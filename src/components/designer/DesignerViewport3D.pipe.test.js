@@ -5,7 +5,7 @@
 
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { applyHighlight, buildPipeGroup } from "./DesignerViewport3D";
+import { applyHighlight, buildPipeGroup, frameCameraOnModel } from "./DesignerViewport3D";
 import { buildThreeScene, highlightRegistryKey } from "@/domains/roomDesigner/designerThreeModel";
 import { addPipeRun, createEmptyDesign, placeSymbol } from "@/domains/roomDesigner/designerDocument";
 
@@ -108,5 +108,72 @@ describe("pipe 3D", () => {
     // through the pipe key, with no scene rebuild.
     expect(highlightedRef.current).toHaveLength(meshes(g).length);
     for (const m of meshes(g)) expect(m.material.emissive.getHex()).toBe(0x2dd4bf);
+  });
+
+  it("clears the pipe highlight when the selection clears (P661-002)", () => {
+    const design = gradeDesign();
+    const built = buildThreeScene(design);
+    const g = buildPipeGroup(built.pipes[0], { stdMaterial, shadowed });
+    const original = meshes(g)[0].material;
+    const registryRef = { current: new Map([[highlightRegistryKey("pipe", "p1"), [g]]]) };
+    const highlightedRef = { current: [] };
+
+    applyHighlight({ kind: "pipe", id: "p1" }, design, registryRef, highlightedRef);
+    expect(highlightedRef.current.length).toBeGreaterThan(0);
+    applyHighlight(null, design, registryRef, highlightedRef);
+    expect(highlightedRef.current).toEqual([]);
+    for (const m of meshes(g)) expect(m.material).toBe(original);
+  });
+});
+
+describe("frameCameraOnModel — pipes (P661-001)", () => {
+  const rig = () => ({
+    camera: new THREE.PerspectiveCamera(50, 1, 1, 24000),
+    controls: { target: new THREE.Vector3(), update() {} },
+  });
+
+  it("frames a pipes-only design far from the origin through the real helper", () => {
+    let d = addPipeRun(createEmptyDesign("P"), [{ x: 10000, y: 10000 }, { x: 11000, y: 10000 }], {
+      id: "far",
+      diameterIn: 4,
+    });
+    const built = buildThreeScene(d);
+    const { camera, controls } = rig();
+    expect(frameCameraOnModel(camera, controls, built)).toBe(true);
+    // Floor center is the pipe's center; floor size 1052 dominates framing.
+    expect(controls.target.x).toBeCloseTo(10500);
+    expect(controls.target.z).toBeCloseTo(10000);
+    expect(camera.position.x).toBeCloseTo(10500 + 1052 * 0.55);
+    expect(camera.position.y).toBeCloseTo(1052 * 0.75);
+    expect(camera.position.z).toBeCloseTo(10000 + 1052 * 0.55);
+  });
+
+  it("returns false for an empty design through the real helper", () => {
+    const built = buildThreeScene(createEmptyDesign("P"));
+    expect(built.floor).toBeNull();
+    const { camera, controls } = rig();
+    const before = camera.position.clone();
+    expect(frameCameraOnModel(camera, controls, built)).toBe(false);
+    expect(camera.position.equals(before)).toBe(true);
+  });
+
+  it("counts pipe elevation toward the vertical frame", () => {
+    const built = {
+      floor: { minX: 0, minZ: 0, maxX: 200, maxZ: 200 },
+      equipment: [],
+      pipes: [
+        {
+          radiusIn: 2,
+          segments: [{ a: { x: 0, z: 0 }, b: { x: 100, z: 0 }, yIn: 600 }],
+          joints: [],
+          risers: [],
+        },
+      ],
+    };
+    const { camera, controls } = rig();
+    expect(frameCameraOnModel(camera, controls, built)).toBe(true);
+    // Pipe top 602; frame = max(200, 602 * 1.8) = 1083.6
+    expect(camera.position.y).toBeCloseTo(1083.6 * 0.75);
+    expect(controls.target.y).toBeCloseTo(Math.min(602, 240) * 0.3); // floorSize floors at 240
   });
 });

@@ -27,8 +27,19 @@ import {
 } from "./designerGeometry";
 import { MAX_MOUNT_IN } from "./furnitureSizing";
 
-/** Entity kinds that can be picked, dragged and sized from the 3D view. */
+/** Entity kinds that can be dragged and sized from the 3D view. */
 export const EDITABLE_3D_KINDS = Object.freeze(["wall", "opening", "furniture", "symbol"]);
+
+/**
+ * Entity kinds that can be PICKED (selected) from the 3D view. This is
+ * a superset of EDITABLE_3D_KINDS: a pipe run is selectable — it
+ * highlights, and clicking empty space clears it — but it has no 3D
+ * drag or size gesture, so it is deliberately NOT editable.
+ * beginDrag3D / sizeFieldsForSelection / popupAnchorForSelection all
+ * return null for a pipe selection, keeping selection distinct from
+ * drag/resize capability.
+ */
+export const SELECTABLE_3D_KINDS = Object.freeze([...EDITABLE_3D_KINDS, "pipe"]);
 
 /** Pointer travel (px) under which a press-release counts as a click, not an orbit. */
 export const CLICK_TOLERANCE_PX = 5;
@@ -41,11 +52,23 @@ export const MIN_WALL_LENGTH_IN = 6;
 
 /**
  * A mesh's entity tag ({ entityKind, entityId } in userData) -> a reducer
- * selection, or null for anything not editable (floor, stairs, untagged).
+ * selection, or null for anything not selectable (floor, stairs, untagged).
  */
 export function selectionFromPick(tag) {
-  if (!tag || !EDITABLE_3D_KINDS.includes(tag.entityKind) || tag.entityId == null) return null;
+  if (!tag || !SELECTABLE_3D_KINDS.includes(tag.entityKind) || tag.entityId == null) return null;
   return { kind: tag.entityKind, id: tag.entityId };
+}
+
+/**
+ * Hover cursor for a picked target: "move" only over the current
+ * selection when that kind is actually draggable, "pointer" over any
+ * other selectable target (including a selected pipe — selectable but
+ * not draggable), and "" (orbit/default) over nothing selectable.
+ */
+export function hoverCursorForPick(target, selection) {
+  if (!target) return "";
+  const isCurrent = !!selection && target.kind === selection.kind && target.id === selection.id;
+  return isCurrent && EDITABLE_3D_KINDS.includes(target.kind) ? "move" : "pointer";
 }
 
 /** World-space hit (x, z) -> plan point (x, y). */

@@ -22,6 +22,7 @@ import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furniture
 import {
   beginDrag3D,
   dragStep3D,
+  hoverCursorForPick,
   isClickGesture,
   planPointFromWorld,
   popupAnchorForSelection,
@@ -90,7 +91,18 @@ export function frameCameraOnModel(camera, controls, built) {
   );
   const cx = (built.floor.minX + built.floor.maxX) / 2;
   const cz = (built.floor.minZ + built.floor.maxZ) / 2;
-  const tallest = Math.max(0, ...(built.equipment || []).map((e) => e.heightIn));
+  // Vertical framing considers pipe elevation too: a run riding a tall
+  // rack (or a riser) can be the tallest thing in the scene even with
+  // no equipment present. Pipe top = centerline elevation + radius.
+  const pipeTopIn = (built.pipes || []).reduce((top, pipe) => {
+    const r = pipe.radiusIn ?? (pipe.diameterIn ?? 0) / 2;
+    let pipeTop = top;
+    for (const seg of pipe.segments || []) pipeTop = Math.max(pipeTop, (seg.yIn ?? 0) + r);
+    for (const joint of pipe.joints || []) pipeTop = Math.max(pipeTop, (joint.yIn ?? 0) + r);
+    for (const riser of pipe.risers || []) pipeTop = Math.max(pipeTop, (riser.y1In ?? 0) + r);
+    return pipeTop;
+  }, 0);
+  const tallest = Math.max(0, pipeTopIn, ...(built.equipment || []).map((e) => e.heightIn));
   const frame = Math.max(floorSize, tallest * 1.8);
   camera.position.set(cx + frame * 0.55, frame * 0.75, cz + frame * 0.55);
   camera.far = frame * 20;
@@ -1232,9 +1244,10 @@ export default function DesignerViewport3D({
       }
       if (e.buttons !== 0 || !dispatchRef.current) return;
       // Hover affordance: "move" over the draggable selection, "pointer"
-      // over anything selectable, default (orbit) elsewhere.
+      // over anything selectable (a selected pipe included — it is
+      // selectable but not draggable), default (orbit) elsewhere.
       const target = selectionFromPick(pickAt(e)?.tag);
-      mount.style.cursor = !target ? "" : sameEntity(target, selectionRef.current) ? "move" : "pointer";
+      mount.style.cursor = hoverCursorForPick(target, selectionRef.current);
     };
     const endEntityDrag = (e) => {
       if (!dragRef.current) return false;

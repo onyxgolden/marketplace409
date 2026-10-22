@@ -21,6 +21,7 @@ import {
   resetDesignerIds,
 } from "./designerDocument";
 import { addSystem, setMemberColor, setMemberSystem, setPipeUnderground } from "./designSystems";
+import { setRackParams } from "./rackGeometry";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { beforeEach } from "vitest";
 
@@ -124,6 +125,38 @@ describe("designerThreeModel — buildThreeScene", () => {
 
   it("throws on a non-document", () => {
     expect(() => buildThreeScene(null)).toThrow(/document/);
+  });
+
+  it("returns floor: null for an empty design", () => {
+    expect(buildThreeScene(createEmptyDesign()).floor).toBeNull();
+  });
+
+  it("frames a pipes-only design far from the origin, with no wall or equipment (P661-001)", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 10000, y: 10000 }, { x: 11000, y: 10000 }], { id: "far", diameterIn: 4 });
+    const scene = buildThreeScene(d);
+    expect(scene.pipes).toHaveLength(1);
+    // Centerline 10000..11000 x, 10000 z, expanded by radius 2, padded 24.
+    expect(scene.floor).toEqual({ minX: 9974, maxX: 11026, minZ: 9974, maxZ: 10026 });
+  });
+
+  it("extends the floor past existing equipment when a pipe runs beyond it (P661-001)", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "processEquipment", "centrifugal-pump", 0, 0, { id: "pump" });
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 600, y: 0 }], { id: "long", diameterIn: 4 });
+    const scene = buildThreeScene(d);
+    expect(scene.equipment).toHaveLength(1);
+    // Pipe end 600 + radius 2 + pad 24; the pump's own extent is far smaller.
+    expect(scene.floor.maxX).toBe(626);
+    expect(scene.floor.minZ).toBeLessThan(-26); // pump depth extends past the pipe's -26
+  });
+
+  it("keeps legacy framing when pipes are absent (P661-001)", () => {
+    let d = createEmptyDesign();
+    d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
+    const scene = buildThreeScene(d);
+    expect(scene.pipes).toEqual([]);
+    expect(scene.floor).toEqual({ minX: -24, maxX: 168, minZ: -24, maxZ: 24 });
   });
 });
 
@@ -512,6 +545,51 @@ describe("designerThreeModel — pipeDescriptors", () => {
     // inside only the unrotated one.
     expect(pipes.find((p) => p.id === "on-rotated").segments[0].yIn).toBe(181);
     expect(pipes.find((p) => p.id === "off-rotated").segments[0].yIn).toBe(30);
+  });
+
+  it("rests on a sleeper rack below grade instead of floating at grade (P661-003)", () => {
+    let d = createEmptyDesign();
+    // Default sleeper rack: top of steel 18 in.
+    d = placeSymbol(d, "processEquipment", "sleeper-rack", 0, 0, { id: "sl", widthIn: 600, depthIn: 120 });
+    d = addPipeRun(d, [{ x: -100, y: 0 }, { x: 100, y: 0 }], { id: "sleep", diameterIn: 4 });
+    // 18 TOS + 2 radius = 20, NOT the 30 in grade baseline.
+    expect(pipeDescriptors(d)[0].segments[0].yIn).toBe(20);
+    expect(pipeDescriptors(d)[0].joints.map((j) => j.yIn)).toEqual([20, 20]);
+  });
+
+  it("picks the highest containing support among overlapping racks (P661-003)", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "processEquipment", "sleeper-rack", 0, 0, { id: "s1", widthIn: 600, depthIn: 120 });
+    d = placeSymbol(d, "processEquipment", "sleeper-rack", 0, 0, { id: "s2", widthIn: 600, depthIn: 120 });
+    d = setRackParams(d, "s2", { elevationIn: 24 });
+    d = addPipeRun(d, [{ x: -100, y: 0 }, { x: 100, y: 0 }], { id: "over", diameterIn: 4 });
+    // Two containing sleepers (18 and 24): the higher wins — 24 + 2 = 26,
+    // still below grade, proving grade never enters the support choice.
+    expect(pipeDescriptors(d)[0].segments[0].yIn).toBe(26);
+
+    // A containing pipe rack (TOS 180) overlapping the same midpoint wins overall.
+    let d2 = createEmptyDesign();
+    d2 = placeSymbol(d2, "processEquipment", "sleeper-rack", 0, 0, { id: "s1", widthIn: 600, depthIn: 120 });
+    d2 = placeSymbol(d2, "processEquipment", "pipe-rack", 0, 0, { id: "pr" });
+    d2 = addPipeRun(d2, [{ x: -100, y: 0 }, { x: 100, y: 0 }], { id: "over2", diameterIn: 4 });
+    expect(pipeDescriptors(d2)[0].segments[0].yIn).toBe(182); // 180 + 2
+  });
+
+  it("uses grade only when no rack contains the segment (P661-003)", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "processEquipment", "sleeper-rack", 0, 0, { id: "sl", widthIn: 600, depthIn: 120 });
+    d = addPipeRun(d, [{ x: 1000, y: 1000 }, { x: 1200, y: 1000 }], { id: "away", diameterIn: 4 });
+    expect(pipeDescriptors(d)[0].segments[0].yIn).toBe(30);
+  });
+
+  it("tests sleeper-rack containment in its rotated local frame (P661-003)", () => {
+    let d = createEmptyDesign();
+    // Rotated 90°: the 600-long axis runs along plan y, 120-wide along x,
+    // so the footprint spans x -60..60, y -300..300.
+    d = placeSymbol(d, "processEquipment", "sleeper-rack", 0, 0, { id: "sl", widthIn: 600, depthIn: 120, rotationDeg: 90 });
+    d = addPipeRun(d, [{ x: -100, y: 200 }, { x: 100, y: 200 }], { id: "on-rot-sleeper", diameterIn: 4 });
+    // Midpoint (0, 200) is inside only the rotated footprint.
+    expect(pipeDescriptors(d)[0].segments[0].yIn).toBe(20);
   });
 
   it("still describes an underground run, with the flag carried through", () => {
