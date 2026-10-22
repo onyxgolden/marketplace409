@@ -57,6 +57,7 @@ import RotateButtons from "./RotateButtons";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
+import RackSection from "./RackSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -3049,6 +3050,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
         </label>
         <SystemMembershipSection design={design} kind="symbol" member={inst} fallbackColor={symbol.color || "#60a5fa"} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
+        <RackSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RotateButtons
           rotationDeg={inst.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg })}
