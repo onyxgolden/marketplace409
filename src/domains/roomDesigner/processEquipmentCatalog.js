@@ -43,18 +43,19 @@ export const PROCESS_EQUIPMENT_CATEGORIES = Object.freeze([
   "Mixing",
   "Utilities & environmental",
   "Valves & instruments",
+  "Structures",
   // Detailed TEMA shell-and-tube entries (temaExchangerCatalog.js).
   ...TEMA_CATEGORIES,
 ]);
 
-export const PROCESS_SHAPES_3D = Object.freeze(["vcyl", "hcyl", "box", "sphere"]);
+export const PROCESS_SHAPES_3D = Object.freeze(["vcyl", "hcyl", "box", "sphere", "rack"]);
 
 const eq = (id, label, category, glyph, widthIn, depthIn, heightIn, shape3d, tagPrefix, color, defaultLayer = "equipment") =>
   Object.freeze({ id, label, category, glyph, widthIn, depthIn, heightIn, shape3d, tagPrefix, defaultLayer, color });
 
 const [
   PUMPS, COMPRESSORS, DRIVERS, FIRED, EXCHANGERS, COLUMNS, VESSELS,
-  SEPARATION, SOLIDS, MIXING, UTILITIES, VALVES,
+  SEPARATION, SOLIDS, MIXING, UTILITIES, VALVES, STRUCTURES,
 ] = PROCESS_EQUIPMENT_CATEGORIES;
 
 // Colors group by discipline so a plot plan reads at a glance.
@@ -194,6 +195,18 @@ export const PROCESS_EQUIPMENT = Object.freeze([
   eq("temperature-element", "Temperature element", VALVES, "instrument-temperature", 12, 12, 12, "box", "TE", C.inst, "piping"),
   eq("level-gauge", "Level gauge", VALVES, "instrument-level", 8, 8, 36, "box", "LG", C.inst, "piping"),
   eq("process-analyzer", "Process analyzer", VALVES, "analyzer", 36, 36, 84, "box", "AT", C.inst),
+
+  // ---- structures: parametric steel (see rackGeometry.js). widthIn x
+  // depthIn = rack length x width; heightIn is nominal — the real height
+  // follows the rack's tiers and top-of-steel elevation. ----
+  Object.freeze({
+    ...eq("pipe-rack", "Pipe rack", STRUCTURES, "pipe-rack", 480, 240, 252, "rack", "PR", "#94a3b8"),
+    rack: Object.freeze({ kind: "pipe", tiers: 2, elevationIn: 180, tierSpacingIn: 72, bentSpacingIn: 240 }),
+  }),
+  Object.freeze({
+    ...eq("sleeper-rack", "Sleeper rack", STRUCTURES, "sleeper-rack", 480, 120, 18, "rack", "SL", "#a8a29e"),
+    rack: Object.freeze({ kind: "sleeper", tiers: 1, elevationIn: 18, tierSpacingIn: 72, bentSpacingIn: 120 }),
+  }),
 
   // ---- TEMA shell-and-tube exchangers: detailed, configurable ----
   ...TEMA_EQUIPMENT,
