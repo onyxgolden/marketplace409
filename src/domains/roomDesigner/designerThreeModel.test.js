@@ -5,11 +5,13 @@ import {
   highlightKeysForSelection,
   highlightRegistryKey,
   pickWallAt,
+  pipeDescriptors,
   splitWallByOpenings,
   stairsDescriptors,
 } from "./designerThreeModel";
 import {
   addOpening,
+  addPipeRun,
   addRoomFromTemplate,
   addWall,
   createEmptyDesign,
@@ -17,6 +19,7 @@ import {
   placeSymbol,
   resetDesignerIds,
 } from "./designerDocument";
+import { addSystem, setMemberColor, setMemberSystem, setPipeUnderground } from "./designSystems";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { beforeEach } from "vitest";
 
@@ -368,8 +371,10 @@ describe("highlightRegistryKey / highlightKeysForSelection", () => {
     expect(highlightKeysForSelection({ kind: "symbol", id: "s1" }, createEmptyDesign())).toEqual(["symbol:s1"]);
   });
 
-  it("maps a pipe selection to no keys — pipes have no 3D mesh yet", () => {
-    expect(highlightKeysForSelection({ kind: "pipe", id: "p1" }, createEmptyDesign())).toEqual([]);
+  it("maps a pipe selection to its own registry key — pipe runs have a 3D mesh", () => {
+    expect(highlightKeysForSelection({ kind: "pipe", id: "p1" }, createEmptyDesign())).toEqual([
+      "pipe:p1",
+    ]);
   });
 
   it("maps a sheet or org-chart selection to no keys — neither exists in 3D", () => {
@@ -385,5 +390,108 @@ describe("highlightRegistryKey / highlightKeysForSelection", () => {
 
   it("tolerates a missing design for a non-room selection", () => {
     expect(highlightKeysForSelection({ kind: "wall", id: "w1" }, null)).toEqual(["wall:w1"]);
+  });
+});
+
+describe("designerThreeModel — pipeDescriptors", () => {
+  it("resolves colors own > system > default across three runs", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 120, y: 0 }], { id: "own", diameterIn: 4 });
+    d = addPipeRun(d, [{ x: 0, y: 60 }, { x: 120, y: 60 }], { id: "sys" });
+    d = addPipeRun(d, [{ x: 0, y: 120 }, { x: 120, y: 120 }], { id: "plain" });
+    d = addSystem(d, { name: "Cooling water", color: "#22c55e" });
+    d = setMemberColor(d, { kind: "pipe", id: "own" }, "#ef4444");
+    d = setMemberSystem(d, { kind: "pipe", id: "sys" }, "system_1");
+
+    const pipes = pipeDescriptors(d);
+    expect(pipes.map((p) => p.id)).toEqual(["own", "sys", "plain"]);
+    expect(pipes.map((p) => p.color)).toEqual(["#ef4444", "#22c55e", "#7dd3fc"]);
+    // Diameter carries through and radius derives from it (default 2 in).
+    expect(pipes[0]).toMatchObject({ kind: "pipe", diameterIn: 4, radiusIn: 2, underground: false });
+    expect(pipes[1]).toMatchObject({ diameterIn: 2, radiusIn: 1 });
+    // Plan coords map x -> x, y -> z, at the low pipeway centerline.
+    expect(pipes[0].segments).toEqual([{ a: { x: 0, z: 0 }, b: { x: 120, z: 0 }, yIn: 30 }]);
+    expect(pipes[0].joints).toEqual([
+      { x: 0, z: 0, yIn: 30 },
+      { x: 120, z: 0, yIn: 30 },
+    ]);
+    expect(pipes[0].risers).toEqual([]);
+  });
+
+  it("rides a segment on a pipe rack at tier-1 top of steel plus radius, and risers down to grade", () => {
+    let d = createEmptyDesign();
+    // Pipe rack: 480 x 240 footprint centered at (300, 160), so it spans
+    // x 60..540, y 40..280; its tier-1 top of steel defaults to 180 in.
+    d = placeSymbol(d, "processEquipment", "pipe-rack", 300, 160, { id: "pr" });
+    // Segment 1's midpoint (250, 160) is inside the rack; segment 2's
+    // midpoint (550, 160) is outside it.
+    d = addPipeRun(d, [{ x: 100, y: 160 }, { x: 400, y: 160 }, { x: 700, y: 160 }], { id: "run" });
+
+    const [pipe] = pipeDescriptors(d);
+    expect(pipe.segments).toHaveLength(2);
+    expect(pipe.segments[0].yIn).toBe(181); // 180 tier-1 TOS + 1 radius
+    expect(pipe.segments[1].yIn).toBe(30); // low pipeway centerline off the rack
+    // One riser at the transition vertex, spanning grade up to the rack.
+    expect(pipe.risers).toEqual([{ x: 400, z: 160, y0In: 30, y1In: 181 }]);
+    // Joints: start/end take their segment's elevation; the interior
+    // vertex takes the higher of its two adjacent segments.
+    expect(pipe.joints).toEqual([
+      { x: 100, z: 160, yIn: 181 },
+      { x: 400, z: 160, yIn: 181 },
+      { x: 700, z: 160, yIn: 30 },
+    ]);
+    // The same descriptors come out of buildThreeScene.
+    expect(buildThreeScene(d).pipes).toEqual([pipe]);
+  });
+
+  it("tests segment midpoints against the rack footprint in its rotated local frame", () => {
+    let d = createEmptyDesign();
+    // Rotated 90°: the 480-long axis runs along plan y and the 240-wide
+    // axis along plan x, so the footprint spans x 180..420, y -80..400.
+    d = placeSymbol(d, "processEquipment", "pipe-rack", 300, 160, { id: "pr", rotationDeg: 90 });
+    d = addPipeRun(d, [{ x: 200, y: 350 }, { x: 400, y: 350 }], { id: "on-rotated" });
+    d = addPipeRun(d, [{ x: 50, y: 160 }, { x: 150, y: 160 }], { id: "off-rotated" });
+    const pipes = pipeDescriptors(d);
+    // (300, 350) is inside only the rotated footprint; (100, 160) is
+    // inside only the unrotated one.
+    expect(pipes.find((p) => p.id === "on-rotated").segments[0].yIn).toBe(181);
+    expect(pipes.find((p) => p.id === "off-rotated").segments[0].yIn).toBe(30);
+  });
+
+  it("still describes an underground run, with the flag carried through", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 120, y: 0 }], { id: "ug" });
+    d = setPipeUnderground(d, "ug", true);
+    const [pipe] = pipeDescriptors(d);
+    expect(pipe.underground).toBe(true);
+    expect(pipe.segments).toHaveLength(1);
+    expect(pipe.joints).toHaveLength(2);
+  });
+
+  it("skips runs with fewer than two points", () => {
+    let d = createEmptyDesign();
+    d = { ...d, pipes: [{ id: "bad", points: [{ x: 0, y: 0 }] }] };
+    expect(pipeDescriptors(d)).toEqual([]);
+  });
+
+  it("buildThreeScene returns pipes: [] for a design without pipes, other arrays unchanged", () => {
+    let d = createEmptyDesign();
+    d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
+    d = placeFurniture(d, "bed-queen", 72, 72);
+    const scene = buildThreeScene(d);
+    expect(scene.pipes).toEqual([]);
+    expect(scene.walls).toHaveLength(1);
+    expect(scene.furniture).toHaveLength(1);
+    expect(scene.glass).toEqual([]);
+    expect(scene.stairs).toEqual([]);
+    expect(scene.equipment).toEqual([]);
+  });
+
+  it("is pure serializable JSON with no three.js objects", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 120, y: 0 }, { x: 120, y: 120 }], { id: "p1" });
+    const pipes = pipeDescriptors(d);
+    expect(() => JSON.stringify(pipes)).not.toThrow();
+    expect(JSON.parse(JSON.stringify(pipes))).toEqual(pipes);
   });
 });

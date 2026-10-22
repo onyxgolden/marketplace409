@@ -365,10 +365,117 @@ export function equipmentDescriptors(design) {
   return out;
 }
 
+/** Centerline elevation (in) for pipe that is not supported on a rack. */
+export const PIPE_GRADE_ELEVATION_IN = 30;
+
+/**
+ * Pipe runs -> 3D descriptors (plain JSON, like equipmentDescriptors):
+ * { kind:"pipe", id, color, diameterIn, radiusIn, underground,
+ *   segments: [{ a:{x,z}, b:{x,z}, yIn }],
+ *   joints: [{ x, z, yIn }],
+ *   risers: [{ x, z, y0In, y1In }] }
+ *
+ * Plan coordinates map x -> x, y -> z. Segment elevation is derived,
+ * never stored: a segment whose plan midpoint falls inside a rack
+ * footprint rides at that rack's first-tier top of steel plus the pipe
+ * radius; when several racks contain the midpoint the highest support
+ * wins. Any other segment runs at the low pipeway centerline
+ * (PIPE_GRADE_ELEVATION_IN). Interior vertices where adjacent segment
+ * elevations differ get a joint at the higher elevation and a riser
+ * spanning the difference. Underground runs are described the same way,
+ * with the flag carried through for the renderer.
+ */
+export function pipeDescriptors(design) {
+  if (!design) return [];
+  // Rack supports in the design: any symbol instance whose catalog entry
+  // carries rack parameters, resolved like equipmentDescriptors does.
+  const racks = [];
+  for (const inst of design.symbols || []) {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol?.rack) continue;
+    const widthIn = inst.widthIn ?? symbol.widthIn;
+    const depthIn = inst.depthIn ?? symbol.depthIn;
+    if (!widthIn || !depthIn) continue;
+    racks.push({ inst, widthIn, depthIn, elevationIn: rackParams(symbol, inst).elevationIn });
+  }
+  const segmentElevationIn = (midX, midY, radiusIn) => {
+    let yIn = PIPE_GRADE_ELEVATION_IN;
+    for (const rack of racks) {
+      // Midpoint into the rack's local frame: translate to its center,
+      // then rotate by -rotationDeg.
+      const dx = midX - rack.inst.x;
+      const dy = midY - rack.inst.y;
+      const angle = (-(rack.inst.rotationDeg || 0) * Math.PI) / 180;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const lx = dx * cos - dy * sin;
+      const ly = dx * sin + dy * cos;
+      if (Math.abs(lx) <= rack.widthIn / 2 && Math.abs(ly) <= rack.depthIn / 2) {
+        yIn = Math.max(yIn, rack.elevationIn + radiusIn);
+      }
+    }
+    return yIn;
+  };
+
+  const out = [];
+  for (const run of design.pipes || []) {
+    const points = run.points || [];
+    if (points.length < 2) continue;
+    const diameterIn = run.diameterIn ?? 2;
+    const radiusIn = diameterIn / 2;
+    const segments = [];
+    for (let i = 0; i + 1 < points.length; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      segments.push({
+        a: { x: a.x, z: a.y },
+        b: { x: b.x, z: b.y },
+        yIn: segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn),
+      });
+    }
+    const joints = points.map((p, i) => {
+      // End vertices take their only segment's elevation; interior
+      // vertices take the higher adjacent elevation (the riser spans
+      // the difference).
+      const yIn =
+        i === 0
+          ? segments[0].yIn
+          : i === segments.length
+            ? segments[segments.length - 1].yIn
+            : Math.max(segments[i - 1].yIn, segments[i].yIn);
+      return { x: p.x, z: p.y, yIn };
+    });
+    const risers = [];
+    for (let i = 1; i + 1 < points.length; i += 1) {
+      const prev = segments[i - 1].yIn;
+      const next = segments[i].yIn;
+      if (prev === next) continue;
+      risers.push({
+        x: points[i].x,
+        z: points[i].y,
+        y0In: Math.min(prev, next),
+        y1In: Math.max(prev, next),
+      });
+    }
+    out.push({
+      kind: "pipe",
+      id: run.id,
+      color: effectiveColor(design, run, "#7dd3fc"), // own > system > default
+      diameterIn,
+      radiusIn,
+      underground: !!run.underground,
+      segments,
+      joints,
+      risers,
+    });
+  }
+  return out;
+}
+
 /**
  * Full scene descriptor for a design:
  * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...],
- *   equipment: [...primitives], floor: {minX,minZ,maxX,maxZ}|null }
+ *   equipment: [...primitives], pipes: [...runs], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -391,6 +498,7 @@ export function buildThreeScene(design) {
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
   const equipment = equipmentDescriptors(design);
+  const pipes = pipeDescriptors(design);
 
   let floor = null;
   const xs = [];
@@ -412,7 +520,7 @@ export function buildThreeScene(design) {
       maxZ: Math.max(...zs) + pad,
     };
   }
-  return { walls, glass, furniture, stairs, equipment, floor };
+  return { walls, glass, furniture, stairs, equipment, pipes, floor };
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
@@ -456,8 +564,9 @@ export function highlightRegistryKey(kind, id) {
  * gap with no mesh, so it has nothing to highlight — that is correct
  * behavior, not a gap in coverage). A symbol maps to its own key: process
  * equipment is built as a 3D primitive registered under it, while other
- * symbol domains have no mesh, so their key simply matches nothing. Pipes
- * have no 3D representation yet and map to no keys.
+ * symbol domains have no mesh, so their key simply matches nothing. A
+ * pipe run maps to its own key: pipe runs are built as 3D meshes
+ * registered under it.
  */
 export function highlightKeysForSelection(selection, design) {
   if (!selection || !selection.kind) return [];
@@ -465,6 +574,7 @@ export function highlightKeysForSelection(selection, design) {
   if (selection.kind === "opening") return [highlightRegistryKey("opening", selection.id)];
   if (selection.kind === "furniture") return [highlightRegistryKey("furniture", selection.id)];
   if (selection.kind === "symbol") return [highlightRegistryKey("symbol", selection.id)];
+  if (selection.kind === "pipe") return [highlightRegistryKey("pipe", selection.id)];
   if (selection.kind === "room") {
     const room = (design?.rooms || []).find((r) => r.id === selection.id);
     return (room?.wallIds || []).map((id) => highlightRegistryKey("wall", id));
