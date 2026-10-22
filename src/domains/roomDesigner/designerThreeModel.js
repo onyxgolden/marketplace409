@@ -379,8 +379,10 @@ export const PIPE_GRADE_ELEVATION_IN = 30;
  * never stored: a segment whose plan midpoint falls inside a rack
  * footprint rides at that rack's first-tier top of steel plus the pipe
  * radius; when several racks contain the midpoint the highest support
- * wins. Any other segment runs at the low pipeway centerline
- * (PIPE_GRADE_ELEVATION_IN). Interior vertices where adjacent segment
+ * wins. The grade centerline (PIPE_GRADE_ELEVATION_IN) applies ONLY
+ * when no rack contains the midpoint — a containing support below
+ * grade (e.g. a sleeper rack) still sets the elevation, so the pipe
+ * rests on it instead of floating at grade. Interior vertices where adjacent segment
  * elevations differ get a joint at the higher elevation and a riser
  * spanning the difference. Underground runs are described the same way,
  * with the flag carried through for the renderer.
@@ -399,7 +401,10 @@ export function pipeDescriptors(design) {
     racks.push({ inst, widthIn, depthIn, elevationIn: rackParams(symbol, inst).elevationIn });
   }
   const segmentElevationIn = (midX, midY, radiusIn) => {
-    let yIn = PIPE_GRADE_ELEVATION_IN;
+    // Highest CONTAINING support wins, chosen independently of grade:
+    // grade is the fallback for unsupported segments only, never a
+    // floor that lifts a pipe off a lower support it rests on.
+    let supportIn = null;
     for (const rack of racks) {
       // Midpoint into the rack's local frame: translate to its center,
       // then rotate by -rotationDeg.
@@ -411,10 +416,11 @@ export function pipeDescriptors(design) {
       const lx = dx * cos - dy * sin;
       const ly = dx * sin + dy * cos;
       if (Math.abs(lx) <= rack.widthIn / 2 && Math.abs(ly) <= rack.depthIn / 2) {
-        yIn = Math.max(yIn, rack.elevationIn + radiusIn);
+        const candidateIn = rack.elevationIn + radiusIn;
+        supportIn = supportIn === null ? candidateIn : Math.max(supportIn, candidateIn);
       }
     }
-    return yIn;
+    return supportIn ?? PIPE_GRADE_ELEVATION_IN;
   };
 
   const out = [];
@@ -510,6 +516,22 @@ export function buildThreeScene(design) {
   for (const f of [...furniture, ...equipment]) {
     xs.push(f.x - f.widthIn / 2, f.x + f.widthIn / 2);
     zs.push(f.z - f.depthIn / 2, f.z + f.depthIn / 2);
+  }
+  // Pipes frame the scene too: a pipes-only design (no wall, furniture
+  // or equipment) still needs a floor under its runs, and a run that
+  // extends past every other object must not fall outside the framed
+  // floor. Plan extents are expanded by the pipe radius so the tube
+  // itself, not just its centerline, sits inside the bounds.
+  for (const pipe of pipes) {
+    const r = pipe.radiusIn ?? (pipe.diameterIn ?? 0) / 2;
+    const planPoints = [];
+    for (const seg of pipe.segments || []) planPoints.push(seg.a, seg.b);
+    for (const joint of pipe.joints || []) planPoints.push({ x: joint.x, z: joint.z });
+    for (const riser of pipe.risers || []) planPoints.push({ x: riser.x, z: riser.z });
+    for (const p of planPoints) {
+      xs.push(p.x - r, p.x + r);
+      zs.push(p.z - r, p.z + r);
+    }
   }
   if (xs.length > 0) {
     const pad = 24;
