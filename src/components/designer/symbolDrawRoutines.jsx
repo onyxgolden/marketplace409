@@ -152,9 +152,9 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
   const c = toScreen({ x: instance.x, y: instance.y });
   const hw = (symbol.widthIn * scale) / 2;
   const hh = (symbol.depthIn * scale) / 2;
-  const stroke = selectionStroke(highlighted, "#cbd5e1");
+  const stroke = selectionStroke(highlighted, symbol.memberColor || "#cbd5e1");
   const sw = highlighted ? 3 : 2;
-  const accent = highlighted ? "#f59e0b" : "#38bdf8";
+  const accent = highlighted ? "#f59e0b" : symbol.memberColor || "#38bdf8";
 
   const glyph = (() => {
     switch (symbol.glyph) {
@@ -941,7 +941,7 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
   const c = toScreen({ x: instance.x, y: instance.y });
   const hw = ((instance.widthIn ?? symbol.widthIn) * scale) / 2;
   const hh = ((instance.depthIn ?? symbol.depthIn) * scale) / 2;
-  const stroke = selectionStroke(highlighted, "#e2e8f0");
+  const stroke = selectionStroke(highlighted, symbol.memberColor || "#e2e8f0");
   const sw = highlighted ? 3 : 1.75;
   const accent = highlighted ? "#f59e0b" : symbol.color || "#60a5fa";
   const body = "#0f172a";
@@ -1403,11 +1403,14 @@ export function getDrawRoutine(domain) {
 export function renderSymbol2D(domain, symbolId, instance, ctx) {
   const symbol = (symbolId && findSymbol(domain, symbolId)) || null;
   const routine = symbol?.draw2D || routines.get(domain) || drawDefaultSymbol;
-  const safeSymbol = symbol || {
+  const base = symbol || {
     id: symbolId || "unknown",
     label: symbolId || "Unknown",
     widthIn: 24,
     depthIn: 24,
   };
+  // ctx.color: the instance's system / own color (designSystems). Routines
+  // read it as symbol.memberColor for outlines and symbol.color for accents.
+  const safeSymbol = ctx?.color ? { ...base, color: ctx.color, memberColor: ctx.color } : base;
   return routine({ symbol: safeSymbol, instance, ...ctx });
 }
