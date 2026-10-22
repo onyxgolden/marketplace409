@@ -45,6 +45,7 @@ import {
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
+import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
@@ -1162,7 +1163,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           x={mid.x} y={mid.y - 8} textAnchor="middle" fontSize={11} fontWeight={600}
           fill="#e0f2fe" transform={`rotate(${angle.toFixed(1)} ${mid.x} ${mid.y})`}
         >
-          {feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
+          {run.underground ? "UG · " : ""}{feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
         </text>
       );
     }
@@ -1171,11 +1172,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <polyline
           points={pts}
           fill="none"
-          stroke={isSelected ? "#f59e0b" : "#7dd3fc"}
+          stroke={isSelected ? "#f59e0b" : effectiveColor(design, run, "#7dd3fc")}
           strokeWidth={widthPx}
-          strokeLinecap="round"
+          strokeLinecap={run.underground ? "butt" : "round"}
           strokeLinejoin="round"
+          strokeDasharray={run.underground ? `${widthPx * 3} ${widthPx * 1.5}` : undefined}
           opacity={0.9}
+          data-underground={run.underground ? "true" : undefined}
         />
         {label}
         {isSelected &&
@@ -1196,6 +1199,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       toScreen,
       scale: view.scale,
       highlighted: isSelected,
+      color: effectiveColor(design, inst, undefined),
     });
   };
 
@@ -1677,6 +1681,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderRulers()}
         {renderCrosshair()}
       </svg>
+      <SystemsLegend design={design} />
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="max-w-md rounded-lg bg-gray-900/90 p-6 text-center shadow-xl">
@@ -1760,4 +1765,29 @@ function openingEndpoints(opening, walls) {
       y: wall.a.y + dir.y * (opening.offsetIn + opening.widthIn),
     },
   };
+}
+
+// Plan legend: one swatch per system that has members (bottom-left, never
+// intercepts the pointer). Underground pipe is explained when present.
+function SystemsLegend({ design }) {
+  const entries = systemLegend(design);
+  const underground = (design.pipes || []).some((p) => p.underground);
+  if (!entries.length && !underground) return null;
+  return (
+    <div className="pointer-events-none absolute bottom-12 left-3 rounded bg-gray-900/90 px-3 py-2 text-[11px] text-gray-200 shadow" data-testid="systems-legend">
+      <p className="mb-1 font-semibold uppercase tracking-wide text-gray-400">Systems</p>
+      {entries.map((e) => (
+        <p key={e.id} className="flex items-center gap-2">
+          <span className="inline-block h-2.5 w-5 rounded-sm" style={{ background: e.color }} />
+          {e.name}
+        </p>
+      ))}
+      {underground && (
+        <p className="mt-1 flex items-center gap-2 text-gray-400">
+          <span className="inline-block w-5 border-t-2 border-dashed border-gray-300" />
+          UG = underground
+        </p>
+      )}
+    </div>
+  );
 }
