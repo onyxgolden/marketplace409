@@ -35,7 +35,8 @@ describe("ObjectLibraryPanel — TEMA category group", () => {
     ]);
     const ungrouped = [...select.children].filter((c) => c.tagName === "OPTION").map((o) => o.value);
     expect(ungrouped[0]).toBe("Pumps");
-    expect(ungrouped).toHaveLength(12);
+    expect(ungrouped).toHaveLength(13); // 12 process categories + Structures (racks)
+    expect(ungrouped).toContain("Structures");
   });
 
   it("lists the TEMA front heads when that category is chosen", async () => {

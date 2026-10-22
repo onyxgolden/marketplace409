@@ -276,6 +276,22 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       group.add(body);
     }
     addLabel(h + 40);
+  } else if (eq.shape === "rack" && Array.isArray(eq.members)) {
+    // Parametric pipe rack / sleeper rack (rackGeometry.rackMembers3D):
+    // columns, beams, struts and knee braces in steel; sleeper piers in
+    // concrete. One shared geometry per member size keeps it light.
+    const concrete = stdMaterial({ color: "#9ca3af", roughness: 0.9 });
+    const geos = new Map();
+    for (const m of eq.members) {
+      const key = `${m.sx}|${m.sy}|${m.sz}`;
+      if (!geos.has(key)) geos.set(key, new THREE.BoxGeometry(m.sx, m.sy, m.sz));
+      const mesh = shadowed(new THREE.Mesh(geos.get(key), m.kind === "pier" ? concrete : mat));
+      mesh.position.set(m.x, m.y, m.z);
+      if (m.rotX) mesh.rotation.x = m.rotX;
+      mesh.userData.rackMember = m.kind;
+      group.add(mesh);
+    }
+    addLabel(h + 40);
   } else {
     // sphere: pressure sphere on legs, with a top nozzle.
     const r = Math.min(w, d) / 2;
