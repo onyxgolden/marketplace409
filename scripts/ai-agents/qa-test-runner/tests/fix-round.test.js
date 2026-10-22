@@ -36,6 +36,7 @@ import {
   classifySuiteResult,
   canonicalJson,
   isolationAvailable,
+  admitValue,
 } from "../src/index.js";
 import { loadFixtureJson } from "./helpers.js";
 
@@ -636,5 +637,126 @@ describe("Q665-007 + CLI bounds: piped stdout, input cap, output containment", (
     const parsed = JSON.parse(r.stdout);
     assert.equal(parsed.verdict, "ALL_SUITES_PASS", "the run itself still reports on stdout");
     assert.equal(git(fx.dir, ["status", "--porcelain"]), "", "target untouched");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Q665-008 — admission must not invoke a single caller-controlled    */
+/* Proxy trap. Proxies are refused via the trap-free util.types       */
+/* isProxy gate BEFORE any reflective traversal, so side-effecting    */
+/* traps (even non-throwing ones returning valid metadata) can never  */
+/* execute. Revoked-only coverage was insufficient.                   */
+/* ------------------------------------------------------------------ */
+
+/** A handler that counts every trap invocation; non-throwing traps. */
+function countingHandler(counts, target) {
+  const names = [
+    "getPrototypeOf",
+    "ownKeys",
+    "getOwnPropertyDescriptor",
+    "get",
+    "set",
+    "has",
+    "defineProperty",
+    "deleteProperty",
+    "setPrototypeOf",
+    "preventExtensions",
+    "isExtensible",
+    "apply",
+    "construct",
+  ];
+  const h = {};
+  for (const name of names) {
+    h[name] = (t, ...args) => {
+      counts[name] = (counts[name] || 0) + 1;
+      return Reflect[name](t, ...args);
+    };
+  }
+  void target;
+  return h;
+}
+
+function totalTrapCalls(counts) {
+  return Object.values(counts).reduce((a, b) => a + b, 0);
+}
+
+describe("Q665-008 — admission refuses caller-controlled Proxies without invoking any trap", () => {
+  it("ChatGPT's exact probe: live Proxy with non-throwing getPrototypeOf/ownKeys/getOwnPropertyDescriptor traps is refused with zero trap invocations", () => {
+    let calls = 0;
+    const input = new Proxy(
+      {},
+      {
+        getPrototypeOf(target) {
+          calls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+        ownKeys(target) {
+          calls += 1;
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          calls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      }
+    );
+    const result = admitValue(input);
+    assert.equal(result.ok, false, "Proxy must be refused, not admitted");
+    assert.equal(calls, 0, `expected zero trap invocations, got ${calls}`);
+  });
+
+  it("every reflective operation the admission performs is covered: a handler that counts ALL traps fires zero times", () => {
+    const counts = {};
+    const input = new Proxy({ a: 1, b: "two" }, countingHandler(counts, null));
+    const result = admitValue(input);
+    assert.equal(result.ok, false);
+    assert.equal(totalTrapCalls(counts), 0, `trap counts: ${JSON.stringify(counts)}`);
+  });
+
+  it("a Proxy over an ARRAY target (exercising the array-length descriptor path) is refused with zero trap invocations", () => {
+    const counts = {};
+    const input = new Proxy([1, 2, 3], countingHandler(counts, null));
+    const result = admitValue(input);
+    assert.equal(result.ok, false);
+    assert.equal(totalTrapCalls(counts), 0, `trap counts: ${JSON.stringify(counts)}`);
+  });
+
+  it("a Proxy NESTED inside a plain object is refused without invoking its traps when the walk reaches it", () => {
+    const counts = {};
+    const nested = new Proxy({ secret: true }, countingHandler(counts, null));
+    const input = { level: "plain", nested };
+    const result = admitValue(input);
+    assert.equal(result.ok, false);
+    assert.equal(totalTrapCalls(counts), 0, `trap counts: ${JSON.stringify(counts)}`);
+  });
+
+  it("traps that RETURN valid metadata (no throw) still execute zero times — refusal is not throw-dependent", () => {
+    let calls = 0;
+    const input = new Proxy(
+      { ok: true },
+      {
+        getPrototypeOf() {
+          calls += 1;
+          return Object.prototype; // valid metadata, would pass the plain-proto check
+        },
+        ownKeys() {
+          calls += 1;
+          return ["ok"];
+        },
+        getOwnPropertyDescriptor(target, key) {
+          calls += 1;
+          return { value: true, writable: true, enumerable: true, configurable: true };
+        },
+      }
+    );
+    const result = admitValue(input);
+    assert.equal(result.ok, false, "even a well-behaved Proxy is refused");
+    assert.equal(calls, 0, `expected zero trap invocations, got ${calls}`);
+  });
+
+  it("non-proxy objects are unaffected: plain data still admits with ok:true", () => {
+    const result = admitValue({ a: [1, "two", { three: 3 }], b: null });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value, { a: [1, "two", { three: 3 }], b: null });
   });
 });

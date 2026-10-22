@@ -2,10 +2,16 @@
  * admit.js — bounded admission for untrusted job-shaped values.
  *
  * Charge-before-inspect, applied to the VALUE ITSELF before any field
- * validation: the input graph is walked exactly once via property
- * DESCRIPTORS (Object.getOwnPropertyDescriptor / Reflect.ownKeys), so
- * getters, setters and Proxy traps are never invoked by this walk — an
- * accessor property is a refusal, not a read. Structural limits
+ * validation: caller-controlled Proxy objects are refused FIRST via
+ * util.types.isProxy — a trap-free shape check — before ANY reflective
+ * traversal, because every reflective operation (getPrototypeOf,
+ * ownKeys, getOwnPropertyDescriptor) invokes caller-defined traps on a
+ * Proxy and a non-throwing trap would execute arbitrary caller code
+ * before any refusal could land. Non-proxy values are then walked
+ * exactly once via property DESCRIPTORS (Object.getOwnPropertyDescriptor
+ * / Reflect.ownKeys), so getters, setters and revoked-Proxy traps are
+ * never invoked either — an accessor property is a refusal, not a
+ * read. Structural limits
  * (depth, node count, estimated byte size) are charged as the walk
  * proceeds; the first over-limit candidate dies on the charge and the
  * unexplored tail is never visited.
@@ -21,6 +27,8 @@
  * NON_JSON_INPUT (accessor, Proxy-shaped, cyclic, sparse, symbol-keyed,
  * non-finite number, or a value JSON cannot represent).
  */
+
+import { types as utilTypes } from "node:util";
 
 export const ADMISSION_LIMITS = Object.freeze({
   maxDepth: 32,
@@ -108,6 +116,19 @@ export function admitValue(input) {
         // undefined, function, symbol, bigint — none are JSON data,
         // and functions are never invoked to find out more.
         return refusal("NON_JSON_INPUT", `value of type ${t} is not JSON data`);
+      }
+      // Q665-008: caller-controlled Proxies are refused BEFORE any
+      // reflective traversal. util.types.isProxy is a trap-free shape
+      // check (it consults the engine's internal object shape and cannot
+      // invoke user traps, not even on a revoked Proxy). Every
+      // reflective operation below — Object.getPrototypeOf, Reflect.ownKeys,
+      // Object.getOwnPropertyDescriptor — WOULD invoke the
+      // caller-defined getPrototypeOf/ownKeys/getOwnPropertyDescriptor
+      // traps on a live Proxy, executing arbitrary caller code before a
+      // thrown trap could ever be converted into a refusal. (Array.isArray
+      // is trap-free by spec, but the gate runs first regardless.)
+      if (utilTypes.isProxy(value)) {
+        return refusal("NON_JSON_INPUT", "Proxy objects are not JSON data");
       }
       // Objects and arrays from here on. A revoked Proxy throws on
       // these probes — the surrounding catch turns that into a refusal.
