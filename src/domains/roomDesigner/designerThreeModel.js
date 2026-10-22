@@ -634,7 +634,6 @@ export function deckHolesInFloor(floor, decks) {
     holes.push({ minX, maxX, minZ, maxZ });
   }
   return holes;
-  return { walls, glass, furniture, stairs, equipment, pipes, floor };
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
