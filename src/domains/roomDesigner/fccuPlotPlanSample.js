@@ -240,19 +240,56 @@ function addPiping(design, systemIds) {
   };
   const anchor = (tag, anchorId) => anchorOfTag(next, tag, anchorId);
 
-  // F1 — process feed, threading the exchanger tube sides along y=235 ft.
+  // F1 — process feed through the exchanger tube sides along y=235 ft.
+  // Each exchanger is genuinely connected: a run END lands on its tube-in /
+  // tube-out nozzle (P663-001 — the train used to be one polyline crossing
+  // the footprints with no attachments at E-102/103/104).
   {
+    const end = anchor("E-101", "tube-in");
+    run(
+      [pt(124, 320), pt(260, 320), pt(260, 235), anchorPt(end)],
+      { diameterIn: 8, service: "Process feed to exchanger train", systemName: "Process feed" },
+    );
+  }
+  for (const [from, to] of [["E-101", "E-102"], ["E-102", "E-103"], ["E-103", "E-104"]]) {
+    const start = anchor(from, "tube-out");
+    const end = anchor(to, "tube-in");
+    run(
+      [anchorPt(start), anchorPt(end)],
+      { diameterIn: 8, service: `Process feed — ${from} to ${to}`, systemName: "Process feed" },
+    );
+  }
+  {
+    const start = anchor("E-104", "tube-out");
     const end = anchor("R-101", "feed-in");
     run(
-      [pt(124, 320), pt(260, 320), pt(260, 235), pt(371, 235), pt(371, 190), pt(190, 190), anchorPt(end)],
+      [anchorPt(start), pt(371, 190), pt(190, 190), anchorPt(end)],
       { diameterIn: 8, service: "Process feed to reactor", systemName: "Process feed" },
     );
   }
-  // F2 — fractionator bottoms, threading the exchanger shell sides along y=233.75 ft.
+  // F2 — fractionator bottoms through the exchanger shell sides along
+  // y=233.75 ft, entering at E-104 and leaving E-101 to rundown — again
+  // with real nozzle endpoints on every exchanger (P663-001).
   {
     const start = anchor("T-101", "bottoms-out");
+    const end = anchor("E-104", "shell-in");
     run(
-      [anchorPt(start), { x: start.x, y: 205 * FT }, pt(368, 205), pt(368, 233.75), pt(266, 233.75), pt(266, 328)],
+      [anchorPt(start), { x: start.x, y: 205 * FT }, pt(368, 205), anchorPt(end)],
+      { diameterIn: 12, service: "Fractionator bottoms to exchanger train", systemName: "Reactor effluent" },
+    );
+  }
+  for (const [from, to] of [["E-104", "E-103"], ["E-103", "E-102"], ["E-102", "E-101"]]) {
+    const start = anchor(from, "shell-out");
+    const end = anchor(to, "shell-in");
+    run(
+      [anchorPt(start), anchorPt(end)],
+      { diameterIn: 12, service: `Fractionator bottoms — ${from} to ${to}`, systemName: "Reactor effluent" },
+    );
+  }
+  {
+    const start = anchor("E-101", "shell-out");
+    run(
+      [anchorPt(start), pt(266, 233.75), pt(266, 328)],
       { diameterIn: 12, service: "Fractionator bottoms to rundown", systemName: "Reactor effluent" },
     );
   }
@@ -435,7 +472,9 @@ function addPiping(design, systemIds) {
       { diameterIn: 12, service: "Regenerator relief branch", systemName: "Relief" },
     );
   }
-  // U1 — cooling water supply, threading every exchanger along y=236.25 ft.
+  // U1 — cooling water supply to E-101 along y=236.25 ft, then chained
+  // exchanger-to-exchanger in series so every exchanger's cooling-water
+  // nozzles carry real attachments (P663-001).
   {
     const end = anchor("E-101", "cooling-water-in");
     run(
@@ -443,9 +482,17 @@ function addPiping(design, systemIds) {
       { diameterIn: 10, service: "Cooling water supply", systemName: "Cooling water" },
     );
   }
-  // U2 — cooling water return.
+  for (const [from, to] of [["E-101", "E-102"], ["E-102", "E-103"], ["E-103", "E-104"]]) {
+    const start = anchor(from, "cooling-water-out");
+    const end = anchor(to, "cooling-water-in");
+    run(
+      [anchorPt(start), anchorPt(end)],
+      { diameterIn: 10, service: `Cooling water — ${from} to ${to}`, systemName: "Cooling water" },
+    );
+  }
+  // U2 — cooling water return, from the last exchanger in the chain.
   {
-    const start = anchor("E-101", "cooling-water-out");
+    const start = anchor("E-104", "cooling-water-out");
     run(
       [anchorPt(start), { x: start.x, y: 248 * FT }, pt(140, 248), pt(140, 379), pt(107, 379)],
       { diameterIn: 10, service: "Cooling water return", systemName: "Cooling water" },
