@@ -684,7 +684,12 @@ export function designerReducer(state, action) {
     case "SET_PIPE_UNDERGROUND": {
       const d = state.design;
       const apply = {
-        ADD_SYSTEM: () => addSystem(d, { name: action.name, color: action.color }),
+        ADD_SYSTEM: () => {
+          // assignTo: create from an inspector and put that item in it (one undo step)
+          const next = addSystem(d, { name: action.name, color: action.color });
+          const created = next.systems[next.systems.length - 1];
+          return action.assignTo ? setMemberSystem(next, action.assignTo, created.id) : next;
+        },
         UPDATE_SYSTEM: () => updateSystem(d, action.systemId, action.fields || {}),
         DELETE_SYSTEM: () => deleteSystem(d, action.systemId),
         SET_MEMBER_SYSTEM: () => setMemberSystem(d, action.target || {}, action.systemId ?? null),
