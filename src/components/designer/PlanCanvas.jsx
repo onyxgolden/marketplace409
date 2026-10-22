@@ -22,6 +22,7 @@ import {
   rotatePoint,
   snapPoint,
   snapScalar,
+  PHONE_AUTO_FIT_BREAKPOINT_PX,
   phoneAutoFitView,
   underlayContainsPoint,
   wallLength,
@@ -65,6 +66,9 @@ import {
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
+/** The view a canvas opens with, and the view a phone-sized canvas
+ * returns to when the open design/level has no content to auto-fit. */
+const DEFAULT_VIEW = { scale: 1.6, ox: 60, oy: 60 };
 const HIT_TOLERANCE_PX = 10;
 // Tools that commit on tap (pointerdown) instead of starting a drag. For
 // touch, the tap commits on pointerup instead, so a second finger landing
@@ -134,7 +138,7 @@ export function autoPanViewForPoint(point, size, view, margin = 16) {
 export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, autoFitKey = null, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
-  const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
+  const [view, setView] = useState({ ...DEFAULT_VIEW });
   const [drawPreview, setDrawPreview] = useState(null); // {kind: "wall"|"wall-rect", a, b} plan inches while drawing
   const [measureStart, setMeasureStart] = useState(null); // plan-inch point once the Measure tool's first click lands; null = waiting for it
   const [measureLivePoint, setMeasureLivePoint] = useState(null); // live second point while measureStart is set, follows the cursor
@@ -255,18 +259,30 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // can never yank the view away from work already in progress. Reset
   // when the auto-fit identity changes (a new design/level opened).
   const [userNav, setUserNav] = useState(false);
-  const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
-  if (prevAutoFitIdentity !== autoFitIdentity) {
-    setPrevAutoFitIdentity(autoFitIdentity);
-    setUserNav(false);
-  }
-  const [appliedAutoFitIdentity, setAppliedAutoFitIdentity] = useState(null);
   // Interactive zoom floor while a phone fit is in effect: a fitted scale
   // can sit far below MIN_SCALE (a very large drawing on a small canvas),
   // and flooring the first wheel zoom at MIN_SCALE would snap the view.
   // Null on desktop / after a fit at or above MIN_SCALE, where the floor
   // is exactly MIN_SCALE as before.
   const [fitFloor, setFitFloor] = useState(null);
+  const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
+  if (prevAutoFitIdentity !== autoFitIdentity) {
+    setPrevAutoFitIdentity(autoFitIdentity);
+    setUserNav(false);
+    // Identity-scoped fit state never leaks into the next design/level:
+    // the previous identity's fitted zoom floor belongs to its drawing,
+    // not this one. On a phone-sized (or not-yet-measured) canvas the
+    // view also returns to the default, so a following identity with no
+    // fit of its own — empty content, or a fit cancelled before the
+    // canvas was measured — cannot inherit the previous fitted view.
+    // A measured desktop canvas keeps its pan/zoom across switches, as
+    // before (desktop never auto-fits).
+    setFitFloor(null);
+    if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
+      setView({ ...DEFAULT_VIEW });
+    }
+  }
+  const [appliedAutoFitIdentity, setAppliedAutoFitIdentity] = useState(null);
   if (
     appliedAutoFitIdentity !== autoFitIdentity &&
     prevAutoFitIdentity === autoFitIdentity &&
@@ -281,6 +297,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (fitted) {
       setView(fitted);
       setFitFloor(fitted.scale < MIN_SCALE ? fitted.scale : null);
+    } else if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
+      // Phone-sized canvas with nothing to fit (e.g. an empty level):
+      // explicitly establish the default view and the normal interactive
+      // floor instead of leaving a previous identity's fitted view and
+      // below-minimum floor in place.
+      setView({ ...DEFAULT_VIEW });
+      setFitFloor(null);
     }
   }
 

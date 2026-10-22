@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { addOpening, createEmptyDesign } from "./designerDocument";
+import {
+  addOpening,
+  addWall,
+  createEmptyDesign,
+  designContentBounds,
+  placeSymbol,
+} from "./designerDocument";
 import {
   ALIGN_MODES,
   GRID_SPACING_OPTIONS,
@@ -622,6 +628,58 @@ describe("phoneAutoFitView", () => {
     expect(view.scale).toBe(12);
     expect(view.ox + 112 * view.scale).toBeCloseTo(195, 6);
     expect(view.oy + 112 * view.scale).toBeCloseTo(350, 6);
+  });
+
+  it("fits a valid large drawing below the old 0.02 floor without clipping (P664-002)", () => {
+    // A 30000in horizontal wall: the scale that fits it inside the 24px
+    // margins is 342 / 30000 = 0.0114 — below the former fixed floor.
+    const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 30000, y: 0 });
+    const view = phoneAutoFitView(designContentBounds(design), phone);
+    expect(view.scale).toBeCloseTo(342 / 30000, 10);
+    expect(view.scale).toBeLessThan(0.02);
+    const left = view.ox + 0 * view.scale;
+    const right = view.ox + 30000 * view.scale;
+    expect(left).toBeCloseTo(24, 6);
+    expect(right).toBeCloseTo(390 - 24, 6);
+    expect(left).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(right).toBeLessThanOrEqual(390 - 24 + 1e-6);
+    // The wall itself sits vertically centered, inside the margins.
+    const y = view.oy + 0 * view.scale;
+    expect(y).toBeCloseTo(350, 6);
+    expect(y).toBeGreaterThanOrEqual(24);
+    expect(y).toBeLessThanOrEqual(700 - 24);
+  });
+
+  it("fits large two-dimensional bounds below the old 0.02 floor, all extents inside the margins", () => {
+    const view = phoneAutoFitView({ x: -5000, y: -5000, widthIn: 20000, heightIn: 20000 }, phone);
+    expect(view.scale).toBeCloseTo(342 / 20000, 10);
+    expect(view.scale).toBeLessThan(0.02);
+    expect(view.ox + -5000 * view.scale).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(view.ox + 15000 * view.scale).toBeLessThanOrEqual(390 - 24 + 1e-6);
+    expect(view.oy + -5000 * view.scale).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(view.oy + 15000 * view.scale).toBeLessThanOrEqual(700 - 24 + 1e-6);
+  });
+
+  it("fits the ACTUAL extent of a resized pipe rack, not its catalog size (P664-001)", () => {
+    // Catalog pipe rack is 480x240, but this instance is resized to
+    // 3600x288. Fitting the catalog bounds crops most of the rack.
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 0, 0, {
+      widthIn: 3600,
+      depthIn: 288,
+    });
+    const bounds = designContentBounds(design);
+    expect(bounds).toEqual({ x: -1800, y: -144, widthIn: 3600, heightIn: 288 });
+    const view = phoneAutoFitView(bounds, phone);
+    const left = view.ox + -1800 * view.scale;
+    const right = view.ox + 1800 * view.scale;
+    const top = view.oy + -144 * view.scale;
+    const bottom = view.oy + 144 * view.scale;
+    expect(left).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(right).toBeLessThanOrEqual(390 - 24 + 1e-6);
+    expect(top).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(bottom).toBeLessThanOrEqual(700 - 24 + 1e-6);
+    expect(left).toBeCloseTo(24, 6);
+    expect(right).toBeCloseTo(366, 6);
   });
 });
 

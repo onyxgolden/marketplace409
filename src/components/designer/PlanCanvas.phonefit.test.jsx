@@ -211,6 +211,93 @@ describe("PlanCanvas phone auto-fit", () => {
     expect(coords(wallLine(container, 0)).x2).toBeCloseTo(after.x2, 4);
   });
 
+  it("switching to an empty design restores the default view and the normal zoom floor (D-001)", () => {
+    mockSize = { w: 390, h: 700 };
+    renderCanvas(largeDesign(), { autoFitKey: "p1:level1" });
+    // Fitted below MIN_SCALE (0.35): fitFloor is now ≈ 0.0445.
+    expect(coords(wallLine(container, 0)).x1).toBeCloseTo(24, 6);
+
+    // Switch the SAME mounted canvas to an empty design: no fit is
+    // produced, so the previous fitted view and floor must not survive.
+    renderCanvas(createEmptyDesign(), { autoFitKey: "p1:level2" });
+    expect(container.textContent).toContain("Start your floor plan");
+
+    // Content appearing under the same (already-applied) identity does
+    // not refit — its position proves the view is the default again.
+    const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
+    renderCanvas(design, { autoFitKey: "p1:level2" });
+    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+
+    // And the interactive floor is MIN_SCALE again, not the previous
+    // design's ≈0.0445 floor: zooming out repeatedly clamps at 0.35.
+    const svg = container.querySelector("svg");
+    for (let i = 0; i < 30; i += 1) {
+      act(() => {
+        svg.dispatchEvent(
+          new window.WheelEvent("wheel", {
+            bubbles: true,
+            deltaY: 100,
+            clientX: 195,
+            clientY: 350,
+          }),
+        );
+      });
+    }
+    const after = coords(wallLine(container));
+    expect(after.x2 - after.x1).toBeCloseTo(240 * 0.35, 4);
+  });
+
+  it("a fit cancelled before measuring cannot leak stale fit state across an identity change (D-001)", () => {
+    mockSize = { w: 390, h: 700 };
+    renderCanvas(largeDesign(), { autoFitKey: "p1:level1" });
+    // Fitted below MIN_SCALE; fitFloor ≈ 0.0445 belongs to this identity.
+    expect(coords(wallLine(container, 0)).x1).toBeCloseTo(24, 6);
+
+    // The canvas becomes unmeasured, a new identity opens, and the user
+    // interacts before it is measured — cancelling that identity's fit.
+    mockSize = { w: 0, h: 0 };
+    triggerResize();
+    const cancelled = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
+    renderCanvas(cancelled, { autoFitKey: "p1:level2" });
+    const svg = container.querySelector("svg");
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        }),
+      );
+    });
+
+    // Another identity change, to an empty design, still unmeasured;
+    // only now is the canvas measured. No fit is produced for it, so it
+    // must open at the default view with the normal floor — the first
+    // design's fitted view/floor must not leak through the cancelled one.
+    renderCanvas(createEmptyDesign(), { autoFitKey: "p1:level3" });
+    mockSize = { w: 390, h: 700 };
+    triggerResize();
+    const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
+    renderCanvas(design, { autoFitKey: "p1:level3" });
+    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+    const svg2 = container.querySelector("svg");
+    for (let i = 0; i < 30; i += 1) {
+      act(() => {
+        svg2.dispatchEvent(
+          new window.WheelEvent("wheel", {
+            bubbles: true,
+            deltaY: 100,
+            clientX: 195,
+            clientY: 350,
+          }),
+        );
+      });
+    }
+    const after = coords(wallLine(container));
+    expect(after.x2 - after.x1).toBeCloseTo(240 * 0.35, 4);
+  });
+
   it("a user interaction before the canvas is measured cancels the pending fit", () => {
     mockSize = { w: 0, h: 0 };
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
