@@ -40,12 +40,13 @@
  */
 
 import { spawn, execFile } from "node:child_process";
-import { existsSync, statSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, statSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateJob, suiteTimeoutMs } from "./schemas.js";
+import { validateJob, suiteTimeoutMs, BUDGET_LIMITS } from "./schemas.js";
 import { parseVitestJson, classifySuiteResult } from "./classify.js";
 import { refusalReport, completedReport, emptySuiteEntry } from "./report.js";
+import { enforceReportBytes } from "./report-bounds.js";
 import { detectIsolation, buildIsolatedSpawn, scrubbedEnv } from "./isolation.js";
 
 const MAX_MATERIALIZED_BYTES = 512 * 1024 * 1024;
@@ -168,6 +169,21 @@ function materializePinnedTree(target, pin, destDir) {
  * evidence: the suites' SOURCE all comes from the pinned commit; the
  * dependency tree is what the operator already installed for that pin.
  *
+ * Q665-002A — no-follow rules, enforced BEFORE any copy:
+ *   - SOURCE: target/node_modules must be a REAL directory. A symlink
+ *     here (tracked in git or ignored-but-installed) would let `cp`
+ *     write THROUGH the link into an external directory on the host —
+ *     before any isolation exists. Refused, never resolved-and-copied:
+ *     a symlinked dependency root is not a legitimate install.
+ *   - DESTINATION: exec/node_modules must not pre-exist as a symlink
+ *     (a tracked link preserved by materialization, or anything else
+ *     that is not a real directory). `cp` follows a destination
+ *     symlink into whatever it points at; the overlay never gives it
+ *     the chance. Refused.
+ * Internal symlinks INSIDE a real node_modules tree (e.g. .bin/*) are
+ * preserved as links by `cp -a`: they are contained by the boundary
+ * (read-only outside scratch), not followed on the host.
+ *
  * Ownership is deliberately NOT preserved (--no-preserve=ownership):
  * it is meaningless inside a disposable tree, and on filesystems that
  * refuse chown a plain `cp -a` emits one warning per file — enough
@@ -177,7 +193,29 @@ function materializePinnedTree(target, pin, destDir) {
  */
 function overlayNodeModules(target, destDir) {
   const src = join(target, "node_modules");
-  if (!existsSync(src)) return Promise.resolve(null);
+  let srcStat = null;
+  try {
+    srcStat = lstatSync(src);
+  } catch {
+    return Promise.resolve(null); // no installed dependencies: nothing to overlay
+  }
+  if (!srcStat.isDirectory()) {
+    return Promise.resolve(
+      `refusing node_modules overlay: ${src} is not a real directory (symlink or special file) — a dependency root that is a link would let the copy write through it into an external directory before any isolation exists`
+    );
+  }
+  const dest = join(destDir, "node_modules");
+  let destStat = null;
+  try {
+    destStat = lstatSync(dest);
+  } catch {
+    destStat = null;
+  }
+  if (destStat && !destStat.isDirectory()) {
+    return Promise.resolve(
+      `refusing node_modules overlay: destination ${dest} already exists and is not a real directory (a preserved link would be followed into its target on the host)`
+    );
+  }
   return new Promise((resolve) => {
     let child;
     try {
@@ -366,7 +404,7 @@ async function executeSuite({ execDir, scratchDir, originalTarget, mechanism, su
     signal: null,
     reason_code: null,
     reason: null,
-    test_counts: { total: 0, passed: 0, failed: 0, pending: 0 },
+    test_counts: { total: 0, passed: 0, failed: 0, pending: 0, skipped: 0, todo: 0 },
     failing_tests: [],
     failing_tests_total: 0,
     failing_tests_truncated: false,
@@ -449,44 +487,59 @@ export async function runJob(job, options = {}) {
   // input (reading its fields could invoke the very getters admission
   // refused to touch).
   const admitted = v.job ?? {};
+  // Q665-005A — central final-envelope bound: EVERY outcome below
+  // leaves through finish()/finishDefault(), never raw. The two
+  // returns before budgets resolve use the hard cap (those refusals
+  // are built from admitted metadata only and are small); every later
+  // return uses the admitted max_report_bytes via finish().
+  const finishDefault = (r) => enforceReportBytes(r, BUDGET_LIMITS.maxReportBytes).report;
   if (!v.ok) {
     if (v.budgetExceeded) {
-      return refusalReport(admitted, "BUDGET_EXCEEDED", v.errors);
+      return finishDefault(refusalReport(admitted, "BUDGET_EXCEEDED", v.errors));
     }
-    return refusalReport(
-      admitted,
-      "INVALID_JOB",
-      v.errors.map((e) => ({ code: e.code, path: e.path, message: e.message }))
+    return finishDefault(
+      refusalReport(
+        admitted,
+        "INVALID_JOB",
+        v.errors.map((e) => ({ code: e.code, path: e.path, message: e.message }))
+      )
     );
   }
   const budgets = v.budgets;
   const spec = v.job;
+  const finish = (r) => enforceReportBytes(r, budgets.maxReportBytes).report;
 
   const target = spec.target;
   if (!existsSync(target) || !statSync(target).isDirectory()) {
-    return refusalReport(spec, "TARGET_NOT_FOUND", [
-      { code: "TARGET_NOT_FOUND", path: "$.target", message: `target checkout "${target}" does not exist or is not a directory` },
-    ]);
+    return finish(
+      refusalReport(spec, "TARGET_NOT_FOUND", [
+        { code: "TARGET_NOT_FOUND", path: "$.target", message: `target checkout "${target}" does not exist or is not a directory` },
+      ])
+    );
   }
 
   const head = await resolveHead(target);
   if (head === null) {
-    return refusalReport(spec, "HEAD_UNRESOLVABLE", [
-      { code: "HEAD_UNRESOLVABLE", path: "$.target", message: "could not resolve HEAD via `git rev-parse HEAD` in the target checkout" },
-    ]);
+    return finish(
+      refusalReport(spec, "HEAD_UNRESOLVABLE", [
+        { code: "HEAD_UNRESOLVABLE", path: "$.target", message: "could not resolve HEAD via `git rev-parse HEAD` in the target checkout" },
+      ])
+    );
   }
   if (head !== spec.head_pin) {
-    return refusalReport(
-      spec,
-      "HEAD_MISMATCH",
-      [
-        {
-          code: "HEAD_MISMATCH",
-          path: "$.head_pin",
-          message: `checkout HEAD ${head} does not equal job pin ${spec.head_pin}; nothing executed`,
-        },
-      ],
-      head
+    return finish(
+      refusalReport(
+        spec,
+        "HEAD_MISMATCH",
+        [
+          {
+            code: "HEAD_MISMATCH",
+            path: "$.head_pin",
+            message: `checkout HEAD ${head} does not equal job pin ${spec.head_pin}; nothing executed`,
+          },
+        ],
+        head
+      )
     );
   }
 
@@ -495,43 +548,49 @@ export async function runJob(job, options = {}) {
   // so refuse — without touching the operator's files.
   const statusBefore = await snapshotWorkingTree(target);
   if (statusBefore === null) {
-    return refusalReport(
-      spec,
-      "TARGET_STATUS_UNREADABLE",
-      [{ code: "TARGET_STATUS_UNREADABLE", path: "$.target", message: "could not read the target working-tree status" }],
-      head
+    return finish(
+      refusalReport(
+        spec,
+        "TARGET_STATUS_UNREADABLE",
+        [{ code: "TARGET_STATUS_UNREADABLE", path: "$.target", message: "could not read the target working-tree status" }],
+        head
+      )
     );
   }
   if (statusBefore !== "") {
     const lines = statusBefore.split("\n").filter(Boolean).slice(0, 5);
-    return refusalReport(
-      spec,
-      "TARGET_NOT_CLEAN",
-      [
-        {
-          code: "TARGET_NOT_CLEAN",
-          path: "$.target",
-          message: `target working tree is not clean (${lines.join("; ")}${statusBefore.split("\n").filter(Boolean).length > 5 ? "; …" : ""}); execution binds to the pinned commit's bytes, so modified/staged/untracked content is refused, never cleaned`,
-        },
-      ],
-      head
+    return finish(
+      refusalReport(
+        spec,
+        "TARGET_NOT_CLEAN",
+        [
+          {
+            code: "TARGET_NOT_CLEAN",
+            path: "$.target",
+            message: `target working tree is not clean (${lines.join("; ")}${statusBefore.split("\n").filter(Boolean).length > 5 ? "; …" : ""}); execution binds to the pinned commit's bytes, so modified/staged/untracked content is refused, never cleaned`,
+          },
+        ],
+        head
+      )
     );
   }
 
   const mechanism = options.isolation !== undefined ? options.isolation : detectIsolation();
   if (!mechanism) {
-    return refusalReport(
-      spec,
-      "ISOLATION_UNAVAILABLE",
-      [
-        {
-          code: "ISOLATION_UNAVAILABLE",
-          path: "$.target",
-          message:
-            "this host provides no supported isolation mechanism (bubblewrap or util-linux unshare with user/net/pid namespaces); the runner will not execute suites without network denial, a scrubbed environment and descendant containment",
-        },
-      ],
-      head
+    return finish(
+      refusalReport(
+        spec,
+        "ISOLATION_UNAVAILABLE",
+        [
+          {
+            code: "ISOLATION_UNAVAILABLE",
+            path: "$.target",
+            message:
+              "this host provides no supported isolation mechanism (bubblewrap or util-linux unshare with user/net/pid namespaces); the runner will not execute suites without network denial, a scrubbed environment and descendant containment",
+          },
+        ],
+        head
+      )
     );
   }
 
@@ -545,20 +604,24 @@ export async function runJob(job, options = {}) {
 
     const materializeError = await materializePinnedTree(target, spec.head_pin, execDir);
     if (materializeError) {
-      return refusalReport(
-        spec,
-        "MATERIALIZATION_FAILED",
-        [{ code: "MATERIALIZATION_FAILED", path: "$.target", message: materializeError }],
-        head
+      return finish(
+        refusalReport(
+          spec,
+          "MATERIALIZATION_FAILED",
+          [{ code: "MATERIALIZATION_FAILED", path: "$.target", message: materializeError }],
+          head
+        )
       );
     }
     const overlayError = await overlayNodeModules(target, execDir);
     if (overlayError) {
-      return refusalReport(
-        spec,
-        "MATERIALIZATION_FAILED",
-        [{ code: "MATERIALIZATION_FAILED", path: "$.target", message: overlayError }],
-        head
+      return finish(
+        refusalReport(
+          spec,
+          "MATERIALIZATION_FAILED",
+          [{ code: "MATERIALIZATION_FAILED", path: "$.target", message: overlayError }],
+          head
+        )
       );
     }
 
@@ -605,7 +668,7 @@ export async function runJob(job, options = {}) {
         },
       ];
     }
-    return report;
+    return finish(report);
   } finally {
     if (!options.keepJobTmp) {
       rmSync(scratchDir, { recursive: true, force: true });

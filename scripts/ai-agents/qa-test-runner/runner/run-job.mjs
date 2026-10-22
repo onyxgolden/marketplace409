@@ -25,8 +25,8 @@
  *     stderr with exit code 2.
  */
 
-import { closeSync, fstatSync, openSync, readSync, writeFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readlinkSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { runJob, canonicalJson, reportToMarkdown, BUDGET_LIMITS } from "../src/index.js";
 
 const MAX_JOB_FILE_BYTES = BUDGET_LIMITS.maxJobBytes;
@@ -129,47 +129,52 @@ async function main() {
     return;
   }
 
+  // Q665-002A: output containment is validated BEFORE the job
+  // executes — never after the write already happened. A refused
+  // destination is reported on stderr with exit code 2 and never
+  // written; the run still proceeds so stdout carries the report.
+  const out = argValue("--out");
+  const mdOut = argValue("--markdown-out");
+  const refusedWrites = new Set();
+  for (const [flag, path] of [["--out", out], ["--markdown-out", mdOut]]) {
+    if (!path) continue;
+    const why = containmentRefusal(job, path);
+    if (why) {
+      console.error(`[runner] ${flag} ${why}; refusing to write into the evidenced tree`);
+      refusedWrites.add(flag);
+    }
+  }
+  let preExit = refusedWrites.size > 0 ? 2 : 0;
+
   const report = await runJob(job);
   let exitCode = report.verdict === "ALL_SUITES_PASS" ? 0 : 1;
+  if (preExit === 2) exitCode = 2;
 
-  // Bounded final output: the report's own byte budget (extraction is
-  // capped upstream; this is the last-line guard). An over-limit
-  // report is replaced by a small named OUTPUT_LIMIT refusal rather
-  // than streamed unboundedly — and the same bounded body is what
-  // --out receives, so stdout and file can never disagree.
+  // Q665-005A: the final-envelope byte bound is enforced CENTRALLY by
+  // runJob (report-bounds.js) against the admitted max_report_bytes —
+  // this CLI no longer owns a separate enforcement with different
+  // semantics. What remains is a defensive assert: the centrally
+  // bounded report always fits the admitted budget (hence the hard
+  // cap); if it somehow does not, emit the named OUTPUT_LIMIT refusal
+  // rather than streaming unboundedly.
   let finalReport = report;
   let text = canonicalJson(report);
-  const reportLimit =
-    job && typeof job === "object" && job.budgets && Number.isInteger(job.budgets.max_report_bytes)
-      ? Math.min(job.budgets.max_report_bytes, BUDGET_LIMITS.maxReportBytes)
-      : BUDGET_LIMITS.maxReportBytes;
-  if (Buffer.byteLength(text, "utf8") > reportLimit) {
+  if (Buffer.byteLength(text, "utf8") > BUDGET_LIMITS.maxReportBytes) {
     finalReport = refusalShell("OUTPUT_LIMIT", [
-      { code: "OUTPUT_LIMIT", path: "$", message: `serialized report exceeds the ${reportLimit}-byte report budget; the full report was not emitted` },
+      { code: "OUTPUT_LIMIT", path: "$", message: `serialized report exceeds the ${BUDGET_LIMITS.maxReportBytes}-byte report budget; the full report was not emitted` },
     ]);
     text = canonicalJson(finalReport);
     exitCode = 1;
   }
 
-  // Output containment: report files may not land inside the target
-  // checkout — the runner never writes into the tree it evidences.
-  const out = argValue("--out");
-  const mdOut = argValue("--markdown-out");
-  const targetAbs = typeof job?.target === "string" ? resolve(job.target) : null;
-  const insideTarget = (p) => {
-    if (!targetAbs) return false;
-    const rp = resolve(p);
-    return rp === targetAbs || rp.startsWith(targetAbs + sep);
-  };
+  // Output containment (Q665-002A): report files may not land inside
+  // the target checkout — the runner never writes into the tree it
+  // evidences. Destinations were validated canonically BEFORE the run
+  // (see above); this loop only performs the writes that passed.
   const writes = [];
-  if (out) writes.push(["--out", out, text + "\n"]);
-  if (mdOut) writes.push(["--markdown-out", mdOut, reportToMarkdown(finalReport) + "\n"]);
+  if (out && !refusedWrites.has("--out")) writes.push(["--out", out, text + "\n"]);
+  if (mdOut && !refusedWrites.has("--markdown-out")) writes.push(["--markdown-out", mdOut, reportToMarkdown(finalReport) + "\n"]);
   for (const [flag, path, content] of writes) {
-    if (insideTarget(path)) {
-      console.error(`[runner] ${flag} path ${path} is inside the target checkout; refusing to write into the evidenced tree`);
-      exitCode = 2;
-      continue;
-    }
     try {
       writeFileSync(path, content);
     } catch (e) {
@@ -180,6 +185,86 @@ async function main() {
 
   await writeStdout(text + "\n");
   process.exitCode = exitCode;
+}
+
+/**
+ * Canonicalize a destination path: resolve symlinks through every
+ * existing ancestor AND through the leaf itself — including DANGLING
+ * links (readlink does not require the target to exist), which
+ * existsSync/realpath would silently skip, letting a dangling
+ * destination link launder a write into the target. The non-existent
+ * tail stays lexical. Returns null when no ancestor exists to resolve
+ * against. Loop-bounded; a symlink loop simply stops resolving (the
+ * subsequent write would fail ELOOP anyway).
+ */
+function canonicalDest(p) {
+  let abs = resolve(p);
+  for (let i = 0; i < 32; i++) {
+    let st;
+    try {
+      st = lstatSync(abs);
+    } catch {
+      break;
+    }
+    if (!st.isSymbolicLink()) break;
+    abs = resolve(dirname(abs), readlinkSync(abs));
+  }
+  let dir = abs;
+  const tail = [];
+  for (let i = 0; i < 64; i++) {
+    let st;
+    try {
+      st = lstatSync(dir);
+    } catch {
+      st = null;
+    }
+    if (st && st.isSymbolicLink()) {
+      dir = resolve(dirname(dir), readlinkSync(dir));
+      continue;
+    }
+    if (st) break;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    tail.unshift(basename(dir));
+    dir = parent;
+  }
+  let real;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    return null;
+  }
+  return join(real, ...tail);
+}
+
+/**
+ * Containment refusal reason for a report destination, or null when
+ * the destination is allowed. The destination is refused when its
+ * canonical form lies inside the job target's canonical form (an
+ * alias directory, ancestor alias, or existing destination link
+ * pointing into the target is caught); a pure-lexical check runs as a
+ * second net for targets that cannot be canonicalized.
+ */
+function containmentRefusal(job, destPath) {
+  const target = job && typeof job === "object" && typeof job.target === "string" ? job.target : null;
+  if (!target) return null;
+  const targetAbs = resolve(target);
+  let targetCanon = null;
+  try {
+    targetCanon = realpathSync(targetAbs);
+  } catch {
+    targetCanon = null;
+  }
+  const canon = canonicalDest(destPath);
+  const anchor = targetCanon ?? targetAbs;
+  if (canon && (canon === anchor || canon.startsWith(anchor + sep))) {
+    return `path ${destPath} canonicalizes inside the target checkout (${canon})`;
+  }
+  const lex = resolve(destPath);
+  if (lex === targetAbs || lex.startsWith(targetAbs + sep)) {
+    return `path ${destPath} is inside the target checkout`;
+  }
+  return null;
 }
 
 await main();

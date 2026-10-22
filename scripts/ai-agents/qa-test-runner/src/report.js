@@ -17,7 +17,8 @@
  * never itself become an unbounded serialization.
  */
 
-import { BUDGET_LIMITS } from "./schemas.js";
+import { BUDGET_LIMITS, MIN_REPORT_BYTES } from "./schemas.js";
+import { Buffer } from "node:buffer";
 
 export const AGENT_ID = "qa-test-runner";
 export const SCHEMA_VERSION = "1";
@@ -55,8 +56,7 @@ const ZERO_TOTALS = Object.freeze({
   tests_pending: 0,
 });
 
-export function emptySuiteEntry(suite, status, reasonCode, reason) {
-  const patterns = Array.isArray(suite?.patterns)
+export function emptySuiteEntry(suite, status, reasonCode, reason) {  const patterns = Array.isArray(suite?.patterns)
     ? suite.patterns
         .filter((p) => typeof p === "string")
         .slice(0, BUDGET_LIMITS.maxPatternsPerSuite)
@@ -71,7 +71,7 @@ export function emptySuiteEntry(suite, status, reasonCode, reason) {
     signal: null,
     reason_code: reasonCode,
     reason,
-    test_counts: { total: 0, passed: 0, failed: 0, pending: 0 },
+    test_counts: { total: 0, passed: 0, failed: 0, pending: 0, skipped: 0, todo: 0 },
     failing_tests: [],
     failing_tests_total: 0,
     failing_tests_truncated: false,
@@ -135,8 +135,7 @@ export function refusalReport(job, reasonCode, diagnostics, checkoutHead = null)
 }
 
 /** A completed run (suites were executed, whatever their outcomes). */
-export function completedReport(job, checkoutHead, suiteEntries, isolation = null) {
-  const r = baseReport(job);
+export function completedReport(job, checkoutHead, suiteEntries, isolation = null) {  const r = baseReport(job);
   r.checkout_head = checkoutHead;
   r.status = "COMPLETED";
   r.isolation = isolation;

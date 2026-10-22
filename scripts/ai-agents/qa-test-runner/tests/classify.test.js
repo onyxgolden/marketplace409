@@ -15,7 +15,7 @@ describe("vitest classification from recorded fixtures", () => {
     assert.ok(json);
     const r = classifySuiteResult({ exitCode: 0, json });
     assert.equal(r.status, "PASS");
-    assert.deepEqual(r.test_counts, { total: 2, passed: 2, failed: 0, pending: 0 });
+    assert.deepEqual(r.test_counts, { total: 2, passed: 2, failed: 0, pending: 0, skipped: 0, todo: 0 });
     assert.deepEqual(r.failing_tests, []);
     assert.equal(r.reason_code, null);
   });
@@ -24,7 +24,7 @@ describe("vitest classification from recorded fixtures", () => {
     const json = parseVitestJson(loadFixtureText("vitest-fail.json"));
     const r = classifySuiteResult({ exitCode: 1, json });
     assert.equal(r.status, "FAIL");
-    assert.deepEqual(r.test_counts, { total: 4, passed: 3, failed: 1, pending: 0 });
+    assert.deepEqual(r.test_counts, { total: 4, passed: 3, failed: 1, pending: 0, skipped: 0, todo: 0 });
     assert.deepEqual(r.failing_tests, [{ name: "beta divides numbers", file: "/fixture-checkout/src/beta.test.js" }]);
   });
 

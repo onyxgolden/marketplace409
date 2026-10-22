@@ -82,8 +82,16 @@ Two byte budgets, kept distinct on purpose:
   BEFORE the file is read or parsed; exactly-at admits, +1 refuses
   with `REPORTER_CAP_EXCEEDED`. Extracted failing-test records are
   additionally bounded (100 entries, truncated fields, true total +
-  truncation flag reported), and the serialized report is bounded by
-  `max_report_bytes`.
+  truncation flag reported).
+- `max_report_bytes` — the serialized **final report envelope**,
+  enforced CENTRALLY by `runJob` for every API outcome (completed,
+  refused, error) via `report-bounds.js` — not just at CLI
+  serialization. Exact-fit passes through byte-identical; +1 over
+  truncates to a deterministic envelope that preserves the outcome
+  (status/verdict/reason_code) and marks `REPORT_TRUNCATED`.
+  Admission requires `max_report_bytes >= 1024`: a smaller cap cannot
+  fit any envelope, so the job is refused (`INVALID_BUDGET`) instead
+  of producing an unbounded or content-free report.
 
 ## Pin binding — the evidence is about the pin's bytes
 
@@ -207,6 +215,18 @@ node --test tests/*.test.js    # 68 tests, no deps beyond node
   reporter exact/+1 budgets, escaped-descendant timeout with
   heartbeat evidence, output-cap settlement, piped-CLI completeness,
   CLI input cap exact/+1 and `--out` containment.
+- `fix-round3.test.js` — the Q665-002A/002B/003A/003B round-3 probes:
+  symlinked node_modules refusal with no host-side write, canonical
+  (dangling-link-aware) `--out` containment incl. ancestor aliases,
+  fake-bwrap capability detection, closed reporter/status schemas,
+  the frozen real vitest 4.1.9 todo/skip/pass fixture plus partner
+  variants.
+- `fix-round3b.test.js` — the Q665-004A/004B/005A round-3 probes:
+  `__proto__` dangerous-key refusal (verbatim vector, nested,
+  over-budget), exact incremental UTF-8 byte charging (exact-fit/+1
+  through API and CLI, multibyte-exact, charge-before-visit
+  sentinel), and the central final-envelope bound (exact/+1,
+  long-diagnostic truncation, admission floor, API end-to-end).
 - `markdown.test.js` — renderer smoke + the pass-verdict gate.
 
 ## Limitations (explicit non-goals)

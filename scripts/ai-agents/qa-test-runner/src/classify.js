@@ -53,9 +53,20 @@ const COUNT_FIELDS = Object.freeze([
   "numPassedTests",
   "numFailedTests",
   "numPendingTests",
+  "numTodoTests",
   "numTotalTestSuites",
   "numFailedTestSuites",
 ]);
+
+/**
+ * Closed reporter/status schemas (Q665-003A). Vitest's JSON reporter
+ * emits a fixed vocabulary; anything outside it is not "pending by
+ * default" — it is evidence the report is not what it claims to be.
+ * File (testResults entry) statuses come from the jest-compatible
+ * reporter contract; assertion statuses are vitest's documented set.
+ */
+const FILE_STATUSES = Object.freeze(["passed", "failed", "pending"]);
+const ASSERTION_STATUSES = Object.freeze(["passed", "failed", "skipped", "todo", "pending"]);
 
 /**
  * Structural validation of a parsed report. Returns null when the
@@ -75,35 +86,61 @@ export function validateReportShape(json) {
   }
   for (const tr of json.testResults) {
     if (!isRecord(tr)) return "a testResults entry is not an object";
-    if (tr.name !== undefined && typeof tr.name !== "string") return "a test result name is not a string";
-    if (tr.status !== undefined && typeof tr.status !== "string") return "a test result status is not a string";
+    // Q665-003A: an entry with no usable file evidence (no name at all,
+    // e.g. testResults:[{}]) is malformed — it must never read as a pass.
+    if (typeof tr.name !== "string") return "a testResults entry has no string name";
+    if (tr.status !== undefined && !FILE_STATUSES.includes(tr.status)) {
+      return `a test result has unknown file status "${tr.status}"`;
+    }
     if (tr.assertionResults !== undefined) {
       if (!Array.isArray(tr.assertionResults)) return "assertionResults is not an array";
       for (const ar of tr.assertionResults) {
         if (!isRecord(ar)) return "an assertionResults entry is not an object";
         if (typeof ar.status !== "string") return "an assertion result has no string status";
+        if (!ASSERTION_STATUSES.includes(ar.status)) {
+          return `an assertion result has unknown status "${ar.status}"`;
+        }
       }
     }
   }
   return null;
 }
 
-/** Counts derived from the records themselves — the ground truth. */
+/**
+ * Counts derived from the records themselves — the ground truth.
+ * Q665-003B: vitest counts TODO and skipped tests as DISTINCT units
+ * (numTodoTests vs numPendingTests in real vitest 4.1.9 reports), so
+ * the derivation keeps them distinct too. The public `pending` field
+ * is the documented combined non-executed count (skipped + todo),
+ * preserved for compatibility; reconciliation compares equivalent
+ * units, never the combined bucket against one header field.
+ * Precondition: the report satisfies validateReportShape (closed
+ * status sets); statuses outside the closed sets are not counted.
+ */
 export function deriveCounts(json) {
   let passed = 0;
   let failed = 0;
-  let pending = 0;
+  let skipped = 0;
+  let todo = 0;
   let failedFiles = 0;
   for (const tr of json.testResults) {
     if (tr.status === "failed") failedFiles += 1;
     for (const ar of tr.assertionResults ?? []) {
       if (ar.status === "passed") passed += 1;
       else if (ar.status === "failed") failed += 1;
-      else pending += 1;
+      else if (ar.status === "todo") todo += 1;
+      else if (ar.status === "skipped" || ar.status === "pending") skipped += 1;
     }
   }
   return {
-    counts: { total: passed + failed + pending, passed, failed, pending },
+    counts: {
+      total: passed + failed + skipped + todo,
+      passed,
+      failed,
+      pending: skipped + todo,
+      skipped,
+      todo,
+    },
     failedFiles,
     totalFiles: json.testResults.length,
   };
@@ -167,23 +204,38 @@ export function extractFailingTests(json) {
  * against vitest 4.1.9 in the PR #665 exact-head receipt run). Failed
  * FILES are taken from the records directly (deriveCounts), never
  * from numFailedTestSuites.
+ *
+ * Q665-003B: todo and pending are reconciled as EQUIVALENT units. A
+ * modern vitest report carries both numTodoTests and numPendingTests
+ * (todo and skipped counted distinctly); a legacy reporter carries
+ * only numPendingTests as the combined non-executed bucket. The
+ * comparison matches whichever shape the header declares.
  */
 export function reconcileHeader(json, derived) {
   const pairs = [
     ["numTotalTests", derived.counts.total],
     ["numPassedTests", derived.counts.passed],
     ["numFailedTests", derived.counts.failed],
-    ["numPendingTests", derived.counts.pending],
   ];
   for (const [key, derivedValue] of pairs) {
     if (json[key] !== undefined && json[key] !== derivedValue) {
       return `header ${key}=${json[key]} disagrees with derived count ${derivedValue}`;
     }
   }
+  if (json.numTodoTests !== undefined) {
+    if (json.numTodoTests !== derived.counts.todo) {
+      return `header numTodoTests=${json.numTodoTests} disagrees with derived todo count ${derived.counts.todo}`;
+    }
+    if (json.numPendingTests !== undefined && json.numPendingTests !== derived.counts.skipped) {
+      return `header numPendingTests=${json.numPendingTests} disagrees with derived skipped count ${derived.counts.skipped}`;
+    }
+  } else if (json.numPendingTests !== undefined && json.numPendingTests !== derived.counts.pending) {
+    return `header numPendingTests=${json.numPendingTests} disagrees with derived non-executed count ${derived.counts.pending}`;
+  }
   return null;
 }
 
-const ZERO_COUNTS = Object.freeze({ total: 0, passed: 0, failed: 0, pending: 0 });
+const ZERO_COUNTS = Object.freeze({ total: 0, passed: 0, failed: 0, pending: 0, skipped: 0, todo: 0 });
 
 function result({ status, reason_code = null, reason = null, test_counts, failing }) {
   return {
@@ -312,6 +364,20 @@ function classifyInner(input) {
       status: "ERROR",
       reason_code: "INCONSISTENT_REPORT",
       reason: "vitest report claims success=true while its records contain failures",
+      test_counts: derived.counts,
+      failing,
+    });
+  }
+
+  // Q665-003A: any reported failure signal precludes PASS. A positive
+  // failed-suite count with no failure in the records is a named
+  // inconsistency, not a pass — the header is asserting failures the
+  // records do not show.
+  if (json.numFailedTestSuites > 0 && !observedFailure) {
+    return result({
+      status: "ERROR",
+      reason_code: "INCONSISTENT_REPORT",
+      reason: `vitest report signals ${json.numFailedTestSuites} failed test suite(s) but its records contain no failures`,
       test_counts: derived.counts,
       failing,
     });

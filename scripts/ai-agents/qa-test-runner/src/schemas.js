@@ -44,6 +44,15 @@ export const BUDGET_LIMITS = Object.freeze({
   maxReportBytes: 16 * 1024 * 1024,
 });
 
+/**
+ * Q665-005A — admission floor for max_report_bytes. A smaller cap
+ * cannot fit ANY report envelope (not even the minimal out-of-band
+ * refusal), so the job is refused at admission (INVALID_BUDGET)
+ * instead of producing an unbounded or content-free report. The test
+ * suite asserts the minimal envelope fits inside this floor.
+ */
+export const MIN_REPORT_BYTES = 1024;
+
 export const BUDGET_DEFAULTS = Object.freeze({
   maxSuites: BUDGET_LIMITS.maxSuites,
   maxPatternsPerSuite: BUDGET_LIMITS.maxPatternsPerSuite,
@@ -159,6 +168,16 @@ function validateBudgetsShape(c, raw, path) {
     if (raw[k] !== undefined && !isPositiveInt(raw[k])) {
       c.add("INVALID_BUDGET", `${path}.${k}`, `${k} must be a positive integer`);
     }
+  }
+  // Q665-005A: a report cap below the minimal envelope size is
+  // meaningless — refuse the job at admission rather than emitting an
+  // unbounded or content-free report.
+  if (raw.max_report_bytes !== undefined && isPositiveInt(raw.max_report_bytes) && raw.max_report_bytes < MIN_REPORT_BYTES) {
+    c.add(
+      "INVALID_BUDGET",
+      `${path}.max_report_bytes`,
+      `max_report_bytes must be at least ${MIN_REPORT_BYTES} (smaller caps cannot fit any report envelope)`
+    );
   }
 }
 

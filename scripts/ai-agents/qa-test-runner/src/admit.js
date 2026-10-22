@@ -12,9 +12,22 @@
  * / Reflect.ownKeys), so getters, setters and revoked-Proxy traps are
  * never invoked either — an accessor property is a refusal, not a
  * read. Structural limits
- * (depth, node count, estimated byte size) are charged as the walk
- * proceeds; the first over-limit candidate dies on the charge and the
- * unexplored tail is never visited.
+ * (depth, node count, exact serialized UTF-8 byte size) are charged as
+ * the walk proceeds; the first over-limit candidate dies on the charge
+ * and the unexplored tail is never visited. Byte charging is EXACT, not
+ * estimated: every candidate's contribution is the UTF-8 byte length of
+ * its JSON.stringify spelling (escaping, numeric forms, quotes, key
+ * spellings, colons, commas, brackets), charged when the candidate is
+ * first visited, before its subtree. An input whose canonical
+ * serialization is exactly the byte budget admits; one byte more
+ * refuses — the admission bound and the serializer agree to the byte.
+ *
+ * Dangerous keys: an own "__proto__" key is refused outright
+ * (DANGEROUS_KEY) — the detached copy attaches with parent[key] =
+ * copy, which would mutate the copy's prototype instead of staying
+ * inert data, conferring inherited job configuration. "constructor"
+ * and "prototype" as own data keys are inert (plain assignments, no
+ * prototype effect) and are left as ordinary data.
  *
  * The walk produces a DETACHED plain-data copy (fresh objects/arrays,
  * plain string keys, finite numbers, strings, booleans, null). Every
@@ -25,7 +38,8 @@
  *
  * Refusal codes: INPUT_LIMIT (depth / node / byte budget exceeded),
  * NON_JSON_INPUT (accessor, Proxy-shaped, cyclic, sparse, symbol-keyed,
- * non-finite number, or a value JSON cannot represent).
+ * non-finite number, or a value JSON cannot represent),
+ * DANGEROUS_KEY (own "__proto__" key).
  */
 
 import { types as utilTypes } from "node:util";
@@ -47,6 +61,22 @@ function isPlainProto(proto) {
 }
 
 /**
+ * Exact serialized-byte cost of one JSON scalar or key, in UTF-8 bytes.
+ * JSON.stringify is the serializer the rest of the system uses, so its
+ * spelling (escaping, numeric forms, quotes) is the exact byte cost —
+ * never a character-count estimate.
+ */
+function jsonUtf8Bytes(v) {
+  return Buffer.byteLength(JSON.stringify(v), "utf8");
+}
+
+const MAX_PATH_CHARS = 256;
+function childPath(parentPath, key) {
+  const p = `${parentPath}.${String(key)}`;
+  return p.length > MAX_PATH_CHARS ? `${p.slice(0, MAX_PATH_CHARS)}…` : p;
+}
+
+/**
  * Admit an untrusted value as bounded plain JSON data.
  * Returns {ok:true, value} | {ok:false, code, message}. Never throws
  * on user data; never invokes user code (accessors/Proxies refused
@@ -56,21 +86,36 @@ export function admitValue(input) {
   const L = ADMISSION_LIMITS;
   let nodes = 0;
   let bytes = 0;
+  // Charge-before-visit: every candidate's exact serialized bytes are
+  // charged when the candidate is first visited, BEFORE its subtree is
+  // explored or the next candidate is visited. A candidate sitting past
+  // the byte budget therefore dies on INPUT_LIMIT even when it would
+  // also be schema-invalid — budget first, validation second.
+  const charge = (n) => {
+    bytes += n;
+    if (bytes > L.maxBytes) {
+      return refusal("INPUT_LIMIT", `input exceeds ${L.maxBytes} serialized bytes`);
+    }
+    return null;
+  };
   try {
     // Iterative DFS with an explicit stack — recursion depth is bounded
     // by maxDepth anyway, but an explicit stack also keeps cycle and
     // breadth accounting exact. Frames: [value, depth, parentCopy, key].
-    const rootFrame = { value: input, depth: 0, parent: null, key: null };
+    const rootFrame = { value: input, depth: 0, parent: null, key: null, path: "$", keyBytes: 0 };
     const stack = [rootFrame];
     let root = null;
     const inProgress = new Set();
     while (stack.length > 0) {
       const frame = stack.pop();
       if (frame.exit) {
+        // One closing brace/bracket per container, charged in walk order.
+        const over = charge(1);
+        if (over) return over;
         inProgress.delete(frame.value);
         continue;
       }
-      const { value, depth, parent, key } = frame;
+      const { value, depth, parent, key, path, keyBytes } = frame;
       nodes += 1;
       if (nodes > L.maxNodes) {
         return refusal("INPUT_LIMIT", `input exceeds ${L.maxNodes} nodes`);
@@ -78,18 +123,24 @@ export function admitValue(input) {
       if (depth > L.maxDepth) {
         return refusal("INPUT_LIMIT", `input nesting exceeds ${L.maxDepth} levels`);
       }
+      // The candidate's own structural bytes land before anything
+      // beneath it is visited: key spelling + colon + separating comma.
+      const over = charge(keyBytes);
+      if (over) return over;
       const attach = (copy) => {
         if (parent === null) root = copy;
         else parent[key] = copy;
       };
       if (value === null) {
-        bytes += 4;
+        const o2 = charge(4); // "null"
+        if (o2) return o2;
         attach(null);
         continue;
       }
       const t = typeof value;
       if (t === "boolean") {
-        bytes += 5;
+        const o2 = charge(value ? 4 : 5); // "true" | "false"
+        if (o2) return o2;
         attach(value);
         continue;
       }
@@ -97,7 +148,8 @@ export function admitValue(input) {
         if (!Number.isFinite(value)) {
           return refusal("NON_JSON_INPUT", "non-finite numbers are not JSON data");
         }
-        bytes += 8;
+        const o2 = charge(jsonUtf8Bytes(value)); // exact numeric spelling
+        if (o2) return o2;
         attach(value);
         continue;
       }
@@ -105,10 +157,8 @@ export function admitValue(input) {
         if (value.length > L.maxStringLength) {
           return refusal("INPUT_LIMIT", `string exceeds ${L.maxStringLength} characters`);
         }
-        bytes += value.length + 2;
-        if (bytes > L.maxBytes) {
-          return refusal("INPUT_LIMIT", `input exceeds ${L.maxBytes} bytes`);
-        }
+        const o2 = charge(jsonUtf8Bytes(value)); // exact escaping + quotes
+        if (o2) return o2;
         attach(value);
         continue;
       }
@@ -151,6 +201,15 @@ export function admitValue(input) {
         if (typeof k === "symbol") {
           return refusal("NON_JSON_INPUT", "symbol-keyed properties are not JSON data");
         }
+        if (k === "__proto__") {
+          // Q665-004A: the detached copy attaches with parent[key] = copy,
+          // so an own __proto__ data key would MUTATE the copy's prototype
+          // instead of staying inert data — conferring inherited job
+          // configuration (Object.keys(job)==[] yet job.target resolves).
+          // __proto__ can never be a legitimate job field, so it is
+          // refused outright rather than laundered into the copy.
+          return refusal("DANGEROUS_KEY", `own "__proto__" key at ${childPath(path, k)} would confer inherited configuration; refused`);
+        }
       }
       if (isArr) {
         const lenDesc = Object.getOwnPropertyDescriptor(value, "length");
@@ -160,15 +219,36 @@ export function admitValue(input) {
         if (lenDesc.value > L.maxArrayLength) {
           return refusal("INPUT_LIMIT", `array exceeds ${L.maxArrayLength} entries`);
         }
+        // Sparse arrays are not JSON data: JSON.stringify spells holes
+        // as null, so a sparse input and its detached copy would have
+        // different serialized bytes — exact charge-before-visit
+        // accounting requires the dense shape. Non-index own properties
+        // on arrays are likewise not JSON data (JSON.stringify ignores
+        // them); they are skipped below, so only canonical indices are
+        // charged and copied.
+        let indexCount = 0;
+        for (const k of keys) {
+          if (k === "length") continue;
+          if (typeof k === "string" && /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < lenDesc.value) indexCount += 1;
+        }
+        if (indexCount !== lenDesc.value) {
+          return refusal("NON_JSON_INPUT", "sparse arrays are not JSON data");
+        }
       }
       const copy = isArr ? [] : {};
+      // One opening brace/bracket per container, charged in walk order.
+      const over2 = charge(1);
+      if (over2) return over2;
       attach(copy);
       inProgress.add(value);
       stack.push({ exit: true, value });
-      // Push children in reverse so traversal reads in key order.
-      for (let i = keys.length - 1; i >= 0; i--) {
-        const k = keys[i];
+      // The visit list: exactly the entries JSON.stringify serializes, in
+      // order. Non-enumerable properties, "length", and non-index array
+      // properties are not JSON data and are skipped (never charged).
+      const visit = [];
+      for (const k of keys) {
         if (isArr && k === "length") continue;
+        if (isArr && !(typeof k === "string" && /^(0|[1-9][0-9]*)$/.test(k))) continue;
         let desc;
         try {
           desc = Object.getOwnPropertyDescriptor(value, k);
@@ -186,11 +266,24 @@ export function admitValue(input) {
           // property is out-of-shape but inert — skip it, do not copy.
           continue;
         }
-        bytes += String(k).length + 4;
-        if (bytes > L.maxBytes) {
-          return refusal("INPUT_LIMIT", `input exceeds ${L.maxBytes} bytes`);
-        }
-        stack.push({ value: desc.value, depth: depth + 1, parent: copy, key: k });
+        visit.push([k, desc]);
+      }
+      // Push children in reverse so traversal reads in key order.
+      for (let vi = visit.length - 1; vi >= 0; vi--) {
+        const [k, desc] = visit[vi];
+        // Exact structural bytes for this candidate, charged when the
+        // candidate is visited (before its subtree): the key's exact
+        // serialized spelling, the colon, and the separating comma for
+        // every entry after the first. Arrays have no keys/colons.
+        const keyBytes = isArr ? (vi > 0 ? 1 : 0) : jsonUtf8Bytes(String(k)) + 1 + (vi > 0 ? 1 : 0);
+        stack.push({
+          value: desc.value,
+          depth: depth + 1,
+          parent: copy,
+          key: k,
+          path: childPath(path, k),
+          keyBytes,
+        });
       }
     }
     if (bytes > L.maxBytes) {

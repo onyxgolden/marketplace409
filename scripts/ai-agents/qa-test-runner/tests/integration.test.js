@@ -18,7 +18,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runJob, canonicalJson } from "../src/index.js";
+import { runJob, canonicalJson, isolationAvailable } from "../src/index.js";
 import { makeStubCheckout, loadFixtureJson } from "./helpers.js";
 
 const CLI = fileURLToPath(new URL("../runner/run-job.mjs", import.meta.url));
@@ -41,6 +41,10 @@ function writeJob(t, job) {
 
 describe("runner integration (stub vitest, real process plumbing)", () => {
   it("runs a passing suite end to end: ALL_SUITES_PASS, marker proves execution, no report file leaks into the target", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const { dir, head, markerPath } = makeStubCheckout(t, { json: loadFixtureJson("vitest-pass.json"), exitCode: 0 });
     const report = await runJob({
       job_id: "job-int-pass",
@@ -53,7 +57,7 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
     assert.equal(report.checkout_head, head);
     assert.equal(report.suites[0].status, "PASS");
     assert.equal(report.suites[0].exit_code, 0);
-    assert.deepEqual(report.suites[0].test_counts, { total: 2, passed: 2, failed: 0, pending: 0 });
+    assert.deepEqual(report.suites[0].test_counts, { total: 2, passed: 2, failed: 0, pending: 0, skipped: 0, todo: 0 });
     assert.equal(report.totals.tests_passed, 2);
     // Q665-001/002 contract: the suite really ran (its JSON report was
     // produced and parsed above) but in the disposable pinned copy —
@@ -63,6 +67,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
   });
 
   it("runs a failing suite end to end: FAIL with failing test name + file, verdict SUITES_FAILED", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const { dir, head } = makeStubCheckout(t, { json: loadFixtureJson("vitest-fail.json"), exitCode: 1 });
     const report = await runJob({
       job_id: "job-int-fail",
@@ -81,6 +89,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
   });
 
   it("a checkout without vitest classifies the suite ERROR/VITEST_NOT_RESOLVABLE — never PASS, never skipped", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const { dir, head, markerPath } = makeStubCheckout(t, { withVitest: false });
     const report = await runJob({
       target: dir,
@@ -95,6 +107,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
   });
 
   it("a suite that outlives its timeout is killed and classified TIMEOUT", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const { dir, head } = makeStubCheckout(t, { sleepSeconds: 30 });
     const started = Date.now();
     const report = await runJob({
@@ -109,6 +125,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
   });
 
   it("when the per-job timeout budget is exhausted, remaining suites are SKIPPED_BUDGET and never run", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const { dir, head, markerPath } = makeStubCheckout(t, { sleepSeconds: 30 });
     const report = await runJob({
       target: dir,
@@ -142,6 +162,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
   });
 
   it("CLI: exit 0 only on ALL_SUITES_PASS; --out writes the same canonical JSON as stdout", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const passFx = makeStubCheckout(t, { json: loadFixtureJson("vitest-pass.json"), exitCode: 0 });
     const passJob = writeJob(t, {
       job_id: "job-cli-pass",

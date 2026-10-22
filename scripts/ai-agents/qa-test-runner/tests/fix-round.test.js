@@ -136,6 +136,10 @@ describe("Q665-001: dirty / staged / untracked checkouts are refused, never clea
   });
 
   it("the operator checkout changing MID-RUN voids the blessing: CHECKOUT_CHANGED_DURING_RUN", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const sleepBin = [
       "#!/bin/sh",
       "touch runner-executed.marker",
@@ -243,6 +247,10 @@ describe("Q665-002: isolation boundary (write attempt, network, environment)", (
 
 describe("materialization: a chatty overlay copy cannot break the run", () => {
   it("a `cp` that spews 2MiB of stderr warnings still completes the overlay", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const fx = makeNodeCheckout(t, { bin: reportStub(PASS_JSON) });
     const fakeBin = mkdtempSync(join(tmpdir(), "qa-runner-fakebin-"));
     t.after(() => rmSync(fakeBin, { recursive: true, force: true }));
@@ -292,6 +300,10 @@ describe("Q665-003: classification integrity", () => {
   });
 
   it("the contradictory report through runJob fails the suite and the verdict", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const fx = makeNodeCheckout(t, { bin: reportStub(contradictory(), 0) });
     const report = await runJob(baseJob(fx));
     assert.equal(report.suites[0].status, "ERROR");
@@ -350,7 +362,7 @@ describe("Q665-003: classification integrity", () => {
     };
     const r = classifySuiteResult({ exitCode: 0, json });
     assert.equal(r.status, "PASS");
-    assert.deepEqual(r.test_counts, { total: 2, passed: 2, failed: 0, pending: 0 });
+    assert.deepEqual(r.test_counts, { total: 2, passed: 2, failed: 0, pending: 0, skipped: 0, todo: 0 });
   });
 });
 
@@ -454,6 +466,10 @@ function rawReportStub(rawText, exitCode = 0) {
 
 describe("Q665-005: reporter-file bytes are charged before read/parse", () => {
   it("a reporter file exactly AT the per-suite reporter budget is admitted", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const cap = 4096;
     const fx = makeNodeCheckout(t, { bin: rawReportStub(paddedPassReport(cap, false)) });
     const report = await runJob(baseJob(fx, { budgets: { max_reporter_bytes_per_suite: cap } }));
@@ -462,6 +478,10 @@ describe("Q665-005: reporter-file bytes are charged before read/parse", () => {
   });
 
   it("a reporter file ONE BYTE over the budget is ERROR/REPORTER_CAP_EXCEEDED — never PASS, never truncated", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const cap = 4096;
     const fx = makeNodeCheckout(t, { bin: rawReportStub(paddedPassReport(cap + 1, false)) });
     const report = await runJob(baseJob(fx, { budgets: { max_reporter_bytes_per_suite: cap } }));
@@ -471,6 +491,10 @@ describe("Q665-005: reporter-file bytes are charged before read/parse", () => {
   });
 
   it("the verdict's shape: a 53,897-byte report under a 1,024-byte STDOUT cap passes on the separate reporter budget", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const raw = paddedPassReport(53_897);
     const fx = makeNodeCheckout(t, { bin: rawReportStub(raw) });
     const report = await runJob(baseJob(fx, { budgets: { max_captured_bytes_per_suite: 1024 } }));
@@ -479,6 +503,10 @@ describe("Q665-005: reporter-file bytes are charged before read/parse", () => {
   });
 
   it("the same report under a 1,024-byte REPORTER budget is REPORTER_CAP_EXCEEDED", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const raw = paddedPassReport(53_897);
     const fx = makeNodeCheckout(t, { bin: rawReportStub(raw) });
     const report = await runJob(baseJob(fx, { budgets: { max_reporter_bytes_per_suite: 1024 } }));
@@ -531,6 +559,10 @@ describe("Q665-006: bounded timeout against an escaped descendant", () => {
   });
 
   it("an output-cap kill also settles promptly", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const spewBin = [
       "#!/usr/bin/env node",
       'const chunk = "x".repeat(65536);',
@@ -573,6 +605,10 @@ function writeJobFile(t, job) {
 
 describe("Q665-007 + CLI bounds: piped stdout, input cap, output containment", () => {
   it("a large failing report arrives COMPLETE on a pipe: parseable, full counts, verdict exit code", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const bigFail = {
       numTotalTests: 2000,
       numPassedTests: 0,
@@ -628,6 +664,10 @@ describe("Q665-007 + CLI bounds: piped stdout, input cap, output containment", (
   });
 
   it("--out inside the target checkout is refused (containment) and nothing is written there", async (t) => {
+    if (!isolationAvailable()) {
+      t.skip("no isolation mechanism on this host");
+      return;
+    }
     const fx = makeNodeCheckout(t, { bin: reportStub(PASS_JSON) });
     const jobPath = writeJobFile(t, baseJob(fx));
     const evil = join(fx.dir, "evil-report.json");
