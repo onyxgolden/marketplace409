@@ -582,6 +582,53 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
   return group;
 }
 
+/**
+ * One pipe run as a group of plain Three.js meshes, from its pure
+ * descriptor (designerThreeModel.pipeDescriptors). Descriptors already
+ * carry world plan coordinates, so the meshes sit in world space inside
+ * a group at the origin: plan x -> x, plan y -> z, elevation -> y. One
+ * cylinder per segment, one sphere per joint, one vertical cylinder per
+ * riser, all at the descriptor's radius and color. The group is tagged
+ * as its pipe run so picking and highlighting work like equipment.
+ */
+export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
+  const group = new THREE.Group();
+  const mat = stdMaterial({ color: pipe.color, roughness: 0.55 });
+  const radius = pipe.radiusIn ?? (pipe.diameterIn ?? 2) / 2;
+
+  const cylinderBetween = (p1, p2) => {
+    const dir = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    const len = dir.length();
+    if (len < 0.01) return;
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 16), mat));
+    mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    group.add(mesh);
+  };
+
+  for (const seg of pipe.segments || []) {
+    cylinderBetween(
+      { x: seg.a.x, y: seg.yIn, z: seg.a.z },
+      { x: seg.b.x, y: seg.yIn, z: seg.b.z },
+    );
+  }
+  for (const joint of pipe.joints || []) {
+    const mesh = shadowed(new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), mat));
+    mesh.position.set(joint.x, joint.yIn, joint.z);
+    group.add(mesh);
+  }
+  for (const riser of pipe.risers || []) {
+    cylinderBetween(
+      { x: riser.x, y: riser.y0In, z: riser.z },
+      { x: riser.x, y: riser.y1In, z: riser.z },
+    );
+  }
+
+  group.userData.entityKind = "pipe";
+  group.userData.entityId = pipe.id;
+  return group;
+}
+
 // Selection -> highlight-registry-key mapping now lives in designerThreeModel.js
 // (highlightKeysForSelection / highlightRegistryKey) — the pure domain layer,
 // unit-tested there against plain design objects with no Three.js involved.
@@ -1522,6 +1569,7 @@ export default function DesignerViewport3D({
         register(highlightRegistryKey("symbol", eq.id), eGroup);
       }
 
+<<<<<<< HEAD
       // site/outdoor symbols (deck, patio, driveway, walkway, fence, shed,
       // garden bed, pool): flat slabs at grade or low boxes — selectable
       // like the other symbol placements.
@@ -1538,6 +1586,17 @@ export default function DesignerViewport3D({
         mesh.userData.entityId = so.id;
         group.add(mesh);
         register(highlightRegistryKey("symbol", so.id), mesh);
+=======
+      // pipe runs: cylinders, joint spheres and risers from the pure
+      // descriptors (world plan coordinates, elevation as y) — selectable
+      // like equipment.
+      for (const pipe of built.pipes || []) {
+        const pGroup = buildPipeGroup(pipe, { stdMaterial, shadowed });
+        pGroup.userData.entityKind = "pipe";
+        pGroup.userData.entityId = pipe.id;
+        group.add(pGroup);
+        register(highlightRegistryKey("pipe", pipe.id), pGroup);
+>>>>>>> 2311af69 (feat(designer): 3D pipe rendering path — descriptors, elevation derivation, viewport meshes (SYS-001))
       }
       // Labels are hidden by default; re-apply the toggle state after every
       // rebuild (new sprites are born hidden).
