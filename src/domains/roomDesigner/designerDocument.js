@@ -28,6 +28,7 @@
 
 import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitureCatalog";
 import { findSymbol } from "./symbolRegistry";
+import { systemErrors } from "./designSystems";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -41,7 +42,6 @@ import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
 import { pipeAttachmentErrors } from "./pipeAttachments";
-import { systemErrors } from "./designSystems";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {

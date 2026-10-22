@@ -33,6 +33,7 @@ import {
 } from "@/domains/roomDesigner/pipingGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
@@ -45,7 +46,6 @@ import {
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
-import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
