@@ -22,6 +22,7 @@ import {
   rotatePoint,
   snapPoint,
   snapScalar,
+  phoneAutoFitView,
   underlayContainsPoint,
   wallLength,
   zoomToFitRect,
@@ -42,6 +43,7 @@ import {
   FURNITURE_MAX_SIZE_IN,
   FURNITURE_MIN_SIZE_IN,
   OPENING_DEFAULTS,
+  designContentBounds,
   fitScaleLabel,
   getRoomTemplate,
   pieceSize,
@@ -116,14 +118,6 @@ function hitMovesWithSelection(design, selection, hit) {
 // Screen-pixel radius within which the pipe tool snaps to a nozzle anchor.
 const ANCHOR_SNAP_PX = 12;
 
-/**
- * Re-anchor the view so a plan point — the FINAL snapped draw endpoint —
- * renders inside the viewport with a margin. Returns the new {ox, oy}, or
- * null when it already renders within bounds (or the canvas has no
- * measured size). Anchoring the snapped endpoint (not the pre-snap
- * pointer) is what keeps it visible: snapping can move the endpoint back
- * off-screen after a pre-snap anchor.
- */
 export function autoPanViewForPoint(point, size, view, margin = 16) {
   if (!(size.w > 0) || !(size.h > 0)) return null;
   const sx = view.ox + point.x * view.scale;
@@ -137,7 +131,7 @@ export function autoPanViewForPoint(point, size, view, margin = 16) {
   };
 }
 
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, autoFitKey = null, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
@@ -242,6 +236,52 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         maxScale: MAX_SCALE,
       }),
     );
+  }
+
+  // Phone auto-fit: when a design opens (or the open design/level switches)
+  // on a phone-sized canvas, fit the whole drawing in view once instead of
+  // opening at the desktop default view cropped to a corner. The canvas
+  // itself is never remounted on a level switch (its pan/zoom state is
+  // deliberately kept alive), so the trigger is the autoFitKey identity
+  // threaded down from the screen — it changes on open/switch and is
+  // stable across edits. Without a key (standalone mounts) the fit applies
+  // once on mount. Same "adjust state during render" pattern as the
+  // zoom-to-sheet block above; waits until the canvas has been measured,
+  // and a user interaction before it applies cancels it for this identity.
+  // Desktop-sized canvases never fit, so desktop behavior is unchanged.
+  const autoFitIdentity = autoFitKey ?? "__mount__";
+  // Set by the first wheel / pointer interaction on the canvas. A phone
+  // auto-fit that has not applied yet is cancelled by it, so a late fit
+  // can never yank the view away from work already in progress. Reset
+  // when the auto-fit identity changes (a new design/level opened).
+  const [userNav, setUserNav] = useState(false);
+  const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
+  if (prevAutoFitIdentity !== autoFitIdentity) {
+    setPrevAutoFitIdentity(autoFitIdentity);
+    setUserNav(false);
+  }
+  const [appliedAutoFitIdentity, setAppliedAutoFitIdentity] = useState(null);
+  // Interactive zoom floor while a phone fit is in effect: a fitted scale
+  // can sit far below MIN_SCALE (a very large drawing on a small canvas),
+  // and flooring the first wheel zoom at MIN_SCALE would snap the view.
+  // Null on desktop / after a fit at or above MIN_SCALE, where the floor
+  // is exactly MIN_SCALE as before.
+  const [fitFloor, setFitFloor] = useState(null);
+  if (
+    appliedAutoFitIdentity !== autoFitIdentity &&
+    prevAutoFitIdentity === autoFitIdentity &&
+    canvasSize.w > 0 &&
+    canvasSize.h > 0 &&
+    !userNav
+  ) {
+    setAppliedAutoFitIdentity(autoFitIdentity);
+    const fitted = phoneAutoFitView(designContentBounds(design), canvasSize, {
+      maxScale: MAX_SCALE,
+    });
+    if (fitted) {
+      setView(fitted);
+      setFitFloor(fitted.scale < MIN_SCALE ? fitted.scale : null);
+    }
   }
 
   const toScreen = useCallback(
@@ -591,6 +631,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
+    setUserNav(true);
     // Capture the pointer to the canvas so move/up keep flowing when the
     // pointer leaves the element mid-gesture (edge-following while drawing,
     // releasing outside after a drag). Touch already has implicit capture;
@@ -1377,10 +1418,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onWheel = (e) => {
+    setUserNav(true);
     const screen = eventPoint(e);
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    // The only interactive scale clamp in this component (there are no
+    // pinch handlers or zoom buttons). Its floor drops to the fitted scale
+    // while a below-MIN_SCALE phone fit is in effect (see fitFloor above);
+    // otherwise it is exactly MIN_SCALE, as before.
+    const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
     setView((v) => {
-      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+      const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
       const applied = scale / v.scale;
       return {
         scale,

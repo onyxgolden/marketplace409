@@ -22,6 +22,7 @@ import {
   nearestPointOnSegment,
   offsetAlongWall,
   parseDimensionInput,
+  phoneAutoFitView,
   pointInPolygon,
   polygonArea,
   rotatePoint,
@@ -557,6 +558,70 @@ describe("zoomToFitRect", () => {
     expect(() => zoomToFitRect({ ...rect, heightIn: -3 }, vp)).toThrow();
     expect(() => zoomToFitRect(rect, { w: 0, h: 100 })).toThrow();
     expect(() => zoomToFitRect(rect, vp, { minScale: 2, maxScale: 1 })).toThrow();
+  });
+});
+
+describe("phoneAutoFitView", () => {
+  const phone = { w: 390, h: 700 };
+
+  it("fits wide large-scale bounds below the interactive minimum scale, centered", () => {
+    const bounds = { x: 0, y: 0, widthIn: 7680, heightIn: 5280 };
+    const view = phoneAutoFitView(bounds, phone);
+    // avail = (390 - 48) x (700 - 48) = 342 x 652; width is the limit.
+    expect(view.scale).toBeCloseTo(342 / 7680, 10);
+    expect(view.scale).toBeLessThan(0.35);
+    // Bounds center maps to the viewport center.
+    expect(view.ox + (bounds.x + bounds.widthIn / 2) * view.scale).toBeCloseTo(390 / 2, 6);
+    expect(view.oy + (bounds.y + bounds.heightIn / 2) * view.scale).toBeCloseTo(700 / 2, 6);
+    // The whole bounds rect lands inside the viewport, margin included.
+    expect(view.ox + bounds.x * view.scale).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(view.ox + (bounds.x + bounds.widthIn) * view.scale).toBeLessThanOrEqual(390 - 24 + 1e-6);
+    expect(view.oy + bounds.y * view.scale).toBeGreaterThanOrEqual(24 - 1e-6);
+    expect(view.oy + (bounds.y + bounds.heightIn) * view.scale).toBeLessThanOrEqual(700 - 24 + 1e-6);
+  });
+
+  it("uses the limiting axis: scale = min(availW / w, availH / h)", () => {
+    const view = phoneAutoFitView({ x: 10, y: 20, widthIn: 100, heightIn: 400 }, phone);
+    expect(view.scale).toBeCloseTo(Math.min(342 / 100, 652 / 400), 10);
+    expect(view.ox + 60 * view.scale).toBeCloseTo(195, 6);
+    expect(view.oy + 220 * view.scale).toBeCloseTo(350, 6);
+  });
+
+  it("returns null for desktop-sized, empty, or unmeasured viewports", () => {
+    const bounds = { x: 0, y: 0, widthIn: 100, heightIn: 100 };
+    expect(phoneAutoFitView(bounds, { w: 768, h: 700 })).toBeNull();
+    expect(phoneAutoFitView(bounds, { w: 1024, h: 700 })).toBeNull();
+    expect(phoneAutoFitView(bounds, { w: 0, h: 700 })).toBeNull();
+    expect(phoneAutoFitView(bounds, null)).toBeNull();
+  });
+
+  it("returns null for missing, invalid, or point-sized bounds", () => {
+    expect(phoneAutoFitView(null, phone)).toBeNull();
+    expect(phoneAutoFitView({ x: 0, y: 0, widthIn: -5, heightIn: 10 }, phone)).toBeNull();
+    expect(phoneAutoFitView({ x: 0, y: 0, widthIn: NaN, heightIn: 10 }, phone)).toBeNull();
+    expect(phoneAutoFitView({ x: 5, y: 5, widthIn: 0, heightIn: 0 }, phone)).toBeNull();
+  });
+
+  it("pads a zero-height bounds (single horizontal wall) to 12in centered", () => {
+    const view = phoneAutoFitView({ x: 0, y: 100, widthIn: 240, heightIn: 0 }, phone);
+    // Effective rect: 240 x 12 centered on y=100 → scale limited by width.
+    expect(view.scale).toBeCloseTo(342 / 240, 10);
+    expect(view.ox + 120 * view.scale).toBeCloseTo(195, 6);
+    expect(view.oy + 100 * view.scale).toBeCloseTo(350, 6);
+  });
+
+  it("pads a zero-width bounds (single vertical wall) to 12in centered", () => {
+    const view = phoneAutoFitView({ x: 50, y: 0, widthIn: 0, heightIn: 240 }, phone);
+    expect(view.scale).toBeCloseTo(652 / 240, 10);
+    expect(view.ox + 50 * view.scale).toBeCloseTo(195, 6);
+    expect(view.oy + 120 * view.scale).toBeCloseTo(350, 6);
+  });
+
+  it("fits single-symbol-sized bounds and clamps to maxScale", () => {
+    const view = phoneAutoFitView({ x: 100, y: 100, widthIn: 24, heightIn: 24 }, phone);
+    expect(view.scale).toBe(12);
+    expect(view.ox + 112 * view.scale).toBeCloseTo(195, 6);
+    expect(view.oy + 112 * view.scale).toBeCloseTo(350, 6);
   });
 });
 
