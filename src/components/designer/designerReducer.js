@@ -66,6 +66,14 @@ import {
   updateSheetFormat,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
+import {
+  addSystem,
+  deleteSystem,
+  setMemberColor,
+  setMemberSystem,
+  setPipeUnderground,
+  updateSystem,
+} from "@/domains/roomDesigner/designSystems";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
@@ -666,6 +674,29 @@ export function designerReducer(state, action) {
       } catch {
         return state;
       }
+    // ---- systems / member colors / underground (fail soft: the panels
+    // constrain their inputs, the domain is the backstop) ----
+    case "ADD_SYSTEM":
+    case "UPDATE_SYSTEM":
+    case "DELETE_SYSTEM":
+    case "SET_MEMBER_SYSTEM":
+    case "SET_MEMBER_COLOR":
+    case "SET_PIPE_UNDERGROUND": {
+      const d = state.design;
+      const apply = {
+        ADD_SYSTEM: () => addSystem(d, { name: action.name, color: action.color }),
+        UPDATE_SYSTEM: () => updateSystem(d, action.systemId, action.fields || {}),
+        DELETE_SYSTEM: () => deleteSystem(d, action.systemId),
+        SET_MEMBER_SYSTEM: () => setMemberSystem(d, action.target || {}, action.systemId ?? null),
+        SET_MEMBER_COLOR: () => setMemberColor(d, action.target || {}, action.color ?? null),
+        SET_PIPE_UNDERGROUND: () => setPipeUnderground(d, action.pipeId, action.underground),
+      }[action.type];
+      try {
+        return touch(state, apply(), action.coalesce);
+      } catch {
+        return state;
+      }
+    }
     case "SET_WALL_MATERIAL":
       return touch(state, setWallMaterial(state.design, action.wallId, action.material));
     // Naming a room. Coalesced so typing a name is one undo step, not one
