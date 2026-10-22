@@ -10,6 +10,7 @@ import { createEmptyDesign, placeSymbol } from "@/domains/roomDesigner/designerD
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { temaAnchorsWorld } from "@/domains/roomDesigner/temaGeometry";
 import { setSymbolDrawingMode, setSymbolTemaConfig } from "@/domains/roomDesigner/temaInstances";
+import { anchorsOf } from "@/domains/roomDesigner/pipeAttachments";
 import { TEMA_PRESETS } from "@/domains/roomDesigner/temaTypes";
 
 if (typeof window.ResizeObserver === "undefined") {
@@ -64,6 +65,64 @@ describe("PlanCanvas pipe tool snaps to TEMA nozzles", () => {
     expect(call).toBeTruthy();
     expect(call[0].points[0].x).toBeCloseTo(tubeIn.x, 6);
     expect(call[0].points[0].y).toBeCloseTo(tubeIn.y, 6);
+  });
+});
+
+describe("PlanCanvas pipe tool snaps to generic catalog nozzles", () => {
+  let container;
+  let root;
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  function pumpDesign() {
+    return placeSymbol(createEmptyDesign(), "processEquipment", "centrifugal-pump", 200, 150, { id: "pump1" });
+  }
+  const suctionOf = (design) => anchorsOf(design.symbols[0]).find((a) => a.id === "suction-in");
+
+  it("starts the run on the pump suction anchor from a nearby off-grid click", () => {
+    const design = pumpDesign();
+    const suction = suctionOf(design);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const dispatch = vi.fn();
+    act(() => {
+      root.render(<PlanCanvas design={design} tool="pipe" selection={null} orthoSnap={false} dispatch={dispatch} />);
+    });
+    const svg = container.querySelector("svg");
+    fire(svg, "pointerdown", { x: suction.x + 2.5, y: suction.y - 2 });
+    fire(svg, "pointerup", { x: suction.x + 2.5, y: suction.y - 2 });
+    fire(svg, "pointerdown", { x: 60, y: 24 });
+    fire(svg, "pointerup", { x: 60, y: 24 });
+    fire(svg, "dblclick", { x: 60, y: 24 }, window.MouseEvent);
+    const call = dispatch.mock.calls.find(([a]) => a.type === "ADD_PIPE_RUN");
+    expect(call).toBeTruthy();
+    expect(call[0].points[0].x).toBeCloseTo(suction.x, 6);
+    expect(call[0].points[0].y).toBeCloseTo(suction.y, 6);
+  });
+
+  it("drops a dragged pipe end vertex exactly on the pump suction anchor", async () => {
+    const { addPipeRun } = await import("@/domains/roomDesigner/designerDocument");
+    let design = pumpDesign();
+    const suction = suctionOf(design);
+    design = addPipeRun(design, [{ x: 12, y: 12 }, { x: 60, y: 12 }], { id: "p1" });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const dispatch = vi.fn();
+    act(() => {
+      root.render(<PlanCanvas design={design} tool="select" selection={{ kind: "pipe", id: "p1" }} orthoSnap={false} dispatch={dispatch} />);
+    });
+    const svg = container.querySelector("svg");
+    fire(svg, "pointerdown", { x: 12, y: 12 });
+    fire(svg, "pointermove", { x: suction.x + 2, y: suction.y + 2 });
+    const call = dispatch.mock.calls.find(([a]) => a.type === "MOVE_PIPE_VERTEX");
+    expect(call).toBeTruthy();
+    expect(call[0].index).toBe(0);
+    expect(call[0].point.x).toBeCloseTo(suction.x, 6);
+    expect(call[0].point.y).toBeCloseTo(suction.y, 6);
   });
 });
 
