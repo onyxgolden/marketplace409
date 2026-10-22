@@ -3,6 +3,14 @@
 // React components stay thin.
 
 import {
+  addSystem,
+  deleteSystem,
+  setMemberColor,
+  setMemberSystem,
+  setPipeUnderground,
+  updateSystem,
+} from "@/domains/roomDesigner/designSystems";
+import {
   addOpening,
   addOrgChart,
   addPerson,
@@ -66,14 +74,6 @@ import {
   updateSheetFormat,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
-import {
-  addSystem,
-  deleteSystem,
-  setMemberColor,
-  setMemberSystem,
-  setPipeUnderground,
-  updateSystem,
-} from "@/domains/roomDesigner/designSystems";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
