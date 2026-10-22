@@ -1,0 +1,1 @@
+{"description":"QA agent slice 2: pre-merge test-runner. Runs named vitest suites on an exact pinned HEAD inside a named checkout and emits a deterministic advisory report. No merging, no approval authority, no production writes.","engines":{"node":">=24"},"name":"qa-test-runner","scripts":{"test":"node --test tests/*.test.js"},"type":"module","version":"0.1.0"}
