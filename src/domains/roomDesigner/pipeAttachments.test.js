@@ -14,7 +14,7 @@ import {
 } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { temaAnchorsWorld } from "./temaGeometry";
-import { setSymbolDrawingMode, setSymbolSize, setSymbolTemaConfig } from "./temaInstances";
+import { nearestConnectionAnchor, setSymbolDrawingMode, setSymbolSize, setSymbolTemaConfig } from "./temaInstances";
 import { TEMA_PRESETS } from "./temaTypes";
 import {
   anchorAtPoint,
@@ -198,6 +198,50 @@ describe("catalog nozzle anchors", () => {
     design = addPipeRun(design, [{ x: 200, y: 200 }, { x: 200, y: 0 }], { id: "p1" });
     design = detectRunAttachments(design, "p1");
     expect("attachments" in run(design)).toBe(false);
+  });
+
+  describe("runs created through the canvas snap query (nearestConnectionAnchor)", () => {
+    const pumpAnchor2 = (design, id) =>
+      anchorsOf(design.symbols.find((s) => s.id === "pump1")).find((a) => a.id === id);
+
+    /**
+     * Pump "pump1" at (101, 103) with a pipe whose start comes from the
+     * ACTUAL canvas snap helper: a nearby off-grid pointer (103.3, 91.8)
+     * must land exactly on the suction nozzle (101, 94).
+     */
+    function snappedPump() {
+      let design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 101, 103, { id: "pump1" });
+      const snapped = nearestConnectionAnchor(design, { x: 103.3, y: 91.8 }, 12);
+      expect(snapped).toMatchObject({ symbolInstanceId: "pump1", anchorId: "suction-in", x: 101, y: 94 });
+      design = addPipeRun(design, [{ x: snapped.x, y: snapped.y }, { x: 300, y: 300 }], { id: "p1" });
+      return detectRunAttachments(design, "p1");
+    }
+
+    it("produces attachment metadata for the snapped end, and only that end", () => {
+      const design = snappedPump();
+      expect(run(design).points[0]).toEqual({ x: 101, y: 94 });
+      expect(run(design).attachments).toEqual({ start: { symbolId: "pump1", anchorId: "suction-in" } });
+    });
+
+    const followsSnap = (design) => {
+      const a = pumpAnchor2(design, "suction-in");
+      expect(run(design).points[0].x).toBeCloseTo(a.x, 9);
+      expect(run(design).points[0].y).toBeCloseTo(a.y, 9);
+      expect(run(design).points[1]).toEqual({ x: 300, y: 300 }); // free end untouched
+      expect(run(design).attachments).toEqual({ start: { symbolId: "pump1", anchorId: "suction-in" } });
+    };
+
+    it("follows a move", () => followsSnap(reconcilePipeAttachments(moveSymbol(snappedPump(), "pump1", 161, 143))));
+    it("follows a rotation", () => followsSnap(reconcilePipeAttachments(rotateSymbol(snappedPump(), "pump1", 90))));
+    it("follows a resize", () =>
+      followsSnap(reconcilePipeAttachments(setSymbolSize(snappedPump(), "pump1", { widthIn: 72, depthIn: 36 }))));
+
+    it("detaches, end left in place, when the snapped-to equipment is deleted", () => {
+      const design = snappedPump();
+      const after = reconcilePipeAttachments(deleteSymbol(design, "pump1"));
+      expect(run(after).points).toEqual(run(design).points);
+      expect("attachments" in run(after)).toBe(false);
+    });
   });
 
   it("catalog nozzle specs are sane: fx/fy in [-1, 1], sizeIn > 0, ids unique per symbol", () => {
