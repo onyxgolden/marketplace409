@@ -240,9 +240,10 @@ export function zoomToFitRect(
  * the layout breakpoint used across the designer screens. */
 export const PHONE_AUTO_FIT_BREAKPOINT_PX = 768;
 
-/** Lowest scale a phone auto-fit may use. Large drawings (thousands of
- * inches across) need a far smaller scale than the interactive zoom floor
- * to fit a phone canvas at all. */
+/** Nominal lowest scale for a phone auto-fit. It is NOT a hard floor: a
+ * valid drawing larger than the viewport can contain at this scale is
+ * fitted at the smaller computed scale its bounds actually require (see
+ * phoneAutoFitView), so a fixed floor can never clip a valid drawing. */
 export const PHONE_AUTO_FIT_MIN_SCALE = 0.02;
 
 /** Margin (px) left around the drawing by a phone auto-fit. */
@@ -295,10 +296,26 @@ export function phoneAutoFitView(
     y -= PHONE_AUTO_FIT_DEGENERATE_IN / 2;
     heightIn = PHONE_AUTO_FIT_DEGENERATE_IN;
   }
+  // Content-derived lower bound: the scale that exactly fits these bounds
+  // in the padded viewport. A fixed floor (the old PHONE_AUTO_FIT_MIN_SCALE
+  // clamp) forces any drawing needing a smaller scale to overflow the
+  // canvas and clip — e.g. a 30000in wall on a 390px canvas needs
+  // 342/30000 ≈ 0.0114, below the old 0.02 floor. When the computed fit
+  // scale is the smaller value it becomes the floor, so the clamp in
+  // zoomToFitRect can never raise the scale past containment; when the
+  // fit needs no such reduction the nominal floor applies as before.
+  const pad = Math.max(0, paddingPx || 0);
+  const availW = Math.max(1, viewport.w - pad * 2);
+  const availH = Math.max(1, viewport.h - pad * 2);
+  const fitScale = Math.min(availW / widthIn, availH / heightIn);
+  const minScale =
+    Number.isFinite(fitScale) && fitScale > 0
+      ? Math.min(PHONE_AUTO_FIT_MIN_SCALE, fitScale, maxScale)
+      : Math.min(PHONE_AUTO_FIT_MIN_SCALE, maxScale);
   return zoomToFitRect(
     { x, y, widthIn, heightIn },
     viewport,
-    { paddingPx, minScale: PHONE_AUTO_FIT_MIN_SCALE, maxScale },
+    { paddingPx, minScale, maxScale },
   );
 }
 
