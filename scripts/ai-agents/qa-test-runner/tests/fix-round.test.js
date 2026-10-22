@@ -235,6 +235,39 @@ describe("Q665-002: isolation boundary (write attempt, network, environment)", (
 });
 
 /* ------------------------------------------------------------------ */
+/* Materialization robustness — found by the exact-head receipt run:   */
+/* `cp -a` on a real dependency tree can emit >1MiB of ownership       */
+/* warnings; the overlay must drain stderr, never die on maxBuffer.    */
+/* ------------------------------------------------------------------ */
+
+describe("materialization: a chatty overlay copy cannot break the run", () => {
+  it("a `cp` that spews 2MiB of stderr warnings still completes the overlay", async (t) => {
+    const fx = makeNodeCheckout(t, { bin: reportStub(PASS_JSON) });
+    const fakeBin = mkdtempSync(join(tmpdir(), "qa-runner-fakebin-"));
+    t.after(() => rmSync(fakeBin, { recursive: true, force: true }));
+    const realCp = execFileSync("which", ["cp"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      join(fakeBin, "cp"),
+      [
+        "#!/bin/sh",
+        // 2 MiB of warning noise on stderr, then delegate for real.
+        'head -c 2097152 /dev/zero | tr "\\0" "w" >&2',
+        `exec ${realCp} "$@"`,
+      ].join("\n")
+    );
+    chmodSync(join(fakeBin, "cp"), 0o755);
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${prevPath}`;
+    try {
+      const report = await runJob(baseJob(fx));
+      assert.equal(report.verdict, "ALL_SUITES_PASS", JSON.stringify(report.diagnostics));
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Q665-003 — a failed assertion can never classify PASS               */
 /* ------------------------------------------------------------------ */
 

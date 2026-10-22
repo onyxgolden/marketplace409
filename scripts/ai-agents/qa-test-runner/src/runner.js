@@ -88,12 +88,6 @@ export function vitestResolvable(dir) {
   return existsSync(join(dir, "node_modules", ".bin", bin));
 }
 
-function execFileP(cmd, args, opts = {}) {
-  return new Promise((resolve) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
-  });
-}
-
 /**
  * Materialize the pinned commit's tree into destDir via `git archive`.
  * The archive byte stream is counted as it flows; past the cap both
@@ -122,6 +116,10 @@ function materializePinnedTree(target, pin, destDir) {
     // that is a materialization failure, never an unhandled error.
     tar.stdin.on("error", (e) => done(`tar extraction failed: ${e?.message ?? e}`));
     archive.stdout.on("error", (e) => done(`git archive failed: ${e?.message ?? e}`));
+    // Drain both stderr streams (discarding) so a chatty child can
+    // never block on a full pipe and hang materialization.
+    archive.stderr?.on("data", () => {});
+    tar.stderr?.on("data", () => {});
     let bytes = 0;
     let overflow = false;
     archive.stdout.on("data", (chunk) => {
@@ -169,12 +167,48 @@ function materializePinnedTree(target, pin, destDir) {
  * disposable execution tree. Dependencies are environment, not
  * evidence: the suites' SOURCE all comes from the pinned commit; the
  * dependency tree is what the operator already installed for that pin.
+ *
+ * Ownership is deliberately NOT preserved (--no-preserve=ownership):
+ * it is meaningless inside a disposable tree, and on filesystems that
+ * refuse chown a plain `cp -a` emits one warning per file — enough
+ * stderr to overflow a naive capture buffer on a real dependency tree
+ * (found by the PR #665 exact-head receipt run). stderr is drained
+ * into a capped tail buffer, never a maxBuffer kill.
  */
-async function overlayNodeModules(target, destDir) {
+function overlayNodeModules(target, destDir) {
   const src = join(target, "node_modules");
-  if (!existsSync(src)) return null;
-  const { err } = await execFileP("cp", ["-a", src, join(destDir, "node_modules")], { timeout: 600_000 });
-  return err ? `node_modules overlay failed: ${err.message ?? err}` : null;
+  if (!existsSync(src)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("cp", ["-a", "--no-preserve=ownership", src, join(destDir, "node_modules")], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (e) {
+      resolve(`node_modules overlay failed: ${e?.message ?? e}`);
+      return;
+    }
+    let tail = "";
+    child.stderr?.on("data", (d) => {
+      tail = (tail + d.toString("utf8")).slice(-4096);
+    });
+    const killer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }, 600_000);
+    child.on("error", (e) => {
+      clearTimeout(killer);
+      resolve(`node_modules overlay failed: ${e?.message ?? e}`);
+    });
+    child.on("close", (code) => {
+      clearTimeout(killer);
+      if (code === 0) resolve(null);
+      else resolve(`node_modules overlay exited ${code}: ${tail.trim().split("\n").slice(-3).join("; ")}`);
+    });
+  });
 }
 
 const KILL_GRACE_MS = 2_000;
