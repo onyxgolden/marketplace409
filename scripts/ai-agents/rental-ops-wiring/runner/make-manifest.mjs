@@ -32,12 +32,22 @@ addTree(join(WIRING_ROOT, "tests"), { tests: true }); // test executables are pi
 addTree(join(WIRING_ROOT, "battery"));
 delete files["battery/make-battery.js"]; // authoring tool, not part of the runtime closure
 delete files["battery/cases.json"]; // pinned by the battery manifest instead
+// P2a-2: the Maintenance Manager battery is a parallel frozen battery
+// with its own case/oracle manifest (battery-mm/manifest-mm.json).
+addTree(join(WIRING_ROOT, "battery-mm"));
+delete files["battery-mm/make-battery-mm.js"]; // authoring tool, not part of the runtime closure
+delete files["battery-mm/cases-mm.json"]; // pinned by the battery-mm manifest instead
 // battery/manifest.json STAYS pinned here (P666-004A): it is the root
 // of the battery's case/oracle pins, so tampering with it must break
 // the host trust chain, not just the battery's self-check. (addTree
 // only walks .js/.mjs, so JSON roots are pinned explicitly.)
 files["battery/manifest.json"] = createHash("sha256")
   .update(readFileSync(join(WIRING_ROOT, "battery", "manifest.json")))
+  .digest("hex");
+// P2a-2: the battery-mm manifest is the root of the MM battery's
+// case/oracle pins — same trust rationale.
+files["battery-mm/manifest-mm.json"] = createHash("sha256")
+  .update(readFileSync(join(WIRING_ROOT, "battery-mm", "manifest-mm.json")))
   .digest("hex");
 addTree(join(REPO_ROOT, "src", "application", "ai-lab", "rental-ops"));
 // The shared classifier is a transitive executable dependency of

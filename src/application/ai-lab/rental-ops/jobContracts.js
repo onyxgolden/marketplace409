@@ -26,9 +26,10 @@ export const JOB_KINDS = Object.freeze({
 });
 
 /**
- * The one job built in slice P2a-1. The Maintenance Manager descriptor
- * exists as data so the boundary is explicit; its job module is NOT
- * built in this slice (P2a-2 follows only after a GO on P2a-1).
+ * The two jobs built across slices P2a-1 and P2a-2. P2a-1 built the
+ * Property Manager daily exception review plus the shared boundary
+ * (read adapter, private Workbench item transport, inert job runner);
+ * P2a-2 builds the Maintenance Manager backlog review, reusing them.
  */
 export const JOB_DESCRIPTORS = Object.freeze([
   Object.freeze({
@@ -47,7 +48,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     version: 1,
     proposed_trigger: "daily 09:15 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "open backlog, civil UTC day aging",
-    readiness: "NOT_BUILT_P2A2",
+    readiness: "WIRED_INERT",
   }),
 ]);
 
@@ -99,7 +100,7 @@ const REQUEST_FIELDS = Object.freeze([
   "principal_ref", "owner_ref", "portfolio_ref", "job_kind", "job_version",
   "as_of", "window", "snapshot_request_id",
 ]);
-const REGISTERED_WINDOWS = Object.freeze(["lease-expiration-60d"]);
+const REGISTERED_WINDOWS = Object.freeze(["lease-expiration-60d", "maintenance-backlog-open"]);
 const UTC_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 export function validateJobRequest(request) {
   if (request === null || typeof request !== "object" || Array.isArray(request)) {

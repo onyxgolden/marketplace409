@@ -35,7 +35,7 @@ test("live-shaped asks are ACTIVATION_REQUIRED (caller ask, host mode), never a 
   assert.equal(byHost.outcome, "ACTIVATION_REQUIRED");
 });
 
-test("unknown mode / unknown agent / second agent refuse closed, distinctly", async () => {
+test("unknown mode / unknown agent refuse closed, distinctly; the MM job now flows (P2a-2)", async () => {
   const badMode = await runJob({
     hostConfig: makeHost({ mode: "TURBO" }), request: makeRequest(),
     adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
@@ -46,11 +46,17 @@ test("unknown mode / unknown agent / second agent refuse closed, distinctly", as
     adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.equal(badKind.code, "UNKNOWN_AGENT");
+  // P2a-2: the JOB_NOT_BUILT_IN_SLICE sequencing gate is gone (its
+  // precondition — P2a-1's GO — is satisfied). The Maintenance
+  // Manager job flows through the same inert runner.
   const mm = await runJob({
-    hostConfig: makeHost(), request: makeRequest({ job_kind: "maintenance-manager-backlog-review" }),
-    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
+    hostConfig: makeHost(),
+    request: makeRequest({ job_kind: "maintenance-manager-backlog-review", window: { name: "maintenance-backlog-open" } }),
+    adapterSpec: previewSpec({ datasets: { properties: [], units: [], leases: [], memberships: [], charges: [], schedules: [], work_orders: [] } }),
+    publisher: createMemoryPublisher(), clock: fixedClock(),
   });
-  assert.deepEqual([mm.outcome, mm.code], ["REFUSED", "JOB_NOT_BUILT_IN_SLICE"]);
+  assert.equal(mm.outcome, "COMPLETED");
+  assert.ok(mm.item_id.startsWith("mm-"));
 });
 
 test("caller-supplied adapter or smuggled request fields refuse before any open", async () => {

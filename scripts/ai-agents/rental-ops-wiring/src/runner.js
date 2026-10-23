@@ -51,9 +51,10 @@ export async function runJob({ hostConfig, request, callerAsk = undefined, calle
     if (!descriptor) throw new JobRefusal("UNKNOWN_AGENT", `job kind '${String(req?.job_kind)}'`);
     const mode = resolveMode(host?.mode, callerAsk);
     if (mode === "DISABLED") return done("DISABLED", { mode });
-    if (descriptor.kind === JOB_KINDS.MM_BACKLOG_REVIEW) {
-      throw new JobRefusal("JOB_NOT_BUILT_IN_SLICE", "Maintenance Manager wiring is P2a-2 and starts only after a GO on P2a-1");
-    }
+    // P2a-2: the Maintenance Manager sequencing gate
+    // (JOB_NOT_BUILT_IN_SLICE) was removed here — its precondition is
+    // satisfied (P2a-1 GO'd; PR #666 merged as e63121d6), and the MM
+    // job now flows through this same inert runner.
     validateJobRequest(req);
     if (req.principal_ref !== host.registered_principal) {
       throw new JobRefusal("PRINCIPAL_MISMATCH", "request principal does not match the host registration");

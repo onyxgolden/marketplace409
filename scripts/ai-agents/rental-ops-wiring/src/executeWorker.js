@@ -20,9 +20,11 @@
  */
 import { parentPort, workerData } from "node:worker_threads";
 import { Budget } from "../../../../src/application/ai-lab/rental-ops/budgets.js";
-import { JobRefusal } from "../../../../src/application/ai-lab/rental-ops/jobContracts.js";
+import { DATASETS, MM_DATASETS } from "../../../../src/application/ai-lab/rental-ops/fieldMappings.js";
+import { JOB_KINDS, JobRefusal } from "../../../../src/application/ai-lab/rental-ops/jobContracts.js";
 import { buildSnapshot } from "../../../../src/application/ai-lab/rental-ops/snapshotBuilder.js";
 import { evaluatePropertyManagerSnapshot } from "../../../../src/application/ai-lab/rental-ops/propertyManagerJob.js";
+import { evaluateMaintenanceManagerSnapshot } from "../../../../src/application/ai-lab/rental-ops/maintenanceManagerJob.js";
 import { createSyntheticAdapter } from "./syntheticRepository.js";
 
 function adapterFromSpec(spec) {
@@ -30,6 +32,17 @@ function adapterFromSpec(spec) {
     throw new JobRefusal("ACTIVATION_REQUIRED", "this release installs only the synthetic adapter");
   }
   return createSyntheticAdapter({ datasets: spec.datasets, faults: spec.faults ?? {} });
+}
+
+/**
+ * Evaluator dispatch (mirrors evaluateWorker.js). The runner
+ * validated the job kind before the spawn; any other value refuses
+ * closed rather than falling through to the wrong evaluator.
+ */
+function evaluatorFor(kind) {
+  if (kind === JOB_KINDS.PM_DAILY_EXCEPTION_REVIEW) return evaluatePropertyManagerSnapshot;
+  if (kind === JOB_KINDS.MM_BACKLOG_REVIEW) return evaluateMaintenanceManagerSnapshot;
+  throw new JobRefusal("UNKNOWN_AGENT", `no evaluator for job kind '${String(kind)}'`);
 }
 
 try {
@@ -49,9 +62,14 @@ try {
   let snapshot;
   let adapterCalls = 0;
   let adapterClosed = false;
+  // P2a-2: the Maintenance Manager job collects its narrow dataset
+  // list (work orders + unit/property linkage); the Property Manager
+  // keeps the full list. The dataset list is job data selected here,
+  // never caller-supplied.
+  const datasets = workerData.request?.job_kind === JOB_KINDS.MM_BACKLOG_REVIEW ? MM_DATASETS : DATASETS;
   try {
     snapshot = await buildSnapshot({
-      request: workerData.request, adapter, budget, clock, signal: controller.signal,
+      request: workerData.request, adapter, budget, clock, signal: controller.signal, datasets,
     });
   } finally {
     clearTimeout(abortTimer);
@@ -59,7 +77,7 @@ try {
     try { if (typeof adapter.close === "function") adapter.close(); } catch { /* termination is the backstop */ }
     adapterClosed = adapter.closed === true;
   }
-  const report = evaluatePropertyManagerSnapshot(snapshot, { policies: workerData.policies });
+  const report = evaluatorFor(workerData.request?.job_kind)(snapshot, { policies: workerData.policies });
   parentPort.postMessage({
     ok: true, snapshot, report,
     budgetUsed: budget.used, adapterCalls, adapterClosed,
