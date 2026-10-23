@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Each test rebuilds and fully validates the 91-run FCCU acceptance
+// design (~4-5 s of CPU on an idle core). The 5 s default test
+// timeout leaves no headroom under full-suite parallel load, where
+// these tests time out without any assertion failing — the timeout
+// is raised for this file only; assertions are unchanged.
+vi.setConfig({ testTimeout: 30000 });
 import { validateHomeProject } from "./homeProject";
 import { anchorAtPoint, anchorsOf, reconcilePipeAttachments } from "./pipeAttachments";
 import { moveSymbol } from "./designerDocument";
@@ -85,7 +92,7 @@ function segmentRectDistance(a, b, rect) {
 }
 
 describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
-  it("builds a valid single-level project", () => {
+  it("builds a valid single-level project", { timeout: 30000 }, () => {
     const project = build();
     expect(validateHomeProject(project)).toEqual([]);
     expect(project.name).toBe(FCCU_SAMPLE_NAME);
@@ -154,18 +161,27 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     expect(labels).toContain("Pipe rack");
   });
 
-  it("is deterministic across builds", () => {
+  // The full fixture build validates 100+ pipes against the strict
+  // D668-002/003/004 geometry rules; two builds exceed the 5 s default
+  // timeout on CI runners (PR668 fixround).
+  it("is deterministic across builds", { timeout: 30000 }, () => {
     const a = JSON.stringify(build());
     const b = JSON.stringify(build());
     expect(a).toBe(b);
   });
 
-  it("routes exactly 44 pipe runs, each in one of the 10 named systems", () => {
+  it("routes exactly 91 pipe runs, each in one of the 14 named systems", () => {
     const design = designOf(build());
-    // 44, not the original 33: P663-001 split the three threading polylines
-    // (feed F1, bottoms F2, cooling water U) into per-exchanger segments so
-    // every exchanger nozzle carries a real run endpoint (+4 +4 +3 runs).
-    expect(design.pipes).toHaveLength(44);
+    // 44 runs originally; D7/D8/D9 added 12 (2 fractionator draw
+    // circuits, 3 utility headers + 6 vessel utility branches, the
+    // underground firewater main). The D8 scope-review fold-in added
+    // 16 more: 3 utility source inlets + 12 utility branches for the
+    // reactor/column vessels (R-101, R-102, T-101, T-102) + the
+    // firewater source inlet — every in-scope vessel's supply path is
+    // modeled branch -> header -> source. The D9 sizing fold-in added
+    // 19 firewater runs: 15 hydrant branches (6-inch, one per hydrant)
+    // and 4 monitor take-offs (6-inch / 4-inch) off the 12-inch loop.
+    expect(design.pipes).toHaveLength(91);
     const expectedSystems = {
       "Process feed": "#22c55e",
       "Reactor effluent": "#f97316",
@@ -175,10 +191,16 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
       "Wet gas": "#a855f7",
       "Product rundown": "#ec4899",
       "Cooling water": "#f59e0b",
-      Relief: "#ef4444",
+      // Relief was #ef4444 (red) until the firewater red reservation
+      // recolored it to dark amber — red belongs to firewater alone.
+      Relief: "#b45309",
       "Flue gas": "#94a3b8",
+      "Plant water": "#0891b2",
+      "Plant air": "#65a30d",
+      Nitrogen: "#db2777",
+      Firewater: "#dc2626",
     };
-    expect(design.systems).toHaveLength(10);
+    expect(design.systems).toHaveLength(14);
     expect(Object.fromEntries((design.systems || []).map((s) => [s.name, s.color]))).toEqual(expectedSystems);
     const systemIds = new Set((design.systems || []).map((s) => s.id));
     for (const run of design.pipes) {
@@ -200,9 +222,26 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     expect(sleeper.symbolId).toBe("sleeper-rack");
   });
 
-  it("places no decorative piping-domain symbols (flow arrows are gone)", () => {
+  it("places no decorative piping-domain symbols — only functional firewater components", () => {
     const design = designOf(build());
-    expect((design.symbols || []).filter((s) => s.domain === "piping")).toEqual([]);
+    const pipingSymbols = (design.symbols || []).filter((s) => s.domain === "piping");
+    // Flow arrows and tags stay out; the piping-domain placements are the
+    // D9 fire hydrants and fixed spray nozzles, which are functional
+    // components with validation rules, not decoration. PR668-001 adds
+    // the modeled reducers — 37 placed explicitly (18 D8 2->1 taps,
+    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 15
+    // more for size-mismatched junctions discovered by the final
+    // junction pass (e.g. 12" rundowns landing on the 10" pump suction
+    // header) — every size transition gets its modeled reducer. (The
+    // 15th junction reducer is the relief branch onto the 24" relief
+    // header: round 1's proximity cover-check counted a neighboring
+    // reducer as covering that tap; R1 requires the tap's own bound
+    // reducer.)
+    expect(pipingSymbols.map((s) => s.symbolId).sort()).toEqual([
+      ...Array(15).fill("fire-hydrant"),
+      ...Array(52).fill("reducer"),
+      ...Array(4).fill("spray-nozzle"),
+    ]);
   });
 
   it("records attachments exactly where a run end sits on a nozzle", () => {
@@ -210,8 +249,12 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     for (const run of design.pipes || []) {
       const start = run.points[0];
       const end = run.points[run.points.length - 1];
-      expect(anchorAtPoint(design, start), `${run.service} start`).toEqual(run.attachments?.start ?? null);
-      expect(anchorAtPoint(design, end), `${run.service} end`).toEqual(run.attachments?.end ?? null);
+      // Coincident anchors (a column's level outlets stack in plan) are
+      // chosen by the run end's own elevation — the selection contract.
+      const hint = (i) =>
+        (Array.isArray(run.elevIn) ? run.elevIn[i] : undefined) ?? run.elevationIn ?? null;
+      expect(anchorAtPoint(design, start, hint(0)), `${run.service} start`).toEqual(run.attachments?.start ?? null);
+      expect(anchorAtPoint(design, end, hint(run.points.length - 1)), `${run.service} end`).toEqual(run.attachments?.end ?? null);
     }
   });
 
@@ -252,9 +295,11 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
       expect(byTag[tag], tag).toBeTruthy();
       expect([...(attachedByTag[tag] || [])].sort(), `${tag} attached anchors`).toEqual(sixNozzles);
     }
-    // 41 ends were attached before the fix; the exchanger rework adds 22
-    // (8 tube + 8 shell + 6 cooling-water), for 63 attached ends total.
-    expect(totalAttached).toBe(63);
+    // 63 attached ends through the exchanger rework; D7/D8 add 8 more:
+    // 2 fractionator draw outlets + 6 vessel utility connections. The
+    // D8 scope-review fold-in adds 12 utility connections for the
+    // reactor/column vessels (R-101, R-102, T-101, T-102 × 3 services).
+    expect(totalAttached).toBe(83);
   });
 
   it("moving a middle exchanger drags its connected pipe ends along (P663-001)", () => {

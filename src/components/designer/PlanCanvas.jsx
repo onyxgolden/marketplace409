@@ -39,6 +39,10 @@ import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
 import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
+import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
+import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
+import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
+import { FlangePairGlyph } from "./flangeDraw";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
   FURNITURE_MAX_SIZE_IN,
@@ -1793,12 +1797,40 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         </text>
       );
     }
+    // Flanged connections (equipment nozzles + pipe-to-pipe junctions)
+    // and the plan break indication where the run steps in elevation to
+    // cross another pipe — both from the shared domain models.
+    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    const segElevs = segmentElevationsForDesign(design, run);
+    const jogTicks = [];
+    for (let i = 1; i + 1 < (run.points || []).length; i += 1) {
+      if (segElevs[i] === segElevs[i - 1]) continue;
+      const v = toScreen(run.points[i]);
+      const a = toScreen(run.points[i - 1]);
+      const len = Math.hypot(v.x - a.x, v.y - a.y) || 1;
+      const ux = (v.x - a.x) / len;
+      const uy = (v.y - a.y) / len;
+      for (const off of [-4, 4]) {
+        jogTicks.push(
+          <line
+            key={`jog-${i}-${off}`}
+            x1={v.x + ux * off - uy * 7}
+            y1={v.y + uy * off + ux * 7}
+            x2={v.x + ux * off + uy * 7}
+            y2={v.y + uy * off - ux * 7}
+            stroke="#f8fafc"
+            strokeWidth={1.75}
+            data-jog="true"
+          />,
+        );
+      }
+    }
     return (
       <g key={run.id}>
         <polyline
           points={pts}
           fill="none"
-          stroke={isSelected ? "#f59e0b" : effectiveColor(design, run, "#7dd3fc")}
+          stroke={isSelected ? "#f59e0b" : finalPipeColor(design, run)}
           strokeWidth={widthPx}
           strokeLinecap={run.underground ? "butt" : "round"}
           strokeLinejoin="round"
@@ -1806,6 +1838,24 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           opacity={0.9}
           data-underground={run.underground ? "true" : undefined}
         />
+        {jogTicks}
+        {flanges.map((f) => {
+          const s = toScreen(f);
+          const dims = flangeDims(f.sizeIn);
+          return (
+            <FlangePairGlyph
+              key={`flange-${f.end}`}
+              x={s.x}
+              y={s.y}
+              angleDeg={f.axisDeg}
+              od={dims.odIn * view.scale}
+              thickness={dims.thicknessIn * view.scale}
+              pair
+              stroke="#f8fafc"
+              testId={`pipe-flange-${run.id}-${f.end}`}
+            />
+          );
+        })}
         {label}
         {isSelected &&
           (run.points || []).map((v, i) => {

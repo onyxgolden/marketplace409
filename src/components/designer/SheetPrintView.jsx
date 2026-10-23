@@ -39,6 +39,13 @@ import {
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { doorSwingFrame } from "@/domains/roomDesigner/designerHandles";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
+import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
+import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
+import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
+import { manwayLocal, accessPackageLocal } from "@/domains/roomDesigner/vesselAccess";
+import { UTILITY_ANCHOR_SPECS, isVesselSymbol } from "@/domains/roomDesigner/utilityPiping";
+import { downcomerLevels } from "@/domains/roomDesigner/downcomers";
+import { FlangePairGlyph } from "./flangeDraw";
 
 const INK = "#1a1a1a";
 const HAIRLINE = "#555555";
@@ -211,20 +218,63 @@ function PrintFurniture({ design }) {
 }
 
 function PrintPipes({ design }) {
+  const flanges = connectionFlanges(design);
   return (
     <g>
-      {(design.pipes || []).map((run) => (
-        <polyline
-          key={run.id}
-          points={pts(run.points || [])}
-          fill="none"
-          stroke={effectiveColor(design, run, INK)}
-          strokeWidth={Math.max(run.diameterIn || 1, 0.75)}
-          strokeLinecap={run.underground ? "butt" : "round"}
-          strokeLinejoin="round"
-          strokeDasharray={run.underground ? "8 4" : undefined}
-        />
-      ))}
+      {(design.pipes || []).map((run) => {
+        const segElevs = segmentElevationsForDesign(design, run);
+        const jogTicks = [];
+        for (let i = 1; i + 1 < (run.points || []).length; i += 1) {
+          if (segElevs[i] === segElevs[i - 1]) continue;
+          const v = run.points[i];
+          const a = run.points[i - 1];
+          const len = Math.hypot(v.x - a.x, v.y - a.y) || 1;
+          const ux = (v.x - a.x) / len;
+          const uy = (v.y - a.y) / len;
+          for (const off of [-2.5, 2.5]) {
+            jogTicks.push(
+              <line
+                key={`${run.id}-jog-${i}-${off}`}
+                x1={v.x + ux * off - uy * 4}
+                y1={v.y + uy * off + ux * 4}
+                x2={v.x + ux * off + uy * 4}
+                y2={v.y + uy * off - ux * 4}
+                stroke={INK}
+                strokeWidth={0.6}
+              />,
+            );
+          }
+        }
+        return (
+          <g key={run.id}>
+            <polyline
+              points={pts(run.points || [])}
+              fill="none"
+              stroke={finalPipeColor(design, run, INK)}
+              strokeWidth={Math.max(run.diameterIn || 1, 0.75)}
+              strokeLinecap={run.underground ? "butt" : "round"}
+              strokeLinejoin="round"
+              strokeDasharray={run.underground ? "8 4" : undefined}
+            />
+            {jogTicks}
+          </g>
+        );
+      })}
+      {flanges.map((f) => {
+        const dims = flangeDims(f.sizeIn);
+        return (
+          <FlangePairGlyph
+            key={`flange-${f.runId}-${f.end}`}
+            x={f.x}
+            y={f.y}
+            angleDeg={f.axisDeg}
+            od={dims.odIn}
+            thickness={dims.thicknessIn}
+            pair
+            stroke={INK}
+          />
+        );
+      })}
     </g>
   );
 }
@@ -277,16 +327,98 @@ function PrintSymbols({ design }) {
         const ink = effectiveColor(design, inst, INK); // system / own color, else ink
         if (sym.tema) return <PrintTemaSymbol key={inst.id} symbol={sym} inst={inst} ink={ink} />;
         if (sym.rack) return <PrintRack key={inst.id} symbol={sym} inst={inst} ink={ink} />;
-        const w = sym.widthIn || 12;
-        const h = sym.depthIn || 12;
+        const w = inst.widthIn ?? sym.widthIn ?? 12;
+        const h = inst.depthIn ?? sym.depthIn ?? 12;
         const label = inst.tag || sym.label || inst.symbolId;
+        const isEquipment = inst.domain === "processEquipment";
+        const mw = isEquipment ? manwayLocal(sym, inst) : null;
+        const pkg = isEquipment ? accessPackageLocal(sym, inst, design) : null;
+        const levels = isEquipment ? downcomerLevels(sym, inst, design) : [];
         return (
           <g key={inst.id} transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`}>
             <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="#ffffff" stroke={ink} strokeWidth={1} />
+            {isEquipment &&
+              (sym.nozzles || []).map((n) => {
+                const dims = flangeDims(n.sizeIn);
+                const x = n.fx * (w / 2);
+                const y = n.fy * (h / 2);
+                if (n.fx === 0 && n.fy === 0) {
+                  return (
+                    <circle key={n.id} cx={x} cy={y} r={dims.odIn / 2} fill="none" stroke={INK} strokeWidth={0.6} />
+                  );
+                }
+                return (
+                  <FlangePairGlyph
+                    key={n.id}
+                    x={x}
+                    y={y}
+                    angleDeg={(Math.atan2(y, x) * 180) / Math.PI}
+                    od={dims.odIn}
+                    thickness={dims.thicknessIn}
+                    pair={false}
+                    stroke={INK}
+                  />
+                );
+              })}
+            {isEquipment &&
+              isVesselSymbol(sym) &&
+              UTILITY_ANCHOR_SPECS.map((n) => {
+                const dims = flangeDims(n.sizeIn);
+                return (
+                  <FlangePairGlyph
+                    key={n.id}
+                    x={n.fx * (w / 2)}
+                    y={n.fy * (h / 2)}
+                    angleDeg={90}
+                    od={dims.odIn}
+                    thickness={dims.thicknessIn}
+                    pair={false}
+                    stroke={INK}
+                  />
+                );
+              })}
+            {mw && (
+              <circle
+                cx={mw.lx}
+                cy={mw.ly}
+                r={mw.diameterIn / 2}
+                fill="none"
+                stroke={INK}
+                strokeWidth={0.75}
+              />
+            )}
+            {pkg && (
+              <g transform={`translate(${pkg.deck.cx} ${pkg.deck.cy}) rotate(${pkg.deck.angleDeg})`}>
+                <rect
+                  x={-pkg.deck.depthIn / 2}
+                  y={-pkg.deck.widthIn / 2}
+                  width={pkg.deck.depthIn}
+                  height={pkg.deck.widthIn}
+                  fill="none"
+                  stroke={INK}
+                  strokeWidth={0.6}
+                  strokeDasharray="4 2"
+                />
+              </g>
+            )}
             <text x={0} y={0} textAnchor="middle" dominantBaseline="middle"
               fontSize={Math.max(2.5, Math.min(5, h / 4))} fill={INK}>
               {String(label).slice(0, 12)}
             </text>
+            {levels
+              .filter((level) => level.label)
+              .map((level, i) => (
+                <text
+                  key={level.index}
+                  x={0}
+                  y={h / 2 + 5 + i * 4.5}
+                  textAnchor="middle"
+                  fontSize={3.5}
+                  fill={INK}
+                >
+                  {`Downcomer ${level.index} · ${level.label}`}
+                </text>
+              ))}
           </g>
         );
       })}

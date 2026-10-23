@@ -17,6 +17,7 @@
  */
 
 import { feetInchesLabel } from "@/domains/roomDesigner/designerGeometry";
+import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
 
 const PAD_SIDE_IN = 10;
 const PAD_TOP_IN = 8;
@@ -41,6 +42,7 @@ function topOf(elevation) {
   let top = 0;
   for (const level of elevation.levels || []) {
     for (const w of level.wallViews || []) top = Math.max(top, w.topIn);
+    if (level.topIn) top = Math.max(top, level.topIn);
   }
   return top > 0 ? top : 108;
 }
@@ -62,6 +64,11 @@ export default function ElevationSvg({ elevation, dark = true, id = "elevation" 
         stroke: "#94a3b8",
         grade: "#f59e0b",
         text: "#cbd5e1",
+        pipe: "#7dd3fc",
+        firewater: "#dc2626",
+        flange: "#e2e8f0",
+        access: "#a8a29e",
+        manway: "#fbbf24",
       }
     : {
         wall: "#cbd5e1",
@@ -69,6 +76,11 @@ export default function ElevationSvg({ elevation, dark = true, id = "elevation" 
         stroke: "#111827",
         grade: "#92400e",
         text: "#111827",
+        pipe: "#0369a1",
+        firewater: "#dc2626",
+        flange: "#111827",
+        access: "#57534e",
+        manway: "#b45309",
       };
 
   const overallWidth = max - min;
@@ -160,6 +172,189 @@ export default function ElevationSvg({ elevation, dark = true, id = "elevation" 
               </g>
             ),
           )}
+
+          {/* Pipes at their modeled elevations, risers at the steps,
+              and a flange marker at every flanged connection. Firewater
+              renders red — red is reserved to firewater. */}
+          {(level.pipeViews || []).map((view, vi) => {
+            if (view.kind === "pipe") {
+              return (
+                <line
+                  key={`pipe-${vi}`}
+                  x1={view.u0}
+                  x2={view.u1}
+                  y1={yOf(view.elevIn)}
+                  y2={yOf(view.elevIn)}
+                  stroke={view.firewater ? palette.firewater : palette.pipe}
+                  strokeWidth={Math.max(1.25, view.diameterIn)}
+                  strokeLinecap="round"
+                />
+              );
+            }
+            if (view.kind === "riser") {
+              return (
+                <line
+                  key={`riser-${vi}`}
+                  x1={view.u}
+                  x2={view.u}
+                  y1={yOf(view.fromIn)}
+                  y2={yOf(view.toIn)}
+                  stroke={palette.pipe}
+                  strokeWidth={2}
+                />
+              );
+            }
+            if (view.kind === "flange") {
+              const odIn = flangeDims(view.sizeIn).odIn;
+              return (
+                <rect
+                  key={`flange-${vi}`}
+                  x={view.u - 1.5}
+                  y={yOf(view.elevIn + odIn / 2)}
+                  width={3}
+                  height={odIn}
+                  fill={palette.flange}
+                  opacity={0.9}
+                />
+              );
+            }
+            return null;
+          })}
+
+          {/* D9 firewater: hydrants (body above grade), directed-spray
+              assemblies (origin + aim tick), reducers and tee markers —
+              the same identities validation consumes (PR668-002). */}
+          {(level.firewaterViews || []).map((view, vi) => {
+            if (view.kind === "hydrant") {
+              return (
+                <g key={`fw-${vi}`}>
+                  <rect
+                    x={view.u - 4}
+                    y={yOf(view.topIn)}
+                    width={8}
+                    height={view.topIn - view.baseIn}
+                    fill={palette.firewater}
+                    opacity={0.9}
+                  />
+                  <circle cx={view.u} cy={yOf(view.topIn) - 3} r={4} fill={palette.firewater} />
+                  {view.label ? (
+                    <text x={view.u} y={yOf(view.topIn) - 8} fontSize={5} fill={palette.text} textAnchor="middle">
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            if (view.kind === "spray") {
+              return (
+                <g key={`fw-${vi}`}>
+                  <circle cx={view.u} cy={yOf(view.elevIn)} r={5} fill="none" stroke={palette.firewater} strokeWidth={1.5} />
+                  {view.aimU !== undefined ? (
+                    <line
+                      x1={view.u}
+                      y1={yOf(view.elevIn)}
+                      x2={view.aimU}
+                      y2={yOf(view.elevIn) + 10}
+                      stroke={palette.firewater}
+                      strokeWidth={1}
+                      strokeDasharray="3 2"
+                      opacity={0.7}
+                    />
+                  ) : null}
+                  {view.label ? (
+                    <text x={view.u} y={yOf(view.elevIn) - 8} fontSize={5} fill={palette.text} textAnchor="middle">
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            if (view.kind === "reducer" || view.kind === "tee") {
+              return (
+                <rect
+                  key={`fw-${vi}`}
+                  x={view.u - 3}
+                  y={yOf(view.elevIn) - 3}
+                  width={6}
+                  height={6}
+                  fill="none"
+                  stroke={palette.flange}
+                  strokeWidth={1.25}
+                />
+              );
+            }
+            return null;
+          })}
+
+          {/* Manways (circles at sill + diameter), catwalk decks,
+              ladders, and downcomer level markers with their labels. */}
+          {(level.accessViews || []).map((view, vi) => {
+            if (view.kind === "manway" || view.kind === "downcomer-manway") {
+              return (
+                <g key={`access-${vi}`}>
+                  <circle
+                    cx={view.u}
+                    cy={yOf((view.sillIn + view.topIn) / 2)}
+                    r={view.diameterIn / 2}
+                    fill="none"
+                    stroke={palette.manway}
+                    strokeWidth={1.25}
+                  />
+                  {view.label ? (
+                    <text x={view.u} y={yOf(view.topIn) - 2} fontSize={5} fill={palette.text} textAnchor="middle">
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            if (view.kind === "catwalk") {
+              return (
+                <rect
+                  key={`access-${vi}`}
+                  x={view.u0}
+                  y={yOf(view.deckIn) - 1}
+                  width={view.u1 - view.u0}
+                  height={2}
+                  fill={palette.access}
+                />
+              );
+            }
+            if (view.kind === "ladder") {
+              return (
+                <line
+                  key={`access-${vi}`}
+                  x1={view.u}
+                  x2={view.u}
+                  y1={yOf(view.fromIn)}
+                  y2={yOf(view.toIn)}
+                  stroke={palette.access}
+                  strokeWidth={2}
+                  strokeDasharray="4 2"
+                />
+              );
+            }
+            if (view.kind === "downcomer") {
+              return (
+                <g key={`access-${vi}`}>
+                  <line
+                    x1={view.u - 3}
+                    x2={view.u + 3}
+                    y1={yOf(view.elevIn)}
+                    y2={yOf(view.elevIn)}
+                    stroke={palette.manway}
+                    strokeWidth={1.5}
+                  />
+                  {view.label ? (
+                    <text x={view.u + 5} y={yOf(view.elevIn) + 2} fontSize={5} fill={palette.text}>
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            return null;
+          })}
         </g>
       ))}
 

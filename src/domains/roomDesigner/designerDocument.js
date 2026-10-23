@@ -44,7 +44,27 @@ import "./mepFixturesCatalog";
 import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
-import { pipeAttachmentErrors } from "./pipeAttachments";
+import {
+  pipeAttachmentErrors,
+  pipeJunctionErrors,
+  connectionCompatibilityErrors,
+  upgradeDesignConnections,
+} from "./pipeAttachments";
+import {
+  pipeCrossingErrors,
+  crossServiceErrors,
+  CONNECTION_FACE_TOLERANCE_IN,
+} from "./pipeCrossings";
+import { vesselAccessErrors, accessEnvelopeErrors } from "./vesselAccess";
+import { downcomerPropsErrors, downcomerGeometryErrors } from "./downcomers";
+import {
+  utilityPipingErrors,
+  utilityService,
+  UTILITY_HEADER_DIAMETER_IN,
+  UTILITY_DROP_DIAMETER_IN,
+} from "./utilityPiping";
+import { firewaterErrors, FIREWATER_MAIN_DIAMETER_IN } from "./firewater";
+import { reducerErrors } from "./pipeReducerModel";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
@@ -70,8 +90,15 @@ import {
 // Re-exported for the catalog UI; the canonical definition lives in
 // furnitureCatalog.js, where the "rooms" symbol set is registered.
 export { ROOM_TEMPLATES, STRUCTURE_TEMPLATES };
+// Re-exported for views/tests: member color assignment lives in
+// designSystems; the document module re-exports it so authoring
+// commands read from one place.
+export { setMemberColor } from "./designSystems";
 
 export const DESIGN_VERSION = 1;
+
+/** Current generated-components marker version (R8 lifecycle gate). */
+export const DESIGN_COMPONENTS_VERSION = 1;
 
 export const OPENING_DEFAULTS = Object.freeze({
   door: Object.freeze({ widthIn: 36 }),
@@ -124,6 +151,13 @@ export function createEmptyDesign(name = "Untitled design", options = {}) {
     cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
     mode: normalizeDesignMode(opts.mode), // designer workspace mode: "home" | "industrial" (see designerModes.js)
+    // Generated-components marker (R8): documents carrying the
+    // current marker generate vessel components (nozzles, manways,
+    // access, downcomer levels, utility ports) for their equipment.
+    // Documents WITHOUT it are legacy: parseDesign stamps their
+    // equipment instances `legacyComponents` so the generated sets
+    // stay OFF until the explicit, undoable retrofit.
+    componentsVersion: DESIGN_COMPONENTS_VERSION,
   };
 }
 
@@ -693,7 +727,7 @@ export function findPipeRun(design, pipeId) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf } = {}) {
   assertDesign(design);
   const clean = dedupeConsecutivePoints(points);
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
@@ -703,11 +737,328 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     diameterIn: cleanDiameter(diameterIn),
     layer: cleanPipeLayer(layer),
   };
+  if (elevationIn !== undefined && elevationIn !== null) {
+    if (!Number.isFinite(elevationIn)) {
+      throw new Error("Pipe elevation must be a number.");
+    }
+    run.elevationIn = elevationIn;
+  }
+  // Semantic identities (D668-008): a run may carry its utility service
+  // identity, its burial flag, and its designated-source role straight
+  // from the authoring command — validated, stored, round-trippable,
+  // and undoable like any other field.
+  if (utility !== undefined && utility !== null) {
+    if (!utilityService(utility)) throw new Error(`Unknown utility service: ${utility}.`);
+    run.utility = utility;
+  }
+  if (underground !== undefined && underground !== null) {
+    run.underground = Boolean(underground);
+  }
+  if (sourceOf !== undefined && sourceOf !== null) {
+    if (!utilityService(sourceOf)) throw new Error(`Unknown utility service: ${sourceOf}.`);
+    run.sourceOf = sourceOf;
+  }
   const cleanMaterial = cleanText(material);
   if (cleanMaterial) run.material = cleanMaterial;
   const cleanService = cleanText(service);
   if (cleanService) run.service = cleanService;
   return { ...design, pipes: [...(design.pipes || []), run] };
+}
+
+/**
+ * Author a utility run with its semantic identity (D668-008):
+ * addUtilityRun(design, utilityId, points, { id, kind, diameterIn, ... }).
+ * kind "header" defaults to the 2-in header size (Jason's pin),
+ * kind "branch"/"drop" to the 1-in drop size; firewater mains default
+ * to 12 in. An explicit diameterIn always wins. Every size stays
+ * editable per run afterwards.
+ */
+export function addUtilityRun(design, utilityId, points, { id, kind = "header", diameterIn, underground, elevationIn, material, layer } = {}) {
+  if (!utilityService(utilityId)) throw new Error(`Unknown utility service: ${utilityId}.`);
+  const defDiameter =
+    diameterIn ??
+    (utilityId === "firewater"
+      ? FIREWATER_MAIN_DIAMETER_IN
+      : kind === "branch" || kind === "drop"
+        ? UTILITY_DROP_DIAMETER_IN
+        : UTILITY_HEADER_DIAMETER_IN);
+  return addPipeRun(design, points, {
+    id,
+    diameterIn: defDiameter,
+    material,
+    layer,
+    elevationIn,
+    utility: utilityId,
+    underground,
+  });
+}
+
+/** Set (or clear, with null) a run's utility service identity. */
+export function setPipeUtility(design, pipeId, utility) {
+  assertDesign(design);
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== pipeId) return run;
+    changed = true;
+    const next = { ...run };
+    if (utility === undefined || utility === null) delete next.utility;
+    else {
+      if (!utilityService(utility)) throw new Error(`Unknown utility service: ${utility}.`);
+      next.utility = utility;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
+  return { ...design, pipes };
+}
+
+/**
+ * Designate (or un-designate, with null) a run as a service's source /
+ * battery-limit inlet run. The service id must be a known utility
+ * service; clearing removes the designation.
+ */
+export function setPipeSource(design, pipeId, serviceId) {
+  assertDesign(design);
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== pipeId) return run;
+    changed = true;
+    const next = { ...run };
+    if (serviceId === undefined || serviceId === null) delete next.sourceOf;
+    else {
+      if (!utilityService(serviceId)) throw new Error(`Unknown utility service: ${serviceId}.`);
+      next.sourceOf = serviceId;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
+  return { ...design, pipes };
+}
+
+/**
+ * Assign (or unassign, with null) a directed-spray assembly to the
+ * vessel it protects. Both ends are validated: the assembly must be a
+ * placed spray-nozzle, the target an existing symbol.
+ */
+export function assignSprayTarget(design, sprayId, vesselId) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== sprayId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "spray-nozzle") {
+      throw new Error(`Symbol ${sprayId} is not a directed-spray assembly.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (vesselId === undefined || vesselId === null) delete next.protects;
+    else {
+      if (!(design.symbols || []).some((t) => t.id === vesselId)) {
+        throw new Error(`Unknown spray target: ${vesselId}.`);
+      }
+      next.protects = vesselId;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Set (or clear, with null) a fire hydrant's authored main-station
+ * association. Clearing falls back to the legacy proximity rule.
+ */
+export function setHydrantStation(design, hydrantId, runId) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== hydrantId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "fire-hydrant") {
+      throw new Error(`Symbol ${hydrantId} is not a fire hydrant.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (runId === undefined || runId === null) delete next.stationRunId;
+    else {
+      if (!(design.pipes || []).some((r) => r.id === runId)) {
+        throw new Error(`Unknown pipe run: ${runId}.`);
+      }
+      next.stationRunId = runId;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${hydrantId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Set (or clear, with null) the authored unit boundary polygon.
+ * Structural validation only (>= 3 finite points); geometric validity
+ * (nondegenerate area) is the validator's job.
+ */
+export function setUnitBoundary(design, polygon) {
+  assertDesign(design);
+  if (polygon !== undefined && polygon !== null) {
+    if (
+      !Array.isArray(polygon) ||
+      polygon.length < 3 ||
+      !polygon.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
+    ) {
+      throw new Error("Unit boundary must be a polygon of at least three finite points.");
+    }
+  }
+  const next = { ...design };
+  if (polygon === undefined || polygon === null) delete next.unitBoundary;
+  else next.unitBoundary = polygon.map((p) => ({ x: p.x, y: p.y }));
+  return next;
+}
+
+/**
+ * Set (or clear, with null) a directed-spray assembly's authored AIM
+ * point (R9). The aim is a plan point the discharge axis runs
+ * through; validation separately checks it lands on the assigned
+ * vessel. Clearing removes the field (the assembly renders in the
+ * named unresolved state until re-aimed).
+ */
+export function setSprayAim(design, sprayId, point) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== sprayId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "spray-nozzle") {
+      throw new Error(`Symbol ${sprayId} is not a directed-spray assembly.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (point === undefined || point === null) delete next.aimAt;
+    else {
+      if (!isValidPoint(point)) throw new Error("Spray aim point must be valid.");
+      next.aimAt = { x: point.x, y: point.y };
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Author (or clear, with a null runId) a directed-spray assembly's
+ * INLET connection (F3): the firewater branch end attached to the
+ * assembly's stable inlet interface. The reference is validated at
+ * authoring time — the assembly must be a placed spray-nozzle, the
+ * run must exist and be a firewater run, and the named end must land
+ * on the inlet face (within face tolerance). Full verification
+ * (elevation/riser, orientation, inlet size or owned reducer, source
+ * reachability) stays the validator's job (verifiedSpraySupply), so
+ * a stamped reference can still go stale honestly. Clearing removes
+ * both fields; an unreferenced assembly has no supply.
+ */
+export function connectSprayInlet(design, sprayId, { runId, end } = {}) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== sprayId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "spray-nozzle") {
+      throw new Error(`Symbol ${sprayId} is not a directed-spray assembly.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (runId === undefined || runId === null) {
+      delete next.inletRunId;
+      delete next.inletEnd;
+      return next;
+    }
+    if (end !== "start" && end !== "end") {
+      throw new Error("Spray inlet connection must name the branch end (start or end).");
+    }
+    const run = (design.pipes || []).find((r) => r.id === runId);
+    if (!run) throw new Error(`Unknown pipe run: ${runId}.`);
+    if (run.utility !== "firewater") {
+      throw new Error(`Pipe run ${runId} is not a firewater run — it cannot feed a spray inlet.`);
+    }
+    if (!Array.isArray(run.points) || run.points.length < 2) {
+      throw new Error(`Pipe run ${runId} has no modeled route.`);
+    }
+    const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
+    if (Math.hypot(point.x - s.x, point.y - s.y) > CONNECTION_FACE_TOLERANCE_IN) {
+      throw new Error(
+        `Pipe run ${runId} (${end}) does not land on the inlet face of spray assembly ${sprayId}.`,
+      );
+    }
+    next.inletRunId = runId;
+    next.inletEnd = end;
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Delete or restore a symbol's catalog manway (R9) through the
+ * D668-007 tombstone contract: delete writes `manway: null`;
+ * restore removes the tombstone, returning the catalog spec.
+ * Restoring never overwrites an authored manway object.
+ */
+export function setSymbolManwayDeleted(design, instanceId, deleted) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    const next = { ...s };
+    if (deleted) next.manway = null;
+    else if (next.manway === null || next.manway?.deleted === true) delete next.manway;
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Tombstone or restore one of a symbol's generated nozzles (R9),
+ * through the D668-007 `nozzleTombstones` contract: deleting adds
+ * the anchor id; restoring removes it (and the field itself when
+ * the last tombstone clears, so a restored instance is byte-clean).
+ */
+export function setSymbolNozzleTombstone(design, instanceId, anchorId, deleted) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    const next = { ...s };
+    const current = Array.isArray(next.nozzleTombstones) ? next.nozzleTombstones : [];
+    if (deleted) {
+      if (!current.includes(anchorId)) next.nozzleTombstones = [...current, anchorId];
+    } else {
+      const remaining = current.filter((id) => id !== anchorId);
+      if (remaining.length > 0) next.nozzleTombstones = remaining;
+      else delete next.nozzleTombstones;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * The explicit legacy retrofit (R8): enable generated components on
+ * every legacy-stamped equipment instance of the document and bring
+ * pipe connections up to the current attachment upgrade. An ordinary
+ * document edit — it persists and undoes like any other command; it
+ * is never applied implicitly at load.
+ */
+export function retrofitDesignComponents(design) {
+  assertDesign(design);
+  const unstamped = {
+    ...design,
+    symbols: (design.symbols || []).map((s) => {
+      if (s?.legacyComponents !== true) return s;
+      const next = { ...s };
+      delete next.legacyComponents;
+      return next;
+    }),
+  };
+  return upgradeDesignConnections(unstamped);
 }
 
 export function deletePipeRun(design, pipeId) {
@@ -735,6 +1086,14 @@ export function setPipeFields(design, pipeId, fields = {}) {
       else delete next.service;
     }
     if (fields.layer !== undefined) next.layer = cleanPipeLayer(fields.layer);
+    if (fields.elevationIn !== undefined) {
+      if (fields.elevationIn === null) delete next.elevationIn;
+      else if (Number.isFinite(fields.elevationIn)) {
+        next.elevationIn = fields.elevationIn;
+      } else {
+        throw new Error("Pipe elevation must be a number.");
+      }
+    }
     return next;
   });
   if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
@@ -846,6 +1205,22 @@ export function setSymbolLayer(design, instanceId, layer) {
   assertDesign(design);
   if (!PIPE_LAYERS.includes(layer)) throw new Error(`Unknown layer: ${layer}`);
   return setShapeField(design, "symbols", instanceId, "layer", layer, "symbol");
+}
+
+/** The editable flammability designation fire protection keys off:
+ * true (highly flammable), "unknown", or false (not flammable). The
+ * value is stored as designated — unknown is a real state, never
+ * silently treated as low risk. */
+export function setSymbolFlammable(design, instanceId, flammable) {
+  assertDesign(design);
+  if (flammable !== true && flammable !== false && flammable !== "unknown") {
+    throw new Error(`Unknown flammability designation: ${flammable}`);
+  }
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    return { ...s, flammable };
+  });
+  return { ...design, symbols };
 }
 
 // ---- Org charts (Phase 3: people org charts) ----
@@ -1087,7 +1462,18 @@ export function validateDesign(design) {
       errors.push(`Pipe run ${run.id} has a bad diameter.`);
     }
     errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
+    errors.push(...pipeJunctionErrors(run)); // optional pipe-to-pipe junctions
   }
+  errors.push(...pipeCrossingErrors(design)); // elevation crossings + footprint pass-throughs
+  errors.push(...crossServiceErrors(design)); // cross-service tees (utility/firewater/process)
+  errors.push(...vesselAccessErrors(design)); // vessel manways + catwalk access
+  errors.push(...accessEnvelopeErrors(design)); // access-deck obstruction / feasibility
+  errors.push(...downcomerPropsErrors(design)); // column downcomer level properties
+  errors.push(...downcomerGeometryErrors(design)); // downcomer shell/head fit
+  errors.push(...utilityPipingErrors(design)); // vessel utility connections (water/air/nitrogen)
+  errors.push(...connectionCompatibilityErrors(design)); // connection size/elevation mismatches
+  errors.push(...reducerErrors(design)); // reducer/transition component validity
+  errors.push(...firewaterErrors(design)); // hydrant spacing + spray coverage/standoff
   errors.push(...systemErrors(design)); // optional systems + member colors
   errors.push(...rackErrors(design)); // optional rack parameters
   for (const instance of design.symbols || []) {
@@ -1189,6 +1575,21 @@ export function parseDesign(json) {
   // A duplicate ID (from a damaged or hand-edited file) keeps its first view and
   // gives the later ones fresh IDs, so a delete can only ever remove one view.
   parsed.cameraViews = uniqueCameraViews(Array.isArray(parsed.cameraViews) ? parsed.cameraViews : []);
+  // Generated-components lifecycle gate (R8): a document saved
+  // before the components marker existed loads with its equipment
+  // instances stamped `legacyComponents` — their generated component
+  // sets (catalog nozzles, manway/access, downcomer levels, utility
+  // ports) stay OFF, exactly as the document was authored, until the
+  // user runs the explicit retrofit (retrofitDesignComponents, an
+  // ordinary undoable edit). Authored data is never stamped away:
+  // instance overrides ride the instances themselves and the gate
+  // readers honor them. Loading NEVER silently upgrades a document.
+  if (parsed.componentsVersion !== DESIGN_COMPONENTS_VERSION) {
+    parsed.symbols = (parsed.symbols || []).map((s) =>
+      s && s.domain === "processEquipment" ? { ...s, legacyComponents: true } : s,
+    );
+    parsed.componentsVersion = DESIGN_COMPONENTS_VERSION;
+  }
   return parsed;
 }
 

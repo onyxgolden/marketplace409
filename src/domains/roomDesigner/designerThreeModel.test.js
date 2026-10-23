@@ -21,6 +21,7 @@ import {
   resetDesignerIds,
 } from "./designerDocument";
 import { addSystem, setMemberColor, setMemberSystem, setPipeUnderground } from "./designSystems";
+import { NON_FIREWATER_RED_REMAP } from "./pipeColorPolicy";
 import { setRackParams } from "./rackGeometry";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { beforeEach } from "vitest";
@@ -497,12 +498,16 @@ describe("designerThreeModel — pipeDescriptors", () => {
 
     const pipes = pipeDescriptors(d);
     expect(pipes.map((p) => p.id)).toEqual(["own", "sys", "plain"]);
-    expect(pipes.map((p) => p.color)).toEqual(["#ef4444", "#22c55e", "#7dd3fc"]);
+    // D668-009: the own color wins the precedence chain, but a RED
+    // own-color on a non-firewater run remaps off the reserved red band
+    // at the final resolved-color boundary (before: "#ef4444").
+    expect(pipes.map((p) => p.color)).toEqual([NON_FIREWATER_RED_REMAP, "#22c55e", "#7dd3fc"]);
     // Diameter carries through and radius derives from it (default 2 in).
     expect(pipes[0]).toMatchObject({ kind: "pipe", diameterIn: 4, radiusIn: 2, underground: false });
     expect(pipes[1]).toMatchObject({ diameterIn: 2, radiusIn: 1 });
     // Plan coords map x -> x, y -> z, at the low pipeway centerline.
-    expect(pipes[0].segments).toEqual([{ a: { x: 0, z: 0 }, b: { x: 120, z: 0 }, yIn: 30 }]);
+    // D668-002: segments carry y0In/y1In (true endpoint elevations) alongside yIn.
+    expect(pipes[0].segments).toEqual([{ a: { x: 0, z: 0 }, b: { x: 120, z: 0 }, yIn: 30, y0In: 30, y1In: 30 }]);
     expect(pipes[0].joints).toEqual([
       { x: 0, z: 0, yIn: 30 },
       { x: 120, z: 0, yIn: 30 },

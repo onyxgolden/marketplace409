@@ -10,6 +10,7 @@ import {
 } from "@/domains/roomDesigner/furnitureCatalog";
 import {
   reconcilePipeAttachments,
+  reconcileRunJunctions,
 } from "@/domains/roomDesigner/pipeAttachments";
 
 export {
@@ -39,8 +40,9 @@ function withPipeDefaults(design) {
  */
 function touch(state, nextDesign, coalesceKey) {
   // Pipe ends attached to equipment nozzles follow every edit (move,
-  // rotate, resize, reconfigure, delete); a no-op for unattached designs.
-  const design = reconcilePipeAttachments(nextDesign);
+  // rotate, resize, reconfigure, delete); junction ends stay on their
+  // host runs the same way. A no-op for unattached designs.
+  const design = reconcileRunJunctions(reconcilePipeAttachments(nextDesign));
   const past = state.past || [];
   // Coalescing only folds into the latest entry while no redo is pending; an
   // edit made after an undo starts its own undo record and clears redo.

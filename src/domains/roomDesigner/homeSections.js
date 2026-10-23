@@ -17,9 +17,12 @@
 //   endpoint A along the wall's normalized direction vector, and both the
 //   opening's start and end are projected onto the view axis. Treating the
 //   offset as a global X/Y would be wrong for angled walls.
-// - Pipes are NOT drawn: pipe runs store plan points only, with no vertical
-//   position — drawing them would invent dimensions. Documented as a
-//   limitation, not a silent omission.
+// - Pipes ARE drawn at their modeled centerline elevations: a run's
+//   stored profile when it has one, otherwise the standard derived
+//   elevation (rack support, else the grade centerline). Flanged
+//   connections, vessel manways, catwalk decks, ladders, and column
+//   downcomer levels project from the same component models as the
+//   plan, print, and 3D views.
 // - Views are computed on the fly from the on-screen design; zero
 //   persistence, zero DB/API change.
 //
@@ -30,6 +33,11 @@
 
 import { validateHomeProject } from "./homeProject";
 import { normalizeUnits, projectWithEditedDesign } from "./homeQuantities";
+import { findSymbol } from "./symbolRegistry";
+import { connectionFlanges, physicalRouteIn } from "./pipeCrossings";
+import { teeFittings } from "./pipeAttachments";
+import { accessPackageWorld, baseElevationIn, manwayWorld } from "./vesselAccess";
+import { downcomerLevels } from "./downcomers";
 
 /** The four cardinal elevation directions. */
 export const ELEVATION_DIRECTIONS = Object.freeze(["N", "S", "E", "W"]);
@@ -191,6 +199,216 @@ function projectWall(wall, u, levelBaseIn, wallHeightIn, openings, assumptions) 
 }
 
 /**
+ * Pipe runs projected onto the view axis from the SHARED physical
+ * route (physicalRouteIn — the same profile validation and the 3D
+ * model consume, R3): each segment view carries BOTH endpoint
+ * elevations (elev0In/elev1In) so a sloped segment draws sloped;
+ * elevIn keeps the segment's high endpoint for existing consumers.
+ * A zero-plan route step is a true riser and projects as one.
+ */
+function projectPipes(design, u, levelBaseIn) {
+  const views = [];
+  const proj = (p) => p.x * u.x + p.y * u.y;
+  for (const run of Array.isArray(design.pipes) ? design.pipes : []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) continue;
+    const route = physicalRouteIn(design, run);
+    for (let i = 0; i + 1 < route.length; i += 1) {
+      const a = route[i];
+      const b = route[i + 1];
+      if (Math.hypot(b.x - a.x, b.y - a.y) <= 1e-9) {
+        if (a.zIn !== b.zIn) {
+          views.push({
+            kind: "riser",
+            runId: run.id,
+            u: round2(proj(a)),
+            fromIn: round2(levelBaseIn + Math.min(a.zIn, b.zIn)),
+            toIn: round2(levelBaseIn + Math.max(a.zIn, b.zIn)),
+          });
+        }
+        continue;
+      }
+      views.push({
+        kind: "pipe",
+        runId: run.id,
+        u0: round2(proj(a)),
+        u1: round2(proj(b)),
+        elevIn: round2(levelBaseIn + Math.max(a.zIn, b.zIn)),
+        elev0In: round2(levelBaseIn + a.zIn),
+        elev1In: round2(levelBaseIn + b.zIn),
+        diameterIn: run.diameterIn ?? 2,
+        ...(run.utility === "firewater" ? { firewater: true } : {}),
+      });
+    }
+  }
+  for (const f of connectionFlanges(design)) {
+    views.push({
+      kind: "flange",
+      runId: f.runId,
+      u: round2(proj(f)),
+      elevIn: round2(levelBaseIn + f.elevationIn),
+      sizeIn: f.sizeIn,
+      connection: f.kind,
+    });
+  }
+  return views;
+}
+
+/**
+ * Vessel manways, catwalk decks, ladders, and column downcomer levels
+ * projected onto the view axis — the access components of the design,
+ * from the same derivations the plan and 3D views use.
+ */
+/**
+ * D9 firewater components projected onto the view axis (PR668-002):
+ * hydrants (body above grade at their plan position), directed-spray
+ * assemblies (discharge origin + aim), and reducer/tee markers — the
+ * same identities and geometry validation consumes.
+ * [{ kind: "hydrant"|"spray"|"reducer"|"tee", instanceId, u, ... }]
+ */
+function projectFirewater(design, u, levelBaseIn) {
+  const views = [];
+  const proj = (p) => p.x * u.x + p.y * u.y;
+  for (const inst of Array.isArray(design.symbols) ? design.symbols : []) {
+    if (inst.domain !== "piping") continue;
+    if (inst.symbolId === "fire-hydrant") {
+      views.push({
+        kind: "hydrant",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        baseIn: round2(levelBaseIn),
+        topIn: round2(levelBaseIn + 36),
+        label: inst.tag || "",
+      });
+    } else if (inst.symbolId === "spray-nozzle") {
+      const elevIn = Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0;
+      const view = {
+        kind: "spray",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        elevIn: round2(levelBaseIn + elevIn),
+        label: inst.tag || "",
+      };
+      if (inst.protects) view.protects = inst.protects;
+      if (inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)) {
+        view.aimU = round2(proj(inst.aimAt));
+      }
+      views.push(view);
+    } else if (inst.symbolId === "reducer") {
+      const elevIn = Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0;
+      views.push({
+        kind: "reducer",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        elevIn: round2(levelBaseIn + elevIn),
+        inletSizeIn: inst.inletSizeIn ?? null,
+        outletSizeIn: inst.outletSizeIn ?? null,
+        label: inst.tag || "",
+      });
+    }
+  }
+  for (const tee of teeFittings(design)) {
+    views.push({
+      kind: "tee",
+      instanceId: tee.id,
+      u: round2(proj(tee)),
+      elevIn: round2(levelBaseIn + tee.elevationIn),
+      branchSizeIn: tee.branchSizeIn,
+      hostSizeIn: tee.hostSizeIn,
+    });
+  }
+  return views;
+}
+
+function projectAccess(design, u, levelBaseIn) {
+  const views = [];
+  const proj = (p) => p.x * u.x + p.y * u.y;
+  for (const inst of Array.isArray(design.symbols) ? design.symbols : []) {
+    if (inst.domain !== "processEquipment") continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol) continue;
+    const manway = manwayWorld(symbol, inst);
+    if (manway) {
+      // World frame (R4): the catalog sill is local to the equipment
+      // base; the section datum adds the level base AND the modeled
+      // base elevation, matching the 3D view and the access package.
+      const sillWorldIn = baseElevationIn(inst) + manway.sillIn;
+      views.push({
+        kind: "manway",
+        instanceId: inst.id,
+        u: round2(proj(manway)),
+        sillIn: round2(levelBaseIn + sillWorldIn),
+        topIn: round2(levelBaseIn + sillWorldIn + manway.diameterIn),
+        diameterIn: manway.diameterIn,
+        label: inst.tag || "",
+      });
+    }
+    const pkg = accessPackageWorld(symbol, inst, design);
+    if (pkg) {
+      const us = pkg.deck.corners.map((c) => proj(c));
+      views.push({
+        kind: "catwalk",
+        instanceId: inst.id,
+        u0: round2(Math.min(...us)),
+        u1: round2(Math.max(...us)),
+        deckIn: round2(levelBaseIn + pkg.deck.elevationIn),
+      });
+      views.push({
+        kind: "ladder",
+        instanceId: inst.id,
+        u: round2(proj(pkg.ladder)),
+        fromIn: round2(levelBaseIn + pkg.ladder.fromIn),
+        toIn: round2(levelBaseIn + pkg.ladder.toIn),
+      });
+    }
+    for (const level of downcomerLevels(symbol, inst, design)) {
+      views.push({
+        kind: "downcomer-manway",
+        instanceId: inst.id,
+        u: round2(proj(level.manway)),
+        sillIn: round2(levelBaseIn + level.manway.sillIn),
+        topIn: round2(levelBaseIn + level.manway.sillIn + level.manway.diameterIn),
+        diameterIn: level.manway.diameterIn,
+        label: level.label || "",
+      });
+      if (level.platform) {
+        const deck = level.platform.deck;
+        const rad = (deck.angleDeg * Math.PI) / 180;
+        const outward = { x: Math.cos(rad), y: Math.sin(rad) };
+        const tangent = { x: -Math.sin(rad), y: Math.cos(rad) };
+        const half =
+          (deck.depthIn / 2) * Math.abs(u.x * outward.x + u.y * outward.y) +
+          (deck.widthIn / 2) * Math.abs(u.x * tangent.x + u.y * tangent.y);
+        views.push({
+          kind: "catwalk",
+          instanceId: inst.id,
+          u0: round2(proj(deck) - half),
+          u1: round2(proj(deck) + half),
+          deckIn: round2(levelBaseIn + level.elevationIn),
+        });
+        views.push({
+          kind: "ladder",
+          instanceId: inst.id,
+          u: round2(proj(level.platform.ladder)),
+          fromIn: round2(levelBaseIn + level.platform.ladder.fromIn),
+          toIn: round2(levelBaseIn + level.platform.ladder.toIn),
+        });
+      }
+      const draw = level.anchors[0];
+      if (draw) {
+        views.push({
+          kind: "downcomer",
+          instanceId: inst.id,
+          u: round2(proj(draw)),
+          elevIn: round2(levelBaseIn + level.elevationIn),
+          label: level.label || "",
+        });
+      }
+    }
+  }
+  return views;
+}
+
+/**
  * Build one level's elevation slice. baseIn is that level's base elevation
  * above grade (0 for a single-level view; cumulative for stacked views).
  */
@@ -213,7 +431,7 @@ function buildLevelElevation(level, u, levelBaseIn, assumptions) {
     }),
     { min: 0, max: 0 },
   );
-  return {
+  const levelView = {
     id: level.id,
     name: level.name,
     baseIn: round2(levelBaseIn),
@@ -226,6 +444,37 @@ function buildLevelElevation(level, u, levelBaseIn, assumptions) {
     maxIn: round2(span.max),
     wallViews,
   };
+  // Industrial content (pipes at modeled elevations, flanged
+  // connections, manways, catwalks, ladders, downcomer levels) is
+  // attached only when the level actually carries some, so purely
+  // architectural levels keep their exact legacy shape.
+  const pipeViews = projectPipes(design, u, levelBaseIn);
+  const accessViews = projectAccess(design, u, levelBaseIn);
+  const firewaterViews = projectFirewater(design, u, levelBaseIn);
+  if (pipeViews.length > 0) levelView.pipeViews = pipeViews;
+  if (accessViews.length > 0) levelView.accessViews = accessViews;
+  if (firewaterViews.length > 0) levelView.firewaterViews = firewaterViews;
+  if (pipeViews.length > 0 || accessViews.length > 0) {
+    let min = span.min;
+    let max = span.max;
+    let top = levelBaseIn + wallHeightIn;
+    for (const v of pipeViews) {
+      if (v.u0 !== undefined) { min = Math.min(min, v.u0); max = Math.max(max, v.u0); }
+      if (v.u1 !== undefined) { min = Math.min(min, v.u1); max = Math.max(max, v.u1); }
+      if (v.u !== undefined) { min = Math.min(min, v.u); max = Math.max(max, v.u); }
+      top = Math.max(top, v.elevIn ?? 0, v.toIn ?? 0);
+    }
+    for (const v of accessViews) {
+      if (v.u0 !== undefined) { min = Math.min(min, v.u0); max = Math.max(max, v.u0); }
+      if (v.u1 !== undefined) { min = Math.min(min, v.u1); max = Math.max(max, v.u1); }
+      if (v.u !== undefined) { min = Math.min(min, v.u); max = Math.max(max, v.u); }
+      top = Math.max(top, v.topIn ?? 0, v.deckIn ?? 0, v.elevIn ?? 0);
+    }
+    levelView.minIn = round2(min);
+    levelView.maxIn = round2(max);
+    levelView.topIn = round2(top);
+  }
+  return levelView;
 }
 
 const ASSUMPTION_TEXT = Object.freeze({
@@ -235,6 +484,8 @@ const ASSUMPTION_TEXT = Object.freeze({
 });
 
 function finalize(result, assumptionFlags) {
+  const levels = [...(result.levels || []), ...(result.level ? [result.level] : [])];
+  const hasPipes = levels.some((l) => Array.isArray(l?.pipeViews) && l.pipeViews.length > 0);
   return {
     ...result,
     quantitySource: PROVENANCE,
@@ -242,7 +493,9 @@ function finalize(result, assumptionFlags) {
     generatedAt: nowIso(),
     assumptions: [...assumptionFlags].map((key) => ASSUMPTION_TEXT[key]),
     limitations: [
-      "Pipes are not drawn in elevation views — pipe runs store plan points only, with no vertical position.",
+      hasPipes
+        ? "Pipes are drawn in elevation views at their modeled centerline elevations (a run's stored profile where it has one, otherwise the standard support/grade derivation)."
+        : "Pipes are not drawn in elevation views — pipe runs store plan points only, with no vertical position.",
     ],
   };
 }
@@ -282,7 +535,7 @@ export function buildElevation(project, options = {}) {
       units: normalizeUnits(withDesign.units),
       levels: [levelView],
       levelCount: 1,
-      ...finalize({}, assumptionFlags),
+      ...finalize({ levels: [levelView] }, assumptionFlags),
     };
   } catch (error) {
     return {
@@ -332,7 +585,7 @@ export function buildStackedElevation(project, options = {}) {
       levels,
       levelCount: levels.length,
       totalHeightIn: round2(baseIn),
-      ...finalize({}, assumptionFlags),
+      ...finalize({ levels }, assumptionFlags),
     };
   } catch (error) {
     return {

@@ -24,53 +24,246 @@
 
 import { findSymbol } from "./symbolRegistry";
 import { temaAnchorsWorld } from "./temaGeometry";
+import { downcomerAnchorsWorld } from "./downcomers";
+import { utilityAnchorsWorld, utilityPortDescriptors, isVesselSymbol } from "./utilityPiping";
+import {
+  pointSegmentDistance,
+  segmentElevationsForDesign,
+  vertexElevationsForDesign,
+  physicalRouteIn,
+  effectiveApproachSegment,
+  validatedJunctionEdge,
+  JUNCTION_TOLERANCE_IN,
+  CONNECTION_FACE_TOLERANCE_IN,
+} from "./pipeCrossings";
+import { flangeNominalSizeIn, pipeOdIn, NOZZLE_NECK_LENGTH_IN } from "./flangeGeometry";
+import { boundReducerAt } from "./pipeReducerModel";
+
+export { JUNCTION_TOLERANCE_IN, CONNECTION_FACE_TOLERANCE_IN };
 
 const ENDS = ["start", "end"];
 const EPS = 1e-6;
 
 /**
- * World anchors for catalog `nozzles` specs: local offset
+ * Shared side-nozzle face elevation rule: a process side nozzle's
+ * connection face sits at this fraction of the equipment height above
+ * its base. ONE rule feeds snap, reconcile, validation, and rendering —
+ * they can never disagree about where a nozzle face is.
+ */
+export const SIDE_NOZZLE_ELEVATION_FRAC = 0.62;
+
+/**
+ * World anchors for catalog `nozzle` specs: local offset
  * (fx * effWidth / 2, fy * effDepth / 2) with effWidth / effDepth the
  * instance's size overrides or the catalog defaults, rotated by the
  * instance rotation — the same projection temaAnchorsWorld uses.
  * Plan frame: +fx = east, +fy = south.
+ *
+ * Generated-component lifecycle (D668-007): the instance may carry an
+ * explicit authored nozzle list (`inst.nozzles`, an array of specs that
+ * REPLACES the catalog set — [] deletes every nozzle) and/or stable
+ * tombstones (`inst.nozzleTombstones`, an array of catalog nozzle ids
+ * the user deleted). Both are plain instance fields, so they persist
+ * through save/reload and ride the normal undoable edit path.
  */
 export function catalogAnchorsWorld(symbol, inst) {
-  if (!symbol?.nozzles) return [];
+  let specs = symbol?.nozzles;
+  if (Array.isArray(inst?.nozzles)) specs = inst.nozzles;
+  if (!specs) return [];
+  const tombstoned = new Set(
+    Array.isArray(inst?.nozzleTombstones) ? inst.nozzleTombstones : [],
+  );
   const effWidth = inst.widthIn ?? symbol.widthIn;
   const effDepth = inst.depthIn ?? symbol.depthIn;
   const rad = ((inst.rotationDeg || 0) * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  return symbol.nozzles.map((n) => {
+  const out = [];
+  for (const n of specs) {
+    if (!n || typeof n.id !== "string" || tombstoned.has(n.id)) continue;
     const lx = n.fx * (effWidth / 2);
     const ly = n.fy * (effDepth / 2);
-    return {
+    out.push({
       id: n.id,
       x: inst.x + lx * cos - ly * sin,
       y: inst.y + lx * sin + ly * cos,
       sizeIn: n.sizeIn,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /** World anchors for any placed symbol instance (TEMA or catalog nozzles). */
 export function anchorsOf(inst) {
   const symbol = findSymbol(inst.domain, inst.symbolId);
   if (symbol?.tema) return temaAnchorsWorld(symbol, inst);
-  return symbol?.nozzles ? catalogAnchorsWorld(symbol, inst) : [];
+  // A full instance nozzle-list override replaces the whole anchor
+  // set (D668-007): [] deletes every anchor — process, downcomer, and
+  // utility alike — and a custom list replaces the catalog set.
+  if (Array.isArray(inst?.nozzles)) return catalogAnchorsWorld(symbol, inst);
+  // Legacy gate (R8): an instance stamped by the pre-marker document
+  // load has NO generated components until the explicit retrofit —
+  // catalog nozzles, downcomer anchors, and utility ports stay off.
+  // (TEMA anchors above predate the feature and stay byte-identical;
+  // an authored nozzle override is user data and stays, above.)
+  if (inst?.legacyComponents === true) return [];
+  let out = symbol?.nozzles ? catalogAnchorsWorld(symbol, inst) : [];
+  // Columns also expose their downcomer-level nozzles (each carries the
+  // level's elevation, so a run connecting there runs at that elevation).
+  if (symbol?.downcomers) out = [...out, ...downcomerAnchorsWorld(symbol, inst)];
+  // In-scope vessels also expose their base utility ports (plant
+  // water, plant air, nitrogen) AFTER the process nozzles, so a
+  // process nozzle sharing the spot keeps attachment priority.
+  if (isVesselSymbol(symbol)) out = [...out, ...utilityAnchorsWorld(symbol, inst)];
+  return out;
 }
 
-/** The nozzle exactly at `point` (within 1e-6 in): { symbolId, anchorId } or null. */
-export function anchorAtPoint(design, point) {
+/**
+ * The ONE shared 3D connection-face model (D668-005): where a nozzle's
+ * flange face actually sits, for snap, reconcile, validation, and
+ * rendering. Every consumer reads the face from here, so validation
+ * and the 3D view can never disagree.
+ *
+ * Returns { anchorId, x, y, elevationIn, normal: {x, y} | null,
+ *   vertical: bool, sizeIn, kind } or null for an unknown anchor.
+ * - kind "top": the face is the flange at the neck top —
+ *   base + height + neck length, normal straight up;
+ * - kind "side": base + height * SIDE_NOZZLE_ELEVATION_FRAC, normal is
+ *   the outward plan direction through the nozzle;
+ * - kind "utility": the vessel's base utility port (explicit elevation
+ *   and outward normal from utilityPiping);
+ * - kind "downcomer": the level elevation, outward from the column;
+ * - kind "tema": TEMA anchors carry no modeled elevation/normal — the
+ *   legacy behavior (compatibility skips elevation) is preserved
+ *   byte-identical, so elevationIn/normal are null.
+ */
+export function connectionFaceForAnchor(symbol, inst, anchorId) {
+  if (!symbol || !inst || typeof anchorId !== "string") return null;
+  const baseElevIn = inst.baseElevationIn ?? 0;
+  const heightIn = inst.heightIn ?? symbol.heightIn ?? 0;
+  const rad = ((inst.rotationDeg || 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const rotate = (x, y) => ({ x: x * cos - y * sin, y: x * sin + y * cos });
+
+  if (symbol.tema) {
+    const anchor = temaAnchorsWorld(symbol, inst).find((a) => a.id === anchorId);
+    if (!anchor) return null;
+    return {
+      anchorId,
+      x: anchor.x,
+      y: anchor.y,
+      elevationIn: null,
+      normal: null,
+      vertical: false,
+      sizeIn: null,
+      kind: "tema",
+    };
+  }
+  // Legacy gate (R8): generated faces do not resolve on a pre-marker
+  // instance until the retrofit — an authored nozzle override is the
+  // only face source that survives the gate.
+  if (inst?.legacyComponents === true && !Array.isArray(inst?.nozzles)) return null;
+  // Utility ports: explicit elevation + outward normal. A full
+  // instance nozzle-list override (D668-007) replaces the whole anchor
+  // set, so overridden-away ports resolve no face.
+  if (isVesselSymbol(symbol) && !Array.isArray(inst?.nozzles)) {
+    const port = utilityPortDescriptors(symbol, inst).find((p) => p.id === anchorId);
+    if (port) {
+      return {
+        anchorId,
+        x: port.x,
+        y: port.y,
+        elevationIn: port.elevationIn,
+        normal: { x: port.dirX, y: port.dirY },
+        vertical: false,
+        sizeIn: port.sizeIn,
+        kind: "utility",
+      };
+    }
+  }
+  // Downcomer level nozzles: the level elevation, outward from the
+  // column. Same override rule as utility ports above.
+  if (symbol.downcomers && !Array.isArray(inst?.nozzles)) {
+    const level = downcomerAnchorsWorld(symbol, inst).find((a) => a.id === anchorId);
+    if (level) {
+      const spec = { x: level.x - inst.x, y: level.y - inst.y };
+      const len = Math.hypot(spec.x, spec.y);
+      const normal = len > 1e-9 ? { x: spec.x / len, y: spec.y / len } : { x: 0, y: 1 };
+      return {
+        anchorId,
+        x: level.x,
+        y: level.y,
+        elevationIn: level.elevationIn,
+        normal,
+        vertical: false,
+        sizeIn: level.sizeIn,
+        kind: "downcomer",
+      };
+    }
+  }
+  // Generic catalog nozzles (honoring the instance lifecycle overrides).
+  const anchor = catalogAnchorsWorld(symbol, inst).find((a) => a.id === anchorId);
+  if (!anchor) return null;
+  const spec = (Array.isArray(inst.nozzles) ? inst.nozzles : symbol.nozzles || []).find(
+    (n) => n?.id === anchorId,
+  );
+  const fx = spec?.fx ?? 0;
+  const fy = spec?.fy ?? 0;
+  const radial = Math.hypot(fx, fy);
+  if (radial < 0.01) {
+    // Top nozzle: the flange face at the neck top.
+    return {
+      anchorId,
+      x: anchor.x,
+      y: anchor.y,
+      elevationIn: baseElevIn + heightIn + NOZZLE_NECK_LENGTH_IN,
+      normal: null,
+      vertical: true,
+      sizeIn: anchor.sizeIn,
+      kind: "top",
+    };
+  }
+  const n = rotate(fx / radial, fy / radial);
+  return {
+    anchorId,
+    x: anchor.x,
+    y: anchor.y,
+    elevationIn: baseElevIn + heightIn * SIDE_NOZZLE_ELEVATION_FRAC,
+    normal: n,
+    vertical: false,
+    sizeIn: anchor.sizeIn,
+    kind: "side",
+  };
+}
+
+/**
+ * The nozzle exactly at `point` (within 1e-6 in): { symbolId, anchorId }
+ * or null. Several anchors can share one plan point (a column's
+ * downcomer draw outlets stack at 10 ft intervals on the same side):
+ * the choice is then made by ELEVATION, never silently by order alone —
+ * an anchor whose level elevation matches `elevationHintIn` (the run
+ * end's own elevation) wins; then a plain grade-level nozzle; then the
+ * lowest level outlet.
+ */
+export function anchorAtPoint(design, point, elevationHintIn = null) {
+  const candidates = [];
   for (const inst of design?.symbols || []) {
     for (const a of anchorsOf(inst)) {
       if (Math.abs(a.x - point.x) <= EPS && Math.abs(a.y - point.y) <= EPS) {
-        return { symbolId: inst.id, anchorId: a.id };
+        candidates.push({ symbolId: inst.id, anchorId: a.id, elevationIn: a.elevationIn ?? null });
       }
     }
   }
-  return null;
+  if (candidates.length === 0) return null;
+  const pick = (list) => ({ symbolId: list[0].symbolId, anchorId: list[0].anchorId });
+  if (elevationHintIn !== null && elevationHintIn !== undefined) {
+    const exact = candidates.filter((c) => c.elevationIn === elevationHintIn);
+    if (exact.length > 0) return pick(exact);
+  }
+  const grade = candidates.filter((c) => c.elevationIn === null);
+  if (grade.length > 0) return pick(grade);
+  return pick([...candidates].sort((a, b) => a.elevationIn - b.elevationIn));
 }
 
 const sameRef = (a, b) => (!a && !b) || (a && b && a.symbolId === b.symbolId && a.anchorId === b.anchorId);
@@ -96,9 +289,11 @@ export function detectRunAttachments(design, runId) {
   let changed = false;
   const pipes = (design.pipes || []).map((run) => {
     if (run.id !== runId || !Array.isArray(run.points) || run.points.length < 2) return run;
+    const hint = (i) =>
+      (Array.isArray(run.elevIn) ? run.elevIn[i] : undefined) ?? run.elevationIn ?? null;
     const found = {
-      start: anchorAtPoint(design, run.points[0]),
-      end: anchorAtPoint(design, run.points[run.points.length - 1]),
+      start: anchorAtPoint(design, run.points[0], hint(0)),
+      end: anchorAtPoint(design, run.points[run.points.length - 1], hint(run.points.length - 1)),
     };
     if (ENDS.every((e) => sameRef(found[e], run.attachments?.[e]))) return run;
     changed = true;
@@ -122,10 +317,24 @@ export function reconcilePipeAttachments(design) {
     if (!anchorCache.has(inst.id)) anchorCache.set(inst.id, anchorsOf(inst));
     return anchorCache.get(inst.id).find((a) => a.id === ref.anchorId) || null;
   };
+  const faceCache = new Map();
+  const faceFor = (ref) => {
+    const inst = byId.get(ref.symbolId);
+    if (!inst) return null;
+    // Canonical tuple key (layer sweep K7): instance ids and anchor
+    // ids are both caller-authorable and delimiter-bearing, so a
+    // "::" join lets one instance/anchor pair read another's face.
+    const key = JSON.stringify([inst.id, ref.anchorId]);
+    if (!faceCache.has(key)) {
+      faceCache.set(key, connectionFaceForAnchor(findSymbol(inst.domain, inst.symbolId), inst, ref.anchorId));
+    }
+    return faceCache.get(key);
+  };
   let changed = false;
   const pipes = design.pipes.map((run) => {
     if (!run.attachments || !Array.isArray(run.points) || run.points.length < 2) return run;
     const points = [...run.points];
+    let elevIn = Array.isArray(run.elevIn) ? [...run.elevIn] : null;
     const kept = {};
     let runChanged = false;
     for (const end of ENDS) {
@@ -142,10 +351,30 @@ export function reconcilePipeAttachments(design) {
         points[i] = { x: a.x, y: a.y };
         runChanged = true;
       }
+      // An attached end connects AT the nozzle's flange face: the shared
+      // face model (snap, validation, rendering) sets the end's
+      // elevation. A face without a modeled elevation (TEMA) leaves the
+      // run's own elevation alone — legacy behavior preserved.
+      const face = faceFor(ref);
+      const faceElevIn = face && Number.isFinite(face.elevationIn) ? face.elevationIn : null;
+      if (faceElevIn !== null) {
+        if (!elevIn || elevIn.length !== points.length) {
+          elevIn = points.map((_, k) => (Array.isArray(run.elevIn) ? run.elevIn[k] ?? null : null));
+        }
+        if (elevIn[i] !== faceElevIn) {
+          elevIn[i] = faceElevIn;
+          runChanged = true;
+        }
+      }
     }
     if (!runChanged) return run;
     changed = true;
-    return withAttachments({ ...run, points }, kept);
+    const next = { ...run, points };
+    if (elevIn) {
+      if (elevIn.some((v) => v != null)) next.elevIn = elevIn;
+      else delete next.elevIn;
+    }
+    return withAttachments(next, kept);
   });
   return changed ? { ...design, pipes } : design;
 }
@@ -161,4 +390,479 @@ export function pipeAttachmentErrors(run) {
     if (!ref || typeof ref.symbolId !== "string" || typeof ref.anchorId !== "string") return bad;
   }
   return [];
+}
+
+// ---- Pipe-to-pipe junctions (D3: every connection is flanged) ----
+//
+// A run end that lands on another run — mid-segment (a tee) or exactly
+// on its end (a coupled joint) — is a pipe-to-pipe connection, modeled
+// as run.junctions: { start?: { runId }, end?: { runId } } and drawn as
+// a flanged joint. An end attached to an equipment nozzle is never a
+// junction (the nozzle attachment wins). Free ends stay plain: the
+// flange exists exactly where a connection exists.
+// (JUNCTION_TOLERANCE_IN is defined in pipeCrossings.js and re-exported
+// at the top of this module.)
+
+function withJunctions(run, junctions) {
+  const next = { ...run };
+  const kept = {};
+  if (junctions.start) kept.start = junctions.start;
+  if (junctions.end) kept.end = junctions.end;
+  if (kept.start || kept.end) next.junctions = kept;
+  else delete next.junctions;
+  return next;
+}
+
+/** Where an end point touches another run: the host point to snap to, or null. */
+function junctionSnapPoint(design, run, end) {
+  const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
+  for (const other of design?.pipes || []) {
+    if (other.id === run.id || !Array.isArray(other.points) || other.points.length < 2) continue;
+    for (const op of [other.points[0], other.points[other.points.length - 1]]) {
+      if (Math.hypot(op.x - point.x, op.y - point.y) <= JUNCTION_TOLERANCE_IN) {
+        return { runId: other.id, point: { x: op.x, y: op.y } };
+      }
+    }
+    for (let i = 0; i + 1 < other.points.length; i += 1) {
+      const hit = pointSegmentDistance(point, other.points[i], other.points[i + 1]);
+      if (hit.distance <= JUNCTION_TOLERANCE_IN && hit.t > EPS && hit.t < 1 - EPS) {
+        return { runId: other.id, point: hit.proj };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Re-derive a run's junctions from where its ends sit now: an end on
+ * another run connects (flanged), any other end disconnects. Returns
+ * the same design when nothing changes.
+ */
+export function detectRunJunctions(design, runId) {
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== runId || !Array.isArray(run.points) || run.points.length < 2) return run;
+    const found = {
+      start: run.attachments?.start ? null : junctionSnapPoint(design, run, "start"),
+      end: run.attachments?.end ? null : junctionSnapPoint(design, run, "end"),
+    };
+    const next = {
+      start: found.start ? { runId: found.start.runId } : null,
+      end: found.end ? { runId: found.end.runId } : null,
+    };
+    const same = ENDS.every((e) => (next[e]?.runId ?? null) === (run.junctions?.[e]?.runId ?? null));
+    if (same) return run;
+    changed = true;
+    return withJunctions(run, next);
+  });
+  return changed ? { ...design, pipes } : design;
+}
+
+/**
+ * Keep junction ends on their host runs after any edit: an end still
+ * touching its host (within tolerance) snaps onto it; an end whose host
+ * moved away or was deleted disconnects and stays where it is. Returns
+ * the same design object when nothing changes.
+ */
+export function reconcileRunJunctions(design) {
+  if (!(design?.pipes || []).some((run) => run.junctions)) return design;
+  const byId = new Map((design.pipes || []).map((r) => [r.id, r]));
+  let changed = false;
+  const pipes = design.pipes.map((run) => {
+    if (!run.junctions || !Array.isArray(run.points) || run.points.length < 2) return run;
+    const points = [...run.points];
+    const kept = {};
+    let runChanged = false;
+    for (const end of ENDS) {
+      const ref = run.junctions[end];
+      if (!ref) continue;
+      if (run.attachments?.[end]) {
+        runChanged = true; // a nozzle attachment supersedes the junction
+        continue;
+      }
+      const host = byId.get(ref.runId);
+      if (!host || host.id === run.id) {
+        runChanged = true; // host gone: end stays put, connection dropped
+        continue;
+      }
+      const idx = end === "start" ? 0 : points.length - 1;
+      const snap = junctionSnapPoint({ pipes: [host] }, { ...run, points }, end);
+      if (!snap) {
+        runChanged = true; // detached
+        continue;
+      }
+      kept[end] = ref;
+      if (Math.hypot(snap.point.x - points[idx].x, snap.point.y - points[idx].y) > EPS) {
+        points[idx] = { x: snap.point.x, y: snap.point.y };
+        runChanged = true;
+      }
+    }
+    if (!runChanged) return run;
+    changed = true;
+    return withJunctions({ ...run, points }, kept);
+  });
+  return changed ? { ...design, pipes } : design;
+}
+
+/** validateDesign messages for a run's optional junction metadata. */
+export function pipeJunctionErrors(run) {
+  if (run.junctions === undefined) return [];
+  const bad = [`Pipe run ${run.id} has malformed junctions.`];
+  const j = run.junctions;
+  if (!j || typeof j !== "object" || Array.isArray(j)) return bad;
+  for (const [key, ref] of Object.entries(j)) {
+    if (!ENDS.includes(key)) return bad;
+    if (!ref || typeof ref.runId !== "string") return bad;
+  }
+  return [];
+}
+
+// ---- Connection compatibility + legacy upgrade ----
+
+/**
+ * A connection is only sound when the faces can actually meet:
+ * - every attachment reference must RESOLVE — a missing instance or a
+ *   nonexistent anchor is a stale reference, never a silent pass (R2);
+ * - the run end must sit ON the named face: the face's plan position
+ *   and elevation (the shared face model — D668-005), approached
+ *   along the face's axis — a side face along its normal, a vertical
+ *   (top) face through a riser, never a horizontal run (R2);
+ * - the run's nominal size must match the nozzle's, or a reducer's
+ *   OWNED interfaces must bind the transition at the connection
+ *   point (position + elevation + axis + per-side sizes — proximity
+ *   never waives a mismatch, PR668-001/R1);
+ * - a pipe-to-pipe junction must meet at a shared face within
+ *   CONNECTION_FACE_TOLERANCE_IN and — for mixed sizes — carry the
+ *   same bound reducer (validatedJunctionEdge owns that gate);
+ *   barrel-overlap reach is not a connection, and a stale/off-route
+ *   junction reference is refused, never approximated (D668-004).
+ * Anything else is flagged here rather than silently drawn as connected.
+ */
+/**
+ * THE shared full-interface predicate for ONE claimed nozzle
+ * attachment (F2): every check a claimed equipment connection must
+ * pass — the reference resolves to a face, the end sits on that face
+ * in plan and elevation, the approach follows the face's axis (along
+ * its normal, or a riser for a vertical face), and the nominal size
+ * matches or a reducer OWNED by this exact pair (this run end + this
+ * nozzle face, F1) binds the transition. Returns the list of problems
+ * (empty = verified). connectionCompatibilityErrors reports these;
+ * verifiedAttachments (pipeCrossings) trusts exactly these — one
+ * predicate, two consumers, no second weaker check.
+ */
+export function attachmentInterfaceErrors(design, run, end) {
+  const errors = [];
+  const ref = run?.attachments?.[end];
+  if (!ref || !Array.isArray(run.points) || run.points.length < 2) return errors;
+  const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
+  const vertexElevs = vertexElevationsForDesign(design, run);
+  const runSizeNom = flangeNominalSizeIn(run.diameterIn ?? 2);
+  const idx = end === "start" ? 0 : run.points.length - 1;
+  const point = run.points[idx];
+  const inst = byId.get(ref.symbolId);
+  const symbol = inst ? findSymbol(inst.domain, inst.symbolId) : null;
+  const face = symbol ? connectionFaceForAnchor(symbol, inst, ref.anchorId) : null;
+  if (!face) {
+    errors.push(
+      `Pipe run ${run.id} claims nozzle ${ref.anchorId} on symbol ${ref.symbolId}, which does not resolve to a connection face — stale reference.`,
+    );
+    return errors;
+  }
+  const faceDist = Math.hypot(point.x - face.x, point.y - face.y);
+  if (faceDist > CONNECTION_FACE_TOLERANCE_IN) {
+    errors.push(
+      `Pipe run ${run.id} claims nozzle ${ref.anchorId} on ${inst.tag || inst.id}, but its end sits ${Math.round(faceDist)} in from the flange face — the end is not on the face it names.`,
+    );
+  }
+  if (Number.isFinite(face.elevationIn)) {
+    const endElev = vertexElevs[idx];
+    if (Math.abs(endElev - face.elevationIn) > CONNECTION_FACE_TOLERANCE_IN) {
+      errors.push(
+        `Pipe run ${run.id} reaches nozzle ${ref.anchorId} at elevation ${Math.round(endElev)} in, but the flange face is at ${face.elevationIn} in.`,
+      );
+    }
+  }
+  // Effective approach segment (F4.3): the approach checks below
+  // judge the segment the run actually arrives on — the first
+  // evidence-bearing segment walking inward (see
+  // effectiveApproachSegment in pipeCrossings). Reading only the
+  // literal terminal segment let the segment BEHIND a degenerate
+  // terminal approach however it liked — a horizontal run at the
+  // face elevation, or the through-vessel run F2.1 refuses — and
+  // still verify.
+  const approach = effectiveApproachSegment(design, run, end);
+  const approachIdx = approach.farIdx;
+  const approachNeighbor = run.points[approachIdx];
+  // Exhaustion (F4.3 residual): the walk found NO evidence-bearing
+  // segment — the whole route is all-degenerate or within-tolerance
+  // only, so there is no approach anywhere to judge. Termination
+  // without evidence must refuse: reaching the route boundary
+  // establishes neither a riser nor an exterior approach, and the
+  // claim must not earn the verified-attachment exemption on
+  // geometry that was never examined.
+  if (!approach.foundEvidence) {
+    errors.push(
+      `Pipe run ${run.id} claims nozzle ${ref.anchorId} on ${inst.tag || inst.id}, but its route carries no approach evidence — every segment lies within the ${CONNECTION_FACE_TOLERANCE_IN} in connection-face tolerance in plan and elevation, so no approach exists to verify against the face.`,
+    );
+  }
+  // Approach axis: the effective end segment must arrive along
+  // the face's own axis (R2). A zero-plan-length end segment is a
+  // riser — the vertical approach itself. A non-flat end segment
+  // whose plan projection exceeds the face tolerance is a SLOPE,
+  // not a riser, however favorable its elevation direction (F4.1).
+  const segPlanLen = Math.hypot(approachNeighbor.x - point.x, approachNeighbor.y - point.y);
+  if (face.vertical) {
+    const flat =
+      Math.abs(vertexElevs[approachIdx] - vertexElevs[idx]) <= CONNECTION_FACE_TOLERANCE_IN;
+    if (segPlanLen > CONNECTION_FACE_TOLERANCE_IN && flat) {
+      errors.push(
+        `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} with a horizontal run at the face elevation — a vertical flange face is met by a riser, not a horizontal approach.`,
+      );
+    } else if (!flat) {
+      // Verticality (F4.1): the effective terminal segment changes
+      // elevation, so it claims to be the riser — require it to BE one: plan
+      // projection at or below the connection-face tolerance. The
+      // signed-direction check below proves only which SIDE the
+      // approach comes from; alone it admitted an arbitrarily
+      // sloped segment (a 500-in plan run gaining 36 in) as a riser.
+      if (segPlanLen > CONNECTION_FACE_TOLERANCE_IN) {
+        errors.push(
+          `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} through a sloped segment (plan projection ${Math.round(segPlanLen)} in), not a vertical riser — a vertical flange face is met by a terminal segment vertical within ${CONNECTION_FACE_TOLERANCE_IN} in in plan.`,
+        );
+      }
+      // Approach SIDE (F2.1): a top face's exterior side is ABOVE
+      // the flange. A riser arriving from below reaches the face
+      // through the vessel body — only an approach from above (or
+      // level with it) is exterior. The undirected flat test alone
+      // admitted the through-vessel riser.
+      const faceElev = Number.isFinite(face.elevationIn) ? face.elevationIn : vertexElevs[idx];
+      if (vertexElevs[approachIdx] < faceElev - CONNECTION_FACE_TOLERANCE_IN) {
+        errors.push(
+          `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} from below the flange face — the approach passes through the vessel; a top nozzle is met from above.`,
+        );
+      }
+    }
+  } else if (face.normal && segPlanLen > CONNECTION_FACE_TOLERANCE_IN) {
+    // Approach SIDE (F2.1): the end->neighbor direction points from
+    // the flange face INTO the run, so an exterior approach aligns
+    // WITH the face's outward normal (signed dot, near +1). The
+    // previous Math.abs(dot) proved only axis alignment: a run
+    // arriving through the vessel interior (dot near -1) passed the
+    // same check and then earned the verified-attachment exemption
+    // for its own through-vessel segment. Same convention for both
+    // ends: point is always the attached end, and the direction is
+    // read to the effective approach segment's far vertex (F4.3).
+    const dot =
+      ((approachNeighbor.x - point.x) / segPlanLen) * face.normal.x +
+      ((approachNeighbor.y - point.y) / segPlanLen) * face.normal.y;
+    if (dot < Math.cos((20 * Math.PI) / 180)) {
+      errors.push(
+        `Pipe run ${run.id} does not approach nozzle ${ref.anchorId} from the exterior side of its flange face — the run must meet the face along its outward normal, not cross the vessel to reach it.`,
+      );
+    }
+  }
+  if (face.sizeIn != null && runSizeNom !== flangeNominalSizeIn(face.sizeIn)) {
+    // F4.4: the query axis is the EFFECTIVE approach axis — the
+    // direction of the first evidence-bearing segment (the same
+    // segment the approach checks above judged). The literal
+    // terminal segment fabricated the axis (atan2(0,0) = 0 for a
+    // duplicate terminal vertex; a stub's offset direction for a
+    // sub-tolerance stub), certifying wrongly faced reducers and
+    // refusing correctly faced ones on genuine risers.
+    const axisDeg = approach.axisDeg;
+    const bound = Number.isFinite(face.elevationIn)
+      ? boundReducerAt(design, {
+          x: point.x,
+          y: point.y,
+          elevationIn: face.elevationIn,
+          sides: [
+            {
+              sizeIn: run.diameterIn ?? 2,
+              dirDeg: axisDeg,
+              owner: { kind: "run-end", runId: run.id, end },
+            },
+            {
+              sizeIn: face.sizeIn,
+              dirDeg: axisDeg + 180,
+              owner: { kind: "nozzle", symbolId: ref.symbolId, anchorId: ref.anchorId },
+            },
+          ],
+        })
+      : null;
+    if (!bound) {
+      errors.push(
+        `Pipe run ${run.id} (${run.diameterIn ?? 2} in) connects to nozzle ${ref.anchorId} (${face.sizeIn} in) without a connected reducer/transition at the connection point.`,
+      );
+    }
+  }
+  return errors;
+}
+
+export function connectionCompatibilityErrors(design) {
+  const errors = [];
+  for (const run of design?.pipes || []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) continue;
+    for (const end of ENDS) {
+      const ref = run.attachments?.[end];
+      if (ref) {
+        errors.push(...attachmentInterfaceErrors(design, run, end));
+        continue;
+      }
+      const junction = run.junctions?.[end];
+      if (junction) {
+        const edge = validatedJunctionEdge(design, run, end);
+        if (edge.status === "no-host") {
+          errors.push(
+            `Pipe run ${run.id} claims a junction to unknown pipe run ${junction.runId} — stale reference.`,
+          );
+        } else if (edge.status === "off-route") {
+          errors.push(
+            `Pipe run ${run.id} claims a junction to pipe run ${junction.runId}, but its end does not touch that run — stale or off-route reference proves no connection.`,
+          );
+        } else if (edge.status === "elevation") {
+          errors.push(
+            `Pipe run ${run.id} joins pipe run ${edge.host.id} in plan, but the face elevations do not meet (${Math.round(edge.myElevIn)} in vs ${Math.round(edge.hostElevIn)} in) — not a flanged connection.`,
+          );
+        } else if (edge.status === "reducer") {
+          errors.push(
+            `Pipe run ${run.id} (${run.diameterIn ?? 2} in) junctions onto pipe run ${edge.host.id} (${edge.host.diameterIn ?? 2} in) without a connected reducer/transition at the tap.`,
+          );
+        } else if (edge.status === "no-approach") {
+          // F4.6: the route carries no approach evidence, so the tap
+          // cannot be verified as a physical connection — termination
+          // without evidence must refuse, the same rule the nozzle
+          // side enforces (F4.3).
+          errors.push(
+            `Pipe run ${run.id} claims a junction to pipe run ${junction.runId}, but its route carries no approach evidence — every segment lies within the ${CONNECTION_FACE_TOLERANCE_IN} in connection-face tolerance in plan and elevation, so the tap cannot be verified as a physical connection.`,
+          );
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * The deterministic, undoable upgrade for designs saved before the full
+ * nozzle catalog existed: re-derive every run's nozzle attachments and
+ * pipe-to-pipe junctions from where its ends sit now. Geometry is never
+ * moved — ends already on a nozzle/junction gain their connection
+ * records; everything else is left exactly as saved. Run it through the
+ * normal edit path so the upgrade is one undoable transaction.
+ */
+export function upgradeDesignConnections(design) {
+  let next = design;
+  for (const run of design?.pipes || []) {
+    next = detectRunAttachments(next, run.id);
+  }
+  for (const run of next?.pipes || []) {
+    next = detectRunJunctions(next, run.id);
+  }
+  return next;
+}
+
+// ---- Tee fittings (PR668-005) ----
+//
+// A modeled pipe-to-pipe junction is a real branch FITTING, not just a
+// logical connection plus a flange pair: the fitting has a body and
+// stable ports — the branch port plus the two host-side ports (one host
+// port for an end-to-end coupled joint). Fittings derive from validated
+// junction edges, so a stale/off-route junction record yields no
+// fitting. Port ids are stable per junction (`tee-<runId>-<end>::<port>`)
+// and survive attach/detach/resize/copy/round-trips because the junction
+// record they derive from does.
+
+/**
+ * Every validated pipe-to-pipe junction as a tee fitting:
+ * [{ id, branchRunId, hostRunId, end, x, y, elevationIn,
+ *    branchSizeIn, hostSizeIn, branchAxisDeg, hostAxisDeg,
+ *    body: { x, y, elevationIn, branchSizeIn, hostSizeIn },
+ *    ports: [{ port: "branch"|"host-a"|"host-b", id, x, y,
+ *              elevationIn, sizeIn, axisDeg }] }]
+ * The body sits at the tap point at the joint elevation; the branch
+ * port faces along the branch axis, the host ports along the host axis
+ * in both directions (one direction for a coupled end-to-end joint).
+ */
+export function teeFittings(design) {
+  const out = [];
+  for (const run of design?.pipes || []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) continue;
+    for (const end of ENDS) {
+      const edge = validatedJunctionEdge(design, run, end);
+      if (edge.status !== "ok") continue;
+      const idx = end === "start" ? 0 : run.points.length - 1;
+      const branchPoint = run.points[idx];
+      const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
+      const branchAxisDeg =
+        (Math.atan2(neighbor.y - branchPoint.y, neighbor.x - branchPoint.x) * 180) / Math.PI;
+      const route = physicalRouteIn(design, edge.host);
+      const hA = route[edge.hostSegIndex];
+      const hB = route[edge.hostSegIndex + 1];
+      const hostAxisDeg = (Math.atan2(hB.y - hA.y, hB.x - hA.x) * 180) / Math.PI;
+      const branchSizeIn = flangeNominalSizeIn(run.diameterIn ?? 2);
+      const hostSizeIn = flangeNominalSizeIn(edge.host.diameterIn ?? 2);
+      const id = `tee-${run.id}-${end}`;
+      const elev = edge.myElevIn;
+      // End-to-end coupled joint: the tap sits on the host's endpoint,
+      // so the host continues in one direction only.
+      const hostFirst = route[0];
+      const hostLast = route[route.length - 1];
+      const atHostEnd =
+        Math.hypot(edge.point.x - hostFirst.x, edge.point.y - hostFirst.y) <= EPS ||
+        Math.hypot(edge.point.x - hostLast.x, edge.point.y - hostLast.y) <= EPS;
+      const ports = [
+        {
+          port: "branch",
+          id: `${id}::branch`,
+          x: branchPoint.x,
+          y: branchPoint.y,
+          elevationIn: elev,
+          sizeIn: branchSizeIn,
+          axisDeg: branchAxisDeg,
+        },
+        {
+          port: "host-a",
+          id: `${id}::host-a`,
+          x: edge.point.x,
+          y: edge.point.y,
+          elevationIn: edge.hostElevIn,
+          sizeIn: hostSizeIn,
+          axisDeg: hostAxisDeg,
+        },
+      ];
+      if (!atHostEnd) {
+        ports.push({
+          port: "host-b",
+          id: `${id}::host-b`,
+          x: edge.point.x,
+          y: edge.point.y,
+          elevationIn: edge.hostElevIn,
+          sizeIn: hostSizeIn,
+          axisDeg: hostAxisDeg + 180,
+        });
+      }
+      out.push({
+        id,
+        branchRunId: run.id,
+        hostRunId: edge.host.id,
+        end,
+        x: edge.point.x,
+        y: edge.point.y,
+        elevationIn: elev,
+        branchSizeIn,
+        hostSizeIn,
+        branchAxisDeg,
+        hostAxisDeg,
+        body: {
+          x: edge.point.x,
+          y: edge.point.y,
+          elevationIn: elev,
+          branchSizeIn,
+          hostSizeIn,
+        },
+        ports,
+      });
+    }
+  }
+  return out;
 }

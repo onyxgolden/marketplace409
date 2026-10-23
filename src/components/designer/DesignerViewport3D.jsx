@@ -18,6 +18,11 @@ import {
   highlightRegistryKey,
 } from "@/domains/roomDesigner/designerThreeModel";
 import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
+import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { nozzleFlangeDescriptors, fittingDescriptors } from "@/domains/roomDesigner/designerThreeModel";
+import { flangeDims, NOZZLE_NECK_LENGTH_IN } from "@/domains/roomDesigner/flangeGeometry";
+import { manwayWorld, accessPackageWorld, baseElevationIn } from "@/domains/roomDesigner/vesselAccess";
+import { downcomerLevels } from "@/domains/roomDesigner/downcomers";
 import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furnitureAssetManifest";
 import {
   beginDrag3D,
@@ -479,7 +484,18 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       const tip = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.08, r * 1.02, tipH, 24), darkMetal));
       tip.position.y = h - tipH / 2;
       group.add(tip);
-      addLabel(h + 40);
+      // An AUTHORED head on a tall form (descriptor headIn > 0, R4)
+      // renders as a dished cap at the tip radius.
+      if (eq.headIn > 0) {
+        const headR = r * 0.82;
+        const head = shadowed(
+          new THREE.Mesh(new THREE.SphereGeometry(headR, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
+        );
+        head.scale.y = eq.headIn / headR;
+        head.position.y = h;
+        group.add(head);
+      }
+      addLabel(h + (eq.headIn ?? 0) + 40);
     } else {
       // Tower / column / vertical vessel: skirt + shell + dished heads.
       const skirtH = clamp(h * 0.12, 12, 72);
@@ -490,13 +506,23 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       const shell = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, shellH, 24), mat));
       shell.position.y = skirtH + shellH / 2;
       group.add(shell);
-      const topHead = shadowed(
-        new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
-      );
-      topHead.scale.y = 0.55; // dished head, not a full dome
-      topHead.position.y = skirtH + shellH;
-      group.add(topHead);
-      addLabel(h + r * 0.55 + 40);
+      // The head height is the MODELED head the descriptor carries
+      // (R4): validation binds terminal assemblies to this same head.
+      // A modeled head of 0 is a flat top — a cap, not a dome.
+      const headH = eq.headIn ?? r * 0.55;
+      if (headH > 0) {
+        const topHead = shadowed(
+          new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
+        );
+        topHead.scale.y = headH / r; // dished head, not a full dome
+        topHead.position.y = skirtH + shellH;
+        group.add(topHead);
+      } else {
+        const cap = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, 2, 24), mat));
+        cap.position.y = skirtH + shellH + 1;
+        group.add(cap);
+      }
+      addLabel(h + headH + 40);
     }
   } else if (eq.shape === "hcyl") {
     // Horizontal vessel: shell + dished ends, riding on two saddles.
@@ -618,11 +644,26 @@ export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
     group.add(mesh);
   };
 
+  // Flat segments render at their yIn elevation (rack/grade/step
+  // level); authored steps render from the risers list. An authored
+  // SLOPE (descriptor `sloped`, R3) renders as a sloped cylinder
+  // between the segment's TRUE endpoint elevations — the same
+  // physical profile validation reads, never flattened.
   for (const seg of pipe.segments || []) {
-    cylinderBetween(
-      { x: seg.a.x, y: seg.yIn, z: seg.a.z },
-      { x: seg.b.x, y: seg.yIn, z: seg.b.z },
-    );
+    // Zero-plan-length segments are vertical steps; the risers list
+    // draws them (never twice).
+    if (Math.hypot(seg.b.x - seg.a.x, seg.b.z - seg.a.z) < 1e-9) continue;
+    if (seg.sloped) {
+      cylinderBetween(
+        { x: seg.a.x, y: seg.y0In ?? seg.yIn, z: seg.a.z },
+        { x: seg.b.x, y: seg.y1In ?? seg.yIn, z: seg.b.z },
+      );
+    } else {
+      cylinderBetween(
+        { x: seg.a.x, y: seg.yIn, z: seg.a.z },
+        { x: seg.b.x, y: seg.yIn, z: seg.b.z },
+      );
+    }
   }
   for (const joint of pipe.joints || []) {
     const mesh = shadowed(new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), mat));
@@ -635,9 +676,315 @@ export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
       { x: riser.x, y: riser.y1In, z: riser.z },
     );
   }
+  // Flanged connections: a mating flange pair (two discs back to back
+  // across the connection plane) at every attached/junctioned end.
+  if (Array.isArray(pipe.flanges) && pipe.flanges.length > 0) {
+    const flangeMat = stdMaterial({ color: "#d6d9de", roughness: 0.35 });
+    for (const f of pipe.flanges) {
+      const dims = flangeDims(f.sizeIn);
+      const rad = (f.axisDeg * Math.PI) / 180;
+      const dir = new THREE.Vector3(Math.cos(rad), 0, Math.sin(rad));
+      for (const s of [-1, 1]) {
+        const disc = shadowed(
+          new THREE.Mesh(
+            new THREE.CylinderGeometry(dims.odIn / 2, dims.odIn / 2, dims.thicknessIn, 20),
+            flangeMat,
+          ),
+        );
+        disc.position.set(
+          f.x + dir.x * (s * dims.thicknessIn) / 2,
+          f.yIn,
+          f.z + dir.z * (s * dims.thicknessIn) / 2,
+        );
+        disc.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        group.add(disc);
+      }
+    }
+  }
 
   group.userData.entityKind = "pipe";
   group.userData.entityId = pipe.id;
+  return group;
+}
+
+/**
+ * 3D group for piping-domain fitting instances (D668-010): standalone
+ * flanged-joint, blind-flange, fire-hydrant, spray-nozzle, and reducer
+ * instances, plus the modeled tee fittings (body + ports from
+ * PR668-005). Every mesh carries userData.fittingId so selection and
+ * tests can click through to the instance. Schematic scale, world
+ * coordinates (plan x -> x, plan y -> z, height -> y).
+ */
+export function buildFittingsGroup(design, { stdMaterial, shadowed }) {
+  const group = new THREE.Group();
+  const steel = stdMaterial({ color: "#c8ccd2", roughness: 0.35 });
+  const hydrantRed = stdMaterial({ color: "#dc2626", roughness: 0.55 });
+  const brass = stdMaterial({ color: "#b45309", roughness: 0.4 });
+
+  const tag = (mesh, fittingId) => {
+    mesh.userData.fittingId = fittingId;
+    return shadowed(mesh);
+  };
+  const addDisc = (fittingId, x, y, z, r, thickness, dir, mat) => {
+    const mesh = tag(
+      new THREE.Mesh(new THREE.CylinderGeometry(r, r, thickness, 20), mat),
+      fittingId,
+    );
+    mesh.position.set(x, y, z);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    group.add(mesh);
+  };
+  const addBarrel = (fittingId, p1, p2, r, mat) => {
+    const dir = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    const len = dir.length();
+    if (len < 0.01) return;
+    const mesh = tag(new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 16), mat), fittingId);
+    mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    group.add(mesh);
+  };
+  const flangePair = (fittingId, x, y, z, sizeIn, axisRad) => {
+    const dims = flangeDims(sizeIn);
+    const dir = new THREE.Vector3(Math.cos(axisRad), 0, Math.sin(axisRad));
+    for (const s of [-1, 1]) {
+      addDisc(
+        fittingId,
+        x + (dir.x * s * dims.thicknessIn) / 2,
+        y,
+        z + (dir.z * s * dims.thicknessIn) / 2,
+        dims.odIn / 2,
+        dims.thicknessIn,
+        dir,
+        steel,
+      );
+    }
+  };
+
+  for (const f of fittingDescriptors(design)) {
+    const y = f.elevationIn ?? 0;
+    if (f.symbolId === "flanged-joint") {
+      // A mated flange pair on the run axis.
+      flangePair(f.id, f.x, y, f.z, 2, f.rotY);
+    } else if (f.symbolId === "blind-flange") {
+      // One flange disc capping a short stub.
+      addBarrel(f.id, { x: f.x, y, z: f.z }, { x: f.x, y: y + 4, z: f.z }, 3, steel);
+      const dims = flangeDims(2);
+      addDisc(f.id, f.x, y + 4, f.z, dims.odIn / 2, dims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
+    } else if (f.symbolId === "fire-hydrant") {
+      // Barrel above grade + bonnet + side caps: reads as a hydrant.
+      addBarrel(f.id, { x: f.x, y: 0, z: f.z }, { x: f.x, y: 30, z: f.z }, 5, hydrantRed);
+      const bonnet = tag(new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), hydrantRed), f.id);
+      bonnet.position.set(f.x, 32, f.z);
+      group.add(bonnet);
+      addBarrel(f.id, { x: f.x - 7, y: 22, z: f.z }, { x: f.x + 7, y: 22, z: f.z }, 2.5, brass);
+    } else if (f.symbolId === "spray-nozzle") {
+      // Monitor: base riser + a barrel along the AUTHORED discharge
+      // direction (R7) — the descriptor's dischargeDir, derived from
+      // the same origin/target model validation checks. An un-aimed
+      // assembly is the named unresolved state: riser only, NO
+      // invented barrel direction.
+      addBarrel(f.id, { x: f.x, y: 0, z: f.z }, { x: f.x, y: 18, z: f.z }, 3, steel);
+      if (f.aimResolved && f.dischargeDir) {
+        addBarrel(
+          f.id,
+          { x: f.x, y: 18, z: f.z },
+          { x: f.x + f.dischargeDir.x * 24, y: 18, z: f.z + f.dischargeDir.y * 24 },
+          2,
+          brass,
+        );
+      }
+    } else if (f.symbolId === "reducer") {
+      // Concentric transition along the reducer's OWNED axis (R1):
+      // the frustum runs from the inlet port to the outlet port at
+      // the fitting's elevation — the inlet face (rotation + 180°)
+      // takes the inlet radius, the outlet face (rotation direction)
+      // the outlet radius — never a vertical stack at bare elevation.
+      const inR = Math.max(1, (f.inletSizeIn ?? 2) / 2);
+      const outR = Math.max(1, (f.outletSizeIn ?? 1) / 2);
+      const len = 12;
+      const axisRad = ((f.rotationDeg || 0) * Math.PI) / 180;
+      const axis = new THREE.Vector3(Math.cos(axisRad), 0, Math.sin(axisRad));
+      const center = new THREE.Vector3(f.x, y, f.z);
+      const mesh = tag(new THREE.Mesh(new THREE.CylinderGeometry(outR, inR, len, 20), steel), f.id);
+      mesh.position.copy(center);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
+      group.add(mesh);
+      const inDims = flangeDims(f.inletSizeIn ?? 2);
+      const inC = center.clone().addScaledVector(axis, -len / 2);
+      addDisc(f.id, inC.x, inC.y, inC.z, inDims.odIn / 2, inDims.thicknessIn, axis, steel);
+      const outDims = flangeDims(f.outletSizeIn ?? 1);
+      const outC = center.clone().addScaledVector(axis, len / 2);
+      addDisc(f.id, outC.x, outC.y, outC.z, outDims.odIn / 2, outDims.thicknessIn, axis, steel);
+    } else if (f.symbolId === "tee-fitting") {
+      // The modeled tee body (PR668-005): host barrel + branch stub +
+      // a flange disc on every port — never just a flange pair.
+      const hostRad = (f.hostAxisDeg * Math.PI) / 180;
+      const hostDir = new THREE.Vector3(Math.cos(hostRad), 0, Math.sin(hostRad));
+      const hostR = Math.max(1, (f.hostSizeIn ?? 2) / 2);
+      addBarrel(
+        f.id,
+        { x: f.x - hostDir.x * 8, y, z: f.z - hostDir.z * 8 },
+        { x: f.x + hostDir.x * 8, y, z: f.z + hostDir.z * 8 },
+        hostR,
+        steel,
+      );
+      const branchRad = (f.branchAxisDeg * Math.PI) / 180;
+      const branchDir = new THREE.Vector3(Math.cos(branchRad), 0, Math.sin(branchRad));
+      const branchR = Math.max(1, (f.branchSizeIn ?? 2) / 2);
+      addBarrel(
+        f.id,
+        { x: f.x, y, z: f.z },
+        { x: f.x + branchDir.x * 10, y, z: f.z + branchDir.z * 10 },
+        branchR,
+        steel,
+      );
+      for (const port of f.ports || []) {
+        const portRad = ((port.axisDeg || 0) * Math.PI) / 180;
+        const dims = flangeDims(port.sizeIn ?? 2);
+        const dir = new THREE.Vector3(Math.cos(portRad), 0, Math.sin(portRad));
+        addDisc(f.id, port.x, port.elevationIn ?? y, port.y, dims.odIn / 2, dims.thicknessIn, dir, steel);
+      }
+    }
+  }
+
+  group.userData.entityKind = "fittings";
+  return group;
+}
+
+/**
+ * 3D overlays for the equipment components the plan model derives:
+ * nozzle flange discs at every connection anchor (vertical necks on
+ * top nozzles), the manway neck + hinged cover, the access package
+ * (grating deck on legs + ladder), and per-downcomer-level platforms
+ * and manways on columns. World coordinates (plan x -> x, plan y -> z,
+ * height -> y), schematic scale — it reads the same domain models the
+ * plan, print, and elevation views read.
+ */
+export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial, shadowed }) {
+  const inst = (design?.symbols || []).find((s) => s.id === instanceId);
+  if (!inst) return null;
+  const symbol = findSymbol(inst.domain, inst.symbolId);
+  if (!symbol) return null;
+  const group = new THREE.Group();
+  const steel = stdMaterial({ color: "#c8ccd2", roughness: 0.35 });
+  const grating = stdMaterial({ color: "#6b7280", roughness: 0.8 });
+  const coverMat = stdMaterial({ color: "#9ca3af", roughness: 0.5 });
+
+  const addCylinder = (p1, p2, r, mat) => {
+    const dir = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    const len = dir.length();
+    if (len < 0.01) return;
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 16), mat));
+    mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    group.add(mesh);
+  };
+  const addDisc = (cx, cy, cz, r, thickness, dir3, mat) => {
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, thickness, 20), mat));
+    mesh.position.set(cx, cy, cz);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir3.clone().normalize());
+    group.add(mesh);
+  };
+  const addAccessPackage = (pkg) => {
+    if (!pkg) return;
+    const rad = (pkg.deck.angleDeg * Math.PI) / 180;
+    const deck = shadowed(
+      new THREE.Mesh(new THREE.BoxGeometry(pkg.deck.depthIn, 2, pkg.deck.widthIn), grating),
+    );
+    deck.position.set(pkg.deck.cx, pkg.deck.elevationIn - 1, pkg.deck.cy);
+    deck.rotation.y = -rad;
+    group.add(deck);
+    for (const c of pkg.deck.corners) {
+      const leg = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2, pkg.deck.elevationIn, 2), steel));
+      leg.position.set(c.x, pkg.deck.elevationIn / 2, c.y);
+      group.add(leg);
+    }
+    const lad = pkg.ladder;
+    const tx = -Math.sin(rad);
+    const tz = Math.cos(rad);
+    const midY = (lad.fromIn + lad.toIn) / 2;
+    const railH = lad.toIn - lad.fromIn;
+    for (const s of [-1, 1]) {
+      const rail = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.5, railH, 1.5), steel));
+      rail.position.set(lad.cx + tx * s * (lad.widthIn / 2 - 1), midY, lad.cy + tz * s * (lad.widthIn / 2 - 1));
+      group.add(rail);
+    }
+    for (let y = lad.fromIn + 12; y < lad.toIn; y += 12) {
+      const rung = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1, 0.75, lad.widthIn - 2), steel));
+      rung.position.set(lad.cx, y, lad.cy);
+      rung.rotation.y = -rad;
+      group.add(rung);
+    }
+  };
+
+  // Nozzle flange discs at every anchor, from the SHARED face model
+  // (D668-005): the disc sits exactly at the flange face validation
+  // checks. Top nozzles get a neck stub up from the roof; side nozzles
+  // a disc facing the outward normal.
+  for (const flange of nozzleFlangeDescriptors(design, inst.id)) {
+    const dims = flangeDims(flange.sizeIn);
+    if (flange.vertical) {
+      // Top nozzle: neck stub up from the roof + horizontal flange at
+      // the face elevation.
+      const neckBase = Math.max(0, flange.yIn - NOZZLE_NECK_LENGTH_IN);
+      addCylinder(
+        { x: flange.x, y: neckBase, z: flange.z },
+        { x: flange.x, y: flange.yIn, z: flange.z },
+        Math.max(1, (flange.sizeIn ?? 2) / 2),
+        steel,
+      );
+      addDisc(flange.x, flange.yIn, flange.z, dims.odIn / 2, dims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
+    } else if (flange.normal) {
+      const dir = new THREE.Vector3(flange.normal.x, 0, flange.normal.y);
+      addDisc(flange.x, flange.yIn, flange.z, dims.odIn / 2, dims.thicknessIn, dir, steel);
+    }
+  }
+
+  // Manway: neck ring + hinged cover on the shell at sill height.
+  // manwayWorld's sill is base-LOCAL; the rendered center elevation
+  // is the WORLD datum (R4): base + sill + radius — the same frame
+  // validation and the sections read.
+  const mw = manwayWorld(symbol, inst);
+  if (mw) {
+    const dir = new THREE.Vector3(mw.dirX, 0, mw.dirY);
+    const cy = baseElevationIn(inst) + mw.sillIn + mw.diameterIn / 2;
+    addCylinder(
+      { x: mw.x, y: cy, z: mw.y },
+      { x: mw.x + dir.x * 4, y: cy, z: mw.y + dir.z * 4 },
+      mw.diameterIn / 2,
+      steel,
+    );
+    addDisc(mw.x + dir.x * 4.75, cy, mw.y + dir.z * 4.75, mw.diameterIn / 2, 1.5, dir, coverMat);
+    const hinge = shadowed(new THREE.Mesh(new THREE.BoxGeometry(6, 2, 3), coverMat));
+    hinge.position.set(mw.x + dir.x * 4.75, cy + mw.diameterIn / 2 + 1, mw.y + dir.z * 4.75);
+    group.add(hinge);
+  }
+  // The design rides along (R4): the access package's grade datum
+  // comes from the design, so a raised-grade design renders its
+  // platforms and ladders at the same datum validation reads.
+  addAccessPackage(accessPackageWorld(symbol, inst, design));
+
+  // Downcomer levels on columns: platform + ladder chain + level manway.
+  for (const level of downcomerLevels(symbol, inst, design)) {
+    addAccessPackage(level.platform);
+    if (level.manway) {
+      const dir = new THREE.Vector3(level.manway.dirX, 0, level.manway.dirY);
+      const cy = level.manway.sillIn + level.manway.diameterIn / 2;
+      addDisc(
+        level.manway.x + dir.x * 2,
+        cy,
+        level.manway.y + dir.z * 2,
+        level.manway.diameterIn / 2,
+        1.5,
+        dir,
+        coverMat,
+      );
+    }
+  }
+
+  if (group.children.length === 0) return null;
+  group.userData.entityKind = "symbol";
+  group.userData.entityId = inst.id;
   return group;
 }
 
@@ -1574,12 +1921,18 @@ export default function DesignerViewport3D({
       // skids, tag labels) — selectable like furniture.
       for (const eq of built.equipment || []) {
         const eGroup = buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel: makeTagSprite });
-        eGroup.position.set(eq.x, 0, eq.z);
+        // The body sits on its modeled base elevation (R4) — the
+        // same datum its components and faces are computed in.
+        eGroup.position.set(eq.x, eq.baseElevationIn ?? 0, eq.z);
         eGroup.rotation.y = eq.rotY;
         eGroup.userData.entityKind = "symbol";
         eGroup.userData.entityId = eq.id;
         group.add(eGroup);
         register(highlightRegistryKey("symbol", eq.id), eGroup);
+        // Derived components (nozzle flanges, manway, catwalks,
+        // downcomer platforms) ride along in world coordinates.
+        const components = buildEquipmentComponentsGroup(design, eq.id, { stdMaterial, shadowed });
+        if (components) group.add(components);
       }
 
       // site/outdoor symbols (deck, patio, driveway, walkway, fence, shed,
@@ -1608,6 +1961,13 @@ export default function DesignerViewport3D({
         pGroup.userData.entityId = pipe.id;
         group.add(pGroup);
         register(highlightRegistryKey("pipe", pipe.id), pGroup);
+      }
+      // Piping-domain fittings: standalone instances + modeled tee
+      // bodies (D668-010) — selectable like pipes.
+      const fittingsGroup = buildFittingsGroup(design, { stdMaterial, shadowed });
+      group.add(fittingsGroup);
+      for (const f of fittingDescriptors(design)) {
+        register(highlightRegistryKey("symbol", f.id), fittingsGroup);
       }
       // Labels are hidden by default; re-apply the toggle state after every
       // rebuild (new sprites are born hidden).

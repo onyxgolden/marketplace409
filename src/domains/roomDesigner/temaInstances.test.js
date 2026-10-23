@@ -213,8 +213,10 @@ describe("nearestConnectionAnchor", () => {
   });
 
   it("ignores symbols without connection anchors", () => {
-    // storage-tank carries neither a TEMA config nor catalog nozzles.
-    const design = placeSymbol(createEmptyDesign(), D, "storage-tank", 0, 0, { id: "t" });
+    // electric-motor is a drive, not process equipment: it carries
+    // neither a TEMA config nor catalog nozzles (vessels like
+    // storage-tank all have flanged nozzles since the D1 change).
+    const design = placeSymbol(createEmptyDesign(), D, "electric-motor", 0, 0, { id: "t" });
     expect(nearestConnectionAnchor(design, { x: 0, y: 0 }, 100)).toBeNull();
   });
 

@@ -13,12 +13,23 @@ import {
   wallDirection,
   wallLength,
 } from "./designerGeometry";
+import { physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
 import { DECK_MATERIALS, decksOf, findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { effectiveColor } from "./designSystems";
+import { finalPipeColor } from "./pipeColorPolicy";
+import { teeFittings, anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
+import { modeledHeadHeightIn } from "./downcomers";
+import { reducerInterfaces } from "./pipeReducerModel";
+import { sprayInletInterface } from "./firewater";
 import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
+import {
+  connectionFlanges,
+  runHasStoredElevation,
+  storedSegmentElevations,
+} from "./pipeCrossings";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -372,7 +383,14 @@ export function equipmentDescriptors(design) {
       rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
       widthIn: inst.widthIn ?? symbol.widthIn,
       depthIn: inst.depthIn ?? symbol.depthIn,
-      heightIn: rack ? rackTopIn(rack) : symbol.heightIn,
+      // The instance's own dimensions and base (R4): a resized body
+      // and a raised base are the modeled geometry in every consumer,
+      // never the catalog default.
+      heightIn: rack ? rackTopIn(rack) : (inst.heightIn ?? symbol.heightIn),
+      baseElevationIn: Number.isFinite(inst.baseElevationIn) ? inst.baseElevationIn : 0,
+      // The modeled head (R4): the same head height validation binds
+      // terminal assemblies to, rendered by the 3D builder.
+      ...(symbol.shape3d === "vcyl" ? { headIn: modeledHeadHeightIn(symbol, inst) } : {}),
       color: effectiveColor(design, inst, symbol.color), // own > system > catalog
       // Parametric structures: the members the 3D builder extrudes as steel.
       ...(rack ? { members: rackMembers3D(rack) } : {}),
@@ -449,50 +467,240 @@ export function pipeDescriptors(design) {
     if (points.length < 2) continue;
     const diameterIn = run.diameterIn ?? 2;
     const radiusIn = diameterIn / 2;
+    // Per-vertex true elevations (D668-002): y0In/y1In carry the actual
+    // endpoint elevations from the shared physical profile, so a downward
+    // jog's dip is visible in the descriptor. yIn keeps the rack/grade
+    // level for rendering and existing consumers.
+    const vertexElevs = vertexElevationsForDesign(design, run);
     const segments = [];
     for (let i = 0; i + 1 < points.length; i += 1) {
       const a = points[i];
       const b = points[i + 1];
-      segments.push({
+      const yIn = segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn);
+      const y0In = vertexElevs[i] ?? yIn;
+      const y1In = vertexElevs[i + 1] ?? yIn;
+      const seg = {
         a: { x: a.x, z: a.y },
         b: { x: b.x, z: b.y },
-        yIn: segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn),
+        yIn,
+        y0In,
+        y1In,
+      };
+      // An authored (stored) elevation change across a plan segment
+      // is a physical slope (R3): the renderer draws the segment
+      // between its true endpoint elevations. A derived profile's
+      // change is a step at the vertex instead (flat segment +
+      // riser), so it is never flagged sloped. The flag is present
+      // only when true — flat segments keep the pre-R3 shape.
+      if (runHasStoredElevation(run) && y0In !== y1In) seg.sloped = true;
+      segments.push(seg);
+    }
+    // A run with a STORED elevation profile (an explicit centerline, or
+    // per-vertex elevations from level connections / crossing jogs)
+    // renders at that profile instead of the derived support elevation.
+    // Runs without one keep the derivation above, unchanged.
+    if (runHasStoredElevation(run)) {
+      const stored = storedSegmentElevations(run);
+      segments.forEach((seg, i) => {
+        if (i < stored.length) seg.yIn = stored[i];
       });
     }
     const joints = points.map((p, i) => {
-      // End vertices take their only segment's elevation; interior
-      // vertices take the higher adjacent elevation (the riser spans
-      // the difference).
-      const yIn =
-        i === 0
-          ? segments[0].yIn
-          : i === segments.length
-            ? segments[segments.length - 1].yIn
-            : Math.max(segments[i - 1].yIn, segments[i].yIn);
-      return { x: p.x, z: p.y, yIn };
+      // Joints sit at the TRUE vertex elevations of the shared
+      // physical route (R3) — the same elevations validation reads.
+      return { x: p.x, z: p.y, yIn: vertexElevs[i] ?? segments[0]?.yIn ?? 0 };
     });
+    // Risers are the route's vertical steps (R3), in the route's own
+    // two forms: a STORED profile steps through zero-plan-length
+    // vertex pairs (crossing jogs, authored risers); a DERIVED
+    // profile steps at the vertex where the support elevation
+    // changes (rack edge to grade). An authored elevation change
+    // across a plan segment is a slope — the segment itself renders
+    // it (see `sloped` below), never a slope plus a phantom riser.
     const risers = [];
-    for (let i = 1; i + 1 < points.length; i += 1) {
-      const prev = segments[i - 1].yIn;
-      const next = segments[i].yIn;
-      if (prev === next) continue;
-      risers.push({
-        x: points[i].x,
-        z: points[i].y,
-        y0In: Math.min(prev, next),
-        y1In: Math.max(prev, next),
-      });
+    if (runHasStoredElevation(run)) {
+      for (let i = 0; i + 1 < points.length; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        if (Math.hypot(b.x - a.x, b.y - a.y) > 1e-9) continue;
+        const y0 = vertexElevs[i];
+        const y1 = vertexElevs[i + 1];
+        if (y0 === undefined || y1 === undefined || y0 === y1) continue;
+        risers.push({
+          x: a.x,
+          z: a.y,
+          y0In: Math.min(y0, y1),
+          y1In: Math.max(y0, y1),
+        });
+      }
+    } else {
+      for (let i = 1; i + 1 < points.length; i += 1) {
+        const prev = segments[i - 1].yIn;
+        const next = segments[i].yIn;
+        if (prev === next) continue;
+        risers.push({
+          x: points[i].x,
+          z: points[i].y,
+          y0In: Math.min(prev, next),
+          y1In: Math.max(prev, next),
+        });
+      }
     }
-    out.push({
+    const descriptor = {
       kind: "pipe",
       id: run.id,
-      color: effectiveColor(design, run, "#7dd3fc"), // own > system > default
+      // Final resolved color via the shared reservation policy
+      // (D668-009): firewater renders the reserved red; any other red
+      // on a non-firewater run is remapped off the red band.
+      color: finalPipeColor(design, run),
       diameterIn,
       radiusIn,
       underground: !!run.underground,
       segments,
       joints,
       risers,
+    };
+    // Flanged connections (equipment nozzles + pipe-to-pipe junctions),
+    // present only when this run actually connects somewhere.
+    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    if (flanges.length > 0) {
+      descriptor.flanges = flanges.map((f) => ({
+        x: f.x,
+        z: f.y,
+        yIn: f.elevationIn,
+        axisDeg: f.axisDeg,
+        sizeIn: f.sizeIn,
+        kind: f.kind,
+      }));
+    }
+    out.push(descriptor);
+  }
+  return out;
+}
+
+/**
+ * Piping-domain fitting instances -> 3D descriptors (D668-010, PR668-005):
+ * standalone flanged-joint, blind-flange, fire-hydrant, spray-nozzle,
+ * and reducer instances, PLUS the modeled tee fittings derived from
+ * validated pipe-to-pipe junctions (body + ports, never just a flange
+ * pair). { kind: "fitting", id, symbolId, x, z, rotY, elevationIn,
+ *   sizes... }. Reducers carry their declared inletSizeIn/outletSizeIn;
+ * tee fittings carry branchSizeIn/hostSizeIn and their port list.
+ */
+export function fittingDescriptors(design) {
+  const out = [];
+  for (const inst of design?.symbols || []) {
+    if (inst.domain !== "piping") continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol) continue;
+    if (
+      !["flanged-joint", "blind-flange", "fire-hydrant", "spray-nozzle", "reducer"].includes(
+        inst.symbolId,
+      )
+    ) {
+      continue;
+    }
+    out.push({
+      kind: "fitting",
+      id: inst.id,
+      symbolId: inst.symbolId,
+      x: inst.x,
+      z: inst.y,
+      rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
+      elevationIn: Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0,
+      widthIn: inst.widthIn ?? symbol.widthIn,
+      depthIn: inst.depthIn ?? symbol.depthIn,
+      ...(inst.symbolId === "reducer"
+        ? {
+            inletSizeIn: inst.inletSizeIn ?? null,
+            outletSizeIn: inst.outletSizeIn ?? null,
+            // The reducer's OWNED interfaces (R1): the ports the 3D
+            // builder draws — position, elevation, direction, size —
+            // are the same interfaces validation binds.
+            interfaces: reducerInterfaces(inst)?.ports ?? [],
+          }
+        : {}),
+      ...(inst.symbolId === "spray-nozzle"
+        ? {
+            // The discharge origin and aim validation consumes (D668-006).
+            protects: inst.protects || null,
+            // The assembly's inlet interface (F3): the same stable
+            // inlet supply validation verifies — id, authored branch
+            // reference, elevation, nominal size.
+            inlet: sprayInletInterface(inst),
+            aimAt:
+              inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
+                ? { x: inst.aimAt.x, y: inst.aimAt.y }
+                : null,
+            // The discharge axis (R7), derived from the SAME
+            // origin/target model validation checks: the unit plan
+            // direction from the assembly to its authored aim point.
+            // aimResolved false is the named unresolved state — no
+            // aim (or an aim at the origin itself) — and the renderer
+            // draws no barrel for it rather than inventing a direction.
+            ...(() => {
+              const aim =
+                inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
+                  ? inst.aimAt
+                  : null;
+              if (!aim) return { dischargeDir: null, aimResolved: false };
+              const dx = aim.x - inst.x;
+              const dy = aim.y - inst.y;
+              const len = Math.hypot(dx, dy);
+              if (!(len > 1e-9)) return { dischargeDir: null, aimResolved: false };
+              return { dischargeDir: { x: dx / len, y: dy / len }, aimResolved: true };
+            })(),
+          }
+        : {}),
+      tag: inst.tag || "",
+    });
+  }
+  // Modeled tee fittings: the fitting body + ports from the shared
+  // junction model (PR668-005).
+  for (const tee of teeFittings(design)) {
+    out.push({
+      kind: "fitting",
+      id: tee.id,
+      symbolId: "tee-fitting",
+      x: tee.x,
+      z: tee.y,
+      rotY: 0,
+      elevationIn: tee.elevationIn,
+      branchSizeIn: tee.branchSizeIn,
+      hostSizeIn: tee.hostSizeIn,
+      branchAxisDeg: tee.branchAxisDeg,
+      hostAxisDeg: tee.hostAxisDeg,
+      ports: tee.ports,
+    });
+  }
+  return out;
+}
+
+/**
+ * Nozzle flange discs for one equipment instance, from the SHARED
+ * connection-face model (D668-005): [{ anchorId, x, yIn, z, sizeIn,
+ * normal, vertical, kind }]. The 3D flange sits exactly at the face
+ * validation checks — snap, reconcile, validation, and rendering can
+ * never disagree.
+ */
+export function nozzleFlangeDescriptors(design, instanceId) {
+  const inst = (design?.symbols || []).find((s) => s.id === instanceId);
+  if (!inst) return [];
+  const symbol = findSymbol(inst.domain, inst.symbolId);
+  if (!symbol) return [];
+  const out = [];
+  for (const anchor of anchorsOf(inst)) {
+    const face = connectionFaceForAnchor(symbol, inst, anchor.id);
+    if (!face || !Number.isFinite(face.elevationIn)) continue;
+    out.push({
+      anchorId: anchor.id,
+      x: face.x,
+      yIn: face.elevationIn,
+      z: face.y,
+      sizeIn: face.sizeIn,
+      normal: face.normal,
+      vertical: face.vertical,
+      kind: face.kind,
     });
   }
   return out;

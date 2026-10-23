@@ -33,6 +33,8 @@ import {
   addSheet,
   addWall,
   addWallRect,
+  assignSprayTarget,
+  connectSprayInlet,
   deleteDeck,
   deleteFurniture,
   deleteOpening,
@@ -69,6 +71,7 @@ import {
   renameOrgChart,
   renameRoom,
   resetFurnitureSize,
+  retrofitDesignComponents,
   resizeFurniture,
   resizeOpening,
   rotateFurniture,
@@ -80,11 +83,18 @@ import {
   setFurnitureUnitCost,
   setPersonManager,
   setPipeFields,
+  setPipeSource,
+  setPipeUtility,
   setRoomFinish,
   setRoomFloorImage,
+  setSprayAim,
   setSymbolLayer,
+  setSymbolFlammable,
+  setSymbolManwayDeleted,
+  setSymbolNozzleTombstone,
   setSymbolTag,
   setUnderlay,
+  setUnitBoundary,
   setWallCovering,
   setWallMaterial,
   updateDesignSettings,
@@ -125,7 +135,12 @@ import {
 } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import {
   detectRunAttachments,
+  detectRunJunctions,
+  upgradeDesignConnections,
 } from "@/domains/roomDesigner/pipeAttachments";
+import { applyCrossingJogs } from "@/domains/roomDesigner/pipeCrossings";
+import { setReducerSizes } from "@/domains/roomDesigner/pipeReducerModel";
+import { setDowncomerLevelProps } from "@/domains/roomDesigner/downcomers";
 import {
   findSymbol,
 } from "@/domains/roomDesigner/symbolRegistry";
@@ -535,8 +550,13 @@ export function documentSlice(state, action) {
       const layer = state.pendingPipe.layer === "auto" ? "piping" : state.pendingPipe.layer;
       const added = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
       const run = added.pipes[added.pipes.length - 1];
-      // Ends snapped onto a nozzle attach to it.
-      const design = detectRunAttachments(added, run.id);
+      // Ends snapped onto a nozzle attach to it; an end landed on
+      // another run junctions to it (both are flanged connections); and
+      // where the new run crosses an existing one it jogs in elevation
+      // — all inside this one undoable dispatch.
+      let design = detectRunAttachments(added, run.id);
+      design = detectRunJunctions(design, run.id);
+      design = applyCrossingJogs(design, run.id);
       return { ...touch(state, design), selection: { kind: "pipe", id: run.id } };
     }
 
@@ -544,13 +564,137 @@ export function documentSlice(state, action) {
       if (!findPipeRun(state.design, action.pipeId)) return state;
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
 
+    // R9: the D8/D9 authoring and repair commands, wired as undoable
+    // document actions. Each soft-fails (returns the same state) when
+    // the domain command rejects the edit — an inspector control can
+    // never corrupt the document with a bad value.
+    case "SET_PIPE_UTILITY":
+      try {
+        return touch(state, setPipeUtility(state.design, action.pipeId, action.utility ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_PIPE_SOURCE":
+      try {
+        return touch(state, setPipeSource(state.design, action.pipeId, action.serviceId ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_REDUCER_SIZES":
+      try {
+        return touch(
+          state,
+          setReducerSizes(state.design, action.symbolId, {
+            inletSizeIn: action.inletSizeIn,
+            outletSizeIn: action.outletSizeIn,
+          }),
+        );
+      } catch {
+        return state;
+      }
+
+    case "ASSIGN_SPRAY_TARGET":
+      try {
+        return touch(state, assignSprayTarget(state.design, action.symbolId, action.vesselId));
+      } catch {
+        return state;
+      }
+
+    case "SET_SPRAY_AIM":
+      try {
+        return touch(state, setSprayAim(state.design, action.symbolId, action.aimAt ?? null));
+      } catch {
+        return state;
+      }
+
+    // F3.1: author (or clear, with a null runId) the assembly's
+    // inlet connection — the reference verifiedSpraySupply demands.
+    // Without this action the domain command was unreachable from
+    // the product surface, so a non-seed monitor could never
+    // satisfy the authored-inlet requirement.
+    case "SET_SPRAY_INLET":
+      try {
+        return touch(
+          state,
+          connectSprayInlet(state.design, action.symbolId, {
+            runId: action.runId ?? null,
+            end: action.end,
+          }),
+        );
+      } catch {
+        return state;
+      }
+
+    case "SET_UNIT_BOUNDARY":
+      try {
+        return touch(state, setUnitBoundary(state.design, action.polygon ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_SYMBOL_MANWAY_DELETED":
+      try {
+        return touch(
+          state,
+          setSymbolManwayDeleted(state.design, action.symbolId, Boolean(action.deleted)),
+        );
+      } catch {
+        return state;
+      }
+
+    case "SET_SYMBOL_NOZZLE_TOMBSTONE":
+      try {
+        return touch(
+          state,
+          setSymbolNozzleTombstone(state.design, action.symbolId, action.anchorId, Boolean(action.deleted)),
+        );
+      } catch {
+        return state;
+      }
+
+    case "RETROFIT_COMPONENTS":
+      try {
+        return touch(state, retrofitDesignComponents(state.design));
+      } catch {
+        return state;
+      }
+
+    case "SET_DOWNCOMER_PROPS": {
+      if (!findSymbolInstance(state.design, action.instanceId)) return state;
+      try {
+        return touch(
+          state,
+          setDowncomerLevelProps(state.design, action.instanceId, action.index, action.props || {}),
+        );
+      } catch {
+        return state;
+      }
+    }
+
+    case "UPGRADE_CONNECTIONS":
+      // The deterministic upgrade for designs saved before the full
+      // nozzle catalog: re-derive attachments/junctions design-wide.
+      // One undoable transaction; geometry is never moved.
+      return touch(state, upgradeDesignConnections(state.design));
+
     case "MOVE_PIPE_VERTEX":
       if (!findPipeRun(state.design, action.pipeId)) return state;
       // Dragging an end re-derives its attachment: off a nozzle detaches,
-      // dropped exactly on one attaches.
+      // dropped exactly on one attaches. Crossing jogs are re-derived
+      // only when the drag ENDS (the commit dispatch carries no
+      // coalesce key) — inserting vertices mid-drag would shift the
+      // indices the gesture is tracking.
       return touch(
         state,
-        detectRunAttachments(movePipeVertex(state.design, action.pipeId, action.index, action.point), action.pipeId),
+        (() => {
+          let design = movePipeVertex(state.design, action.pipeId, action.index, action.point);
+          design = detectRunAttachments(design, action.pipeId);
+          design = detectRunJunctions(design, action.pipeId);
+          if (!action.coalesce) design = applyCrossingJogs(design, action.pipeId);
+          return design;
+        })(),
         action.coalesce,
       );
 
@@ -591,6 +735,10 @@ export function documentSlice(state, action) {
     case "SET_SYMBOL_LAYER":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
+
+    case "SET_SYMBOL_FLAMMABLE":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, setSymbolFlammable(state.design, action.symbolId, action.flammable));
     // ---- TEMA exchangers: configuration, drawing mode, size, replace ----
 
     case "SET_SYMBOL_TEMA": {

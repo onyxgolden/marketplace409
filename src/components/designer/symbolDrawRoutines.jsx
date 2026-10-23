@@ -21,6 +21,11 @@ import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg
 import { drawTemaSymbol } from "./temaDrawRoutine";
 import { drawRackSymbol } from "./rackDrawRoutine";
 import { uprightTextTransform } from "./uprightText";
+import { FlangePairGlyph, NozzlePlanGlyph } from "./flangeDraw";
+import { flangeDims, pipeOdIn, NOZZLE_NECK_LENGTH_IN } from "@/domains/roomDesigner/flangeGeometry";
+import { manwayLocal, accessPackageLocal, accessPackageForManway } from "@/domains/roomDesigner/vesselAccess";
+import { downcomerLevelSpecs } from "@/domains/roomDesigner/downcomers";
+import { UTILITY_ANCHOR_SPECS, isVesselSymbol } from "@/domains/roomDesigner/utilityPiping";
 
 export { uprightTextTransform };
 
@@ -264,6 +269,50 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
             strokeWidth={sw}
           />
         );
+      case "flanged-joint": // pipe through a mating flange pair (the D0 component as a fitting)
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={sw} />
+            <FlangePairGlyph x={0} y={0} angleDeg={0} od={hh * 1.9} thickness={Math.max(2, hw * 0.24)} pair stroke={stroke} />
+          </g>
+        );
+      case "blind-flange": // pipe stub closed by a blind flange cap
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={0} y2={0} stroke={stroke} strokeWidth={sw} />
+            <FlangePairGlyph x={0} y={0} angleDeg={0} od={hh * 1.9} thickness={Math.max(2, hw * 0.24)} pair={false} stroke={stroke} />
+            <line x1={Math.max(2, hw * 0.24)} y1={-hh * 0.95} x2={Math.max(2, hw * 0.24)} y2={hh * 0.95} stroke={stroke} strokeWidth={sw} />
+          </g>
+        );
+      case "fire-hydrant": // barrel + dome cap + two side outlets (equipment red, not a pipe color)
+        return (
+          <g stroke={stroke} strokeWidth={sw}>
+            <line x1={-hw} y1={0} x2={hw} y2={0} />
+            <rect x={-hw * 0.45} y={-hh * 0.55} width={hw * 0.9} height={hh * 1.1} fill="#dc2626" />
+            <path d={`M ${-hw * 0.45} ${-hh * 0.55} A ${hw * 0.45} ${hh * 0.5} 0 0 1 ${hw * 0.45} ${-hh * 0.55} Z`} fill="#dc2626" />
+            <rect x={-hw} y={-hh * 0.18} width={hw * 0.35} height={hh * 0.36} fill="#dc2626" />
+            <rect x={hw * 0.65} y={-hh * 0.18} width={hw * 0.35} height={hh * 0.36} fill="#dc2626" />
+          </g>
+        );
+      case "spray-nozzle": { // fixed directed-spray/monitor assembly: flanged base + fan cone
+        // The fan points at the assembly's authored aim point when one
+        // is recorded (local frame: world aim angle less the symbol's
+        // own rotation); without one it keeps the default +x facing.
+        const aimDeg =
+          instance.aimAt && Number.isFinite(instance.aimAt.x)
+            ? (Math.atan2(instance.aimAt.y - instance.y, instance.aimAt.x - instance.x) * 180) / Math.PI -
+              (instance.rotationDeg || 0)
+            : 0;
+        return (
+          <g transform={`rotate(${aimDeg.toFixed(2)})`}>
+            <line x1={-hw} y1={0} x2={-hw * 0.3} y2={0} stroke={stroke} strokeWidth={sw} />
+            <FlangePairGlyph x={-hw * 0.3} y={0} angleDeg={0} od={hh * 1.5} thickness={Math.max(1.5, hw * 0.18)} pair={false} stroke={stroke} />
+            <polygon points={`${-hw * 0.2},0 ${hw},${-hh} ${hw},${hh}`} fill={accent} fillOpacity={0.3} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw * 0.2} y1={0} x2={hw} y2={-hh * 0.5} stroke={stroke} strokeWidth={sw} strokeDasharray="3 2" />
+            <line x1={-hw * 0.2} y1={0} x2={hw} y2={hh * 0.5} stroke={stroke} strokeWidth={sw} strokeDasharray="3 2" />
+          </g>
+        );
+      }
       case "flow":
         return (
           <polygon
@@ -1236,9 +1285,11 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
   // Marks that hang below the body (a boot, sphere legs) push the labels down.
   const hangs = PROCESS_GLYPH_SPECS[symbol.glyph]?.marks || [];
   const below = hh + (hangs.includes("boot") ? Math.max(2, hh * 0.35) : 0) + (hangs.includes("legs") ? Math.min(hw, hh) * 0.15 : 0);
+  const components = drawEquipmentComponents({ symbol, instance, hw, hh, scale, highlighted });
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
+      {components}
       {instance.tag && (
         <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
           {instance.tag.slice(0, 14)}
@@ -1249,6 +1300,136 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
       </text>
     </g>
   );
+}
+
+/**
+ * The physical components a process-equipment symbol carries, drawn in
+ * the symbol's local (pixel) frame over the glyph: flanged nozzles
+ * (neck + flange from the shared component model), vessel base utility
+ * connections, the manway (hinged round cover), the derived catwalk +
+ * ladder access package, and a column's downcomer-level nozzles,
+ * manway, and platform (the levels coincide in plan).
+ */
+function drawEquipmentComponents({ symbol, instance, hw, hh, scale, highlighted }) {
+  const parts = [];
+  const flangeStroke = highlighted ? "#f59e0b" : "#e2e8f0";
+  const nozzleAt = (key, fx, fy, sizeIn) => {
+    const x = fx * hw;
+    const y = fy * hh;
+    const dims = flangeDims(sizeIn);
+    const angleDeg = (Math.atan2(y, x) * 180) / Math.PI;
+    const dist = Math.hypot(x, y);
+    parts.push(
+      <NozzlePlanGlyph
+        key={key}
+        x={x}
+        y={y}
+        angleDeg={angleDeg}
+        od={dims.odIn * scale}
+        thickness={dims.thicknessIn * scale}
+        neckLength={Math.min(NOZZLE_NECK_LENGTH_IN * scale, dist * 0.9)}
+        neckWidth={pipeOdIn(sizeIn) * scale}
+        top={fx === 0 && fy === 0}
+        stroke={flangeStroke}
+      />,
+    );
+  };
+  (symbol.nozzles || []).forEach((n) => nozzleAt(`nz-${n.id}`, n.fx, n.fy, n.sizeIn));
+  if (isVesselSymbol(symbol)) {
+    UTILITY_ANCHOR_SPECS.forEach((n) => nozzleAt(`ut-${n.id}`, n.fx, n.fy, n.sizeIn));
+  }
+  if (symbol.downcomers) {
+    const seen = new Set();
+    for (const level of downcomerLevelSpecs(symbol, instance)) {
+      for (const n of level.nozzleSpecs) {
+        const key = `${n.fx}|${n.fy}|${n.sizeIn}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        nozzleAt(`dc-${n.id}`, n.fx, n.fy, n.sizeIn);
+      }
+    }
+  }
+  const manwayGlyph = (key, fx, fy, diameterIn) => {
+    const x = fx * hw;
+    const y = fy * hh;
+    const r = Math.max(3, (diameterIn / 2) * scale);
+    const len = Math.hypot(fx, fy) || 1;
+    const dx = fx / len;
+    const dy = fy / len;
+    const hx = x - dy * r;
+    const hy = y + dx * r;
+    parts.push(
+      <g key={key} stroke="#fbbf24" fill="none">
+        <circle cx={x} cy={y} r={r} strokeWidth={1.5} />
+        <circle cx={x} cy={y} r={r * 0.78} strokeWidth={0.75} />
+        <line x1={hx - dx * 3} y1={hy - dy * 3} x2={hx + dx * 3} y2={hy + dy * 3} strokeWidth={2.5} />
+      </g>,
+    );
+  };
+  const mw = manwayLocal(symbol, instance);
+  if (mw) {
+    const effW = instance.widthIn ?? symbol.widthIn;
+    const effD = instance.depthIn ?? symbol.depthIn;
+    manwayGlyph("manway", mw.lx / (effW / 2), mw.ly / (effD / 2), mw.diameterIn);
+  }
+  const deckGlyph = (key, pkg) => {
+    if (!pkg) return;
+    const { deck, ladder } = pkg;
+    parts.push(
+      <g key={key}>
+        <g transform={`translate(${deck.cx * scale} ${deck.cy * scale}) rotate(${deck.angleDeg})`}>
+          <rect
+            x={-(deck.depthIn * scale) / 2}
+            y={-(deck.widthIn * scale) / 2}
+            width={deck.depthIn * scale}
+            height={deck.widthIn * scale}
+            fill="rgba(168,162,158,0.30)"
+            stroke="#a8a29e"
+            strokeWidth={1}
+          />
+          {[-0.25, 0, 0.25].map((f) => (
+            <line
+              key={f}
+              x1={-(deck.depthIn * scale) / 2}
+              y1={f * deck.widthIn * scale}
+              x2={(deck.depthIn * scale) / 2}
+              y2={f * deck.widthIn * scale}
+              stroke="#a8a29e"
+              strokeWidth={0.5}
+            />
+          ))}
+        </g>
+        <g transform={`translate(${ladder.cx * scale} ${ladder.cy * scale}) rotate(${ladder.angleDeg})`}>
+          <rect
+            x={-3 * scale}
+            y={-(ladder.widthIn * scale) / 2}
+            width={6 * scale}
+            height={ladder.widthIn * scale}
+            fill="none"
+            stroke="#a8a29e"
+            strokeWidth={1}
+          />
+        </g>
+      </g>,
+    );
+  };
+  deckGlyph("access", accessPackageLocal(symbol, instance));
+  if (symbol.downcomers) {
+    const levels = downcomerLevelSpecs(symbol, instance);
+    if (levels.length > 0) {
+      const first = levels[0];
+      const effD = instance.depthIn ?? symbol.depthIn;
+      manwayGlyph("dc-manway", 0, 1, first.manway.diameterIn);
+      deckGlyph(
+        "dc-access",
+        accessPackageForManway(
+          { lx: 0, ly: effD / 2, dirX: 0, dirY: 1, diameterIn: first.manway.diameterIn, sillIn: first.elevationIn },
+          { fromIn: 0 },
+        ),
+      );
+    }
+  }
+  return parts.length > 0 ? <g data-testid="equipment-components">{parts}</g> : null;
 }
 
 const routines = new Map([
