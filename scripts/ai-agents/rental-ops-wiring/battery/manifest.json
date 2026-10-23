@@ -1,0 +1,8 @@
+{
+  "schema": "rental-ops-battery-manifest@1",
+  "cases": 80,
+  "files": {
+    "cases.json": "b8336f491582199586b251d953c05d46e42aec1d24c7abe81dfd9d5e78520e43",
+    "oracle.js": "3c859ae5a7d4a99bf440bc5cb931f4db84cb1ca93e4dbc63e640f8d4f475015a"
+  }
+}
