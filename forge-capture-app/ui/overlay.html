@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!-- Dark color-scheme: WebView2 paints its default background from this
+       before any CSS loads. Without it the fullscreen overlay flashes white
+       on open (the page itself is black). -->
+  <meta name="color-scheme" content="dark" />
   <title>Select region</title>
   <style>
     html, body {
