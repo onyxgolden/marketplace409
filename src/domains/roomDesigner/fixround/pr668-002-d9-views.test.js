@@ -70,9 +70,26 @@ function d9Design() {
   });
   // R6: the take-off is the spray's riser leg — it must REACH the
   // assembly inlet elevation (grade), not just its plan position.
+  // F4.1 rebuild: the buried leg runs at -36 to the assembly's plan
+  // position and the terminal segment is a zero-plan-length vertical
+  // riser vertex (duplicate plan point, per-vertex elevation) — the
+  // round-1 fixture's single segment rose over its whole 900-in plan
+  // run, a sloped terminal F4.1 now refuses; assertions unchanged.
   d = {
     ...d,
-    pipes: d.pipes.map((p) => (p.id === "fw-spray-takeoff" ? { ...p, elevIn: [-36, 0] } : p)),
+    pipes: d.pipes.map((p) =>
+      p.id === "fw-spray-takeoff"
+        ? {
+            ...p,
+            points: [
+              { x: 900, y: 0 },
+              { x: 900, y: 900 },
+              { x: 900, y: 900 },
+            ],
+            elevIn: [-36, -36, 0],
+          }
+        : p,
+    ),
   };
   d = detectRunJunctions(d, "fw-spray-takeoff");
   d = placeReducer(d, 900, 0, { id: "red-fws", inletSizeIn: 12, outletSizeIn: 6 });

@@ -1028,11 +1028,31 @@ function addFirewater(design, systemIds) {
       service: `Firewater take-off to ${tag}`,
       systemName: "Firewater",
       utility: "firewater",
-      // Buried at the tap, rising to the assembly's inlet elevation
-      // at the spray end (0 in) — the modeled riser R6 requires.
-      elevIn: [-36, 0],
     });
     const takeoffId = next.pipes[next.pipes.length - 1].id;
+    // Buried at the tap and along the leg to the assembly's plan
+    // position, then a zero-plan-length vertical riser vertex
+    // (duplicate plan point, per-vertex elevation) up to the
+    // assembly's inlet elevation (0 in) — the modeled riser R6
+    // requires, with the terminal segment itself vertical (F4.1: a
+    // single segment rising over the whole plan run is a sloped
+    // terminal, not a riser).
+    next = {
+      ...next,
+      pipes: next.pipes.map((r) =>
+        r.id === takeoffId
+          ? {
+              ...r,
+              points: [
+                pt(tapFt.x, tapFt.y),
+                { x: spray.x, y: spray.y },
+                { x: spray.x, y: spray.y },
+              ],
+              elevIn: [-36, -36, 0],
+            }
+          : r,
+      ),
+    };
     // F3: the take-off end is AUTHORED as the assembly's inlet
     // connection (inletRunId/inletEnd + the assembly's inlet size) —
     // supply is verified against that reference, never proximity.

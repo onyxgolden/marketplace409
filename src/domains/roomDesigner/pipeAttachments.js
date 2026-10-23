@@ -585,7 +585,9 @@ export function attachmentInterfaceErrors(design, run, end) {
   }
   // Approach axis: the end segment must arrive along the face's
   // own axis (R2). A zero-plan-length end segment is a riser —
-  // the vertical approach itself.
+  // the vertical approach itself. A non-flat end segment whose
+  // plan projection exceeds the face tolerance is a SLOPE, not a
+  // riser, however favorable its elevation direction (F4.1).
   const segPlanLen = Math.hypot(neighbor.x - point.x, neighbor.y - point.y);
   if (face.vertical) {
     const flat =
@@ -595,6 +597,17 @@ export function attachmentInterfaceErrors(design, run, end) {
         `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} with a horizontal run at the face elevation — a vertical flange face is met by a riser, not a horizontal approach.`,
       );
     } else if (!flat) {
+      // Verticality (F4.1): the terminal segment changes elevation,
+      // so it claims to be the riser — require it to BE one: plan
+      // projection at or below the connection-face tolerance. The
+      // signed-direction check below proves only which SIDE the
+      // approach comes from; alone it admitted an arbitrarily
+      // sloped segment (a 500-in plan run gaining 36 in) as a riser.
+      if (segPlanLen > CONNECTION_FACE_TOLERANCE_IN) {
+        errors.push(
+          `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} through a sloped segment (plan projection ${Math.round(segPlanLen)} in), not a vertical riser — a vertical flange face is met by a terminal segment vertical within ${CONNECTION_FACE_TOLERANCE_IN} in in plan.`,
+        );
+      }
       // Approach SIDE (F2.1): a top face's exterior side is ABOVE
       // the flange. A riser arriving from below reaches the face
       // through the vessel body — only an approach from above (or

@@ -57,8 +57,16 @@ function sprayDesign() {
   return design;
 }
 
-/** Main (source, buried) + a riser take-off ending AT the spray point. */
-function suppliedDesign({ takeoffDiameterIn = 6, takeoffElevIn = [-36, 0] } = {}) {
+/**
+ * Main (source, buried) + a riser take-off ending AT the spray
+ * point: a buried horizontal leg to the spray's plan position, then
+ * a zero-plan-length vertical riser vertex (duplicate plan point,
+ * per-vertex elevation) up to the inlet elevation. (F4.1 rebuild:
+ * the round-3 fixture's single segment rose over its whole 1000-in
+ * plan run — a sloped terminal F4.1 now refuses; assertions
+ * unchanged.)
+ */
+function suppliedDesign({ takeoffDiameterIn = 6, takeoffElevIn = [-36, -36, 0] } = {}) {
   let design = sprayDesign();
   design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 1200, y: 0 }], {
     id: "main",
@@ -77,7 +85,16 @@ function suppliedDesign({ takeoffDiameterIn = 6, takeoffElevIn = [-36, 0] } = {}
     ...design,
     pipes: design.pipes.map((p) =>
       p.id === "takeoff"
-        ? { ...p, elevIn: takeoffElevIn, junctions: { start: { runId: "main" } } }
+        ? {
+            ...p,
+            points: [
+              { x: 0, y: 0 },
+              { x: 0, y: 1000 },
+              { x: 0, y: 1000 },
+            ],
+            elevIn: takeoffElevIn,
+            junctions: { start: { runId: "main" } },
+          }
         : p,
     ),
   };

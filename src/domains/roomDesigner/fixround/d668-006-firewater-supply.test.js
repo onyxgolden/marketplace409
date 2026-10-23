@@ -80,10 +80,15 @@ describe("D668-006 firewater protection requires verified supply", () => {
       sourceOf: "firewater",
     });
     // 6-in take-off off the main, run to the spray assembly — buried
-    // at the tap, rising to the assembly's inlet elevation at the
-    // spray end (R6: the supply must bind a physical inlet, not just
-    // reach the assembly in plan). addPipeRun does not carry elevIn;
-    // it is patched on with the junction below.
+    // at the tap and along the run to the assembly's plan position,
+    // then a zero-plan-length vertical riser vertex (duplicate plan
+    // point, per-vertex elevation) up to the assembly's inlet
+    // elevation at the spray end (R6: the supply must bind a physical
+    // inlet, not just reach the assembly in plan; F4.1: the terminal
+    // segment itself must be that riser — the round-1 fixture's
+    // single segment rose over its whole plan run, a sloped terminal
+    // F4.1 now refuses; assertions unchanged). addPipeRun does not
+    // carry elevIn; it is patched on with the junction below.
     design = addPipeRun(design, [{ x: 900, y: 1000 }, { x: 900, y: 900 }], {
       id: "fw-takeoff",
       diameterIn: 6,
@@ -93,7 +98,16 @@ describe("D668-006 firewater protection requires verified supply", () => {
     });
     const pipes = design.pipes.map((p) =>
       p.id === "fw-takeoff"
-        ? { ...p, elevIn: [-36, 0], junctions: { start: { runId: "fw-main" } } }
+        ? {
+            ...p,
+            points: [
+              { x: 900, y: 1000 },
+              { x: 900, y: 900 },
+              { x: 900, y: 900 },
+            ],
+            elevIn: [-36, -36, 0],
+            junctions: { start: { runId: "fw-main" } },
+          }
         : p,
     );
     design = { ...design, pipes };

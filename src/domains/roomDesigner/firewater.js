@@ -447,9 +447,11 @@ export function sprayInletInterface(spray) {
  * full interface predicate, mirroring the equipment-nozzle checks:
  * the authored branch end must exist and be a firewater run; its end
  * must sit ON the inlet face (plan + elevation within face
- * tolerance); its approach must be a riser (the inlet is fed from
- * below — a flat horizontal run at the inlet elevation is not an
- * inlet connection); the branch's nominal size must match the
+ * tolerance); its approach must be a riser — vertical in plan
+ * within face tolerance (F4.1) — rising into the inlet from below
+ * (the inlet is fed from below: a flat horizontal run at the inlet
+ * elevation, a descent from above, or a sloped terminal segment is
+ * not an inlet connection); the branch's nominal size must match the
  * inlet's, or a reducer OWNED by this exact pair (branch end +
  * assembly inlet) must bind at the inlet point; and the branch must
  * reach the firewater source through modeled junctions — traversal
@@ -520,6 +522,21 @@ export function verifiedSpraySupply(design, spray) {
     // cannot prove the modeled below-fed connection.
     problems.push(
       "supply branch does not rise into the assembly inlet through a riser from below — a flat horizontal approach, or a descent from above, is not a verified inlet connection",
+    );
+  } else if (
+    Math.hypot(neighborNode.x - node.x, neighborNode.y - node.y) >
+    CONNECTION_FACE_TOLERANCE_IN
+  ) {
+    // Verticality (F4.1): RISING is not enough — the terminal
+    // segment must be a riser, vertical in plan within the face
+    // tolerance. The direction check above proves only the side
+    // the approach comes from; alone it admitted an arbitrarily
+    // sloped terminal run (ChatGPT's executed counterexample: a
+    // 500-in plan run gaining 36 in) as a below-fed inlet.
+    problems.push(
+      `supply branch reaches the assembly inlet through a sloped segment (plan projection ${Math.round(
+        Math.hypot(neighborNode.x - node.x, neighborNode.y - node.y),
+      )} in), not a vertical riser — a below-fed inlet is proven only by a terminal segment vertical within ${CONNECTION_FACE_TOLERANCE_IN} in in plan`,
     );
   }
   if (

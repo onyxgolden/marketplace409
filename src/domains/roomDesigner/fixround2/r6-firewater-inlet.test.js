@@ -90,7 +90,12 @@ describe("R6 firewater supply binds a physical inlet; boundary must be simple", 
       sourceOf: "firewater",
       underground: true,
     });
-    // Take-off: buried at the main, rising to the assembly inlet (0).
+    // Take-off: buried at the main, running buried to the assembly's
+    // plan position, then a zero-plan-length vertical riser vertex
+    // (duplicate plan point, per-vertex elevation) up to the assembly
+    // inlet (0). (F4.1 rebuild: the round-2 fixture's single segment
+    // rose over its whole plan run — a sloped terminal F4.1 now
+    // refuses; assertions unchanged.)
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 0, y: 1000 }], {
       id: "takeoff",
       diameterIn: 6,
@@ -100,7 +105,16 @@ describe("R6 firewater supply binds a physical inlet; boundary must be simple", 
       ...design,
       pipes: design.pipes.map((p) =>
         p.id === "takeoff"
-          ? { ...p, elevIn: [-36, 0], junctions: { start: { runId: "main" } } }
+          ? {
+              ...p,
+              points: [
+                { x: 0, y: 0 },
+                { x: 0, y: 1000 },
+                { x: 0, y: 1000 },
+              ],
+              elevIn: [-36, -36, 0],
+              junctions: { start: { runId: "main" } },
+            }
           : p,
       ),
     };

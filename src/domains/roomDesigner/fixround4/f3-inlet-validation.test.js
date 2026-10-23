@@ -67,10 +67,15 @@ function sprayDesign() {
 
 /**
  * Buried 12-in source main + a 6-in branch junctioned at (0, 0). The
- * branch has three vertices: it leaves the main at -36, holds a
- * preceding elevation (the vertex before the inlet end), and arrives
- * at the inlet at elevation 0. midElevIn < 0 = fed from below (the
- * modeled inlet); midElevIn > 0 = descending from above.
+ * branch runs buried at -36 to the inlet's plan position, then its
+ * terminal segment is a true vertical riser (duplicate plan point,
+ * per-vertex elevation — the codebase's riser representation): the
+ * middle vertex sits at the inlet plan position holding the
+ * preceding elevation, and the branch arrives at the inlet at
+ * elevation 0. midElevIn < 0 = fed from below (the modeled inlet);
+ * midElevIn > 0 = descending from above. (F4.1 rebuild: the round-4
+ * fixture's terminal segment ran 500 in in plan gaining 36 in — the
+ * sloped geometry F4.1 now refuses; assertions unchanged.)
  */
 function suppliedDesign({ midElevIn = -36 } = {}) {
   let design = sprayDesign();
@@ -82,7 +87,7 @@ function suppliedDesign({ midElevIn = -36 } = {}) {
     sourceOf: "firewater",
     underground: true,
   });
-  design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 0, y: 500 }, { x: 0, y: 1000 }], {
+  design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 0, y: 1000 }], {
     id: "takeoff",
     diameterIn: 6,
     utility: "firewater",
@@ -91,7 +96,16 @@ function suppliedDesign({ midElevIn = -36 } = {}) {
     ...design,
     pipes: design.pipes.map((p) =>
       p.id === "takeoff"
-        ? { ...p, elevIn: [-36, midElevIn, 0], junctions: { start: { runId: "main" } } }
+        ? {
+            ...p,
+            points: [
+              { x: 0, y: 0 },
+              { x: 0, y: 1000 },
+              { x: 0, y: 1000 },
+            ],
+            elevIn: [-36, midElevIn, 0],
+            junctions: { start: { runId: "main" } },
+          }
         : p,
     ),
   };

@@ -63,6 +63,11 @@ function sprayDesign(sprayAt, aimAt = { x: 1000, y: 1000 }) {
   // spray. A flat buried run ending beside the assembly is a
   // plan-only supply and is rejected. (addPipeRun does not carry
   // elevIn; it is patched on, as the sample's authoring does.)
+  // F4.1 rebuild: the leg runs buried at -36 to the spray's plan
+  // position and the terminal segment is a zero-plan-length vertical
+  // riser vertex (duplicate plan point, per-vertex elevation) — the
+  // earlier fixture's single segment rose over its whole plan run,
+  // a sloped terminal F4.1 now refuses; assertions unchanged.
   design = addPipeRun(design, [{ x: sprayAt.x - 100, y: sprayAt.y }, { x: sprayAt.x, y: sprayAt.y }], {
     id: "fw-riser",
     diameterIn: 6,
@@ -72,7 +77,16 @@ function sprayDesign(sprayAt, aimAt = { x: 1000, y: 1000 }) {
     ...design,
     pipes: design.pipes.map((p) =>
       p.id === "fw-riser"
-        ? { ...p, elevIn: [-36, 0], junctions: { start: { runId: "fw-main" } } }
+        ? {
+            ...p,
+            points: [
+              { x: sprayAt.x - 100, y: sprayAt.y },
+              { x: sprayAt.x, y: sprayAt.y },
+              { x: sprayAt.x, y: sprayAt.y },
+            ],
+            elevIn: [-36, -36, 0],
+            junctions: { start: { runId: "fw-main" } },
+          }
         : p,
     ),
   };
