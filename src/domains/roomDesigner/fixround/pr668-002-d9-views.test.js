@@ -45,6 +45,13 @@ function d9Design() {
     utility: "firewater",
     elevationIn: -36,
   });
+  // R6: the branch is the hydrant's riser leg — buried at the tap,
+  // rising to the hydrant inlet at grade (modeled profile, patched
+  // post-add the way the other firewater fixtures author elevIn).
+  d = {
+    ...d,
+    pipes: d.pipes.map((p) => (p.id === "fw-branch" ? { ...p, elevIn: [-36, 0] } : p)),
+  };
   // The branch taps the main: modeled junction + the 12->6 reducer the
   // size transition requires (PR668-001/D668-003 — an unmodeled tap is
   // a validation finding now).
@@ -58,6 +65,12 @@ function d9Design() {
     utility: "firewater",
     elevationIn: -36,
   });
+  // R6: the take-off is the spray's riser leg — it must REACH the
+  // assembly inlet elevation (grade), not just its plan position.
+  d = {
+    ...d,
+    pipes: d.pipes.map((p) => (p.id === "fw-spray-takeoff" ? { ...p, elevIn: [-36, 0] } : p)),
+  };
   d = detectRunJunctions(d, "fw-spray-takeoff");
   d = placeReducer(d, 900, 0, { id: "red-fws", inletSizeIn: 12, outletSizeIn: 6 });
   d = placeSymbol(d, "piping", "fire-hydrant", 600, 72, { id: "fh-1", tag: "FH-1" });

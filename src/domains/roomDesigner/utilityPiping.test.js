@@ -24,6 +24,7 @@ import {
   validateDesign,
 } from "./designerDocument";
 import { PROCESS_EQUIPMENT } from "./processEquipmentCatalog";
+import { placeReducer } from "./pipeReducerModel";
 
 const E = "processEquipment";
 const sym = (id) => PROCESS_EQUIPMENT.find((s) => s.id === id);
@@ -71,6 +72,16 @@ function vesselWithUtilities() {
       diameterIn: service.sizeIn,
     });
     design = withUtility(design, `br-${service.id}`, { utility: service.id });
+    // R1/D3: the 2-in header to 1-in drop transition at the tap is a
+    // modeled reducer whose owned interfaces bind the junction — the
+    // supply graph only carries the edge through the bound reducer.
+    // The branch leaves the tap toward the port (axis -90 here).
+    design = placeReducer(design, port.x, y, {
+      id: `red-${service.id}`,
+      inletSizeIn: UTILITY_HEADER_DIAMETER_IN,
+      outletSizeIn: service.sizeIn,
+      rotationDeg: (Math.atan2(port.y - y, 0) * 180) / Math.PI,
+    });
   }
   return design;
 }

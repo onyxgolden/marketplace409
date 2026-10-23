@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Each test rebuilds and fully validates the 91-run FCCU acceptance
+// design (~4-5 s of CPU on an idle core). The 5 s default test
+// timeout leaves no headroom under full-suite parallel load, where
+// these tests time out without any assertion failing — the timeout
+// is raised for this file only; assertions are unchanged.
+vi.setConfig({ testTimeout: 30000 });
 import { validateHomeProject } from "./homeProject";
 import { anchorAtPoint, anchorsOf, reconcilePipeAttachments } from "./pipeAttachments";
 import { moveSymbol } from "./designerDocument";

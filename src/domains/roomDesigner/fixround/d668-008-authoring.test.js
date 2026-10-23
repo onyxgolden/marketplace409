@@ -110,6 +110,15 @@ describe("D668-008 authoring: semantic identities on ordinary commands", () => {
           : p,
       ),
     };
+    // R1/D3: the header-to-drop tap carries its modeled reducer —
+    // without the bound transition the supply graph has no edge.
+    const { placeReducer } = await import("../pipeReducerModel");
+    design = placeReducer(design, 50, 0, {
+      id: "pw-red",
+      inletSizeIn: 2,
+      outletSizeIn: 1,
+      rotationDeg: (Math.atan2(port.y - 0, port.x - 50) * 180) / Math.PI,
+    });
     const errors = utilityPipingErrors(design);
     expect(errors.some((e) => e.includes("V-901") && e.includes("Plant water"))).toBe(false);
     expect(errors.some((e) => e.includes("V-901") && e.includes("Plant air"))).toBe(true);

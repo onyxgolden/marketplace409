@@ -479,19 +479,21 @@ export function pipeDescriptors(design) {
       const yIn = segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn);
       const y0In = vertexElevs[i] ?? yIn;
       const y1In = vertexElevs[i + 1] ?? yIn;
-      segments.push({
+      const seg = {
         a: { x: a.x, z: a.y },
         b: { x: b.x, z: b.y },
         yIn,
         y0In,
         y1In,
-        // An authored (stored) elevation change across a plan
-        // segment is a physical slope (R3): the renderer draws the
-        // segment between its true endpoint elevations. A derived
-        // profile's change is a step at the vertex instead (flat
-        // segment + riser), so it is never flagged sloped.
-        sloped: runHasStoredElevation(run) && y0In !== y1In,
-      });
+      };
+      // An authored (stored) elevation change across a plan segment
+      // is a physical slope (R3): the renderer draws the segment
+      // between its true endpoint elevations. A derived profile's
+      // change is a step at the vertex instead (flat segment +
+      // riser), so it is never flagged sloped. The flag is present
+      // only when true — flat segments keep the pre-R3 shape.
+      if (runHasStoredElevation(run) && y0In !== y1In) seg.sloped = true;
+      segments.push(seg);
     }
     // A run with a STORED elevation profile (an explicit centerline, or
     // per-vertex elevations from level connections / crossing jogs)
