@@ -30,7 +30,17 @@ import {
   resetHomeProjectIds,
   updateLevelDesign,
 } from "./homeProject";
-import { anchorsOf, detectRunAttachments } from "./pipeAttachments";
+import {
+  anchorsOf,
+  detectRunAttachments,
+  detectRunJunctions,
+  reconcilePipeAttachments,
+  reconcileRunJunctions,
+} from "./pipeAttachments";
+import { applyCrossingJogs } from "./pipeCrossings";
+import { setDowncomerLevelProps } from "./downcomers";
+import { UTILITY_HEADER_DIAMETER_IN, UTILITY_SERVICES } from "./utilityPiping";
+import { FIREWATER_MAIN_DIAMETER_IN, HYDRANT_BRANCH_DIAMETER_IN } from "./firewater";
 import { setRackParams } from "./rackGeometry";
 
 export const FCCU_SAMPLE_SEED_ID = "fccu-plot-plan";
@@ -92,6 +102,10 @@ const FCCU_AREAS = [
 ];
 
 // Named piping systems, created in this order: [name, color].
+// Color note (firewater red reservation): red is reserved to firewater
+// piping across the designer, so the Relief system was recolored from
+// red (#ef4444) to dark amber (#b45309) when the Firewater system was
+// added — see the before/after color map in the build report.
 const FCCU_SYSTEMS = [
   ["Process feed", "#22c55e"],
   ["Reactor effluent", "#f97316"],
@@ -101,8 +115,12 @@ const FCCU_SYSTEMS = [
   ["Wet gas", "#a855f7"],
   ["Product rundown", "#ec4899"],
   ["Cooling water", "#f59e0b"],
-  ["Relief", "#ef4444"],
+  ["Relief", "#b45309"],
   ["Flue gas", "#94a3b8"],
+  ["Plant water", "#0891b2"],
+  ["Plant air", "#65a30d"],
+  ["Nitrogen", "#db2777"],
+  ["Firewater", "#dc2626"],
 ];
 
 const pt = (xFt, yFt) => ({ x: xFt * FT, y: yFt * FT });
@@ -217,9 +235,12 @@ function labelPlot(design) {
 
 /**
  * Every pipe run goes through here: add the run, join its system, then
- * record nozzle attachments for any end sitting exactly on an anchor.
+ * record nozzle attachments for any end sitting exactly on an anchor,
+ * pipe-to-pipe junctions for any end landing on another run (both are
+ * flanged connections), and a vertical jog wherever the new run crosses
+ * an existing one — a pipe changes elevation to cross another pipe.
  */
-function addRun(design, systemIds, pointsInches, { diameterIn, service, systemName, id } = {}) {
+function addRun(design, systemIds, pointsInches, { diameterIn, service, systemName, id, utility, elevationIn, elevIn, sourceOf } = {}) {
   const runId = id || fccuId("pipe");
   let next = addPipeRun(design, pointsInches, {
     id: runId,
@@ -227,9 +248,29 @@ function addRun(design, systemIds, pointsInches, { diameterIn, service, systemNa
     material: "Carbon steel",
     service,
     layer: "piping",
+    elevationIn,
   });
+  if (utility || elevIn || sourceOf) {
+    next = {
+      ...next,
+      pipes: next.pipes.map((r) =>
+        r.id === runId
+          ? {
+              ...r,
+              ...(utility ? { utility } : {}),
+              ...(elevIn ? { elevIn } : {}),
+              ...(sourceOf ? { sourceOf } : {}),
+            }
+          : r,
+      ),
+    };
+  }
   next = setMemberSystem(next, { kind: "pipe", id: runId }, systemIds[systemName]);
   next = detectRunAttachments(next, runId);
+  next = reconcilePipeAttachments(next);
+  next = detectRunJunctions(next, runId);
+  next = reconcileRunJunctions(next);
+  next = applyCrossingJogs(next, runId);
   return next;
 }
 
@@ -275,7 +316,7 @@ function addPiping(design, systemIds) {
     const end = anchor("E-104", "shell-in");
     run(
       [anchorPt(start), { x: start.x, y: 205 * FT }, pt(368, 205), anchorPt(end)],
-      { diameterIn: 12, service: "Fractionator bottoms to exchanger train", systemName: "Reactor effluent" },
+      { diameterIn: 12, service: "Slurry oil — fractionator bottoms to exchanger train", systemName: "Reactor effluent" },
     );
   }
   for (const [from, to] of [["E-104", "E-103"], ["E-103", "E-102"], ["E-102", "E-101"]]) {
@@ -320,6 +361,36 @@ function addPiping(design, systemIds) {
       { diameterIn: 10, service: "Regenerated catalyst to reactor", systemName: "Catalyst transfer" },
     );
   }
+  // D1 — heavy cycle oil draw: from the 10 ft downcomer assembly's draw
+  // outlet (east side, at the level's 120 in elevation) east, then south
+  // overhead to the battery limit. Its own circuit — it touches neither
+  // the suction header nor the light cycle oil path.
+  {
+    const start = anchor("T-101", "downcomer-1-draw");
+    run(
+      [anchorPt(start), pt(348, 150), pt(348, 400)],
+      {
+        diameterIn: 6,
+        service: "Heavy cycle oil draw to battery limit",
+        systemName: "Product rundown",
+        elevationIn: 120,
+      },
+    );
+  }
+  // D2 — light cycle oil draw: from the 20 ft assembly's draw outlet
+  // (west side, at 240 in) west, then north to the battery limit.
+  {
+    const start = anchor("T-101", "downcomer-2-draw");
+    run(
+      [anchorPt(start), pt(250, 150), pt(250, 36)],
+      {
+        diameterIn: 6,
+        service: "Light cycle oil draw to battery limit",
+        systemName: "Product rundown",
+        elevationIn: 240,
+      },
+    );
+  }
   // R4 — regenerator flue gas to the battery limit.
   {
     const start = anchor("R-102", "flue-gas-out");
@@ -328,20 +399,25 @@ function addPiping(design, systemIds) {
       { diameterIn: 12, service: "Regenerator flue gas to battery limit", systemName: "Flue gas" },
     );
   }
-  // G1 — fractionator overhead to the reflux drum.
+  // G1 — fractionator overhead vapors to the reflux drum (the overhead
+  // stream is wet gas / gasoline-range material, not yet a separated
+  // gas product — downstream separation happens in V-101/V-102).
   {
     const start = anchor("T-101", "overhead-out");
     const end = anchor("V-101", "inlet");
     run(
       [anchorPt(start), pt(320, 255), pt(330, 255), anchorPt(end)],
-      { diameterIn: 10, service: "Fractionator overhead to reflux drum", systemName: "Overhead & reflux" },
+      { diameterIn: 10, service: "Overhead vapors — wet gas / gasoline-range material", systemName: "Overhead & reflux" },
     );
   }
-  // G2 — reflux drum liquid to the suction header (end lands pipe-to-pipe).
+  // G2 — reflux drum liquid to the suction header (the end lands
+  // pipe-to-pipe ON the header at x=315 ft: a junction-modeled mixing
+  // point it shares with the slurry bottoms rundown — see the fixture
+  // draw map on configureFractionator).
   {
     const start = anchor("V-101", "liquid-out");
     run(
-      [anchorPt(start), pt(315, 262), pt(315, 328), pt(330, 328)],
+      [anchorPt(start), pt(315, 262), pt(315, 328)],
       { diameterIn: 6, service: "Reflux drum liquid to suction header", systemName: "Overhead & reflux" },
     );
   }
@@ -437,10 +513,12 @@ function addPiping(design, systemIds) {
     });
   }
   // Discharge jumpers from each pump (except the reflux pump P-101, whose
-  // discharge is run G3) up to the rack rundown header.
+  // discharge is run G3) up to the rack rundown header. Each jogs up at
+  // the rack edge (y=361 ft) so its last segment rides the rack and its
+  // end actually meets the header's elevation.
   for (const [tag, pxFt] of pumpRow.slice(1)) {
     const start = anchor(tag, "discharge-out");
-    run([anchorPt(start), pt(pxFt, 373)], {
+    run([anchorPt(start), pt(pxFt, 361), pt(pxFt, 373)], {
       diameterIn: 6,
       service: `Pump discharge — ${tag}`,
       systemName: "Product rundown",
@@ -472,13 +550,14 @@ function addPiping(design, systemIds) {
       { diameterIn: 12, service: "Regenerator relief branch", systemName: "Relief" },
     );
   }
-  // U1 — cooling water supply to E-101 along y=236.25 ft, then chained
-  // exchanger-to-exchanger in series so every exchanger's cooling-water
-  // nozzles carry real attachments (P663-001).
+  // U1 — cooling water supply to E-101. It approaches the exchanger's
+  // cooling-water-in nozzle from the south (perpendicular), rather than
+  // running west along the nozzle line, so it never overlaps the
+  // exchanger-to-exchanger chain runs that share that line.
   {
     const end = anchor("E-101", "cooling-water-in");
     run(
-      [pt(110, 376), pt(400, 376), pt(400, 236.25), anchorPt(end)],
+      [pt(110, 376), pt(400, 376), pt(400, 252), { x: end.x, y: 252 * FT }, anchorPt(end)],
       { diameterIn: 10, service: "Cooling water supply", systemName: "Cooling water" },
     );
   }
@@ -501,15 +580,334 @@ function addPiping(design, systemIds) {
   return next;
 }
 
+/**
+ * T-101, the main fractionator: a fictional FCCU-inspired arrangement
+ * with authored product draws (an illustration, not a validated
+ * operating design). The column keeps its catalog 30 ft height, so it
+ * carries downcomer assemblies at 10/20/30 ft. Fixture draw map:
+ *   30 ft assembly / top outlet — overhead gas (the overhead circuit
+ *     runs from the column's overhead-out nozzle to the reflux drum;
+ *     downstream, wet gas continues through the KO drum and compressor
+ *     to the absorber)
+ *   20 ft assembly draw outlet — light cycle oil (own circuit west,
+ *     then north to the battery limit)
+ *   10 ft assembly draw outlet — heavy cycle oil (own circuit east,
+ *     then south to the battery limit)
+ *   bottoms-out nozzle (below the lowest assembly) — slurry oil, via
+ *     the existing bottoms circuit through the exchanger train; its
+ *     rundown end joins the pump suction header at an explicit,
+ *     junction-modeled mixing point shared with the reflux-drum liquid.
+ * The light/heavy cycle oil paths stay separate from each other and
+ * from the suction header. Products are editable level data;
+ * temperatures stay blank for the operator to enter — never invented.
+ */
+function configureFractionator(design) {
+  const t101 = instanceByTag(design, "T-101");
+  let next = design;
+  const draws = [
+    [1, "Heavy cycle oil"],
+    [2, "Light cycle oil"],
+    [3, "Overhead gas"],
+  ];
+  for (const [index, product] of draws) {
+    next = setDowncomerLevelProps(next, t101.id, index, { product });
+  }
+  return next;
+}
+
+/**
+ * Utility piping (plant water, plant air, nitrogen): a header for each
+ * service runs through the pipe rack (riding the rack's elevation like
+ * any rack run), and a branch runs from each header to the BASE of
+ * every vessel, junctioned (flanged) at the header and attached
+ * (flanged) at the vessel's utility connection. Branch routes step off
+ * the rack at its north edge (y=362 ft) so the derived elevations meet
+ * the header's at the junction.
+ */
+// D8: utility headers for the three services run through the rack on
+// DELIBERATE TIERS (authored elevations, not the rack's single
+// fallback line), each fed by its own designated source / battery-
+// limit inlet at the west end. Branches drop from each header to the
+// base utility ports of every in-scope vessel (reactors, columns,
+// drums): tap on the header at tier elevation, a 1-ft drop leg to the
+// port elevation (24 in), then the run to the port — flanged at both
+// ends. Connectivity is modeled (junctions + attachments), so the
+// supply graph — branch -> header -> source — is real, not proximity.
+const UTILITY_HEADER_TIER_IN = { "plant-water": 150, "plant-air": 162, nitrogen: 174 };
+
+function addUtilities(design, systemIds) {
+  let next = design;
+  const headerYFt = { "plant-water": 369, "plant-air": 371, nitrogen: 375 };
+  // Sizing per Jason's pin: headers (and their source inlets) are
+  // 2-inch pipe; the drops to each vessel base are 1-inch.
+  for (const service of UTILITY_SERVICES) {
+    const yFt = headerYFt[service.id];
+    const tier = UTILITY_HEADER_TIER_IN[service.id];
+    // Source / battery-limit inlet for this service, west of the rack.
+    next = addRun(next, systemIds, [pt(118, yFt), pt(130, yFt)], {
+      diameterIn: UTILITY_HEADER_DIAMETER_IN,
+      service: `${service.label} source`,
+      systemName: service.label,
+      utility: service.id,
+      elevationIn: tier,
+      sourceOf: service.id,
+    });
+    next = addRun(next, systemIds, [pt(130, yFt), pt(405, yFt)], {
+      diameterIn: UTILITY_HEADER_DIAMETER_IN,
+      service: `${service.label} header`,
+      systemName: service.label,
+      utility: service.id,
+      elevationIn: tier,
+    });
+  }
+  // Branch routes are authored per vessel. Straight lanes drop from
+  // the header tier to the port elevation (24 in) on a 1-ft drop leg
+  // just south of the tap. Two routings need care:
+  //  - R-101's plant-water lane would clip pump P-102's east edge, so
+  //    it jogs east around the pump row and comes back west into the
+  //    base;
+  //  - T-102 sits behind the exchanger row, so its three services use
+  //    three offset eastern lanes (395/398/401 ft) and fan into the
+  //    base along staggered approach lines (152.5/158/164 ft) at
+  //    staggered elevations (24/36/48 in), dropping to the port
+  //    elevation at each anchor — no two runs ever share a line at
+  //    the same elevation.
+  const T102_LANE_FT = { "plant-water": 395, "plant-air": 398, nitrogen: 401 };
+  const T102_APPROACH_FT = { "plant-water": 152.5, "plant-air": 158, nitrogen: 164 };
+  const T102_APPROACH_ELEV_IN = { "plant-water": 24, "plant-air": 36, nitrogen: 48 };
+  for (const tag of ["R-101", "R-102", "T-101", "T-102", "V-101", "V-102"]) {
+    for (const service of UTILITY_SERVICES) {
+      const end = anchorOfTag(next, tag, service.anchorId);
+      const yFt = headerYFt[service.id];
+      const tier = UTILITY_HEADER_TIER_IN[service.id];
+      const anchorFt = { x: end.x / FT, y: end.y / FT };
+      let points;
+      let elevIn;
+      if (tag === "T-102") {
+        const lane = T102_LANE_FT[service.id];
+        const approachY = T102_APPROACH_FT[service.id];
+        const approachElev = T102_APPROACH_ELEV_IN[service.id];
+        points = [pt(lane, yFt), pt(lane, yFt - 1), pt(lane, approachY)];
+        elevIn = [tier, approachElev, approachElev];
+        if (approachY !== anchorFt.y) {
+          // Fan corner: the drop to port elevation happens HERE, so
+          // the final stub reaches the flange at exactly 24 in.
+          points.push(pt(anchorFt.x, approachY));
+          elevIn.push(24);
+        }
+        points.push(anchorPt(end));
+        elevIn.push(24);
+      } else if (tag === "R-101" && service.id === "plant-water") {
+        // Detour east around P-102, returning west at y=182 — clear of
+        // the pump row and of the reactor feed line's own approach
+        // along the vessel centerline (crossed, with a jog, at y=182).
+        points = [
+          pt(anchorFt.x, yFt),
+          pt(anchorFt.x, yFt - 1),
+          pt(anchorFt.x, 345),
+          pt(196, 345),
+          pt(196, 182),
+          pt(anchorFt.x, 182),
+          anchorPt(end),
+        ];
+        elevIn = [tier, 24, 24, 24, 24, 24, 24];
+      } else {
+        points = [pt(anchorFt.x, yFt), pt(anchorFt.x, yFt - 1), anchorPt(end)];
+        elevIn = [tier, 24, 24];
+      }
+      next = addRun(next, systemIds, points, {
+        diameterIn: service.sizeIn,
+        service: `${service.label} to ${tag}`,
+        systemName: service.label,
+        utility: service.id,
+        elevIn,
+      });
+    }
+  }
+  return next;
+}
+
+/** The firewater loop: corners of the underground main rectangle (ft). */
+const FIREWATER_LOOP_FT = [
+  [90, 90],
+  [460, 90],
+  [460, 410],
+  [90, 410],
+];
+
+/** Point + outward unit normal (feet) at arc distance sFt along the loop. */
+function firewaterLoopFrameAt(sFt) {
+  const corners = FIREWATER_LOOP_FT.map(([x, y]) => ({ x, y }));
+  const centroid = {
+    x: corners.reduce((sum, c) => sum + c.x, 0) / corners.length,
+    y: corners.reduce((sum, c) => sum + c.y, 0) / corners.length,
+  };
+  const edges = corners.map((c, i) => {
+    const n = corners[(i + 1) % corners.length];
+    return { from: c, to: n, len: Math.hypot(n.x - c.x, n.y - c.y) };
+  });
+  const total = edges.reduce((sum, e) => sum + e.len, 0);
+  let s = ((sFt % total) + total) % total;
+  for (const e of edges) {
+    if (s <= e.len) {
+      const t = e.len === 0 ? 0 : s / e.len;
+      const x = e.from.x + (e.to.x - e.from.x) * t;
+      const y = e.from.y + (e.to.y - e.from.y) * t;
+      const dx = e.len === 0 ? 0 : (e.to.x - e.from.x) / e.len;
+      const dy = e.len === 0 ? 0 : (e.to.y - e.from.y) / e.len;
+      let nx = -dy;
+      let ny = dx;
+      if (nx * (x - centroid.x) + ny * (y - centroid.y) < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      return { x, y, nx, ny };
+    }
+    s -= e.len;
+  }
+  return { x: corners[0].x, y: corners[0].y, nx: 0, ny: -1 };
+}
+
+/**
+ * Firewater: an underground main looped around the unit (buried
+ * centerline at −36 in, so it passes UNDER grade piping without
+ * jogging), hydrants along it every 92 ft (inside the 100 ft maximum),
+ * and fixed spray nozzles outside the unit boundary covering the
+ * flammable vessels from at least 50 ft away.
+ */
+function addFirewater(design, systemIds) {
+  // Sizing per Jason's pins: the loop main is 12-inch (header class);
+  // hydrant branches are 6-inch; monitor take-offs step down to
+  // 6-inch / 4-inch.
+  let next = addRun(
+    design,
+    systemIds,
+    [...FIREWATER_LOOP_FT.map(([x, y]) => pt(x, y)), pt(FIREWATER_LOOP_FT[0][0], FIREWATER_LOOP_FT[0][1])],
+    {
+      diameterIn: FIREWATER_MAIN_DIAMETER_IN,
+      service: "Firewater main (underground)",
+      systemName: "Firewater",
+      utility: "firewater",
+      elevationIn: -36,
+    },
+  );
+  // The main is buried: mark it underground for the renderers.
+  const mainId = next.pipes[next.pipes.length - 1].id;
+  next = {
+    ...next,
+    pipes: next.pipes.map((r) => (r.id === mainId ? { ...r, underground: true } : r)),
+  };
+  // The network's designated source / boundary inlet: a short buried
+  // stub west of the loop corner, junctioned onto the main — the
+  // supply connection is modeled, not proximity.
+  next = addRun(next, systemIds, [pt(82, 90), pt(90, 90)], {
+    diameterIn: FIREWATER_MAIN_DIAMETER_IN,
+    service: "Firewater source",
+    systemName: "Firewater",
+    utility: "firewater",
+    elevationIn: -36,
+    sourceOf: "firewater",
+  });
+  const sourceId = next.pipes[next.pipes.length - 1].id;
+  next = {
+    ...next,
+    pipes: next.pipes.map((r) => (r.id === sourceId ? { ...r, underground: true } : r)),
+  };
+  // Hydrants every 92 ft of developed loop stationing (15 around the
+  // 1380-ft loop, none on a corner), each body offset 6 ft outside
+  // the main on its own 6-inch branch off the main, junctioned at the
+  // tap — the standard hydrant connection.
+  for (let i = 0; i < 15; i += 1) {
+    const frame = firewaterLoopFrameAt(30 + i * 92);
+    const tap = { x: frame.x * FT, y: frame.y * FT };
+    const hydrantAt = {
+      x: (frame.x + frame.nx * 6) * FT,
+      y: (frame.y + frame.ny * 6) * FT,
+    };
+    next = addRun(next, systemIds, [tap, hydrantAt], {
+      diameterIn: HYDRANT_BRANCH_DIAMETER_IN,
+      service: `Fire hydrant FH-${i + 1} branch`,
+      systemName: "Firewater",
+      utility: "firewater",
+      elevationIn: -36,
+    });
+    next = placeSymbol(next, "piping", "fire-hydrant", hydrantAt.x, hydrantAt.y, { tag: `FH-${i + 1}` });
+    const hydrant = instanceByTag(next, `FH-${i + 1}`);
+    next = {
+      ...next,
+      symbols: next.symbols.map((s) => (s.id === hydrant.id ? { ...s, stationRunId: mainId } : s)),
+    };
+  }
+  const sprays = [
+    ["FA-101", "R-101", 190, 55],
+    ["FA-102", "T-101", 455, 150],
+    ["FA-103", "V-101", 330, 405],
+    ["FA-104", "V-102", 270, 405],
+  ];
+  for (const [tag, targetTag, xFt, yFt] of sprays) {
+    next = placeSymbol(next, "piping", "spray-nozzle", xFt * FT, yFt * FT, { tag });
+    const spray = instanceByTag(next, tag);
+    const target = instanceByTag(next, targetTag);
+    next = {
+      ...next,
+      symbols: next.symbols.map((s) =>
+        s.id === spray.id
+          ? { ...s, protects: target.id, aimAt: { x: target.x, y: target.y } }
+          : s,
+      ),
+    };
+  }
+  // Monitor take-offs: a stepped-down branch off the main to each
+  // directed-spray assembly — 6-inch to FA-101/FA-102, 4-inch to
+  // FA-103/FA-104 — junctioned onto the main at the tap.
+  const takeoffs = [
+    ["FA-101", { x: 190, y: 90 }, 6],
+    ["FA-102", { x: 460, y: 150 }, 6],
+    ["FA-103", { x: 330, y: 410 }, 4],
+    ["FA-104", { x: 270, y: 410 }, 4],
+  ];
+  for (const [tag, tapFt, diameterIn] of takeoffs) {
+    const spray = instanceByTag(next, tag);
+    next = addRun(next, systemIds, [pt(tapFt.x, tapFt.y), { x: spray.x, y: spray.y }], {
+      diameterIn,
+      service: `Firewater take-off to ${tag}`,
+      systemName: "Firewater",
+      utility: "firewater",
+      elevationIn: -36,
+    });
+  }
+  return next;
+}
+
+/** Highly flammable designations for the fire-protection fixture. */
+function configureFireProtection(design) {
+  const flammable = new Set(["R-101", "T-101", "V-101", "V-102"]);
+  return {
+    ...design,
+    symbols: design.symbols.map((s) =>
+      flammable.has(s.tag) ? { ...s, flammable: true } : s,
+    ),
+  };
+}
+
 function buildPlotDesign() {
   const systemIds = {};
   let design = createEmptyDesign("Plot Plan");
   design = placeEquipment(design);
+  design = configureFractionator(design);
+  design = configureFireProtection(design);
   design = placeRacks(design);
   design = createSystems(design, systemIds);
   design = labelAreas(design);
   design = labelPlot(design);
+  // The unit boundary the spray assemblies must stay outside of.
+  design = {
+    ...design,
+    unitBoundary: [pt(100, 100), pt(440, 100), pt(440, 395), pt(100, 395)],
+  };
   design = addPiping(design, systemIds);
+  design = addUtilities(design, systemIds);
+  design = addFirewater(design, systemIds);
   return design;
 }
 

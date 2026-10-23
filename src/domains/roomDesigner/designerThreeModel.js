@@ -19,6 +19,12 @@ import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { effectiveColor } from "./designSystems";
 import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
+import {
+  connectionFlanges,
+  runHasStoredElevation,
+  storedSegmentElevations,
+} from "./pipeCrossings";
+import { FIREWATER_COLOR } from "./firewater";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -459,6 +465,16 @@ export function pipeDescriptors(design) {
         yIn: segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn),
       });
     }
+    // A run with a STORED elevation profile (an explicit centerline, or
+    // per-vertex elevations from level connections / crossing jogs)
+    // renders at that profile instead of the derived support elevation.
+    // Runs without one keep the derivation above, unchanged.
+    if (runHasStoredElevation(run)) {
+      const stored = storedSegmentElevations(run);
+      segments.forEach((seg, i) => {
+        seg.yIn = stored[i];
+      });
+    }
     const joints = points.map((p, i) => {
       // End vertices take their only segment's elevation; interior
       // vertices take the higher adjacent elevation (the riser spans
@@ -483,17 +499,33 @@ export function pipeDescriptors(design) {
         y1In: Math.max(prev, next),
       });
     }
-    out.push({
+    const descriptor = {
       kind: "pipe",
       id: run.id,
-      color: effectiveColor(design, run, "#7dd3fc"), // own > system > default
+      // Firewater renders red — red is reserved to firewater, ahead of
+      // any system/own color.
+      color: run.utility === "firewater" ? FIREWATER_COLOR : effectiveColor(design, run, "#7dd3fc"), // own > system > default
       diameterIn,
       radiusIn,
       underground: !!run.underground,
       segments,
       joints,
       risers,
-    });
+    };
+    // Flanged connections (equipment nozzles + pipe-to-pipe junctions),
+    // present only when this run actually connects somewhere.
+    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    if (flanges.length > 0) {
+      descriptor.flanges = flanges.map((f) => ({
+        x: f.x,
+        z: f.y,
+        yIn: f.elevationIn,
+        axisDeg: f.axisDeg,
+        sizeIn: f.sizeIn,
+        kind: f.kind,
+      }));
+    }
+    out.push(descriptor);
   }
   return out;
 }

@@ -18,6 +18,11 @@ import {
   highlightRegistryKey,
 } from "@/domains/roomDesigner/designerThreeModel";
 import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
+import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { anchorsOf } from "@/domains/roomDesigner/pipeAttachments";
+import { flangeDims, NOZZLE_NECK_LENGTH_IN } from "@/domains/roomDesigner/flangeGeometry";
+import { manwayWorld, accessPackageWorld } from "@/domains/roomDesigner/vesselAccess";
+import { downcomerLevels } from "@/domains/roomDesigner/downcomers";
 import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furnitureAssetManifest";
 import {
   beginDrag3D,
@@ -635,9 +640,166 @@ export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
       { x: riser.x, y: riser.y1In, z: riser.z },
     );
   }
+  // Flanged connections: a mating flange pair (two discs back to back
+  // across the connection plane) at every attached/junctioned end.
+  if (Array.isArray(pipe.flanges) && pipe.flanges.length > 0) {
+    const flangeMat = stdMaterial({ color: "#d6d9de", roughness: 0.35 });
+    for (const f of pipe.flanges) {
+      const dims = flangeDims(f.sizeIn);
+      const rad = (f.axisDeg * Math.PI) / 180;
+      const dir = new THREE.Vector3(Math.cos(rad), 0, Math.sin(rad));
+      for (const s of [-1, 1]) {
+        const disc = shadowed(
+          new THREE.Mesh(
+            new THREE.CylinderGeometry(dims.odIn / 2, dims.odIn / 2, dims.thicknessIn, 20),
+            flangeMat,
+          ),
+        );
+        disc.position.set(
+          f.x + dir.x * (s * dims.thicknessIn) / 2,
+          f.yIn,
+          f.z + dir.z * (s * dims.thicknessIn) / 2,
+        );
+        disc.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        group.add(disc);
+      }
+    }
+  }
 
   group.userData.entityKind = "pipe";
   group.userData.entityId = pipe.id;
+  return group;
+}
+
+/**
+ * 3D overlays for the equipment components the plan model derives:
+ * nozzle flange discs at every connection anchor (vertical necks on
+ * top nozzles), the manway neck + hinged cover, the access package
+ * (grating deck on legs + ladder), and per-downcomer-level platforms
+ * and manways on columns. World coordinates (plan x -> x, plan y -> z,
+ * height -> y), schematic scale — it reads the same domain models the
+ * plan, print, and elevation views read.
+ */
+export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial, shadowed }) {
+  const inst = (design?.symbols || []).find((s) => s.id === instanceId);
+  if (!inst) return null;
+  const symbol = findSymbol(inst.domain, inst.symbolId);
+  if (!symbol) return null;
+  const group = new THREE.Group();
+  const steel = stdMaterial({ color: "#c8ccd2", roughness: 0.35 });
+  const grating = stdMaterial({ color: "#6b7280", roughness: 0.8 });
+  const coverMat = stdMaterial({ color: "#9ca3af", roughness: 0.5 });
+  const heightIn = inst.heightIn ?? symbol.heightIn ?? 96;
+
+  const addCylinder = (p1, p2, r, mat) => {
+    const dir = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    const len = dir.length();
+    if (len < 0.01) return;
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 16), mat));
+    mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    group.add(mesh);
+  };
+  const addDisc = (cx, cy, cz, r, thickness, dir3, mat) => {
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, thickness, 20), mat));
+    mesh.position.set(cx, cy, cz);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir3.clone().normalize());
+    group.add(mesh);
+  };
+  const addAccessPackage = (pkg) => {
+    if (!pkg) return;
+    const rad = (pkg.deck.angleDeg * Math.PI) / 180;
+    const deck = shadowed(
+      new THREE.Mesh(new THREE.BoxGeometry(pkg.deck.depthIn, 2, pkg.deck.widthIn), grating),
+    );
+    deck.position.set(pkg.deck.cx, pkg.deck.elevationIn - 1, pkg.deck.cy);
+    deck.rotation.y = -rad;
+    group.add(deck);
+    for (const c of pkg.deck.corners) {
+      const leg = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2, pkg.deck.elevationIn, 2), steel));
+      leg.position.set(c.x, pkg.deck.elevationIn / 2, c.y);
+      group.add(leg);
+    }
+    const lad = pkg.ladder;
+    const tx = -Math.sin(rad);
+    const tz = Math.cos(rad);
+    const midY = (lad.fromIn + lad.toIn) / 2;
+    const railH = lad.toIn - lad.fromIn;
+    for (const s of [-1, 1]) {
+      const rail = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.5, railH, 1.5), steel));
+      rail.position.set(lad.cx + tx * s * (lad.widthIn / 2 - 1), midY, lad.cy + tz * s * (lad.widthIn / 2 - 1));
+      group.add(rail);
+    }
+    for (let y = lad.fromIn + 12; y < lad.toIn; y += 12) {
+      const rung = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1, 0.75, lad.widthIn - 2), steel));
+      rung.position.set(lad.cx, y, lad.cy);
+      rung.rotation.y = -rad;
+      group.add(rung);
+    }
+  };
+
+  // Nozzle flange discs at every anchor (the nozzle component's face).
+  for (const anchor of anchorsOf(inst)) {
+    const dims = flangeDims(anchor.sizeIn);
+    const dx = anchor.x - inst.x;
+    const dz = anchor.y - inst.y;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1) {
+      // Top nozzle: neck stub up from the roof + horizontal flange.
+      const neckTop = heightIn + NOZZLE_NECK_LENGTH_IN;
+      addCylinder(
+        { x: inst.x, y: heightIn, z: inst.y },
+        { x: inst.x, y: neckTop, z: inst.y },
+        Math.max(1, anchor.sizeIn / 2),
+        steel,
+      );
+      addDisc(inst.x, neckTop, inst.y, dims.odIn / 2, dims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
+    } else {
+      const dir = new THREE.Vector3(dx / dist, 0, dz / dist);
+      const elev = anchor.elevationIn ?? heightIn * 0.62;
+      addDisc(anchor.x, elev, anchor.y, dims.odIn / 2, dims.thicknessIn, dir, steel);
+    }
+  }
+
+  // Manway: neck ring + hinged cover on the shell at sill height.
+  const mw = manwayWorld(symbol, inst);
+  if (mw) {
+    const dir = new THREE.Vector3(mw.dirX, 0, mw.dirY);
+    const cy = mw.sillIn + mw.diameterIn / 2;
+    addCylinder(
+      { x: mw.x, y: cy, z: mw.y },
+      { x: mw.x + dir.x * 4, y: cy, z: mw.y + dir.z * 4 },
+      mw.diameterIn / 2,
+      steel,
+    );
+    addDisc(mw.x + dir.x * 4.75, cy, mw.y + dir.z * 4.75, mw.diameterIn / 2, 1.5, dir, coverMat);
+    const hinge = shadowed(new THREE.Mesh(new THREE.BoxGeometry(6, 2, 3), coverMat));
+    hinge.position.set(mw.x + dir.x * 4.75, cy + mw.diameterIn / 2 + 1, mw.y + dir.z * 4.75);
+    group.add(hinge);
+  }
+  addAccessPackage(accessPackageWorld(symbol, inst));
+
+  // Downcomer levels on columns: platform + ladder chain + level manway.
+  for (const level of downcomerLevels(symbol, inst)) {
+    addAccessPackage(level.platform);
+    if (level.manway) {
+      const dir = new THREE.Vector3(level.manway.dirX, 0, level.manway.dirY);
+      const cy = level.manway.sillIn + level.manway.diameterIn / 2;
+      addDisc(
+        level.manway.x + dir.x * 2,
+        cy,
+        level.manway.y + dir.z * 2,
+        level.manway.diameterIn / 2,
+        1.5,
+        dir,
+        coverMat,
+      );
+    }
+  }
+
+  if (group.children.length === 0) return null;
+  group.userData.entityKind = "symbol";
+  group.userData.entityId = inst.id;
   return group;
 }
 
@@ -1580,6 +1742,10 @@ export default function DesignerViewport3D({
         eGroup.userData.entityId = eq.id;
         group.add(eGroup);
         register(highlightRegistryKey("symbol", eq.id), eGroup);
+        // Derived components (nozzle flanges, manway, catwalks,
+        // downcomer platforms) ride along in world coordinates.
+        const components = buildEquipmentComponentsGroup(design, eq.id, { stdMaterial, shadowed });
+        if (components) group.add(components);
       }
 
       // site/outdoor symbols (deck, patio, driveway, walkway, fence, shed,

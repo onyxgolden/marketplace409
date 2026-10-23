@@ -83,6 +83,7 @@ import {
   setRoomFinish,
   setRoomFloorImage,
   setSymbolLayer,
+  setSymbolFlammable,
   setSymbolTag,
   setUnderlay,
   setWallCovering,
@@ -125,7 +126,11 @@ import {
 } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import {
   detectRunAttachments,
+  detectRunJunctions,
+  upgradeDesignConnections,
 } from "@/domains/roomDesigner/pipeAttachments";
+import { applyCrossingJogs } from "@/domains/roomDesigner/pipeCrossings";
+import { setDowncomerLevelProps } from "@/domains/roomDesigner/downcomers";
 import {
   findSymbol,
 } from "@/domains/roomDesigner/symbolRegistry";
@@ -535,8 +540,13 @@ export function documentSlice(state, action) {
       const layer = state.pendingPipe.layer === "auto" ? "piping" : state.pendingPipe.layer;
       const added = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
       const run = added.pipes[added.pipes.length - 1];
-      // Ends snapped onto a nozzle attach to it.
-      const design = detectRunAttachments(added, run.id);
+      // Ends snapped onto a nozzle attach to it; an end landed on
+      // another run junctions to it (both are flanged connections); and
+      // where the new run crosses an existing one it jogs in elevation
+      // — all inside this one undoable dispatch.
+      let design = detectRunAttachments(added, run.id);
+      design = detectRunJunctions(design, run.id);
+      design = applyCrossingJogs(design, run.id);
       return { ...touch(state, design), selection: { kind: "pipe", id: run.id } };
     }
 
@@ -544,13 +554,40 @@ export function documentSlice(state, action) {
       if (!findPipeRun(state.design, action.pipeId)) return state;
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
 
+    case "SET_DOWNCOMER_PROPS": {
+      if (!findSymbolInstance(state.design, action.instanceId)) return state;
+      try {
+        return touch(
+          state,
+          setDowncomerLevelProps(state.design, action.instanceId, action.index, action.props || {}),
+        );
+      } catch {
+        return state;
+      }
+    }
+
+    case "UPGRADE_CONNECTIONS":
+      // The deterministic upgrade for designs saved before the full
+      // nozzle catalog: re-derive attachments/junctions design-wide.
+      // One undoable transaction; geometry is never moved.
+      return touch(state, upgradeDesignConnections(state.design));
+
     case "MOVE_PIPE_VERTEX":
       if (!findPipeRun(state.design, action.pipeId)) return state;
       // Dragging an end re-derives its attachment: off a nozzle detaches,
-      // dropped exactly on one attaches.
+      // dropped exactly on one attaches. Crossing jogs are re-derived
+      // only when the drag ENDS (the commit dispatch carries no
+      // coalesce key) — inserting vertices mid-drag would shift the
+      // indices the gesture is tracking.
       return touch(
         state,
-        detectRunAttachments(movePipeVertex(state.design, action.pipeId, action.index, action.point), action.pipeId),
+        (() => {
+          let design = movePipeVertex(state.design, action.pipeId, action.index, action.point);
+          design = detectRunAttachments(design, action.pipeId);
+          design = detectRunJunctions(design, action.pipeId);
+          if (!action.coalesce) design = applyCrossingJogs(design, action.pipeId);
+          return design;
+        })(),
         action.coalesce,
       );
 
@@ -591,6 +628,10 @@ export function documentSlice(state, action) {
     case "SET_SYMBOL_LAYER":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
+
+    case "SET_SYMBOL_FLAMMABLE":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, setSymbolFlammable(state.design, action.symbolId, action.flammable));
     // ---- TEMA exchangers: configuration, drawing mode, size, replace ----
 
     case "SET_SYMBOL_TEMA": {

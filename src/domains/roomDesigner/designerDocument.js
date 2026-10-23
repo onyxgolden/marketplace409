@@ -44,7 +44,12 @@ import "./mepFixturesCatalog";
 import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
-import { pipeAttachmentErrors } from "./pipeAttachments";
+import { pipeAttachmentErrors, pipeJunctionErrors, connectionCompatibilityErrors } from "./pipeAttachments";
+import { pipeCrossingErrors, crossServiceErrors } from "./pipeCrossings";
+import { vesselAccessErrors } from "./vesselAccess";
+import { downcomerPropsErrors } from "./downcomers";
+import { utilityPipingErrors } from "./utilityPiping";
+import { firewaterErrors } from "./firewater";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
@@ -693,7 +698,7 @@ export function findPipeRun(design, pipeId) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn } = {}) {
   assertDesign(design);
   const clean = dedupeConsecutivePoints(points);
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
@@ -703,6 +708,12 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     diameterIn: cleanDiameter(diameterIn),
     layer: cleanPipeLayer(layer),
   };
+  if (elevationIn !== undefined && elevationIn !== null) {
+    if (!Number.isFinite(elevationIn)) {
+      throw new Error("Pipe elevation must be a number.");
+    }
+    run.elevationIn = elevationIn;
+  }
   const cleanMaterial = cleanText(material);
   if (cleanMaterial) run.material = cleanMaterial;
   const cleanService = cleanText(service);
@@ -735,6 +746,14 @@ export function setPipeFields(design, pipeId, fields = {}) {
       else delete next.service;
     }
     if (fields.layer !== undefined) next.layer = cleanPipeLayer(fields.layer);
+    if (fields.elevationIn !== undefined) {
+      if (fields.elevationIn === null) delete next.elevationIn;
+      else if (Number.isFinite(fields.elevationIn)) {
+        next.elevationIn = fields.elevationIn;
+      } else {
+        throw new Error("Pipe elevation must be a number.");
+      }
+    }
     return next;
   });
   if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
@@ -846,6 +865,22 @@ export function setSymbolLayer(design, instanceId, layer) {
   assertDesign(design);
   if (!PIPE_LAYERS.includes(layer)) throw new Error(`Unknown layer: ${layer}`);
   return setShapeField(design, "symbols", instanceId, "layer", layer, "symbol");
+}
+
+/** The editable flammability designation fire protection keys off:
+ * true (highly flammable), "unknown", or false (not flammable). The
+ * value is stored as designated — unknown is a real state, never
+ * silently treated as low risk. */
+export function setSymbolFlammable(design, instanceId, flammable) {
+  assertDesign(design);
+  if (flammable !== true && flammable !== false && flammable !== "unknown") {
+    throw new Error(`Unknown flammability designation: ${flammable}`);
+  }
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    return { ...s, flammable };
+  });
+  return { ...design, symbols };
 }
 
 // ---- Org charts (Phase 3: people org charts) ----
@@ -1087,7 +1122,15 @@ export function validateDesign(design) {
       errors.push(`Pipe run ${run.id} has a bad diameter.`);
     }
     errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
+    errors.push(...pipeJunctionErrors(run)); // optional pipe-to-pipe junctions
   }
+  errors.push(...pipeCrossingErrors(design)); // elevation crossings + footprint pass-throughs
+  errors.push(...crossServiceErrors(design)); // cross-service tees (utility/firewater/process)
+  errors.push(...vesselAccessErrors(design)); // vessel manways + catwalk access
+  errors.push(...downcomerPropsErrors(design)); // column downcomer level properties
+  errors.push(...utilityPipingErrors(design)); // vessel utility connections (water/air/nitrogen)
+  errors.push(...connectionCompatibilityErrors(design)); // connection size/elevation mismatches
+  errors.push(...firewaterErrors(design)); // hydrant spacing + spray coverage/standoff
   errors.push(...systemErrors(design)); // optional systems + member colors
   errors.push(...rackErrors(design)); // optional rack parameters
   for (const instance of design.symbols || []) {

@@ -193,8 +193,12 @@ describe("catalog nozzle anchors", () => {
   });
 
   it("a symbol type without nozzles yields no anchors and no attachments", () => {
-    let design = placeSymbol(createEmptyDesign(), D, "storage-tank", 200, 200, { id: "tank1" });
-    expect(anchorsOf(design.symbols.find((s) => s.id === "tank1"))).toEqual([]);
+    // UPDATED for the D1 nozzle rollout: storage tanks now carry
+    // nozzles like every other process vessel, so the no-nozzle
+    // example is a drive component (electric motor) — drive equipment,
+    // valves/instruments, and structures intentionally carry none.
+    let design = placeSymbol(createEmptyDesign(), D, "electric-motor", 200, 200, { id: "motor1" });
+    expect(anchorsOf(design.symbols.find((s) => s.id === "motor1"))).toEqual([]);
     design = addPipeRun(design, [{ x: 200, y: 200 }, { x: 200, y: 0 }], { id: "p1" });
     design = detectRunAttachments(design, "p1");
     expect("attachments" in run(design)).toBe(false);
@@ -246,19 +250,108 @@ describe("catalog nozzle anchors", () => {
 
   it("catalog nozzle specs are sane: fx/fy in [-1, 1], sizeIn > 0, ids unique per symbol", () => {
     const withNozzles = PROCESS_EQUIPMENT.filter((e) => e.nozzles);
+    // UPDATED for the D1 nozzle rollout: every process-equipment
+    // symbol that takes a process connection now carries a nozzle set
+    // (94 symbols). The deliberate exceptions are drive equipment
+    // (electric-motor, gearbox), the valves & instruments category
+    // (inline devices a run passes through, not endpoints), and the
+    // pipe racks (structures).
     expect(withNozzles.map((e) => e.id).sort()).toEqual([
       "absorber",
+      "agitated-tank",
+      "air-cooler",
+      "api-separator",
+      "axial-compressor",
+      "baghouse",
+      "ball-mill",
+      "basket-strainer",
+      "belt-conveyor",
       "blower",
+      "cartridge-filter",
       "catalyst-regenerator",
+      "centrifuge",
       "centrifugal-compressor",
       "centrifugal-pump",
+      "chiller-package",
+      "coalescer",
       "column",
+      "cooling-tower",
+      "cracking-furnace",
+      "crusher",
+      "crystallizer",
+      "cyclone",
+      "cylindrical-heater",
+      "day-tank",
+      "deaerator",
+      "desalter",
+      "desiccant-dryer",
+      "diesel-engine",
+      "double-pipe-exchanger",
+      "electric-process-heater",
+      "electrostatic-precipitator",
+      "evaporator",
+      "filter-press",
+      "fired-heater",
+      "firetube-boiler",
       "flare-stack",
+      "floating-roof-tank",
       "fluidized-bed-reactor",
+      "gas-turbine",
+      "gear-pump",
+      "hopper",
       "horizontal-drum",
+      "inline-dynamic-mixer",
+      "instrument-air-package",
+      "jacketed-reactor",
+      "kettle-reboiler",
       "knockout-drum",
+      "liquid-ring-vacuum-pump",
+      "lpg-bullet",
+      "metering-pump",
+      "package-boiler",
+      "packed-column",
+      "pd-pump",
+      "plate-exchanger",
+      "plate-fin-exchanger",
+      "plunger-pump",
+      "pressure-sphere",
+      "progressive-cavity-pump",
+      "recip-compressor",
+      "reformer-furnace",
+      "reflux-accumulator",
+      "ribbon-blender",
+      "rotary-lobe-blower",
+      "rotary-valve",
+      "screw-compressor",
+      "screw-conveyor",
+      "screw-pump",
       "shell-tube-exchanger",
-    ]);
+      "spiral-exchanger",
+      "stack",
+      "static-mixer",
+      "steam-ejector",
+      "steam-turbine",
+      "storage-tank",
+      "stripper",
+      "submersible-pump",
+      "sump-pump",
+      "surface-condenser",
+      "three-phase-separator",
+      "tubular-reactor",
+      "turboexpander",
+      "vacuum-column",
+      "vertical-can-pump",
+      "vertical-inline-pump",
+      "vertical-vessel",
+      "waste-heat-boiler",
+      "water-treatment-skid",
+      "weigh-feeder",
+      "wet-scrubber",
+      "dome-roof-tank",
+      "fixed-bed-reactor",
+      "thermal-oxidizer",
+      "bucket-elevator",
+    ].sort());
     for (const e of withNozzles) {
       expect(new Set(e.nozzles.map((n) => n.id)).size).toBe(e.nozzles.length);
       for (const n of e.nozzles) {

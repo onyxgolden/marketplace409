@@ -64,6 +64,10 @@ import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
 import RackSection from "./RackSection";
+import DowncomerSection from "./DowncomerSection";
+import { developedRunLengthIn } from "@/domains/roomDesigner/pipeCrossings";
+import { manwaySpec, accessPackageLocal } from "@/domains/roomDesigner/vesselAccess";
+import { isVesselSymbol } from "@/domains/roomDesigner/utilityPiping";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -3502,7 +3506,25 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
     return (
       <PanelShell title="Pipe run" onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
         <Row label="Length" value={feetInchesLabel(pipeRunLengthIn(run.points))} />
+        <Row label="Developed length" value={feetInchesLabel(developedRunLengthIn(design, run))} />
         <Row label="Vertices" value={String((run.points || []).length)} />
+        <label className="block text-xs text-gray-400">
+          Elevation (in, blank = auto)
+          <input
+            type="number"
+            step="any"
+            value={run.elevationIn ?? ""}
+            placeholder="auto"
+            onChange={(e) =>
+              dispatch({
+                type: "SET_PIPE_FIELDS",
+                pipeId: run.id,
+                fields: { elevationIn: e.target.value === "" ? null : Number(e.target.value) },
+              })
+            }
+            className={`${selectClass} placeholder:text-gray-600`}
+          />
+        </label>
         <label className="block text-xs text-gray-400">
           Diameter
           <select
@@ -3554,10 +3576,29 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
         {["start", "end"].map((end) => {
           const ref = run.attachments?.[end];
           const target = ref && (design.symbols || []).find((s) => s.id === ref.symbolId);
-          const label = target ? `${target.tag || "equipment"} · ${ref.anchorId}` : "not connected";
+          const label = target ? `${target.tag || "equipment"} · ${ref.anchorId} (flanged)` : "not connected";
           return <Row key={end} label={end === "start" ? "Start connection" : "End connection"} value={label} />;
         })}
-        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run. Drop an end on an equipment nozzle to connect it; connected ends follow the equipment.</p>
+        {["start", "end"].map((end) => {
+          const ref = run.junctions?.[end];
+          if (!ref) return null;
+          const host = (design.pipes || []).find((p) => p.id === ref.runId);
+          return (
+            <Row
+              key={`junction-${end}`}
+              label={end === "start" ? "Start junction" : "End junction"}
+              value={host ? `flanged tee on ${host.service || "pipe run"}` : "flanged tee"}
+            />
+          );
+        })}
+        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run. Drop an end on an equipment nozzle to connect it; connected ends follow the equipment. Every connection is flanged. Where a run crosses another pipe it steps up or down in elevation — the double tick on the plan marks the step.</p>
+        <button
+          onClick={() => dispatch({ type: "UPGRADE_CONNECTIONS" })}
+          className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+        >
+          Re-derive all connections (upgrade)
+        </button>
+        <p className="text-[11px] text-gray-500">For designs saved before the full nozzle catalog: re-derives nozzle attachments and flanged junctions across the whole design without moving any geometry. Undoable.</p>
       </PanelShell>
     );
   }
@@ -3592,6 +3633,37 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
           </select>
         </label>
         <SystemMembershipSection design={design} kind="symbol" member={inst} fallbackColor={symbol.color || "#60a5fa"} dispatch={dispatch} />
+        {symbol.manway && (
+          <>
+            <Row label="Manway sill" value={feetInchesLabel(manwaySpec(symbol, inst).sillIn)} />
+            <Row
+              label="Access"
+              value={accessPackageLocal(symbol, inst) ? "Steel catwalk + ladder" : "Grade (sill ≤ 2′-0″)"}
+            />
+          </>
+        )}
+        {isVesselSymbol(symbol) && (
+          <label className="block text-xs text-gray-400">
+            Flammability
+            <select
+              value={inst.flammable === true ? "high" : inst.flammable === "unknown" ? "unknown" : "none"}
+              onChange={(e) =>
+                dispatch({
+                  type: "SET_SYMBOL_FLAMMABLE",
+                  symbolId: inst.id,
+                  flammable:
+                    e.target.value === "high" ? true : e.target.value === "unknown" ? "unknown" : false,
+                })
+              }
+              className={selectClass}
+            >
+              <option value="high">Highly flammable — needs a fixed directed-spray assembly</option>
+              <option value="unknown">Unknown — treated as needing one until designated</option>
+              <option value="none">Not flammable</option>
+            </select>
+          </label>
+        )}
+        <DowncomerSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RackSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RotateButtons
