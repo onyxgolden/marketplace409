@@ -540,6 +540,24 @@ export function verifiedSpraySupply(design, spray) {
       )} in), not a vertical riser — a below-fed inlet is proven only by a terminal segment vertical within ${CONNECTION_FACE_TOLERANCE_IN} in in plan`,
     );
   }
+  // F4.7: fail closed when the effective approach carries no evidence —
+  // a route with no evidence-bearing segment cannot certify a
+  // physical connection (the same rule as nozzles, junctions, and
+  // authoring in F4.3/F4.6). This gate runs BEFORE the size-equality
+  // check so equal-size inlets cannot bypass it, and before reducer
+  // matching so a missing approach can never be reducer-matched. The
+  // evidence predicate wins at the tolerance boundary: an
+  // exactly-0.5-in rise with 0.5-in plan projection passes the rise
+  // check above but is evidence-free by the shared definition, so it
+  // refuses here with a named error instead of verifying clean.
+  {
+    const approach = effectiveApproachSegment(design, run, end);
+    if (!approach || !approach.foundEvidence) {
+      problems.push(
+        `supply branch ${run.id} has no approach evidence at the assembly inlet — its route carries no evidence-bearing segment within the ${CONNECTION_FACE_TOLERANCE_IN} in connection-face tolerance in plan and elevation, so no approach exists to verify against the inlet face`,
+      );
+    }
+  }
   if (
     flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(inlet.sizeIn)
   ) {
@@ -547,9 +565,9 @@ export function verifiedSpraySupply(design, spray) {
     // literal terminal segment's tiny plan vector — a tolerance-valid
     // below-fed riser with sub-tolerance plan drift must bind the
     // correctly owned reducer regardless of which way the drift
-    // points. F4.6: never match a reducer when the approach carries
-    // no evidence (the connection is already refused by the rise and
-    // verticality checks above).
+    // points. F4.6/F4.7: the evidence gate above already refused
+    // no-evidence routes, so the approach here always carries
+    // evidence — never match a reducer against a fabricated axis.
     const approach = effectiveApproachSegment(design, run, end);
     if (approach && approach.foundEvidence) {
       const axisDeg = approach.axisDeg;
