@@ -320,7 +320,10 @@ export function reconcilePipeAttachments(design) {
   const faceFor = (ref) => {
     const inst = byId.get(ref.symbolId);
     if (!inst) return null;
-    const key = `${inst.id}::${ref.anchorId}`;
+    // Canonical tuple key (layer sweep K7): instance ids and anchor
+    // ids are both caller-authorable and delimiter-bearing, so a
+    // "::" join lets one instance/anchor pair read another's face.
+    const key = JSON.stringify([inst.id, ref.anchorId]);
     if (!faceCache.has(key)) {
       faceCache.set(key, connectionFaceForAnchor(findSymbol(inst.domain, inst.symbolId), inst, ref.anchorId));
     }
@@ -591,16 +594,35 @@ export function attachmentInterfaceErrors(design, run, end) {
       errors.push(
         `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} with a horizontal run at the face elevation — a vertical flange face is met by a riser, not a horizontal approach.`,
       );
+    } else if (!flat) {
+      // Approach SIDE (F2.1): a top face's exterior side is ABOVE
+      // the flange. A riser arriving from below reaches the face
+      // through the vessel body — only an approach from above (or
+      // level with it) is exterior. The undirected flat test alone
+      // admitted the through-vessel riser.
+      const faceElev = Number.isFinite(face.elevationIn) ? face.elevationIn : vertexElevs[idx];
+      if (vertexElevs[neighborIdx] < faceElev - CONNECTION_FACE_TOLERANCE_IN) {
+        errors.push(
+          `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} from below the flange face — the approach passes through the vessel; a top nozzle is met from above.`,
+        );
+      }
     }
   } else if (face.normal && segPlanLen > CONNECTION_FACE_TOLERANCE_IN) {
+    // Approach SIDE (F2.1): the end->neighbor direction points from
+    // the flange face INTO the run, so an exterior approach aligns
+    // WITH the face's outward normal (signed dot, near +1). The
+    // previous Math.abs(dot) proved only axis alignment: a run
+    // arriving through the vessel interior (dot near -1) passed the
+    // same check and then earned the verified-attachment exemption
+    // for its own through-vessel segment. Same convention for both
+    // ends: point is always the attached end, neighbor the next
+    // vertex into the run.
     const dot =
-      Math.abs(
-        ((neighbor.x - point.x) / segPlanLen) * face.normal.x +
-          ((neighbor.y - point.y) / segPlanLen) * face.normal.y,
-      );
+      ((neighbor.x - point.x) / segPlanLen) * face.normal.x +
+      ((neighbor.y - point.y) / segPlanLen) * face.normal.y;
     if (dot < Math.cos((20 * Math.PI) / 180)) {
       errors.push(
-        `Pipe run ${run.id} does not approach nozzle ${ref.anchorId} along its face normal — the run axis crosses the flange face instead of meeting it.`,
+        `Pipe run ${run.id} does not approach nozzle ${ref.anchorId} from the exterior side of its flange face — the run must meet the face along its outward normal, not cross the vessel to reach it.`,
       );
     }
   }

@@ -133,7 +133,12 @@ describe("R2 attachments verify against the named face, not the vessel box", () 
     });
     // The riser is a zero-plan-length vertex pair (the same form the
     // crossing-jog inserter authors) — patched in directly because
-    // addPipeRun dedupes consecutive points.
+    // addPipeRun dedupes consecutive points. F2.1 (fix round 4): the
+    // riser must arrive from the EXTERIOR side of the top face —
+    // from above the roof (200), descending onto the flange at 126.
+    // The round-2 form (horizontal at 30 to the center, then rising
+    // inside the vessel) traverses the vessel before reaching the
+    // face and is now refused; see fixround4/f2-approach-side.
     design = {
       ...design,
       pipes: design.pipes.map((p) =>
@@ -141,7 +146,7 @@ describe("R2 attachments verify against the named face, not the vessel box", () 
           ? {
               ...p,
               points: [{ x: 200, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
-              elevIn: [30, 30, 126],
+              elevIn: [200, 200, 126],
             }
           : p,
       ),

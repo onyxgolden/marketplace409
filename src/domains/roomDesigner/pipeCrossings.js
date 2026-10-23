@@ -661,6 +661,19 @@ export function runPathToSource(design, runId, serviceId) {
  * water, firewater ↔ anything) is a misconnection, never a supply.
  * Process-to-process junctions (both identities empty) are normal.
  */
+/**
+ * An unambiguous key for an unordered pair of run ids (layer sweep,
+ * F1.1 family): run ids are caller-authorable and may contain any
+ * delimiter, so a joined string key lets distinct pairs collide —
+ * ("a|b","c") and ("a","b|c") both join to "a|b|c" — and one pair's
+ * dedup suppresses another pair's error. The canonical form is the
+ * JSON encoding of the sorted pair; sorting gives {A, B} === {B, A},
+ * and JSON array encoding is injective for any id content.
+ */
+export function runPairKey(a, b) {
+  return JSON.stringify([a, b].sort());
+}
+
 export function crossServiceErrors(design) {
   const errors = [];
   const byId = new Map((design?.pipes || []).map((r) => [r.id, r]));
@@ -676,7 +689,7 @@ export function crossServiceErrors(design) {
       const b = identity(host);
       if (a === b) continue;
       if (a === null && b === null) continue;
-      const key = [run.id, hostId].sort().join("|");
+      const key = runPairKey(run.id, hostId);
       if (seen.has(key)) continue;
       seen.add(key);
       errors.push(
@@ -829,7 +842,10 @@ export function pipeCrossingErrors(design) {
   const seenCross = new Set();
   for (const c of findPipeCrossings(design)) {
     if (c.resolved) continue;
-    const key = `${c.aRunId}|${c.bRunId}|${Math.round(c.x)}|${Math.round(c.y)}`;
+    // Canonical tuple key (layer sweep K5): run ids are
+    // caller-authorable and delimiter-bearing; a "|" join lets one
+    // crossing pair dedup another pair's error away.
+    const key = JSON.stringify([c.aRunId, c.bRunId, Math.round(c.x), Math.round(c.y)]);
     if (seenCross.has(key)) continue;
     seenCross.add(key);
     errors.push(
@@ -882,7 +898,7 @@ export function pipeCrossingErrors(design) {
           const hiB = Math.max(routeB[j].zIn, routeB[j + 1].zIn);
           const rangeGap = Math.max(0, Math.max(loA, loB) - Math.min(hiA, hiB));
           if (rangeGap >= requiredSeparationIn(ra.diameterIn ?? 2, rb.diameterIn ?? 2) - EPS) continue;
-          const key = `${ra.id}|${rb.id}`;
+          const key = runPairKey(ra.id, rb.id);
           if (seenOverlap.has(key)) continue;
           seenOverlap.add(key);
           errors.push(

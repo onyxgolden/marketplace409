@@ -86,24 +86,77 @@ export function reducerSizes(inst) {
 }
 
 /**
+ * The closed kind-specific schemas for ownership references (F1.1).
+ * Identifiers are NOT restricted to exclude delimiters — a caller may
+ * author symbol/anchor ids containing ':' — so owner identity is
+ * never encoded by raw string concatenation (where
+ * { nozzle, "v:a", "b" } and { nozzle, "v", "a:b" } collide). A
+ * reference validates against exactly one schema — kind plus its
+ * named fields, no extras — and its canonical form is the typed
+ * tuple, JSON-encoded (JSON array encoding is injective for any
+ * identifier content: quoting/escaping is part of the encoding).
+ */
+const OWNER_REF_SCHEMAS = {
+  "run-end": ["runId", "end"],
+  "run-segment": ["runId", "segmentIndex"],
+  nozzle: ["symbolId", "anchorId"],
+  "spray-inlet": ["symbolId", "anchorId"],
+};
+
+/**
+ * Validate an ownership reference against its kind's closed schema
+ * and return the canonical tuple [kind, ...fields] — or null when
+ * the reference is malformed (unknown kind, missing/extra fields,
+ * wrong field types, a run end that is not exactly "start"/"end",
+ * or a segment index that is not a non-negative integer: naming a
+ * run without naming the interface on it is not an identity).
+ * Malformed references never compare equal and never bind — every
+ * consumer fails closed on them.
+ */
+export function normalizeOwnerRef(ref) {
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
+  const fields = OWNER_REF_SCHEMAS[ref.kind];
+  if (!fields) return null;
+  for (const key of Object.keys(ref)) {
+    if (key !== "kind" && !fields.includes(key)) return null;
+  }
+  const tuple = [ref.kind];
+  for (const field of fields) {
+    const value = ref[field];
+    if (field === "end") {
+      if (value !== "start" && value !== "end") return null;
+    } else if (field === "segmentIndex") {
+      if (!Number.isInteger(value) || value < 0) return null;
+    } else if (typeof value !== "string") {
+      return null;
+    }
+    tuple.push(value);
+  }
+  return tuple;
+}
+
+/**
  * A stable string key for an ownership reference (F1) — the identity
- * validators compare. Two references own the same interface iff their
- * keys are equal.
+ * validators compare. Two references own the same interface iff
+ * their canonical tuples are equal. Null for a malformed reference.
  */
 export function reducerOwnerKey(ref) {
-  if (!ref || typeof ref !== "object") return null;
-  switch (ref.kind) {
-    case "run-end":
-      return `run-end:${ref.runId}:${ref.end}`;
-    case "run-segment":
-      return `run-segment:${ref.runId}:${ref.segmentIndex}`;
-    case "nozzle":
-      return `nozzle:${ref.symbolId}:${ref.anchorId}`;
-    case "spray-inlet":
-      return `spray-inlet:${ref.symbolId}:${ref.anchorId}`;
-    default:
-      return null;
-  }
+  const tuple = normalizeOwnerRef(ref);
+  return tuple ? JSON.stringify(tuple) : null;
+}
+
+/**
+ * An unambiguous key for an UNORDERED pair of ownership references
+ * (F1.1) — the dedup key for modeled connections: {A, B} and {B, A}
+ * key identically, and distinct pairs never collide (each side is
+ * canonically encoded first; there is no delimiter join to move the
+ * collision to). Null when either side is malformed.
+ */
+export function ownerPairKey(a, b) {
+  const ka = reducerOwnerKey(a);
+  const kb = reducerOwnerKey(b);
+  if (ka === null || kb === null) return null;
+  return JSON.stringify([ka, kb].sort());
 }
 
 /** True when two ownership references name the same interface. */
@@ -276,7 +329,9 @@ export function modeledConnectionsAtPoint(design, x, y) {
   const spraysByInletRun = new Map();
   for (const s of design?.symbols || []) {
     if (s?.domain === "piping" && s?.symbolId === "spray-nozzle" && s.inletRunId) {
-      spraysByInletRun.set(`${s.inletRunId}:${s.inletEnd}`, s);
+      // Canonical tuple key (F1.1): the raw persisted inletEnd is not
+      // delimiter-free, so a ':' join could cross-match another run.
+      spraysByInletRun.set(JSON.stringify([s.inletRunId, s.inletEnd]), s);
     }
   }
   for (const run of design?.pipes || []) {
@@ -287,7 +342,7 @@ export function modeledConnectionsAtPoint(design, x, y) {
       if (Math.hypot(point.x - x, point.y - y) > REDUCER_CONNECTION_TOLERANCE_IN) continue;
       const junction = run.junctions?.[end];
       const attachment = run.attachments?.[end];
-      const spray = spraysByInletRun.get(`${run.id}:${end}`);
+      const spray = spraysByInletRun.get(JSON.stringify([run.id, end]));
       if (!junction && !attachment && !spray) continue;
       const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
       const axisDeg = (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
@@ -320,11 +375,11 @@ export function modeledConnectionsAtPoint(design, x, y) {
         });
       }
       for (const c of candidates) {
-        const key = [reducerOwnerKey(mineOwner), reducerOwnerKey(c.otherOwner)]
-          .sort()
-          .join("|");
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const key = ownerPairKey(mineOwner, c.otherOwner);
+        if (key !== null) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
         out.push({
           elevationIn,
           axisDeg,
@@ -468,6 +523,16 @@ export function reducerErrors(design) {
       for (const port of ["inlet", "outlet"]) {
         const ref = owners[port];
         if (!ref) continue;
+        // F1.1/fail-closed: a persisted reference that does not
+        // validate against its kind's closed schema is malformed —
+        // reported as such (it can never bind), not silently carried
+        // and not misreported as merely stale.
+        if (!normalizeOwnerRef(ref)) {
+          errors.push(
+            `Reducer ${inst.id} ${port} port carries a malformed ownership reference — it names no valid interface and binds nothing.`,
+          );
+          continue;
+        }
         const stale =
           ((ref.kind === "run-end" || ref.kind === "run-segment") && !runIds.has(ref.runId)) ||
           ((ref.kind === "nozzle" || ref.kind === "spray-inlet") && !symbolIds.has(ref.symbolId));

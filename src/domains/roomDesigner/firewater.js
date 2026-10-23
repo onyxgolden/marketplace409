@@ -478,7 +478,19 @@ export function verifiedSpraySupply(design, spray) {
     );
     return { ok: false, problems, run };
   }
-  const end = inlet.end === "start" ? "start" : "end";
+  // Fail closed on the reference itself (F3.1): the persisted
+  // inletEnd is validated at this runtime/rehydration boundary —
+  // only the exact authored values are admitted. The document may
+  // not have come through the authoring command (hand edits, older
+  // writers), and the previous truthiness-plus-ternary read silently
+  // interpreted any malformed value (e.g. "typo") as "end".
+  if (inlet.end !== "start" && inlet.end !== "end") {
+    problems.push(
+      `authored inlet connection names an invalid branch end ${JSON.stringify(inlet.end)} — the inlet reference must name exactly "start" or "end"; a malformed inlet reference proves no supply`,
+    );
+    return { ok: false, problems, run };
+  }
+  const end = inlet.end;
   const idx = end === "start" ? 0 : run.points.length - 1;
   const point = run.points[idx];
   const route = physicalRouteIn(design, run);
@@ -497,14 +509,17 @@ export function verifiedSpraySupply(design, spray) {
     );
   } else if (
     !neighborNode ||
-    Math.abs(node.zIn - neighborNode.zIn) <= CONNECTION_FACE_TOLERANCE_IN
+    neighborNode.zIn > node.zIn - CONNECTION_FACE_TOLERANCE_IN
   ) {
-    // Orientation (F3): the inlet face is vertical (fed from below),
-    // so the branch must ARRIVE through a riser — its final segment
-    // changes elevation into the inlet. A flat horizontal segment at
-    // the inlet elevation runs across the face instead of into it.
+    // Orientation (F3) + direction (F3.1): the inlet face is vertical
+    // and fed FROM BELOW, so the branch's final segment must RISE
+    // into the inlet — the preceding vertex sits strictly below the
+    // inlet elevation. The previous absolute-difference test rejected
+    // only a FLAT approach; a branch descending into the inlet from
+    // above passed identically, though the opposite-side approach
+    // cannot prove the modeled below-fed connection.
     problems.push(
-      "supply branch does not approach the assembly inlet through a riser — a flat horizontal approach at the inlet elevation is not a verified inlet connection",
+      "supply branch does not rise into the assembly inlet through a riser from below — a flat horizontal approach, or a descent from above, is not a verified inlet connection",
     );
   }
   if (
