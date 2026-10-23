@@ -34,7 +34,7 @@ beforeEach(() => {
   resetHomeProjectIds();
 });
 
-function slopedDesign() {
+function slopedDesign(crossElevationIn = 50) {
   let design = createEmptyDesign();
   design = addPipeRun(design, [{ x: -100, y: 0 }, { x: 100, y: 0 }], {
     id: "slope",
@@ -47,7 +47,7 @@ function slopedDesign() {
   design = addPipeRun(design, [{ x: 0, y: -100 }, { x: 0, y: 100 }], {
     id: "cross",
     diameterIn: 2,
-    elevationIn: 50,
+    elevationIn: crossElevationIn,
   });
   return design;
 }
@@ -91,7 +91,10 @@ describe("R3 one physical profile for validation, lengths, and views", () => {
   });
 
   it("elevation sections project both endpoint elevations of a sloped segment", () => {
-    let design = slopedDesign();
+    // Cross at 150 (above the slope): at the default 50 the two runs
+    // genuinely collide at the crossing (see slopedCollision), and
+    // updateLevelDesign rightly refuses an invalid level design.
+    let design = slopedDesign(150);
     let project = createHomeProject("Slope project", { units: "ft" });
     project = updateLevelDesign(project, project.levels[0].id, () => design);
     const result = buildElevation(project, { direction: "S" });

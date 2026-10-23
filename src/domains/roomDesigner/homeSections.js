@@ -34,9 +34,9 @@
 import { validateHomeProject } from "./homeProject";
 import { normalizeUnits, projectWithEditedDesign } from "./homeQuantities";
 import { findSymbol } from "./symbolRegistry";
-import { connectionFlanges, segmentElevationsForDesign } from "./pipeCrossings";
+import { connectionFlanges, physicalRouteIn } from "./pipeCrossings";
 import { teeFittings } from "./pipeAttachments";
-import { accessPackageWorld, manwayWorld } from "./vesselAccess";
+import { accessPackageWorld, baseElevationIn, manwayWorld } from "./vesselAccess";
 import { downcomerLevels } from "./downcomers";
 
 /** The four cardinal elevation directions. */
@@ -199,36 +199,45 @@ function projectWall(wall, u, levelBaseIn, wallHeightIn, openings, assumptions) 
 }
 
 /**
- * Pipe runs projected onto the view axis at their effective elevations
- * (the shared route contract: stored profile, else rack/grade
- * derivation), with risers where the elevation steps and a marker for
- * every flanged connection.
+ * Pipe runs projected onto the view axis from the SHARED physical
+ * route (physicalRouteIn — the same profile validation and the 3D
+ * model consume, R3): each segment view carries BOTH endpoint
+ * elevations (elev0In/elev1In) so a sloped segment draws sloped;
+ * elevIn keeps the segment's high endpoint for existing consumers.
+ * A zero-plan route step is a true riser and projects as one.
  */
 function projectPipes(design, u, levelBaseIn) {
   const views = [];
   const proj = (p) => p.x * u.x + p.y * u.y;
   for (const run of Array.isArray(design.pipes) ? design.pipes : []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
-    const elevs = segmentElevationsForDesign(design, run);
-    for (let i = 0; i + 1 < run.points.length; i += 1) {
+    const route = physicalRouteIn(design, run);
+    for (let i = 0; i + 1 < route.length; i += 1) {
+      const a = route[i];
+      const b = route[i + 1];
+      if (Math.hypot(b.x - a.x, b.y - a.y) <= 1e-9) {
+        if (a.zIn !== b.zIn) {
+          views.push({
+            kind: "riser",
+            runId: run.id,
+            u: round2(proj(a)),
+            fromIn: round2(levelBaseIn + Math.min(a.zIn, b.zIn)),
+            toIn: round2(levelBaseIn + Math.max(a.zIn, b.zIn)),
+          });
+        }
+        continue;
+      }
       views.push({
         kind: "pipe",
         runId: run.id,
-        u0: round2(proj(run.points[i])),
-        u1: round2(proj(run.points[i + 1])),
-        elevIn: round2(levelBaseIn + elevs[i]),
+        u0: round2(proj(a)),
+        u1: round2(proj(b)),
+        elevIn: round2(levelBaseIn + Math.max(a.zIn, b.zIn)),
+        elev0In: round2(levelBaseIn + a.zIn),
+        elev1In: round2(levelBaseIn + b.zIn),
         diameterIn: run.diameterIn ?? 2,
         ...(run.utility === "firewater" ? { firewater: true } : {}),
       });
-      if (i > 0 && elevs[i] !== elevs[i - 1]) {
-        views.push({
-          kind: "riser",
-          runId: run.id,
-          u: round2(proj(run.points[i])),
-          fromIn: round2(levelBaseIn + Math.min(elevs[i - 1], elevs[i])),
-          toIn: round2(levelBaseIn + Math.max(elevs[i - 1], elevs[i])),
-        });
-      }
     }
   }
   for (const f of connectionFlanges(design)) {
@@ -319,17 +328,21 @@ function projectAccess(design, u, levelBaseIn) {
     if (!symbol) continue;
     const manway = manwayWorld(symbol, inst);
     if (manway) {
+      // World frame (R4): the catalog sill is local to the equipment
+      // base; the section datum adds the level base AND the modeled
+      // base elevation, matching the 3D view and the access package.
+      const sillWorldIn = baseElevationIn(inst) + manway.sillIn;
       views.push({
         kind: "manway",
         instanceId: inst.id,
         u: round2(proj(manway)),
-        sillIn: round2(levelBaseIn + manway.sillIn),
-        topIn: round2(levelBaseIn + manway.sillIn + manway.diameterIn),
+        sillIn: round2(levelBaseIn + sillWorldIn),
+        topIn: round2(levelBaseIn + sillWorldIn + manway.diameterIn),
         diameterIn: manway.diameterIn,
         label: inst.tag || "",
       });
     }
-    const pkg = accessPackageWorld(symbol, inst);
+    const pkg = accessPackageWorld(symbol, inst, design);
     if (pkg) {
       const us = pkg.deck.corners.map((c) => proj(c));
       views.push({
@@ -347,13 +360,13 @@ function projectAccess(design, u, levelBaseIn) {
         toIn: round2(levelBaseIn + pkg.ladder.toIn),
       });
     }
-    for (const level of downcomerLevels(symbol, inst)) {
+    for (const level of downcomerLevels(symbol, inst, design)) {
       views.push({
         kind: "downcomer-manway",
         instanceId: inst.id,
         u: round2(proj(level.manway)),
-        sillIn: round2(levelBaseIn + level.elevationIn),
-        topIn: round2(levelBaseIn + level.elevationIn + level.manway.diameterIn),
+        sillIn: round2(levelBaseIn + level.manway.sillIn),
+        topIn: round2(levelBaseIn + level.manway.sillIn + level.manway.diameterIn),
         diameterIn: level.manway.diameterIn,
         label: level.label || "",
       });

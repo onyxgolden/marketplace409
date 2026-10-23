@@ -77,18 +77,27 @@ describe("elevation pipe + access projection", () => {
     return d;
   }
 
-  it("projects pipe segments at their stepped elevations with a riser at the step", () => {
+  it("projects pipe segments from the shared physical route (R3 contract)", () => {
+    // Round-2 contract change (PR #668 R3): sections consume the same
+    // physicalRouteIn profile as validation and the 3D model. The
+    // [30, 30, 66, 66] vertex profile means the middle segment SLOPES
+    // 30 -> 66 in plan — the old per-segment-max model drew it flat at
+    // 66 with a fictitious riser at the step vertex. Segment views now
+    // carry both endpoint elevations; elevIn keeps the high endpoint.
+    // True risers (zero-plan route steps) still project as risers.
     const result = buildElevation(projectWithDesign(pipedDesign()), { direction: "S" });
     expect(result.ok).toBe(true);
     const level = result.levels[0];
     expect(level.pipeViews).toBeTruthy();
     const segs = level.pipeViews.filter((v) => v.kind === "pipe" && v.runId === "stepped");
     expect(segs.map((s) => s.elevIn)).toEqual([30, 66, 66]);
+    expect(segs.map((s) => [s.elev0In, s.elev1In])).toEqual([
+      [30, 30],
+      [30, 66],
+      [66, 66],
+    ]);
     const risers = level.pipeViews.filter((v) => v.kind === "riser" && v.runId === "stepped");
-    expect(risers).toHaveLength(1);
-    // South elevation looks north with u = -x, so the x=120 step
-    // (where the run first rises) lands at u = -120.
-    expect(risers[0]).toMatchObject({ u: -120, fromIn: 30, toIn: 66 });
+    expect(risers).toHaveLength(0);
     expect(result.limitations.join(" ")).toMatch(/Pipes are drawn in elevation views/);
   });
 

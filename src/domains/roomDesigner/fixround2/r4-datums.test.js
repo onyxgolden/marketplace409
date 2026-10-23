@@ -20,9 +20,12 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  addPipeRun,
   createEmptyDesign,
   placeSymbol,
   resetDesignerIds,
+  setPipeSource,
+  setPipeUtility,
 } from "../designerDocument";
 import { findSymbol } from "../symbolRegistry";
 import { accessPackageWorld } from "../vesselAccess";
@@ -133,6 +136,13 @@ describe("R4 datums agree across domain, descriptors, and views", () => {
     let design = createEmptyDesign();
     design = placeSymbol(design, "processEquipment", "vertical-vessel", 0, 0, { id: "v" });
     design = patched(design, "v", { baseElevationIn: 36 });
+    // A firewater-only design demands no D8 utility supply (the
+    // D668-008 scoping rule), so the bare vessel validates and the
+    // section builder accepts the level; the datum assertions below
+    // are the code under test.
+    design = addPipeRun(design, [{ x: 500, y: 500 }, { x: 900, y: 500 }], { id: "fw", diameterIn: 12 });
+    design = setPipeUtility(design, "fw", "firewater");
+    design = setPipeSource(design, "fw", "firewater");
     let project = createHomeProject("Datum project", { units: "ft" });
     project = updateLevelDesign(project, project.levels[0].id, () => design);
     const result = buildElevation(project, { direction: "S" });
