@@ -38,7 +38,7 @@ import {
   reconcilePipeAttachments,
   reconcileRunJunctions,
 } from "./pipeAttachments";
-import { applyCrossingJogs, physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
+import { applyCrossingJogs, findPipeCrossings, physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
 import { findSymbol } from "./symbolRegistry";
 import { boundReducerAt, placeReducer } from "./pipeReducerModel";
 import { setDowncomerLevelProps } from "./downcomers";
@@ -1157,12 +1157,24 @@ function buildPlotDesign() {
   design = addUtilities(design, systemIds);
   design = addFirewater(design, systemIds);
   // The stub pass re-routes final approaches; re-run the crossing-jog
-  // pass for the runs it touched so any stub crossing another run
-  // gets its elevation jog, exactly as construction-time runs did.
+  // pass for the stubbed runs that actually have open crossings so
+  // any stub crossing another run gets its elevation jog, exactly as
+  // construction-time runs did. (Jogging every stubbed run would
+  // re-scan the whole design per run — the crossing set is computed
+  // once instead.)
   const stubbed = alignApproachStubs(design);
   design = stubbed.design;
-  for (const runId of stubbed.changedIds) {
-    design = applyCrossingJogs(design, runId);
+  if (stubbed.changedIds.length > 0) {
+    const stubbedIds = new Set(stubbed.changedIds);
+    const openIds = new Set();
+    for (const c of findPipeCrossings(design)) {
+      if (c.resolved) continue;
+      if (stubbedIds.has(c.aRunId)) openIds.add(c.aRunId);
+      if (stubbedIds.has(c.bRunId)) openIds.add(c.bRunId);
+    }
+    for (const runId of openIds) {
+      design = applyCrossingJogs(design, runId);
+    }
   }
   // Final junction pass: runs added early never saw runs added later —
   // re-detect junctions for every run so endpoint-T contacts (e.g. a

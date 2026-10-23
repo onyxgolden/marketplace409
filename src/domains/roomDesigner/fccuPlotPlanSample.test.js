@@ -222,13 +222,17 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     // D9 fire hydrants and fixed spray nozzles, which are functional
     // components with validation rules, not decoration. PR668-001 adds
     // the modeled reducers — 37 placed explicitly (18 D8 2->1 taps,
-    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 14
+    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 15
     // more for size-mismatched junctions discovered by the final
     // junction pass (e.g. 12" rundowns landing on the 10" pump suction
-    // header) — every size transition gets its modeled reducer.
+    // header) — every size transition gets its modeled reducer. (The
+    // 15th junction reducer is the relief branch onto the 24" relief
+    // header: round 1's proximity cover-check counted a neighboring
+    // reducer as covering that tap; R1 requires the tap's own bound
+    // reducer.)
     expect(pipingSymbols.map((s) => s.symbolId).sort()).toEqual([
       ...Array(15).fill("fire-hydrant"),
-      ...Array(51).fill("reducer"),
+      ...Array(52).fill("reducer"),
       ...Array(4).fill("spray-nozzle"),
     ]);
   });

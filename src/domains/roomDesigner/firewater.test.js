@@ -15,6 +15,7 @@ import {
   createEmptyDesign,
   placeSymbol,
 } from "./designerDocument";
+import { placeReducer } from "./pipeReducerModel";
 
 const P = "piping";
 const E = "processEquipment";
@@ -55,6 +56,34 @@ function sprayDesign(sprayAt, aimAt = { x: 1000, y: 1000 }) {
     sourceOf: "firewater",
     underground: true,
     elevationIn: -36,
+  });
+  // R6: the supply must bind the assembly's physical inlet — a
+  // modeled riser leg (not itself a buried run, the sample's
+  // convention) rises from the main to the inlet elevation at the
+  // spray. A flat buried run ending beside the assembly is a
+  // plan-only supply and is rejected. (addPipeRun does not carry
+  // elevIn; it is patched on, as the sample's authoring does.)
+  design = addPipeRun(design, [{ x: sprayAt.x - 100, y: sprayAt.y }, { x: sprayAt.x, y: sprayAt.y }], {
+    id: "fw-riser",
+    diameterIn: 6,
+    utility: "firewater",
+  });
+  design = {
+    ...design,
+    pipes: design.pipes.map((p) =>
+      p.id === "fw-riser"
+        ? { ...p, elevIn: [-36, 0], junctions: { start: { runId: "fw-main" } } }
+        : p,
+    ),
+  };
+  // The 12 -> 6 tap transition gets its modeled reducer, oriented
+  // with its outlet facing the riser (R1: the junction edge exists
+  // only when a reducer's owned interfaces bind it).
+  design = placeReducer(design, sprayAt.x - 100, sprayAt.y, {
+    id: "fw-tap-red",
+    inletSizeIn: 12,
+    outletSizeIn: 6,
+    rotationDeg: 0,
   });
   design = {
     ...design,
@@ -151,15 +180,34 @@ describe("firewater", () => {
     design = addPipeRun(design, [{ x: 1200, y: 0 }, { x: 1200, y: -72 }], {
       id: "hbr",
       diameterIn: HYDRANT_BRANCH_DIAMETER_IN,
-      elevationIn: -36,
-      underground: true,
     });
     design = {
       ...design,
       pipes: design.pipes.map((p) =>
-        p.id === "hbr" ? { ...p, utility: "firewater", junctions: { start: { runId: "main" } } } : p,
+        p.id === "hbr"
+          ? {
+              ...p,
+              utility: "firewater",
+              // Buried at the main, rising to the hydrant's inlet at
+              // grade — the modeled riser R6 binds the supply check
+              // to. (A riser leg is not itself a buried run — the
+              // sample's convention; addPipeRun does not carry
+              // elevIn, so it is patched on here.)
+              elevIn: [-36, 0],
+              junctions: { start: { runId: "main" } },
+            }
+          : p,
       ),
     };
+    // The 12 -> 6 tap transition gets its modeled reducer, outlet
+    // facing the branch (R1: the junction edge exists only when a
+    // reducer's owned interfaces bind it).
+    design = placeReducer(design, 1200, 0, {
+      id: "hbr-red",
+      inletSizeIn: 12,
+      outletSizeIn: HYDRANT_BRANCH_DIAMETER_IN,
+      rotationDeg: -90,
+    });
     design = placeSymbol(design, P, "fire-hydrant", 1200, -72, { id: "hoff" });
     design = {
       ...design,
