@@ -57,7 +57,8 @@ import {
   properIntersection,
   CONNECTION_FACE_TOLERANCE_IN,
 } from "./pipeCrossings";
-import { pipeOdIn } from "./flangeGeometry";
+import { flangeNominalSizeIn, pipeOdIn } from "./flangeGeometry";
+import { boundReducerAt } from "./pipeReducerModel";
 
 /** The one red in the designer: reserved to firewater piping. */
 export const FIREWATER_COLOR = "#dc2626";
@@ -85,6 +86,16 @@ export const FIREWATER_TAKEOFF_DIAMETER_IN = Object.freeze([6, 4]);
 export const HYDRANT_BRANCH_DIAMETER_IN = 6;
 /** A branch run's end must land within this distance (in) of the hydrant it serves. */
 export const HYDRANT_BRANCH_TAP_TOLERANCE_IN = 12;
+/** The stable anchor id of a directed-spray assembly's inlet interface (F3). */
+export const SPRAY_INLET_ANCHOR_ID = "inlet";
+/**
+ * Default nominal inlet size (in) of a directed-spray assembly whose
+ * instance carries no authored `inletSizeIn`. The sample's monitor
+ * take-offs are 6 in to the default assemblies; an assembly fed by a
+ * 4-in take-off authors `inletSizeIn: 4` (an editable property like
+ * any other size in the designer).
+ */
+export const SPRAY_INLET_DEFAULT_DIAMETER_IN = 6;
 
 const EPS = 1e-6;
 
@@ -402,17 +413,153 @@ export function unitBoundaryValid(design) {
 }
 
 /**
+ * A directed-spray assembly's stable INLET interface (F3): the one
+ * port a supply branch may attach to. { id: "<sprayId>::inlet",
+ * anchorId: "inlet", x, y, elevationIn, sizeIn, vertical: true,
+ * runId, end } — position is the assembly's plan point, elevation the
+ * assembly's inlet elevation (its authored elevationIn, else grade),
+ * size the authored inletSizeIn (else the 6-in default). The inlet is
+ * fed FROM BELOW: a verified branch approaches it through a riser
+ * (its final segment rises to the inlet elevation). The authored
+ * attachment lives on the instance as inletRunId / inletEnd — the
+ * connectSprayInlet authoring command stamps them; nothing about
+ * proximity creates them.
+ */
+export function sprayInletInterface(spray) {
+  if (!spray) return null;
+  return {
+    id: `${spray.id}::${SPRAY_INLET_ANCHOR_ID}`,
+    anchorId: SPRAY_INLET_ANCHOR_ID,
+    x: spray.x,
+    y: spray.y,
+    elevationIn: Number.isFinite(spray.elevationIn) ? spray.elevationIn : 0,
+    sizeIn: Number.isFinite(spray.inletSizeIn)
+      ? spray.inletSizeIn
+      : SPRAY_INLET_DEFAULT_DIAMETER_IN,
+    vertical: true,
+    runId: spray.inletRunId ?? null,
+    end: spray.inletEnd ?? null,
+  };
+}
+
+/**
+ * Verify a spray assembly's authored inlet connection (F3) — the
+ * full interface predicate, mirroring the equipment-nozzle checks:
+ * the authored branch end must exist and be a firewater run; its end
+ * must sit ON the inlet face (plan + elevation within face
+ * tolerance); its approach must be a riser (the inlet is fed from
+ * below — a flat horizontal run at the inlet elevation is not an
+ * inlet connection); the branch's nominal size must match the
+ * inlet's, or a reducer OWNED by this exact pair (branch end +
+ * assembly inlet) must bind at the inlet point; and the branch must
+ * reach the firewater source through modeled junctions — traversal
+ * depends on this verified edge, never on an unreferenced endpoint
+ * that merely lands nearby. Returns { ok, problems, run }.
+ */
+export function verifiedSpraySupply(design, spray) {
+  const problems = [];
+  const inlet = sprayInletInterface(spray);
+  if (!inlet.runId || !inlet.end) {
+    problems.push(
+      "no authored inlet connection: no firewater branch end is authored as attached to the assembly inlet — an unreferenced endpoint at the inlet proves no supply",
+    );
+    return { ok: false, problems, run: null };
+  }
+  const run = (design?.pipes || []).find((r) => r.id === inlet.runId) || null;
+  if (!run || !Array.isArray(run.points) || run.points.length < 2) {
+    problems.push(
+      `authored inlet connection names unknown pipe run ${inlet.runId} — stale inlet reference`,
+    );
+    return { ok: false, problems, run: null };
+  }
+  if (run.utility !== "firewater") {
+    problems.push(
+      `authored inlet branch ${run.id} is not a firewater run — the assembly inlet accepts only a firewater supply branch`,
+    );
+    return { ok: false, problems, run };
+  }
+  const end = inlet.end === "start" ? "start" : "end";
+  const idx = end === "start" ? 0 : run.points.length - 1;
+  const point = run.points[idx];
+  const route = physicalRouteIn(design, run);
+  const node = end === "start" ? route[0] : route[route.length - 1];
+  const neighborIdx = end === "start" ? 1 : run.points.length - 2;
+  const neighborNode = route[neighborIdx];
+  const distIn = Math.hypot(point.x - inlet.x, point.y - inlet.y);
+  if (distIn > CONNECTION_FACE_TOLERANCE_IN) {
+    problems.push(
+      `authored inlet branch ${run.id} ends ${Math.round(distIn)} in from the assembly inlet face — the branch end is not on the inlet it names`,
+    );
+  }
+  if (!node || Math.abs(node.zIn - inlet.elevationIn) > CONNECTION_FACE_TOLERANCE_IN) {
+    problems.push(
+      "supply branch reaches the assembly in plan but not at its inlet elevation — a modeled riser to the assembly inlet is required",
+    );
+  } else if (
+    !neighborNode ||
+    Math.abs(node.zIn - neighborNode.zIn) <= CONNECTION_FACE_TOLERANCE_IN
+  ) {
+    // Orientation (F3): the inlet face is vertical (fed from below),
+    // so the branch must ARRIVE through a riser — its final segment
+    // changes elevation into the inlet. A flat horizontal segment at
+    // the inlet elevation runs across the face instead of into it.
+    problems.push(
+      "supply branch does not approach the assembly inlet through a riser — a flat horizontal approach at the inlet elevation is not a verified inlet connection",
+    );
+  }
+  if (
+    flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(inlet.sizeIn)
+  ) {
+    const neighbor = run.points[neighborIdx];
+    const axisDeg = (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+    const bound = boundReducerAt(design, {
+      x: inlet.x,
+      y: inlet.y,
+      elevationIn: inlet.elevationIn,
+      sides: [
+        {
+          sizeIn: run.diameterIn ?? 2,
+          dirDeg: axisDeg,
+          owner: { kind: "run-end", runId: run.id, end },
+        },
+        {
+          sizeIn: inlet.sizeIn,
+          dirDeg: axisDeg + 180,
+          owner: { kind: "spray-inlet", symbolId: spray.id, anchorId: SPRAY_INLET_ANCHOR_ID },
+        },
+      ],
+    });
+    if (!bound) {
+      problems.push(
+        `supply branch ${run.id} (${run.diameterIn ?? 2} in) meets the assembly inlet (${inlet.sizeIn} in) without a reducer owned by the branch end and the assembly inlet`,
+      );
+    }
+  }
+  if (problems.length === 0 && !runReachesSource(design, run.id, "firewater")) {
+    problems.push(
+      "no verified supply path: the inlet branch does not reach the firewater source through modeled junctions",
+    );
+  }
+  return { ok: problems.length === 0, problems, run };
+}
+
+/**
  * The geometric assignment status of one directed-spray assembly
  * against its assigned vessel — geometry, aim, and SUPPLY.
- * A valid assignment needs a VERIFIED supply path (D668-006): a
- * firewater run must end within the branch-tap tolerance of the
- * assembly in plan AND reach the firewater source through modeled
- * junctions (proximity alone is not supply; an unconnected branch is
- * not supply). Effectiveness is NEVER evaluated in this slice.
+ * A valid assignment needs a VERIFIED supply path (D668-006/F3): the
+ * branch end AUTHORED as attached to the assembly's inlet interface
+ * must pass the full face/elevation/riser/size-or-owned-reducer
+ * checks and reach the firewater source through modeled junctions
+ * (proximity alone is not supply; an unreferenced endpoint is not
+ * supply; an unconnected branch is not supply). Effectiveness is
+ * NEVER evaluated in this slice.
  * { sprayId, vesselId, ok, problems: [string], effectiveness: "NOT_EVALUATED" }
  */
-export function sprayAssignmentStatus(design, spray) {
+export function sprayAssignmentStatus(design, sprayArg) {
   const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
+  // The design's own instance is authoritative where one exists (a
+  // caller may pass a partial spray literal for a placed assembly).
+  const spray = (sprayArg && byId.get(sprayArg.id)) || sprayArg;
   const problems = [];
   const target = spray?.protects ? byId.get(spray.protects) : null;
   if (!spray?.protects) problems.push("no assigned vessel");
@@ -437,42 +584,13 @@ export function sprayAssignmentStatus(design, spray) {
     } else if (symbol && distanceToFootprintIn(spray.aimAt, target, symbol) > EPS) {
       problems.push("aim point does not land on the assigned vessel");
     }
-    // Verified supply path: a firewater branch ends at the assembly
-    // and reaches the network source through modeled junctions. The
-    // landing end must ALSO reach the assembly's physical inlet
-    // (R6): its route elevation at the landing vertex must meet the
-    // assembly inlet elevation — a buried branch passing the
-    // assembly's plan point at main depth is not supply; the riser
-    // belongs in the branch's modeled profile.
-    let supplied = false;
-    let landedInPlan = false;
-    let landedAtInlet = false;
-    const inletZ = Number.isFinite(spray.elevationIn) ? spray.elevationIn : 0;
-    for (const run of design?.pipes || []) {
-      if (run.utility !== "firewater") continue;
-      if (!Array.isArray(run.points) || run.points.length < 2) continue;
-      const route = physicalRouteIn(design, run);
-      for (const ei of [0, run.points.length - 1]) {
-        const p = run.points[ei];
-        if (Math.hypot(p.x - spray.x, p.y - spray.y) > HYDRANT_BRANCH_TAP_TOLERANCE_IN) continue;
-        landedInPlan = true;
-        const node = ei === 0 ? route[0] : route[route.length - 1];
-        if (!node || Math.abs(node.zIn - inletZ) > CONNECTION_FACE_TOLERANCE_IN) continue;
-        landedAtInlet = true;
-        if (runReachesSource(design, run.id, "firewater")) {
-          supplied = true;
-          break;
-        }
-      }
-      if (supplied) break;
-    }
-    if (!supplied) {
-      problems.push(
-        landedInPlan && !landedAtInlet
-          ? "supply branch reaches the assembly in plan but not at its inlet elevation — a modeled riser to the assembly inlet is required"
-          : "no verified supply path: no firewater branch ends at the assembly and reaches the firewater source through modeled junctions",
-      );
-    }
+    // Verified supply path (F3): the assembly's authored inlet
+    // connection, checked by the full interface predicate — face,
+    // inlet elevation/riser (R6), orientation, inlet size or an
+    // owned reducer — plus source reachability through the modeled
+    // junction graph. No authored reference, no supply.
+    const supply = verifiedSpraySupply(design, spray);
+    problems.push(...supply.problems);
   }
   return {
     sprayId: spray?.id,

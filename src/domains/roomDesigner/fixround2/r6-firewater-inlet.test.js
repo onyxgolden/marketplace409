@@ -105,6 +105,13 @@ describe("R6 firewater supply binds a physical inlet; boundary must be simple", 
       ),
     };
     design = placeReducer(design, 0, 0, { id: "red", inletSizeIn: 12, outletSizeIn: 6 });
+    // F3: author the take-off end as the assembly's inlet connection.
+    design = {
+      ...design,
+      symbols: design.symbols.map((s) =>
+        s.id === "s" ? { ...s, inletRunId: "takeoff", inletEnd: "end" } : s,
+      ),
+    };
     const spray = design.symbols.find((s) => s.id === "s");
     const status = sprayAssignmentStatus(design, spray);
     expect(status.problems).toEqual([]);

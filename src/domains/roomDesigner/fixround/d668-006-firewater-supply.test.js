@@ -104,6 +104,13 @@ describe("D668-006 firewater protection requires verified supply", () => {
       inletSizeIn: 12,
       outletSizeIn: 6,
     });
+    // F3: author the take-off end as the assembly's inlet connection.
+    design = {
+      ...design,
+      symbols: design.symbols.map((s) =>
+        s.id === "fa-1" ? { ...s, inletRunId: "fw-takeoff", inletEnd: "end" } : s,
+      ),
+    };
     const spray = design.symbols.find((s) => s.id === "fa-1");
     const status = sprayAssignmentStatus(design, spray);
     expect(status.problems).toEqual([]);

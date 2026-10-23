@@ -23,12 +23,12 @@ import { finalPipeColor } from "./pipeColorPolicy";
 import { teeFittings, anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
 import { modeledHeadHeightIn } from "./downcomers";
 import { reducerInterfaces } from "./pipeReducerModel";
+import { sprayInletInterface } from "./firewater";
 import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
 import {
   connectionFlanges,
   runHasStoredElevation,
   storedSegmentElevations,
-  vertexElevationsForDesign,
 } from "./pipeCrossings";
 
 export const WINDOW_SILL_IN = 36;
@@ -624,6 +624,10 @@ export function fittingDescriptors(design) {
         ? {
             // The discharge origin and aim validation consumes (D668-006).
             protects: inst.protects || null,
+            // The assembly's inlet interface (F3): the same stable
+            // inlet supply validation verifies — id, authored branch
+            // reference, elevation, nominal size.
+            inlet: sprayInletInterface(inst),
             aimAt:
               inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
                 ? { x: inst.aimAt.x, y: inst.aimAt.y }

@@ -95,7 +95,9 @@ function sprayDesign(sprayAt, aimAt = { x: 1000, y: 1000 }) {
     ],
     symbols: design.symbols.map((s) => {
       if (s.id === "v1") return { ...s, flammable: true };
-      if (s.id === "s1") return { ...s, protects: "v1", aimAt };
+      // F3: the riser's end is authored as the assembly's inlet
+      // connection — supply is verified against that reference.
+      if (s.id === "s1") return { ...s, protects: "v1", aimAt, inletRunId: "fw-riser", inletEnd: "end" };
       return s;
     }),
   };

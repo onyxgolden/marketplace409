@@ -110,7 +110,19 @@ describe("R2 attachments verify against the named face, not the vessel box", () 
     design = attach(design, "r1", "end", "side-out");
     expect(connectionCompatibilityErrors(design)).toEqual([]);
     expect(pipeCrossingErrors(design)).toEqual([]);
-    expect(verifiedAttachmentPoints(design).get("v")).toEqual([{ x: 24, y: 0 }]);
+    // F2 (fix round 3): verified attachments are owned tuples keyed
+    // by run/end/segment/anchor, not bare plan points.
+    expect(verifiedAttachmentPoints(design).get("v")).toEqual([
+      {
+        runId: "r1",
+        end: "end",
+        segmentIndex: 0,
+        symbolId: "v",
+        anchorId: "side-out",
+        x: 24,
+        y: 0,
+      },
+    ]);
   });
 
   it("positive: a riser arriving at the top face validates", () => {

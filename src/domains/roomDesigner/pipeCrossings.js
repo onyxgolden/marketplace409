@@ -24,8 +24,8 @@
 import { flangeNominalSizeIn, pipeOdIn } from "./flangeGeometry";
 import { findSymbol } from "./symbolRegistry";
 import { rackParams } from "./rackGeometry";
-import { boundReducerAt } from "./pipeReducerModel";
-import { connectionFaceForAnchor } from "./pipeAttachments";
+import { boundReducerAt, junctionHostOwner } from "./pipeReducerModel";
+import { attachmentInterfaceErrors } from "./pipeAttachments";
 
 const EPS = 1e-9;
 
@@ -533,9 +533,14 @@ export function validatedJunctionEdge(design, run, end) {
   if (Math.abs(myElevIn - hostElevIn) > CONNECTION_FACE_TOLERANCE_IN) {
     return { status: "elevation", host, point, hostElevIn, myElevIn };
   }
-  // R1: a mixed-size transition is an edge ONLY when a reducer's
-  // owned interfaces bind it (position + elevation + axis + per-side
-  // sizes). A size warning elsewhere never substitutes for the edge.
+  // R1/F1: a mixed-size transition is an edge ONLY when a reducer's
+  // owned interfaces bind it — and the reducer must own THIS exact
+  // pair of participating interfaces: this run's end and the host
+  // interface it taps (the host's own end for a coupled joint, else
+  // the tapped host segment). A reducer owned by a different,
+  // coincident transition authorizes nothing here. A size warning
+  // elsewhere never substitutes for the edge.
+  let reducerId = null;
   if (flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(host.diameterIn ?? 2)) {
     const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
     const branchAxisDeg =
@@ -545,15 +550,24 @@ export function validatedJunctionEdge(design, run, end) {
       y: point.y,
       elevationIn: myElevIn,
       sides: [
-        { sizeIn: run.diameterIn ?? 2, dirDeg: branchAxisDeg },
-        { sizeIn: host.diameterIn ?? 2, dirDeg: branchAxisDeg + 180 },
+        {
+          sizeIn: run.diameterIn ?? 2,
+          dirDeg: branchAxisDeg,
+          owner: { kind: "run-end", runId: run.id, end },
+        },
+        {
+          sizeIn: host.diameterIn ?? 2,
+          dirDeg: branchAxisDeg + 180,
+          owner: junctionHostOwner(design, host, point),
+        },
       ],
     });
     if (!bound) {
       return { status: "reducer", host, point, hostElevIn, myElevIn, hostSegIndex: best.i };
     }
+    reducerId = bound.id;
   }
-  return { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex: best.i };
+  return { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex: best.i, reducerId };
 }
 
 /**
@@ -886,11 +900,12 @@ export function pipeCrossingErrors(design) {
   // attachment id, never proximity).
   errors.push(...envelopeConflictErrors(design));
   // A run passing through an equipment footprint it does not connect
-  // to. The exemption is LOCALIZED and verified: only the sub-route
-  // near a verified attached nozzle (the run end actually sitting on
-  // the nozzle) is exempt — never the whole run because an attachment
-  // names the vessel (D668-003).
-  const verifiedNozzlePoints = verifiedAttachmentPoints(design);
+  // to. The exemption is OWNED and segment-exact (F2): only the one
+  // segment adjacent to a VERIFIED attached end of THIS run at THIS
+  // vessel is exempt — never another run sharing the nozzle point,
+  // never the owner's other segments, never the whole run because an
+  // attachment names the vessel (D668-003).
+  const verified = verifiedAttachments(design);
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
     // Buried runs pass underneath plan symbols legitimately: the
@@ -901,17 +916,14 @@ export function pipeCrossingErrors(design) {
       if (inst.domain !== "processEquipment") continue;
       const symbol = findSymbol(inst.domain, inst.symbolId);
       if (!symbol || symbol.rack) continue; // pipes ride racks by design
-      const nearNozzle = verifiedNozzlePoints.get(inst.id) || [];
       let flagged = false;
       for (let i = 0; i + 1 < run.points.length && !flagged; i += 1) {
         const a = run.points[i];
         const b = run.points[i + 1];
-        // Localized exemption: a segment with an endpoint at a verified
-        // attached nozzle of THIS vessel is the connection itself.
-        const atNozzle = [a, b].some((p) =>
-          nearNozzle.some((n) => Math.hypot(n.x - p.x, n.y - p.y) <= JUNCTION_TOLERANCE_IN + 2),
+        const exempt = verified.some(
+          (t) => t.runId === run.id && t.symbolId === inst.id && t.segmentIndex === i,
         );
-        if (atNozzle) continue;
+        if (exempt) continue;
         if (segmentPassesThroughFootprint(a, b, inst, symbol)) {
           errors.push(
             `Pipe run ${run.id} passes through ${symbol.label} (${inst.tag || inst.id}) without connecting to it.`,
@@ -925,43 +937,54 @@ export function pipeCrossingErrors(design) {
 }
 
 /**
- * Verified attachment points per vessel instance id: the world plan
- * positions of the SPECIFIC connection faces where a run end actually
- * sits (R2). The named anchor must resolve through the shared face
- * model, the endpoint must sit on that face's position within
- * junction tolerance, and — where the face model carries an
- * elevation — the endpoint must meet it within face tolerance. A
- * stale or unresolvable reference verifies nothing and exempts
- * nothing; an endpoint merely inside the vessel's (expanded)
- * footprint verifies nothing either.
+ * VERIFIED attachment tuples (F2): one record per run end whose
+ * claimed nozzle attachment passes the ONE shared full-interface
+ * predicate (attachmentInterfaceErrors in pipeAttachments.js — the
+ * same check connectionCompatibilityErrors reports): the named face
+ * resolves, the end sits on it in plan and elevation, the approach
+ * follows the face normal (or a riser for a vertical face), and the
+ * nominal size matches or an owned reducer binds the pair.
+ * [{ runId, end, segmentIndex, symbolId, anchorId, x, y }] —
+ * segmentIndex is the ONE segment adjacent to the verified end, the
+ * only segment any exemption may cover. A stale reference, an
+ * off-face end, a wrong approach, or an unreduced size mismatch
+ * verifies nothing and exempts nothing.
  */
-export function verifiedAttachmentPoints(design) {
-  const out = new Map();
-  const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
+export function verifiedAttachments(design) {
+  const out = [];
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
-    const vertexElevs = vertexElevationsForDesign(design, run);
     for (const end of ["start", "end"]) {
       const ref = run.attachments?.[end];
       if (!ref) continue;
-      const inst = byId.get(ref.symbolId);
-      if (!inst) continue;
-      const symbol = findSymbol(inst.domain, inst.symbolId);
-      if (!symbol) continue;
-      const face = connectionFaceForAnchor(symbol, inst, ref.anchorId);
-      if (!face) continue; // unresolved anchor: no verified interface
+      if (attachmentInterfaceErrors(design, run, end).length > 0) continue;
       const idx = end === "start" ? 0 : run.points.length - 1;
       const point = run.points[idx];
-      if (Math.hypot(point.x - face.x, point.y - face.y) > JUNCTION_TOLERANCE_IN) continue;
-      if (
-        Number.isFinite(face.elevationIn) &&
-        Math.abs(vertexElevs[idx] - face.elevationIn) > CONNECTION_FACE_TOLERANCE_IN
-      ) {
-        continue;
-      }
-      if (!out.has(inst.id)) out.set(inst.id, []);
-      out.get(inst.id).push({ x: point.x, y: point.y });
+      out.push({
+        runId: run.id,
+        end,
+        segmentIndex: end === "start" ? 0 : run.points.length - 2,
+        symbolId: ref.symbolId,
+        anchorId: ref.anchorId,
+        x: point.x,
+        y: point.y,
+      });
     }
+  }
+  return out;
+}
+
+/**
+ * Verified attachment tuples grouped by vessel instance id (F2) —
+ * the tuples themselves, never bare plan points: ownership (run,
+ * end, segment, anchor) is the information the penetration exemption
+ * is decided on.
+ */
+export function verifiedAttachmentPoints(design) {
+  const out = new Map();
+  for (const t of verifiedAttachments(design)) {
+    if (!out.has(t.symbolId)) out.set(t.symbolId, []);
+    out.get(t.symbolId).push(t);
   }
   return out;
 }

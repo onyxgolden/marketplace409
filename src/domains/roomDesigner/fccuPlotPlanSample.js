@@ -38,9 +38,14 @@ import {
   reconcilePipeAttachments,
   reconcileRunJunctions,
 } from "./pipeAttachments";
-import { applyCrossingJogs, findPipeCrossings, physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
+import {
+  applyCrossingJogs,
+  findPipeCrossings,
+  physicalRouteIn,
+  validatedJunctionEdge,
+} from "./pipeCrossings";
 import { findSymbol } from "./symbolRegistry";
-import { boundReducerAt, placeReducer } from "./pipeReducerModel";
+import { placeReducer } from "./pipeReducerModel";
 import { setDowncomerLevelProps } from "./downcomers";
 import { UTILITY_HEADER_DIAMETER_IN, UTILITY_SERVICES } from "./utilityPiping";
 import { FIREWATER_MAIN_DIAMETER_IN, HYDRANT_BRANCH_DIAMETER_IN } from "./firewater";
@@ -1027,6 +1032,18 @@ function addFirewater(design, systemIds) {
       // at the spray end (0 in) — the modeled riser R6 requires.
       elevIn: [-36, 0],
     });
+    const takeoffId = next.pipes[next.pipes.length - 1].id;
+    // F3: the take-off end is AUTHORED as the assembly's inlet
+    // connection (inletRunId/inletEnd + the assembly's inlet size) —
+    // supply is verified against that reference, never proximity.
+    next = {
+      ...next,
+      symbols: next.symbols.map((s) =>
+        s.id === spray.id
+          ? { ...s, inletRunId: takeoffId, inletEnd: "end", inletSizeIn: diameterIn }
+          : s,
+      ),
+    };
     // PR668-001: the 12-in main to 6/4-in monitor take-off transition
     // at the tap gets its modeled reducer.
     next = placeReducer(next, tapFt.x * FT, tapFt.y * FT, {
@@ -1187,11 +1204,12 @@ function buildPlotDesign() {
   }
   design = reconcileRunJunctions(design);
   // Place reducers at size-mismatched junctions discovered by the final
-  // pass (PR668-001 + R1: every transition gets its modeled reducer,
+  // pass (PR668-001 + R1/F1: every transition gets its modeled reducer,
   // oriented so its owned interfaces bind the tap — the branch-facing
-  // port carries the branch's size, at the tap's elevation). A tap is
-  // skipped only when a reducer already BINDS it (boundReducerAt),
-  // never merely because one sits nearby.
+  // port carries the branch's size, at the tap's elevation, and both
+  // ports persist ownership of THIS tap's pair). A tap is skipped only
+  // when its junction edge already validates (validatedJunctionEdge —
+  // the owner-aware check), never merely because a reducer sits nearby.
   const byId = new Map((design.pipes || []).map((p) => [p.id, p]));
   for (const pipe of design.pipes || []) {
     for (const end of ["start", "end"]) {
@@ -1202,23 +1220,13 @@ function buildPlotDesign() {
       const d1 = pipe.diameterIn ?? 2;
       const d2 = host.diameterIn ?? 2;
       if (d1 === d2) continue;
+      if (validatedJunctionEdge(design, pipe, end).status === "ok") continue;
       const idx = end === "start" ? 0 : pipe.points.length - 1;
       const pt = pipe.points[idx];
       const neighbor = pipe.points[end === "start" ? 1 : pipe.points.length - 2];
       if (!neighbor) continue;
       const branchAxisDeg =
         (Math.atan2(neighbor.y - pt.y, neighbor.x - pt.x) * 180) / Math.PI;
-      const elevIn = vertexElevationsForDesign(design, pipe)[idx];
-      const bound = boundReducerAt(design, {
-        x: pt.x,
-        y: pt.y,
-        elevationIn: elevIn,
-        sides: [
-          { sizeIn: d1, dirDeg: branchAxisDeg },
-          { sizeIn: d2, dirDeg: branchAxisDeg + 180 },
-        ],
-      });
-      if (bound) continue;
       const inletSizeIn = Math.max(d1, d2);
       const outletSizeIn = Math.min(d1, d2);
       // The outlet (smaller side) faces the branch when the branch is
@@ -1229,6 +1237,9 @@ function buildPlotDesign() {
         inletSizeIn,
         outletSizeIn,
         rotationDeg,
+        // F1: this pass serves THIS pipe's end — name it, since other
+        // transitions may share the tap point.
+        forRun: { runId: pipe.id, end },
       });
     }
   }

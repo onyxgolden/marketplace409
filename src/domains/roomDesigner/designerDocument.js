@@ -50,7 +50,11 @@ import {
   connectionCompatibilityErrors,
   upgradeDesignConnections,
 } from "./pipeAttachments";
-import { pipeCrossingErrors, crossServiceErrors } from "./pipeCrossings";
+import {
+  pipeCrossingErrors,
+  crossServiceErrors,
+  CONNECTION_FACE_TOLERANCE_IN,
+} from "./pipeCrossings";
 import { vesselAccessErrors, accessEnvelopeErrors } from "./vesselAccess";
 import { downcomerPropsErrors, downcomerGeometryErrors } from "./downcomers";
 import {
@@ -930,6 +934,58 @@ export function setSprayAim(design, sprayId, point) {
       if (!isValidPoint(point)) throw new Error("Spray aim point must be valid.");
       next.aimAt = { x: point.x, y: point.y };
     }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Author (or clear, with a null runId) a directed-spray assembly's
+ * INLET connection (F3): the firewater branch end attached to the
+ * assembly's stable inlet interface. The reference is validated at
+ * authoring time — the assembly must be a placed spray-nozzle, the
+ * run must exist and be a firewater run, and the named end must land
+ * on the inlet face (within face tolerance). Full verification
+ * (elevation/riser, orientation, inlet size or owned reducer, source
+ * reachability) stays the validator's job (verifiedSpraySupply), so
+ * a stamped reference can still go stale honestly. Clearing removes
+ * both fields; an unreferenced assembly has no supply.
+ */
+export function connectSprayInlet(design, sprayId, { runId, end } = {}) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== sprayId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "spray-nozzle") {
+      throw new Error(`Symbol ${sprayId} is not a directed-spray assembly.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (runId === undefined || runId === null) {
+      delete next.inletRunId;
+      delete next.inletEnd;
+      return next;
+    }
+    if (end !== "start" && end !== "end") {
+      throw new Error("Spray inlet connection must name the branch end (start or end).");
+    }
+    const run = (design.pipes || []).find((r) => r.id === runId);
+    if (!run) throw new Error(`Unknown pipe run: ${runId}.`);
+    if (run.utility !== "firewater") {
+      throw new Error(`Pipe run ${runId} is not a firewater run — it cannot feed a spray inlet.`);
+    }
+    if (!Array.isArray(run.points) || run.points.length < 2) {
+      throw new Error(`Pipe run ${runId} has no modeled route.`);
+    }
+    const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
+    if (Math.hypot(point.x - s.x, point.y - s.y) > CONNECTION_FACE_TOLERANCE_IN) {
+      throw new Error(
+        `Pipe run ${runId} (${end}) does not land on the inlet face of spray assembly ${sprayId}.`,
+      );
+    }
+    next.inletRunId = runId;
+    next.inletEnd = end;
     return next;
   });
   if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
