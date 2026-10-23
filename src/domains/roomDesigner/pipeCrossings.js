@@ -165,6 +165,66 @@ export function physicalRouteIn(design, run) {
   return pts.map((p, i) => ({ x: p.x, y: p.y, zIn: elevs[i] ?? DEFAULT_PIPE_ELEVATION_IN }));
 }
 
+/**
+ * The EFFECTIVE approach segment of a run end (F4.3/F4.4) — the
+ * shared evidence read for every check that judges how a run
+ * arrives at a connection. Walking inward from the attached end,
+ * a segment that is flat within CONNECTION_FACE_TOLERANCE_IN AND
+ * at/below it in plan — a zero-length duplicate vertex (the
+ * codebase's own riser representation) or a sub-tolerance stub —
+ * carries no approach evidence: it can neither prove nor refuse an
+ * approach, so the walk steps past it and judges the first segment
+ * with extent. A terminal segment that IS evidence-bearing (a true
+ * riser, a slope, a horizontal leg) stops the walk immediately and
+ * is judged exactly as the literal terminal segment always was.
+ *
+ * Returns { idx, innerIdx, farIdx, foundEvidence, axisDeg }:
+ * idx is the attached end vertex; the effective segment runs from
+ * its near vertex (innerIdx) to its far vertex (farIdx);
+ * foundEvidence is false when the walk reached the route boundary
+ * with every segment evidence-free — an all-degenerate or
+ * within-tolerance-only route, where no approach exists to judge;
+ * axisDeg is the effective segment's own plan direction (far
+ * vertex minus near vertex, pointing into the run). The axis is
+ * read off the segment itself, never off a stub delta: a stub's
+ * plan offset cannot rotate it, and for a vertical arrival the
+ * segment's plan delta is (0,0), so the axis is the deterministic
+ * atan2(0,0) = 0 the literal terminal read also produced —
+ * vertical arrivals have no plan axis by geometry, and every
+ * consumer now agrees on that same conventional value. Null when
+ * the run has fewer than two points (callers in the validated
+ * paths guarantee at least two).
+ */
+export function effectiveApproachSegment(design, run, end) {
+  const points = run?.points;
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const vertexElevs = vertexElevationsForDesign(design, run);
+  const idx = end === "start" ? 0 : points.length - 1;
+  const step = end === "start" ? 1 : -1;
+  let farIdx = end === "start" ? 1 : points.length - 2;
+  let innerIdx = idx;
+  const evidenceFree = (a, b) =>
+    Math.hypot(points[b].x - points[a].x, points[b].y - points[a].y) <=
+      CONNECTION_FACE_TOLERANCE_IN &&
+    Math.abs(vertexElevs[b] - vertexElevs[a]) <= CONNECTION_FACE_TOLERANCE_IN;
+  while (evidenceFree(innerIdx, farIdx)) {
+    const nextIdx = farIdx + step;
+    if (nextIdx < 0 || nextIdx >= points.length) break;
+    innerIdx = farIdx;
+    farIdx = nextIdx;
+  }
+  return {
+    idx,
+    innerIdx,
+    farIdx,
+    foundEvidence: !evidenceFree(innerIdx, farIdx),
+    axisDeg:
+      (Math.atan2(points[farIdx].y - points[innerIdx].y, points[farIdx].x - points[innerIdx].x) *
+        180) /
+      Math.PI,
+  };
+}
+
 /** Minimum distance between two 3D segments (p1-q1, p2-q2). */
 export function segSegDistance3D(p1, q1, p2, q2) {
   const d1 = { x: q1.x - p1.x, y: q1.y - p1.y, z: q1.zIn - p1.zIn };
@@ -542,9 +602,13 @@ export function validatedJunctionEdge(design, run, end) {
   // elsewhere never substitutes for the edge.
   let reducerId = null;
   if (flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(host.diameterIn ?? 2)) {
-    const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
-    const branchAxisDeg =
-      (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+    // F4.4: the query axis is the EFFECTIVE approach axis — the
+    // direction of the first evidence-bearing segment. Reading it
+    // off the literal terminal segment fabricated the axis
+    // (atan2(0,0) = 0) whenever the terminal vertex was duplicated,
+    // certifying reducers faced for a different approach (and
+    // refusing correctly faced ones).
+    const branchAxisDeg = effectiveApproachSegment(design, run, end).axisDeg;
     const bound = boundReducerAt(design, {
       x: point.x,
       y: point.y,

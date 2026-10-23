@@ -31,6 +31,7 @@ import {
   segmentElevationsForDesign,
   vertexElevationsForDesign,
   physicalRouteIn,
+  effectiveApproachSegment,
   validatedJunctionEdge,
   JUNCTION_TOLERANCE_IN,
   CONNECTION_FACE_TOLERANCE_IN,
@@ -567,8 +568,6 @@ export function attachmentInterfaceErrors(design, run, end) {
     );
     return errors;
   }
-  const neighborIdx = end === "start" ? 1 : run.points.length - 2;
-  const neighbor = run.points[neighborIdx];
   const faceDist = Math.hypot(point.x - face.x, point.y - face.y);
   if (faceDist > CONNECTION_FACE_TOLERANCE_IN) {
     errors.push(
@@ -584,35 +583,28 @@ export function attachmentInterfaceErrors(design, run, end) {
     }
   }
   // Effective approach segment (F4.3): the approach checks below
-  // judge the segment the run actually arrives on. A terminal
-  // segment that is flat within the face tolerance AND at/below
-  // the tolerance in plan — a zero-length duplicate final vertex
-  // (the codebase's riser representation) or a sub-tolerance stub
-  // — carries no approach evidence: it satisfies neither the
-  // horizontal refusal (which needs plan extent) nor the sloped
-  // refusal (which needs elevation change), so reading only the
-  // literal terminal segment lets the segment BEHIND it approach
-  // however it likes — a horizontal run at the face elevation, or
-  // the through-vessel run F2.1 refuses — and still verify. Walk
-  // inward past evidence-free segments and judge the first
-  // segment with extent, from the attached end to that segment's
-  // far vertex. A terminal segment that IS evidence-bearing (a
-  // true riser, a slope, a horizontal leg) is judged exactly as
-  // before — the walk stops at it immediately.
-  const step = end === "start" ? 1 : -1;
-  let approachIdx = neighborIdx;
-  let innerIdx = idx;
-  const evidenceFree = (a, b) =>
-    Math.hypot(run.points[b].x - run.points[a].x, run.points[b].y - run.points[a].y) <=
-      CONNECTION_FACE_TOLERANCE_IN &&
-    Math.abs(vertexElevs[b] - vertexElevs[a]) <= CONNECTION_FACE_TOLERANCE_IN;
-  while (evidenceFree(innerIdx, approachIdx)) {
-    const nextIdx = approachIdx + step;
-    if (nextIdx < 0 || nextIdx >= run.points.length) break;
-    innerIdx = approachIdx;
-    approachIdx = nextIdx;
-  }
+  // judge the segment the run actually arrives on — the first
+  // evidence-bearing segment walking inward (see
+  // effectiveApproachSegment in pipeCrossings). Reading only the
+  // literal terminal segment let the segment BEHIND a degenerate
+  // terminal approach however it liked — a horizontal run at the
+  // face elevation, or the through-vessel run F2.1 refuses — and
+  // still verify.
+  const approach = effectiveApproachSegment(design, run, end);
+  const approachIdx = approach.farIdx;
   const approachNeighbor = run.points[approachIdx];
+  // Exhaustion (F4.3 residual): the walk found NO evidence-bearing
+  // segment — the whole route is all-degenerate or within-tolerance
+  // only, so there is no approach anywhere to judge. Termination
+  // without evidence must refuse: reaching the route boundary
+  // establishes neither a riser nor an exterior approach, and the
+  // claim must not earn the verified-attachment exemption on
+  // geometry that was never examined.
+  if (!approach.foundEvidence) {
+    errors.push(
+      `Pipe run ${run.id} claims nozzle ${ref.anchorId} on ${inst.tag || inst.id}, but its route carries no approach evidence — every segment lies within the ${CONNECTION_FACE_TOLERANCE_IN} in connection-face tolerance in plan and elevation, so no approach exists to verify against the face.`,
+    );
+  }
   // Approach axis: the effective end segment must arrive along
   // the face's own axis (R2). A zero-plan-length end segment is a
   // riser — the vertical approach itself. A non-flat end segment
@@ -670,7 +662,14 @@ export function attachmentInterfaceErrors(design, run, end) {
     }
   }
   if (face.sizeIn != null && runSizeNom !== flangeNominalSizeIn(face.sizeIn)) {
-    const axisDeg = (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+    // F4.4: the query axis is the EFFECTIVE approach axis — the
+    // direction of the first evidence-bearing segment (the same
+    // segment the approach checks above judged). The literal
+    // terminal segment fabricated the axis (atan2(0,0) = 0 for a
+    // duplicate terminal vertex; a stub's offset direction for a
+    // sub-tolerance stub), certifying wrongly faced reducers and
+    // refusing correctly faced ones on genuine risers.
+    const axisDeg = approach.axisDeg;
     const bound = Number.isFinite(face.elevationIn)
       ? boundReducerAt(design, {
           x: point.x,

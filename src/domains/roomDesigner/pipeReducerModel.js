@@ -54,6 +54,7 @@ import { flangeNominalSizeIn } from "./flangeGeometry";
 import {
   CONNECTION_FACE_TOLERANCE_IN,
   JUNCTION_TOLERANCE_IN,
+  effectiveApproachSegment,
   physicalRouteIn,
   pointSegmentDistance,
   vertexElevationsForDesign,
@@ -351,8 +352,14 @@ export function modeledConnectionsAtPoint(design, x, y) {
       const attachment = run.attachments?.[end];
       const spray = spraysByInletRun.get(JSON.stringify([run.id, end]));
       if (!junction && !attachment && !spray) continue;
-      const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
-      const axisDeg = (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+      // F4.4: report the EFFECTIVE approach axis — the direction of
+      // the first evidence-bearing segment (see
+      // effectiveApproachSegment in pipeCrossings). The literal
+      // terminal segment fabricated the axis (atan2(0,0) = 0 for a
+      // duplicate terminal vertex), and placeReducer persists this
+      // value into rotationDeg, so a fabricated read here became a
+      // fabricated record the gates then agreed with.
+      const axisDeg = effectiveApproachSegment(design, run, end).axisDeg;
       const elevationIn = vertexElevationsForDesign(design, run)[idx];
       const mineOwner = { kind: "run-end", runId: run.id, end };
       const candidates = [];
