@@ -21,9 +21,11 @@
 //
 // Pure and framework-free.
 
-import { pipeOdIn } from "./flangeGeometry";
+import { flangeNominalSizeIn, pipeOdIn } from "./flangeGeometry";
 import { findSymbol } from "./symbolRegistry";
 import { rackParams } from "./rackGeometry";
+import { boundReducerAt } from "./pipeReducerModel";
+import { connectionFaceForAnchor } from "./pipeAttachments";
 
 const EPS = 1e-9;
 
@@ -249,19 +251,24 @@ export function findPipeCrossings(design) {
   const runs = (design?.pipes || []).filter(
     (r) => Array.isArray(r.points) && r.points.length >= 2,
   );
-  const elevations = new Map(runs.map((r) => [r.id, segmentElevationsForDesign(design, r)]));
+  // ONE physical profile (R3): crossings interpolate the shared route
+  // at the intersection point — a sloped segment is judged where it
+  // actually passes, never by a flat per-segment elevation.
+  const routes = new Map(runs.map((r) => [r.id, physicalRouteIn(design, r)]));
   const out = [];
   for (let i = 0; i < runs.length; i += 1) {
     for (let j = i + 1; j < runs.length; j += 1) {
       const a = runs[i];
       const b = runs[j];
-      const elevA = elevations.get(a.id);
-      const elevB = elevations.get(b.id);
-      for (let sa = 0; sa + 1 < a.points.length; sa += 1) {
-        for (let sb = 0; sb + 1 < b.points.length; sb += 1) {
-          const hit = properIntersection(a.points[sa], a.points[sa + 1], b.points[sb], b.points[sb + 1]);
+      const routeA = routes.get(a.id);
+      const routeB = routes.get(b.id);
+      for (let sa = 0; sa + 1 < routeA.length; sa += 1) {
+        for (let sb = 0; sb + 1 < routeB.length; sb += 1) {
+          const hit = properIntersection(routeA[sa], routeA[sa + 1], routeB[sb], routeB[sb + 1]);
           if (!hit) continue;
-          const sep = Math.abs(elevA[sa] - elevB[sb]);
+          const elevA = routeA[sa].zIn + hit.t * (routeA[sa + 1].zIn - routeA[sa].zIn);
+          const elevB = routeB[sb].zIn + hit.u * (routeB[sb + 1].zIn - routeB[sb].zIn);
+          const sep = Math.abs(elevA - elevB);
           out.push({
             aRunId: a.id,
             bRunId: b.id,
@@ -271,8 +278,8 @@ export function findPipeCrossings(design) {
             segB: sb,
             tA: hit.t,
             tB: hit.u,
-            elevAIn: elevA[sa],
-            elevBIn: elevB[sb],
+            elevAIn: elevA,
+            elevBIn: elevB,
             resolved: sep >= requiredSeparationIn(a.diameterIn ?? 2, b.diameterIn ?? 2) - EPS,
           });
         }
@@ -496,6 +503,9 @@ export function pipeConnectionGraph(design) {
  *   { status: "elevation" } — the end is on the host's route but the
  *                              faces do not meet (host, hostElevIn,
  *                              myElevIn included for the message);
+ *   { status: "reducer" }  — the faces meet but the two sides differ
+ *                              in nominal size and no reducer's owned
+ *                              interfaces bind the transition (R1);
  *   { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex }.
  * Faces meet within CONNECTION_FACE_TOLERANCE_IN — barrel-overlap
  * reach is not a connection.
@@ -522,6 +532,26 @@ export function validatedJunctionEdge(design, run, end) {
   const myElevIn = vertexElevationsForDesign(design, run)[idx];
   if (Math.abs(myElevIn - hostElevIn) > CONNECTION_FACE_TOLERANCE_IN) {
     return { status: "elevation", host, point, hostElevIn, myElevIn };
+  }
+  // R1: a mixed-size transition is an edge ONLY when a reducer's
+  // owned interfaces bind it (position + elevation + axis + per-side
+  // sizes). A size warning elsewhere never substitutes for the edge.
+  if (flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(host.diameterIn ?? 2)) {
+    const neighbor = run.points[end === "start" ? 1 : run.points.length - 2];
+    const branchAxisDeg =
+      (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+    const bound = boundReducerAt(design, {
+      x: point.x,
+      y: point.y,
+      elevationIn: myElevIn,
+      sides: [
+        { sizeIn: run.diameterIn ?? 2, dirDeg: branchAxisDeg },
+        { sizeIn: host.diameterIn ?? 2, dirDeg: branchAxisDeg + 180 },
+      ],
+    });
+    if (!bound) {
+      return { status: "reducer", host, point, hostElevIn, myElevIn, hostSegIndex: best.i };
+    }
   }
   return { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex: best.i };
 }
@@ -718,11 +748,17 @@ export function collinearOverlapIn(p1, p2, p3, p4) {
  */
 export function developedRunLengthIn(design, run) {
   if (!Array.isArray(run?.points) || run.points.length < 2) return 0;
-  const elevs = segmentElevationsForDesign(design, run);
+  // The true 3D length of the shared physical route (R3): each
+  // segment contributes its full spatial length — plan, riser, or
+  // slope alike — from the same profile every consumer reads.
+  const route = physicalRouteIn(design, run);
   let total = 0;
-  for (let i = 0; i + 1 < run.points.length; i += 1) {
-    total += Math.hypot(run.points[i + 1].x - run.points[i].x, run.points[i + 1].y - run.points[i].y);
-    if (i > 0) total += Math.abs(elevs[i] - elevs[i - 1]);
+  for (let i = 0; i + 1 < route.length; i += 1) {
+    total += Math.hypot(
+      route[i + 1].x - route[i].x,
+      route[i + 1].y - route[i].y,
+      route[i + 1].zIn - route[i].zIn,
+    );
   }
   return total;
 }
@@ -789,16 +825,18 @@ export function pipeCrossingErrors(design) {
   // A run crossing ITSELF at an unresolved elevation is the same defect.
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 4) continue;
-    const elevs = segmentElevationsForDesign(design, run);
+    const route = physicalRouteIn(design, run);
     let flagged = false;
-    for (let i = 0; i + 1 < run.points.length && !flagged; i += 1) {
-      for (let j = i + 2; j + 1 < run.points.length; j += 1) {
+    for (let i = 0; i + 1 < route.length && !flagged; i += 1) {
+      for (let j = i + 2; j + 1 < route.length; j += 1) {
         // A closed loop's first/last segments meet at the closing
         // vertex — an endpoint touch, which properIntersection already
         // excludes; no special case needed here.
-        const hit = properIntersection(run.points[i], run.points[i + 1], run.points[j], run.points[j + 1]);
+        const hit = properIntersection(route[i], route[i + 1], route[j], route[j + 1]);
         if (!hit) continue;
-        const sep = Math.abs(elevs[i] - elevs[j]);
+        const elevI = route[i].zIn + hit.t * (route[i + 1].zIn - route[i].zIn);
+        const elevJ = route[j].zIn + hit.u * (route[j + 1].zIn - route[j].zIn);
+        const sep = Math.abs(elevI - elevJ);
         if (sep < requiredSeparationIn(run.diameterIn ?? 2, run.diameterIn ?? 2) - EPS) {
           errors.push(`Pipe run ${run.id} crosses itself at the same elevation.`);
           flagged = true;
@@ -809,20 +847,27 @@ export function pipeCrossingErrors(design) {
   }
   // Collinear overlaps: two runs sharing the same line at the same
   // elevation occupy the same space (a shared plan point at an endpoint
-  // is a joint, not an overlap).
+  // is a joint, not an overlap). Elevations are the physical route's
+  // per-segment RANGES (R3) — two sloped segments conflict when their
+  // ranges come within the required separation anywhere on the overlap.
   const runList = (design?.pipes || []).filter((r) => Array.isArray(r.points) && r.points.length >= 2);
   const seenOverlap = new Set();
   for (let a = 0; a < runList.length; a += 1) {
     for (let b = a + 1; b < runList.length; b += 1) {
       const ra = runList[a];
       const rb = runList[b];
-      const ea = segmentElevationsForDesign(design, ra);
-      const eb = segmentElevationsForDesign(design, rb);
+      const routeA = physicalRouteIn(design, ra);
+      const routeB = physicalRouteIn(design, rb);
       for (let i = 0; i + 1 < ra.points.length; i += 1) {
         for (let j = 0; j + 1 < rb.points.length; j += 1) {
           const overlap = collinearOverlapIn(ra.points[i], ra.points[i + 1], rb.points[j], rb.points[j + 1]);
           if (overlap <= 1) continue;
-          if (Math.abs(ea[i] - eb[j]) >= requiredSeparationIn(ra.diameterIn ?? 2, rb.diameterIn ?? 2) - EPS) continue;
+          const loA = Math.min(routeA[i].zIn, routeA[i + 1].zIn);
+          const hiA = Math.max(routeA[i].zIn, routeA[i + 1].zIn);
+          const loB = Math.min(routeB[j].zIn, routeB[j + 1].zIn);
+          const hiB = Math.max(routeB[j].zIn, routeB[j + 1].zIn);
+          const rangeGap = Math.max(0, Math.max(loA, loB) - Math.min(hiA, hiB));
+          if (rangeGap >= requiredSeparationIn(ra.diameterIn ?? 2, rb.diameterIn ?? 2) - EPS) continue;
           const key = `${ra.id}|${rb.id}`;
           if (seenOverlap.has(key)) continue;
           seenOverlap.add(key);
@@ -881,35 +926,39 @@ export function pipeCrossingErrors(design) {
 
 /**
  * Verified attachment points per vessel instance id: the world plan
- * positions of nozzles where a run end actually sits (within junction
- * tolerance of the anchor). A stale attachment record — the end far
- * from the named nozzle — verifies nothing and exempts nothing.
+ * positions of the SPECIFIC connection faces where a run end actually
+ * sits (R2). The named anchor must resolve through the shared face
+ * model, the endpoint must sit on that face's position within
+ * junction tolerance, and — where the face model carries an
+ * elevation — the endpoint must meet it within face tolerance. A
+ * stale or unresolvable reference verifies nothing and exempts
+ * nothing; an endpoint merely inside the vessel's (expanded)
+ * footprint verifies nothing either.
  */
 export function verifiedAttachmentPoints(design) {
-  // anchorsOf lives in pipeAttachments; requiring it here would cycle
-  // the modules, so this walks the same anchor sources directly.
   const out = new Map();
   const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
+    const vertexElevs = vertexElevationsForDesign(design, run);
     for (const end of ["start", "end"]) {
       const ref = run.attachments?.[end];
       if (!ref) continue;
       const inst = byId.get(ref.symbolId);
       if (!inst) continue;
-      const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
-      // A run endpoint attached to this vessel is a verified connection
-      // (D668-003) — BUT only if the endpoint is actually at the vessel.
-      // A stale attachment (names the vessel, but the endpoint is far
-      // away) does NOT exempt — the proximity check defeats it.
-      // Covers nozzles, utility anchors, and TEMA anchors alike.
       const symbol = findSymbol(inst.domain, inst.symbolId);
-      const w = (inst.widthIn ?? symbol?.widthIn ?? 0) / 2;
-      const d = (inst.depthIn ?? symbol?.depthIn ?? 0) / 2;
-      // Expanded footprint: vessel half-size + 12 in tolerance.
-      const dx = Math.abs(point.x - inst.x);
-      const dy = Math.abs(point.y - inst.y);
-      if (dx > w + 12 || dy > d + 12) continue; // stale: endpoint not at vessel
+      if (!symbol) continue;
+      const face = connectionFaceForAnchor(symbol, inst, ref.anchorId);
+      if (!face) continue; // unresolved anchor: no verified interface
+      const idx = end === "start" ? 0 : run.points.length - 1;
+      const point = run.points[idx];
+      if (Math.hypot(point.x - face.x, point.y - face.y) > JUNCTION_TOLERANCE_IN) continue;
+      if (
+        Number.isFinite(face.elevationIn) &&
+        Math.abs(vertexElevs[idx] - face.elevationIn) > CONNECTION_FACE_TOLERANCE_IN
+      ) {
+        continue;
+      }
       if (!out.has(inst.id)) out.set(inst.id, []);
       out.get(inst.id).push({ x: point.x, y: point.y });
     }

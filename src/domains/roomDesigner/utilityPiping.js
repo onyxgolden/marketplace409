@@ -133,6 +133,9 @@ export function utilityService(serviceId) {
  * port elevation so attachments land at the flange face.
  */
 export function utilityAnchorsWorld(symbol, inst) {
+  // Legacy gate (R8): a pre-marker instance has no generated utility
+  // ports until the explicit retrofit.
+  if (inst?.legacyComponents === true) return [];
   return utilityPortDescriptors(symbol, inst).map((port) => ({
     id: port.id,
     x: port.x,

@@ -38,6 +38,7 @@
 
 import { findSymbol } from "./symbolRegistry";
 import { catalogAnchorsWorld } from "./pipeAttachments";
+import { downcomerLevels, isColumnSymbol } from "./downcomers";
 import { physicalRouteIn } from "./pipeCrossings";
 
 /** Sill height (in above grade) that triggers the access package. */
@@ -93,6 +94,15 @@ export function baseElevationIn(inst) {
 export function manwaySpec(symbol, inst) {
   if (!symbol?.manway) return null;
   if (inst?.manway === null || inst?.manway?.deleted === true) return null;
+  // Legacy gate (R8): a pre-marker instance carries no GENERATED
+  // manway until the explicit retrofit — an authored manway object
+  // is user data and survives the gate.
+  if (
+    inst?.legacyComponents === true &&
+    !(inst?.manway && typeof inst.manway === "object")
+  ) {
+    return null;
+  }
   const override = inst?.manway && typeof inst.manway === "object" ? inst.manway : {};
   return { ...symbol.manway, ...override };
 }
@@ -350,7 +360,73 @@ function instanceFootprint(inst, symbol) {
  * elevation), other equipment footprints, and the plot boundary when
  * the design carries one.
  */
-function deckObstruction(design, ownerId, deck, { inflated = true } = {}) {
+/**
+ * Clip a route segment to a (convex) corners polygon in plan
+ * (Sutherland–Hodgman against each edge's inward half-plane) and
+ * return the z-range of the portion INSIDE, or null when the segment
+ * never enters. Elevations interpolate linearly along the segment —
+ * the shared physical profile (R3).
+ */
+function clippedZRange(a, b, corners) {
+  let poly = [
+    { x: a.x, y: a.y, zIn: a.zIn },
+    { x: b.x, y: b.y, zIn: b.zIn },
+  ];
+  const n = corners.length;
+  const cx = corners.reduce((s, c) => s + c.x, 0) / n;
+  const cy = corners.reduce((s, c) => s + c.y, 0) / n;
+  for (let e = 0; e < n; e += 1) {
+    const c0 = corners[e];
+    const c1 = corners[(e + 1) % n];
+    const edgeCross = (p) => (c1.x - c0.x) * (p.y - c0.y) - (c1.y - c0.y) * (p.x - c0.x);
+    const insideSign = Math.sign(edgeCross({ x: cx, y: cy })) || 1;
+    const next = [];
+    for (let i = 0; i < poly.length; i += 1) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const dp = edgeCross(p) * insideSign;
+      const dq = edgeCross(q) * insideSign;
+      if (dp >= -1e-9) next.push(p);
+      if ((dp > 1e-9 && dq < -1e-9) || (dp < -1e-9 && dq > 1e-9)) {
+        const t = dp / (dp - dq);
+        next.push({
+          x: p.x + (q.x - p.x) * t,
+          y: p.y + (q.y - p.y) * t,
+          zIn: p.zIn + (q.zIn - p.zIn) * t,
+        });
+      }
+    }
+    poly = next;
+    if (poly.length === 0) return null;
+  }
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  for (const p of poly) {
+    zMin = Math.min(zMin, p.zIn);
+    zMax = Math.max(zMax, p.zIn);
+  }
+  return { zMin, zMax };
+}
+
+/**
+ * The exact deck-box test (R5 refinement of the envelope rule): a
+ * pipe obstructs a deck when the portion of its route INSIDE the
+ * deck's working box — the working-corners rect inflated by the
+ * pipe's clearance (radius + 6 in) — has elevations intersecting
+ * the deck's z band (deck elevation ± (radius + 6 in)). Testing the
+ * whole segment's z span instead would flag a pipe whose elevation
+ * merely crosses the band somewhere OUTSIDE the deck (a line diving
+ * from a high nozzle beside the platform to grade beyond it) — the
+ * physical question is the pipe's height WHILE it is over the deck.
+ */
+function segmentEntersDeckBox(a, b, corners, pipeR, deckElevationIn) {
+  const inside = clippedZRange(a, b, corners);
+  if (!inside) return false;
+  const band = pipeR + ACCESS_WORKING_CLEARANCE_IN;
+  return inside.zMax >= deckElevationIn - band && inside.zMin <= deckElevationIn + band;
+}
+
+function deckObstruction(design, ownerId, deck, { inflated = true, skipOwnerAnchors = false } = {}) {
   const by = inflated ? ACCESS_WORKING_CLEARANCE_IN : 0;
   const corners = deckCorners({
     ...deck,
@@ -370,24 +446,31 @@ function deckObstruction(design, ownerId, deck, { inflated = true } = {}) {
   for (const run of design?.pipes || []) {
     const route = physicalRouteIn(design, run);
     const pipeR = (run.diameterIn ?? 2) / 2;
+    // The working box: working corners inflated by the pipe's own
+    // clearance radius, tested exactly (see segmentEntersDeckBox).
+    const box = deckCorners({
+      ...deck,
+      widthIn: deck.widthIn + (by + pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+      depthIn: deck.depthIn + (by + pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+    });
     for (let i = 0; i + 1 < route.length; i += 1) {
-      const a = route[i];
-      const b = route[i + 1];
-      const planDist = distSegmentToRect(a, b, corners);
-      if (planDist >= pipeR + 6) continue;
-      const zMin = Math.min(a.zIn, b.zIn);
-      const zMax = Math.max(a.zIn, b.zIn);
-      if (zMax < deck.elevationIn - (pipeR + 6) || zMin > deck.elevationIn + (pipeR + 6)) continue;
-      return `pipe run ${run.id}`;
+      if (segmentEntersDeckBox(route[i], route[i + 1], box, pipeR, deck.elevationIn)) {
+        return `pipe run ${run.id}`;
+      }
     }
   }
   for (const inst of design?.symbols || []) {
     const symbol = findSymbol(inst.domain, inst.symbolId);
-    for (const anchor of catalogAnchorsWorld(symbol, inst, design)) {
-      if (!pointInPolygon({ x: anchor.x, y: anchor.y }, corners)) continue;
-      const elev = Number.isFinite(anchor.elevationIn) ? anchor.elevationIn : deck.elevationIn;
-      if (Math.abs(elev - deck.elevationIn) > 24) continue;
-      return `nozzle ${anchor.id} on ${inst.id}`;
+    // A downcomer platform exists FOR its own column's nozzles — the
+    // level draw is taken standing on the deck — so the owner's own
+    // anchors never obstruct its own level decks (R5 callers only).
+    if (!(skipOwnerAnchors && inst.id === ownerId)) {
+      for (const anchor of catalogAnchorsWorld(symbol, inst, design)) {
+        if (!pointInPolygon({ x: anchor.x, y: anchor.y }, corners)) continue;
+        const elev = Number.isFinite(anchor.elevationIn) ? anchor.elevationIn : deck.elevationIn;
+        if (Math.abs(elev - deck.elevationIn) > 24) continue;
+        return `nozzle ${anchor.id} on ${inst.id}`;
+      }
     }
     if (inst.id === ownerId) continue;
     if (rectsOverlap(corners, instanceFootprint(inst, symbol))) {
@@ -398,6 +481,38 @@ function deckObstruction(design, ownerId, deck, { inflated = true } = {}) {
     for (const c of corners) {
       if (!pointInPolygon(c, design.plotBoundary)) {
         return "the plot boundary";
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Obstruction check for a ladder PATH (R5): the ladder's plan quad
+ * (its width across, a nominal 6 in through) swept over its climb
+ * band [fromIn, toIn]. A pipe whose route passes through the quad
+ * inside the band blocks the climb.
+ */
+function ladderObstruction(design, ladder) {
+  for (const run of design?.pipes || []) {
+    const route = physicalRouteIn(design, run);
+    const pipeR = (run.diameterIn ?? 2) / 2;
+    // The ladder's box: its plan quad inflated by the pipe's
+    // clearance, over the climb band — the same exact box test the
+    // decks use (z read on the portion inside the box).
+    const box = deckCorners({
+      cx: ladder.cx,
+      cy: ladder.cy,
+      angleDeg: ladder.angleDeg,
+      widthIn: ladder.widthIn + (pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+      depthIn: 6 + (pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+    });
+    const band = pipeR + ACCESS_WORKING_CLEARANCE_IN;
+    for (let i = 0; i + 1 < route.length; i += 1) {
+      const inside = clippedZRange(route[i], route[i + 1], box);
+      if (!inside) continue;
+      if (inside.zMax >= ladder.fromIn - band && inside.zMin <= ladder.toIn + band) {
+        return `pipe run ${run.id}`;
       }
     }
   }
@@ -463,6 +578,33 @@ export function accessEnvelopeErrors(design) {
       errors.push(
         `${label} has no feasible deck placement: all ${ACCESS_SEARCH_ORIENTATIONS} orientations are obstructed (unresolved access).`,
       );
+    }
+  }
+  // Downcomer level platforms and their ladder paths (R5): every
+  // generated level deck is obstruction-validated AS PLACED, at its
+  // real (world) datum, with a stable level identity — the same
+  // deckObstruction the vessel packages use. A level's ladder chain
+  // is validated over its climb band.
+  for (const inst of design?.symbols || []) {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!isColumnSymbol(symbol)) continue;
+    for (const level of downcomerLevels(symbol, inst, design)) {
+      if (!level.platform) continue;
+      // Stable level identity: the elevation-derived index the rest
+      // of the system names (level 1 is the 10 ft level).
+      const label = `Symbol ${inst.id} (${symbol.label}) downcomer level ${level.index}`;
+      const blockedBy = deckObstruction(design, inst.id, level.platform.deck, {
+        skipOwnerAnchors: true,
+      });
+      if (blockedBy) {
+        errors.push(`${label} platform deck is obstructed by ${blockedBy}.`);
+      }
+      if (level.platform.ladder) {
+        const ladderBlockedBy = ladderObstruction(design, level.platform.ladder);
+        if (ladderBlockedBy) {
+          errors.push(`${label} access ladder is obstructed by ${ladderBlockedBy}.`);
+        }
+      }
     }
   }
   return errors;

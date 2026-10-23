@@ -51,8 +51,8 @@ export const DOWNCOMER_MANWAY_DIAMETER_IN = 24;
 export const DOWNCOMER_DRAW_SIZE_IN = 6;
 /** Nominal size of a level's second piping nozzle (in). */
 export const DOWNCOMER_NOZZLE_SIZE_IN = 8;
-/** Default head allowance above the shell for the terminal manway (in). */
-export const DOWNCOMER_HEAD_ALLOWANCE_DEFAULT_IN = 24;
+/** Dished-head depth ratio the 3D model draws on a tower-form vessel. */
+export const HEAD_DISH_RATIO = 0.55;
 
 /** True for catalog entries that carry downcomer levels (columns). */
 export function isColumnSymbol(symbol) {
@@ -65,21 +65,44 @@ export function columnHeightIn(symbol, inst) {
 }
 
 /**
+ * The MODELED head height (in) above a vertical vessel's shell — the
+ * same geometry the 3D view draws (R4). An authored head
+ * (`inst.headIn`, else `symbol.headIn`) is modeled geometry: the
+ * descriptor carries it and the viewer renders it. Otherwise the
+ * form decides: a slender vessel (height / diameter > 8) renders as
+ * the stack form — shell and tip band only, NO head — while a
+ * tower-form vessel renders a dished head of radius * HEAD_DISH_RATIO.
+ * There is no default numeric allowance: a number that is not modeled
+ * anywhere cannot prove a terminal assembly fits.
+ */
+export function modeledHeadHeightIn(symbol, inst) {
+  if (!symbol || symbol.shape3d !== "vcyl") return 0;
+  const authored = Number.isFinite(inst?.headIn)
+    ? inst.headIn
+    : Number.isFinite(symbol?.headIn)
+      ? symbol.headIn
+      : null;
+  if (authored !== null) return authored;
+  const w = inst?.widthIn ?? symbol.widthIn ?? 0;
+  const d = inst?.depthIn ?? symbol.depthIn ?? 0;
+  const r = Math.min(w, d) / 2;
+  if (!(r > 0)) return 0;
+  const h = inst?.heightIn ?? symbol?.heightIn ?? 0;
+  if (h / (2 * r) > 8) return 0; // stack form: no head is modeled
+  return r * HEAD_DISH_RATIO;
+}
+
+/**
  * The explicit usable-shell/head interval a column's downcomer levels
  * bind to (PR668-004): { minIn, maxIn, headAllowanceIn }. Levels live
  * in [minIn, maxIn]; the terminal level's complete manway assembly
  * (opening top = sill + diameter) must fit inside maxIn +
- * headAllowanceIn. The allowance defaults to 24 in and is overridable
- * per instance (`inst.headIn`) or catalog (`symbol.headIn`) — it is an
- * authored planning fit allowance, not a head/flange certification.
+ * headAllowanceIn, where headAllowanceIn is the MODELED head height
+ * (R4) — never a flat default.
  */
 export function downcomerShellIntervalIn(symbol, inst) {
   const maxIn = columnHeightIn(symbol, inst);
-  const headAllowanceIn =
-    (Number.isFinite(inst?.headIn) ? inst.headIn : null) ??
-    (Number.isFinite(symbol?.headIn) ? symbol.headIn : null) ??
-    DOWNCOMER_HEAD_ALLOWANCE_DEFAULT_IN;
-  return { minIn: 0, maxIn, headAllowanceIn };
+  return { minIn: 0, maxIn, headAllowanceIn: modeledHeadHeightIn(symbol, inst) };
 }
 
 /**
@@ -93,6 +116,7 @@ export function downcomerGeometryErrors(design) {
   for (const inst of design?.symbols || []) {
     const symbol = findSymbol(inst.domain, inst.symbolId);
     if (!isColumnSymbol(symbol)) continue;
+    if (inst?.legacyComponents === true) continue; // R8: not generated yet
     const { minIn, maxIn, headAllowanceIn } = downcomerShellIntervalIn(symbol, inst);
     for (const level of downcomerLevelSpecs(symbol, inst)) {
       const label = `Symbol ${inst.id} (${inst.tag || symbol.label}) downcomer level ${level.index}`;
@@ -104,7 +128,7 @@ export function downcomerGeometryErrors(design) {
       const openingTop = level.manway.sillIn + level.manway.diameterIn;
       if (openingTop > maxIn + headAllowanceIn + 1e-9) {
         errors.push(
-          `${label} manway assembly reaches ${openingTop} in, out-of-bounds past the shell top ${maxIn} in plus ${headAllowanceIn} in head allowance.`,
+          `${label} manway assembly reaches ${openingTop} in, out-of-bounds past the shell top ${maxIn} in plus the ${headAllowanceIn} in modeled head.`,
         );
       }
     }
@@ -207,15 +231,22 @@ function specWorld(symbol, inst, fx, fy) {
  * deck rides at the sill's world elevation.
  */
 export function downcomerLevels(symbol, inst, design) {
+  // Legacy gate (R8): a pre-marker instance has no generated levels
+  // until the explicit retrofit.
+  if (inst?.legacyComponents === true) return [];
   const specs = downcomerLevelSpecs(symbol, inst);
   const effWidth = inst?.widthIn ?? symbol?.widthIn ?? 0;
   const effDepth = inst?.depthIn ?? symbol?.depthIn ?? 0;
   const base = baseElevationIn(inst);
   const grade = gradeElevationIn(design);
   return specs.map((spec, i) => {
+    // ONE world frame (R4): level elevation, anchor faces, and the
+    // manway sill are all WORLD elevations (base + local spec) — the
+    // same frame the platform deck already rode in, and the frame
+    // pipe elevations and the shared face model speak.
     const anchors = spec.nozzleSpecs.map((n) => {
       const p = specWorld(symbol, inst, n.fx, n.fy);
-      return { id: n.id, x: p.x, y: p.y, sizeIn: n.sizeIn, elevationIn: n.elevationIn };
+      return { id: n.id, x: p.x, y: p.y, sizeIn: n.sizeIn, elevationIn: base + n.elevationIn };
     });
     const mp = specWorld(symbol, inst, spec.manway.fx, spec.manway.fy);
     const rad = ((inst?.rotationDeg || 0) * Math.PI) / 180;
@@ -256,7 +287,7 @@ export function downcomerLevels(symbol, inst, design) {
     }
     const level = {
       index: spec.index,
-      elevationIn: spec.elevationIn,
+      elevationIn: base + spec.elevationIn,
       anchors,
       manway: {
         x: mp.x,
@@ -264,7 +295,7 @@ export function downcomerLevels(symbol, inst, design) {
         dirX: 0 * cos - 1 * sin,
         dirY: 0 * sin + 1 * cos,
         diameterIn: spec.manway.diameterIn,
-        sillIn: spec.manway.sillIn,
+        sillIn: base + spec.manway.sillIn,
       },
       platform,
       temperature: spec.temperature,

@@ -44,7 +44,12 @@ import "./mepFixturesCatalog";
 import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
-import { pipeAttachmentErrors, pipeJunctionErrors, connectionCompatibilityErrors } from "./pipeAttachments";
+import {
+  pipeAttachmentErrors,
+  pipeJunctionErrors,
+  connectionCompatibilityErrors,
+  upgradeDesignConnections,
+} from "./pipeAttachments";
 import { pipeCrossingErrors, crossServiceErrors } from "./pipeCrossings";
 import { vesselAccessErrors, accessEnvelopeErrors } from "./vesselAccess";
 import { downcomerPropsErrors, downcomerGeometryErrors } from "./downcomers";
@@ -87,6 +92,9 @@ export { ROOM_TEMPLATES, STRUCTURE_TEMPLATES };
 export { setMemberColor } from "./designSystems";
 
 export const DESIGN_VERSION = 1;
+
+/** Current generated-components marker version (R8 lifecycle gate). */
+export const DESIGN_COMPONENTS_VERSION = 1;
 
 export const OPENING_DEFAULTS = Object.freeze({
   door: Object.freeze({ widthIn: 36 }),
@@ -139,6 +147,13 @@ export function createEmptyDesign(name = "Untitled design", options = {}) {
     cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
     mode: normalizeDesignMode(opts.mode), // designer workspace mode: "home" | "industrial" (see designerModes.js)
+    // Generated-components marker (R8): documents carrying the
+    // current marker generate vessel components (nozzles, manways,
+    // access, downcomer levels, utility ports) for their equipment.
+    // Documents WITHOUT it are legacy: parseDesign stamps their
+    // equipment instances `legacyComponents` so the generated sets
+    // stay OFF until the explicit, undoable retrofit.
+    componentsVersion: DESIGN_COMPONENTS_VERSION,
   };
 }
 
@@ -893,6 +908,103 @@ export function setUnitBoundary(design, polygon) {
   return next;
 }
 
+/**
+ * Set (or clear, with null) a directed-spray assembly's authored AIM
+ * point (R9). The aim is a plan point the discharge axis runs
+ * through; validation separately checks it lands on the assigned
+ * vessel. Clearing removes the field (the assembly renders in the
+ * named unresolved state until re-aimed).
+ */
+export function setSprayAim(design, sprayId, point) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== sprayId) return s;
+    if (s.domain !== "piping" || s.symbolId !== "spray-nozzle") {
+      throw new Error(`Symbol ${sprayId} is not a directed-spray assembly.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (point === undefined || point === null) delete next.aimAt;
+    else {
+      if (!isValidPoint(point)) throw new Error("Spray aim point must be valid.");
+      next.aimAt = { x: point.x, y: point.y };
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${sprayId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Delete or restore a symbol's catalog manway (R9) through the
+ * D668-007 tombstone contract: delete writes `manway: null`;
+ * restore removes the tombstone, returning the catalog spec.
+ * Restoring never overwrites an authored manway object.
+ */
+export function setSymbolManwayDeleted(design, instanceId, deleted) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    const next = { ...s };
+    if (deleted) next.manway = null;
+    else if (next.manway === null || next.manway?.deleted === true) delete next.manway;
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * Tombstone or restore one of a symbol's generated nozzles (R9),
+ * through the D668-007 `nozzleTombstones` contract: deleting adds
+ * the anchor id; restoring removes it (and the field itself when
+ * the last tombstone clears, so a restored instance is byte-clean).
+ */
+export function setSymbolNozzleTombstone(design, instanceId, anchorId, deleted) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    const next = { ...s };
+    const current = Array.isArray(next.nozzleTombstones) ? next.nozzleTombstones : [];
+    if (deleted) {
+      if (!current.includes(anchorId)) next.nozzleTombstones = [...current, anchorId];
+    } else {
+      const remaining = current.filter((id) => id !== anchorId);
+      if (remaining.length > 0) next.nozzleTombstones = remaining;
+      else delete next.nozzleTombstones;
+    }
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+/**
+ * The explicit legacy retrofit (R8): enable generated components on
+ * every legacy-stamped equipment instance of the document and bring
+ * pipe connections up to the current attachment upgrade. An ordinary
+ * document edit — it persists and undoes like any other command; it
+ * is never applied implicitly at load.
+ */
+export function retrofitDesignComponents(design) {
+  assertDesign(design);
+  const unstamped = {
+    ...design,
+    symbols: (design.symbols || []).map((s) => {
+      if (s?.legacyComponents !== true) return s;
+      const next = { ...s };
+      delete next.legacyComponents;
+      return next;
+    }),
+  };
+  return upgradeDesignConnections(unstamped);
+}
+
 export function deletePipeRun(design, pipeId) {
   assertDesign(design);
   return { ...design, pipes: (design.pipes || []).filter((p) => p.id !== pipeId) };
@@ -1407,6 +1519,21 @@ export function parseDesign(json) {
   // A duplicate ID (from a damaged or hand-edited file) keeps its first view and
   // gives the later ones fresh IDs, so a delete can only ever remove one view.
   parsed.cameraViews = uniqueCameraViews(Array.isArray(parsed.cameraViews) ? parsed.cameraViews : []);
+  // Generated-components lifecycle gate (R8): a document saved
+  // before the components marker existed loads with its equipment
+  // instances stamped `legacyComponents` — their generated component
+  // sets (catalog nozzles, manway/access, downcomer levels, utility
+  // ports) stay OFF, exactly as the document was authored, until the
+  // user runs the explicit retrofit (retrofitDesignComponents, an
+  // ordinary undoable edit). Authored data is never stamped away:
+  // instance overrides ride the instances themselves and the gate
+  // readers honor them. Loading NEVER silently upgrades a document.
+  if (parsed.componentsVersion !== DESIGN_COMPONENTS_VERSION) {
+    parsed.symbols = (parsed.symbols || []).map((s) =>
+      s && s.domain === "processEquipment" ? { ...s, legacyComponents: true } : s,
+    );
+    parsed.componentsVersion = DESIGN_COMPONENTS_VERSION;
+  }
   return parsed;
 }
 

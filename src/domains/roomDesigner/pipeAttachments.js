@@ -36,7 +36,7 @@ import {
   CONNECTION_FACE_TOLERANCE_IN,
 } from "./pipeCrossings";
 import { flangeNominalSizeIn, pipeOdIn, NOZZLE_NECK_LENGTH_IN } from "./flangeGeometry";
-import { reducerConnectionAt } from "./pipeReducerModel";
+import { boundReducerAt } from "./pipeReducerModel";
 
 export { JUNCTION_TOLERANCE_IN, CONNECTION_FACE_TOLERANCE_IN };
 
@@ -100,6 +100,12 @@ export function anchorsOf(inst) {
   // set (D668-007): [] deletes every anchor — process, downcomer, and
   // utility alike — and a custom list replaces the catalog set.
   if (Array.isArray(inst?.nozzles)) return catalogAnchorsWorld(symbol, inst);
+  // Legacy gate (R8): an instance stamped by the pre-marker document
+  // load has NO generated components until the explicit retrofit —
+  // catalog nozzles, downcomer anchors, and utility ports stay off.
+  // (TEMA anchors above predate the feature and stay byte-identical;
+  // an authored nozzle override is user data and stays, above.)
+  if (inst?.legacyComponents === true) return [];
   let out = symbol?.nozzles ? catalogAnchorsWorld(symbol, inst) : [];
   // Columns also expose their downcomer-level nozzles (each carries the
   // level's elevation, so a run connecting there runs at that elevation).
@@ -153,6 +159,10 @@ export function connectionFaceForAnchor(symbol, inst, anchorId) {
       kind: "tema",
     };
   }
+  // Legacy gate (R8): generated faces do not resolve on a pre-marker
+  // instance until the retrofit — an authored nozzle override is the
+  // only face source that survives the gate.
+  if (inst?.legacyComponents === true && !Array.isArray(inst?.nozzles)) return null;
   // Utility ports: explicit elevation + outward normal. A full
   // instance nozzle-list override (D668-007) replaces the whole anchor
   // set, so overridden-away ports resolve no face.
@@ -507,16 +517,21 @@ export function pipeJunctionErrors(run) {
 
 /**
  * A connection is only sound when the faces can actually meet:
- * - the run's nominal size must match the nozzle's (or a CONNECTED
- *   reducer fitting with matching declared sizes must sit at the
- *   connection point — proximity never waives a mismatch, PR668-001);
- * - the run must arrive at the flange face's elevation (the shared
- *   face model — D668-005);
- * - a pipe-to-pipe junction must join equal nominal sizes (or a
- *   connected reducer) AND meet at a shared face within
- *   CONNECTION_FACE_TOLERANCE_IN — barrel-overlap reach is not a
- *   connection, and a stale/off-route junction reference is refused,
- *   never approximated (D668-004).
+ * - every attachment reference must RESOLVE — a missing instance or a
+ *   nonexistent anchor is a stale reference, never a silent pass (R2);
+ * - the run end must sit ON the named face: the face's plan position
+ *   and elevation (the shared face model — D668-005), approached
+ *   along the face's axis — a side face along its normal, a vertical
+ *   (top) face through a riser, never a horizontal run (R2);
+ * - the run's nominal size must match the nozzle's, or a reducer's
+ *   OWNED interfaces must bind the transition at the connection
+ *   point (position + elevation + axis + per-side sizes — proximity
+ *   never waives a mismatch, PR668-001/R1);
+ * - a pipe-to-pipe junction must meet at a shared face within
+ *   CONNECTION_FACE_TOLERANCE_IN and — for mixed sizes — carry the
+ *   same bound reducer (validatedJunctionEdge owns that gate);
+ *   barrel-overlap reach is not a connection, and a stale/off-route
+ *   junction reference is refused, never approximated (D668-004).
  * Anything else is flagged here rather than silently drawn as connected.
  */
 export function connectionCompatibilityErrors(design) {
@@ -534,23 +549,70 @@ export function connectionCompatibilityErrors(design) {
         const inst = byId.get(ref.symbolId);
         const symbol = inst ? findSymbol(inst.domain, inst.symbolId) : null;
         const face = symbol ? connectionFaceForAnchor(symbol, inst, ref.anchorId) : null;
-        if (face) {
-          if (
-            face.sizeIn != null &&
-            runSizeNom !== flangeNominalSizeIn(face.sizeIn) &&
-            !reducerConnectionAt(design, point, run.diameterIn ?? 2, face.sizeIn)
-          ) {
+        if (!face) {
+          errors.push(
+            `Pipe run ${run.id} claims nozzle ${ref.anchorId} on symbol ${ref.symbolId}, which does not resolve to a connection face — stale reference.`,
+          );
+          continue;
+        }
+        const neighborIdx = end === "start" ? 1 : run.points.length - 2;
+        const neighbor = run.points[neighborIdx];
+        const faceDist = Math.hypot(point.x - face.x, point.y - face.y);
+        if (faceDist > CONNECTION_FACE_TOLERANCE_IN) {
+          errors.push(
+            `Pipe run ${run.id} claims nozzle ${ref.anchorId} on ${inst.tag || inst.id}, but its end sits ${Math.round(faceDist)} in from the flange face — the end is not on the face it names.`,
+          );
+        }
+        if (Number.isFinite(face.elevationIn)) {
+          const endElev = vertexElevs[idx];
+          if (Math.abs(endElev - face.elevationIn) > CONNECTION_FACE_TOLERANCE_IN) {
+            errors.push(
+              `Pipe run ${run.id} reaches nozzle ${ref.anchorId} at elevation ${Math.round(endElev)} in, but the flange face is at ${face.elevationIn} in.`,
+            );
+          }
+        }
+        // Approach axis: the end segment must arrive along the face's
+        // own axis (R2). A zero-plan-length end segment is a riser —
+        // the vertical approach itself.
+        const segPlanLen = Math.hypot(neighbor.x - point.x, neighbor.y - point.y);
+        if (face.vertical) {
+          const flat =
+            Math.abs(vertexElevs[neighborIdx] - vertexElevs[idx]) <= CONNECTION_FACE_TOLERANCE_IN;
+          if (segPlanLen > CONNECTION_FACE_TOLERANCE_IN && flat) {
+            errors.push(
+              `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} with a horizontal run at the face elevation — a vertical flange face is met by a riser, not a horizontal approach.`,
+            );
+          }
+        } else if (face.normal && segPlanLen > CONNECTION_FACE_TOLERANCE_IN) {
+          const dot =
+            Math.abs(
+              ((neighbor.x - point.x) / segPlanLen) * face.normal.x +
+                ((neighbor.y - point.y) / segPlanLen) * face.normal.y,
+            );
+          if (dot < Math.cos((20 * Math.PI) / 180)) {
+            errors.push(
+              `Pipe run ${run.id} does not approach nozzle ${ref.anchorId} along its face normal — the run axis crosses the flange face instead of meeting it.`,
+            );
+          }
+        }
+        if (face.sizeIn != null && runSizeNom !== flangeNominalSizeIn(face.sizeIn)) {
+          const axisDeg =
+            (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
+          const bound = Number.isFinite(face.elevationIn)
+            ? boundReducerAt(design, {
+                x: point.x,
+                y: point.y,
+                elevationIn: face.elevationIn,
+                sides: [
+                  { sizeIn: run.diameterIn ?? 2, dirDeg: axisDeg },
+                  { sizeIn: face.sizeIn, dirDeg: axisDeg + 180 },
+                ],
+              })
+            : null;
+          if (!bound) {
             errors.push(
               `Pipe run ${run.id} (${run.diameterIn ?? 2} in) connects to nozzle ${ref.anchorId} (${face.sizeIn} in) without a connected reducer/transition at the connection point.`,
             );
-          }
-          if (Number.isFinite(face.elevationIn)) {
-            const endElev = vertexElevs[idx];
-            if (Math.abs(endElev - face.elevationIn) > CONNECTION_FACE_TOLERANCE_IN) {
-              errors.push(
-                `Pipe run ${run.id} reaches nozzle ${ref.anchorId} at elevation ${Math.round(endElev)} in, but the flange face is at ${face.elevationIn} in.`,
-              );
-            }
           }
         }
         continue;
@@ -570,16 +632,10 @@ export function connectionCompatibilityErrors(design) {
           errors.push(
             `Pipe run ${run.id} joins pipe run ${edge.host.id} in plan, but the face elevations do not meet (${Math.round(edge.myElevIn)} in vs ${Math.round(edge.hostElevIn)} in) — not a flanged connection.`,
           );
-        } else if (edge.status === "ok") {
-          const hostSizeNom = flangeNominalSizeIn(edge.host.diameterIn ?? 2);
-          if (
-            runSizeNom !== hostSizeNom &&
-            !reducerConnectionAt(design, point, run.diameterIn ?? 2, edge.host.diameterIn ?? 2)
-          ) {
-            errors.push(
-              `Pipe run ${run.id} (${run.diameterIn ?? 2} in) junctions onto pipe run ${edge.host.id} (${edge.host.diameterIn ?? 2} in) without a connected reducer/transition at the tap.`,
-            );
-          }
+        } else if (edge.status === "reducer") {
+          errors.push(
+            `Pipe run ${run.id} (${run.diameterIn ?? 2} in) junctions onto pipe run ${edge.host.id} (${edge.host.diameterIn ?? 2} in) without a connected reducer/transition at the tap.`,
+          );
         }
       }
     }

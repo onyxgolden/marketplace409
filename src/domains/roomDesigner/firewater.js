@@ -53,6 +53,9 @@ import {
   pointSegmentDistance,
   runReachesSource,
   segmentElevationsForDesign,
+  physicalRouteIn,
+  properIntersection,
+  CONNECTION_FACE_TOLERANCE_IN,
 } from "./pipeCrossings";
 import { pipeOdIn } from "./flangeGeometry";
 
@@ -194,10 +197,21 @@ export function hydrantPlacements(design) {
   const branchServes = (hydrant, mainId) =>
     mains.some((run) => {
       if (run.id === mainId) return false;
-      const ends = [run.points[0], run.points[run.points.length - 1]];
-      const lands = ends.some(
-        (p) => Math.hypot(p.x - hydrant.x, p.y - hydrant.y) <= HYDRANT_BRANCH_TAP_TOLERANCE_IN,
-      );
+      // The branch must land on the hydrant's PHYSICAL INLET (R6):
+      // plan proximity plus the landing end's route elevation at the
+      // hydrant inlet elevation — a buried branch passing under the
+      // hydrant at main depth does not serve it; the modeled riser
+      // in the branch's profile is the connection.
+      const inletZ = Number.isFinite(hydrant.elevationIn) ? hydrant.elevationIn : 0;
+      const route = physicalRouteIn(design, run);
+      const lands = [0, run.points.length - 1].some((ei) => {
+        const p = run.points[ei];
+        if (Math.hypot(p.x - hydrant.x, p.y - hydrant.y) > HYDRANT_BRANCH_TAP_TOLERANCE_IN) {
+          return false;
+        }
+        const node = ei === 0 ? route[0] : route[route.length - 1];
+        return node && Math.abs(node.zIn - inletZ) <= CONNECTION_FACE_TOLERANCE_IN;
+      });
       return lands && reaches(run.id, mainId);
     });
   const stationOn = (hydrant, run) => {
@@ -352,7 +366,39 @@ export function unitBoundaryValid(design) {
     const q = b[(i + 1) % b.length];
     area2 += p.x * q.y - q.x * p.y;
   }
-  return Math.abs(area2) > 1e-6;
+  if (!(Math.abs(area2) > 1e-6)) return false;
+  // A REAL simple polygon (R6): no repeated vertices, and no pair of
+  // non-adjacent edges may cross or touch. A self-crossing outline
+  // (a bowtie) has nonzero signed area yet no well-defined inside —
+  // "outside the boundary" is unverifiable for it.
+  for (let i = 0; i < b.length; i += 1) {
+    for (let j = i + 1; j < b.length; j += 1) {
+      if (Math.hypot(b[i].x - b[j].x, b[i].y - b[j].y) <= 1e-9) return false;
+    }
+  }
+  const n = b.length;
+  for (let i = 0; i < n; i += 1) {
+    const a = b[i];
+    const c = b[(i + 1) % n];
+    for (let j = i + 1; j < n; j += 1) {
+      if (j === i) continue;
+      if ((j + 1) % n === i || (i + 1) % n === j) continue; // adjacent edges share a vertex
+      const d = b[j];
+      const e = b[(j + 1) % n];
+      if (properIntersection(a, c, d, e)) return false;
+      // Touching at a shared point (a vertex lying on another edge)
+      // is also self-intersection for a simple polygon.
+      if (
+        pointSegmentDistance(a, d, e).distance <= 1e-9 ||
+        pointSegmentDistance(c, d, e).distance <= 1e-9 ||
+        pointSegmentDistance(d, a, c).distance <= 1e-9 ||
+        pointSegmentDistance(e, a, c).distance <= 1e-9
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /**
@@ -392,24 +438,39 @@ export function sprayAssignmentStatus(design, spray) {
       problems.push("aim point does not land on the assigned vessel");
     }
     // Verified supply path: a firewater branch ends at the assembly
-    // and reaches the network source through modeled junctions.
+    // and reaches the network source through modeled junctions. The
+    // landing end must ALSO reach the assembly's physical inlet
+    // (R6): its route elevation at the landing vertex must meet the
+    // assembly inlet elevation — a buried branch passing the
+    // assembly's plan point at main depth is not supply; the riser
+    // belongs in the branch's modeled profile.
     let supplied = false;
+    let landedInPlan = false;
+    let landedAtInlet = false;
+    const inletZ = Number.isFinite(spray.elevationIn) ? spray.elevationIn : 0;
     for (const run of design?.pipes || []) {
       if (run.utility !== "firewater") continue;
       if (!Array.isArray(run.points) || run.points.length < 2) continue;
-      const ends = [run.points[0], run.points[run.points.length - 1]];
-      const lands = ends.some(
-        (p) => Math.hypot(p.x - spray.x, p.y - spray.y) <= HYDRANT_BRANCH_TAP_TOLERANCE_IN,
-      );
-      if (!lands) continue;
-      if (runReachesSource(design, run.id, "firewater")) {
-        supplied = true;
-        break;
+      const route = physicalRouteIn(design, run);
+      for (const ei of [0, run.points.length - 1]) {
+        const p = run.points[ei];
+        if (Math.hypot(p.x - spray.x, p.y - spray.y) > HYDRANT_BRANCH_TAP_TOLERANCE_IN) continue;
+        landedInPlan = true;
+        const node = ei === 0 ? route[0] : route[route.length - 1];
+        if (!node || Math.abs(node.zIn - inletZ) > CONNECTION_FACE_TOLERANCE_IN) continue;
+        landedAtInlet = true;
+        if (runReachesSource(design, run.id, "firewater")) {
+          supplied = true;
+          break;
+        }
       }
+      if (supplied) break;
     }
     if (!supplied) {
       problems.push(
-        "no verified supply path: no firewater branch ends at the assembly and reaches the firewater source through modeled junctions",
+        landedInPlan && !landedAtInlet
+          ? "supply branch reaches the assembly in plan but not at its inlet elevation — a modeled riser to the assembly inlet is required"
+          : "no verified supply path: no firewater branch ends at the assembly and reaches the firewater source through modeled junctions",
       );
     }
   }

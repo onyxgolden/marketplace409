@@ -59,11 +59,29 @@ describe("PR668-004 terminal downcomer assembly bounds", () => {
     const interval = downcomerShellIntervalIn(symbol, inst);
     expect(interval.minIn).toBe(0);
     expect(interval.maxIn).toBe(360);
-    expect(interval.headAllowanceIn).toBeGreaterThan(0);
+    // R4 (fix round 2): the head term is the MODELED head, not a
+    // flat allowance. The catalog column's form (36 in dia x 360 in)
+    // is a stack (h / 2r > 8), so its modeled head is 0. A
+    // tower-form body carries its dished head (r x 0.55).
+    expect(interval.headAllowanceIn).toBe(0);
+    const wide = columnDesign("c-wide", 360, { widthIn: 96, depthIn: 96 });
+    expect(downcomerShellIntervalIn(wide.symbol, wide.inst).headAllowanceIn).toBeCloseTo(26.4, 6);
   });
 
-  it("30-ft terminal assembly fits inside the explicit interval: no finding", () => {
+  it("30-ft terminal assembly on a stack-form column: the head is modeled flat, so the assembly is out-of-bounds (R4)", () => {
+    // Fix round 1 asserted NO finding here because a flat 24 in
+    // allowance absorbed the terminal manway (360 + 24 <= 360 + 24).
+    // ChatGPT's R4 counterexample: the modeled body has no such
+    // head — the renderer draws the stack form — so the terminal
+    // assembly (top 384 in) is genuinely out-of-bounds and the
+    // finding must fire.
     const { design } = columnDesign("c-30", 360);
+    const errors = downcomerGeometryErrors(design);
+    expect(errors.some((e) => /out-of-bounds|out of bounds/i.test(e))).toBe(true);
+  });
+
+  it("30-ft terminal assembly fits when the modeled head carries it: no finding", () => {
+    const { design } = columnDesign("c-30-head", 360, { headIn: 30 });
     expect(downcomerGeometryErrors(design)).toEqual([]);
   });
 

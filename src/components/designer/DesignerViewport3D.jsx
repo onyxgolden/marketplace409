@@ -21,7 +21,7 @@ import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { nozzleFlangeDescriptors, fittingDescriptors } from "@/domains/roomDesigner/designerThreeModel";
 import { flangeDims, NOZZLE_NECK_LENGTH_IN } from "@/domains/roomDesigner/flangeGeometry";
-import { manwayWorld, accessPackageWorld } from "@/domains/roomDesigner/vesselAccess";
+import { manwayWorld, accessPackageWorld, baseElevationIn } from "@/domains/roomDesigner/vesselAccess";
 import { downcomerLevels } from "@/domains/roomDesigner/downcomers";
 import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furnitureAssetManifest";
 import {
@@ -484,7 +484,18 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       const tip = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.08, r * 1.02, tipH, 24), darkMetal));
       tip.position.y = h - tipH / 2;
       group.add(tip);
-      addLabel(h + 40);
+      // An AUTHORED head on a tall form (descriptor headIn > 0, R4)
+      // renders as a dished cap at the tip radius.
+      if (eq.headIn > 0) {
+        const headR = r * 0.82;
+        const head = shadowed(
+          new THREE.Mesh(new THREE.SphereGeometry(headR, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
+        );
+        head.scale.y = eq.headIn / headR;
+        head.position.y = h;
+        group.add(head);
+      }
+      addLabel(h + (eq.headIn ?? 0) + 40);
     } else {
       // Tower / column / vertical vessel: skirt + shell + dished heads.
       const skirtH = clamp(h * 0.12, 12, 72);
@@ -495,13 +506,23 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       const shell = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, shellH, 24), mat));
       shell.position.y = skirtH + shellH / 2;
       group.add(shell);
-      const topHead = shadowed(
-        new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
-      );
-      topHead.scale.y = 0.55; // dished head, not a full dome
-      topHead.position.y = skirtH + shellH;
-      group.add(topHead);
-      addLabel(h + r * 0.55 + 40);
+      // The head height is the MODELED head the descriptor carries
+      // (R4): validation binds terminal assemblies to this same head.
+      // A modeled head of 0 is a flat top — a cap, not a dome.
+      const headH = eq.headIn ?? r * 0.55;
+      if (headH > 0) {
+        const topHead = shadowed(
+          new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
+        );
+        topHead.scale.y = headH / r; // dished head, not a full dome
+        topHead.position.y = skirtH + shellH;
+        group.add(topHead);
+      } else {
+        const cap = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, 2, 24), mat));
+        cap.position.y = skirtH + shellH + 1;
+        group.add(cap);
+      }
+      addLabel(h + headH + 40);
     }
   } else if (eq.shape === "hcyl") {
     // Horizontal vessel: shell + dished ends, riding on two saddles.
@@ -623,15 +644,26 @@ export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
     group.add(mesh);
   };
 
-  // Segments render at their yIn elevation (rack/grade/step level).
-  // The y0In/y1In true endpoint elevations (D668-002) are carried in
-  // the descriptor for validation/rendering agreement checks, but the
-  // 3D cylinders stay flat per segment — steps become vertical risers.
+  // Flat segments render at their yIn elevation (rack/grade/step
+  // level); authored steps render from the risers list. An authored
+  // SLOPE (descriptor `sloped`, R3) renders as a sloped cylinder
+  // between the segment's TRUE endpoint elevations — the same
+  // physical profile validation reads, never flattened.
   for (const seg of pipe.segments || []) {
-    cylinderBetween(
-      { x: seg.a.x, y: seg.yIn, z: seg.a.z },
-      { x: seg.b.x, y: seg.yIn, z: seg.b.z },
-    );
+    // Zero-plan-length segments are vertical steps; the risers list
+    // draws them (never twice).
+    if (Math.hypot(seg.b.x - seg.a.x, seg.b.z - seg.a.z) < 1e-9) continue;
+    if (seg.sloped) {
+      cylinderBetween(
+        { x: seg.a.x, y: seg.y0In ?? seg.yIn, z: seg.a.z },
+        { x: seg.b.x, y: seg.y1In ?? seg.yIn, z: seg.b.z },
+      );
+    } else {
+      cylinderBetween(
+        { x: seg.a.x, y: seg.yIn, z: seg.a.z },
+        { x: seg.b.x, y: seg.yIn, z: seg.b.z },
+      );
+    }
   }
   for (const joint of pipe.joints || []) {
     const mesh = shadowed(new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), mat));
@@ -746,28 +778,43 @@ export function buildFittingsGroup(design, { stdMaterial, shadowed }) {
       group.add(bonnet);
       addBarrel(f.id, { x: f.x - 7, y: 22, z: f.z }, { x: f.x + 7, y: 22, z: f.z }, 2.5, brass);
     } else if (f.symbolId === "spray-nozzle") {
-      // Monitor: base elbow + aimed barrel (schematic 45°).
+      // Monitor: base riser + a barrel along the AUTHORED discharge
+      // direction (R7) — the descriptor's dischargeDir, derived from
+      // the same origin/target model validation checks. An un-aimed
+      // assembly is the named unresolved state: riser only, NO
+      // invented barrel direction.
       addBarrel(f.id, { x: f.x, y: 0, z: f.z }, { x: f.x, y: 18, z: f.z }, 3, steel);
-      const dir = new THREE.Vector3(0.7071, 0.7071, 0);
-      addBarrel(
-        f.id,
-        { x: f.x, y: 18, z: f.z },
-        { x: f.x + dir.x * 24, y: 18 + dir.y * 24, z: f.z },
-        2,
-        brass,
-      );
+      if (f.aimResolved && f.dischargeDir) {
+        addBarrel(
+          f.id,
+          { x: f.x, y: 18, z: f.z },
+          { x: f.x + f.dischargeDir.x * 24, y: 18, z: f.z + f.dischargeDir.y * 24 },
+          2,
+          brass,
+        );
+      }
     } else if (f.symbolId === "reducer") {
-      // Concentric transition: frustum from inlet to outlet + end rings.
+      // Concentric transition along the reducer's OWNED axis (R1):
+      // the frustum runs from the inlet port to the outlet port at
+      // the fitting's elevation — the inlet face (rotation + 180°)
+      // takes the inlet radius, the outlet face (rotation direction)
+      // the outlet radius — never a vertical stack at bare elevation.
       const inR = Math.max(1, (f.inletSizeIn ?? 2) / 2);
       const outR = Math.max(1, (f.outletSizeIn ?? 1) / 2);
       const len = 12;
+      const axisRad = ((f.rotationDeg || 0) * Math.PI) / 180;
+      const axis = new THREE.Vector3(Math.cos(axisRad), 0, Math.sin(axisRad));
+      const center = new THREE.Vector3(f.x, y, f.z);
       const mesh = tag(new THREE.Mesh(new THREE.CylinderGeometry(outR, inR, len, 20), steel), f.id);
-      mesh.position.set(f.x, y, f.z);
+      mesh.position.copy(center);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
       group.add(mesh);
       const inDims = flangeDims(f.inletSizeIn ?? 2);
-      addDisc(f.id, f.x, y - len / 2, f.z, inDims.odIn / 2, inDims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
+      const inC = center.clone().addScaledVector(axis, -len / 2);
+      addDisc(f.id, inC.x, inC.y, inC.z, inDims.odIn / 2, inDims.thicknessIn, axis, steel);
       const outDims = flangeDims(f.outletSizeIn ?? 1);
-      addDisc(f.id, f.x, y + len / 2, f.z, outDims.odIn / 2, outDims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
+      const outC = center.clone().addScaledVector(axis, len / 2);
+      addDisc(f.id, outC.x, outC.y, outC.z, outDims.odIn / 2, outDims.thicknessIn, axis, steel);
     } else if (f.symbolId === "tee-fitting") {
       // The modeled tee body (PR668-005): host barrel + branch stub +
       // a flange disc on every port — never just a flange pair.
@@ -894,10 +941,13 @@ export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial,
   }
 
   // Manway: neck ring + hinged cover on the shell at sill height.
+  // manwayWorld's sill is base-LOCAL; the rendered center elevation
+  // is the WORLD datum (R4): base + sill + radius — the same frame
+  // validation and the sections read.
   const mw = manwayWorld(symbol, inst);
   if (mw) {
     const dir = new THREE.Vector3(mw.dirX, 0, mw.dirY);
-    const cy = mw.sillIn + mw.diameterIn / 2;
+    const cy = baseElevationIn(inst) + mw.sillIn + mw.diameterIn / 2;
     addCylinder(
       { x: mw.x, y: cy, z: mw.y },
       { x: mw.x + dir.x * 4, y: cy, z: mw.y + dir.z * 4 },
@@ -909,10 +959,13 @@ export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial,
     hinge.position.set(mw.x + dir.x * 4.75, cy + mw.diameterIn / 2 + 1, mw.y + dir.z * 4.75);
     group.add(hinge);
   }
-  addAccessPackage(accessPackageWorld(symbol, inst));
+  // The design rides along (R4): the access package's grade datum
+  // comes from the design, so a raised-grade design renders its
+  // platforms and ladders at the same datum validation reads.
+  addAccessPackage(accessPackageWorld(symbol, inst, design));
 
   // Downcomer levels on columns: platform + ladder chain + level manway.
-  for (const level of downcomerLevels(symbol, inst)) {
+  for (const level of downcomerLevels(symbol, inst, design)) {
     addAccessPackage(level.platform);
     if (level.manway) {
       const dir = new THREE.Vector3(level.manway.dirX, 0, level.manway.dirY);
@@ -1868,7 +1921,9 @@ export default function DesignerViewport3D({
       // skids, tag labels) — selectable like furniture.
       for (const eq of built.equipment || []) {
         const eGroup = buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel: makeTagSprite });
-        eGroup.position.set(eq.x, 0, eq.z);
+        // The body sits on its modeled base elevation (R4) — the
+        // same datum its components and faces are computed in.
+        eGroup.position.set(eq.x, eq.baseElevationIn ?? 0, eq.z);
         eGroup.rotation.y = eq.rotY;
         eGroup.userData.entityKind = "symbol";
         eGroup.userData.entityId = eq.id;

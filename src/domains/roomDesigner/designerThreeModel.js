@@ -21,6 +21,8 @@ import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { effectiveColor } from "./designSystems";
 import { finalPipeColor } from "./pipeColorPolicy";
 import { teeFittings, anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
+import { modeledHeadHeightIn } from "./downcomers";
+import { reducerInterfaces } from "./pipeReducerModel";
 import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
 import {
   connectionFlanges,
@@ -381,7 +383,14 @@ export function equipmentDescriptors(design) {
       rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
       widthIn: inst.widthIn ?? symbol.widthIn,
       depthIn: inst.depthIn ?? symbol.depthIn,
-      heightIn: rack ? rackTopIn(rack) : symbol.heightIn,
+      // The instance's own dimensions and base (R4): a resized body
+      // and a raised base are the modeled geometry in every consumer,
+      // never the catalog default.
+      heightIn: rack ? rackTopIn(rack) : (inst.heightIn ?? symbol.heightIn),
+      baseElevationIn: Number.isFinite(inst.baseElevationIn) ? inst.baseElevationIn : 0,
+      // The modeled head (R4): the same head height validation binds
+      // terminal assemblies to, rendered by the 3D builder.
+      ...(symbol.shape3d === "vcyl" ? { headIn: modeledHeadHeightIn(symbol, inst) } : {}),
       color: effectiveColor(design, inst, symbol.color), // own > system > catalog
       // Parametric structures: the members the 3D builder extrudes as steel.
       ...(rack ? { members: rackMembers3D(rack) } : {}),
@@ -468,12 +477,20 @@ export function pipeDescriptors(design) {
       const a = points[i];
       const b = points[i + 1];
       const yIn = segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn);
+      const y0In = vertexElevs[i] ?? yIn;
+      const y1In = vertexElevs[i + 1] ?? yIn;
       segments.push({
         a: { x: a.x, z: a.y },
         b: { x: b.x, z: b.y },
         yIn,
-        y0In: vertexElevs[i] ?? yIn,
-        y1In: vertexElevs[i + 1] ?? yIn,
+        y0In,
+        y1In,
+        // An authored (stored) elevation change across a plan
+        // segment is a physical slope (R3): the renderer draws the
+        // segment between its true endpoint elevations. A derived
+        // profile's change is a step at the vertex instead (flat
+        // segment + riser), so it is never flagged sloped.
+        sloped: runHasStoredElevation(run) && y0In !== y1In,
       });
     }
     // A run with a STORED elevation profile (an explicit centerline, or
@@ -487,28 +504,45 @@ export function pipeDescriptors(design) {
       });
     }
     const joints = points.map((p, i) => {
-      // End vertices take their only segment's elevation; interior
-      // vertices take the higher adjacent elevation (the riser spans
-      // the difference).
-      const yIn =
-        i === 0
-          ? segments[0].yIn
-          : i === segments.length
-            ? segments[segments.length - 1].yIn
-            : Math.max(segments[i - 1].yIn, segments[i].yIn);
-      return { x: p.x, z: p.y, yIn };
+      // Joints sit at the TRUE vertex elevations of the shared
+      // physical route (R3) — the same elevations validation reads.
+      return { x: p.x, z: p.y, yIn: vertexElevs[i] ?? segments[0]?.yIn ?? 0 };
     });
+    // Risers are the route's vertical steps (R3), in the route's own
+    // two forms: a STORED profile steps through zero-plan-length
+    // vertex pairs (crossing jogs, authored risers); a DERIVED
+    // profile steps at the vertex where the support elevation
+    // changes (rack edge to grade). An authored elevation change
+    // across a plan segment is a slope — the segment itself renders
+    // it (see `sloped` below), never a slope plus a phantom riser.
     const risers = [];
-    for (let i = 1; i + 1 < points.length; i += 1) {
-      const prev = segments[i - 1].yIn;
-      const next = segments[i].yIn;
-      if (prev === next) continue;
-      risers.push({
-        x: points[i].x,
-        z: points[i].y,
-        y0In: Math.min(prev, next),
-        y1In: Math.max(prev, next),
-      });
+    if (runHasStoredElevation(run)) {
+      for (let i = 0; i + 1 < points.length; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        if (Math.hypot(b.x - a.x, b.y - a.y) > 1e-9) continue;
+        const y0 = vertexElevs[i];
+        const y1 = vertexElevs[i + 1];
+        if (y0 === undefined || y1 === undefined || y0 === y1) continue;
+        risers.push({
+          x: a.x,
+          z: a.y,
+          y0In: Math.min(y0, y1),
+          y1In: Math.max(y0, y1),
+        });
+      }
+    } else {
+      for (let i = 1; i + 1 < points.length; i += 1) {
+        const prev = segments[i - 1].yIn;
+        const next = segments[i].yIn;
+        if (prev === next) continue;
+        risers.push({
+          x: points[i].x,
+          z: points[i].y,
+          y0In: Math.min(prev, next),
+          y1In: Math.max(prev, next),
+        });
+      }
     }
     const descriptor = {
       kind: "pipe",
@@ -578,6 +612,10 @@ export function fittingDescriptors(design) {
         ? {
             inletSizeIn: inst.inletSizeIn ?? null,
             outletSizeIn: inst.outletSizeIn ?? null,
+            // The reducer's OWNED interfaces (R1): the ports the 3D
+            // builder draws — position, elevation, direction, size —
+            // are the same interfaces validation binds.
+            interfaces: reducerInterfaces(inst)?.ports ?? [],
           }
         : {}),
       ...(inst.symbolId === "spray-nozzle"
@@ -588,6 +626,24 @@ export function fittingDescriptors(design) {
               inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
                 ? { x: inst.aimAt.x, y: inst.aimAt.y }
                 : null,
+            // The discharge axis (R7), derived from the SAME
+            // origin/target model validation checks: the unit plan
+            // direction from the assembly to its authored aim point.
+            // aimResolved false is the named unresolved state — no
+            // aim (or an aim at the origin itself) — and the renderer
+            // draws no barrel for it rather than inventing a direction.
+            ...(() => {
+              const aim =
+                inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
+                  ? inst.aimAt
+                  : null;
+              if (!aim) return { dischargeDir: null, aimResolved: false };
+              const dx = aim.x - inst.x;
+              const dy = aim.y - inst.y;
+              const len = Math.hypot(dx, dy);
+              if (!(len > 1e-9)) return { dischargeDir: null, aimResolved: false };
+              return { dischargeDir: { x: dx / len, y: dy / len }, aimResolved: true };
+            })(),
           }
         : {}),
       tag: inst.tag || "",
