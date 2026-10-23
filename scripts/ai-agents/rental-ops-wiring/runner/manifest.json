@@ -18,8 +18,9 @@
     "fixtures/repositories.js": "100c8c6f0aa30af35bc1e228d0584f208979d4f44ca0c33730146e74abee8759",
     "package.json": "c27c262518620a26ddbe1c160734f1d3be7a61d4c207618bdb52917064e94c2e",
     "runner/bootstrap.mjs": "99371aee4ae0cdeac2a18bcbcdc4598ace68f6052d86d19f58b31b2bb47f2f3a",
+    "runner/preview-child.mjs": "da5895a315dba3038e1f69e6bfc8954b5353c38656ec0da177d2f95fcd519887",
     "runner/run-job.mjs": "28e523beb1681037efc55cfdbe4b08d9f9fbd9a108e7509887ba58778478cb8b",
-    "runner/trust-entry.mjs": "4bd9b97a50f774d0a1c53a3436dc24a76970301e51f744b2361f74835aa83f6a",
+    "runner/trust-entry.mjs": "40b02841b777747bee188bba077a75a2a682ea336dcab700fa7653cb14477772",
     "src/deadline.js": "717646f582c09d750b7c45e108e7e930ad18b914aaa008582fca6ae344458473",
     "src/evaluateWorker.js": "959559a7f41a8a47de068f34767e170cfb40e628d39f99a5df735159b4384a2c",
     "src/executeWorker.js": "abf98544d0670e41ada4483ec4e3f1d6e45fe2acbfa777770ea3d254b50a98a4",
@@ -32,6 +33,7 @@
     "tests/runner.test.js": "d23fdd83d7ec786c098c021a746bc4aacf89724e61be84a5198fd39a3cd28da6",
     "tests/scope.test.js": "64c8c2364029de4c704832384373cfc8d467a8278f8354e518af211788cbab61",
     "tests/trust-bootstrap.test.js": "b4439ec87116b7182251a350ea4a8709df1c414278bc40c10f75101bf42d94f3",
+    "tests/trust-launcher.test.js": "2620f48c362d039ec6990fd2bc245febabe381fb042dfc8c6951b5cfc599a1c7",
     "tests/trust-ping.mjs": "53bd022e7759c4aa8ea369ab61e35e5dceab38240a87af4671e8374134b05535"
   }
 }

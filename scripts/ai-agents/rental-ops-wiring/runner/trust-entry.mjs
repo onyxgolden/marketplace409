@@ -1,6 +1,22 @@
 #!/usr/bin/env node
 /**
- * trust-entry.mjs — the ONLY supported way to execute wiring code.
+ * trust-entry.mjs — the IN-TREE verifier for wiring code.
+ *
+ * IMPORTANT (P666-004A.1): this file lives INSIDE the candidate
+ * checkout, so invoking it directly (`node runner/trust-entry.mjs`)
+ * evaluates ITS top-level code before authenticateWiring() can run —
+ * a modified copy of this file can execute a canary or falsify the
+ * checks first. Pinning this file inside the manifest does NOT close
+ * that bootstrap loop, because nothing checks the manifest before
+ * Node evaluates this module.
+ *
+ * The SUPPORTED first verifier is the host-owned launcher OUTSIDE
+ * the candidate tree (drop repo: tools/trusted-launcher/launch.mjs),
+ * which authenticates the closure read-only — including this file's
+ * bytes — before any candidate module is evaluated, and never
+ * evaluates this file at all. This module remains as defense in
+ * depth for already-trusted invocations and for its exported
+ * authenticateWiring() helper, but it is not the trust root.
  *
  * Builtins only (node:crypto, node:fs, node:path, node:url): this
  * module never imports candidate code, so importing it cannot execute
@@ -24,11 +40,10 @@
  * mismatch was ever noticed. Static pre-auth imports are the defect;
  * dynamic post-auth imports are the fix.
  *
- * Usage:
+ * Usage (supported path — via the host launcher):
  *   RENTAL_OPS_TRUST_ROOT=<sha256 of runner/manifest.json> \
- *     node runner/trust-entry.mjs --entry tests/run-tests.js
- *   node runner/trust-entry.mjs --trust-root <hex> --entry runner/run-job.mjs \
- *     -- --config <host-config.json> --request <job-request.json>
+ *     node <drop>/tools/trusted-launcher/launch.mjs \
+ *       --wiring-root <wiring root> --entry tests/run-tests.js
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
