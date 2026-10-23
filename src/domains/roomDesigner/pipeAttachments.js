@@ -583,22 +583,52 @@ export function attachmentInterfaceErrors(design, run, end) {
       );
     }
   }
-  // Approach axis: the end segment must arrive along the face's
-  // own axis (R2). A zero-plan-length end segment is a riser —
-  // the vertical approach itself. A non-flat end segment whose
-  // plan projection exceeds the face tolerance is a SLOPE, not a
-  // riser, however favorable its elevation direction (F4.1).
-  const segPlanLen = Math.hypot(neighbor.x - point.x, neighbor.y - point.y);
+  // Effective approach segment (F4.3): the approach checks below
+  // judge the segment the run actually arrives on. A terminal
+  // segment that is flat within the face tolerance AND at/below
+  // the tolerance in plan — a zero-length duplicate final vertex
+  // (the codebase's riser representation) or a sub-tolerance stub
+  // — carries no approach evidence: it satisfies neither the
+  // horizontal refusal (which needs plan extent) nor the sloped
+  // refusal (which needs elevation change), so reading only the
+  // literal terminal segment lets the segment BEHIND it approach
+  // however it likes — a horizontal run at the face elevation, or
+  // the through-vessel run F2.1 refuses — and still verify. Walk
+  // inward past evidence-free segments and judge the first
+  // segment with extent, from the attached end to that segment's
+  // far vertex. A terminal segment that IS evidence-bearing (a
+  // true riser, a slope, a horizontal leg) is judged exactly as
+  // before — the walk stops at it immediately.
+  const step = end === "start" ? 1 : -1;
+  let approachIdx = neighborIdx;
+  let innerIdx = idx;
+  const evidenceFree = (a, b) =>
+    Math.hypot(run.points[b].x - run.points[a].x, run.points[b].y - run.points[a].y) <=
+      CONNECTION_FACE_TOLERANCE_IN &&
+    Math.abs(vertexElevs[b] - vertexElevs[a]) <= CONNECTION_FACE_TOLERANCE_IN;
+  while (evidenceFree(innerIdx, approachIdx)) {
+    const nextIdx = approachIdx + step;
+    if (nextIdx < 0 || nextIdx >= run.points.length) break;
+    innerIdx = approachIdx;
+    approachIdx = nextIdx;
+  }
+  const approachNeighbor = run.points[approachIdx];
+  // Approach axis: the effective end segment must arrive along
+  // the face's own axis (R2). A zero-plan-length end segment is a
+  // riser — the vertical approach itself. A non-flat end segment
+  // whose plan projection exceeds the face tolerance is a SLOPE,
+  // not a riser, however favorable its elevation direction (F4.1).
+  const segPlanLen = Math.hypot(approachNeighbor.x - point.x, approachNeighbor.y - point.y);
   if (face.vertical) {
     const flat =
-      Math.abs(vertexElevs[neighborIdx] - vertexElevs[idx]) <= CONNECTION_FACE_TOLERANCE_IN;
+      Math.abs(vertexElevs[approachIdx] - vertexElevs[idx]) <= CONNECTION_FACE_TOLERANCE_IN;
     if (segPlanLen > CONNECTION_FACE_TOLERANCE_IN && flat) {
       errors.push(
         `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} with a horizontal run at the face elevation — a vertical flange face is met by a riser, not a horizontal approach.`,
       );
     } else if (!flat) {
-      // Verticality (F4.1): the terminal segment changes elevation,
-      // so it claims to be the riser — require it to BE one: plan
+      // Verticality (F4.1): the effective terminal segment changes
+      // elevation, so it claims to be the riser — require it to BE one: plan
       // projection at or below the connection-face tolerance. The
       // signed-direction check below proves only which SIDE the
       // approach comes from; alone it admitted an arbitrarily
@@ -614,7 +644,7 @@ export function attachmentInterfaceErrors(design, run, end) {
       // level with it) is exterior. The undirected flat test alone
       // admitted the through-vessel riser.
       const faceElev = Number.isFinite(face.elevationIn) ? face.elevationIn : vertexElevs[idx];
-      if (vertexElevs[neighborIdx] < faceElev - CONNECTION_FACE_TOLERANCE_IN) {
+      if (vertexElevs[approachIdx] < faceElev - CONNECTION_FACE_TOLERANCE_IN) {
         errors.push(
           `Pipe run ${run.id} reaches top nozzle ${ref.anchorId} from below the flange face — the approach passes through the vessel; a top nozzle is met from above.`,
         );
@@ -628,11 +658,11 @@ export function attachmentInterfaceErrors(design, run, end) {
     // arriving through the vessel interior (dot near -1) passed the
     // same check and then earned the verified-attachment exemption
     // for its own through-vessel segment. Same convention for both
-    // ends: point is always the attached end, neighbor the next
-    // vertex into the run.
+    // ends: point is always the attached end, and the direction is
+    // read to the effective approach segment's far vertex (F4.3).
     const dot =
-      ((neighbor.x - point.x) / segPlanLen) * face.normal.x +
-      ((neighbor.y - point.y) / segPlanLen) * face.normal.y;
+      ((approachNeighbor.x - point.x) / segPlanLen) * face.normal.x +
+      ((approachNeighbor.y - point.y) / segPlanLen) * face.normal.y;
     if (dot < Math.cos((20 * Math.PI) / 180)) {
       errors.push(
         `Pipe run ${run.id} does not approach nozzle ${ref.anchorId} from the exterior side of its flange face — the run must meet the face along its outward normal, not cross the vessel to reach it.`,
