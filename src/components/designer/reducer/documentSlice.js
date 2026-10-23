@@ -34,6 +34,7 @@ import {
   addWall,
   addWallRect,
   assignSprayTarget,
+  connectSprayInlet,
   deleteDeck,
   deleteFurniture,
   deleteOpening,
@@ -604,6 +605,24 @@ export function documentSlice(state, action) {
     case "SET_SPRAY_AIM":
       try {
         return touch(state, setSprayAim(state.design, action.symbolId, action.aimAt ?? null));
+      } catch {
+        return state;
+      }
+
+    // F3.1: author (or clear, with a null runId) the assembly's
+    // inlet connection — the reference verifiedSpraySupply demands.
+    // Without this action the domain command was unreachable from
+    // the product surface, so a non-seed monitor could never
+    // satisfy the authored-inlet requirement.
+    case "SET_SPRAY_INLET":
+      try {
+        return touch(
+          state,
+          connectSprayInlet(state.design, action.symbolId, {
+            runId: action.runId ?? null,
+            end: action.end,
+          }),
+        );
       } catch {
         return state;
       }

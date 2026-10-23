@@ -65,7 +65,10 @@ import DxfImportSection from "./DxfImportSection";
 import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
 import RackSection from "./RackSection";
 import DowncomerSection from "./DowncomerSection";
-import { developedRunLengthIn } from "@/domains/roomDesigner/pipeCrossings";
+import {
+  CONNECTION_FACE_TOLERANCE_IN,
+  developedRunLengthIn,
+} from "@/domains/roomDesigner/pipeCrossings";
 import { manwaySpec, accessPackageLocal } from "@/domains/roomDesigner/vesselAccess";
 import { isVesselSymbol, UTILITY_SERVICES } from "@/domains/roomDesigner/utilityPiping";
 import { isReducerInstance } from "@/domains/roomDesigner/pipeReducerModel";
@@ -3388,7 +3391,8 @@ function ReducerSection({ symbol, instance: inst, dispatch }) {
 
 // R9: directed-spray authoring — the protected-vessel assignment and
 // the authored aim point (the 3D barrel follows the aim; an un-aimed
-// assembly renders its named unresolved state).
+// assembly renders its named unresolved state). F3.1 adds the
+// authored inlet connection (SET_SPRAY_INLET) below.
 function SpraySection({ design, symbol, instance: inst, dispatch }) {
   const [aimX, setAimX] = useState(inst.aimAt ? String(inst.aimAt.x) : "");
   const [aimY, setAimY] = useState(inst.aimAt ? String(inst.aimAt.y) : "");
@@ -3396,6 +3400,23 @@ function SpraySection({ design, symbol, instance: inst, dispatch }) {
   const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
   const vessels = (design.symbols || []).filter((s) => s.domain === "processEquipment");
   const target = vessels.find((s) => s.id === inst.protects);
+  // F3.1: the authored inlet connection. Supply verification demands
+  // a firewater branch end AUTHORED onto the assembly inlet
+  // (inletRunId/inletEnd) — until this control existed the domain
+  // command was unreachable, so a non-seed monitor could never
+  // satisfy the requirement. Candidates are the firewater branch
+  // ends that land on the inlet face; the command re-validates.
+  const inletCandidates = [];
+  for (const r of design.pipes || []) {
+    if (r.utility !== "firewater" || !Array.isArray(r.points) || r.points.length < 2) continue;
+    for (const end of ["start", "end"]) {
+      const pt = end === "start" ? r.points[0] : r.points[r.points.length - 1];
+      if (Math.hypot(pt.x - inst.x, pt.y - inst.y) <= CONNECTION_FACE_TOLERANCE_IN) {
+        inletCandidates.push({ runId: r.id, end });
+      }
+    }
+  }
+  const inletValue = inst.inletRunId ? JSON.stringify([inst.inletRunId, inst.inletEnd]) : "";
   const applyAim = () => {
     const x = Number(aimX);
     const y = Number(aimY);
@@ -3421,6 +3442,34 @@ function SpraySection({ design, symbol, instance: inst, dispatch }) {
           ))}
         </select>
       </label>
+      <label className="block text-xs text-gray-400">
+        Inlet connection (firewater branch end)
+        <select
+          value={inletValue}
+          onChange={(e) => {
+            if (!e.target.value) {
+              dispatch({ type: "SET_SPRAY_INLET", symbolId: inst.id, runId: null });
+            } else {
+              const [runId, end] = JSON.parse(e.target.value);
+              dispatch({ type: "SET_SPRAY_INLET", symbolId: inst.id, runId, end });
+            }
+          }}
+          className={selectClass}
+        >
+          <option value="">No authored inlet connection</option>
+          {inletCandidates.map((c) => (
+            <option key={JSON.stringify([c.runId, c.end])} value={JSON.stringify([c.runId, c.end])}>
+              Run {c.runId} ({c.end})
+            </option>
+          ))}
+        </select>
+      </label>
+      {inst.inletRunId && !inletCandidates.some((c) => c.runId === inst.inletRunId && c.end === inst.inletEnd) && (
+        <p className="text-xs text-amber-400">
+          Authored inlet: run {inst.inletRunId} ({inst.inletEnd}) — its end no longer lands on the
+          inlet face; supply verification will report it until repaired or cleared.
+        </p>
+      )}
       <div className="flex gap-2">
         <label className="block flex-1 text-xs text-gray-400">
           Aim X (in)
