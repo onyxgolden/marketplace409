@@ -1,0 +1,21 @@
+{
+  "schema": "rental-ops-wiring-manifest@1",
+  "note": "SHA-256 pins for every executable byte the bootstrap may import. Re-pin with runner/make-manifest.mjs after source changes.",
+  "files": {
+    "../../../src/application/ai-lab/rental-ops/budgets.js": "a2ad282b2f51b21475fc4f9251db2ecd04937bb5bcc0d409943438e8c2452f00",
+    "../../../src/application/ai-lab/rental-ops/canonical.js": "b1078994609d5718ce0214aa042f76b20fc195bd2509aaa9960b837efd67f5c1",
+    "../../../src/application/ai-lab/rental-ops/decisionValidator.js": "f8cf4a4beee25f9f892fa7c97fa830dfb9e7c158824e12ea69d0c06fedc58d4e",
+    "../../../src/application/ai-lab/rental-ops/fieldMappings.js": "c46b9b19de6be2405124cb67f55131c9ed7f5c6c5503a07a9e63b1152fdaf5e2",
+    "../../../src/application/ai-lab/rental-ops/jobContracts.js": "bcd693e7e39012428f51b1885a29c18dd6a4bd057dca3609c3eec94bfa317e17",
+    "../../../src/application/ai-lab/rental-ops/privateItemSerializer.js": "64703dbb7fc6b254a9478a395823ceebab632dd4c3b2fb4cecc65acd2d572cb9",
+    "../../../src/application/ai-lab/rental-ops/propertyManagerJob.js": "47b727dd4f4501ebf9aefba643aa975415d558ae8a7e594438a0054618e3fa3e",
+    "../../../src/application/ai-lab/rental-ops/readAdapter.js": "2001f7d235ec7a61d799459ac46c38c215c2647719a4eb6c1f65d530a4a27150",
+    "../../../src/application/ai-lab/rental-ops/snapshotBuilder.js": "85f99ec17d9a720f98d8b82edd039f0a2bf6e3613f3e25b14e3b695cc8f42276",
+    "fixtures/repositories.js": "100c8c6f0aa30af35bc1e228d0584f208979d4f44ca0c33730146e74abee8759",
+    "runner/bootstrap.mjs": "f7ca9035c775ecdea2459194df49ddfc22ac8897cccd74bb44da576af5fc05bf",
+    "runner/run-job.mjs": "57f8cacd4e5309f73f42bd917cdd66a432e3503ae15d5045ddfbdbfdca43f582",
+    "src/evaluateWorker.js": "959559a7f41a8a47de068f34767e170cfb40e628d39f99a5df735159b4384a2c",
+    "src/runner.js": "66880213ed1098112045888fcef81962772701d4836ca9e2002e9ef69b15d1e2",
+    "src/syntheticRepository.js": "99f91ec76066ef5014fa9f9c4d75a950043964a0fbbf3c8764100efb0a66bd9e"
+  }
+}
