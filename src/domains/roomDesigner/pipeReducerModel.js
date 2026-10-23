@@ -95,13 +95,20 @@ export function reducerSizes(inst) {
  * named fields, no extras — and its canonical form is the typed
  * tuple, JSON-encoded (JSON array encoding is injective for any
  * identifier content: quoting/escaping is part of the encoding).
+ *
+ * The table is a Map, not a plain object (F1.2): a bracket lookup on
+ * a plain object resolves kinds naming inherited Object.prototype
+ * members ("constructor", "__proto__", "toString", ...) to truthy
+ * non-schema values, and validation threw instead of refusing the
+ * malformed reference. A Map lookup never consults the prototype
+ * chain — every unknown kind, string or otherwise, simply misses.
  */
-const OWNER_REF_SCHEMAS = {
-  "run-end": ["runId", "end"],
-  "run-segment": ["runId", "segmentIndex"],
-  nozzle: ["symbolId", "anchorId"],
-  "spray-inlet": ["symbolId", "anchorId"],
-};
+const OWNER_REF_SCHEMAS = new Map([
+  ["run-end", ["runId", "end"]],
+  ["run-segment", ["runId", "segmentIndex"]],
+  ["nozzle", ["symbolId", "anchorId"]],
+  ["spray-inlet", ["symbolId", "anchorId"]],
+]);
 
 /**
  * Validate an ownership reference against its kind's closed schema
@@ -115,7 +122,7 @@ const OWNER_REF_SCHEMAS = {
  */
 export function normalizeOwnerRef(ref) {
   if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
-  const fields = OWNER_REF_SCHEMAS[ref.kind];
+  const fields = OWNER_REF_SCHEMAS.get(ref.kind);
   if (!fields) return null;
   for (const key of Object.keys(ref)) {
     if (key !== "kind" && !fields.includes(key)) return null;
