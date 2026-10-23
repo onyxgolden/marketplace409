@@ -161,6 +161,14 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
         if (!leasesByRef.has(schedule.lease_ref)) {
           pushIntegrity("SCHEDULE_LEASE_DANGLING", "schedules", schedule.schedule_ref, { lease_ref: schedule.lease_ref ?? null });
           classificationOk = false;
+        } else if (schedule.lease_ref !== charge.lease_ref) {
+          // P666-006A: existence is not equality — a schedule that
+          // belongs to a DIFFERENT existing lease cannot classify
+          // this charge.
+          pushIntegrity("SCHEDULE_LEASE_MISMATCH", "schedules", schedule.schedule_ref, {
+            lease_ref: schedule.lease_ref ?? null, charge_lease_ref: charge.lease_ref,
+          });
+          classificationOk = false;
         }
         if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null
           && !isCivilDate(schedule.forge_cutover_date)) {
@@ -170,11 +178,19 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
       }
       if (!isCivilDate(charge.due_date)) {
         pushIntegrity("CHARGE_DUE_DATE_INVALID", "charges", charge.charge_ref);
+        // P666-006A: an invalid due date means relevance cannot be
+        // determined — the charge is withheld AND the lease's totals
+        // are blocked with a named reason, never silently excluded.
+        unverified = unverified ?? "DUE_DATE_INVALID";
         continue;
       }
       if (!(charge.due_date < asOfDate)) continue;
       if (!isSafeNonnegIntCents(charge.amount_cents) || !isSafeNonnegIntCents(charge.paid_amount_cents)) {
         pushIntegrity("MONEY_INVALID", "charges", charge.charge_ref);
+        // P666-006A: an invalid amount on a relevant charge withholds
+        // the charge and blocks the totals — a partial sum must never
+        // publish as the complete amount.
+        unverified = unverified ?? "MONEY_INVALID";
         continue;
       }
       if (!(charge.amount_cents > charge.paid_amount_cents)) continue;
@@ -328,11 +344,35 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
   const coverageOk = chargesComplete && schedulesComplete;
   const anyRowBlocked = overdue.some((r) => r.totals_blocked);
   const rowCurrencies = new Set(overdue.filter((r) => !r.totals_blocked && r.currency).map((r) => r.currency));
-  const totalsAvailable = coverageOk && !anyRowBlocked && rowCurrencies.size <= 1;
-  const sumField = (field) => overdue.reduce((acc, r) => acc + (r[field] ?? 0), 0);
+  // P666-006A: section totals aggregate EXACTLY. Per-row values are
+  // safe integers, but their sum may not be (MAX_SAFE_INTEGER + 2
+  // published as 9007199254740992 was the defect): sum in BigInt and
+  // withhold the section — with a named reason — when the exact sum
+  // is not exactly representable, never a plausible wrong number.
+  const sumExact = (field) => {
+    let total = 0n;
+    for (const r of overdue) {
+      if (r.totals_blocked) continue;
+      const v = r[field];
+      if (v === null || v === undefined) continue;
+      total += BigInt(v); // exact: row values are safe nonneg ints by construction
+    }
+    return total;
+  };
+  const forgeSectionTotal = sumExact("forge_collectible_cents");
+  const externalSectionTotal = sumExact("externally_managed_cents");
+  const sectionOverflow = forgeSectionTotal > MAX_CENTS || externalSectionTotal > MAX_CENTS;
+  if (sectionOverflow) {
+    pushIntegrity("SECTION_TOTALS_OVERFLOW", "report", "overdue_balances", {
+      forge_collectible_total_cents: forgeSectionTotal.toString(),
+      externally_managed_total_cents: externalSectionTotal.toString(),
+    });
+  }
+  const totalsAvailable = coverageOk && !anyRowBlocked && rowCurrencies.size <= 1 && !sectionOverflow;
   const totalsUnavailableReason = !coverageOk ? "COVERAGE_INCOMPLETE"
     : anyRowBlocked ? "ROW_BLOCKED"
-    : rowCurrencies.size > 1 ? "CURRENCY_INCONSISTENT" : null;
+    : rowCurrencies.size > 1 ? "CURRENCY_INCONSISTENT"
+    : sectionOverflow ? "TOTALS_OVERFLOW" : null;
   const blockedCount = recommendations.filter((r) => r.status === "BLOCKED").length;
   const status = blockedCount > 0 ? "BLOCKED" : (snapshot.consistency === "PARTIAL" ? "PARTIAL" : "PROPOSED");
   if (snapshot.consistency === "PARTIAL") {
@@ -360,8 +400,8 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
       lease_expirations: { rows: expirations, count: expirations.length },
       overdue_balances: {
         rows: overdue,
-        forge_collectible_total_cents: totalsAvailable ? sumField("forge_collectible_cents") : null,
-        externally_managed_total_cents: totalsAvailable ? sumField("externally_managed_cents") : null,
+        forge_collectible_total_cents: totalsAvailable ? Number(forgeSectionTotal) : null,
+        externally_managed_total_cents: totalsAvailable ? Number(externalSectionTotal) : null,
         blocked_row_count: overdue.filter((r) => r.totals_blocked).length,
         totals_unavailable: !totalsAvailable,
         ...(totalsAvailable ? {} : { totals_unavailable_reason: totalsUnavailableReason }),

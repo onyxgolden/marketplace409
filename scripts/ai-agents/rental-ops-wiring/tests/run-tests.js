@@ -1,7 +1,13 @@
 /**
- * Test entry: authenticate the source manifest BEFORE any test byte
- * runs (same trust bootstrap pattern as the slice-1 prototypes), then
- * run the node:test suites.
+ * Test entry: runs the node:test suites.
+ *
+ * Trust note (P666-004A): this file MUST NOT statically import any
+ * candidate module. It is executed only through
+ * runner/trust-entry.mjs, which authenticates the entire closure
+ * against the host trust root BEFORE this file is imported — a
+ * canary in any pinned file stops the run before a single test byte
+ * runs. The previous static `import ... from "../runner/bootstrap.mjs"`
+ * executed candidate code pre-auth and is the defect this removes.
  *
  * Test executables are discovered ONLY from the authenticated
  * manifest: a .test.js file present on disk but absent from the
@@ -12,14 +18,10 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyManifest } from "../runner/bootstrap.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const { ok, failures } = verifyManifest();
-if (!ok) {
-  console.error(`trust authentication failed — ${failures.join("; ")}`);
-  process.exit(3);
-}
+// The trust entry authenticated runner/manifest.json against the host
+// root before importing this file; re-read it for discovery only.
 const manifest = JSON.parse(readFileSync(join(HERE, "..", "runner", "manifest.json"), "utf8"));
 const listed = Object.keys(manifest.files)
   .filter((f) => f.startsWith("tests/") && f.endsWith(".test.js"))

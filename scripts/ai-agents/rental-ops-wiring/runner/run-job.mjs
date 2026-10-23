@@ -2,7 +2,14 @@
 /**
  * Inert rental-ops job CLI — the manual, host-operated entrypoint.
  *
- *   node runner/run-job.mjs --config <host-config.json> --request <job-request.json>
+ *   RENTAL_OPS_TRUST_ROOT=<sha256 of runner/manifest.json> \
+ *     node runner/trust-entry.mjs --entry runner/run-job.mjs \
+ *       -- --config <host-config.json> --request <job-request.json>
+ *
+ * Trust note (P666-004A): this file performs NO trust check itself
+ * and MUST NOT be invoked directly — runner/trust-entry.mjs
+ * authenticates the whole closure against the host trust root before
+ * this module is imported.
  *
  * The host config (mode, adapter kind, registered principal/owner,
  * synthetic repository ID) is operator-owned; the job request is
@@ -14,9 +21,6 @@
  * supplies the real private-store publisher.)
  */
 import { readFileSync } from "node:fs";
-import { assertManifest } from "./bootstrap.mjs";
-
-assertManifest();
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`);

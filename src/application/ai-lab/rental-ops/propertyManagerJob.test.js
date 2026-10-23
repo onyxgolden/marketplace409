@@ -97,12 +97,87 @@ describe("domain oracle — overdue split (FORGE-collectible vs externally manag
     expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("CURRENCY_INCONSISTENT");
   });
 
-  it("invalid money becomes an integrity row and is excluded from totals", async () => {
+  it("P666-006A: invalid money on a relevant charge blocks the lease totals (never a partial sum)", async () => {
     const { report } = await run(shell({
       leases: [lease()], charges: [charge({ amount_cents: -5 })], schedules: [schedule()],
     }));
-    expect(report.sections.overdue_balances.rows).toHaveLength(0);
+    // The defective behavior excluded the charge and published the
+    // remaining totals as complete; the fix withholds the charge AND
+    // blocks the affected totals with a named reason.
+    const rows = report.sections.overdue_balances.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].totals_blocked).toBe(true);
+    expect(rows[0].blocked_reason).toBe("MONEY_INVALID");
     expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("MONEY_INVALID");
+    expect(report.sections.overdue_balances.totals_unavailable).toBe(true);
+    expect(report.sections.overdue_balances.totals_unavailable_reason).toBe("ROW_BLOCKED");
+  });
+
+  it("P666-006A: an invalid due date on a live charge blocks the totals (relevance cannot be determined)", async () => {
+    const { report } = await run(shell({
+      leases: [lease()], charges: [charge({ due_date: "10/01/2026" })], schedules: [schedule()],
+    }));
+    const rows = report.sections.overdue_balances.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].totals_blocked).toBe(true);
+    expect(rows[0].blocked_reason).toBe("DUE_DATE_INVALID");
+    expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("CHARGE_DUE_DATE_INVALID");
+    expect(report.sections.overdue_balances.totals_unavailable).toBe(true);
+  });
+
+  it("P666-006A: a schedule belonging to a different existing lease cannot classify the charge", async () => {
+    const { report } = await run(shell({
+      leases: [lease(), lease({ lease_ref: "lease-2", unit_ref: "unit-1" })],
+      charges: [charge({ lease_ref: "lease-2" })],
+      schedules: [schedule()], // sch-1 belongs to lease-1, not lease-2
+    }));
+    const rows = report.sections.overdue_balances.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].lease_ref).toBe("lease-2");
+    expect(rows[0].totals_blocked).toBe(true);
+    expect(rows[0].blocked_reason).toBe("CLASSIFICATION_UNVERIFIED");
+    const kinds = report.sections.integrity.rows.map((r) => r.kind);
+    expect(kinds).toContain("SCHEDULE_LEASE_MISMATCH");
+  });
+
+  it("P666-006A: section sums are exact — MAX_SAFE_INTEGER + 2 withholds the section, never a wrong number", async () => {
+    const big = Number.MAX_SAFE_INTEGER;
+    // Two leases, each with an exactly-representable row total; the
+    // SECTION sum (9007199254740993) is not exactly representable.
+    // (A single lease with that sum is caught by the row-level
+    // BigInt check; this exercises the section boundary.)
+    const { report } = await run(shell({
+      leases: [lease(), lease({ lease_ref: "lease-2" })],
+      charges: [
+        charge({ charge_ref: "ch-1", amount_cents: big, paid_amount_cents: 0 }),
+        charge({ charge_ref: "ch-2", lease_ref: "lease-2", schedule_ref: "sch-2", amount_cents: 2, paid_amount_cents: 0 }),
+      ],
+      schedules: [schedule(), schedule({ schedule_ref: "sch-2", lease_ref: "lease-2" })],
+    }));
+    const section = report.sections.overdue_balances;
+    // The exact sum (9007199254740993) is not exactly representable:
+    // the section must be unavailable with a named reason, and the
+    // plausible-but-wrong 9007199254740992 must never publish.
+    expect(section.totals_unavailable).toBe(true);
+    expect(section.totals_unavailable_reason).toBe("TOTALS_OVERFLOW");
+    expect(section.forge_collectible_total_cents).toBeNull();
+    expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("SECTION_TOTALS_OVERFLOW");
+    const rows = section.rows;
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.totals_blocked).toBe(false);
+    expect(rows.find((r) => r.lease_ref === "lease-1").forge_collectible_cents).toBe(big);
+  });
+
+  it("P666-006A: exact-safe section sums still publish (positive control)", async () => {
+    const { report } = await run(shell({
+      leases: [lease()],
+      charges: [charge({ amount_cents: 10000, paid_amount_cents: 2500 }), charge({ charge_ref: "ch-2", schedule_ref: "sch-2", amount_cents: 4000, paid_amount_cents: 0 })],
+      schedules: [schedule(), schedule({ schedule_ref: "sch-2", collection_mode: "external" })],
+    }));
+    const section = report.sections.overdue_balances;
+    expect(section.totals_unavailable).toBe(false);
+    expect(section.forge_collectible_total_cents).toBe(7500);
+    expect(section.externally_managed_total_cents).toBe(4000);
   });
 
   it("a missing schedule withholds the charge from both buckets and blocks totals with a named reason", async () => {

@@ -1,13 +1,16 @@
 /**
- * Authenticated runtime bootstrap for the rental-ops wiring.
+ * Manifest verification helpers for the rental-ops wiring.
  *
- * Before any wiring byte is imported for execution, every source file
- * is hashed and compared against the host-pinned manifest
- * (runner/manifest.json). A mismatch — tampered source, helper or
- * manifest — stops the run before a single candidate executes. In
- * production the manifest root itself is pinned outside the repo by
- * the host (the same pattern as the Research prototype's external
- * approved root); this in-repo copy is the slice's testable form.
+ * HISTORICAL NOTE (P666-004A): this module used to be the trust
+ * entry — tests/run-tests.js, runner/run-job.mjs and
+ * battery/run-battery.js imported it BEFORE verification, so a
+ * canary appended to this very file executed before the digest
+ * mismatch was noticed. It is NO LONGER an entry point:
+ * runner/trust-entry.mjs (builtins only, host-supplied trust root)
+ * authenticates the whole closure before any candidate module —
+ * including this one — is imported. These helpers remain for
+ * in-process re-verification only; they must never be statically
+ * imported by an entry point.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

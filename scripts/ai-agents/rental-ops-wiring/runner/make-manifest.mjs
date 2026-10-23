@@ -31,9 +31,21 @@ delete files["runner/manifest.json"];
 addTree(join(WIRING_ROOT, "tests"), { tests: true }); // test executables are pinned too
 addTree(join(WIRING_ROOT, "battery"));
 delete files["battery/make-battery.js"]; // authoring tool, not part of the runtime closure
-delete files["battery/manifest.json"];
 delete files["battery/cases.json"]; // pinned by the battery manifest instead
+// battery/manifest.json STAYS pinned here (P666-004A): it is the root
+// of the battery's case/oracle pins, so tampering with it must break
+// the host trust chain, not just the battery's self-check. (addTree
+// only walks .js/.mjs, so JSON roots are pinned explicitly.)
+files["battery/manifest.json"] = createHash("sha256")
+  .update(readFileSync(join(WIRING_ROOT, "battery", "manifest.json")))
+  .digest("hex");
 addTree(join(REPO_ROOT, "src", "application", "ai-lab", "rental-ops"));
+// The shared classifier is a transitive executable dependency of
+// propertyManagerJob.js — an unpinned import is an unauthenticated
+// import (P666-004A probe 2).
+files["../../../src/application/rental/isChargeForgeCollectible.js"] = createHash("sha256")
+  .update(readFileSync(join(REPO_ROOT, "src", "application", "rental", "isChargeForgeCollectible.js")))
+  .digest("hex");
 // Package metadata governs module type and entry points — part of the closure.
 files["package.json"] = createHash("sha256").update(readFileSync(join(WIRING_ROOT, "package.json"))).digest("hex");
 const manifest = {

@@ -134,12 +134,18 @@ export function oraclePredict(caseSpec) {
       }
       if (schedule) {
         if (!leases.has(schedule.lease_ref)) { kind("SCHEDULE_LEASE_DANGLING"); classificationOk = false; }
+        // P666-006A: existence is not equality — a schedule belonging
+        // to a different existing lease cannot classify this charge.
+        else if (schedule.lease_ref !== c.lease_ref) { kind("SCHEDULE_LEASE_MISMATCH"); classificationOk = false; }
         if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null
           && !isDate(schedule.forge_cutover_date)) { kind("SCHEDULE_CUTOVER_INVALID"); classificationOk = false; }
       }
-      if (!isDate(c.due_date)) { kind("CHARGE_DUE_DATE_INVALID"); continue; }
+      // P666-006A: an invalid due date or amount on a live charge
+      // withholds the charge AND blocks the lease's totals with a
+      // named reason — a partial sum never publishes as complete.
+      if (!isDate(c.due_date)) { kind("CHARGE_DUE_DATE_INVALID"); unverified = unverified ?? "DUE_DATE_INVALID"; continue; }
       if (!(c.due_date < asOfDate)) continue;
-      if (!isMoney(c.amount_cents) || !isMoney(c.paid_amount_cents)) { kind("MONEY_INVALID"); continue; }
+      if (!isMoney(c.amount_cents) || !isMoney(c.paid_amount_cents)) { kind("MONEY_INVALID"); unverified = unverified ?? "MONEY_INVALID"; continue; }
       if (!(c.amount_cents > c.paid_amount_cents)) continue;
       if (!validCurrency(c.currency)) { kind("CURRENCY_UNVERIFIED"); unverified = unverified ?? "CURRENCY_UNVERIFIED"; continue; }
       if (!classificationOk) { unverified = unverified ?? "CLASSIFICATION_UNVERIFIED"; continue; }

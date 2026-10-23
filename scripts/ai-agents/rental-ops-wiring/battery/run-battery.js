@@ -1,31 +1,42 @@
 /**
- * Frozen battery runner. Verifies the wiring manifest AND the battery
- * manifest (cases + oracle digests) before any case executes — a
- * tampered source, case or oracle stops the run cold. Each case runs
- * the full inert runner three times against one shared publisher:
- * the published item must be byte-identical across runs and match
- * the independent oracle (or the case's literal expectation).
+ * Frozen battery runner. Trust note (P666-004A): this file MUST NOT
+ * statically import any candidate module — it is executed only
+ * through runner/trust-entry.mjs, which authenticates the wiring
+ * manifest against the host trust root BEFORE this file is imported.
+ * The battery manifest (cases + oracle digests) is verified here with
+ * builtins only, before the oracle or any wiring module is imported.
+ * Each case runs the full inert runner three times against one shared
+ * publisher: the published item must be byte-identical across runs
+ * and match the independent oracle (or the case's literal
+ * expectation).
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { verifyManifest } from "../runner/bootstrap.mjs";
-import { createMemoryPublisher, runJob } from "../src/runner.js";
-import { canonicalDigest, canonicalJson } from "../../../../src/application/ai-lab/rental-ops/canonical.js";
-import { validateDecision } from "../../../../src/application/ai-lab/rental-ops/decisionValidator.js";
-import { oraclePredict } from "./oracle.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const WIRING_ROOT = join(HERE, "..");
+const APP_ROOT = join(WIRING_ROOT, "..", "..", "..", "src", "application", "ai-lab", "rental-ops");
+const imp = (abs) => import(pathToFileURL(abs).href);
 
-const wiring = verifyManifest();
-if (!wiring.ok) { console.error(`trust authentication failed (wiring) — ${wiring.failures.join("; ")}`); process.exit(3); }
+// The trust entry already authenticated the wiring closure (this
+// file, the oracle, the runner) against the host root. Verify the
+// battery manifest — cases.json and the oracle bytes — before any
+// candidate import.
 const batteryManifest = JSON.parse(readFileSync(join(HERE, "manifest.json"), "utf8"));
 for (const [file, expected] of Object.entries(batteryManifest.files)) {
   const actual = createHash("sha256").update(readFileSync(join(HERE, file))).digest("hex");
   if (actual !== expected) { console.error(`trust authentication failed (battery) — ${file} digest mismatch`); process.exit(3); }
 }
 const cases = JSON.parse(readFileSync(join(HERE, "cases.json"), "utf8"));
+
+// Dynamic post-verification imports only: no candidate byte executes
+// before both manifests are authenticated.
+const { createMemoryPublisher, runJob } = await imp(join(WIRING_ROOT, "src", "runner.js"));
+const { canonicalDigest, canonicalJson } = await imp(join(APP_ROOT, "canonical.js"));
+const { validateDecision } = await imp(join(APP_ROOT, "decisionValidator.js"));
+const { oraclePredict } = await imp(join(HERE, "oracle.js"));
 
 const failures = [];
 const fail = (c, msg) => failures.push(`${c.id} [${c.category}]: ${msg}`);

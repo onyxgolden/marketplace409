@@ -74,6 +74,11 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
   const collectionErrors = [];
   const revisions = new Set();
   const datasetErrored = {};
+  const coverageGaps = [];
+  // P666-005A: source_revision is claimed only when EVERY dataset
+  // attests — a missing revision is unknown/partial, never borrowed
+  // from another dataset's attestation.
+  let allDatasetsAttested = true;
   let partial = false;
 
   for (const dataset of DATASETS) {
@@ -81,9 +86,16 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
     const byRef = new Map();
     let seenCount = 0;
     let cursor = null;
-    let expected = null;
     let complete = false;
     let errored = false;
+    // Per-dataset attestations (P666-005A): a terminal page must
+    // EXPLICITLY declare next_cursor: null — an absent next_cursor
+    // is not a terminal contract — and must attest expected_total;
+    // every page's revision and expected_total are collected here so
+    // gaps are named per dataset instead of borrowed across them.
+    const attestedRevisions = new Set();
+    const attestedExpected = new Set();
+    let terminalAttestedExpected = false;
     const seenCursors = new Set();
     for (;;) {
       if (signal?.aborted) {
@@ -111,8 +123,8 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
         collectionErrors.push({ dataset, code: "BAD_PAGE" });
         break;
       }
-      if (typeof page.revision === "string") revisions.add(page.revision);
-      if (typeof page.expected_total === "number") expected = page.expected_total;
+      if (typeof page.revision === "string") attestedRevisions.add(page.revision);
+      if (typeof page.expected_total === "number") attestedExpected.add(page.expected_total);
       for (const raw of page.rows) {
         budget.measureCandidate(raw, `${dataset} row`);
         seenCount += 1;
@@ -142,8 +154,30 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
         admitted.push({ row, dropped });
         budget.chargeEvidenceSpan();
       }
-      if (page.next_cursor === null || page.next_cursor === undefined) { complete = !errored; break; }
+      if (page.next_cursor === null) {
+        // Explicit terminal contract: the source declares the page
+        // sequence finished. The terminal page must attest the
+        // expected row count — a terminal page without one cannot
+        // prove it saw every row.
+        if (typeof page.expected_total === "number") terminalAttestedExpected = true;
+        complete = !errored;
+        break;
+      }
+      if (page.next_cursor === undefined) {
+        // P666-005A: an ABSENT next_cursor is not a terminal
+        // declaration. Treating it as terminal published all-clears
+        // over unattested coverage.
+        errored = true;
+        partial = true;
+        collectionErrors.push({ dataset, code: "TERMINAL_UNATTESTED" });
+        break;
+      }
       if (typeof page.next_cursor !== "string" || seenCursors.has(page.next_cursor)) {
+        // A looping or malformed cursor is a named pagination
+        // failure: no terminal page can ever arrive, so per-dataset
+        // attestation checks do not apply (the CURSOR_FAULT
+        // diagnostic carries it; diagnostics stay orthogonal).
+        errored = true;
         partial = true;
         collectionErrors.push({ dataset, code: "CURSOR_FAULT" });
         break;
@@ -192,32 +226,60 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
     }
     evidence[dataset] = spans;
     const received = seenCount;
-    if (expected !== null && expected !== received) { complete = false; partial = true; }
-    if (errored) complete = false;
+    // P666-005A: expected counts are validated per dataset — every
+    // page's attestation must agree, the terminal page must attest,
+    // and the agreed count must match the received row count. A
+    // missing revision on one dataset is never borrowed from
+    // another's: each non-errored dataset must attest exactly one.
+    const expectedValues = [...attestedExpected];
+    const expectedAgreed = expectedValues.length === 1 ? expectedValues[0] : null;
+    if (!errored) {
+      if (expectedValues.length === 0) {
+        complete = false; partial = true;
+        coverageGaps.push({ dataset, code: "COVERAGE_UNATTESTED" });
+      } else {
+        if (expectedValues.length > 1) {
+          complete = false; partial = true;
+          coverageGaps.push({ dataset, code: "EXPECTED_COUNT_CONFLICT", detail: `pages attest differing expected_total values: ${expectedValues.join(", ")}` });
+        }
+        if (!terminalAttestedExpected) {
+          complete = false; partial = true;
+          coverageGaps.push({ dataset, code: "EXPECTED_COUNT_UNATTESTED", detail: "the terminal page did not attest expected_total" });
+        }
+        if (expectedAgreed !== null && expectedAgreed !== received) {
+          complete = false; partial = true;
+        }
+      }
+      if (attestedRevisions.size !== 1) {
+        complete = false; partial = true;
+        allDatasetsAttested = false;
+        coverageGaps.push({
+          dataset,
+          code: "REVISION_UNATTESTED",
+          detail: attestedRevisions.size === 0
+            ? "no source revision was attested for this dataset"
+            : "this dataset's pages attest differing revisions",
+        });
+      } else {
+        revisions.add([...attestedRevisions][0]);
+      }
+    }
+    if (errored) { complete = false; allDatasetsAttested = false; }
     datasetErrored[dataset] = errored;
     datasetFacts[dataset] = {
-      expected, received, complete,
+      expected: expectedAgreed, received, complete,
       pages_complete: complete,
+      revision: attestedRevisions.size === 1 ? [...attestedRevisions][0] : null,
     };
   }
 
-  // Coverage attestation: a dataset is complete only with a terminal
-  // cursor AND an attested expected_total matching the received row
-  // count; a snapshot with zero or mixed source revisions cannot be
-  // attested as one coherent point in time. Every gap is named —
-  // missing coverage never publishes as an all-clear.
-  const coverageGaps = [];
-  for (const dataset of DATASETS) {
-    // expected_total unattested — but only when the dataset did not
-    // already fail with a named error (an errored dataset carries its
-    // own diagnostic; diagnostics stay orthogonal).
-    if (datasetFacts[dataset].expected === null && !datasetErrored[dataset]) {
-      datasetFacts[dataset].complete = false;
-      datasetFacts[dataset].pages_complete = false;
-      partial = true;
-      coverageGaps.push({ dataset, code: "COVERAGE_UNATTESTED" });
-    }
-  }
+  // Coverage attestation: a dataset is complete only with an explicit
+  // terminal cursor, a terminal-attested expected_total matching the
+  // received row count, and exactly one attested revision; the
+  // snapshot is coherent only when every dataset attests the SAME
+  // revision. Every gap is named — missing coverage never publishes
+  // as an all-clear, and a missing revision is unknown/partial, never
+  // borrowed from another dataset.
   if (revisions.size !== 1) {
     partial = true;
     coverageGaps.push({
@@ -243,7 +305,7 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
     owner_ref: request.owner_ref,
     portfolio_ref: request.portfolio_ref,
     source_system: adapter.source_system ?? "unknown",
-    source_revision: revisions.size === 1 ? [...revisions][0] : null,
+    source_revision: revisions.size === 1 && allDatasetsAttested ? [...revisions][0] : null,
     collection: { started_at: startedAt, finished_at: finishedAt },
     as_of: request.as_of,
     as_of_date: chicagoCivilDate(request.as_of),

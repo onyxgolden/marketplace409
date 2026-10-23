@@ -108,4 +108,40 @@ describe("snapshot builder", () => {
     expect(snap.records.units).toHaveLength(1);
     expect(snap.records.units[0].status).toBe("occupied");
   });
+
+  it("P666-005A: a page that omits next_cursor is not terminal (TERMINAL_UNATTESTED, PARTIAL)", async () => {
+    const adapter = makeAdapter(baseData());
+    const orig = adapter.collect.bind(adapter);
+    adapter.collect = async (ds, req) => {
+      const p = await orig(ds, req);
+      if (ds === "leases") { const { next_cursor, ...rest } = p; return rest; }
+      return p;
+    };
+    const snap = await buildSnapshot({ request: REQUEST, adapter, budget: new Budget(), clock: fixedClock() });
+    expect(snap.consistency).toBe("PARTIAL");
+    expect(snap.collection_errors).toContainEqual({ dataset: "leases", code: "TERMINAL_UNATTESTED" });
+    expect(snap.datasets.leases.complete).toBe(false);
+  });
+
+  it("P666-005A: a dataset that omits its revision is never covered by another dataset's (REVISION_UNATTESTED, PARTIAL)", async () => {
+    const adapter = makeAdapter(baseData());
+    const orig = adapter.collect.bind(adapter);
+    adapter.collect = async (ds, req) => {
+      const p = await orig(ds, req);
+      if (ds === "charges") { const { revision, ...rest } = p; return rest; }
+      return p;
+    };
+    const snap = await buildSnapshot({ request: REQUEST, adapter, budget: new Budget(), clock: fixedClock() });
+    expect(snap.consistency).toBe("PARTIAL");
+    expect(snap.coverage_gaps).toContainEqual(expect.objectContaining({ dataset: "charges", code: "REVISION_UNATTESTED" }));
+    // The other datasets' shared revision does not leak in.
+    expect(snap.source_revision).toBe(null);
+  });
+
+  it("P666-005A: explicit terminal pages with coherent revisions stay CONSISTENT (positive control)", async () => {
+    const snap = await buildSnapshot({ request: REQUEST, adapter: makeAdapter(baseData()), budget: new Budget(), clock: fixedClock() });
+    expect(snap.consistency).toBe("CONSISTENT");
+    expect(snap.source_revision).toBe("rev-1");
+    expect(snap.coverage_gaps).toHaveLength(0);
+  });
 });
