@@ -332,8 +332,8 @@ function PrintSymbols({ design }) {
         const label = inst.tag || sym.label || inst.symbolId;
         const isEquipment = inst.domain === "processEquipment";
         const mw = isEquipment ? manwayLocal(sym, inst) : null;
-        const pkg = isEquipment ? accessPackageLocal(sym, inst) : null;
-        const levels = isEquipment ? downcomerLevels(sym, inst) : [];
+        const pkg = isEquipment ? accessPackageLocal(sym, inst, design) : null;
+        const levels = isEquipment ? downcomerLevels(sym, inst, design) : [];
         return (
           <g key={inst.id} transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`}>
             <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="#ffffff" stroke={ink} strokeWidth={1} />

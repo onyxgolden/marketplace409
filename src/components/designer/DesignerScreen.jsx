@@ -67,7 +67,10 @@ import RackSection from "./RackSection";
 import DowncomerSection from "./DowncomerSection";
 import { developedRunLengthIn } from "@/domains/roomDesigner/pipeCrossings";
 import { manwaySpec, accessPackageLocal } from "@/domains/roomDesigner/vesselAccess";
-import { isVesselSymbol } from "@/domains/roomDesigner/utilityPiping";
+import { isVesselSymbol, UTILITY_SERVICES } from "@/domains/roomDesigner/utilityPiping";
+import { isReducerInstance } from "@/domains/roomDesigner/pipeReducerModel";
+import { anchorsOf } from "@/domains/roomDesigner/pipeAttachments";
+import { unitBoundaryValid } from "@/domains/roomDesigner/firewater";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -1624,6 +1627,57 @@ function PipingPanel({ state, dispatch }) {
         >
           Symbols
         </button>
+      </div>
+
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Unit boundary</h3>
+      <div className="mb-3 space-y-2">
+        <p className="text-[11px] text-gray-500">
+          {Array.isArray(state.design.unitBoundary)
+            ? unitBoundaryValid(state.design)
+              ? "Boundary authored — a simple polygon (firewater stationing is measured along it)."
+              : "Boundary authored but INVALID — it must be a simple polygon with nonzero area."
+            : "No boundary authored — hydrant stationing along the firewater loop is unavailable."}
+        </p>
+        <button
+          onClick={() => {
+            const syms = state.design.symbols || [];
+            if (syms.length === 0) return;
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            for (const inst of syms) {
+              const sym = findSymbol(inst.domain, inst.symbolId);
+              const hw = (inst.widthIn ?? sym?.widthIn ?? 24) / 2;
+              const hh = (inst.depthIn ?? sym?.depthIn ?? 24) / 2;
+              minX = Math.min(minX, inst.x - hw);
+              maxX = Math.max(maxX, inst.x + hw);
+              minY = Math.min(minY, inst.y - hh);
+              maxY = Math.max(maxY, inst.y + hh);
+            }
+            const M = 600;
+            dispatch({
+              type: "SET_UNIT_BOUNDARY",
+              polygon: [
+                { x: minX - M, y: minY - M },
+                { x: maxX + M, y: minY - M },
+                { x: maxX + M, y: maxY + M },
+                { x: minX - M, y: maxY + M },
+              ],
+            });
+          }}
+          className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+        >
+          Set boundary around equipment (50 ft margin)
+        </button>
+        {Array.isArray(state.design.unitBoundary) && (
+          <button
+            onClick={() => dispatch({ type: "SET_UNIT_BOUNDARY", polygon: null })}
+            className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+          >
+            Clear boundary
+          </button>
+        )}
       </div>
 
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">New pipe runs</h3>
@@ -3279,6 +3333,203 @@ export function DoorHandednessFields({ opening, dispatch }) {
 // Selections the copy/paste/flip actions apply to. Sheets and openings have their own panels.
 const ACTIONABLE_SELECTION_KINDS = new Set(["wall", "room", "furniture", "symbol", "pipe", "orgchart", "deck", "house", "group"]);
 
+// R9: reducer transition editor — the placed reducer's declared
+// inlet/outlet sizes, editable after placement (the bound-interface
+// model re-validates the transition against its connections).
+function ReducerSection({ symbol, instance: inst, dispatch }) {
+  if (!isReducerInstance(inst)) return null;
+  const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
+  const inlet = inst.inletSizeIn ?? 12;
+  const outlet = inst.outletSizeIn ?? 6;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Reducer</h3>
+      <label className="block text-xs text-gray-400">
+        Inlet size
+        <select
+          value={inlet}
+          onChange={(e) =>
+            dispatch({
+              type: "SET_REDUCER_SIZES",
+              symbolId: inst.id,
+              inletSizeIn: Number(e.target.value),
+              outletSizeIn: outlet,
+            })
+          }
+          className={selectClass}
+        >
+          {PIPE_DIAMETERS_IN.map((d) => (
+            <option key={d} value={d}>⌀{d}″</option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-xs text-gray-400">
+        Outlet size
+        <select
+          value={outlet}
+          onChange={(e) =>
+            dispatch({
+              type: "SET_REDUCER_SIZES",
+              symbolId: inst.id,
+              inletSizeIn: inlet,
+              outletSizeIn: Number(e.target.value),
+            })
+          }
+          className={selectClass}
+        >
+          {PIPE_DIAMETERS_IN.map((d) => (
+            <option key={d} value={d}>⌀{d}″</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+// R9: directed-spray authoring — the protected-vessel assignment and
+// the authored aim point (the 3D barrel follows the aim; an un-aimed
+// assembly renders its named unresolved state).
+function SpraySection({ design, symbol, instance: inst, dispatch }) {
+  const [aimX, setAimX] = useState(inst.aimAt ? String(inst.aimAt.x) : "");
+  const [aimY, setAimY] = useState(inst.aimAt ? String(inst.aimAt.y) : "");
+  if (inst.domain !== "piping" || inst.symbolId !== "spray-nozzle") return null;
+  const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
+  const vessels = (design.symbols || []).filter((s) => s.domain === "processEquipment");
+  const target = vessels.find((s) => s.id === inst.protects);
+  const applyAim = () => {
+    const x = Number(aimX);
+    const y = Number(aimY);
+    if (aimX !== "" && aimY !== "" && Number.isFinite(x) && Number.isFinite(y)) {
+      dispatch({ type: "SET_SPRAY_AIM", symbolId: inst.id, aimAt: { x, y } });
+    }
+  };
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Directed spray</h3>
+      <label className="block text-xs text-gray-400">
+        Protects (assigned vessel)
+        <select
+          value={inst.protects || ""}
+          onChange={(e) =>
+            dispatch({ type: "ASSIGN_SPRAY_TARGET", symbolId: inst.id, vesselId: e.target.value || null })
+          }
+          className={selectClass}
+        >
+          <option value="">No assigned target</option>
+          {vessels.map((v) => (
+            <option key={v.id} value={v.id}>{v.tag || v.id}</option>
+          ))}
+        </select>
+      </label>
+      <div className="flex gap-2">
+        <label className="block flex-1 text-xs text-gray-400">
+          Aim X (in)
+          <input
+            type="number"
+            step="any"
+            value={aimX}
+            onChange={(e) => setAimX(e.target.value)}
+            onBlur={applyAim}
+            className={selectClass}
+          />
+        </label>
+        <label className="block flex-1 text-xs text-gray-400">
+          Aim Y (in)
+          <input
+            type="number"
+            step="any"
+            value={aimY}
+            onChange={(e) => setAimY(e.target.value)}
+            onBlur={applyAim}
+            className={selectClass}
+          />
+        </label>
+      </div>
+      {target && (
+        <button
+          onClick={() => {
+            setAimX(String(target.x));
+            setAimY(String(target.y));
+            dispatch({ type: "SET_SPRAY_AIM", symbolId: inst.id, aimAt: { x: target.x, y: target.y } });
+          }}
+          className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+        >
+          Aim at {target.tag || target.id} center
+        </button>
+      )}
+      {inst.aimAt && (
+        <button
+          onClick={() => {
+            setAimX("");
+            setAimY("");
+            dispatch({ type: "SET_SPRAY_AIM", symbolId: inst.id, aimAt: null });
+          }}
+          className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+        >
+          Clear aim (renders unresolved)
+        </button>
+      )}
+    </div>
+  );
+}
+
+// R8/R9: generated-component lifecycle on process equipment — the
+// legacy retrofit (one undoable action enables a pre-marker
+// document's components) and per-nozzle tombstone delete/restore.
+function ComponentsSection({ design, symbol, instance: inst, dispatch }) {
+  if (inst.domain !== "processEquipment") return null;
+  if (inst.legacyComponents === true) {
+    return (
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Components</h3>
+        <p className="text-[11px] text-gray-500">
+          This document predates the component model: generated nozzles, manways, and access are
+          switched off for its equipment. Retrofitting enables them in one undoable step; authored
+          geometry is never moved.
+        </p>
+        <button
+          onClick={() => dispatch({ type: "RETROFIT_COMPONENTS" })}
+          className="w-full rounded bg-sky-700 px-2 py-1 text-xs text-white hover:bg-sky-600"
+        >
+          Retrofit generated components
+        </button>
+      </div>
+    );
+  }
+  if (symbol?.tema) return null; // TEMA faces stay byte-identical (R8 gate exemption)
+  const all = anchorsOf({ ...inst, nozzleTombstones: undefined });
+  if (all.length === 0) return null;
+  const live = new Set(anchorsOf(inst).map((a) => a.id));
+  return (
+    <div className="space-y-1">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Nozzles</h3>
+      {all.map((a) => {
+        const deleted = !live.has(a.id);
+        return (
+          <div key={a.id} className="flex items-center justify-between text-xs text-gray-300">
+            <span>
+              {a.id} · ⌀{a.sizeIn}″{deleted ? " (deleted)" : ""}
+            </span>
+            <button
+              onClick={() =>
+                dispatch({
+                  type: "SET_SYMBOL_NOZZLE_TOMBSTONE",
+                  symbolId: inst.id,
+                  anchorId: a.id,
+                  deleted: !deleted,
+                })
+              }
+              className="rounded bg-gray-800 px-2 py-0.5 text-[11px] text-gray-200 hover:bg-gray-700"
+            >
+              {deleted ? "Restore" : "Delete"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SelectionPanel(props) {
   const kind = props.state.selection?.kind;
   return (
@@ -3572,6 +3823,37 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <label className="block text-xs text-gray-400">
+          Utility identity
+          <select
+            value={run.utility || ""}
+            onChange={(e) =>
+              dispatch({ type: "SET_PIPE_UTILITY", pipeId: run.id, utility: e.target.value || null })
+            }
+            className={selectClass}
+          >
+            <option value="">None (process / unassigned)</option>
+            {UTILITY_SERVICES.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+            <option value="firewater">Firewater</option>
+          </select>
+        </label>
+        {run.utility && (
+          <label className="block text-xs text-gray-400">
+            Source designation
+            <select
+              value={run.sourceOf || ""}
+              onChange={(e) =>
+                dispatch({ type: "SET_PIPE_SOURCE", pipeId: run.id, serviceId: e.target.value || null })
+              }
+              className={selectClass}
+            >
+              <option value="">Not a designated source</option>
+              <option value={run.utility}>Designated {run.utility} source / boundary inlet</option>
+            </select>
+          </label>
+        )}
         <SystemMembershipSection design={design} kind="pipe" member={run} fallbackColor="#7dd3fc" dispatch={dispatch} />
         {["start", "end"].map((end) => {
           const ref = run.attachments?.[end];
@@ -3633,13 +3915,30 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
           </select>
         </label>
         <SystemMembershipSection design={design} kind="symbol" member={inst} fallbackColor={symbol.color || "#60a5fa"} dispatch={dispatch} />
-        {symbol.manway && (
+        {symbol.manway && manwaySpec(symbol, inst) && (
           <>
             <Row label="Manway sill" value={feetInchesLabel(manwaySpec(symbol, inst).sillIn)} />
             <Row
               label="Access"
-              value={accessPackageLocal(symbol, inst) ? "Steel catwalk + ladder" : "Grade (sill ≤ 2′-0″)"}
+              value={accessPackageLocal(symbol, inst, design) ? "Steel catwalk + ladder" : "Grade (sill ≤ 2′-0″)"}
             />
+            <button
+              onClick={() => dispatch({ type: "SET_SYMBOL_MANWAY_DELETED", symbolId: inst.id, deleted: true })}
+              className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+            >
+              Delete manway
+            </button>
+          </>
+        )}
+        {symbol.manway && !manwaySpec(symbol, inst) && (
+          <>
+            <Row label="Manway" value="Deleted (tombstone)" />
+            <button
+              onClick={() => dispatch({ type: "SET_SYMBOL_MANWAY_DELETED", symbolId: inst.id, deleted: false })}
+              className="w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+            >
+              Restore manway
+            </button>
           </>
         )}
         {isVesselSymbol(symbol) && (
@@ -3663,6 +3962,9 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
             </select>
           </label>
         )}
+        <ReducerSection symbol={symbol} instance={inst} dispatch={dispatch} />
+        <SpraySection design={design} symbol={symbol} instance={inst} dispatch={dispatch} />
+        <ComponentsSection design={design} symbol={symbol} instance={inst} dispatch={dispatch} />
         <DowncomerSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RackSection symbol={symbol} instance={inst} dispatch={dispatch} />
