@@ -59,7 +59,10 @@ function d9Design() {
   d = placeReducer(d, 600, 0, { id: "red-fwb", inletSizeIn: 12, outletSizeIn: 6 });
   // Supply take-off to the directed-spray assembly (D668-006: a valid
   // assignment needs a verified supply path).
-  d = addPipeRun(d, [{ x: 900, y: 0 }, { x: 900, y: 888 }], {
+  // F3: the take-off ends ON the assembly's inlet face (900, 900) —
+  // an authored inlet connection must land on the face, not within
+  // the old 12-in proximity tolerance.
+  d = addPipeRun(d, [{ x: 900, y: 0 }, { x: 900, y: 900 }], {
     id: "fw-spray-takeoff",
     diameterIn: 6,
     utility: "firewater",
@@ -82,7 +85,14 @@ function d9Design() {
     ...d,
     symbols: d.symbols.map((s) =>
       s.id === "fa-1"
-        ? { ...s, protects: "v-1", aimAt: { x: 100, y: 100 } }
+        ? {
+            ...s,
+            protects: "v-1",
+            aimAt: { x: 100, y: 100 },
+            // F3: the take-off end is authored as the inlet connection.
+            inletRunId: "fw-spray-takeoff",
+            inletEnd: "end",
+          }
         : s.id === "v-1"
           ? { ...s, flammable: true }
           : s,
