@@ -418,6 +418,9 @@ describe("red reservation", () => {
     expect(isReservedRed("#7dd3fc")).toBe(false); // default pipe blue
   });
 
+  // Builds the full FCCU sample (~4-6 s of CPU): the 5 s default
+  // timeout tips over under full-suite parallel load with no
+  // assertion failing, so this test carries an explicit timeout.
   it("no piping color in the FCCU sample is red except firewater", async () => {
     const { buildFccuPlotPlan } = await import("./fccuPlotPlanSample");
     const { effectiveColor } = await import("./designSystems");
@@ -432,5 +435,5 @@ describe("red reservation", () => {
       }
     }
     expect(design.pipes.some((p) => p.utility === "firewater")).toBe(true);
-  });
+  }, 30000);
 });
