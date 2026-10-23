@@ -32,13 +32,15 @@ import {
 } from "./homeProject";
 import {
   anchorsOf,
+  connectionFaceForAnchor,
   detectRunAttachments,
   detectRunJunctions,
   reconcilePipeAttachments,
   reconcileRunJunctions,
 } from "./pipeAttachments";
-import { applyCrossingJogs } from "./pipeCrossings";
-import { placeReducer } from "./pipeReducerModel";
+import { applyCrossingJogs, physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
+import { findSymbol } from "./symbolRegistry";
+import { boundReducerAt, placeReducer } from "./pipeReducerModel";
 import { setDowncomerLevelProps } from "./downcomers";
 import { UTILITY_HEADER_DIAMETER_IN, UTILITY_SERVICES } from "./utilityPiping";
 import { FIREWATER_MAIN_DIAMETER_IN, HYDRANT_BRANCH_DIAMETER_IN } from "./firewater";
@@ -335,12 +337,16 @@ function addPiping(design, systemIds) {
       { diameterIn: 12, service: "Fractionator bottoms to rundown", systemName: "Reactor effluent" },
     );
   }
-  // R1 — reactor effluent to the fractionator.
+  // R1 — reactor effluent to the fractionator. The approach turns
+  // north at x=310 ft and enters the west-face feed nozzle along its
+  // normal at the nozzle's own row: routing the corner at the column
+  // face (x=316 ft) threads the line through the bottoms draw's
+  // descent corridor beside the level-1 platform.
   {
     const start = anchor("R-101", "effluent-out");
     const end = anchor("T-101", "feed-in");
     run(
-      [anchorPt(start), pt(196, 160), pt(316, 160), anchorPt(end)],
+      [anchorPt(start), pt(196, 160), pt(310, 160), { x: 310 * FT, y: end.y }, anchorPt(end)],
       { diameterIn: 16, service: "Reactor effluent to fractionator", systemName: "Reactor effluent" },
     );
   }
@@ -406,9 +412,20 @@ function addPiping(design, systemIds) {
   {
     const start = anchor("T-101", "overhead-out");
     const end = anchor("V-101", "inlet");
+    // The overhead line exits EAST along the nozzle's own row before
+    // turning south: dropping straight down the column centerline, or
+    // diagonally across the south face, would cross the downcomer
+    // ladder cages on the manway face (R5). The east leg holds near
+    // the nozzle elevation (authored 200 in at the corner) and the
+    // descent happens along the east lane, clear of the level decks.
     run(
-      [anchorPt(start), pt(320, 255), pt(330, 255), anchorPt(end)],
-      { diameterIn: 10, service: "Overhead vapors — wet gas / gasoline-range material", systemName: "Overhead & reflux" },
+      [anchorPt(start), { x: 3900, y: 1862 }, pt(325, 255), pt(330, 255), anchorPt(end)],
+      {
+        diameterIn: 10,
+        service: "Overhead vapors — wet gas / gasoline-range material",
+        systemName: "Overhead & reflux",
+        elevIn: [null, 200, null, null, null],
+      },
     );
   }
   // G2 — reflux drum liquid to the suction header (the end lands
@@ -459,17 +476,39 @@ function addPiping(design, systemIds) {
   }
   // G6 — compressor discharge to the absorber.
   // The north-south segment at x=350 rides at 40 in to clear the
-  // east-west process runs below (D668-002).
+  // east-west process runs below (D668-002). The climb to the
+  // absorber's high gas inlet is a steep 12 in spool at x=4420-4432
+  // (east of the absorber's platform decks): the grade leg runs east
+  // under the deck elevations, climbs, and returns west at the
+  // nozzle elevation. (A zero-plan riser pair cannot be authored
+  // here — addPipeRun dedupes consecutive identical points.)
   {
     const start = anchor("K-102", "discharge-out");
     const end = anchor("T-102", "gas-in");
+    // The climb elevation is the gas-in FACE's elevation (the shared
+    // face model — anchorsOf points carry no elevation).
+    const endInst = instanceByTag(next, "T-102");
+    const endFace = connectionFaceForAnchor(
+      findSymbol(endInst.domain, endInst.symbolId),
+      endInst,
+      end.id,
+    );
     run(
-      [anchorPt(start), pt(230, 364), pt(350, 364), { x: 350 * FT, y: end.y }, anchorPt(end)],
+      [
+        anchorPt(start),
+        pt(230, 364),
+        pt(350, 364),
+        { x: 350 * FT, y: end.y },
+        { x: 4420, y: end.y },
+        { x: 4432, y: end.y },
+        { x: 4356, y: end.y },
+        anchorPt(end),
+      ],
       {
         diameterIn: 6,
         service: "Compressor discharge to absorber",
         systemName: "Wet gas",
-        elevIn: [null, 40, 40, 40, null],
+        elevIn: [null, 40, 40, 40, 40, endFace.elevationIn, endFace.elevationIn, endFace.elevationIn],
       },
     );
   }
@@ -552,11 +591,14 @@ function addPiping(design, systemIds) {
       systemName: "Relief",
     });
   }
-  // X1 — fractionator relief branch into the header.
+  // X1 — fractionator relief branch into the header. The southward
+  // leg runs at x=358.3 ft, west of the absorber's utility-fan port
+  // zone: at x=366 ft its crossing jog over the fan lines landed the
+  // jog's downcomer inside the water line's envelope.
   {
     const start = anchor("T-101", "relief-out");
     run(
-      [anchorPt(start), { x: start.x, y: 146 * FT }, pt(366, 146), pt(366, 180), pt(380, 180)],
+      [anchorPt(start), { x: start.x, y: 146 * FT }, pt(358.3, 146), pt(358.3, 180), pt(380, 180)],
       { diameterIn: 12, service: "Fractionator relief branch", systemName: "Relief" },
     );
   }
@@ -588,11 +630,20 @@ function addPiping(design, systemIds) {
     );
   }
   // U2 — cooling water return, from the last exchanger in the chain.
+  // Its southward leg at x=140 ft is authored at 160 in so it passes
+  // UNDER the utility headers' tier (185 in) and the supply leg with
+  // real separation, instead of relying on a construction-time jog
+  // flank that grazed both (R3: one shared physical profile).
   {
     const start = anchor("E-104", "cooling-water-out");
     run(
       [anchorPt(start), { x: start.x, y: 248 * FT }, pt(140, 248), pt(140, 379), pt(107, 379)],
-      { diameterIn: 10, service: "Cooling water return", systemName: "Cooling water" },
+      {
+        diameterIn: 10,
+        service: "Cooling water return",
+        systemName: "Cooling water",
+        elevIn: [null, null, 160, 160, 160],
+      },
     );
   }
   return next;
@@ -691,7 +742,10 @@ function addUtilities(design, systemIds) {
   //    elevation at each anchor — no two runs ever share a line at
   //    the same elevation.
   const T102_LANE_FT = { "plant-water": 395, "plant-air": 398, nitrogen: 401 };
-  const T102_APPROACH_FT = { "plant-water": 152.5, "plant-air": 158, nitrogen: 164 };
+  // Fan shaping (see the T-102 branch below): nitrogen (easternmost
+  // port) takes the NEAREST row and a shallow line; plant-air takes
+  // the far row; plant-water runs a long diagonal at port elevation.
+  const T102_APPROACH_FT = { "plant-water": 159.9, "plant-air": 164, nitrogen: 156 };
   const T102_APPROACH_ELEV_IN = { "plant-water": 24, "plant-air": 36, nitrogen: 48 };
   for (const tag of ["R-101", "R-102", "T-101", "T-102", "V-101", "V-102"]) {
     for (const service of UTILITY_SERVICES) {
@@ -701,19 +755,36 @@ function addUtilities(design, systemIds) {
       const anchorFt = { x: end.x / FT, y: end.y / FT };
       let points;
       let elevIn;
+      let tapXFt = null;
       if (tag === "T-102") {
         const lane = T102_LANE_FT[service.id];
         const approachY = T102_APPROACH_FT[service.id];
         const approachElev = T102_APPROACH_ELEV_IN[service.id];
-        // Transit at header tier to clear process runs below; drop to
-        // the approach elevation at the fan corner near the vessel.
+        // Transit at header tier to clear process runs below, then
+        // fan into the base. The fan lines are shaped so no two final
+        // approaches cross inside the port zone (crossings there get
+        // jog-cut, and a jog on a final leg destroys its normal
+        // approach): nitrogen (easternmost port) takes the nearest
+        // row and a shallow line that never crosses plant-air's
+        // corridor; plant-air takes the far row, holds its approach
+        // elevation (36 in) to a mid waypoint — crossing plant-water
+        // with the full stagger — and drops only on its final leg;
+        // plant-water runs a long diagonal at the port elevation
+        // (24 in) with a waypoint that keeps its final leg north of
+        // the absorber's downcomer ladder cage (R5). The elevation
+        // stagger (24/36/48) carries the separation at the crossings
+        // that remain.
         points = [pt(lane, yFt), pt(lane, yFt - 1), pt(lane, approachY)];
         elevIn = [tier, tier, tier];
-        if (approachY !== anchorFt.y) {
-          // Fan corner: the drop to port elevation happens HERE, so
-          // the final stub reaches the flange at exactly 24 in.
-          points.push(pt(anchorFt.x, approachY));
-          elevIn.push(24);
+        if (service.id === "plant-air") {
+          points.push(pt(anchorFt.x + 10, approachY - 1), pt(365, 154.6));
+          elevIn.push(approachElev, approachElev);
+        } else if (service.id === "plant-water") {
+          points.push(pt(anchorFt.x + 10, approachY - 1), pt(364, 154.4));
+          elevIn.push(approachElev, approachElev);
+        } else {
+          points.push(pt(anchorFt.x + 10, approachY - 1));
+          elevIn.push(approachElev);
         }
         points.push(anchorPt(end));
         elevIn.push(24);
@@ -732,6 +803,22 @@ function addUtilities(design, systemIds) {
           anchorPt(end),
         ];
         elevIn = [tier, tier, tier, tier, tier, 24, 24];
+      } else if (tag === "T-101" && service.id === "plant-air") {
+        // The plant-air port sits 10 in east of the column centerline —
+        // its meridian passes through the downcomer ladder cage south
+        // of the face, and every south approach to it threads the
+        // cage's clearance box. The drop transits on a WEST lane and
+        // approaches along y=155 ft, north of the cage, so only the
+        // short normal stub crosses the face row (R5/R2).
+        const laneFt = 313.3;
+        points = [
+          pt(laneFt, yFt),
+          pt(laneFt, yFt - 1),
+          pt(laneFt, 155),
+          anchorPt(end),
+        ];
+        elevIn = [tier, 18, 18, 24];
+        tapXFt = laneFt;
       } else {
         // T-101's utilities transit south at 18 in elevation — below the
         // process pipe rack (±26 in and up) — then rise to the port
@@ -766,7 +853,7 @@ function addUtilities(design, systemIds) {
       // PR668-001: the 2-in header to 1-in drop transition at the tap
       // gets its modeled reducer — a connected component with declared
       // sizes, in the catalog and every view.
-      const tapXft = tag === "T-102" ? T102_LANE_FT[service.id] : anchorFt.x;
+      const tapXft = tag === "T-102" ? T102_LANE_FT[service.id] : (tapXFt ?? anchorFt.x);
       next = placeReducer(next, tapXft * FT, yFt * FT, {
         id: fccuId("reducer"),
         inletSizeIn: UTILITY_HEADER_DIAMETER_IN,
@@ -879,7 +966,11 @@ function addFirewater(design, systemIds) {
       service: `Fire hydrant FH-${i + 1} branch`,
       systemName: "Firewater",
       utility: "firewater",
-      elevationIn: -36,
+      // The branch rises from the buried main (-36 in) to the
+      // hydrant's inlet at grade (0 in): the modeled riser R6 binds
+      // the supply check to, not a flat buried run ending beside the
+      // hydrant body.
+      elevIn: [-36, 0],
     });
     // PR668-001: the 12-in main to 6-in hydrant branch transition at
     // the tap gets its modeled reducer (Jason's planning default: 6
@@ -932,7 +1023,9 @@ function addFirewater(design, systemIds) {
       service: `Firewater take-off to ${tag}`,
       systemName: "Firewater",
       utility: "firewater",
-      elevationIn: -36,
+      // Buried at the tap, rising to the assembly's inlet elevation
+      // at the spray end (0 in) — the modeled riser R6 requires.
+      elevIn: [-36, 0],
     });
     // PR668-001: the 12-in main to 6/4-in monitor take-off transition
     // at the tap gets its modeled reducer.
@@ -956,6 +1049,77 @@ function configureFireProtection(design) {
   };
 }
 
+/**
+ * R2 approach alignment for the fixture: a run end attached to a
+ * non-vertical equipment face must travel along the face normal for
+ * its final approach (the compatibility check enforces a 20 deg
+ * cone). The fixture's grid routing turns corners at right angles,
+ * which leaves many ends entering their faces diagonally; this pass
+ * inserts a short stub point on the normal ray just outside the face
+ * so the final segment IS the normal approach. The endpoint itself
+ * never moves. When the run carries per-vertex elevations, the stub
+ * vertex is pinned to the elevation the original segment has at the
+ * stub's plan position (interpolated on the shared physical route) —
+ * an unpinned stub vertex would read the far segment's elevation and
+ * drop the approach from nozzle elevation to grade across the stub.
+ */
+const APPROACH_STUB_MAX_IN = 14;
+function alignApproachStubs(design) {
+  let next = design;
+  const changedIds = [];
+  const cosTol = Math.cos((20 * Math.PI) / 180);
+  for (const run of [...(next.pipes || [])]) {
+    for (const endName of ["start", "end"]) {
+      const att = run.attachments?.[endName];
+      if (!att) continue;
+      const current = (next.pipes || []).find((r) => r.id === run.id);
+      if (!current) continue;
+      const inst = (next.symbols || []).find((s) => s.id === att.symbolId);
+      if (!inst) continue;
+      const symbol = findSymbol(inst.domain, inst.symbolId);
+      if (!symbol) continue;
+      const face = connectionFaceForAnchor(symbol, inst, att.anchorId);
+      if (!face || !face.normal || face.vertical) continue;
+      const pts = current.points || [];
+      if (pts.length < 2) continue;
+      const idx = endName === "start" ? 0 : pts.length - 1;
+      const endPt = pts[idx];
+      const neighbor = pts[endName === "start" ? 1 : pts.length - 2];
+      const segLen = Math.hypot(neighbor.x - endPt.x, neighbor.y - endPt.y);
+      if (!(segLen >= 12)) continue;
+      const travelDot =
+        ((endPt.x - neighbor.x) / segLen) * face.normal.x +
+        ((endPt.y - neighbor.y) / segLen) * face.normal.y;
+      if (travelDot <= -cosTol) continue; // already a normal approach
+      const stubLen = Math.min(APPROACH_STUB_MAX_IN, segLen * 0.5);
+      if (stubLen < 6) continue;
+      const stub = {
+        x: face.x + face.normal.x * stubLen,
+        y: face.y + face.normal.y * stubLen,
+      };
+      const insertAt = endName === "start" ? 1 : pts.length - 1;
+      const points = [...pts.slice(0, insertAt), stub, ...pts.slice(insertAt)];
+      let elevIn = current.elevIn;
+      if (Array.isArray(elevIn)) {
+        const route = physicalRouteIn(next, current);
+        const zA = route[idx]?.zIn;
+        const zB = route[endName === "start" ? 1 : route.length - 2]?.zIn;
+        const zStub =
+          Number.isFinite(zA) && Number.isFinite(zB)
+            ? zA + (zB - zA) * (stubLen / segLen)
+            : null;
+        elevIn = [...elevIn.slice(0, insertAt), zStub, ...elevIn.slice(insertAt)];
+      }
+      next = {
+        ...next,
+        pipes: next.pipes.map((r) => (r.id === current.id ? { ...r, points, elevIn } : r)),
+      };
+      if (!changedIds.includes(current.id)) changedIds.push(current.id);
+    }
+  }
+  return { design: next, changedIds };
+}
+
 function buildPlotDesign() {
   const systemIds = {};
   let design = createEmptyDesign("Plot Plan");
@@ -969,6 +1133,14 @@ function buildPlotDesign() {
     symbols: design.symbols.map((s) =>
       s.tag === "V-102" ? { ...s, manway: { fx: 0, fy: 1, diameterIn: 24, sillIn: 24 } } : s,
     ),
+  };
+  // T-102 (absorber): authored 30 in head so its terminal downcomer
+  // assembly (top level at the shell top + the 24 in manway) fits
+  // inside the MODELED head (R4) — the h/(2r) dish estimate for the
+  // placed 60 in shell is only ~16.5 in.
+  design = {
+    ...design,
+    symbols: design.symbols.map((s) => (s.tag === "T-102" ? { ...s, headIn: 30 } : s)),
   };
   design = configureFractionator(design);
   design = configureFireProtection(design);
@@ -984,6 +1156,14 @@ function buildPlotDesign() {
   design = addPiping(design, systemIds);
   design = addUtilities(design, systemIds);
   design = addFirewater(design, systemIds);
+  // The stub pass re-routes final approaches; re-run the crossing-jog
+  // pass for the runs it touched so any stub crossing another run
+  // gets its elevation jog, exactly as construction-time runs did.
+  const stubbed = alignApproachStubs(design);
+  design = stubbed.design;
+  for (const runId of stubbed.changedIds) {
+    design = applyCrossingJogs(design, runId);
+  }
   // Final junction pass: runs added early never saw runs added later —
   // re-detect junctions for every run so endpoint-T contacts (e.g. a
   // rundown landing on the pump suction header) are modeled, not
@@ -995,7 +1175,11 @@ function buildPlotDesign() {
   }
   design = reconcileRunJunctions(design);
   // Place reducers at size-mismatched junctions discovered by the final
-  // pass (PR668-001: every transition gets its modeled reducer).
+  // pass (PR668-001 + R1: every transition gets its modeled reducer,
+  // oriented so its owned interfaces bind the tap — the branch-facing
+  // port carries the branch's size, at the tap's elevation). A tap is
+  // skipped only when a reducer already BINDS it (boundReducerAt),
+  // never merely because one sits nearby.
   const byId = new Map((design.pipes || []).map((p) => [p.id, p]));
   for (const pipe of design.pipes || []) {
     for (const end of ["start", "end"]) {
@@ -1006,18 +1190,33 @@ function buildPlotDesign() {
       const d1 = pipe.diameterIn ?? 2;
       const d2 = host.diameterIn ?? 2;
       if (d1 === d2) continue;
-      const pt = end === "start" ? pipe.points[0] : pipe.points[pipe.points.length - 1];
-      // Skip if a reducer already covers this tap.
-      const covered = (design.symbols || []).some(
-        (s) =>
-          s.symbolId === "reducer" &&
-          Math.hypot(s.x - pt.x, s.y - pt.y) <= 1,
-      );
-      if (covered) continue;
+      const idx = end === "start" ? 0 : pipe.points.length - 1;
+      const pt = pipe.points[idx];
+      const neighbor = pipe.points[end === "start" ? 1 : pipe.points.length - 2];
+      if (!neighbor) continue;
+      const branchAxisDeg =
+        (Math.atan2(neighbor.y - pt.y, neighbor.x - pt.x) * 180) / Math.PI;
+      const elevIn = vertexElevationsForDesign(design, pipe)[idx];
+      const bound = boundReducerAt(design, {
+        x: pt.x,
+        y: pt.y,
+        elevationIn: elevIn,
+        sides: [
+          { sizeIn: d1, dirDeg: branchAxisDeg },
+          { sizeIn: d2, dirDeg: branchAxisDeg + 180 },
+        ],
+      });
+      if (bound) continue;
+      const inletSizeIn = Math.max(d1, d2);
+      const outletSizeIn = Math.min(d1, d2);
+      // The outlet (smaller side) faces the branch when the branch is
+      // the smaller side; otherwise it faces the host.
+      const rotationDeg = d1 === outletSizeIn ? branchAxisDeg : branchAxisDeg + 180;
       design = placeReducer(design, pt.x, pt.y, {
         id: fccuId("reducer"),
-        inletSizeIn: Math.max(d1, d2),
-        outletSizeIn: Math.min(d1, d2),
+        inletSizeIn,
+        outletSizeIn,
+        rotationDeg,
       });
     }
   }

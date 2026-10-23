@@ -422,7 +422,11 @@ function clippedZRange(a, b, corners) {
 function segmentEntersDeckBox(a, b, corners, pipeR, deckElevationIn) {
   const inside = clippedZRange(a, b, corners);
   if (!inside) return false;
-  const band = pipeR + ACCESS_WORKING_CLEARANCE_IN;
+  // The obstruction band around a deck's elevation: the pipe's own
+  // radius plus 6 in of working clearance (the round-1 deck rule —
+  // ACCESS_WORKING_CLEARANCE_IN governs deck PLACEMENT envelopes,
+  // not this band).
+  const band = pipeR + 6;
   return inside.zMax >= deckElevationIn - band && inside.zMin <= deckElevationIn + band;
 }
 
@@ -450,8 +454,8 @@ function deckObstruction(design, ownerId, deck, { inflated = true, skipOwnerAnch
     // clearance radius, tested exactly (see segmentEntersDeckBox).
     const box = deckCorners({
       ...deck,
-      widthIn: deck.widthIn + (by + pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
-      depthIn: deck.depthIn + (by + pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+      widthIn: deck.widthIn + (by + pipeR + 6) * 2,
+      depthIn: deck.depthIn + (by + pipeR + 6) * 2,
     });
     for (let i = 0; i + 1 < route.length; i += 1) {
       if (segmentEntersDeckBox(route[i], route[i + 1], box, pipeR, deck.elevationIn)) {
@@ -504,10 +508,10 @@ function ladderObstruction(design, ladder) {
       cx: ladder.cx,
       cy: ladder.cy,
       angleDeg: ladder.angleDeg,
-      widthIn: ladder.widthIn + (pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
-      depthIn: 6 + (pipeR + ACCESS_WORKING_CLEARANCE_IN) * 2,
+      widthIn: ladder.widthIn + (pipeR + 6) * 2,
+      depthIn: 6 + (pipeR + 6) * 2,
     });
-    const band = pipeR + ACCESS_WORKING_CLEARANCE_IN;
+    const band = pipeR + 6;
     for (let i = 0; i + 1 < route.length; i += 1) {
       const inside = clippedZRange(route[i], route[i + 1], box);
       if (!inside) continue;
