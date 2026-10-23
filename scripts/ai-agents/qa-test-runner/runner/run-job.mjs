@@ -25,7 +25,8 @@
  *     stderr with exit code 2.
  */
 
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readlinkSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readlinkSync, realpathSync, readSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { O_DIRECTORY, O_NOFOLLOW } from "node:constants";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { runJob, canonicalJson, reportToMarkdown, BUDGET_LIMITS } from "../src/index.js";
 
@@ -176,7 +177,8 @@ async function main() {
   if (mdOut && !refusedWrites.has("--markdown-out")) writes.push(["--markdown-out", mdOut, reportToMarkdown(finalReport) + "\n"]);
   for (const [flag, path, content] of writes) {
     try {
-      writeFileSync(path, content);
+      // Q665-002A.1: never truncate an existing destination inode.
+      installOutputFile(job, path, content);
     } catch (e) {
       console.error(`[runner] cannot write ${flag} file ${path}: ${e.message}`);
       exitCode = 2;
@@ -265,6 +267,139 @@ function containmentRefusal(job, destPath) {
     return `path ${destPath} is inside the target checkout`;
   }
   return null;
+}
+
+let installSeq = 0;
+
+/**
+ * Install one output file without ever truncating an existing
+ * destination inode (Q665-002A.1) and without letting a concurrent
+ * directory swap redirect the write (Q665-002A.2).
+ *
+ * Canonical paths resolve symbolic links but NOT hard-link identity,
+ * so a destination that is a hard link to a file inside the evidenced
+ * checkout passes containment and a plain writeFileSync then mutates
+ * the checkout in place through the shared inode (the reviewer probe
+ * overwrote the checkout's tracked package.json exactly this way).
+ *
+ * Instead the content is written to a no-follow temporary file in the
+ * canonical destination directory and atomically renamed over the
+ * destination: the old directory entry — and any inode it shared —
+ * is replaced, never truncated, so the checkout's bytes and Git
+ * status cannot change through an output path.
+ *
+ * Q665-002A.2: atomic replacement alone is not enough. The
+ * destination directory was stat'ed and then used by pathname, so
+ * renaming the directory aside and replacing it with a symlink to
+ * the evidenced checkout between the stat and the temp open/rename
+ * smuggled the write into the checkout (reviewer probe:
+ * CLI report REFUSED but the checkout's tracked package.json got
+ * replaced by report JSON). A repeated pathname check cannot close
+ * that race.
+ *
+ * The directory is therefore anchored to a verified handle identity:
+ * it is opened with O_DIRECTORY|O_NOFOLLOW (a symlink final
+ * component fails the open outright), its kernel-resolved identity is
+ * read back through /proc/self/fd and required to equal the
+ * canonical directory validated above (an ancestor or directory
+ * swap shows up as a different resolved path — or a "(deleted)"
+ * suffix — and refuses), and every subsequent operation (temp
+ * creation, rename, cleanup) is issued relative to that handle
+ * through /proc/self/fd/<fd>, which the kernel resolves against the
+ * handle's own dentry. A swap before the open fails the open or the
+ * identity check; a swap after the open cannot redirect
+ * handle-relative operations. Any failure refuses the write with a
+ * thrown error, which the caller reports as exit 2 — never a write
+ * to an unvalidated location.
+ */
+function installOutputFile(job, destPath, content) {
+  const why = containmentRefusal(job, destPath);
+  if (why) throw new Error(`refusing write into the evidenced tree: ${why}`);
+  const canon = canonicalDest(destPath);
+  if (!canon) throw new Error(`refusing write: cannot canonicalize destination ${destPath}`);
+  const dir = dirname(canon);
+  const base = basename(canon);
+
+  // Q665-002A.2: anchor the destination directory to a verified
+  // handle identity before touching any pathname beneath it.
+  let dirFd;
+  try {
+    dirFd = openSync(dir, O_DIRECTORY | O_NOFOLLOW);
+  } catch (e) {
+    throw new Error(`refusing write: cannot anchor output directory ${dir}: ${e.message}`);
+  }
+  try {
+    let dirStat;
+    try {
+      dirStat = fstatSync(dirFd);
+    } catch (e) {
+      throw new Error(`refusing write: cannot stat anchored output directory ${dir}: ${e.message}`);
+    }
+    if (!dirStat.isDirectory()) {
+      throw new Error(`refusing write: anchored output directory ${dir} is not a directory`);
+    }
+    let kernelDir;
+    try {
+      kernelDir = readlinkSync(`/proc/self/fd/${dirFd}`);
+    } catch (e) {
+      throw new Error(`refusing write: cannot resolve anchored output directory ${dir}: ${e.message}`);
+    }
+    if (kernelDir.endsWith(" (deleted)")) {
+      throw new Error(`refusing write: output directory ${dir} was removed during installation`);
+    }
+    if (kernelDir !== dir) {
+      throw new Error(
+        `refusing write: output directory identity changed during installation (expected ${dir}, opened ${kernelDir})`
+      );
+    }
+
+    // Every operation below is relative to dirFd through
+    // /proc/self/fd, so a pathname swap after this point cannot
+    // redirect the write.
+    const via = `/proc/self/fd/${dirFd}`;
+    const buf = Buffer.from(content, "utf8");
+    let lastErr = null;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const tmpName = `.qa-runner-out-${process.pid}-${installSeq++}.tmp`;
+      const tmpVia = `${via}/${tmpName}`;
+      let fd;
+      try {
+        fd = openSync(tmpVia, "wx", 0o600);
+      } catch (e) {
+        if (e && e.code === "EEXIST") {
+          lastErr = e;
+          continue;
+        }
+        throw new Error(`cannot create temp output file in ${dir}: ${e.message}`);
+      }
+      try {
+        writeSync(fd, buf, 0, buf.length, null);
+        fsyncSync(fd);
+        closeSync(fd);
+        renameSync(tmpVia, `${via}/${base}`);
+        return;
+      } catch (e) {
+        try {
+          closeSync(fd);
+        } catch {
+          /* already closed */
+        }
+        try {
+          unlinkSync(tmpVia);
+        } catch {
+          /* best effort */
+        }
+        throw new Error(`cannot install output file ${destPath}: ${e.message}`);
+      }
+    }
+    throw new Error(`cannot create temp output file in ${dir}: ${lastErr ? lastErr.message : "attempts exhausted"}`);
+  } finally {
+    try {
+      closeSync(dirFd);
+    } catch {
+      /* best effort */
+    }
+  }
 }
 
 await main();

@@ -19,5 +19,5 @@ export { runJob, resolveHead, snapshotWorkingTree, vitestResolvable, isolationAv
 export { detectIsolation, buildIsolatedSpawn, scrubbedEnv } from "./isolation.js";
 export { canonicalize, canonicalJson, AGENT_ID, SCHEMA_VERSION } from "./report.js";
 export { refusalReport, completedReport, emptySuiteEntry, computeTotals } from "./report.js";
-export { enforceReportBytes, minimalEnvelope, reportBytes } from "./report-bounds.js";
+export { enforceReportBytes, minimalEnvelope, reportBytes, validateReducedEnvelope } from "./report-bounds.js";
 export { reportToMarkdown } from "./markdown.js";

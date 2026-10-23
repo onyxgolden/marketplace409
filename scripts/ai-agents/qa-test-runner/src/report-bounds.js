@@ -17,7 +17,7 @@
 
 import { MIN_REPORT_BYTES } from "./schemas.js";
 import { Buffer } from "node:buffer";
-import { canonicalJson, AGENT_ID, SCHEMA_VERSION } from "./report.js";
+import { canonicalJson, AGENT_ID, SCHEMA_VERSION, computeTotals } from "./report.js";
 
 const ZERO_TOTALS = Object.freeze({
   suites_total: 0,
@@ -33,9 +33,13 @@ const ZERO_TOTALS = Object.freeze({
 });
 
 /**
- * The minimal envelope: identity + outcome + one truncation diagnostic.
- * No suites, no bulk. Its canonical size is the floor every admitted
- * max_report_bytes must clear (asserted by the test suite).
+ * The minimal envelope: an explicit nonpassing truncation refusal
+ * (Q665-005A.1). It claims no identity and no evidence — no head pin,
+ * no checkout head, no suites, zero totals — and it never carries a
+ * green verdict: a minimal envelope is REFUSED/REPORT_TRUNCATED, not
+ * a detached ALL_SUITES_PASS receipt over invented zero counters.
+ * Its canonical size is the floor every admitted max_report_bytes
+ * must clear (asserted by the test suite).
  */
 export function minimalEnvelope(report) {
   return {
@@ -46,14 +50,14 @@ export function minimalEnvelope(report) {
     target: null,
     head_pin: null,
     checkout_head: null,
-    status: report?.status ?? "REFUSED",
-    verdict: report?.verdict ?? "REFUSED",
-    reason_code: report?.reason_code ?? "REPORT_TRUNCATED",
+    status: "REFUSED",
+    verdict: "REFUSED",
+    reason_code: "REPORT_TRUNCATED",
     diagnostics: [
       {
         code: "REPORT_TRUNCATED",
         path: "$",
-        message: "serialized report exceeded its byte budget; body replaced by this minimal envelope",
+        message: "serialized report exceeded its byte budget; the report body could not be preserved, so no outcome is claimed — this is an explicit truncation refusal, not an executed result",
       },
     ],
     isolation: null,
@@ -64,12 +68,30 @@ export function minimalEnvelope(report) {
 
 /**
  * Shrink a report to its outcome skeleton: identity fields, the
- * outcome (status/verdict/reason_code preserved exactly), a single
- * REPORT_TRUNCATED diagnostic, per-suite id/status/reason/counts, and
- * totals. Deterministic: the same over-budget report always shrinks to
- * the same bytes.
+ * outcome (status preserved exactly; the verdict is RECOMPUTED from
+ * the kept per-suite records for completed runs, so a green verdict
+ * can never survive on a body that no longer earns it — Q665-005A.1),
+ * a single REPORT_TRUNCATED diagnostic, per-suite id/status/reason/
+ * true counts, and the true totals (never invented zeros; displayed-
+ * record counts stay separate from true counts via failing_tests_total
+ * / the per-suite test_counts).
+ * Deterministic: the same over-budget report always shrinks to the
+ * same bytes.
  */
 function shrinkReport(report, maxBytes) {
+  const suites = (report.suites ?? []).map((s) => ({
+    id: s.id,
+    status: s.status,
+    reason_code: s.reason_code,
+    test_counts: s.test_counts,
+    failing_tests_total: s.failing_tests_total,
+  }));
+  const verdict =
+    report.status === "COMPLETED"
+      ? suites.length > 0 && suites.every((s) => s.status === "PASS")
+        ? "ALL_SUITES_PASS"
+        : "SUITES_FAILED"
+      : report.verdict;
   return {
     schema_version: report.schema_version,
     agent: report.agent,
@@ -79,7 +101,7 @@ function shrinkReport(report, maxBytes) {
     head_pin: report.head_pin,
     checkout_head: report.checkout_head,
     status: report.status,
-    verdict: report.verdict,
+    verdict,
     reason_code: report.reason_code,
     diagnostics: [
       {
@@ -89,13 +111,7 @@ function shrinkReport(report, maxBytes) {
       },
     ],
     isolation: report.isolation,
-    suites: (report.suites ?? []).map((s) => ({
-      id: s.id,
-      status: s.status,
-      reason_code: s.reason_code,
-      test_counts: s.test_counts,
-      failing_tests_total: s.failing_tests_total,
-    })),
+    suites,
     totals: report.totals,
   };
 }
@@ -117,6 +133,44 @@ export function enforceReportBytes(report, maxBytes) {
   const shrunk = shrinkReport(report, maxBytes);
   if (reportBytes(shrunk) <= maxBytes) return { report: shrunk, truncated: true };
   return { report: minimalEnvelope(report), truncated: true };
+}
+
+/**
+ * Q665-005A.1: the reduced-envelope contract. Every reduced or
+ * minimal form is validated against the report contract:
+ *  - a green verdict is only valid on a body that earns it: at least
+ *    one recorded suite, every recorded suite PASS;
+ *  - totals reconcile with the kept suite records (true counts, never
+ *    invented zeros);
+ *  - a truncation refusal claims no identity: null pins, no green
+ *    verdict.
+ * Returns null when the envelope satisfies the contract, else a
+ * reason string.
+ */
+export function validateReducedEnvelope(envelope) {
+  if (!envelope || typeof envelope !== "object") return "envelope is not an object";
+  if (envelope.verdict === "ALL_SUITES_PASS") {
+    const suites = Array.isArray(envelope.suites) ? envelope.suites : [];
+    if (suites.length === 0) return "ALL_SUITES_PASS on an envelope with no suite records";
+    const nonPass = suites.find((s) => !s || s.status !== "PASS");
+    if (nonPass) return `ALL_SUITES_PASS with a non-PASS suite record (${nonPass && nonPass.id ? nonPass.id : "?"})`;
+  }
+  if (Array.isArray(envelope.suites) && envelope.totals && typeof envelope.totals === "object") {
+    const expected = computeTotals(
+      envelope.suites.map((s) => ({ status: s.status, test_counts: s.test_counts ?? { total: 0, passed: 0, failed: 0, pending: 0 } }))
+    );
+    for (const k of Object.keys(expected)) {
+      if (envelope.totals[k] !== expected[k]) {
+        return `totals.${k}=${envelope.totals[k]} does not reconcile with the kept suite records (${expected[k]})`;
+      }
+    }
+  }
+  if (envelope.status === "REFUSED" && envelope.reason_code === "REPORT_TRUNCATED") {
+    if (envelope.head_pin !== null || envelope.checkout_head !== null) {
+      return "truncation refusal claims identity pins";
+    }
+  }
+  return null;
 }
 
 /** The admission floor: no admitted cap may be smaller. */

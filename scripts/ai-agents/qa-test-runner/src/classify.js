@@ -107,6 +107,20 @@ export function validateReportShape(json) {
 }
 
 /**
+ * Q665-003A.1: the supported successful-file shape. A testResults
+ * entry only authenticates a PASS when it carries usable execution
+ * evidence: at least one recorded assertion (any closed status —
+ * passed, failed, skipped, todo and pending are all counted test
+ * units), or a "failed" file status (a suite-level execution attempt,
+ * which never yields PASS anyway). A bare name — or a pending file
+ * with no assertions — establishes nothing about the requested suite
+ * actually running; a name alone cannot authenticate a pass.
+ */
+function fileHasExecutionEvidence(tr) {
+  return (Array.isArray(tr.assertionResults) && tr.assertionResults.length > 0) || tr.status === "failed";
+}
+
+/**
  * Counts derived from the records themselves — the ground truth.
  * Q665-003B: vitest counts TODO and skipped tests as DISTINCT units
  * (numTodoTests vs numPendingTests in real vitest 4.1.9 reports), so
@@ -398,6 +412,31 @@ function classifyInner(input) {
     });
   }
   if (exitCode === 0 && json.success === true) {
+    // Q665-003A.1: PASS requires usable execution evidence. Every
+    // file must authenticate itself with at least one recorded
+    // assertion or a failed-file execution attempt, and the suite
+    // must name at least one file. An empty report, a filename-only
+    // entry, or a pending file with no assertions never earns PASS —
+    // the suite's execution is not established. Genuinely empty or
+    // nonexecuted suites are ERROR/NO_EXECUTION_EVIDENCE, never PASS.
+    const noEvidence = [];
+    for (const tr of json.testResults) {
+      if (!fileHasExecutionEvidence(tr)) {
+        noEvidence.push(typeof tr.name === "string" ? tr.name : "<unnamed>");
+      }
+    }
+    if (json.testResults.length === 0 || noEvidence.length > 0) {
+      return result({
+        status: "ERROR",
+        reason_code: "NO_EXECUTION_EVIDENCE",
+        reason:
+          `vitest report claims success but carries no usable execution evidence` +
+          (noEvidence.length > 0 ? `: ${noEvidence.slice(0, 5).join(", ")}` : ": no test files were recorded") +
+          ` — a name alone does not authenticate a pass`,
+        test_counts: derived.counts,
+        failing,
+      });
+    }
     return result({ status: "PASS", test_counts: derived.counts, failing: { tests: [], total: 0, truncated: false } });
   }
   if (exitCode === 0 && json.success === false) {
