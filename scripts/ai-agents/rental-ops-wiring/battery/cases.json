@@ -38,7 +38,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -97,7 +98,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -156,7 +158,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -215,7 +218,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -308,7 +312,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -368,7 +373,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -427,7 +433,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -507,7 +514,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -587,7 +595,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -667,7 +676,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -747,7 +757,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -818,7 +829,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -920,7 +932,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1036,7 +1049,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1127,7 +1141,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1207,7 +1222,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1287,7 +1303,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1346,7 +1363,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1405,7 +1423,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1464,7 +1483,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1511,7 +1531,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1570,7 +1591,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1653,7 +1675,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1715,7 +1738,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1777,7 +1801,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1850,7 +1875,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1915,7 +1941,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -1974,7 +2001,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2033,7 +2061,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2093,7 +2122,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2151,7 +2181,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2231,7 +2262,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2293,7 +2325,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2355,7 +2388,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2414,7 +2448,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2473,7 +2508,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2537,7 +2573,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2617,7 +2654,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2697,7 +2735,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2755,7 +2794,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2814,7 +2854,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -2861,7 +2902,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "mallory",
@@ -2962,7 +3004,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3066,7 +3109,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3167,7 +3211,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-b"
+      "registered_owner": "owner-b",
+      "registered_portfolio": "portfolio-b"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3214,7 +3259,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3264,7 +3310,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3326,7 +3373,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3376,7 +3424,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3426,7 +3475,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3473,7 +3523,8 @@
       "mode": "LIVE",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3519,7 +3570,8 @@
       "mode": "TURBO",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3566,7 +3618,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3613,7 +3666,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3660,7 +3714,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3708,7 +3763,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3756,7 +3812,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "production",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3815,7 +3872,8 @@
       "mode": "DISABLED",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3861,7 +3919,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -3908,7 +3967,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -4571,7 +4631,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5245,7 +5306,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5304,7 +5366,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5424,7 +5487,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5483,7 +5547,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5545,7 +5610,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5628,7 +5694,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5711,7 +5778,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -5773,7 +5841,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6285,7 +6354,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6347,7 +6417,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6473,7 +6544,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6532,7 +6604,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6603,7 +6676,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6668,7 +6742,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6728,7 +6803,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6775,7 +6851,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -6822,7 +6899,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -7507,7 +7585,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",
@@ -7954,7 +8033,8 @@
       "mode": "SYNTHETIC_PREVIEW",
       "adapter_kind": "synthetic",
       "registered_principal": "host:workbench-operator",
-      "registered_owner": "owner-a"
+      "registered_owner": "owner-a",
+      "registered_portfolio": "portfolio-a"
     },
     "request": {
       "principal_ref": "host:workbench-operator",

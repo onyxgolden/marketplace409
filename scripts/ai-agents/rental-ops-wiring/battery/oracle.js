@@ -23,10 +23,16 @@ function chicagoDate(iso) {
 const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)
   && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
 const isMoney = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-// The collectible rule, restated from the brief's fail-safe wording:
+// The collectible rule, restated from the brief's wording:
 // FORGE-collectible only when the schedule says forge, a cutover
 // exists, the cutover has arrived, and the charge is due on/after it.
-// Anything unresolved is externally managed.
+// A charge whose classification cannot be VERIFIED (missing/dangling
+// schedule, invalid cutover, unknown status, unverified currency) is
+// withheld from both buckets and blocks the lease's totals — unknown
+// classification never masquerades as verified evidence.
+const CURRENCY_RE = /^[A-Z]{3}$/;
+const validCurrency = (c) => typeof c === "string" && CURRENCY_RE.test(c);
+const CHARGE_KNOWN = new Set(["open", "partial", "paid", "void", "written_off"]);
 function collectible(charge, schedule, asOfDate) {
   if (!schedule) return false;
   if (schedule.collection_mode !== "forge") return false;
@@ -56,6 +62,7 @@ export function oraclePredict(caseSpec) {
       continue;
     }
     if (faults.cursorLoopDataset === ds) partial = true; // first page admitted, coverage incomplete
+    if (faults.hideExpected === true) { partial = true; kind("COVERAGE_UNATTESTED"); } // one gap per dataset
     let rows = (caseSpec.datasets[ds] ?? []).filter((r) => r !== null && typeof r === "object" && r.owner_ref === owner);
     if (ds !== "memberships") {
       const seen = new Map();
@@ -74,7 +81,7 @@ export function oraclePredict(caseSpec) {
     }
     admitted[ds] = rows;
   }
-  if (faults.mixedRevisions) partial = true;
+  if (faults.mixedRevisions) { partial = true; kind("REVISION_UNATTESTED"); }
   if (caseSpec.clock_iso && (Date.parse(caseSpec.request.as_of) - Date.parse(caseSpec.clock_iso)) > 15 * 60 * 1000) partial = true;
 
   const units = new Map(admitted.units.map((u) => [u.unit_ref, u]));
@@ -114,23 +121,37 @@ export function oraclePredict(caseSpec) {
   }
   for (const lease of admitted.leases) {
     if (lease.status !== "active") continue;
-    let forge = 0; let external = 0; let any = false;
+    let forge = 0; let external = 0; let forgeCount = 0; let externalCount = 0;
+    let unverified = null; // named reason the lease's totals are blocked
     const currencies = new Set();
     for (const c of chargesByLease.get(lease.lease_ref) ?? []) {
-      if (!schedules.has(c.schedule_ref)) kind("CHARGE_SCHEDULE_MISSING");
+      if (!CHARGE_KNOWN.has(c.status)) { kind("CHARGE_STATUS_UNSUPPORTED"); unverified = unverified ?? "CLASSIFICATION_UNVERIFIED"; continue; }
       if (c.status === "void") continue;
+      const schedule = schedules.get(c.schedule_ref);
+      let classificationOk = true;
+      if (c.schedule_ref !== undefined && c.schedule_ref !== null && !schedule) {
+        kind("CHARGE_SCHEDULE_MISSING"); classificationOk = false;
+      }
+      if (schedule) {
+        if (!leases.has(schedule.lease_ref)) { kind("SCHEDULE_LEASE_DANGLING"); classificationOk = false; }
+        if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null
+          && !isDate(schedule.forge_cutover_date)) { kind("SCHEDULE_CUTOVER_INVALID"); classificationOk = false; }
+      }
       if (!isDate(c.due_date)) { kind("CHARGE_DUE_DATE_INVALID"); continue; }
       if (!(c.due_date < asOfDate)) continue;
       if (!isMoney(c.amount_cents) || !isMoney(c.paid_amount_cents)) { kind("MONEY_INVALID"); continue; }
       if (!(c.amount_cents > c.paid_amount_cents)) continue;
-      any = true;
-      if (typeof c.currency === "string") currencies.add(c.currency);
+      if (!validCurrency(c.currency)) { kind("CURRENCY_UNVERIFIED"); unverified = unverified ?? "CURRENCY_UNVERIFIED"; continue; }
+      if (!classificationOk) { unverified = unverified ?? "CLASSIFICATION_UNVERIFIED"; continue; }
       const owed = c.amount_cents - c.paid_amount_cents;
-      if (collectible(c, schedules.get(c.schedule_ref), asOfDate)) forge += owed; else external += owed;
+      currencies.add(c.currency);
+      if (collectible(c, schedule, asOfDate)) { forge += owed; forgeCount += 1; } else { external += owed; externalCount += 1; }
     }
-    if (!any) continue;
-    if (typeof lease.currency === "string") currencies.add(lease.currency);
-    if (currencies.size > 1) { kind("CURRENCY_INCONSISTENT"); blocked.push(lease.lease_ref); continue; }
+    if (forgeCount === 0 && externalCount === 0 && unverified === null) continue;
+    if (!validCurrency(lease.currency)) { kind("CURRENCY_UNVERIFIED"); unverified = unverified ?? "CURRENCY_UNVERIFIED"; }
+    else currencies.add(lease.currency);
+    if (currencies.size > 1) { kind("CURRENCY_INCONSISTENT"); unverified = unverified ?? "CURRENCY_INCONSISTENT"; }
+    if (unverified !== null) { blocked.push(lease.lease_ref); continue; }
     overdue[lease.lease_ref] = [forge, external];
   }
 

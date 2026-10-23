@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runJob, createMemoryPublisher } from "../src/runner.js";
-import { createSyntheticAdapter } from "../src/syntheticRepository.js";
 import { SYNTHETIC_REPOSITORIES, PII_CANARIES } from "../fixtures/repositories.js";
-import { fixedClock, makeHost, makeRequest, runPreview, onlyItem } from "./helpers.js";
+import { fixedClock, makeHost, makeRequest, runPreview, onlyItem, previewSpec } from "./helpers.js";
 
-const explodingFactory = () => { throw new Error("adapter factory must not be called"); };
+// DISABLED must return before the adapter spec is ever used: a spec
+// whose datasets would explode on construction proves it.
+const unusedSpec = previewSpec({ datasets: null });
 
 test("DISABLED returns before opening adapters, the store, or any source", async () => {
   let published = 0;
   const result = await runJob({
     hostConfig: makeHost({ mode: "DISABLED" }),
     request: makeRequest(),
-    adapterFactory: explodingFactory,
+    adapterSpec: unusedSpec,
     publisher: { async publish() { published += 1; } },
     clock: fixedClock(),
   });
@@ -24,12 +25,12 @@ test("DISABLED returns before opening adapters, the store, or any source", async
 test("live-shaped asks are ACTIVATION_REQUIRED (caller ask, host mode), never a run", async () => {
   const byCaller = await runJob({
     hostConfig: makeHost(), request: makeRequest(), callerAsk: "live",
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.equal(byCaller.outcome, "ACTIVATION_REQUIRED");
   const byHost = await runJob({
     hostConfig: makeHost({ mode: "PRODUCTION" }), request: makeRequest(),
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.equal(byHost.outcome, "ACTIVATION_REQUIRED");
 });
@@ -37,17 +38,17 @@ test("live-shaped asks are ACTIVATION_REQUIRED (caller ask, host mode), never a 
 test("unknown mode / unknown agent / second agent refuse closed, distinctly", async () => {
   const badMode = await runJob({
     hostConfig: makeHost({ mode: "TURBO" }), request: makeRequest(),
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.deepEqual([badMode.outcome, badMode.code], ["REFUSED", "UNKNOWN_MODE"]);
   const badKind = await runJob({
     hostConfig: makeHost(), request: makeRequest({ job_kind: "tax-agent-review" }),
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.equal(badKind.code, "UNKNOWN_AGENT");
   const mm = await runJob({
     hostConfig: makeHost(), request: makeRequest({ job_kind: "maintenance-manager-backlog-review" }),
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.deepEqual([mm.outcome, mm.code], ["REFUSED", "JOB_NOT_BUILT_IN_SLICE"]);
 });
@@ -55,7 +56,7 @@ test("unknown mode / unknown agent / second agent refuse closed, distinctly", as
 test("caller-supplied adapter or smuggled request fields refuse before any open", async () => {
   const byAdapter = await runJob({
     hostConfig: makeHost(), request: makeRequest(), callerAdapter: { url: "https://example.invalid" },
-    adapterFactory: explodingFactory, publisher: createMemoryPublisher(), clock: fixedClock(),
+    adapterSpec: unusedSpec, publisher: createMemoryPublisher(), clock: fixedClock(),
   });
   assert.equal(byAdapter.code, "CALLER_ADAPTER_REFUSED");
   const smuggled = await runPreview({ request: { mode: "LIVE" } });
@@ -103,7 +104,7 @@ test("identical replay is idempotent; no second store write", async () => {
   const data = SYNTHETIC_REPOSITORIES["preview-basic"]();
   const run = () => runJob({
     hostConfig: makeHost(), request: makeRequest(),
-    adapterFactory: () => createSyntheticAdapter({ datasets: data }),
+    adapterSpec: previewSpec({ datasets: data }),
     publisher, clock: fixedClock(),
   });
   const first = await run();
@@ -132,11 +133,11 @@ test("revoked permission and stale session refuse the run; nothing is published"
 
 test("a blocked reader settles via the bounded read timeout, adapter cleaned up, report is PARTIAL", async () => {
   const started = Date.now();
-  const { result, publisher, adapter } = await runPreview({ faults: { blockedDataset: "charges" } });
+  const { result, publisher } = await runPreview({ faults: { blockedDataset: "charges" } });
   const elapsed = Date.now() - started;
   assert.equal(result.outcome, "COMPLETED");
   assert.ok(elapsed < 5000, `blocked reader did not settle inside the boundary (${elapsed}ms)`);
-  assert.equal(adapter().closed, true);
+  assert.equal(result.adapter_closed, true);
   const item = onlyItem(publisher);
   assert.equal(item.report.status, "PARTIAL");
   assert.ok(item.report.exclusions.some((e) => e.dataset === "charges" && e.code === "READ_TIMEOUT"));

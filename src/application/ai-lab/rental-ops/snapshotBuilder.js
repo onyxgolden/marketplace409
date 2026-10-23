@@ -32,6 +32,24 @@ function withReadTimeout(promise, dataset) {
 }
 
 /**
+ * Race a unit of collection work against the invocation deadline's
+ * abort signal. When the deadline fires, the work is abandoned (the
+ * runner additionally closes the adapter) and the run refuses with
+ * EXECUTION_TIMEOUT — collection never gets a fresh window.
+ */
+function raceDeadline(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new JobRefusal("EXECUTION_TIMEOUT", "the single invocation deadline was reached during snapshot collection"));
+  }
+  return Promise.race([promise, new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(
+      new JobRefusal("EXECUTION_TIMEOUT", "the single invocation deadline was reached during snapshot collection"),
+    ), { once: true });
+  })]);
+}
+
+/**
  * Collect an owner-scoped snapshot through the read adapter and admit
  * it under the invocation budget. Every page container and every row
  * is charged BEFORE inspection; cross-owner rows refuse the whole
@@ -40,8 +58,13 @@ function withReadTimeout(promise, dataset) {
  * snapshot PARTIAL instead of silently becoming a zero total.
  *
  * `clock` is injected ({ nowIso() }) so fixed-clock runs are exact.
+ * `signal` is the invocation deadline's AbortSignal: it is offered
+ * to the adapter with every page request (a cooperative adapter may
+ * abandon work early) and raced against every page read, so a
+ * collection that reaches the deadline refuses EXECUTION_TIMEOUT
+ * instead of consuming a second window downstream.
  */
-export async function buildSnapshot({ request, adapter, budget, clock }) {
+export async function buildSnapshot({ request, adapter, budget, clock, signal = undefined }) {
   assertAdapterShape(adapter);
   const startedAt = clock.nowIso();
   const records = {};
@@ -50,6 +73,7 @@ export async function buildSnapshot({ request, adapter, budget, clock }) {
   const conflicts = [];
   const collectionErrors = [];
   const revisions = new Set();
+  const datasetErrored = {};
   let partial = false;
 
   for (const dataset of DATASETS) {
@@ -62,13 +86,19 @@ export async function buildSnapshot({ request, adapter, budget, clock }) {
     let errored = false;
     const seenCursors = new Set();
     for (;;) {
+      if (signal?.aborted) {
+        throw new JobRefusal("EXECUTION_TIMEOUT", "the single invocation deadline was reached during snapshot collection");
+      }
       let page;
       try {
-        page = await withReadTimeout(
-          adapter.collect(dataset, { owner_ref: request.owner_ref, cursor }),
+        page = await raceDeadline(withReadTimeout(
+          adapter.collect(dataset, { owner_ref: request.owner_ref, cursor, signal }),
           dataset,
-        );
+        ), signal);
       } catch (err) {
+        // The invocation deadline is a hard refusal, never a partial
+        // snapshot: a timed-out collection must not publish totals.
+        if (err instanceof JobRefusal && err.code === "EXECUTION_TIMEOUT") throw err;
         errored = true;
         partial = true;
         collectionErrors.push({ dataset, code: err?.code ?? "ADAPTER_ERROR" });
@@ -164,13 +194,40 @@ export async function buildSnapshot({ request, adapter, budget, clock }) {
     const received = seenCount;
     if (expected !== null && expected !== received) { complete = false; partial = true; }
     if (errored) complete = false;
+    datasetErrored[dataset] = errored;
     datasetFacts[dataset] = {
       expected, received, complete,
       pages_complete: complete,
     };
   }
 
-  if (revisions.size > 1) partial = true;
+  // Coverage attestation: a dataset is complete only with a terminal
+  // cursor AND an attested expected_total matching the received row
+  // count; a snapshot with zero or mixed source revisions cannot be
+  // attested as one coherent point in time. Every gap is named —
+  // missing coverage never publishes as an all-clear.
+  const coverageGaps = [];
+  for (const dataset of DATASETS) {
+    // expected_total unattested — but only when the dataset did not
+    // already fail with a named error (an errored dataset carries its
+    // own diagnostic; diagnostics stay orthogonal).
+    if (datasetFacts[dataset].expected === null && !datasetErrored[dataset]) {
+      datasetFacts[dataset].complete = false;
+      datasetFacts[dataset].pages_complete = false;
+      partial = true;
+      coverageGaps.push({ dataset, code: "COVERAGE_UNATTESTED" });
+    }
+  }
+  if (revisions.size !== 1) {
+    partial = true;
+    coverageGaps.push({
+      dataset: "snapshot",
+      code: "REVISION_UNATTESTED",
+      detail: revisions.size === 0
+        ? "no source revision was attested for this snapshot"
+        : "source revisions differ across datasets; the snapshot cannot be attested as one coherent point in time",
+    });
+  }
   const finishedAt = clock.nowIso();
   const asOfMs = Date.parse(request.as_of);
   const finishedMs = Date.parse(finishedAt);
@@ -194,6 +251,7 @@ export async function buildSnapshot({ request, adapter, budget, clock }) {
     mapping_version: FIELD_MAPPING_VERSION,
     datasets: datasetFacts,
     consistency: partial ? "PARTIAL" : "CONSISTENT",
+    coverage_gaps: coverageGaps,
     stale,
     conflicts,
     collection_errors: collectionErrors,

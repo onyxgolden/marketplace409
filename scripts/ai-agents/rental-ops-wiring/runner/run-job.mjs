@@ -32,7 +32,6 @@ const hostConfig = JSON.parse(readFileSync(configPath, "utf8"));
 const request = JSON.parse(readFileSync(requestPath, "utf8"));
 
 const { runJob, createMemoryPublisher } = await import("../src/runner.js");
-const { createSyntheticAdapter } = await import("../src/syntheticRepository.js");
 const { SYNTHETIC_REPOSITORIES } = await import("../fixtures/repositories.js");
 
 const repoFactory = SYNTHETIC_REPOSITORIES[hostConfig.repository];
@@ -44,7 +43,7 @@ const clock = { nowIso: () => hostConfig.clock_iso ?? new Date().toISOString() }
 const result = await runJob({
   hostConfig,
   request,
-  adapterFactory: () => createSyntheticAdapter({ datasets: repoFactory(), faults: hostConfig.faults ?? {} }),
+  adapterSpec: { kind: "synthetic", datasets: repoFactory(), faults: hostConfig.faults ?? {} },
   publisher: createMemoryPublisher(),
   clock,
 });

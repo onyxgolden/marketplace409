@@ -20,6 +20,14 @@ export const BUDGET_LIMITS = Object.freeze({
 
 /** Hard wall-clock boundary for adapter admission + evaluation. */
 export const EXECUTION_BOUNDARY_MS = 5000;
+/**
+ * Separate bounded wait for publication, deliberately OUTSIDE the
+ * execution boundary: a publish that does not settle inside this
+ * bound fails as PUBLICATION_TIMEOUT (named semantics — the report
+ * was computed but not durably published; publication is idempotent,
+ * so replaying the same job identity settles the question).
+ */
+export const PUBLICATION_BOUND_MS = 5000;
 /** Bounded wait for a single source page read. */
 export const READ_TIMEOUT_MS = 2000;
 
@@ -105,4 +113,68 @@ export class Budget {
       throw new BudgetExceededError("outputBytes", this.limits.outputBytes);
     }
   }
+}
+
+/**
+ * Admit a caller/host control object (request, host config, policies,
+ * adapter spec) under the invocation budget BEFORE any of its fields
+ * is read. The object's serialized bytes are charged, then it is
+ * walked by property DESCRIPTOR only: getters, setters, proxies,
+ * cyclic graphs, non-plain prototypes and function-valued fields
+ * (including toJSON) refuse with CONTROL_DATA_REFUSED — no accessor
+ * is ever invoked and no serialization hook ever runs. The admitted
+ * value is a primitive-only deep copy, so nothing downstream
+ * (structured clone into the execution worker included) can trigger
+ * caller code.
+ *
+ * Control objects are byte-charged, not candidate-charged: the
+ * 64-candidate cap governs admitted source containers (pages, rows),
+ * whose calibration the battery pins exactly; host-owned control
+ * data joins the same monotonic budget through its byte cost.
+ */
+export function admitControlObject(value, what, budget) {
+  const seen = new Set();
+  const walk = (v, path) => {
+    if (v === null || v === undefined) return;
+    if (typeof v === "function") {
+      throw new ControlDataError(`${what}: function value at ${path}`);
+    }
+    if (typeof v !== "object") return;
+    if (types.isProxy(v)) throw new ControlDataError(`${what}: proxy at ${path}`);
+    if (seen.has(v)) throw new ControlDataError(`${what}: cyclic structure at ${path}`);
+    seen.add(v);
+    const proto = Object.getPrototypeOf(v);
+    if (!Array.isArray(v) && proto !== Object.prototype && proto !== null) {
+      throw new ControlDataError(`${what}: non-plain object at ${path}`);
+    }
+    for (const key of Reflect.ownKeys(v)) {
+      const desc = Object.getOwnPropertyDescriptor(v, key);
+      if (!desc) continue;
+      const at = `${path}.${String(key)}`;
+      if ("get" in desc || "set" in desc) {
+        throw new ControlDataError(`${what}: accessor property at ${at}`);
+      }
+      walk(desc.value, at);
+    }
+  };
+  walk(value, what);
+  // The walk above refused every function-valued field, so no toJSON
+  // or other serialization hook can run during stringification.
+  const text = JSON.stringify(value);
+  budget.chargeInputBytes(Buffer.byteLength(text, "utf8"));
+  return JSON.parse(text);
+}
+
+/**
+ * Count public output records in a finished envelope: every
+ * non-array plain-object node (rows, spans, recommendations,
+ * escalations, coverage facts, headers). The runner charges this
+ * count — not a hand-picked subset of domain rows — so nested
+ * evidence/coverage/header records are accounted and 257 public
+ * objects refuse at the 256-record cap.
+ */
+export function countOutputRecords(value) {
+  if (value === null || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return value.reduce((a, v) => a + countOutputRecords(v), 0);
+  return 1 + Object.values(value).reduce((a, v) => a + countOutputRecords(v), 0);
 }

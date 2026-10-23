@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOST = { mode: "SYNTHETIC_PREVIEW", adapter_kind: "synthetic", registered_principal: "host:workbench-operator", registered_owner: "owner-a" };
+const HOST = { mode: "SYNTHETIC_PREVIEW", adapter_kind: "synthetic", registered_principal: "host:workbench-operator", registered_owner: "owner-a", registered_portfolio: "portfolio-a" };
 const REQUEST = {
   principal_ref: "host:workbench-operator", owner_ref: "owner-a", portfolio_ref: "portfolio-a",
   job_kind: "property-manager-daily-exception-review", job_version: 1,
@@ -116,7 +116,7 @@ const colliding = DS({
 cases.push(kase("S03", "scope", colliding, lit("REFUSED", { code: "SCOPE_VIOLATION" }), { faults: { leakyOwners: true } }));
 cases.push(kase("S04", "scope", colliding, oracle));
 cases.push(kase("S05", "scope", colliding, oracle, {
-  host: { ...HOST, registered_owner: "owner-b" },
+  host: { ...HOST, registered_owner: "owner-b", registered_portfolio: "portfolio-b" },
   request: { ...REQUEST, owner_ref: "owner-b", portfolio_ref: "portfolio-b" },
 }));
 cases.push(kase("S06", "scope", DS({}), lit("REFUSED", { code: "PERMISSION_REVOKED" }), { faults: { revoked: true } }));

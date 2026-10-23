@@ -43,6 +43,9 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
   for (const c of snapshot.conflicts ?? []) {
     pushIntegrity("DUPLICATE_CONFLICT", c.dataset, c.record_ref);
   }
+  for (const g of snapshot.coverage_gaps ?? []) {
+    pushIntegrity(g.code, g.dataset, "coverage", g.detail ? { detail: g.detail } : {});
+  }
 
   const span = (dataset, ref) => {
     const s = snapshot.evidence?.[dataset]?.[ref];
@@ -110,6 +113,17 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
     : (a.lease_ref < b.lease_ref ? -1 : 1)));
 
   // ---- overdue balances: FORGE-collectible vs externally managed -----
+  //
+  // Totals discipline: a charge contributes to a total only when every
+  // fact its classification depends on is verified — a known status, a
+  // valid linked schedule with a valid cutover date, a valid currency,
+  // and safe integer arithmetic. Anything unverified withholds the
+  // charge from the sums and blocks the lease's totals with a NAMED
+  // reason (never a plausible zero). Unknown classification never
+  // masquerades as verified FORGE/external evidence.
+  const CURRENCY_RE = /^[A-Z]{3}$/;
+  const validCurrency = (c) => typeof c === "string" && CURRENCY_RE.test(c);
+  const MAX_CENTS = BigInt(Number.MAX_SAFE_INTEGER);
   const chargesByLease = new Map();
   for (const charge of rec.charges) {
     if (!leasesByRef.has(charge.lease_ref)) {
@@ -124,15 +138,36 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
   for (const lease of rec.leases) {
     if (mapStatus(LEASE_STATUS_MAP, lease.status) !== "ACTIVE") continue;
     const charges = chargesByLease.get(lease.lease_ref) ?? [];
-    let forgeCents = 0; let forgeCount = 0; let externalCents = 0; let externalCount = 0;
+    let forgeCents = 0n; let forgeCount = 0; let externalCents = 0n; let externalCount = 0;
     let oldestForgeDue = null;
+    let unverified = null; // named reason the lease's totals are blocked
     const currencies = new Set();
     const chargeSpans = [];
     for (const charge of charges) {
-      if (!schedulesByRef.has(charge.schedule_ref)) {
-        pushIntegrity("CHARGE_SCHEDULE_MISSING", "charges", charge.charge_ref);
+      const statusMapped = mapStatus(CHARGE_STATUS_MAP, charge.status);
+      if (statusMapped === "UNKNOWN") {
+        pushIntegrity("CHARGE_STATUS_UNSUPPORTED", "charges", charge.charge_ref, { source_status: charge.status ?? null });
+        unverified = unverified ?? "CLASSIFICATION_UNVERIFIED";
+        continue;
       }
-      if (mapStatus(CHARGE_STATUS_MAP, charge.status) === "VOID") continue;
+      if (statusMapped === "VOID") continue;
+      const schedule = schedulesByRef.get(charge.schedule_ref);
+      let classificationOk = true;
+      if (charge.schedule_ref !== undefined && charge.schedule_ref !== null && !schedule) {
+        pushIntegrity("CHARGE_SCHEDULE_MISSING", "charges", charge.charge_ref);
+        classificationOk = false;
+      }
+      if (schedule) {
+        if (!leasesByRef.has(schedule.lease_ref)) {
+          pushIntegrity("SCHEDULE_LEASE_DANGLING", "schedules", schedule.schedule_ref, { lease_ref: schedule.lease_ref ?? null });
+          classificationOk = false;
+        }
+        if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null
+          && !isCivilDate(schedule.forge_cutover_date)) {
+          pushIntegrity("SCHEDULE_CUTOVER_INVALID", "schedules", schedule.schedule_ref, { forge_cutover_date: schedule.forge_cutover_date });
+          classificationOk = false;
+        }
+      }
       if (!isCivilDate(charge.due_date)) {
         pushIntegrity("CHARGE_DUE_DATE_INVALID", "charges", charge.charge_ref);
         continue;
@@ -143,25 +178,45 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
         continue;
       }
       if (!(charge.amount_cents > charge.paid_amount_cents)) continue;
-      const owed = charge.amount_cents - charge.paid_amount_cents;
-      if (typeof charge.currency === "string") currencies.add(charge.currency);
+      if (!validCurrency(charge.currency)) {
+        pushIntegrity("CURRENCY_UNVERIFIED", "charges", charge.charge_ref, { currency: charge.currency ?? null });
+        unverified = unverified ?? "CURRENCY_UNVERIFIED";
+        continue;
+      }
+      if (!classificationOk) {
+        unverified = unverified ?? "CLASSIFICATION_UNVERIFIED";
+        continue;
+      }
+      const owed = BigInt(charge.amount_cents - charge.paid_amount_cents);
+      currencies.add(charge.currency);
       chargeSpans.push(span("charges", charge.charge_ref));
-      if (isChargeForgeCollectible(charge, schedulesByRef.get(charge.schedule_ref), asOfDate)) {
+      if (isChargeForgeCollectible(charge, schedule, asOfDate)) {
         forgeCents += owed; forgeCount += 1;
         if (oldestForgeDue === null || charge.due_date < oldestForgeDue) oldestForgeDue = charge.due_date;
       } else {
         externalCents += owed; externalCount += 1;
       }
     }
-    if (forgeCount === 0 && externalCount === 0) continue;
-    if (typeof lease.currency === "string") currencies.add(lease.currency);
+    if (forgeCount === 0 && externalCount === 0 && unverified === null) continue;
+    if (!validCurrency(lease.currency)) {
+      pushIntegrity("CURRENCY_UNVERIFIED", "leases", lease.lease_ref, { currency: lease.currency ?? null });
+      unverified = unverified ?? "CURRENCY_UNVERIFIED";
+    } else {
+      currencies.add(lease.currency);
+    }
     const currencyConsistent = currencies.size <= 1;
     if (!currencyConsistent) {
       pushIntegrity("CURRENCY_INCONSISTENT", "leases", lease.lease_ref, { currencies: [...currencies].sort() });
+      unverified = unverified ?? "CURRENCY_INCONSISTENT";
     }
+    if (forgeCents > MAX_CENTS || externalCents > MAX_CENTS) {
+      pushIntegrity("TOTALS_OVERFLOW", "leases", lease.lease_ref);
+      unverified = "TOTALS_OVERFLOW";
+    }
+    const blocked = unverified !== null;
     const flags = [];
-    if (forgeCents > 0) flags.push("FORGE_COLLECTIBLE_OVERDUE");
-    if (externalCents > 0) flags.push("EXTERNALLY_MANAGED_OVERDUE");
+    if (!blocked && forgeCents > 0n) flags.push("FORGE_COLLECTIBLE_OVERDUE");
+    if (!blocked && externalCents > 0n) flags.push("EXTERNALLY_MANAGED_OVERDUE");
     if (lease.flag_in_legal_process === true) flags.push("LEGAL_PROCESS_FLAGGED");
     if (lease.flag_balance_disputed === true) flags.push("BALANCE_DISPUTED");
     if (lease.flag_safety_concern === true) flags.push("SAFETY_FLAGGED");
@@ -171,13 +226,14 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
       lease_ref: lease.lease_ref,
       unit_ref: lease.unit_ref,
       property_ref: lease.property_ref,
-      forge_collectible_cents: currencyConsistent ? forgeCents : null,
+      forge_collectible_cents: blocked ? null : Number(forgeCents),
       forge_charge_count: forgeCount,
-      externally_managed_cents: currencyConsistent ? externalCents : null,
+      externally_managed_cents: blocked ? null : Number(externalCents),
       externally_managed_charge_count: externalCount,
       oldest_forge_due_date: oldestForgeDue,
-      currency: currencyConsistent ? ([...currencies][0] ?? null) : null,
-      totals_blocked: !currencyConsistent,
+      currency: blocked ? null : ([...currencies][0] ?? null),
+      totals_blocked: blocked,
+      ...(blocked ? { blocked_reason: unverified } : {}),
       flags,
       evidence: [span("leases", lease.lease_ref), ...chargeSpans].filter(Boolean),
     });
@@ -264,8 +320,19 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
     });
   }
 
-  // ---- totals (only over unblocked rows; partial data never "all clear")
-  const sumOrNull = (rows, field) => rows.reduce((acc, r) => (r[field] === null ? acc : acc + r[field]), 0);
+  // ---- totals: unavailable (null + named reason), never a plausible
+  // zero or a partial sum, when coverage is incomplete, any row is
+  // blocked, or contributing rows span more than one currency.
+  const chargesComplete = snapshot.datasets?.charges?.complete === true;
+  const schedulesComplete = snapshot.datasets?.schedules?.complete === true;
+  const coverageOk = chargesComplete && schedulesComplete;
+  const anyRowBlocked = overdue.some((r) => r.totals_blocked);
+  const rowCurrencies = new Set(overdue.filter((r) => !r.totals_blocked && r.currency).map((r) => r.currency));
+  const totalsAvailable = coverageOk && !anyRowBlocked && rowCurrencies.size <= 1;
+  const sumField = (field) => overdue.reduce((acc, r) => acc + (r[field] ?? 0), 0);
+  const totalsUnavailableReason = !coverageOk ? "COVERAGE_INCOMPLETE"
+    : anyRowBlocked ? "ROW_BLOCKED"
+    : rowCurrencies.size > 1 ? "CURRENCY_INCONSISTENT" : null;
   const blockedCount = recommendations.filter((r) => r.status === "BLOCKED").length;
   const status = blockedCount > 0 ? "BLOCKED" : (snapshot.consistency === "PARTIAL" ? "PARTIAL" : "PROPOSED");
   if (snapshot.consistency === "PARTIAL") {
@@ -293,9 +360,11 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
       lease_expirations: { rows: expirations, count: expirations.length },
       overdue_balances: {
         rows: overdue,
-        forge_collectible_total_cents: sumOrNull(overdue, "forge_collectible_cents"),
-        externally_managed_total_cents: sumOrNull(overdue, "externally_managed_cents"),
+        forge_collectible_total_cents: totalsAvailable ? sumField("forge_collectible_cents") : null,
+        externally_managed_total_cents: totalsAvailable ? sumField("externally_managed_cents") : null,
         blocked_row_count: overdue.filter((r) => r.totals_blocked).length,
+        totals_unavailable: !totalsAvailable,
+        ...(totalsAvailable ? {} : { totals_unavailable_reason: totalsUnavailableReason }),
       },
       integrity: { rows: integrity, count: integrity.length },
       vacancy_assessment: "NOT_MODELED",

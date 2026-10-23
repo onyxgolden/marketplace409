@@ -9,7 +9,11 @@
  * Fault knobs (test-only, set by the harness — never by a job
  * request): failDataset, leakyOwners (return every owner's rows),
  * blockedDataset (a page read that never settles), pageSize,
- * mixedRevisions, revoked, staleSession, getterCanaryDataset.
+ * mixedRevisions, revoked, staleSession, getterCanaryDataset,
+ * slowReadMs (async sleep before every page read), syncSpinMs
+ * (synchronous busy-loop before every page read — proves the
+ * execution boundary is preemptive), hangCollect (collect never
+ * settles).
  */
 export function createSyntheticAdapter({ datasets, faults = {} }) {
   const calls = [];
@@ -23,7 +27,15 @@ export function createSyntheticAdapter({ datasets, faults = {} }) {
       if (faults.revoked) throw Object.assign(new Error("permission revoked"), { code: "PERMISSION_REVOKED" });
       if (faults.staleSession) throw Object.assign(new Error("stale session"), { code: "STALE_SESSION" });
       if (faults.failDataset === dataset) throw Object.assign(new Error("source down"), { code: "SOURCE_DOWN" });
+      if (faults.hangCollect) return new Promise(() => {});
       if (faults.blockedDataset === dataset) return new Promise(() => {});
+      if (typeof faults.slowReadMs === "number" && faults.slowReadMs > 0) {
+        await new Promise((r) => setTimeout(r, faults.slowReadMs));
+      }
+      if (typeof faults.syncSpinMs === "number" && faults.syncSpinMs > 0) {
+        const end = Date.now() + faults.syncSpinMs;
+        while (Date.now() < end) { /* synchronous runaway: only a preemptive boundary can stop this */ }
+      }
       const pageSize = faults.pageSize ?? 100;
       let all = (datasets[dataset] ?? []).filter((r) => faults.leakyOwners || r === null || typeof r !== "object" || r.owner_ref === owner_ref);
       if (faults.getterCanaryDataset === dataset && all.length > 0) {

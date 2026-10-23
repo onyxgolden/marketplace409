@@ -12,7 +12,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyManifest } from "../runner/bootstrap.mjs";
 import { createMemoryPublisher, runJob } from "../src/runner.js";
-import { createSyntheticAdapter } from "../src/syntheticRepository.js";
 import { canonicalDigest, canonicalJson } from "../../../../src/application/ai-lab/rental-ops/canonical.js";
 import { validateDecision } from "../../../../src/application/ai-lab/rental-ops/decisionValidator.js";
 import { oraclePredict } from "./oracle.js";
@@ -67,7 +66,7 @@ for (const c of cases) {
     try {
       await runJob({
         hostConfig: c.host, request: c.request,
-        adapterFactory: () => createSyntheticAdapter({ datasets: c.datasets, faults: c.faults ?? {} }),
+        adapterSpec: { kind: "synthetic", datasets: c.datasets, faults: c.faults ?? {} },
         publisher: { async publish() { throw new Error("disk on fire"); } },
         clock,
       });
@@ -82,7 +81,7 @@ for (const c of cases) {
     const result = await runJob({
       hostConfig: c.host, request: c.request,
       callerAsk: c.callerAsk, callerAdapter: c.callerAdapter,
-      adapterFactory: () => createSyntheticAdapter({ datasets: c.datasets, faults: c.faults ?? {} }),
+      adapterSpec: { kind: "synthetic", datasets: c.datasets, faults: c.faults ?? {} },
       publisher, clock,
     });
     if (run === 0) firstResult = result;

@@ -26,12 +26,19 @@ const addTree = (dir, { tests = false } = {}) => {
 addTree(join(WIRING_ROOT, "src"));
 addTree(join(WIRING_ROOT, "fixtures"));
 addTree(join(WIRING_ROOT, "runner"));
-delete files["runner/make-manifest.mjs"];
+delete files["runner/make-manifest.mjs"]; // authoring tool, not part of the runtime closure
 delete files["runner/manifest.json"];
+addTree(join(WIRING_ROOT, "tests"), { tests: true }); // test executables are pinned too
+addTree(join(WIRING_ROOT, "battery"));
+delete files["battery/make-battery.js"]; // authoring tool, not part of the runtime closure
+delete files["battery/manifest.json"];
+delete files["battery/cases.json"]; // pinned by the battery manifest instead
 addTree(join(REPO_ROOT, "src", "application", "ai-lab", "rental-ops"));
+// Package metadata governs module type and entry points — part of the closure.
+files["package.json"] = createHash("sha256").update(readFileSync(join(WIRING_ROOT, "package.json"))).digest("hex");
 const manifest = {
-  schema: "rental-ops-wiring-manifest@1",
-  note: "SHA-256 pins for every executable byte the bootstrap may import. Re-pin with runner/make-manifest.mjs after source changes.",
+  schema: "rental-ops-wiring-manifest@2",
+  note: "SHA-256 pins for the complete transitive executable closure: wiring sources, fixtures, runner, test executables, the battery launcher and package metadata. Re-pin with runner/make-manifest.mjs after source changes.",
   files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))),
 };
 writeFileSync(join(HERE, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

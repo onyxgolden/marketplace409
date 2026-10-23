@@ -105,11 +105,20 @@ describe("domain oracle — overdue split (FORGE-collectible vs externally manag
     expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("MONEY_INVALID");
   });
 
-  it("a missing schedule defaults the charge to externally managed + integrity row", async () => {
+  it("a missing schedule withholds the charge from both buckets and blocks totals with a named reason", async () => {
     const { report } = await run(shell({ leases: [lease()], charges: [charge()], schedules: [] }));
     const row = report.sections.overdue_balances.rows[0];
-    expect(row.externally_managed_cents).toBe(7500);
+    // Unknown classification never masquerades as verified evidence:
+    // no plausible external total is emitted, the lease totals are
+    // blocked, and the section totals are unavailable — never zero.
+    expect(row.totals_blocked).toBe(true);
+    expect(row.blocked_reason).toBe("CLASSIFICATION_UNVERIFIED");
+    expect(row.forge_collectible_cents).toBeNull();
+    expect(row.externally_managed_cents).toBeNull();
     expect(report.sections.integrity.rows.map((r) => r.kind)).toContain("CHARGE_SCHEDULE_MISSING");
+    expect(report.sections.overdue_balances.totals_unavailable).toBe(true);
+    expect(report.sections.overdue_balances.totals_unavailable_reason).toBe("ROW_BLOCKED");
+    expect(report.sections.overdue_balances.forge_collectible_total_cents).toBeNull();
   });
 });
 

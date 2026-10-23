@@ -84,14 +84,23 @@ export function descriptorFor(kind) {
 
 /**
  * Validate a job request. Identity/scope fields are cross-checked
- * against the host-registered principal by the runner; this validates
- * shape only. Unknown fields refuse — a request can never smuggle a
- * mode, adapter, URL, path or SQL through extra keys.
+ * against the host-registered principal AND portfolio by the runner;
+ * this validates shape only. Unknown fields refuse — a request can
+ * never smuggle a mode, adapter, URL, path or SQL through extra keys.
+ *
+ * The portfolio and the reporting window are caller LABELS only until
+ * the runner binds them: portfolio_ref must equal the host-registered
+ * portfolio, and the window must be exactly the one registered window
+ * contract — no caller-supplied horizon, no extra nested fields.
+ * as_of must be an explicit UTC calendar instant (Zulu); offset or
+ * loose date forms refuse.
  */
 const REQUEST_FIELDS = Object.freeze([
   "principal_ref", "owner_ref", "portfolio_ref", "job_kind", "job_version",
   "as_of", "window", "snapshot_request_id",
 ]);
+const REGISTERED_WINDOWS = Object.freeze(["lease-expiration-60d"]);
+const UTC_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 export function validateJobRequest(request) {
   if (request === null || typeof request !== "object" || Array.isArray(request)) {
     throw new JobRefusal("BAD_REQUEST", "request must be an object");
@@ -108,12 +117,17 @@ export function validateJobRequest(request) {
   if (request.job_version !== descriptorFor(request.job_kind).version) {
     throw new JobRefusal("BAD_REQUEST", "job_version does not match the registered descriptor");
   }
-  if (typeof request.as_of !== "string" || Number.isNaN(Date.parse(request.as_of))) {
-    throw new JobRefusal("BAD_REQUEST", "as_of must be an explicit UTC instant");
+  if (typeof request.as_of !== "string" || !UTC_INSTANT_RE.test(request.as_of)
+    || Number.isNaN(Date.parse(request.as_of))) {
+    throw new JobRefusal("BAD_REQUEST", "as_of must be an explicit UTC instant (Zulu, e.g. 2026-10-22T14:00:00.000Z)");
   }
   const w = request.window;
-  if (w === null || typeof w !== "object" || typeof w.name !== "string" || w.name.length === 0) {
-    throw new JobRefusal("BAD_REQUEST", "window.name is required");
+  if (w === null || typeof w !== "object" || Array.isArray(w)) {
+    throw new JobRefusal("BAD_REQUEST", "window must be an object");
+  }
+  const wKeys = Object.keys(w);
+  if (wKeys.length !== 1 || wKeys[0] !== "name" || !REGISTERED_WINDOWS.includes(w.name)) {
+    throw new JobRefusal("BAD_REQUEST", `window must be exactly { name: '${REGISTERED_WINDOWS.join("' | '")}' } — no caller-supplied horizon or extra fields`);
   }
   return request;
 }

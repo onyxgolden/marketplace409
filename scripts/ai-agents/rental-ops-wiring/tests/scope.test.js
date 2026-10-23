@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SYNTHETIC_REPOSITORIES } from "../fixtures/repositories.js";
 import { makeHost, makeRequest, runPreview, onlyItem } from "./helpers.js";
-import { createSyntheticAdapter } from "../src/syntheticRepository.js";
-import { createMemoryPublisher, runJob } from "../src/runner.js";
 import { fixedClock } from "./helpers.js";
 
 test("two owners with colliding IDs: each run sees only its own owner's facts", async () => {
@@ -14,7 +12,7 @@ test("two owners with colliding IDs: each run sees only its own owner's facts", 
   assert.equal(itemA.report.owner_ref, "owner-a");
 
   const b = await runPreview({
-    host: makeHost({ registered_owner: "owner-b" }),
+    host: makeHost({ registered_owner: "owner-b", registered_portfolio: "portfolio-b" }),
     request: makeRequest({ owner_ref: "owner-b", portfolio_ref: "portfolio-b" }),
   });
   const itemB = onlyItem(b.publisher);
@@ -36,10 +34,16 @@ test("dangling cross-owner join: a charge naming another owner's schedule cannot
   const { publisher } = await runPreview({ datasets: data });
   const item = onlyItem(publisher);
   const ovd = item.report.sections.overdue_balances.rows[0];
-  // Fail-safe: unresolvable schedule -> externally managed, never FORGE-collectible.
-  assert.equal(ovd.forge_collectible_cents, 0);
-  assert.equal(ovd.externally_managed_cents, 130000);
+  // Unknown classification never masquerades as verified evidence: the
+  // charge is withheld from both buckets and the lease totals are
+  // blocked with a named reason — never a plausible external total.
+  assert.equal(ovd.totals_blocked, true);
+  assert.equal(ovd.blocked_reason, "CLASSIFICATION_UNVERIFIED");
+  assert.equal(ovd.forge_collectible_cents, null);
+  assert.equal(ovd.externally_managed_cents, null);
   assert.ok(item.report.sections.integrity.rows.some((r) => r.kind === "CHARGE_SCHEDULE_MISSING"));
+  assert.equal(item.report.sections.overdue_balances.forge_collectible_total_cents, null);
+  assert.equal(item.report.sections.overdue_balances.totals_unavailable, true);
 });
 
 test("a data-getter canary row is refused as control data without invoking the getter", async () => {
@@ -49,13 +53,36 @@ test("a data-getter canary row is refused as control data without invoking the g
 });
 
 test("the adapter is only ever asked for the registered owner", async () => {
-  const data = SYNTHETIC_REPOSITORIES["preview-basic"]();
-  const adapter = createSyntheticAdapter({ datasets: data });
-  const publisher = createMemoryPublisher();
-  await runJob({
-    hostConfig: makeHost(), request: makeRequest(),
-    adapterFactory: () => adapter, publisher, clock: fixedClock(),
-  });
-  assert.ok(adapter.calls.length > 0);
-  assert.ok(adapter.calls.every((c) => c.owner_ref === "owner-a"));
+  // The execution worker builds the adapter from the host-owned spec,
+  // so owner scoping is proven at the snapshot boundary: every page
+  // request the builder issues carries the request's owner.
+  const { buildSnapshot } = await import("../../../../src/application/ai-lab/rental-ops/snapshotBuilder.js");
+  const { Budget } = await import("../../../../src/application/ai-lab/rental-ops/budgets.js");
+  const seen = [];
+  const adapter = {
+    async collect(dataset, { owner_ref }) {
+      seen.push(owner_ref);
+      return { rows: [], next_cursor: null, revision: "rev-1", expected_total: 0 };
+    },
+  };
+  await buildSnapshot({ request: makeRequest(), adapter, budget: new Budget(), clock: fixedClock() });
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((o) => o === "owner-a"));
+});
+
+test("an unregistered portfolio label refuses; it is never relabeled over whole-owner data", async () => {
+  const { result, publisher } = await runPreview({ request: { portfolio_ref: "not-registered-portfolio" } });
+  assert.deepEqual([result.outcome, result.code], ["REFUSED", "PORTFOLIO_UNREGISTERED"]);
+  assert.equal(publisher.items.size, 0);
+});
+
+test("a caller-supplied window horizon or extra window fields refuse", async () => {
+  const badHorizon = await runPreview({ request: { window: { name: "lease-expiration-60d", horizon_days: 90 } } });
+  assert.equal(badHorizon.result.code, "BAD_REQUEST");
+  const badName = await runPreview({ request: { window: { name: "lease-expiration-30d" } } });
+  assert.equal(badName.result.code, "BAD_REQUEST");
+  const badAsOf = await runPreview({ request: { as_of: "10/22/2026 2:00 PM" } });
+  assert.equal(badAsOf.result.code, "BAD_REQUEST");
+  const offsetAsOf = await runPreview({ request: { as_of: "2026-10-22T14:00:00+05:00" } });
+  assert.equal(offsetAsOf.result.code, "BAD_REQUEST");
 });

@@ -9,11 +9,14 @@ export const PRIVATE_ITEM_SCHEMA = "rental-ops-private-item@1";
  * Serialize an evaluated report into a private Workbench item.
  *
  * Item identity is a canonical tuple — agent / version / owner /
- * window / snapshot digest / report digest — so an identical replay
- * produces the identical item (idempotent publish), and changed
- * content can never silently overwrite a prior item: a tuple that
- * matches on identity but not on report bytes is a determinism
- * violation, refused as REPUBLISH_CONFLICT by the store.
+ * window / clock policy / snapshot digest / report digest — so an
+ * identical replay produces the identical item (idempotent publish),
+ * and changed content can never silently overwrite a prior item: a
+ * tuple that matches on identity but not on report bytes is a
+ * determinism violation, refused as REPUBLISH_CONFLICT by the store.
+ * The reporting window and the clock policy are bound into the
+ * identity: a report computed under a different window or clock
+ * regime can never share an item id.
  *
  * The publication timestamp lives OUTSIDE the digested report, so the
  * report bytes are identical across fixed-clock replays while the
@@ -28,6 +31,8 @@ export function reportRowIds(report) {
   return ids;
 }
 
+export const EVIDENCE_RETENTION_MS = 24 * 3600 * 1000;
+
 export function serializePrivateItem({ report, snapshot, publishedAt }) {
   const reportDigest = canonicalDigest(report);
   const tuple = {
@@ -35,6 +40,7 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
     job_version: 1,
     owner_ref: report.owner_ref,
     window: report.window.name,
+    clock_policy: "explicit-as-of",
     snapshot_digest: snapshot.digest,
     report_digest: reportDigest,
   };
@@ -60,6 +66,15 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
     report_digest: reportDigest,
     report,
     evidence_spans: evidenceSpans,
+    // Evidence expiry: raw snapshots are the 24h-retention class. Past
+    // this instant the review surface must not present decisions as
+    // evidence-backed (the renderer disables the controls and the
+    // server refuses new decisions with EXPIRED_EVIDENCE).
+    evidence_retained_until: new Date(
+      (Number.isNaN(Date.parse(snapshot.collection?.finished_at))
+        ? Date.parse(publishedAt)
+        : Date.parse(snapshot.collection.finished_at)) + EVIDENCE_RETENTION_MS,
+    ).toISOString(),
     row_ids: reportRowIds(report),
     pinned: {
       mapping_version: FIELD_MAPPING_VERSION,

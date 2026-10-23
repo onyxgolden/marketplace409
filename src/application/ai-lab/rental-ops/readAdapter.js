@@ -11,10 +11,13 @@ import { JobRefusal } from "./jobContracts.js";
  *
  * Adapter contract (implemented by the synthetic repository double in
  * scripts/ai-agents/rental-ops-wiring for this slice):
- *   collect(dataset, { owner_ref, cursor, fields })
+ *   collect(dataset, { owner_ref, cursor, fields, signal? })
  *     -> Promise<{ rows: object[], next_cursor: string|null,
  *                  revision: string|null, expected_total?: number }>
  *   close() -> void
+ * `signal`, when present, is the invocation deadline's AbortSignal —
+ * an optional cooperative-cancellation hint; the snapshot builder
+ * enforces the deadline whether or not the adapter honors it.
  * The adapter is owner-scoped by the host registration: it may only
  * ever be asked for the request's owner, and the snapshot builder
  * re-checks every admitted row's owner before returning bytes.

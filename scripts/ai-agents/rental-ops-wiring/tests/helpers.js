@@ -1,4 +1,3 @@
-import { createSyntheticAdapter } from "../src/syntheticRepository.js";
 import { createMemoryPublisher, runJob } from "../src/runner.js";
 import { SYNTHETIC_REPOSITORIES } from "../fixtures/repositories.js";
 
@@ -10,6 +9,7 @@ export const makeHost = (over = {}) => ({
   adapter_kind: "synthetic",
   registered_principal: "host:workbench-operator",
   registered_owner: "owner-a",
+  registered_portfolio: "portfolio-a",
   ...over,
 });
 
@@ -25,19 +25,23 @@ export const makeRequest = (over = {}) => ({
   ...over,
 });
 
+/** Host-owned adapter spec (data only): the execution worker builds the adapter from this. */
+export const previewSpec = ({ datasets, faults = {} } = {}) => ({
+  kind: "synthetic", datasets, faults,
+});
+
 export async function runPreview({ datasets, faults = {}, host = {}, request = {}, clock = fixedClock(), policies } = {}) {
   const data = datasets ?? SYNTHETIC_REPOSITORIES["preview-basic"]();
   const publisher = createMemoryPublisher();
-  let adapter;
   const result = await runJob({
     hostConfig: makeHost(host),
     request: makeRequest(request),
-    adapterFactory: () => { adapter = createSyntheticAdapter({ datasets: data, faults }); return adapter; },
+    adapterSpec: previewSpec({ datasets: data, faults }),
     publisher,
     clock,
     policies,
   });
-  return { result, publisher, adapter: () => adapter };
+  return { result, publisher };
 }
 
 export const onlyItem = (publisher) => {
