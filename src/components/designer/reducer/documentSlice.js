@@ -33,6 +33,7 @@ import {
   addSheet,
   addWall,
   addWallRect,
+  assignSprayTarget,
   deleteDeck,
   deleteFurniture,
   deleteOpening,
@@ -69,6 +70,7 @@ import {
   renameOrgChart,
   renameRoom,
   resetFurnitureSize,
+  retrofitDesignComponents,
   resizeFurniture,
   resizeOpening,
   rotateFurniture,
@@ -80,12 +82,18 @@ import {
   setFurnitureUnitCost,
   setPersonManager,
   setPipeFields,
+  setPipeSource,
+  setPipeUtility,
   setRoomFinish,
   setRoomFloorImage,
+  setSprayAim,
   setSymbolLayer,
   setSymbolFlammable,
+  setSymbolManwayDeleted,
+  setSymbolNozzleTombstone,
   setSymbolTag,
   setUnderlay,
+  setUnitBoundary,
   setWallCovering,
   setWallMaterial,
   updateDesignSettings,
@@ -130,6 +138,7 @@ import {
   upgradeDesignConnections,
 } from "@/domains/roomDesigner/pipeAttachments";
 import { applyCrossingJogs } from "@/domains/roomDesigner/pipeCrossings";
+import { setReducerSizes } from "@/domains/roomDesigner/pipeReducerModel";
 import { setDowncomerLevelProps } from "@/domains/roomDesigner/downcomers";
 import {
   findSymbol,
@@ -553,6 +562,85 @@ export function documentSlice(state, action) {
     case "SET_PIPE_FIELDS":
       if (!findPipeRun(state.design, action.pipeId)) return state;
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
+
+    // R9: the D8/D9 authoring and repair commands, wired as undoable
+    // document actions. Each soft-fails (returns the same state) when
+    // the domain command rejects the edit — an inspector control can
+    // never corrupt the document with a bad value.
+    case "SET_PIPE_UTILITY":
+      try {
+        return touch(state, setPipeUtility(state.design, action.pipeId, action.utility ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_PIPE_SOURCE":
+      try {
+        return touch(state, setPipeSource(state.design, action.pipeId, action.serviceId ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_REDUCER_SIZES":
+      try {
+        return touch(
+          state,
+          setReducerSizes(state.design, action.symbolId, {
+            inletSizeIn: action.inletSizeIn,
+            outletSizeIn: action.outletSizeIn,
+          }),
+        );
+      } catch {
+        return state;
+      }
+
+    case "ASSIGN_SPRAY_TARGET":
+      try {
+        return touch(state, assignSprayTarget(state.design, action.symbolId, action.vesselId));
+      } catch {
+        return state;
+      }
+
+    case "SET_SPRAY_AIM":
+      try {
+        return touch(state, setSprayAim(state.design, action.symbolId, action.aimAt ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_UNIT_BOUNDARY":
+      try {
+        return touch(state, setUnitBoundary(state.design, action.polygon ?? null));
+      } catch {
+        return state;
+      }
+
+    case "SET_SYMBOL_MANWAY_DELETED":
+      try {
+        return touch(
+          state,
+          setSymbolManwayDeleted(state.design, action.symbolId, Boolean(action.deleted)),
+        );
+      } catch {
+        return state;
+      }
+
+    case "SET_SYMBOL_NOZZLE_TOMBSTONE":
+      try {
+        return touch(
+          state,
+          setSymbolNozzleTombstone(state.design, action.symbolId, action.anchorId, Boolean(action.deleted)),
+        );
+      } catch {
+        return state;
+      }
+
+    case "RETROFIT_COMPONENTS":
+      try {
+        return touch(state, retrofitDesignComponents(state.design));
+      } catch {
+        return state;
+      }
 
     case "SET_DOWNCOMER_PROPS": {
       if (!findSymbolInstance(state.design, action.instanceId)) return state;
