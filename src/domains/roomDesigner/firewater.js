@@ -56,6 +56,7 @@ import {
   physicalRouteIn,
   properIntersection,
   CONNECTION_FACE_TOLERANCE_IN,
+  effectiveApproachSegment,
 } from "./pipeCrossings";
 import { flangeNominalSizeIn, pipeOdIn } from "./flangeGeometry";
 import { boundReducerAt } from "./pipeReducerModel";
@@ -542,29 +543,38 @@ export function verifiedSpraySupply(design, spray) {
   if (
     flangeNominalSizeIn(run.diameterIn ?? 2) !== flangeNominalSizeIn(inlet.sizeIn)
   ) {
-    const neighbor = run.points[neighborIdx];
-    const axisDeg = (Math.atan2(neighbor.y - point.y, neighbor.x - point.x) * 180) / Math.PI;
-    const bound = boundReducerAt(design, {
-      x: inlet.x,
-      y: inlet.y,
-      elevationIn: inlet.elevationIn,
-      sides: [
-        {
-          sizeIn: run.diameterIn ?? 2,
-          dirDeg: axisDeg,
-          owner: { kind: "run-end", runId: run.id, end },
-        },
-        {
-          sizeIn: inlet.sizeIn,
-          dirDeg: axisDeg + 180,
-          owner: { kind: "spray-inlet", symbolId: spray.id, anchorId: SPRAY_INLET_ANCHOR_ID },
-        },
-      ],
-    });
-    if (!bound) {
-      problems.push(
-        `supply branch ${run.id} (${run.diameterIn ?? 2} in) meets the assembly inlet (${inlet.sizeIn} in) without a reducer owned by the branch end and the assembly inlet`,
-      );
+    // F4.5: the query axis is the EFFECTIVE approach axis, not the
+    // literal terminal segment's tiny plan vector — a tolerance-valid
+    // below-fed riser with sub-tolerance plan drift must bind the
+    // correctly owned reducer regardless of which way the drift
+    // points. F4.6: never match a reducer when the approach carries
+    // no evidence (the connection is already refused by the rise and
+    // verticality checks above).
+    const approach = effectiveApproachSegment(design, run, end);
+    if (approach && approach.foundEvidence) {
+      const axisDeg = approach.axisDeg;
+      const bound = boundReducerAt(design, {
+        x: inlet.x,
+        y: inlet.y,
+        elevationIn: inlet.elevationIn,
+        sides: [
+          {
+            sizeIn: run.diameterIn ?? 2,
+            dirDeg: axisDeg,
+            owner: { kind: "run-end", runId: run.id, end },
+          },
+          {
+            sizeIn: inlet.sizeIn,
+            dirDeg: axisDeg + 180,
+            owner: { kind: "spray-inlet", symbolId: spray.id, anchorId: SPRAY_INLET_ANCHOR_ID },
+          },
+        ],
+      });
+      if (!bound) {
+        problems.push(
+          `supply branch ${run.id} (${run.diameterIn ?? 2} in) meets the assembly inlet (${inlet.sizeIn} in) without a reducer owned by the branch end and the assembly inlet`,
+        );
+      }
     }
   }
   if (problems.length === 0 && !runReachesSource(design, run.id, "firewater")) {

@@ -727,6 +727,14 @@ export function connectionCompatibilityErrors(design) {
           errors.push(
             `Pipe run ${run.id} (${run.diameterIn ?? 2} in) junctions onto pipe run ${edge.host.id} (${edge.host.diameterIn ?? 2} in) without a connected reducer/transition at the tap.`,
           );
+        } else if (edge.status === "no-approach") {
+          // F4.6: the route carries no approach evidence, so the tap
+          // cannot be verified as a physical connection — termination
+          // without evidence must refuse, the same rule the nozzle
+          // side enforces (F4.3).
+          errors.push(
+            `Pipe run ${run.id} claims a junction to pipe run ${junction.runId}, but its route carries no approach evidence — every segment lies within the ${CONNECTION_FACE_TOLERANCE_IN} in connection-face tolerance in plan and elevation, so the tap cannot be verified as a physical connection.`,
+          );
         }
       }
     }

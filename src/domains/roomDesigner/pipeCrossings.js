@@ -187,13 +187,16 @@ export function physicalRouteIn(design, run) {
  * axisDeg is the effective segment's own plan direction (far
  * vertex minus near vertex, pointing into the run). The axis is
  * read off the segment itself, never off a stub delta: a stub's
- * plan offset cannot rotate it, and for a vertical arrival the
- * segment's plan delta is (0,0), so the axis is the deterministic
- * atan2(0,0) = 0 the literal terminal read also produced —
- * vertical arrivals have no plan axis by geometry, and every
- * consumer now agrees on that same conventional value. Null when
- * the run has fewer than two points (callers in the validated
- * paths guarantee at least two).
+ * plan offset cannot rotate it. F4.5: when the effective segment
+ * changes elevation beyond the face tolerance but its plan
+ * projection is at/below it — a genuine vertical riser with
+ * sub-tolerance plan drift — the plan direction is
+ * tolerance-scale noise, not a meaningful axis, so axisDeg is the
+ * conventional vertical-arrival axis (0), the same value the
+ * literal read produced for an exactly vertical run. Genuine
+ * planar approaches (plan beyond tolerance) keep their true plan
+ * direction. Null when the run has fewer than two points (callers
+ * in the validated paths guarantee at least two).
  */
 export function effectiveApproachSegment(design, run, end) {
   const points = run?.points;
@@ -213,15 +216,19 @@ export function effectiveApproachSegment(design, run, end) {
     innerIdx = farIdx;
     farIdx = nextIdx;
   }
+  const planDx = points[farIdx].x - points[innerIdx].x;
+  const planDy = points[farIdx].y - points[innerIdx].y;
+  const planLen = Math.hypot(planDx, planDy);
+  const elevDelta = Math.abs(vertexElevs[farIdx] - vertexElevs[innerIdx]);
   return {
     idx,
     innerIdx,
     farIdx,
     foundEvidence: !evidenceFree(innerIdx, farIdx),
     axisDeg:
-      (Math.atan2(points[farIdx].y - points[innerIdx].y, points[farIdx].x - points[innerIdx].x) *
-        180) /
-      Math.PI,
+      elevDelta > CONNECTION_FACE_TOLERANCE_IN && planLen <= CONNECTION_FACE_TOLERANCE_IN
+        ? 0
+        : (Math.atan2(planDy, planDx) * 180) / Math.PI,
   };
 }
 
@@ -566,6 +573,9 @@ export function pipeConnectionGraph(design) {
  *   { status: "reducer" }  — the faces meet but the two sides differ
  *                              in nominal size and no reducer's owned
  *                              interfaces bind the transition (R1);
+ *   { status: "no-approach" } — the route carries no approach
+ *                              evidence (F4.6): the tap cannot be
+ *                              verified as a physical connection;
  *   { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex }.
  * Faces meet within CONNECTION_FACE_TOLERANCE_IN — barrel-overlap
  * reach is not a connection.
@@ -593,6 +603,16 @@ export function validatedJunctionEdge(design, run, end) {
   if (Math.abs(myElevIn - hostElevIn) > CONNECTION_FACE_TOLERANCE_IN) {
     return { status: "elevation", host, point, hostElevIn, myElevIn };
   }
+  // F4.6: an exhausted approach — no evidence-bearing segment anywhere
+  // in the route — certifies nothing. The edge cannot be "ok" on an
+  // unknown approach, and no reducer may bind against a fabricated
+  // axis (ChatGPT's executed repro: an all-duplicate branch validated
+  // "ok" through a 0/180 reducer no real approach justified). A null
+  // approach (fewer than two points) is the same refusal.
+  const approach = effectiveApproachSegment(design, run, end);
+  if (!approach || !approach.foundEvidence) {
+    return { status: "no-approach", host, point, hostElevIn, myElevIn };
+  }
   // R1/F1: a mixed-size transition is an edge ONLY when a reducer's
   // owned interfaces bind it — and the reducer must own THIS exact
   // pair of participating interfaces: this run's end and the host
@@ -607,8 +627,11 @@ export function validatedJunctionEdge(design, run, end) {
     // off the literal terminal segment fabricated the axis
     // (atan2(0,0) = 0) whenever the terminal vertex was duplicated,
     // certifying reducers faced for a different approach (and
-    // refusing correctly faced ones).
-    const branchAxisDeg = effectiveApproachSegment(design, run, end).axisDeg;
+    // refusing correctly faced ones). F4.5: a near-vertical effective
+    // segment reports the conventional vertical-arrival axis (0),
+    // never the sub-tolerance plan noise. F4.6: this line is reached
+    // only when the approach carries evidence (see above).
+    const branchAxisDeg = approach.axisDeg;
     const bound = boundReducerAt(design, {
       x: point.x,
       y: point.y,

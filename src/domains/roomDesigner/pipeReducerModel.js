@@ -321,8 +321,10 @@ export function junctionHostOwner(design, host, point) {
  * EVERY modeled connection (junction tap, attached equipment end, or
  * authored spray-inlet end) whose run end sits at a plan point (F1):
  * [{ elevationIn, axisDeg, runId, end, runSizeIn, otherSizeIn,
- *    mineOwner, otherOwner }]. The axis points from the connection
- * point into the run whose end sits there; otherSizeIn is the far
+ *    mineOwner, otherOwner }]. Ends whose route carries no approach
+ * evidence are NOT published (F4.6): without evidence there is no
+ * verified transition to author, so no usable axis may be persisted.
+ * The axis points from the connection point into the run whose end
  * side's size (host run for a junction; the inlet's authored size for
  * a spray inlet; unknown for an equipment attachment, null). Distinct
  * connections are deduplicated by their ownership pair — the two
@@ -359,7 +361,16 @@ export function modeledConnectionsAtPoint(design, x, y) {
       // duplicate terminal vertex), and placeReducer persists this
       // value into rotationDeg, so a fabricated read here became a
       // fabricated record the gates then agreed with.
-      const axisDeg = effectiveApproachSegment(design, run, end).axisDeg;
+      // F4.6: an exhausted approach publishes NO usable transition
+      // axis — emitting a connection with a fabricated axis for an
+      // unknown approach let placeReducer persist it into
+      // rotationDeg. Skip these connections: without evidence there
+      // is no verified transition to author, so the reducer stays
+      // unowned (and binds nothing) instead of carrying a fabricated
+      // axis.
+      const approach = effectiveApproachSegment(design, run, end);
+      if (!approach || !approach.foundEvidence) continue;
+      const axisDeg = approach.axisDeg;
       const elevationIn = vertexElevationsForDesign(design, run)[idx];
       const mineOwner = { kind: "run-end", runId: run.id, end };
       const candidates = [];
