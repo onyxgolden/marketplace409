@@ -41,7 +41,7 @@ import { doorSwingFrame } from "@/domains/roomDesigner/designerHandles";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
 import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
-import { FIREWATER_COLOR } from "@/domains/roomDesigner/firewater";
+import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
 import { manwayLocal, accessPackageLocal } from "@/domains/roomDesigner/vesselAccess";
 import { UTILITY_ANCHOR_SPECS, isVesselSymbol } from "@/domains/roomDesigner/utilityPiping";
 import { downcomerLevels } from "@/domains/roomDesigner/downcomers";
@@ -250,7 +250,7 @@ function PrintPipes({ design }) {
             <polyline
               points={pts(run.points || [])}
               fill="none"
-              stroke={run.utility === "firewater" ? FIREWATER_COLOR : effectiveColor(design, run, INK)}
+              stroke={finalPipeColor(design, run, INK)}
               strokeWidth={Math.max(run.diameterIn || 1, 0.75)}
               strokeLinecap={run.underground ? "butt" : "round"}
               strokeLinejoin="round"

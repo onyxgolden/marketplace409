@@ -30,7 +30,7 @@ function mainWithHydrants(hydrantXs) {
     ...design,
     pipes: design.pipes.map((p) =>
       p.id === "src"
-        ? { ...p, utility: "firewater", sourceOf: "firewater", junctions: { end: { runId: "main" } } }
+        ? { ...p, utility: "firewater", sourceOf: "firewater", underground: true, elevationIn: -36, junctions: { end: { runId: "main" } } }
         : { ...p, utility: "firewater", underground: true, elevationIn: -36 },
     ),
   };
@@ -46,6 +46,16 @@ function mainWithHydrants(hydrantXs) {
 function sprayDesign(sprayAt, aimAt = { x: 1000, y: 1000 }) {
   let design = placeSymbol(createEmptyDesign(), E, "vertical-vessel", 1000, 1000, { id: "v1" });
   design = placeSymbol(design, P, "spray-nozzle", sprayAt.x, sprayAt.y, { id: "s1" });
+  // D668-006: spray assignments require a verified supply path. Include
+  // a minimal firewater loop with a source.
+  design = addPipeRun(design, [{ x: sprayAt.x - 100, y: sprayAt.y }, { x: sprayAt.x, y: sprayAt.y }], {
+    id: "fw-main",
+    diameterIn: 12,
+    utility: "firewater",
+    sourceOf: "firewater",
+    underground: true,
+    elevationIn: -36,
+  });
   design = {
     ...design,
     unitBoundary: [
@@ -141,6 +151,8 @@ describe("firewater", () => {
     design = addPipeRun(design, [{ x: 1200, y: 0 }, { x: 1200, y: -72 }], {
       id: "hbr",
       diameterIn: HYDRANT_BRANCH_DIAMETER_IN,
+      elevationIn: -36,
+      underground: true,
     });
     design = {
       ...design,

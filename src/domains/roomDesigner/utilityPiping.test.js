@@ -147,11 +147,18 @@ describe("utility piping (D8)", () => {
     expect(utilityConnectionTable(moved).every((r) => r.supplied)).toBe(true);
   });
 
-  it("a design without any utility system reports no errors (legacy designs untouched)", () => {
+  it("a new vessel with zero utilities is flagged (missing all three) — D668-008", () => {
     const design = placeSymbol(createEmptyDesign(), E, "vertical-vessel", 500, 500, { id: "v1" });
-    expect(utilityPipingErrors(design)).toEqual([]);
+    // D668-008: the old guard that disabled checks when the system was
+    // absent is removed — a new vessel with no utility branches is
+    // flagged for all three missing services.
+    const errors = utilityPipingErrors(design);
+    expect(errors).toHaveLength(3);
+    expect(errors.some((e) => /Plant water.*missing supply path/.test(e))).toBe(true);
+    expect(errors.some((e) => /Plant air.*missing supply path/.test(e))).toBe(true);
+    expect(errors.some((e) => /Nitrogen.*missing supply path/.test(e))).toBe(true);
     // The connection table still lists the vessel's ports as evidence —
-    // every row unsupplied — but nothing is flagged.
+    // every row unsupplied.
     const table = utilityConnectionTable(design);
     expect(table).toHaveLength(3);
     expect(table.every((r) => r.supplied === false)).toBe(true);

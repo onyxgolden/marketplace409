@@ -63,7 +63,21 @@ describe("pipe crossings and elevation jogs", () => {
     design = addPipeRun(design, [{ x: 500, y: 500 }, { x: 500, y: 900 }], { id: "tee", diameterIn: 2 });
     design = addPipeRun(design, [{ x: 900, y: 500 }, { x: 900, y: 900 }], { id: "corner", diameterIn: 2 });
     expect(findPipeCrossings(design)).toEqual([]);
+    // A modeled tee (junction record derived from the touch) is a
+    // connection, not a crossing and not an unmodeled contact.
+    design = detectRunJunctions(design, "tee");
     expect(pipeCrossingErrors(design)).toEqual([]);
+  });
+
+  it("an unmodeled end-on-run touch is a named contact finding (D668-003)", () => {
+    let design = createEmptyDesign();
+    design = addPipeRun(design, [{ x: 100, y: 500 }, { x: 900, y: 500 }], { id: "a", diameterIn: 2 });
+    design = addPipeRun(design, [{ x: 500, y: 500 }, { x: 500, y: 900 }], { id: "tee", diameterIn: 2 });
+    // No junction record: the touch is not a crossing (it never was),
+    // but it is no longer silent either.
+    expect(findPipeCrossings(design)).toEqual([]);
+    const errors = pipeCrossingErrors(design);
+    expect(errors.some((e) => /unmodeled contact/i.test(e))).toBe(true);
   });
 
   it("validateDesign flags an unresolved crossing with a named error", () => {
@@ -76,21 +90,24 @@ describe("pipe crossings and elevation jogs", () => {
   it("applyCrossingJogs steps the edited run over the other, in elevation only", () => {
     const before = crossingDesign();
     const after = applyCrossingJogs(before, "b");
-    // No unresolved crossing remains, and validation is clean. (The
-    // jog's step vertex sits exactly at the crossing, so the pair no
-    // longer intersects in both interiors — the physical separation is
-    // asserted on the stored profile below.)
+    // No unresolved crossing remains, and validation is clean.
     expect(findPipeCrossings(after).filter((c) => !c.resolved)).toEqual([]);
     expect(pipeCrossingErrors(after)).toEqual([]);
-    // The step vertex is AT the crossing point, at the other run's
-    // elevation plus the OD-rule separation for two 2-in pipes.
+    // The jog is two vertical risers and a short elevated span
+    // straddling the crossing (D668-002): the span's two vertices ride
+    // at the other run's elevation plus the OD-rule separation for two
+    // 2-in pipes; the risers share their plan positions.
     const b = run(after, "b");
-    const stepIdx = b.points.findIndex((p) => p.x === 500 && p.y === 500);
-    expect(stepIdx).toBeGreaterThan(0);
-    expect(b.elevIn[stepIdx]).toBeCloseTo(30 + requiredSeparationIn(2, 2), 9);
-    // Segments adjacent to the step ride at the stepped elevation.
-    const bElevs = segmentElevationsForDesign(after, b);
-    expect(Math.max(...bElevs)).toBeCloseTo(30 + requiredSeparationIn(2, 2), 9);
+    const stepElev = 30 + requiredSeparationIn(2, 2);
+    const spanIdx = b.points
+      .map((p, i) => (Math.abs(b.elevIn[i] - stepElev) < 1e-9 ? i : -1))
+      .filter((i) => i >= 0);
+    expect(spanIdx).toHaveLength(2);
+    const [up, span] = spanIdx;
+    expect(b.points[up]).toEqual(b.points[up - 1]); // riser: same plan
+    expect(b.points[span]).toEqual(b.points[span + 1]); // riser: same plan
+    expect(b.elevIn[up - 1]).toBeCloseTo(30, 9);
+    expect(b.elevIn[span + 1]).toBeCloseTo(30, 9);
     // The other run is untouched...
     expect(run(after, "a")).toEqual(run(before, "a"));
     // ...and no plan (x, y) coordinate moved off the original line:
@@ -114,19 +131,25 @@ describe("pipe crossings and elevation jogs", () => {
     expect(applyCrossingJogs(design, "solo")).toBe(design);
   });
 
-  it("short segments jog by stepping the crossing vertex itself", () => {
+  it("a jog that cannot clear is refused, not faked (D668-002)", () => {
     // Two 12-in runs on 10-in segments crossing at their midpoints:
-    // no room for a plateau, so the crossing vertex itself steps.
+    // the required 13.75-in separation cannot fit between risers ~8 in
+    // apart (or up a 5-in approach), so the jog is REFUSED — the run is
+    // left unchanged and the crossing stays honestly unresolved, with
+    // its validation error intact. A fake jog that renders but does
+    // not clear is worse than no jog.
     let design = createEmptyDesign();
     design = addPipeRun(design, [{ x: 495, y: 500 }, { x: 505, y: 500 }], { id: "a", diameterIn: 12 });
     design = addPipeRun(design, [{ x: 500, y: 495 }, { x: 500, y: 505 }], { id: "b", diameterIn: 12 });
+    const before = run(design, "b");
     const after = applyCrossingJogs(design, "b");
-    const b = run(after, "b");
-    const stepIdx = b.points.findIndex((p) => p.x === 500 && p.y === 500);
-    expect(stepIdx).toBeGreaterThan(0);
-    expect(b.elevIn[stepIdx]).toBeCloseTo(30 + requiredSeparationIn(12, 12), 9);
-    expect(pipeCrossingErrors(after)).toEqual([]);
-    expect(findPipeCrossings(after).filter((c) => !c.resolved)).toEqual([]);
+    const afterB = run(after, "b");
+    // No jog geometry was inserted (still 2 points; only the derived
+    // profile got baked into per-vertex elevations).
+    expect(afterB.points).toEqual(before.points);
+    expect(afterB.points).toHaveLength(2);
+    expect(findPipeCrossings(after).filter((c) => !c.resolved)).toHaveLength(1);
+    expect(pipeCrossingErrors(after).length).toBeGreaterThan(0);
   });
 
   it("a run crossing itself at one elevation is flagged", () => {

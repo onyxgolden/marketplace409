@@ -31,6 +31,19 @@ const EPS = 1e-9;
 export const DEFAULT_PIPE_ELEVATION_IN = 30;
 /** Extra vertical clearance (in) between crossing pipes, beyond touching. */
 export const CROSSING_CLEARANCE_IN = 1;
+/**
+ * How close (plan in) a run end must land to another run to connect.
+ * (Moved here from pipeAttachments.js: the junction tolerance is a
+ * geometric constant of the pipe-crossing model; pipeAttachments
+ * re-exports it.)
+ */
+export const JUNCTION_TOLERANCE_IN = 0.5;
+/**
+ * Plan/elevation tolerance (in) for two pipe centerlines to count as
+ * meeting at a shared flanged face. Faces meet; barrel-overlap reach
+ * is NOT a connection (D668-004).
+ */
+export const CONNECTION_FACE_TOLERANCE_IN = 0.5;
 
 /** True when a run carries any stored elevation (base or per-vertex). */
 export function runHasStoredElevation(run) {
@@ -109,6 +122,85 @@ export function segmentElevationsForDesign(design, run) {
   return runHasStoredElevation(run)
     ? storedSegmentElevations(run)
     : derivedSegmentElevations(design, run);
+}
+
+/**
+ * Per-VERTEX true centerline elevations for a run in a design — the
+ * shared physical profile consumed by validation, rendering, and
+ * connection checks alike (D668-002). Stored per-vertex elevations win;
+ * gaps fall back to the run's base elevation, then to the standard
+ * derived rule (endpoints take their segment's elevation, interior
+ * vertices the higher adjacent one — the same rule the 3D joints use).
+ */
+export function vertexElevationsForDesign(design, run) {
+  const pts = run?.points || [];
+  if (pts.length === 0) return [];
+  const derived = derivedSegmentElevations(design, run);
+  const at = (i) => {
+    if (i === 0) return derived[0];
+    if (i === pts.length - 1) return derived[derived.length - 1];
+    return Math.max(derived[i - 1], derived[i]);
+  };
+  if (!runHasStoredElevation(run)) return pts.map((_, i) => at(i));
+  return pts.map((_, i) => {
+    const v = vertexElevationIn(run, i);
+    return v != null ? v : at(i);
+  });
+}
+
+/**
+ * The run's physical route: [{ x, y, zIn }] — plan position plus the
+ * true centerline elevation at every vertex. Consecutive vertices with
+ * the same plan position and different elevations are a vertical riser;
+ * a vertex pair with different elevations is a sloped segment. This is
+ * the single profile both validation and rendering read (D668-002):
+ * a downward jog dips below its base elevation in the route, and every
+ * consumer sees the same dip.
+ */
+export function physicalRouteIn(design, run) {
+  const pts = run?.points || [];
+  const elevs = vertexElevationsForDesign(design, run);
+  return pts.map((p, i) => ({ x: p.x, y: p.y, zIn: elevs[i] ?? DEFAULT_PIPE_ELEVATION_IN }));
+}
+
+/** Minimum distance between two 3D segments (p1-q1, p2-q2). */
+export function segSegDistance3D(p1, q1, p2, q2) {
+  const d1 = { x: q1.x - p1.x, y: q1.y - p1.y, z: q1.zIn - p1.zIn };
+  const d2 = { x: q2.x - p2.x, y: q2.y - p2.y, z: q2.zIn - p2.zIn };
+  const r = { x: p1.x - p2.x, y: p1.y - p2.y, z: p1.zIn - p2.zIn };
+  const a = d1.x * d1.x + d1.y * d1.y + d1.z * d1.z;
+  const e = d2.x * d2.x + d2.y * d2.y + d2.z * d2.z;
+  const f = d2.x * r.x + d2.y * r.y + d2.z * r.z;
+  let s;
+  let t;
+  if (a <= EPS && e <= EPS) {
+    return Math.hypot(r.x, r.y, r.z);
+  }
+  if (a <= EPS) {
+    s = 0;
+    t = Math.max(0, Math.min(1, f / e));
+  } else {
+    const c = d1.x * r.x + d1.y * r.y + d1.z * r.z;
+    if (e <= EPS) {
+      t = 0;
+      s = Math.max(0, Math.min(1, -c / a));
+    } else {
+      const b = d1.x * d2.x + d1.y * d2.y + d1.z * d2.z;
+      const denom = a * e - b * b;
+      s = denom > EPS ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) {
+        t = 0;
+        s = Math.max(0, Math.min(1, -c / a));
+      } else if (t > 1) {
+        t = 1;
+        s = Math.max(0, Math.min(1, (b - c) / a));
+      }
+    }
+  }
+  const c1 = { x: p1.x + d1.x * s, y: p1.y + d1.y * s, z: p1.zIn + d1.z * s };
+  const c2 = { x: p2.x + d2.x * t, y: p2.y + d2.y * t, z: p2.zIn + d2.z * t };
+  return Math.hypot(c1.x - c2.x, c1.y - c2.y, c1.z - c2.z);
 }
 
 /** Vertical separation (in) two crossing centerlines need to not touch. */
@@ -190,7 +282,20 @@ export function findPipeCrossings(design) {
   return out;
 }
 
-/** Insert a vertical jog into `run` at a crossing on segment segIndex. */
+/**
+ * Insert a vertical jog into `run` at a crossing on segment segIndex:
+ * two vertical risers and a short level span straddling the crossing —
+ * pre(base), up(target) at pre's plan position, span(target),
+ * down(base) at span's plan position. The zero-plan-length pre->up and
+ * span->down pairs ARE the risers (the shared physical route reads them
+ * as vertical); the span clears the crossing by the required separation,
+ * upward for an above-grade run and downward (an authored underpass
+ * inside the burial envelope) for a buried one. One form serves both
+ * directions, so validation and rendering always agree about the jog's
+ * shape (D668-002): a V would flatten back under the max-of-endpoints
+ * segment rule and the crossing would vanish from validation at its own
+ * vertex.
+ */
 function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn) {
   const pts = run.points;
   const A = pts[segIndex];
@@ -202,21 +307,19 @@ function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn) 
   const uy = (B.y - A.y) / segLen;
   const distX = Math.hypot(X.x - A.x, X.y - A.y);
   const half = Math.min(Math.max(9, pipeOdIn(otherDiameterIn) + 6), segLen / 2);
-  const inserts = []; // { point, elevIn } in along-segment order
-  if (distX < 1) {
-    elevIn[segIndex] = targetElevIn; // crossing at the vertex: step the vertex
-  } else if (segLen - distX < 1) {
-    elevIn[segIndex + 1] = targetElevIn;
-  } else {
-    if (distX - half >= 1) {
-      inserts.push({ point: { x: X.x - ux * half, y: X.y - uy * half }, elevIn: baseElevIn });
-    }
-    inserts.push({ point: { x: X.x, y: X.y }, elevIn: targetElevIn });
-    if (segLen - distX - half >= 1) {
-      inserts.push({ point: { x: X.x + ux * half, y: X.y + uy * half }, elevIn: baseElevIn });
-    }
-  }
-  if (inserts.length === 0) return { ...run, elevIn };
+  const at = (dist) => ({ x: A.x + ux * dist, y: A.y + uy * dist });
+  // Clamp the riser plan positions inside the segment so a crossing
+  // near a vertex still gets a real jog.
+  const preDist = Math.min(Math.max(distX - half, 1), segLen - 1);
+  const spanDist = Math.min(Math.max(distX + half, 1), segLen - 1);
+  const prePlan = at(preDist);
+  const spanPlan = at(spanDist);
+  const inserts = [
+    { point: prePlan, elevIn: baseElevIn },
+    { point: { ...prePlan }, elevIn: targetElevIn },
+    { point: spanPlan, elevIn: targetElevIn },
+    { point: { ...spanPlan }, elevIn: baseElevIn },
+  ];
   return {
     ...run,
     points: [
@@ -242,6 +345,12 @@ function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn) 
  * interior vertices the higher adjacent one — the same rule the 3D
  * joints use), so a rack-riding run keeps riding the rack after the
  * jog instead of dropping to the grade fallback.
+ *
+ * A jog that cannot actually clear — the inserted geometry still
+ * conflicts with the other run or with the run itself (e.g. 12-in
+ * pipes on a 10-in segment) — is REFUSED: the run is left unchanged
+ * and the crossing stays honestly unresolved instead of rendering a
+ * jog validation cannot defend (D668-002).
  */
 export function applyCrossingJogs(design, runId) {
   let current = design;
@@ -278,17 +387,59 @@ export function applyCrossingJogs(design, runId) {
       ? { seg: c.segA, myElev: c.elevAIn, otherElev: c.elevBIn, otherId: c.bRunId }
       : { seg: c.segB, myElev: c.elevBIn, otherElev: c.elevAIn, otherId: c.aRunId };
     const other = (current.pipes || []).find((r) => r.id === mine.otherId);
-    const separation = requiredSeparationIn(work.diameterIn ?? 2, other?.diameterIn ?? 2);
-    // A buried run jogs DOWN (authored underpass inside its burial
-    // envelope); an above-grade run jogs up over the other.
-    const target = runIsBuried(current, work)
-      ? mine.otherElev - separation
-      : mine.otherElev + separation;
-    const jogged = insertJog(work, mine.seg, { x: c.x, y: c.y }, target, mine.myElev, other?.diameterIn ?? 2);
-    current = {
-      ...current,
-      pipes: current.pipes.map((r) => (r.id === runId ? jogged : r)),
-    };
+    const myDiam = work.diameterIn ?? 2;
+    const otherDiam = other?.diameterIn ?? 2;
+    // The jog must clear the other pipe AND the run's own body at the
+    // elbow: a large pipe stepping over a small one needs the span far
+    // enough from its un-jogged route that its own OD clears, not just
+    // the small pipe's separation (D668-002/D668-003).
+    const otherSep = requiredSeparationIn(myDiam, otherDiam);
+    const selfSep = requiredSeparationIn(myDiam, myDiam);
+    // A buried run prefers DOWN (authored underpass inside its burial
+    // envelope); an above-grade run prefers up over the other. If the
+    // preferred direction introduces new envelope conflicts (congested
+    // plan), the alternative direction is tried before refusing.
+    const buried = runIsBuried(current, work);
+    const targets = buried
+      ? [
+          Math.min(mine.otherElev - otherSep, mine.myElev - selfSep),
+          Math.max(mine.otherElev + otherSep, mine.myElev + selfSep),
+        ]
+      : [
+          Math.max(mine.otherElev + otherSep, mine.myElev + selfSep),
+          Math.min(mine.otherElev - otherSep, mine.myElev - selfSep),
+        ];
+    const beforeEnv = new Set(
+      envelopeConflictErrors(current).filter((e) => e.includes(runId)),
+    );
+    let accepted = null;
+    for (const target of targets) {
+      const jogged = insertJog(work, mine.seg, { x: c.x, y: c.y }, target, mine.myElev, otherDiam);
+      const candidate = {
+        ...current,
+        pipes: current.pipes.map((r) => (r.id === runId ? jogged : r)),
+      };
+      // The target crossing must be resolved, and the jog must not
+      // introduce NEW envelope errors for this run. Other pre-existing
+      // crossings are handled by subsequent loop iterations (D668-002).
+      const targetResolved = !findPipeCrossings(candidate).some(
+        (k) =>
+          !k.resolved &&
+          ((k.aRunId === c.aRunId && k.bRunId === c.bRunId) ||
+            (k.aRunId === c.bRunId && k.bRunId === c.aRunId)) &&
+          Math.hypot(k.x - c.x, k.y - c.y) < 12,
+      );
+      const newEnv = envelopeConflictErrors(candidate)
+        .filter((e) => e.includes(runId))
+        .some((e) => !beforeEnv.has(e));
+      if (targetResolved && !newEnv) {
+        accepted = candidate;
+        break;
+      }
+    }
+    // A refused jog stops the loop — retrying the same crossing cannot help.
+    if (!accepted) return current;
+    current = accepted;
   }
   return current;
 }
@@ -306,10 +457,14 @@ export function runIsBuried(design, run) {
 }
 
 /**
- * The modeled pipe-connection graph: edges exist ONLY where a run's
- * end is explicitly junctioned onto another run (its `junctions`
- * record). Plan proximity and x/y intersections never create edges —
- * connectivity is modeled, not inferred.
+ * The modeled pipe-connection graph: edges exist ONLY where a run's end
+ * is explicitly junctioned onto another run (its `junctions` record)
+ * AND the physical interface validates (D668-004): the host run exists,
+ * the end actually lands on a host segment (no fallback to the first
+ * segment — a stale/off-route reference is refused, not approximated),
+ * and the two centerlines meet at a shared face within
+ * CONNECTION_FACE_TOLERANCE_IN. Plan proximity and bare junction ids
+ * never create edges — connectivity is modeled AND verified.
  * Returns Map<runId, Set<runId>> (undirected).
  */
 export function pipeConnectionGraph(design) {
@@ -319,15 +474,74 @@ export function pipeConnectionGraph(design) {
     graph.get(a).add(b);
   };
   for (const run of design?.pipes || []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) continue;
     for (const end of ["start", "end"]) {
-      const host = run.junctions?.[end]?.runId;
-      if (host && host !== run.id) {
-        link(run.id, host);
-        link(host, run.id);
+      const edge = validatedJunctionEdge(design, run, end);
+      if (edge.status === "ok") {
+        link(run.id, edge.host.id);
+        link(edge.host.id, run.id);
       }
     }
   }
   return graph;
+}
+
+/**
+ * Validate one claimed pipe-to-pipe junction against the physical
+ * interface (D668-004). Returns one of:
+ *   { status: "no-edge" }   — no junction record on this end;
+ *   { status: "no-host" }   — the named host run does not exist;
+ *   { status: "off-route" } — the end touches no host segment
+ *                              (stale/off-route reference: refused);
+ *   { status: "elevation" } — the end is on the host's route but the
+ *                              faces do not meet (host, hostElevIn,
+ *                              myElevIn included for the message);
+ *   { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex }.
+ * Faces meet within CONNECTION_FACE_TOLERANCE_IN — barrel-overlap
+ * reach is not a connection.
+ */
+export function validatedJunctionEdge(design, run, end) {
+  const hostId = run.junctions?.[end]?.runId;
+  if (!hostId || hostId === run.id) return { status: "no-edge" };
+  const host = (design?.pipes || []).find((r) => r.id === hostId);
+  if (!host || !Array.isArray(host.points) || host.points.length < 2) {
+    return { status: "no-host" };
+  }
+  const idx = end === "start" ? 0 : run.points.length - 1;
+  const point = run.points[idx];
+  const route = physicalRouteIn(design, host);
+  let best = null;
+  for (let i = 0; i + 1 < route.length; i += 1) {
+    const hit = pointSegmentDistance(point, route[i], route[i + 1]);
+    if (hit.distance <= JUNCTION_TOLERANCE_IN + 1e-9 && (!best || hit.distance < best.distance)) {
+      best = { i, t: hit.t, distance: hit.distance };
+    }
+  }
+  if (!best) return { status: "off-route", host, point };
+  const hostElevIn = route[best.i].zIn + best.t * (route[best.i + 1].zIn - route[best.i].zIn);
+  const myElevIn = vertexElevationsForDesign(design, run)[idx];
+  if (Math.abs(myElevIn - hostElevIn) > CONNECTION_FACE_TOLERANCE_IN) {
+    return { status: "elevation", host, point, hostElevIn, myElevIn };
+  }
+  return { status: "ok", host, point, hostElevIn, myElevIn, hostSegIndex: best.i };
+}
+
+/**
+ * Validated contact points between two runs: the plan points where a
+ * verified junction edge joins them. Used to exempt modeled connections
+ * (and only modeled connections) from the envelope-conflict checks.
+ */
+export function validatedContactPoints(design, runA, runB) {
+  const pts = [];
+  for (const end of ["start", "end"]) {
+    const edge = validatedJunctionEdge(design, runA, end);
+    if (edge.status === "ok" && edge.host.id === runB.id) pts.push(edge.point);
+  }
+  for (const end of ["start", "end"]) {
+    const edge = validatedJunctionEdge(design, runB, end);
+    if (edge.status === "ok" && edge.host.id === runA.id) pts.push(edge.point);
+  }
+  return pts;
 }
 
 /** The run designated as a service's source / battery-limit inlet. */
@@ -441,7 +655,7 @@ export function connectionFlanges(design) {
   const out = [];
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
-    const segElevs = segmentElevationsForDesign(design, run);
+    const vertexElevs = vertexElevationsForDesign(design, run);
     for (const end of ["start", "end"]) {
       const kind = run.attachments?.[end]
         ? "nozzle"
@@ -461,7 +675,7 @@ export function connectionFlanges(design) {
         y: point.y,
         axisDeg,
         sizeIn: run.diameterIn ?? 2,
-        elevationIn: segElevs[end === "start" ? 0 : segElevs.length - 1],
+        elevationIn: vertexElevs[idx],
       });
     }
   }
@@ -619,25 +833,204 @@ export function pipeCrossingErrors(design) {
       }
     }
   }
-  const attachedTo = (run) =>
-    new Set(Object.values(run.attachments || {}).map((ref) => ref?.symbolId).filter(Boolean));
+  // Envelope conflicts beyond plan crossings (D668-003): unmodeled
+  // end-to-interior contacts, parallel runs inside each other's
+  // outside-radius envelopes, and horizontal runs crossing vertical
+  // risers. All are measured on the shared physical route in 3D; only
+  // VALIDATED modeled connections exempt a contact (never a bare
+  // attachment id, never proximity).
+  errors.push(...envelopeConflictErrors(design));
+  // A run passing through an equipment footprint it does not connect
+  // to. The exemption is LOCALIZED and verified: only the sub-route
+  // near a verified attached nozzle (the run end actually sitting on
+  // the nozzle) is exempt — never the whole run because an attachment
+  // names the vessel (D668-003).
+  const verifiedNozzlePoints = verifiedAttachmentPoints(design);
   for (const run of design?.pipes || []) {
     if (!Array.isArray(run.points) || run.points.length < 2) continue;
     // Buried runs pass underneath plan symbols legitimately: the
     // footprint rule governs above-grade equipment, not underground
     // obstruction volumes (modeled separately where they exist).
     if (runIsBuried(design, run)) continue;
-    const exempt = attachedTo(run);
     for (const inst of design?.symbols || []) {
-      if (inst.domain !== "processEquipment" || exempt.has(inst.id)) continue;
+      if (inst.domain !== "processEquipment") continue;
       const symbol = findSymbol(inst.domain, inst.symbolId);
       if (!symbol || symbol.rack) continue; // pipes ride racks by design
-      for (let i = 0; i + 1 < run.points.length; i += 1) {
-        if (segmentPassesThroughFootprint(run.points[i], run.points[i + 1], inst, symbol)) {
+      const nearNozzle = verifiedNozzlePoints.get(inst.id) || [];
+      let flagged = false;
+      for (let i = 0; i + 1 < run.points.length && !flagged; i += 1) {
+        const a = run.points[i];
+        const b = run.points[i + 1];
+        // Localized exemption: a segment with an endpoint at a verified
+        // attached nozzle of THIS vessel is the connection itself.
+        const atNozzle = [a, b].some((p) =>
+          nearNozzle.some((n) => Math.hypot(n.x - p.x, n.y - p.y) <= JUNCTION_TOLERANCE_IN + 2),
+        );
+        if (atNozzle) continue;
+        if (segmentPassesThroughFootprint(a, b, inst, symbol)) {
           errors.push(
             `Pipe run ${run.id} passes through ${symbol.label} (${inst.tag || inst.id}) without connecting to it.`,
           );
-          break;
+          flagged = true;
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Verified attachment points per vessel instance id: the world plan
+ * positions of nozzles where a run end actually sits (within junction
+ * tolerance of the anchor). A stale attachment record — the end far
+ * from the named nozzle — verifies nothing and exempts nothing.
+ */
+export function verifiedAttachmentPoints(design) {
+  // anchorsOf lives in pipeAttachments; requiring it here would cycle
+  // the modules, so this walks the same anchor sources directly.
+  const out = new Map();
+  const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
+  for (const run of design?.pipes || []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) continue;
+    for (const end of ["start", "end"]) {
+      const ref = run.attachments?.[end];
+      if (!ref) continue;
+      const inst = byId.get(ref.symbolId);
+      if (!inst) continue;
+      const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
+      // A run endpoint attached to this vessel is a verified connection
+      // (D668-003) — BUT only if the endpoint is actually at the vessel.
+      // A stale attachment (names the vessel, but the endpoint is far
+      // away) does NOT exempt — the proximity check defeats it.
+      // Covers nozzles, utility anchors, and TEMA anchors alike.
+      const symbol = findSymbol(inst.domain, inst.symbolId);
+      const w = (inst.widthIn ?? symbol?.widthIn ?? 0) / 2;
+      const d = (inst.depthIn ?? symbol?.depthIn ?? 0) / 2;
+      // Expanded footprint: vessel half-size + 12 in tolerance.
+      const dx = Math.abs(point.x - inst.x);
+      const dy = Math.abs(point.y - inst.y);
+      if (dx > w + 12 || dy > d + 12) continue; // stale: endpoint not at vessel
+      if (!out.has(inst.id)) out.set(inst.id, []);
+      out.get(inst.id).push({ x: point.x, y: point.y });
+    }
+  }
+  return out;
+}
+
+/**
+ * 3D envelope conflicts between run pairs (D668-003): unmodeled
+ * end-to-interior contacts, parallel runs inside the outside-radius
+ * clearance envelopes, and horizontal runs crossing vertical risers.
+ * Plan crossings already reported by findPipeCrossings are skipped
+ * (that function owns strictly-interior intersections); modeled
+ * connections and end-to-end touches are never conflicts.
+ */
+export function envelopeConflictErrors(design) {
+  const errors = [];
+  const runs = (design?.pipes || []).filter(
+    (r) => Array.isArray(r.points) && r.points.length >= 2,
+  );
+  const routes = new Map(runs.map((r) => [r.id, physicalRouteIn(design, r)]));
+  const seen = new Set();
+  const flag = (key, message) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    errors.push(message);
+  };
+  for (let a = 0; a < runs.length; a += 1) {
+    for (let b = a; b < runs.length; b += 1) {
+      const ra = runs[a];
+      const rb = runs[b];
+      const sameRun = ra.id === rb.id;
+      const routeA = routes.get(ra.id);
+      const routeB = routes.get(rb.id);
+      const sep = requiredSeparationIn(ra.diameterIn ?? 2, rb.diameterIn ?? 2);
+      const contacts = sameRun ? [] : validatedContactPoints(design, ra, rb);
+      const nearContact = (p) =>
+        contacts.some((c) => Math.hypot(c.x - p.x, c.y - p.y) <= JUNCTION_TOLERANCE_IN + 1);
+      for (let i = 0; i + 1 < routeA.length; i += 1) {
+        for (let j = 0; j + 1 < routeB.length; j += 1) {
+          // A jog's elbows (|i-j|==2 across a riser) are the pipe's own
+          // designed bends, not a self-contact — only a run doubling back
+          // on itself at route distance belongs here (D668-002).
+          if (sameRun && Math.abs(i - j) <= 2) continue;
+          const A1 = routeA[i];
+          const A2 = routeA[i + 1];
+          const B1 = routeB[j];
+          const B2 = routeB[j + 1];
+          const d3 = segSegDistance3D(A1, A2, B1, B2);
+          if (d3 >= sep - EPS) continue;
+          // Strictly-interior plan intersections belong to
+          // findPipeCrossings — skip them here to avoid double-reporting.
+          if (properIntersection(A1, A2, B1, B2)) continue;
+          const planHit = segmentIntersection(A1, A2, B1, B2);
+          if (planHit && (nearContact(planHit) || nearContact(A1) || nearContact(B1))) continue;
+          if (!planHit && (nearContact(A1) || nearContact(A2) || nearContact(B1) || nearContact(B2))) {
+            continue;
+          }
+          const endOnSeg = (p, q1, q2) => {
+            const hit = pointSegmentDistance(p, q1, q2);
+            return { dist: hit.distance, t: hit.t };
+          };
+          const a1 = endOnSeg(A1, B1, B2);
+          const a2 = endOnSeg(A2, B1, B2);
+          const b1 = endOnSeg(B1, A1, A2);
+          const b2 = endOnSeg(B2, A1, A2);
+          const interior = (e) => e.dist <= JUNCTION_TOLERANCE_IN && e.t > EPS && e.t < 1 - EPS;
+          const atEndpoint = (e) => e.dist <= JUNCTION_TOLERANCE_IN && (e.t <= EPS || e.t >= 1 - EPS);
+          const aEndInteriorB = interior(a1) || interior(a2);
+          const bEndInteriorA = interior(b1) || interior(b2);
+          const aEndAtBEnd = atEndpoint(a1) || atEndpoint(a2);
+          const bEndAtAEnd = atEndpoint(b1) || atEndpoint(b2);
+          if (sameRun) {
+            // A closed loop's start/end meeting at the closure point is
+            // intentional, not a self-contact. Adjacent segments (|i-j|<=2)
+            // are the pipe's own elbows (D668-002).
+            const nSeg = routeA.length - 1;
+            const first = routeA[0];
+            const last = routeA[routeA.length - 1];
+            const isClosedLoop =
+              Math.hypot(first.x - last.x, first.y - last.y) <= JUNCTION_TOLERANCE_IN &&
+              Math.abs(first.zIn - last.zIn) <= JUNCTION_TOLERANCE_IN;
+            const isClosure =
+              isClosedLoop && ((i === 0 && j === nSeg - 1) || (j === 0 && i === nSeg - 1));
+            if (isClosure) continue;
+            // A run touching itself away from adjacent segments.
+            flag(`${ra.id}|self|${i}|${j}`, `Pipe run ${ra.id} contacts itself inside the clearance envelope.`);
+            continue;
+          }
+          // End-to-end touch (both ends within tolerance of the other's
+          // endpoint): a route corner, never a conflict.
+          if ((aEndAtBEnd || bEndAtAEnd) && !(aEndInteriorB || bEndInteriorA)) continue;
+          const riserA = Math.hypot(A2.x - A1.x, A2.y - A1.y) < 1e-9;
+          const riserB = Math.hypot(B2.x - B1.x, B2.y - B1.y) < 1e-9;
+          if (riserA || riserB) {
+            // A vertical riser meeting another run's envelope: a
+            // penetration, not a model-the-junction contact.
+            const riserId = riserA ? ra.id : rb.id;
+            const otherId = riserA ? rb.id : ra.id;
+            flag(
+              `${riserId}|${otherId}|riser`,
+              `Pipe run ${otherId} crosses the riser of pipe run ${riserId} inside the clearance envelope.`,
+            );
+            continue;
+          }
+          if (aEndInteriorB || bEndInteriorA) {
+            // An end landing on the other's route with no validated
+            // junction: an unmodeled contact, never a supply, never
+            // silent (D668-003).
+            const endId = aEndInteriorB ? ra.id : rb.id;
+            const hostId = aEndInteriorB ? rb.id : ra.id;
+            flag(
+              `${endId}|${hostId}|contact`,
+              `Pipe run ${endId} has an unmodeled contact with pipe run ${hostId} — model the junction or move the run.`,
+            );
+            continue;
+          }
+          flag(
+            `${ra.id}|${rb.id}|${i}|${j}`,
+            `Pipe runs ${ra.id} and ${rb.id} run inside each other's clearance envelope.`,
+          );
         }
       }
     }

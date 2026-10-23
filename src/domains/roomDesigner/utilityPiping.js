@@ -274,8 +274,13 @@ export function utilityConnectionTable(design) {
  * the findings distinguish: missing port, no connected branch
  * (missing supply path), wrong-service connection, and a branch that
  * does not reach the service's designated source through same-service
- * modeled junctions (disconnected supply path). Runs only once the
- * design carries a utility system at all.
+ * modeled junctions (disconnected supply path).
+ *
+ * The per-vessel checks run whenever in-scope vessels exist, EXCEPT
+ * on firewater-only designs (D668-008): a brand-new vessel with zero
+ * utilities is missing all three services (flagged), a partially
+ * connected vessel flags only the missing services, and a design
+ * carrying only firewater demands nothing.
  */
 export function utilityPipingErrors(design) {
   const errors = [];
@@ -284,7 +289,12 @@ export function utilityPipingErrors(design) {
       errors.push(`Pipe run ${run.id} names an unknown utility service: ${run.utility}.`);
     }
   }
-  if (!designHasD8System(design)) return errors;
+  const inScopeVessels = (design?.symbols || []).filter((inst) =>
+    isVesselSymbol(findSymbol(inst.domain, inst.symbolId)),
+  );
+  const checkVessels =
+    designHasD8System(design) || (inScopeVessels.length > 0 && !designHasUtilitySystem(design));
+  if (!checkVessels) return errors;
   for (const inst of design?.symbols || []) {
     const symbol = findSymbol(inst.domain, inst.symbolId);
     if (!isVesselSymbol(symbol)) continue;

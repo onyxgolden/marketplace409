@@ -35,7 +35,13 @@
 // Pure and framework-free.
 
 import { findSymbol } from "./symbolRegistry";
-import { accessPackageForManway, localToWorld } from "./vesselAccess";
+import {
+  accessPackageForManway,
+  baseElevationIn,
+  deckCorners,
+  gradeElevationIn,
+  localToWorld,
+} from "./vesselAccess";
 
 /** Vertical spacing of downcomer levels (in). */
 export const DOWNCOMER_SPACING_IN = 120;
@@ -45,6 +51,8 @@ export const DOWNCOMER_MANWAY_DIAMETER_IN = 24;
 export const DOWNCOMER_DRAW_SIZE_IN = 6;
 /** Nominal size of a level's second piping nozzle (in). */
 export const DOWNCOMER_NOZZLE_SIZE_IN = 8;
+/** Default head allowance above the shell for the terminal manway (in). */
+export const DOWNCOMER_HEAD_ALLOWANCE_DEFAULT_IN = 24;
 
 /** True for catalog entries that carry downcomer levels (columns). */
 export function isColumnSymbol(symbol) {
@@ -54,6 +62,54 @@ export function isColumnSymbol(symbol) {
 /** The column's height: instance override wins over the catalog nominal. */
 export function columnHeightIn(symbol, inst) {
   return inst?.heightIn ?? symbol?.heightIn ?? 0;
+}
+
+/**
+ * The explicit usable-shell/head interval a column's downcomer levels
+ * bind to (PR668-004): { minIn, maxIn, headAllowanceIn }. Levels live
+ * in [minIn, maxIn]; the terminal level's complete manway assembly
+ * (opening top = sill + diameter) must fit inside maxIn +
+ * headAllowanceIn. The allowance defaults to 24 in and is overridable
+ * per instance (`inst.headIn`) or catalog (`symbol.headIn`) — it is an
+ * authored planning fit allowance, not a head/flange certification.
+ */
+export function downcomerShellIntervalIn(symbol, inst) {
+  const maxIn = columnHeightIn(symbol, inst);
+  const headAllowanceIn =
+    (Number.isFinite(inst?.headIn) ? inst.headIn : null) ??
+    (Number.isFinite(symbol?.headIn) ? symbol.headIn : null) ??
+    DOWNCOMER_HEAD_ALLOWANCE_DEFAULT_IN;
+  return { minIn: 0, maxIn, headAllowanceIn };
+}
+
+/**
+ * validateDesign messages for downcomer geometry (PR668-004): every
+ * level's elevation inside the usable shell, and the complete
+ * terminal assembly (manway opening top) inside shell + head
+ * allowance — otherwise a named out-of-bounds issue.
+ */
+export function downcomerGeometryErrors(design) {
+  const errors = [];
+  for (const inst of design?.symbols || []) {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!isColumnSymbol(symbol)) continue;
+    const { minIn, maxIn, headAllowanceIn } = downcomerShellIntervalIn(symbol, inst);
+    for (const level of downcomerLevelSpecs(symbol, inst)) {
+      const label = `Symbol ${inst.id} (${inst.tag || symbol.label}) downcomer level ${level.index}`;
+      if (level.elevationIn < minIn - 1e-9 || level.elevationIn > maxIn + 1e-9) {
+        errors.push(
+          `${label} elevation ${level.elevationIn} in is out-of-bounds of the usable shell [${minIn}, ${maxIn}] in.`,
+        );
+      }
+      const openingTop = level.manway.sillIn + level.manway.diameterIn;
+      if (openingTop > maxIn + headAllowanceIn + 1e-9) {
+        errors.push(
+          `${label} manway assembly reaches ${openingTop} in, out-of-bounds past the shell top ${maxIn} in plus ${headAllowanceIn} in head allowance.`,
+        );
+      }
+    }
+  }
+  return errors;
 }
 
 const cleanText = (v) => (typeof v === "string" ? v.trim().slice(0, 60) : "");
@@ -85,12 +141,16 @@ export function downcomerLevelProps(inst, index) {
   };
 }
 
-/** Display label for a level: "Product · 350°F" with the parts that are set. */
+/** Display label for a level: "Product · 350°F" with the parts that are set.
+ * The unit rides only when the user chose one — a temperature entered
+ * without a unit never defaults to F (D668-007). */
 export function downcomerLabel(level) {
   const parts = [];
   if (level?.product) parts.push(level.product);
   if (level?.temperature !== null && level?.temperature !== undefined) {
-    parts.push(`${level.temperature}°${level.temperatureUnit || "F"}`);
+    parts.push(
+      level.temperatureUnit ? `${level.temperature}°${level.temperatureUnit}` : `${level.temperature}° (unit not set)`,
+    );
   }
   return parts.join(" · ");
 }
@@ -140,12 +200,18 @@ function specWorld(symbol, inst, fx, fy) {
  *    manway: { x, y, dirX, dirY, diameterIn, sillIn },
  *    platform: { deck, ladder } | null, temperature, product, label }]
  * The platform ladder climbs from the previous level (grade for the
- * first). Platforms follow the D5 rule via the shared access package.
+ * first). Platforms follow the D5 rule via the shared access package;
+ * the deck carries world-plan `corners` under the same geometry
+ * contract as vessel decks (D668-001), and elevations are grade/base
+ * aware (PR668-003): the D5 trigger reads the sill above grade, the
+ * deck rides at the sill's world elevation.
  */
-export function downcomerLevels(symbol, inst) {
+export function downcomerLevels(symbol, inst, design) {
   const specs = downcomerLevelSpecs(symbol, inst);
   const effWidth = inst?.widthIn ?? symbol?.widthIn ?? 0;
   const effDepth = inst?.depthIn ?? symbol?.depthIn ?? 0;
+  const base = baseElevationIn(inst);
+  const grade = gradeElevationIn(design);
   return specs.map((spec, i) => {
     const anchors = spec.nozzleSpecs.map((n) => {
       const p = specWorld(symbol, inst, n.fx, n.fy);
@@ -161,18 +227,31 @@ export function downcomerLevels(symbol, inst) {
       dirX: 0,
       dirY: 1,
       diameterIn: spec.manway.diameterIn,
-      sillIn: spec.manway.sillIn,
+      // D5 trigger datum: the sill ABOVE GRADE.
+      sillIn: spec.elevationIn + base - grade,
     };
     const local_pkg = accessPackageForManway(manwayLocal, {
-      fromIn: i === 0 ? 0 : specs[i - 1].elevationIn,
+      fromIn: i === 0 ? grade : specs[i - 1].elevationIn + base,
+      deckElevationIn: base + spec.elevationIn,
     });
     let platform = null;
     if (local_pkg) {
       const deckC = localToWorld(inst, local_pkg.deck.cx, local_pkg.deck.cy);
       const ladderC = localToWorld(inst, local_pkg.ladder.cx, local_pkg.ladder.cy);
+      const deck = {
+        ...local_pkg.deck,
+        cx: deckC.x,
+        cy: deckC.y,
+        angleDeg: local_pkg.deck.angleDeg + (inst?.rotationDeg || 0),
+      };
       platform = {
-        deck: { ...local_pkg.deck, cx: deckC.x, cy: deckC.y, angleDeg: local_pkg.deck.angleDeg + (inst?.rotationDeg || 0) },
-        ladder: { ...local_pkg.ladder, cx: ladderC.x, cy: ladderC.y, angleDeg: local_pkg.ladder.angleDeg + (inst?.rotationDeg || 0) },
+        deck: { ...deck, corners: deckCorners(deck) },
+        ladder: {
+          ...local_pkg.ladder,
+          cx: ladderC.x,
+          cy: ladderC.y,
+          angleDeg: local_pkg.ladder.angleDeg + (inst?.rotationDeg || 0),
+        },
       };
     }
     const level = {
@@ -205,12 +284,14 @@ export function downcomerAnchorsWorld(symbol, inst) {
 /**
  * Set (or clear) a downcomer level's user-entered properties.
  * temperature: a finite number (zero is valid) or null/"" to clear;
- * temperatureUnit: "F" or "C" (defaults to "F" when a temperature is
- * set without one); product: bounded text, blank clears. Clearing every
- * field removes the entry; an empty property map leaves the instance.
- * Throws for an unknown instance, a non-column, a level index the
- * column's height does not reach, or an invalid temperature/unit —
- * entering data here never touches another level or reorders levels.
+ * temperatureUnit: "F" or "C" — or null/blank for UNKNOWN (D668-007:
+ * a temperature entered without a unit never defaults to F; the unit
+ * is user-entered, blank/default-unknown until chosen); product:
+ * bounded text, blank clears. Clearing every field removes the entry;
+ * an empty property map leaves the instance. Throws for an unknown
+ * instance, a non-column, a level index the column's height does not
+ * reach, or an invalid temperature/unit — entering data here never
+ * touches another level or reorders levels.
  */
 export function setDowncomerLevelProps(design, instanceId, index, props = {}) {
   const inst = (design?.symbols || []).find((s) => s.id === instanceId);
@@ -225,7 +306,7 @@ export function setDowncomerLevelProps(design, instanceId, index, props = {}) {
   if (temperature === undefined) throw new Error("Downcomer temperature must be a finite number.");
   const unitGiven = cleanUnit(props.temperatureUnit);
   if (unitGiven === undefined) throw new Error('Downcomer temperature unit must be "F" or "C".');
-  const temperatureUnit = temperature !== null ? unitGiven || "F" : null;
+  const temperatureUnit = temperature !== null ? unitGiven : null;
   const product = cleanText(props.product);
   const map = { ...(inst.downcomerProps || {}) };
   if (temperature === null && !product) delete map[index];
@@ -258,7 +339,8 @@ export function downcomerPropsErrors(design) {
         ([k, v]) =>
           !/^[1-9]\d*$/.test(k) || !v || typeof v !== "object" ||
           (v.temperature !== undefined && !Number.isFinite(v.temperature)) ||
-          (v.temperatureUnit !== undefined && v.temperatureUnit !== "F" && v.temperatureUnit !== "C") ||
+          // D668-008: null unit means "not chosen yet" (valid); only F/C allowed if set.
+          (v.temperatureUnit !== undefined && v.temperatureUnit !== null && v.temperatureUnit !== "F" && v.temperatureUnit !== "C") ||
           (v.product !== undefined && typeof v.product !== "string"),
       );
     if (badShape) {

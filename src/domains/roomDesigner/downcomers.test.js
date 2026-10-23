@@ -138,7 +138,8 @@ describe("column downcomer levels", () => {
     // design reports it as orphaned instead of dropping it.
     design = withHeight(design, "c1", 240);
     const inst = design.symbols.find((s) => s.id === "c1");
-    expect(inst.downcomerProps[3]).toEqual({ temperature: 410, temperatureUnit: "F", product: "Overhead gas" });
+    // D668-008: unit is NOT defaulted to F — null means "not chosen yet".
+    expect(inst.downcomerProps[3]).toEqual({ temperature: 410, temperatureUnit: null, product: "Overhead gas" });
     const errors = downcomerPropsErrors(design);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/level 3/);

@@ -13,18 +13,21 @@ import {
   wallDirection,
   wallLength,
 } from "./designerGeometry";
+import { physicalRouteIn, vertexElevationsForDesign } from "./pipeCrossings";
 import { DECK_MATERIALS, decksOf, findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 import { effectiveColor } from "./designSystems";
+import { finalPipeColor } from "./pipeColorPolicy";
+import { teeFittings, anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
 import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
 import {
   connectionFlanges,
   runHasStoredElevation,
   storedSegmentElevations,
+  vertexElevationsForDesign,
 } from "./pipeCrossings";
-import { FIREWATER_COLOR } from "./firewater";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -455,14 +458,22 @@ export function pipeDescriptors(design) {
     if (points.length < 2) continue;
     const diameterIn = run.diameterIn ?? 2;
     const radiusIn = diameterIn / 2;
+    // Per-vertex true elevations (D668-002): y0In/y1In carry the actual
+    // endpoint elevations from the shared physical profile, so a downward
+    // jog's dip is visible in the descriptor. yIn keeps the rack/grade
+    // level for rendering and existing consumers.
+    const vertexElevs = vertexElevationsForDesign(design, run);
     const segments = [];
     for (let i = 0; i + 1 < points.length; i += 1) {
       const a = points[i];
       const b = points[i + 1];
+      const yIn = segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn);
       segments.push({
         a: { x: a.x, z: a.y },
         b: { x: b.x, z: b.y },
-        yIn: segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn),
+        yIn,
+        y0In: vertexElevs[i] ?? yIn,
+        y1In: vertexElevs[i + 1] ?? yIn,
       });
     }
     // A run with a STORED elevation profile (an explicit centerline, or
@@ -472,7 +483,7 @@ export function pipeDescriptors(design) {
     if (runHasStoredElevation(run)) {
       const stored = storedSegmentElevations(run);
       segments.forEach((seg, i) => {
-        seg.yIn = stored[i];
+        if (i < stored.length) seg.yIn = stored[i];
       });
     }
     const joints = points.map((p, i) => {
@@ -502,9 +513,10 @@ export function pipeDescriptors(design) {
     const descriptor = {
       kind: "pipe",
       id: run.id,
-      // Firewater renders red — red is reserved to firewater, ahead of
-      // any system/own color.
-      color: run.utility === "firewater" ? FIREWATER_COLOR : effectiveColor(design, run, "#7dd3fc"), // own > system > default
+      // Final resolved color via the shared reservation policy
+      // (D668-009): firewater renders the reserved red; any other red
+      // on a non-firewater run is remapped off the red band.
+      color: finalPipeColor(design, run),
       diameterIn,
       radiusIn,
       underground: !!run.underground,
@@ -526,6 +538,108 @@ export function pipeDescriptors(design) {
       }));
     }
     out.push(descriptor);
+  }
+  return out;
+}
+
+/**
+ * Piping-domain fitting instances -> 3D descriptors (D668-010, PR668-005):
+ * standalone flanged-joint, blind-flange, fire-hydrant, spray-nozzle,
+ * and reducer instances, PLUS the modeled tee fittings derived from
+ * validated pipe-to-pipe junctions (body + ports, never just a flange
+ * pair). { kind: "fitting", id, symbolId, x, z, rotY, elevationIn,
+ *   sizes... }. Reducers carry their declared inletSizeIn/outletSizeIn;
+ * tee fittings carry branchSizeIn/hostSizeIn and their port list.
+ */
+export function fittingDescriptors(design) {
+  const out = [];
+  for (const inst of design?.symbols || []) {
+    if (inst.domain !== "piping") continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol) continue;
+    if (
+      !["flanged-joint", "blind-flange", "fire-hydrant", "spray-nozzle", "reducer"].includes(
+        inst.symbolId,
+      )
+    ) {
+      continue;
+    }
+    out.push({
+      kind: "fitting",
+      id: inst.id,
+      symbolId: inst.symbolId,
+      x: inst.x,
+      z: inst.y,
+      rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
+      elevationIn: Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0,
+      widthIn: inst.widthIn ?? symbol.widthIn,
+      depthIn: inst.depthIn ?? symbol.depthIn,
+      ...(inst.symbolId === "reducer"
+        ? {
+            inletSizeIn: inst.inletSizeIn ?? null,
+            outletSizeIn: inst.outletSizeIn ?? null,
+          }
+        : {}),
+      ...(inst.symbolId === "spray-nozzle"
+        ? {
+            // The discharge origin and aim validation consumes (D668-006).
+            protects: inst.protects || null,
+            aimAt:
+              inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)
+                ? { x: inst.aimAt.x, y: inst.aimAt.y }
+                : null,
+          }
+        : {}),
+      tag: inst.tag || "",
+    });
+  }
+  // Modeled tee fittings: the fitting body + ports from the shared
+  // junction model (PR668-005).
+  for (const tee of teeFittings(design)) {
+    out.push({
+      kind: "fitting",
+      id: tee.id,
+      symbolId: "tee-fitting",
+      x: tee.x,
+      z: tee.y,
+      rotY: 0,
+      elevationIn: tee.elevationIn,
+      branchSizeIn: tee.branchSizeIn,
+      hostSizeIn: tee.hostSizeIn,
+      branchAxisDeg: tee.branchAxisDeg,
+      hostAxisDeg: tee.hostAxisDeg,
+      ports: tee.ports,
+    });
+  }
+  return out;
+}
+
+/**
+ * Nozzle flange discs for one equipment instance, from the SHARED
+ * connection-face model (D668-005): [{ anchorId, x, yIn, z, sizeIn,
+ * normal, vertical, kind }]. The 3D flange sits exactly at the face
+ * validation checks — snap, reconcile, validation, and rendering can
+ * never disagree.
+ */
+export function nozzleFlangeDescriptors(design, instanceId) {
+  const inst = (design?.symbols || []).find((s) => s.id === instanceId);
+  if (!inst) return [];
+  const symbol = findSymbol(inst.domain, inst.symbolId);
+  if (!symbol) return [];
+  const out = [];
+  for (const anchor of anchorsOf(inst)) {
+    const face = connectionFaceForAnchor(symbol, inst, anchor.id);
+    if (!face || !Number.isFinite(face.elevationIn)) continue;
+    out.push({
+      anchorId: anchor.id,
+      x: face.x,
+      yIn: face.elevationIn,
+      z: face.y,
+      sizeIn: face.sizeIn,
+      normal: face.normal,
+      vertical: face.vertical,
+      kind: face.kind,
+    });
   }
   return out;
 }

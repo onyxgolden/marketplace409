@@ -41,7 +41,7 @@ import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSyste
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
 import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
-import { FIREWATER_COLOR } from "@/domains/roomDesigner/firewater";
+import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
 import { FlangePairGlyph } from "./flangeDraw";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
@@ -1830,7 +1830,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <polyline
           points={pts}
           fill="none"
-          stroke={isSelected ? "#f59e0b" : run.utility === "firewater" ? FIREWATER_COLOR : effectiveColor(design, run, "#7dd3fc")}
+          stroke={isSelected ? "#f59e0b" : finalPipeColor(design, run)}
           strokeWidth={widthPx}
           strokeLinecap={run.underground ? "butt" : "round"}
           strokeLinejoin="round"

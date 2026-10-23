@@ -85,7 +85,7 @@ function segmentRectDistance(a, b, rect) {
 }
 
 describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
-  it("builds a valid single-level project", () => {
+  it("builds a valid single-level project", { timeout: 30000 }, () => {
     const project = build();
     expect(validateHomeProject(project)).toEqual([]);
     expect(project.name).toBe(FCCU_SAMPLE_NAME);
@@ -154,7 +154,10 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     expect(labels).toContain("Pipe rack");
   });
 
-  it("is deterministic across builds", () => {
+  // The full fixture build validates 100+ pipes against the strict
+  // D668-002/003/004 geometry rules; two builds exceed the 5 s default
+  // timeout on CI runners (PR668 fixround).
+  it("is deterministic across builds", { timeout: 30000 }, () => {
     const a = JSON.stringify(build());
     const b = JSON.stringify(build());
     expect(a).toBe(b);
@@ -217,9 +220,15 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     const pipingSymbols = (design.symbols || []).filter((s) => s.domain === "piping");
     // Flow arrows and tags stay out; the piping-domain placements are the
     // D9 fire hydrants and fixed spray nozzles, which are functional
-    // components with validation rules, not decoration.
+    // components with validation rules, not decoration. PR668-001 adds
+    // the modeled reducers — 37 placed explicitly (18 D8 2->1 taps,
+    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 14
+    // more for size-mismatched junctions discovered by the final
+    // junction pass (e.g. 12" rundowns landing on the 10" pump suction
+    // header) — every size transition gets its modeled reducer.
     expect(pipingSymbols.map((s) => s.symbolId).sort()).toEqual([
       ...Array(15).fill("fire-hydrant"),
+      ...Array(51).fill("reducer"),
       ...Array(4).fill("spray-nozzle"),
     ]);
   });

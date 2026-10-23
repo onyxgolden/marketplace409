@@ -35,6 +35,7 @@ import { validateHomeProject } from "./homeProject";
 import { normalizeUnits, projectWithEditedDesign } from "./homeQuantities";
 import { findSymbol } from "./symbolRegistry";
 import { connectionFlanges, segmentElevationsForDesign } from "./pipeCrossings";
+import { teeFittings } from "./pipeAttachments";
 import { accessPackageWorld, manwayWorld } from "./vesselAccess";
 import { downcomerLevels } from "./downcomers";
 
@@ -248,6 +249,67 @@ function projectPipes(design, u, levelBaseIn) {
  * projected onto the view axis — the access components of the design,
  * from the same derivations the plan and 3D views use.
  */
+/**
+ * D9 firewater components projected onto the view axis (PR668-002):
+ * hydrants (body above grade at their plan position), directed-spray
+ * assemblies (discharge origin + aim), and reducer/tee markers — the
+ * same identities and geometry validation consumes.
+ * [{ kind: "hydrant"|"spray"|"reducer"|"tee", instanceId, u, ... }]
+ */
+function projectFirewater(design, u, levelBaseIn) {
+  const views = [];
+  const proj = (p) => p.x * u.x + p.y * u.y;
+  for (const inst of Array.isArray(design.symbols) ? design.symbols : []) {
+    if (inst.domain !== "piping") continue;
+    if (inst.symbolId === "fire-hydrant") {
+      views.push({
+        kind: "hydrant",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        baseIn: round2(levelBaseIn),
+        topIn: round2(levelBaseIn + 36),
+        label: inst.tag || "",
+      });
+    } else if (inst.symbolId === "spray-nozzle") {
+      const elevIn = Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0;
+      const view = {
+        kind: "spray",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        elevIn: round2(levelBaseIn + elevIn),
+        label: inst.tag || "",
+      };
+      if (inst.protects) view.protects = inst.protects;
+      if (inst.aimAt && Number.isFinite(inst.aimAt.x) && Number.isFinite(inst.aimAt.y)) {
+        view.aimU = round2(proj(inst.aimAt));
+      }
+      views.push(view);
+    } else if (inst.symbolId === "reducer") {
+      const elevIn = Number.isFinite(inst.elevationIn) ? inst.elevationIn : 0;
+      views.push({
+        kind: "reducer",
+        instanceId: inst.id,
+        u: round2(proj(inst)),
+        elevIn: round2(levelBaseIn + elevIn),
+        inletSizeIn: inst.inletSizeIn ?? null,
+        outletSizeIn: inst.outletSizeIn ?? null,
+        label: inst.tag || "",
+      });
+    }
+  }
+  for (const tee of teeFittings(design)) {
+    views.push({
+      kind: "tee",
+      instanceId: tee.id,
+      u: round2(proj(tee)),
+      elevIn: round2(levelBaseIn + tee.elevationIn),
+      branchSizeIn: tee.branchSizeIn,
+      hostSizeIn: tee.hostSizeIn,
+    });
+  }
+  return views;
+}
+
 function projectAccess(design, u, levelBaseIn) {
   const views = [];
   const proj = (p) => p.x * u.x + p.y * u.y;
@@ -375,8 +437,10 @@ function buildLevelElevation(level, u, levelBaseIn, assumptions) {
   // architectural levels keep their exact legacy shape.
   const pipeViews = projectPipes(design, u, levelBaseIn);
   const accessViews = projectAccess(design, u, levelBaseIn);
+  const firewaterViews = projectFirewater(design, u, levelBaseIn);
   if (pipeViews.length > 0) levelView.pipeViews = pipeViews;
   if (accessViews.length > 0) levelView.accessViews = accessViews;
+  if (firewaterViews.length > 0) levelView.firewaterViews = firewaterViews;
   if (pipeViews.length > 0 || accessViews.length > 0) {
     let min = span.min;
     let max = span.max;

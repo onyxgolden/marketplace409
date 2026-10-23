@@ -74,8 +74,9 @@ export const FIREWATER_MAIN_DIAMETER_IN = 12;
 export const FIREWATER_TAKEOFF_DIAMETER_IN = Object.freeze([6, 4]);
 /**
  * Hydrant connections (the riser/branch off the main) are 6-inch —
- * the codified minimum for the connecting pipe of an AWWA C502
- * hydrant (5-inch-plus bottom valve; 2x 2.5-in + 1x 4.5-in outlets).
+ * Jason's stated planning default for the hydrant connecting pipe
+ * (fixture requirement). This is a planning default, not a code
+ * citation: nothing here claims any standard sets this minimum.
  * 8-inch shows up on mains, not on the hydrant connection.
  */
 export const HYDRANT_BRANCH_DIAMETER_IN = 6;
@@ -105,13 +106,27 @@ export function sprayInstances(design) {
 
 /**
  * An instance's editable flammability designation:
- * "highly-flammable" | "unknown" | "not-flammable". Unknown is a real
- * state, not a default — it is NOT treated as low risk.
+ * "highly-flammable" | "unknown" | "not-flammable" | "undesignated".
+ * "unknown" is a real state, not a default — it is NOT treated as low
+ * risk and requires assignment too. "undesignated" is the quiet
+ * legacy state: no designation was ever entered (fixture/legacy
+ * designs predate the field) — it carries no requirement and no
+ * finding. A MALFORMED value (anything but true / "unknown" /
+ * false / missing) reads as "unknown" — never silently
+ * not-flammable — and is named by validation.
  */
 export function flammabilityOf(inst) {
   if (inst?.flammable === true) return "highly-flammable";
   if (inst?.flammable === "unknown") return "unknown";
-  return "not-flammable";
+  if (inst?.flammable === false) return "not-flammable";
+  if (inst?.flammable === undefined || inst?.flammable === null) return "undesignated";
+  return "unknown"; // malformed: unknown risk, never silent low risk
+}
+
+/** True when the flammability field holds a malformed value. */
+export function flammabilityMalformed(inst) {
+  const v = inst?.flammable;
+  return v !== undefined && v !== null && v !== true && v !== false && v !== "unknown";
 }
 
 /** True only for an explicit highly-flammable designation. */
@@ -121,7 +136,8 @@ export function isFlammableInstance(inst) {
 
 /** True when the designation requires a directed-spray assignment. */
 export function requiresSprayAssignment(inst) {
-  return flammabilityOf(inst) !== "not-flammable";
+  const f = flammabilityOf(inst);
+  return f === "highly-flammable" || f === "unknown";
 }
 
 /**
@@ -320,20 +336,33 @@ export function pointOnPolygonEdge(point, polygon) {
   return false;
 }
 
-/** A usable unit boundary: an explicit persisted polygon of >= 3 points. */
+/**
+ * A usable unit boundary: an explicit persisted polygon of >= 3
+ * finite points with NONZERO area. A degenerate polygon (repeated
+ * identical points, zero area) is not a boundary — placement
+ * "outside" it cannot be verified.
+ */
 export function unitBoundaryValid(design) {
   const b = design?.unitBoundary;
-  return (
-    Array.isArray(b) &&
-    b.length >= 3 &&
-    b.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
-  );
+  if (!Array.isArray(b) || b.length < 3) return false;
+  if (!b.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y))) return false;
+  let area2 = 0;
+  for (let i = 0; i < b.length; i += 1) {
+    const p = b[i];
+    const q = b[(i + 1) % b.length];
+    area2 += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(area2) > 1e-6;
 }
 
 /**
  * The geometric assignment status of one directed-spray assembly
- * against its assigned vessel — geometry and aim only. Effectiveness
- * is NEVER evaluated in this slice.
+ * against its assigned vessel — geometry, aim, and SUPPLY.
+ * A valid assignment needs a VERIFIED supply path (D668-006): a
+ * firewater run must end within the branch-tap tolerance of the
+ * assembly in plan AND reach the firewater source through modeled
+ * junctions (proximity alone is not supply; an unconnected branch is
+ * not supply). Effectiveness is NEVER evaluated in this slice.
  * { sprayId, vesselId, ok, problems: [string], effectiveness: "NOT_EVALUATED" }
  */
 export function sprayAssignmentStatus(design, spray) {
@@ -361,6 +390,27 @@ export function sprayAssignmentStatus(design, spray) {
       problems.push("no aimed target point recorded");
     } else if (symbol && distanceToFootprintIn(spray.aimAt, target, symbol) > EPS) {
       problems.push("aim point does not land on the assigned vessel");
+    }
+    // Verified supply path: a firewater branch ends at the assembly
+    // and reaches the network source through modeled junctions.
+    let supplied = false;
+    for (const run of design?.pipes || []) {
+      if (run.utility !== "firewater") continue;
+      if (!Array.isArray(run.points) || run.points.length < 2) continue;
+      const ends = [run.points[0], run.points[run.points.length - 1]];
+      const lands = ends.some(
+        (p) => Math.hypot(p.x - spray.x, p.y - spray.y) <= HYDRANT_BRANCH_TAP_TOLERANCE_IN,
+      );
+      if (!lands) continue;
+      if (runReachesSource(design, run.id, "firewater")) {
+        supplied = true;
+        break;
+      }
+    }
+    if (!supplied) {
+      problems.push(
+        "no verified supply path: no firewater branch ends at the assembly and reaches the firewater source through modeled junctions",
+      );
     }
   }
   return {
@@ -440,7 +490,8 @@ export function firewaterErrors(design) {
   }
 
   // Supply: every firewater main must reach the network's designated
-  // source / boundary inlet through modeled junctions.
+  // D668-006: a firewater network without a designated source is flagged,
+  // and mains must connect to it through modeled junctions.
   const fwRuns = firewaterRuns(design);
   if (fwRuns.length > 0) {
     const hasSource = fwRuns.some((r) => r.sourceOf === "firewater");
@@ -485,6 +536,13 @@ export function firewaterErrors(design) {
 
   const byId = new Map((design?.symbols || []).map((s) => [s.id, s]));
   for (const inst of design?.symbols || []) {
+    // Malformed risk metadata (D668-006): named, and treated as
+    // unknown risk — never silently not-flammable.
+    if (flammabilityMalformed(inst)) {
+      errors.push(
+        `Equipment ${byTagOrId(inst)} has a malformed flammability designation — treated as UNKNOWN flammability, not low risk.`,
+      );
+    }
     if (!requiresSprayAssignment(inst)) continue;
     const covering = sprays.filter((s) => s.protects === inst.id);
     if (covering.length === 0) {

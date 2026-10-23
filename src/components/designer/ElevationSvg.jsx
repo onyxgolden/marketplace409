@@ -221,6 +221,71 @@ export default function ElevationSvg({ elevation, dark = true, id = "elevation" 
             return null;
           })}
 
+          {/* D9 firewater: hydrants (body above grade), directed-spray
+              assemblies (origin + aim tick), reducers and tee markers —
+              the same identities validation consumes (PR668-002). */}
+          {(level.firewaterViews || []).map((view, vi) => {
+            if (view.kind === "hydrant") {
+              return (
+                <g key={`fw-${vi}`}>
+                  <rect
+                    x={view.u - 4}
+                    y={yOf(view.topIn)}
+                    width={8}
+                    height={view.topIn - view.baseIn}
+                    fill={palette.firewater}
+                    opacity={0.9}
+                  />
+                  <circle cx={view.u} cy={yOf(view.topIn) - 3} r={4} fill={palette.firewater} />
+                  {view.label ? (
+                    <text x={view.u} y={yOf(view.topIn) - 8} fontSize={5} fill={palette.text} textAnchor="middle">
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            if (view.kind === "spray") {
+              return (
+                <g key={`fw-${vi}`}>
+                  <circle cx={view.u} cy={yOf(view.elevIn)} r={5} fill="none" stroke={palette.firewater} strokeWidth={1.5} />
+                  {view.aimU !== undefined ? (
+                    <line
+                      x1={view.u}
+                      y1={yOf(view.elevIn)}
+                      x2={view.aimU}
+                      y2={yOf(view.elevIn) + 10}
+                      stroke={palette.firewater}
+                      strokeWidth={1}
+                      strokeDasharray="3 2"
+                      opacity={0.7}
+                    />
+                  ) : null}
+                  {view.label ? (
+                    <text x={view.u} y={yOf(view.elevIn) - 8} fontSize={5} fill={palette.text} textAnchor="middle">
+                      {view.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            }
+            if (view.kind === "reducer" || view.kind === "tee") {
+              return (
+                <rect
+                  key={`fw-${vi}`}
+                  x={view.u - 3}
+                  y={yOf(view.elevIn) - 3}
+                  width={6}
+                  height={6}
+                  fill="none"
+                  stroke={palette.flange}
+                  strokeWidth={1.25}
+                />
+              );
+            }
+            return null;
+          })}
+
           {/* Manways (circles at sill + diameter), catwalk decks,
               ladders, and downcomer level markers with their labels. */}
           {(level.accessViews || []).map((view, vi) => {

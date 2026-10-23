@@ -38,6 +38,7 @@ import {
   reconcileRunJunctions,
 } from "./pipeAttachments";
 import { applyCrossingJogs } from "./pipeCrossings";
+import { placeReducer } from "./pipeReducerModel";
 import { setDowncomerLevelProps } from "./downcomers";
 import { UTILITY_HEADER_DIAMETER_IN, UTILITY_SERVICES } from "./utilityPiping";
 import { FIREWATER_MAIN_DIAMETER_IN, HYDRANT_BRANCH_DIAMETER_IN } from "./firewater";
@@ -422,12 +423,20 @@ function addPiping(design, systemIds) {
     );
   }
   // G3 — reflux return from the reflux pump discharge to the fractionator.
+  // The north-south segment at x=345 rides at 40 in to clear the
+  // east-west process runs below (D668-002: explicit elevations beat
+  // the default-30 fallback that caused same-elevation crossings).
   {
     const start = anchor("P-101", "discharge-out");
     const end = anchor("T-101", "reflux-in");
     run(
       [anchorPt(start), pt(160, 367), pt(345, 367), { x: 345 * FT, y: end.y }, anchorPt(end)],
-      { diameterIn: 6, service: "Reflux return to fractionator", systemName: "Overhead & reflux" },
+      {
+        diameterIn: 6,
+        service: "Reflux return to fractionator",
+        systemName: "Overhead & reflux",
+        elevIn: [null, 40, 40, 40, null],
+      },
     );
   }
   // G4 — wet gas to the knockout drum.
@@ -449,12 +458,19 @@ function addPiping(design, systemIds) {
     );
   }
   // G6 — compressor discharge to the absorber.
+  // The north-south segment at x=350 rides at 40 in to clear the
+  // east-west process runs below (D668-002).
   {
     const start = anchor("K-102", "discharge-out");
     const end = anchor("T-102", "gas-in");
     run(
       [anchorPt(start), pt(230, 364), pt(350, 364), { x: 350 * FT, y: end.y }, anchorPt(end)],
-      { diameterIn: 6, service: "Compressor discharge to absorber", systemName: "Wet gas" },
+      {
+        diameterIn: 6,
+        service: "Compressor discharge to absorber",
+        systemName: "Wet gas",
+        elevIn: [null, 40, 40, 40, null],
+      },
     );
   }
   // G7 — absorber rich oil straight to the fractionator.
@@ -515,13 +531,15 @@ function addPiping(design, systemIds) {
   // Discharge jumpers from each pump (except the reflux pump P-101, whose
   // discharge is run G3) up to the rack rundown header. Each jogs up at
   // the rack edge (y=361 ft) so its last segment rides the rack and its
-  // end actually meets the header's elevation.
+  // end actually meets the header's elevation (186 in — D668-004: the
+  // junction faces must meet within tolerance).
   for (const [tag, pxFt] of pumpRow.slice(1)) {
     const start = anchor(tag, "discharge-out");
     run([anchorPt(start), pt(pxFt, 361), pt(pxFt, 373)], {
       diameterIn: 6,
       service: `Pump discharge — ${tag}`,
       systemName: "Product rundown",
+      elevIn: [null, null, 186],
     });
   }
   // X0 — relief header: process area -> east -> south -> flare.
@@ -687,8 +705,10 @@ function addUtilities(design, systemIds) {
         const lane = T102_LANE_FT[service.id];
         const approachY = T102_APPROACH_FT[service.id];
         const approachElev = T102_APPROACH_ELEV_IN[service.id];
+        // Transit at header tier to clear process runs below; drop to
+        // the approach elevation at the fan corner near the vessel.
         points = [pt(lane, yFt), pt(lane, yFt - 1), pt(lane, approachY)];
-        elevIn = [tier, approachElev, approachElev];
+        elevIn = [tier, tier, tier];
         if (approachY !== anchorFt.y) {
           // Fan corner: the drop to port elevation happens HERE, so
           // the final stub reaches the flange at exactly 24 in.
@@ -701,6 +721,7 @@ function addUtilities(design, systemIds) {
         // Detour east around P-102, returning west at y=182 — clear of
         // the pump row and of the reactor feed line's own approach
         // along the vessel centerline (crossed, with a jog, at y=182).
+        // Transit at header tier to clear process runs below.
         points = [
           pt(anchorFt.x, yFt),
           pt(anchorFt.x, yFt - 1),
@@ -710,10 +731,30 @@ function addUtilities(design, systemIds) {
           pt(anchorFt.x, 182),
           anchorPt(end),
         ];
-        elevIn = [tier, 24, 24, 24, 24, 24, 24];
+        elevIn = [tier, tier, tier, tier, tier, 24, 24];
       } else {
-        points = [pt(anchorFt.x, yFt), pt(anchorFt.x, yFt - 1), anchorPt(end)];
-        elevIn = [tier, 24, 24];
+        // T-101's utilities transit south at 18 in elevation — below the
+        // process pipe rack (±26 in and up) — then rise to the port
+        // elevation at the vessel (D668-003: vertical separation clears
+        // the envelope where plan separation cannot).
+        // Other vessels transit at header tier.
+        const dropYFt = anchorFt.y + 10;
+        if (tag === "T-101") {
+          points = [
+            pt(anchorFt.x, yFt),
+            pt(anchorFt.x, yFt - 1),
+            pt(anchorFt.x, dropYFt),
+            anchorPt(end),
+          ];
+          elevIn = [tier, 18, 18, 24];
+        } else {
+          points = [
+            pt(anchorFt.x, yFt),
+            pt(anchorFt.x, dropYFt),
+            anchorPt(end),
+          ];
+          elevIn = [tier, tier, 24];
+        }
       }
       next = addRun(next, systemIds, points, {
         diameterIn: service.sizeIn,
@@ -721,6 +762,15 @@ function addUtilities(design, systemIds) {
         systemName: service.label,
         utility: service.id,
         elevIn,
+      });
+      // PR668-001: the 2-in header to 1-in drop transition at the tap
+      // gets its modeled reducer — a connected component with declared
+      // sizes, in the catalog and every view.
+      const tapXft = tag === "T-102" ? T102_LANE_FT[service.id] : anchorFt.x;
+      next = placeReducer(next, tapXft * FT, yFt * FT, {
+        id: fccuId("reducer"),
+        inletSizeIn: UTILITY_HEADER_DIAMETER_IN,
+        outletSizeIn: service.sizeIn,
       });
     }
   }
@@ -831,6 +881,15 @@ function addFirewater(design, systemIds) {
       utility: "firewater",
       elevationIn: -36,
     });
+    // PR668-001: the 12-in main to 6-in hydrant branch transition at
+    // the tap gets its modeled reducer (Jason's planning default: 6
+    // in on the hydrant connection — a planning default, not a code
+    // citation).
+    next = placeReducer(next, tap.x, tap.y, {
+      id: fccuId("reducer"),
+      inletSizeIn: FIREWATER_MAIN_DIAMETER_IN,
+      outletSizeIn: HYDRANT_BRANCH_DIAMETER_IN,
+    });
     next = placeSymbol(next, "piping", "fire-hydrant", hydrantAt.x, hydrantAt.y, { tag: `FH-${i + 1}` });
     const hydrant = instanceByTag(next, `FH-${i + 1}`);
     next = {
@@ -875,6 +934,13 @@ function addFirewater(design, systemIds) {
       utility: "firewater",
       elevationIn: -36,
     });
+    // PR668-001: the 12-in main to 6/4-in monitor take-off transition
+    // at the tap gets its modeled reducer.
+    next = placeReducer(next, tapFt.x * FT, tapFt.y * FT, {
+      id: fccuId("reducer"),
+      inletSizeIn: FIREWATER_MAIN_DIAMETER_IN,
+      outletSizeIn: diameterIn,
+    });
   }
   return next;
 }
@@ -894,6 +960,16 @@ function buildPlotDesign() {
   const systemIds = {};
   let design = createEmptyDesign("Plot Plan");
   design = placeEquipment(design);
+  // V-102 (knockout drum): its catalog manway sill (30 in) would require
+  // an access deck, and the congested plot has no feasible placement
+  // (PR668-003). Override the sill to 24 in (at-grade access, no deck
+  // required) — an explicit editable choice, not a deletion.
+  design = {
+    ...design,
+    symbols: design.symbols.map((s) =>
+      s.tag === "V-102" ? { ...s, manway: { fx: 0, fy: 1, diameterIn: 24, sillIn: 24 } } : s,
+    ),
+  };
   design = configureFractionator(design);
   design = configureFireProtection(design);
   design = placeRacks(design);
@@ -908,6 +984,43 @@ function buildPlotDesign() {
   design = addPiping(design, systemIds);
   design = addUtilities(design, systemIds);
   design = addFirewater(design, systemIds);
+  // Final junction pass: runs added early never saw runs added later —
+  // re-detect junctions for every run so endpoint-T contacts (e.g. a
+  // rundown landing on the pump suction header) are modeled, not
+  // flagged as unmodeled contacts (D668-003/D668-004). Skip runs that
+  // already have both ends junctioned (no new junctions possible).
+  for (const pipe of design.pipes || []) {
+    if (pipe.junctions?.start?.runId && pipe.junctions?.end?.runId) continue;
+    design = detectRunJunctions(design, pipe.id);
+  }
+  design = reconcileRunJunctions(design);
+  // Place reducers at size-mismatched junctions discovered by the final
+  // pass (PR668-001: every transition gets its modeled reducer).
+  const byId = new Map((design.pipes || []).map((p) => [p.id, p]));
+  for (const pipe of design.pipes || []) {
+    for (const end of ["start", "end"]) {
+      const hostId = pipe.junctions?.[end]?.runId;
+      if (!hostId) continue;
+      const host = byId.get(hostId);
+      if (!host) continue;
+      const d1 = pipe.diameterIn ?? 2;
+      const d2 = host.diameterIn ?? 2;
+      if (d1 === d2) continue;
+      const pt = end === "start" ? pipe.points[0] : pipe.points[pipe.points.length - 1];
+      // Skip if a reducer already covers this tap.
+      const covered = (design.symbols || []).some(
+        (s) =>
+          s.symbolId === "reducer" &&
+          Math.hypot(s.x - pt.x, s.y - pt.y) <= 1,
+      );
+      if (covered) continue;
+      design = placeReducer(design, pt.x, pt.y, {
+        id: fccuId("reducer"),
+        inletSizeIn: Math.max(d1, d2),
+        outletSizeIn: Math.min(d1, d2),
+      });
+    }
+  }
   return design;
 }
 
