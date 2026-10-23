@@ -29,7 +29,7 @@
     "tests/coverage.test.js": "d862789b9e34c9c1208d4690196f661026abb46131dabf69a881bf9036959501",
     "tests/deadline.test.js": "0dbc18d04fc075dbe33f36d96e30b8a236f9a53925a1969f6bceebfb1d74c6fc",
     "tests/helpers.js": "acd868d849837a0ccd14300fa32840a34155c5e586ddd94747feb92f4df2509d",
-    "tests/run-tests.js": "2781c9eecf131a1583e69e4edb3983ff12a96d9011a7768c60a9ca381bfdbe0a",
+    "tests/run-tests.js": "2bdc6657442fb94ebe7376d63ccce14b41c372bcedb5065162508f2e68f88dd9",
     "tests/runner.test.js": "d23fdd83d7ec786c098c021a746bc4aacf89724e61be84a5198fd39a3cd28da6",
     "tests/scope.test.js": "64c8c2364029de4c704832384373cfc8d467a8278f8354e518af211788cbab61",
     "tests/trust-bootstrap.test.js": "b4439ec87116b7182251a350ea4a8709df1c414278bc40c10f75101bf42d94f3",

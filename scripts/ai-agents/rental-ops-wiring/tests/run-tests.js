@@ -13,6 +13,12 @@
  * manifest: a .test.js file present on disk but absent from the
  * manifest is refused (exit 3) before any test byte runs — unlisted
  * executables never execute.
+ *
+ * P666-010A.2 test hygiene: the trust suites mutate the live
+ * candidate tree (canary appends, restored in finally). Test files
+ * run one at a time (--test-concurrency=1) so a mutation in
+ * trust-bootstrap.test.js / trust-launcher.test.js can never be
+ * observed by a concurrently running file's spawned child.
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -36,4 +42,4 @@ if (listed.length === 0) {
   console.error("trust authentication failed — manifest lists no test executables");
   process.exit(3);
 }
-execFileSync(process.execPath, ["--test", ...listed.map((f) => join(HERE, "..", f))], { stdio: "inherit" });
+execFileSync(process.execPath, ["--test", "--test-concurrency=1", ...listed.map((f) => join(HERE, "..", f))], { stdio: "inherit" });
