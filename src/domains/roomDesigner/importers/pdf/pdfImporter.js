@@ -260,6 +260,12 @@ export function applyVectorScale(prepared, options = {}) {
     ? { x: prepared.paperBounds.minX, y: prepared.paperBounds.minY }
     : { x: 0, y: 0 };
   const simplifyTolerance = Math.max(minSegmentIn, 0) * SIMPLIFY_FRACTION;
+  // Same units as the scaled paths below, so a path spanning the whole
+  // sheet (the page background or border frame) can be told apart from
+  // architecture on size alone — see pdfClassifier's page-frame check.
+  const pageBoundsIn = prepared.pageSizeIn
+    ? { w: prepared.pageSizeIn.widthIn * scaleFactor, h: prepared.pageSizeIn.heightIn * scaleFactor }
+    : null;
 
   const items = prepared.paperPaths.map((path, index) => {
     const scaled = applyScaleToPolylines(path.polylines, scaleFactor, anchor).map((line) => ({
@@ -274,7 +280,7 @@ export function applyVectorScale(prepared, options = {}) {
     return {
       index,
       path: scaledPath,
-      classification: classifyPath(scaledPath, { minSegmentIn, includeDashed }),
+      classification: classifyPath(scaledPath, { minSegmentIn, includeDashed, pageBoundsIn }),
     };
   });
 
