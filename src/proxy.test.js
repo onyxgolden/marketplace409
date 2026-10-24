@@ -24,7 +24,15 @@ function proxyRunsFor(pathname) {
   return matcherFns.some((fn) => fn(pathname) !== false);
 }
 
-describe("proxy matcher coverage (S3: authenticated sections only)", () => {
+describe("proxy matcher coverage (S3 fix round: every page route — P671-001)", () => {
+  // The matcher no longer scopes to authenticated sections. The
+  // shared RootLayout reads SSR session state on every page, and
+  // getSession() can refresh an expired session; a refresh in a
+  // Server Component cannot persist its rotated cookies. Every
+  // page route therefore stays matched so the refresh happens in
+  // the proxy, where cookie writes persist (P671-001). Anonymous
+  // requests on these routes still perform zero validation via
+  // the no-cookie shortcut in the proxy body (see proxy() tests).
   it.each([
     "/",
     "/api/financial/accounts",
@@ -51,11 +59,6 @@ describe("proxy matcher coverage (S3: authenticated sections only)", () => {
     "/import",
     "/my-listings",
     "/saved-listings",
-  ])("runs the proxy for authenticated section %s", (pathname) => {
-    expect(proxyRunsFor(pathname)).toBe(true);
-  });
-
-  it.each([
     "/privacy",
     "/terms",
     "/market",
@@ -76,9 +79,21 @@ describe("proxy matcher coverage (S3: authenticated sections only)", () => {
     "/definitely-not-a-real-page",
     "/apiary",
     "/forgex",
+  ])("runs the proxy for page route %s", (pathname) => {
+    expect(proxyRunsFor(pathname)).toBe(true);
+  });
+
+  it.each([
     "/favicon.ico",
     "/brand/og-image.jpg",
-  ])("does not run the proxy for public/unmatched path %s", (pathname) => {
+    "/icon.svg",
+    "/photo.png",
+    "/anim.gif",
+    "/pic.webp",
+    "/img.jpeg",
+    "/_next/static/chunks/main-app.js",
+    "/_next/image",
+  ])("does not run the proxy for static asset %s", (pathname) => {
     expect(proxyRunsFor(pathname)).toBe(false);
   });
 });
@@ -96,6 +111,21 @@ describe("proxy()", () => {
 
   it("(b) performs zero Auth-server validation for an anonymous request on a protected route", async () => {
     const request = new NextRequest("https://test/forge/rental");
+    const response = await proxy(request);
+
+    expect(createServerClientMock).not.toHaveBeenCalled();
+    expect(getUserMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("(b) performs zero Auth-server validation for an anonymous request on a public page route", async () => {
+    // Public pages are matched again after P671-001 (the shared
+    // layout reads session state there), but the no-cookie
+    // shortcut keeps anonymous traffic validation-free: the
+    // Supabase client is never even constructed.
+    const request = new NextRequest("https://test/post");
     const response = await proxy(request);
 
     expect(createServerClientMock).not.toHaveBeenCalled();

@@ -9,32 +9,36 @@ import {
 /*
  * S3 (performance audit): one auth check per request.
  *
- * Two changes, both confined to this proxy:
+ * A request that presents no Supabase auth cookie has no
+ * session to validate or refresh. With no stored session,
+ * supabase.auth.getUser() reads the (empty) cookie storage,
+ * returns AuthSessionMissingError, and performs no network
+ * call and no cookie write (verified against
+ * @supabase/auth-js __loadSession / _getUser). Returning
+ * the passthrough response immediately is therefore
+ * behavior-identical for anonymous requests, and it removes
+ * the validation cost the audit measured: a network
+ * getUser() on every non-static path, including anonymous
+ * hits and would-be 404s. Any cookie whose name marks it
+ * as session material (auth-token, its chunked .0/.1 parts,
+ * or the PKCE code-verifier, which shares the -auth-token
+ * prefix) takes the full path below, exactly as before.
  *
- * 1. The matcher (below) scopes the proxy to the authenticated
- *    sections of the app. Public/content sections (e.g.
- *    /privacy, /terms, /market, /listing, /post) and any
- *    unmatched path no longer invoke the proxy at all, so they
- *    pay no session validation. Every section that requires
- *    authentication, or resolves identity server-side, stays
- *    matched and keeps the exact session-refresh behavior in
- *    the body below. Mixed public/private sections (e.g.
- *    /investors) stay matched in full on purpose.
- *
- * 2. A request that presents no Supabase auth cookie has no
- *    session to validate or refresh. With no stored session,
- *    supabase.auth.getUser() reads the (empty) cookie storage,
- *    returns AuthSessionMissingError, and performs no network
- *    call and no cookie write (verified against
- *    @supabase/auth-js __loadSession / _getUser). Returning
- *    the passthrough response immediately is therefore
- *    behavior-identical for anonymous requests, and it removes
- *    the validation cost from anonymous traffic on matched
- *    routes too (including would-be 404s under /api).
- *    Any cookie whose name marks it as session material
- *    (auth-token, its chunked .0/.1 parts, or the PKCE
- *    code-verifier, which shares the -auth-token prefix)
- *    takes the full path below, exactly as before.
+ * The matcher keeps the original all-routes coverage on
+ * purpose. An earlier revision of this slice scoped the
+ * matcher to authenticated sections only; that was wrong
+ * (review finding P671-001): the shared RootLayout reads
+ * the session via getSession() on EVERY page, and
+ * getSession() can refresh an expired session. A refresh
+ * attempted in a Server Component cannot persist its
+ * rotated cookies — the SSR adapter's cookie writes are
+ * swallowed there — so the browser kept stale credentials
+ * while the server held rotated ones. Every page request
+ * therefore stays matched, so any refresh happens here,
+ * in middleware, where cookie writes persist to both the
+ * forwarded request and the response, before the layout
+ * reads the session. The anonymous shortcut above is what
+ * keeps this coverage from re-imposing the audit's cost.
  */
 function hasSupabaseAuthCookie(request) {
   return request.cookies
@@ -112,28 +116,16 @@ export async function proxy(request) {
 export const config = {
   matcher: [
     /*
-     * Authenticated sections only. "/" is the workspace hub:
-     * it resolves identity server-side (loadWorkspaceHub) and
-     * renders workspace data keyed to the signed-in user, so
-     * it keeps the session-refresh path.
+     * Every request that can render a page stays matched:
+     * the shared RootLayout reads SSR session state on all
+     * of them, so each one needs this writable refresh
+     * boundary in front of it (P671-001). Only requests
+     * that never render the layout are excluded — Next
+     * static assets, the image optimizer, the favicon and
+     * image files. Anonymous requests on matched routes
+     * still skip validation entirely via the no-cookie
+     * shortcut in the body above.
      */
-    "/",
-    "/api/:path*",
-    "/forge/:path*",
-    "/admin/:path*",
-    "/auth/:path*",
-    "/investors/:path*",
-    "/businesses/add",
-    "/businesses/edit/:path*",
-    "/businesses/:id/claim",
-    "/edit/:path*",
-    "/jobs/add",
-    "/jobs/edit/:path*",
-    "/pets/add",
-    "/pets/edit/:path*",
-    "/financial-snapshot",
-    "/import",
-    "/my-listings",
-    "/saved-listings",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
