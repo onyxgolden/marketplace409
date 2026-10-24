@@ -1,4 +1,4 @@
-import { FIELD_ALLOWLIST, DATASETS } from "./fieldMappings.js";
+import { FIELD_ALLOWLIST, DATASETS, MM_DATASETS } from "./fieldMappings.js";
 import { JobRefusal } from "./jobContracts.js";
 
 /**
@@ -23,7 +23,7 @@ import { JobRefusal } from "./jobContracts.js";
  * re-checks every admitted row's owner before returning bytes.
  */
 export const READ_PROJECTION = Object.freeze(
-  Object.fromEntries(DATASETS.map((d) => [d, FIELD_ALLOWLIST[d]])),
+  Object.fromEntries([...new Set([...DATASETS, ...MM_DATASETS])].map((d) => [d, FIELD_ALLOWLIST[d]])),
 );
 
 export function assertAdapterShape(adapter) {

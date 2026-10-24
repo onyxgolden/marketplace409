@@ -1,5 +1,5 @@
 {
-  "description": "AI Lab P2(a) rental-ops wiring slice 1: inert Property Manager daily exception review \u2014 synthetic preview only, no activation path, no credentials, no scheduler registration.",
+  "description": "AI Lab P2(a) rental-ops wiring slices P2a-1 (Property Manager daily exception review) and P2a-2 (Maintenance Manager backlog review) \u2014 synthetic preview only, no activation path, no credentials, no scheduler registration.",
   "engines": {
     "node": ">=24"
   },

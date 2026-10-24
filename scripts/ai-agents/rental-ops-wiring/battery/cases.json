@@ -3677,14 +3677,13 @@
       "job_version": 1,
       "as_of": "2026-10-22T14:00:00.000Z",
       "window": {
-        "name": "lease-expiration-60d"
+        "name": "maintenance-backlog-open"
       },
       "snapshot_request_id": "snap-battery"
     },
     "clock_iso": "2026-10-22T13:55:00.000Z",
     "expect": {
-      "outcome": "REFUSED",
-      "code": "JOB_NOT_BUILT_IN_SLICE"
+      "outcome": "COMPLETED"
     }
   },
   {

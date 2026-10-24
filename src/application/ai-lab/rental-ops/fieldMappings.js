@@ -16,6 +16,15 @@ export const FIELD_MAPPING_VERSION = "rental-ops-fields@1";
 
 export const DATASETS = Object.freeze(["properties", "units", "leases", "memberships", "charges", "schedules"]);
 
+/**
+ * P2a-2: the Maintenance Manager job's narrow dataset list — the
+ * work-order projection plus the unit/property linkage it joins
+ * against. DATASETS (the Property Manager list) is unchanged, so the
+ * PM job's collection, timing and budget calibration are
+ * byte-identical to P2a-1.
+ */
+export const MM_DATASETS = Object.freeze(["properties", "units", "work_orders"]);
+
 export const FIELD_ALLOWLIST = Object.freeze({
   properties: Object.freeze(["property_ref", "owner_ref"]),
   units: Object.freeze(["unit_ref", "property_ref", "owner_ref", "status"]),
@@ -32,6 +41,18 @@ export const FIELD_ALLOWLIST = Object.freeze({
   schedules: Object.freeze([
     "schedule_ref", "lease_ref", "owner_ref", "collection_mode", "forge_cutover_date", "currency",
   ]),
+  // P2a-2: the narrow work-order read projection. This is the minimum
+  // the Maintenance Manager backlog review needs: the work-order ID,
+  // request/unit/property linkage, status, creation date (the aging
+  // field — the existing report projection lacks it), explicit
+  // priority, explicit due date where authoritative, and the
+  // completion timestamp. scheduled_start/scheduled_end are NOT
+  // admitted (scheduled_end is not a due date); contractor, cost and
+  // scope-of-work fields are OUT (not needed for a backlog review).
+  work_orders: Object.freeze([
+    "work_order_ref", "request_ref", "unit_ref", "property_ref", "owner_ref",
+    "status", "created_date", "priority", "due_date", "completed_date",
+  ]),
 });
 
 /** Raw source status -> normalized status. Anything unmapped is UNKNOWN. */
@@ -45,6 +66,18 @@ export const UNIT_STATUS_MAP = Object.freeze({
 });
 export const CHARGE_STATUS_MAP = Object.freeze({
   open: "OPEN", partial: "PARTIAL", paid: "PAID", void: "VOID", written_off: "WRITTEN_OFF",
+});
+/**
+ * Raw source work-order status -> normalized status (P2a-2). Confirmed
+ * against the reviewed work-order report projection
+ * (buildWorkOrdersReport.js: OPEN_STATUSES = draft/assigned/scheduled/
+ * in_progress). Anything unmapped is UNKNOWN — unknown statuses stay
+ * explicit unsupported/integrity rows; they are never counted as
+ * closed, and never silently treated as open.
+ */
+export const WORK_ORDER_STATUS_MAP = Object.freeze({
+  draft: "OPEN", assigned: "OPEN", scheduled: "OPEN",
+  in_progress: "IN_PROGRESS", completed: "COMPLETED", cancelled: "CANCELLED",
 });
 
 export function mapStatus(map, raw) {
@@ -66,6 +99,19 @@ export function civilDayDiff(fromStr, toStr) {
   const a = Date.parse(`${fromStr}T00:00:00Z`);
   const b = Date.parse(`${toStr}T00:00:00Z`);
   return Math.round((b - a) / 86400000);
+}
+
+/**
+ * Civil date (YYYY-MM-DD) of an instant in UTC. This is the
+ * Maintenance Manager's aging clock: the P2a-2 brief and the MM job
+ * descriptor specify civil UTC day aging, which is a DIFFERENT civil
+ * calendar from the shared snapshot's America/Chicago as_of_date
+ * (the Rental Manager/Property Manager contract). The two calendars
+ * are kept distinct and named — neither silently governs the other
+ * job's semantics.
+ */
+export function utcCivilDate(isoInstant) {
+  return new Date(isoInstant).toISOString().slice(0, 10);
 }
 
 export function isSafeNonnegIntCents(v) {

@@ -28,8 +28,37 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
   const rec = snapshot.records;
   const diagnostics = [];
   const integrity = [];
-  const pushIntegrity = (kind, dataset, record_ref, extra = {}) =>
-    integrity.push({ row_id: `int:${kind}:${record_ref}`, kind, dataset, record_ref, ...extra });
+  // P670-005 (identity alignment with the MM fix): public row
+  // identity includes the dataset, so genuinely separate issues
+  // (e.g. one coverage gap per dataset) never alias onto one
+  // decision identity. Kinds, counts and calendar semantics are
+  // unchanged.
+  const pushIntegrity = (kind, dataset, record_ref, extra = {}, identityRef = null) =>
+    // identityRef discriminates a finding that is intrinsically
+    // per-citation: SCHEDULE_LEASE_MISMATCH is keyed by the schedule
+    // but its payload names the citing charge's lease, so two charges
+    // on different leases citing one schedule are two distinct
+    // findings and must not share one decision identity (P670-005).
+    //
+    // P670-005A: when a discriminator is appended, BOTH free-form
+    // components are length-framed (`<len>:<value>`), so the composed
+    // identity is injective over arbitrary admitted reference strings
+    // — refs containing ":", empty refs, delimiter-only refs. Raw
+    // colon concatenation aliased (schedule "a:b", charge "c") with
+    // (schedule "a", charge "b:c") onto one identity, and the
+    // serializer then refused the whole report. The kind/dataset
+    // segments stay raw: both are colon-free code vocabularies
+    // (call-site literals / the DATASETS list), so the prefix
+    // boundary is unambiguous and the framed tail parses uniquely
+    // from it. Without a discriminator the identity keeps the
+    // P670-005 form — record_ref is the final component, so its
+    // content can never alias a further component.
+    integrity.push({
+      row_id: identityRef === null
+        ? `int:${kind}:${dataset}:${record_ref}`
+        : `int:${kind}:${dataset}:${record_ref.length}:${record_ref}:${identityRef.length}:${identityRef}`,
+      kind, dataset, record_ref, ...extra,
+    });
 
   const unitsByRef = new Map(rec.units.map((u) => [u.unit_ref, u]));
   const propertiesByRef = new Map(rec.properties.map((p) => [p.property_ref, p]));
@@ -167,7 +196,7 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
           // this charge.
           pushIntegrity("SCHEDULE_LEASE_MISMATCH", "schedules", schedule.schedule_ref, {
             lease_ref: schedule.lease_ref ?? null, charge_lease_ref: charge.lease_ref,
-          });
+          }, charge.charge_ref);
           classificationOk = false;
         }
         if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null

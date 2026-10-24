@@ -34,6 +34,10 @@ function arg(name, dflt) {
 const dropRoot = arg("drop-root");
 const repository = arg("repository", "preview-basic");
 const owner = arg("owner", "owner-a");
+// P2a-2: the preview child can run either rental-ops job. Defaults
+// preserve the P2a-1 Property Manager preview exactly.
+const jobKind = arg("job-kind", "property-manager-daily-exception-review");
+const windowName = arg("window", "lease-expiration-60d");
 if (!dropRoot) { console.error("required: --drop-root <drop repo>"); process.exit(2); }
 const stateDir = process.env.FORGE_PRIVATE_STATE_DIR;
 if (!stateDir) { console.error("required: FORGE_PRIVATE_STATE_DIR"); process.exit(2); }
@@ -46,11 +50,15 @@ const { openPrivateStore } = await import(
 );
 const { runJob } = await import(pathToFileURL(join(WIRING, "src", "runner.js")).href);
 const { SYNTHETIC_REPOSITORIES } = await import(pathToFileURL(join(WIRING, "fixtures", "repositories.js")).href);
+const { MM_SYNTHETIC_REPOSITORIES } = await import(pathToFileURL(join(WIRING, "fixtures", "maintenanceRepositories.js")).href);
 const { canonicalDigest } = await import(
   pathToFileURL(join(WIRING, "..", "..", "..", "src", "application", "ai-lab", "rental-ops", "canonical.js")).href
 );
 
-const repoFactory = SYNTHETIC_REPOSITORIES[repository];
+// Closed registry: a job request can never name a path or URL; the
+// host harness selects one of these by ID.
+const REGISTRIES = { ...SYNTHETIC_REPOSITORIES, ...MM_SYNTHETIC_REPOSITORIES };
+const repoFactory = REGISTRIES[repository];
 if (!repoFactory) { console.error(`unknown synthetic repository '${repository}' (closed registry)`); process.exit(2); }
 
 const store = await openPrivateStore({ stateDir, dropRoot });
@@ -73,8 +81,8 @@ const hostConfig = {
 };
 const request = {
   principal_ref: "host:workbench-operator", owner_ref: owner, portfolio_ref: `portfolio-${owner}`,
-  job_kind: "property-manager-daily-exception-review", job_version: 1,
-  as_of: "2026-10-22T14:00:00.000Z", window: { name: "lease-expiration-60d" },
+  job_kind: jobKind, job_version: 1,
+  as_of: "2026-10-22T14:00:00.000Z", window: { name: windowName },
   snapshot_request_id: `snap-preview-${repository}-${owner}`,
 };
 const clock = { nowIso: () => "2026-10-22T13:55:00.000Z" };

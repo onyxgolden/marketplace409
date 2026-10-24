@@ -12,6 +12,7 @@ export const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
 const REF_FIELD = Object.freeze({
   properties: "property_ref", units: "unit_ref", leases: "lease_ref",
   memberships: "lease_ref", charges: "charge_ref", schedules: "schedule_ref",
+  work_orders: "work_order_ref",
 });
 
 /** Civil date (YYYY-MM-DD) of an instant in America/Chicago — the Rental Manager's "today". */
@@ -64,7 +65,7 @@ function raceDeadline(promise, signal) {
  * collection that reaches the deadline refuses EXECUTION_TIMEOUT
  * instead of consuming a second window downstream.
  */
-export async function buildSnapshot({ request, adapter, budget, clock, signal = undefined }) {
+export async function buildSnapshot({ request, adapter, budget, clock, signal = undefined, datasets = DATASETS }) {
   assertAdapterShape(adapter);
   const startedAt = clock.nowIso();
   const records = {};
@@ -81,7 +82,7 @@ export async function buildSnapshot({ request, adapter, budget, clock, signal = 
   let allDatasetsAttested = true;
   let partial = false;
 
-  for (const dataset of DATASETS) {
+  for (const dataset of datasets) {
     const admitted = []; // { row, dropped } in arrival order; canonicalized below
     const byRef = new Map();
     let seenCount = 0;

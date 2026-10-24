@@ -26,9 +26,10 @@ export const JOB_KINDS = Object.freeze({
 });
 
 /**
- * The one job built in slice P2a-1. The Maintenance Manager descriptor
- * exists as data so the boundary is explicit; its job module is NOT
- * built in this slice (P2a-2 follows only after a GO on P2a-1).
+ * The two jobs built across slices P2a-1 and P2a-2. P2a-1 built the
+ * Property Manager daily exception review plus the shared boundary
+ * (read adapter, private Workbench item transport, inert job runner);
+ * P2a-2 builds the Maintenance Manager backlog review, reusing them.
  */
 export const JOB_DESCRIPTORS = Object.freeze([
   Object.freeze({
@@ -38,6 +39,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     version: 1,
     proposed_trigger: "daily 09:00 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "lease-expiration horizon 60 days",
+    window_name: "lease-expiration-60d",
     readiness: "WIRED_INERT",
   }),
   Object.freeze({
@@ -47,7 +49,8 @@ export const JOB_DESCRIPTORS = Object.freeze([
     version: 1,
     proposed_trigger: "daily 09:15 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "open backlog, civil UTC day aging",
-    readiness: "NOT_BUILT_P2A2",
+    window_name: "maintenance-backlog-open",
+    readiness: "WIRED_INERT",
   }),
 ]);
 
@@ -90,8 +93,11 @@ export function descriptorFor(kind) {
  *
  * The portfolio and the reporting window are caller LABELS only until
  * the runner binds them: portfolio_ref must equal the host-registered
- * portfolio, and the window must be exactly the one registered window
- * contract — no caller-supplied horizon, no extra nested fields.
+ * portfolio, and the window must be exactly the window contract bound
+ * to the request's job descriptor — a window registered to the OTHER
+ * job is not valid authority for this one and refuses here, before
+ * any adapter is opened; no caller-supplied horizon, no extra nested
+ * fields, and no silent substitution of the job's own window.
  * as_of must be an explicit UTC calendar instant (Zulu); offset or
  * loose date forms refuse.
  */
@@ -99,7 +105,7 @@ const REQUEST_FIELDS = Object.freeze([
   "principal_ref", "owner_ref", "portfolio_ref", "job_kind", "job_version",
   "as_of", "window", "snapshot_request_id",
 ]);
-const REGISTERED_WINDOWS = Object.freeze(["lease-expiration-60d"]);
+const REGISTERED_WINDOWS = Object.freeze(["lease-expiration-60d", "maintenance-backlog-open"]);
 const UTC_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 export function validateJobRequest(request) {
   if (request === null || typeof request !== "object" || Array.isArray(request)) {
@@ -113,8 +119,9 @@ export function validateJobRequest(request) {
       throw new JobRefusal("BAD_REQUEST", `${field} must be a non-empty string`);
     }
   }
-  if (!descriptorFor(request.job_kind)) throw new JobRefusal("UNKNOWN_AGENT", `job kind '${request.job_kind}'`);
-  if (request.job_version !== descriptorFor(request.job_kind).version) {
+  const descriptor = descriptorFor(request.job_kind);
+  if (!descriptor) throw new JobRefusal("UNKNOWN_AGENT", `job kind '${request.job_kind}'`);
+  if (request.job_version !== descriptor.version) {
     throw new JobRefusal("BAD_REQUEST", "job_version does not match the registered descriptor");
   }
   if (typeof request.as_of !== "string" || !UTC_INSTANT_RE.test(request.as_of)
@@ -128,6 +135,13 @@ export function validateJobRequest(request) {
   const wKeys = Object.keys(w);
   if (wKeys.length !== 1 || wKeys[0] !== "name" || !REGISTERED_WINDOWS.includes(w.name)) {
     throw new JobRefusal("BAD_REQUEST", `window must be exactly { name: '${REGISTERED_WINDOWS.join("' | '")}' } — no caller-supplied horizon or extra fields`);
+  }
+  // P670-004: the window vocabulary is bound to the job. A window
+  // registered to another job refuses here — validateJobRequest runs
+  // in the runner before any adapter is opened — instead of being
+  // silently rewritten to the job's own window downstream.
+  if (w.name !== descriptor.window_name) {
+    throw new JobRefusal("BAD_REQUEST", `window '${w.name}' is not the registered window for job kind '${request.job_kind}' (expected '${descriptor.window_name}')`);
   }
   return request;
 }

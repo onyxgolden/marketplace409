@@ -127,7 +127,7 @@ cases.push(kase("S10", "scope", DS({}), lit("ACTIVATION_REQUIRED"), { callerAsk:
 cases.push(kase("S11", "scope", DS({}), lit("ACTIVATION_REQUIRED"), { host: { ...HOST, mode: "LIVE" } }));
 cases.push(kase("S12", "scope", DS({}), lit("REFUSED", { code: "UNKNOWN_MODE" }), { host: { ...HOST, mode: "TURBO" } }));
 cases.push(kase("S13", "scope", DS({}), lit("REFUSED", { code: "UNKNOWN_AGENT" }), { request: { ...REQUEST, job_kind: "tax-agent-review" } }));
-cases.push(kase("S14", "scope", DS({}), lit("REFUSED", { code: "JOB_NOT_BUILT_IN_SLICE" }), { request: { ...REQUEST, job_kind: "maintenance-manager-backlog-review" } }));
+cases.push(kase("S14", "scope", DS({}), lit("COMPLETED"), { request: { ...REQUEST, job_kind: "maintenance-manager-backlog-review", window: { name: "maintenance-backlog-open" } } }));
 cases.push(kase("S15", "scope", DS({}), lit("REFUSED", { code: "BAD_REQUEST" }), { request: { ...REQUEST, mode: "LIVE" } }));
 cases.push(kase("S16", "scope", DS({}), lit("REFUSED", { code: "BAD_REQUEST" }), { request: { ...REQUEST, sql: "select 1" } }));
 cases.push(kase("S17", "scope", DS({}), lit("REFUSED", { code: "ADAPTER_NOT_INSTALLED" }), { host: { ...HOST, adapter_kind: "production" } }));
