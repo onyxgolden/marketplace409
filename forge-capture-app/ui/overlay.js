@@ -54,6 +54,14 @@ export function createOverlayController({
   // Generation: supersedes in-flight inits (e.g. a retry racing a slow
   // first load) so a late arrival can never clobber the current session.
   let gen = 0;
+  // C639-007C.3: this pick's own session id, learned from overlay_context
+  // at init and echoed back on the eventual `capture` call so the backend
+  // can bind that call to the exact generation that opened this page,
+  // never to whichever pick happens to be its own `active_pick` by the
+  // time the request is processed. Capture stays gated on `backdropReady`,
+  // which only ever becomes true after `overlay_context` has already
+  // succeeded, so this is always set by the time `onMouseUp` can commit.
+  let sessionId = null;
 
   function showAimTools() {
     // Crosshairs stay up while dragging (the OS cursor is hidden); the
@@ -260,6 +268,7 @@ export function createOverlayController({
     if (myGen !== gen || now() >= deadline) return;
     mark("context");
     if (ctx && ctx.dpr) dpr = ctx.dpr;
+    if (ctx && typeof ctx.session_id !== "undefined") sessionId = ctx.session_id;
     // Blank-frame warning: the frozen frame came back a single solid
     // color. Retry re-captures with the picker hidden; proceed picks on
     // the frame as-is (legit for a truly solid-color desktop); Esc still
@@ -348,6 +357,11 @@ export function createOverlayController({
           windowId: null,
           region: null,
           overlayRect: r,
+          // C639-007C.3: this pick's own session id, learned at init from
+          // overlay_context — binds this exact call to the generation that
+          // opened this page, never to whatever pick the backend's own
+          // active_pick happens to name by the time it processes this.
+          overlaySessionId: sessionId,
           // Ignored for region-overlay: the backend applies the delay/cursor
           // selections recorded by begin_region_pick (this page cannot see
           // the main window's controls).
