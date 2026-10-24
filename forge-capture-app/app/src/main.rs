@@ -43,6 +43,10 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 mod session_store;
+/// Bounded capture worker (ChatGPT design verdict 2026-10-23, Option C):
+/// parent-side supervisor, wire protocol, phase ring log. See the module
+/// docs for the contract.
+mod capture_worker;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -91,6 +95,12 @@ struct AppState {
     /// hands it to that session's watchdog, so a stale watchdog can be
     /// told apart from the session it was spawned for.
     overlay_session: Mutex<u64>,
+    /// Bounded capture worker supervisor (C639 Option C). Owns the single
+    /// worker slot, the 3 s parent deadline, generation fencing, and the
+    /// phase ring log. All potentially blocking native acquisition for the
+    /// region path (initial backdrop, retry, final region read) goes
+    /// through here; the native code itself runs in the child process.
+    capture_supervisor: capture_worker::CaptureSupervisor,
     /// File stems already handed out (in-memory part of stem uniqueness;
     /// the on-disk check in `unique_stem` covers previous runs).
     used_stems: Mutex<HashSet<String>>,
@@ -980,8 +990,32 @@ fn run_capture_inner(
     dto: &CaptureRequestDto,
 ) -> Result<ArtifactRefDto, String> {
     let monitors = current_monitors()?;
+    // C639: the region-overlay session id must be read before `build_mode`
+    // takes the pending context.
+    let overlay_session = state
+        .pending_overlay
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|o| o.session_id);
     let (mode, include_cursor) = build_mode(dto, app, &state)?;
     let id = next_id(&state);
+    // C639 Option C: the final live region read runs in the supervised
+    // capture worker (3 s parent deadline, generation fencing, one worker
+    // max). All other modes keep the existing direct engine path.
+    if let Some((rect, delay_ms)) = worker_region_request(&mode) {
+        let session_id =
+            overlay_session.ok_or("region overlay session vanished before capture")?;
+        return run_capture_via_worker(
+            app,
+            &state,
+            &id,
+            session_id,
+            &rect,
+            include_cursor,
+            delay_ms,
+        );
+    }
     // The engine stamps captured_at at acquisition time (after any delay
     // sleep); the request carries no request-time timestamp.
     let request = CaptureRequest {
@@ -1007,6 +1041,75 @@ fn run_capture_inner(
         // 2b scrolling outcome. Both non-complete arms are loud errors here.
         other => Err(format!("capture did not complete: {}", other.describe())),
     }
+}
+
+/// Extract a worker-suitable region from a built capture mode: the
+/// region-overlay path, optionally delay-wrapped. Returns (physical rect,
+/// delay_ms). Pure so the routing decision is unit-testable. Any other
+/// mode returns None and keeps the direct engine path.
+fn worker_region_request(mode: &CaptureMode) -> Option<(Rect, u64)> {
+    match mode {
+        CaptureMode::RegionVirtual { rect } => Some((*rect, 0)),
+        CaptureMode::Delayed { mode, delay_ms } => match mode.as_ref() {
+            CaptureMode::RegionVirtual { rect } => Some((*rect, *delay_ms)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Final live region capture through the supervised worker (C639 Option C).
+/// Rebuilds the `CaptureArtifact` from the worker's validated reply,
+/// preserving the engine's provenance: cursor state, solid-color warnings,
+/// acquisition timestamp, and DPI scale. The worker ran the SAME
+/// `NativeRasterEngine` acquisition — including the per-piece blank
+/// hard-fail (`validate_raw_blit`) — so the hard-fail blank policy is
+/// unchanged; only the execution boundary moved.
+fn run_capture_via_worker(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    id: &str,
+    session_id: u64,
+    rect: &Rect,
+    include_cursor: bool,
+    delay_ms: u64,
+) -> Result<ArtifactRefDto, String> {
+    // Physical pixels in virtual-desktop coords. Negative origins are
+    // legitimate (secondary monitor left/above the primary); the worker
+    // re-validates the bounds.
+    let x = rect.x.round() as i64;
+    let y = rect.y.round() as i64;
+    let w = rect.w.round().max(1.0) as u64;
+    let h = rect.h.round().max(1.0) as u64;
+    let reply = state
+        .capture_supervisor
+        .execute_region(session_id, x, y, w, h, include_cursor, delay_ms)
+        .map_err(|e| format!("capture worker: {e}"))?;
+    let mut artifact = CaptureArtifact::new(
+        id.to_string(),
+        CaptureKind::Region,
+        reply.png_bytes,
+        RasterMime::Png,
+        reply.width,
+        reply.height,
+        None,
+        None,
+        reply.meta.scale,
+        CursorState {
+            captured: reply.meta.cursor_captured,
+            position_physical: reply.meta.cursor_pos,
+        },
+        reply.meta.captured_at,
+        if delay_ms > 0 { Some(delay_ms) } else { None },
+    )
+    .map_err(|e| format!("worker artifact rejected: {e}"))?;
+    artifact.warnings = reply.meta.warnings;
+    let saved = store_artifact(state, id.to_string(), artifact)?;
+    // Notify the main window (region captures originate from the overlay
+    // window, which closed itself before acquisition).
+    focus_capture_window(app);
+    let _ = app.emit("capture-saved", saved.clone());
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -1864,16 +1967,19 @@ fn open_region_overlay(
         .iter()
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
-    // 1. Frozen backdrop first, while no overlay window exists.
-    let backdrop_png = capture_region_backdrop(&monitors, &monitor.id)?;
-    let (_, _, rgba) =
-        decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
-    let backdrop_blank = solid_frame_rgba(&rgba);
+    // Mint the session before acquisition so the worker request carries
+    // the session identity the overlay (and its watchdog) will use.
     let session_id = {
         let mut counter = state.overlay_session.lock().unwrap();
         *counter = counter.wrapping_add(1);
         *counter
     };
+    // 1. Frozen backdrop first, while no overlay window exists. Runs in
+    // the supervised capture worker (C639 Option C).
+    let backdrop_png = capture_region_backdrop(&state, session_id, &monitor.id)?;
+    let (_, _, rgba) =
+        decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
+    let backdrop_blank = solid_frame_rgba(&rgba);
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         monitor_id: monitor_id.to_string(),
         origin_virtual: monitor.origin_virtual,
@@ -1953,19 +2059,239 @@ fn must_abort_capture_if_overlay_present(overlay_present: bool) -> Result<(), St
 
 /// Capture the frozen fullscreen frame for region picking. The caller must
 /// invoke this BEFORE creating the overlay window.
-fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec<u8>, String> {
+///
+/// C639 Option C: the native acquisition runs in the supervised capture
+/// worker process (3 s parent deadline, generation fencing, one worker
+/// max), never inline on the calling thread. The worker runs the SAME
+/// `NativeRasterEngine` code path as before — including the per-piece
+/// blank hard-fail (`validate_raw_blit`) — so the blank policy is
+/// unchanged; only the execution boundary moved.
+fn capture_region_backdrop(
+    state: &State<AppState>,
+    session_id: u64,
+    monitor_id: &str,
+) -> Result<Vec<u8>, String> {
+    let reply = state
+        .capture_supervisor
+        .execute_backdrop(session_id, monitor_id)
+        .map_err(|e| format!("capture worker: {e}"))?;
+    Ok(reply.png_bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Capture worker entry (`--capture-worker`)
+// ---------------------------------------------------------------------------
+
+/// Worker entry point (C639 Option C): reads ONE framed request from
+/// stdin, performs exactly one native acquisition with the same
+/// `NativeRasterEngine` the parent used to run inline, writes ONE framed
+/// reply to stdout, and exits. Phase markers go to stderr; the parent
+/// drains them into its ring log.
+///
+/// This function must never: create a window, touch Tauri state, persist
+/// files, touch the network, or call back into the parent. A native error
+/// is returned as stage + message — never replaced with a fabricated
+/// frame. The per-piece blank hard-fail (`validate_raw_blit`) runs here,
+/// unchanged, as part of the engine.
+fn capture_worker_main() -> i32 {
+    use capture_worker::{
+        decode_request_frame, encode_reply_err, encode_reply_ok, ReplyMeta, ReplyStatus,
+        RequestTarget, WorkerOp,
+    };
+    use std::io::Write as _;
+
+    eprintln!("[capture-worker] start pid={}", std::process::id());
+
+    let stdin = std::io::stdin();
+    let req = match decode_request_frame(stdin.lock()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[capture-worker] malformed request: {e}");
+            return 2;
+        }
+    };
+    eprintln!(
+        "[capture-worker] request op={:?} session={} gen={}",
+        req.op, req.session_id, req.generation
+    );
+
+    // The worker owns enumeration, exactly like the parent did before.
+    let monitors = match native::list_monitors() {
+        Ok(m) => m,
+        Err(e) => {
+            return worker_exit_err(
+                &req,
+                ReplyStatus::WorkerError,
+                "enumerate",
+                &format!("monitor enumeration failed: {e}"),
+            );
+        }
+    };
+
+    let (mode, monitor_label) = match (&req.op, &req.target) {
+        (WorkerOp::Backdrop, RequestTarget::Backdrop { monitor_id }) => {
+            if !monitors.iter().any(|m| m.id == *monitor_id) {
+                return worker_exit_err(
+                    &req,
+                    ReplyStatus::WorkerError,
+                    "resolve",
+                    &format!("unknown monitor id: {monitor_id}"),
+                );
+            }
+            (
+                CaptureMode::FullMonitor {
+                    monitor_id: monitor_id.clone(),
+                },
+                monitor_id.clone(),
+            )
+        }
+        (WorkerOp::Region, RequestTarget::Region { x, y, w, h }) => {
+            let rect = Rect {
+                x: *x as f64,
+                y: *y as f64,
+                w: *w as f64,
+                h: *h as f64,
+            };
+            let inner = CaptureMode::RegionVirtual { rect };
+            let mode = if req.delay_ms > 0 {
+                CaptureMode::Delayed {
+                    mode: Box::new(inner),
+                    delay_ms: req.delay_ms,
+                }
+            } else {
+                inner
+            };
+            (mode, format!("region {x},{y} {w}x{h}"))
+        }
+        _ => {
+            return worker_exit_err(
+                &req,
+                ReplyStatus::WorkerError,
+                "decode",
+                "op/target mismatch",
+            );
+        }
+    };
+    eprintln!("[capture-worker] acquire {monitor_label}");
+
     let request = CaptureRequest {
-        mode: CaptureMode::FullMonitor {
-            monitor_id: monitor_id.to_string(),
-        },
-        include_cursor: false,
-        id: "region-pick-backdrop".to_string(),
+        mode,
+        include_cursor: req.include_cursor,
+        id: format!("worker-{}-{}", req.session_id, req.generation),
     };
     let mut engine = NativeRasterEngine;
-    match engine.acquire(&request, monitors) {
-        ScrollingResult::Complete { artifact } => Ok(artifact.raster_bytes),
-        other => Err(format!("backdrop capture failed: {}", other.describe())),
+    let reply_frame = match engine.acquire(&request, &monitors) {
+        ScrollingResult::Complete { artifact } => {
+            eprintln!(
+                "[capture-worker] complete {}x{} {} bytes",
+                artifact.raster_width, artifact.raster_height, artifact.raster_bytes.len()
+            );
+            let meta = ReplyMeta {
+                cursor_captured: artifact.cursor.captured,
+                cursor_pos: artifact.cursor.position_physical,
+                scale: artifact.scale,
+                captured_at: artifact.captured_at.clone(),
+                warnings: artifact.warnings.clone(),
+            };
+            match encode_reply_ok(
+                req.session_id,
+                req.generation,
+                artifact.raster_width,
+                artifact.raster_height,
+                &artifact.raster_bytes,
+                &meta,
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    return worker_exit_err(&req, ReplyStatus::WorkerError, "encode", &e);
+                }
+            }
+        }
+        other => {
+            // Preserve the native failure exactly: the engine's own
+            // wording as stage + message. No fabricated frame.
+            let message = other.describe();
+            eprintln!("[capture-worker] native failure: {message}");
+            match encode_reply_err(
+                req.session_id,
+                req.generation,
+                ReplyStatus::NativeError,
+                "acquire",
+                &message,
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[capture-worker] error encode failed: {e}");
+                    return 2;
+                }
+            }
+        }
+    };
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    if let Err(e) = out.write_all(&reply_frame).and_then(|_| out.flush()) {
+        eprintln!("[capture-worker] reply write failed: {e}");
+        return 2;
     }
+    eprintln!("[capture-worker] done");
+    0
+}
+
+/// Write a framed error reply and return the process exit code. Used when
+/// the worker cannot produce a capture but can still speak protocol.
+fn worker_exit_err(
+    req: &capture_worker::WorkerRequest,
+    status: capture_worker::ReplyStatus,
+    stage: &str,
+    message: &str,
+) -> i32 {
+    use std::io::Write as _;
+    match capture_worker::encode_reply_err(req.session_id, req.generation, status, stage, message)
+    {
+        Ok(frame) => {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            if out.write_all(&frame).and_then(|_| out.flush()).is_err() {
+                return 2;
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("[capture-worker] error encode failed: {e}");
+            2
+        }
+    }
+}
+
+/// Dump the capture worker's phase ring log (oldest first) for
+/// diagnostics. Used by the on-hardware gate to collect phase evidence.
+#[tauri::command]
+fn capture_phase_log(state: State<AppState>) -> Vec<String> {
+    let mut v = state.capture_supervisor.ring().tail(200);
+    v.reverse();
+    v
+}
+
+/// Overlay page phase marker (C639 §5 instrumentation): the page reports
+/// page_boot / context / backdrop / image / aim_ready / preview_unavailable
+/// with millisecond offsets. Namespaced "overlay" in the ring so frontend
+/// markers stay distinguishable from native markers. Fire-and-forget from
+/// the page; a failure here never breaks the picker.
+#[tauri::command]
+fn capture_overlay_phase(
+    phase: String,
+    ms: u64,
+    detail: Option<String>,
+    state: State<AppState>,
+) {
+    let mut d = format!("phase={phase} +{ms}ms");
+    if let Some(detail) = detail {
+        let mut detail = detail;
+        detail.truncate(256);
+        d.push_str(&format!(" {detail}"));
+    }
+    state.capture_supervisor.ring().log("overlay", d);
 }
 
 /// True when every pixel of an RGBA frame is byte-identical. A uniform
@@ -2115,7 +2441,8 @@ fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Resul
     // Let the compositor settle so the hidden window is truly gone from
     // the next frame; without this the retry could capture the picker.
     std::thread::sleep(Duration::from_millis(250));
-    let fresh = capture_region_backdrop(&monitors, &monitor_id);
+    // C639 Option C: the re-acquisition runs in the supervised worker.
+    let fresh = capture_region_backdrop(&state, retry_session, &monitor_id);
     // Commit the retry only if this is still the same session. The lock is
     // held across the session check AND the window restore: `cancel_region_pick`
     // must take this same lock to clear the session, so a cancel during the
@@ -3489,9 +3816,47 @@ fn ensure_dpi_awareness() {
     }
 }
 
+/// EXE identity for the phase ring log (C639 §5): path, size, SHA-256.
+/// Best effort — "unreadable" when the file cannot be read.
+fn exe_identity_string(exe: &std::path::Path) -> String {
+    match std::fs::read(exe) {
+        Ok(bytes) => {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&bytes);
+            format!(
+                "path={} size={} sha256={:x}",
+                exe.display(),
+                bytes.len(),
+                h.finalize()
+            )
+        }
+        Err(e) => format!("path={} unreadable: {e}", exe.display()),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     ensure_dpi_awareness();
+
+    // C639 Option C: capture-worker mode. The parent re-enters its own EXE
+    // with `--capture-worker`; this MUST precede all Tauri/window
+    // initialization — the worker owns native GDI objects and must never
+    // create a window, touch sessions, or write files. It performs exactly
+    // one framed acquisition and exits.
+    if std::env::args().any(|a| a == "--capture-worker") {
+        std::process::exit(capture_worker_main());
+    }
+
+    // Resolved once, never caller-supplied: the worker is always this EXE.
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let supervisor = capture_worker::CaptureSupervisor::new(
+        exe_path.clone(),
+        forge_capture_core::artifact::MAX_ARTIFACT_BYTES,
+    );
+    supervisor
+        .ring()
+        .log("exe_identity", exe_identity_string(&exe_path));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -3501,6 +3866,7 @@ fn main() {
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
             overlay_session: Mutex::new(0),
+            capture_supervisor: supervisor,
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
@@ -3548,6 +3914,8 @@ fn main() {
             cancel_region_pick,
             region_pick_backdrop,
             retry_region_backdrop,
+            capture_phase_log,
+            capture_overlay_phase,
             ai_edit_submit,
             ai_edit_poll,
             ai_edit_import,
@@ -4195,6 +4563,58 @@ mod region_picker_tests {
         assert!(overlay_context_dto(&ctx).backdrop_blank);
         ctx.backdrop_blank = false;
         assert!(!overlay_context_dto(&ctx).backdrop_blank);
+    }
+
+    #[test]
+    fn worker_routing_takes_plain_region() {
+        // C639 Option C: a plain RegionVirtual routes to the worker.
+        let mode = CaptureMode::RegionVirtual {
+            rect: Rect {
+                x: -1920.0,
+                y: 0.0,
+                w: 2560.0,
+                h: 1440.0,
+            },
+        };
+        let (rect, delay) = worker_region_request(&mode).expect("must route");
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (-1920.0, 0.0, 2560.0, 1440.0));
+        assert_eq!(delay, 0);
+    }
+
+    #[test]
+    fn worker_routing_unwraps_delayed_region() {
+        // The delay travels with the request; the worker sleeps before
+        // acquiring so the acquisition timestamp stays truthful.
+        let mode = CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::RegionVirtual {
+                rect: Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            }),
+            delay_ms: 2500,
+        };
+        let (rect, delay) = worker_region_request(&mode).expect("must route");
+        assert_eq!((rect.w, rect.h), (100.0, 100.0));
+        assert_eq!(delay, 2500);
+    }
+
+    #[test]
+    fn worker_routing_leaves_other_modes_on_direct_path() {
+        // Only the region-overlay path moves to the worker; everything
+        // else keeps the existing direct engine path (blast radius).
+        assert!(worker_region_request(&CaptureMode::FullMonitor {
+            monitor_id: "m".to_string()
+        })
+        .is_none());
+        assert!(worker_region_request(&CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::FullMonitor {
+                monitor_id: "m".to_string()
+            }),
+            delay_ms: 100,
+        })
+        .is_none());
+        assert!(worker_region_request(&CaptureMode::Window {
+            window_id: "w".to_string()
+        })
+        .is_none());
     }
 }
 
