@@ -271,7 +271,10 @@ export function createOverlayController({
     let ctx;
     try {
       ctx = await withDeadline(
-        invoke("overlay_context"),
+        // C639-007C.5: this page's own URL-borne session id, never
+        // whichever pending overlay happens to be globally current by the
+        // time the backend processes this — see `main.rs::overlay_context`.
+        invoke("overlay_context", { overlaySessionId: sessionId }),
         deadline,
         "overlay_context"
       );
@@ -295,7 +298,14 @@ export function createOverlayController({
     if (myGen !== gen || now() >= deadline) return;
     mark("context");
     if (ctx && ctx.dpr) dpr = ctx.dpr;
-    if (ctx && typeof ctx.session_id !== "undefined") sessionId = ctx.session_id;
+    // C639-007C.5: the URL-borne session id is this page's immutable
+    // authority — it is NEVER overwritten from `overlay_context`'s reply.
+    // The backend now binds that reply to `sessionId` itself (it fails
+    // closed rather than returning a different session's context — see
+    // `main.rs::overlay_context`), so `ctx`, when present at all, already
+    // belongs to this exact session; there is nothing left to reconcile.
+    // Adopting a reply's session used to let a stale page silently borrow
+    // a newer page's identity whenever its own context read resolved late.
     // Blank-frame warning: the frozen frame came back a single solid
     // color. Retry re-captures with the picker hidden; proceed picks on
     // the frame as-is (legit for a truly solid-color desktop); Esc still
@@ -303,7 +313,9 @@ export function createOverlayController({
     if (ctx && ctx.backdrop_blank) els.blankwarn.style.display = "block";
     try {
       const shot = await withDeadline(
-        invoke("region_pick_backdrop"),
+        // C639-007C.5: same binding as overlay_context above — this exact
+        // session, never whichever pending overlay is globally current.
+        invoke("region_pick_backdrop", { overlaySessionId: sessionId }),
         deadline,
         "region_pick_backdrop"
       );

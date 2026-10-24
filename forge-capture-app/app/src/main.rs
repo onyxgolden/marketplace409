@@ -3055,13 +3055,58 @@ fn capture_focus_still_current(
     !is_overlay_request || pick_still_active(active_pick, session_id)
 }
 
+/// C639-007C.5: `overlaySessionId` is the calling page's own URL-borne
+/// session (see `open_region_overlay_claimed`'s window build), never
+/// inferred from whichever `pending_overlay` happens to be current when
+/// this runs. The prior version took no caller session at all and simply
+/// returned the current global context — so a stale page A, delayed past
+/// its own retirement, could receive a NEWER page B's context and (per the
+/// old `overlay.js`) adopt B's session id as its own, then carry B's valid
+/// authority on every later Esc/right-click/sliver-cancel/Retry. Binding to
+/// the three-way claim (`active_pick`/`pending_overlay`/
+/// `overlay_window_owner`, via `overlay_request_session_still_current` —
+/// the same check `capture`/Retry already use) and re-filtering the read
+/// itself by the caller's exact session closes that: a mismatched request
+/// fails closed with no context returned, so a stale page's local identity
+/// is never mutated by surviving data obtained under a different session.
 #[tauri::command]
-fn overlay_context(state: State<AppState>) -> Result<OverlayContextDto, String> {
+#[allow(non_snake_case)]
+fn overlay_context(
+    overlaySessionId: u64,
+    state: State<AppState>,
+) -> Result<OverlayContextDto, String> {
+    if !overlay_request_session_still_current(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        overlaySessionId,
+    ) {
+        return Err(
+            "region pick was cancelled or superseded before context could load".to_string(),
+        );
+    }
     let guard = state.pending_overlay.lock().unwrap();
-    guard
-        .as_ref()
-        .map(overlay_context_dto)
+    overlay_context_for_session(guard.as_ref(), overlaySessionId)
         .ok_or_else(|| "no pending region overlay".to_string())
+}
+
+/// C639-007C.5: pure extraction mirroring `stored_backdrop_png` below — a
+/// context is served ONLY while its own recorded session matches the
+/// caller's exact `overlaySessionId`, re-filtered here on top of the
+/// three-way `overlay_request_session_still_current` check the command
+/// itself runs first (that check's `pending_overlay` lock is released
+/// before this one is taken, so a cancel/supersession landing in between
+/// must not let a since-mismatched context through). Pure over the option
+/// so the re-filter itself is unit-testable without a live Tauri app: a
+/// context being PENDING is not sufficient, it must be pending for THIS
+/// session.
+fn overlay_context_for_session(
+    pending: Option<&OverlayContext>,
+    session_id: u64,
+) -> Option<OverlayContextDto> {
+    pending
+        .filter(|ctx| ctx.session_id == session_id)
+        .map(overlay_context_dto)
 }
 
 /// Pure context-to-DTO mapping, so the page always receives the session's
@@ -3121,10 +3166,31 @@ struct BackdropDto {
     height: u32,
 }
 
+/// C639-007C.5: the same caller-bound read as `overlay_context` above —
+/// `overlaySessionId` is the page's own URL-borne identity, verified
+/// against the live three-way claim before ANY frame is served, and the
+/// stored-backdrop lookup itself is re-filtered to that exact session so a
+/// stale/superseded caller can never receive (and thus never locally adopt
+/// or act on) a different session's frame.
 #[tauri::command]
-fn region_pick_backdrop(state: State<AppState>) -> Result<BackdropDto, String> {
+#[allow(non_snake_case)]
+fn region_pick_backdrop(
+    overlaySessionId: u64,
+    state: State<AppState>,
+) -> Result<BackdropDto, String> {
+    if !overlay_request_session_still_current(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        overlaySessionId,
+    ) {
+        return Err(
+            "region pick was cancelled or superseded before the backdrop could load".to_string(),
+        );
+    }
     let guard = state.pending_overlay.lock().unwrap();
-    let png = stored_backdrop_png(guard.as_ref())?;
+    let ctx_ref = guard.as_ref().filter(|c| c.session_id == overlaySessionId);
+    let png = stored_backdrop_png(ctx_ref)?;
     let (width, height) =
         png_dimensions(png).map_err(|e| format!("backdrop dimensions unreadable: {e}"))?;
     Ok(BackdropDto {
@@ -3217,20 +3283,43 @@ fn retry_region_backdrop_blocking(
     // the same binding again, atomically, right before the first window
     // mutation — the same discipline `run_capture_inner`/`build_mode` use
     // around their own unbounded calls.
-    if !overlay_request_session_still_current(
-        &state.active_pick,
-        &state.pending_overlay,
-        &state.overlay_window_owner,
-        retry_session,
-    ) {
-        return Err("region pick was cancelled or superseded before retry could run".to_string());
-    }
-    let window = app
-        .get_webview_window("overlay")
-        .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
-    window
-        .hide()
-        .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+    //
+    // C639-007C.6: the recheck, the shared-"overlay"-label lookup, and the
+    // hide must happen as ONE atomic step, never a check followed by a
+    // separate later lookup. The prior version re-verified ownership here,
+    // then reacquired the window by its shared label and hid it as two
+    // separate operations with nothing — no lock, no main-thread
+    // serialization — spanning them: if a newer session (B) was admitted
+    // and built its own window in that gap (window CREATION already runs
+    // as one `run_on_main_thread_sync` closure, see
+    // `open_region_overlay_claimed`), the label lookup below would resolve
+    // to B's window and hide it, stranding B hidden even though this retry
+    // is a stale request that must touch nothing of B's. Dispatching the
+    // recheck + label lookup + hide as one `run_on_main_thread_sync`
+    // closure serializes it against that exact build closure on Tauri's
+    // single main-event-loop thread — the two can never interleave, so the
+    // lookup here can only ever resolve to whichever window is actually
+    // live at that one instant, never a window a concurrent build swapped
+    // onto the label between two separate steps. The resolved handle is
+    // returned and reused for every later show/focus/close in this
+    // function (below) instead of being reacquired by label again, per
+    // the same requirement.
+    let app_for_hide = app.clone();
+    let window = run_on_main_thread_sync(app, move || -> Result<tauri::WebviewWindow, String> {
+        let state = app_for_hide.state::<AppState>();
+        if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+            return Err(
+                "region pick was cancelled or superseded before retry could run".to_string(),
+            );
+        }
+        let window = app_for_hide
+            .get_webview_window("overlay")
+            .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
+        window
+            .hide()
+            .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+        Ok(window)
+    })??;
     // Let the compositor settle so the hidden window is truly gone from
     // the next frame; without this the retry could capture the picker.
     std::thread::sleep(Duration::from_millis(250));
@@ -5865,6 +5954,54 @@ mod region_picker_tests {
         let mut ctx = overlay_ctx_with_backdrop(None);
         ctx.session_id = 123;
         assert_eq!(overlay_context_dto(&ctx).session_id, 123);
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.5: `overlay_context`/`region_pick_backdrop` must never
+    // serve a DIFFERENT session's context/frame — a stale page's read
+    // must fail closed rather than return data it could adopt as its own
+    // identity.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_context_for_session_returns_the_dto_when_sessions_agree() {
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 5;
+        let dto = overlay_context_for_session(Some(&ctx), 5).expect("must serve matching session");
+        assert_eq!(dto.session_id, 5);
+    }
+
+    #[test]
+    fn overlay_context_for_session_refuses_a_different_sessions_context() {
+        // A context IS pending — just not for the caller's session. The
+        // prior unbound `overlay_context` returned whichever context was
+        // current regardless of who asked; serving B's context to a
+        // request carrying stale A's id is exactly what let A silently
+        // adopt B's identity.
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        assert!(overlay_context_for_session(Some(&b_ctx), 5).is_none());
+    }
+
+    #[test]
+    fn overlay_context_for_session_refuses_when_nothing_is_pending() {
+        assert!(overlay_context_for_session(None, 5).is_none());
+    }
+
+    #[test]
+    fn stored_backdrop_png_refuses_a_different_sessions_context() {
+        // Same binding as `overlay_context_for_session`, exercised through
+        // the actual helper `region_pick_backdrop` calls: a pending
+        // context for session 6 must yield nothing when the caller's own
+        // session (the exact filter `region_pick_backdrop` applies before
+        // calling this) is 5 — modeled here by passing the pre-filtered
+        // `None` a session mismatch produces, the same shape the command
+        // itself constructs.
+        let b_ctx = overlay_ctx_with_backdrop(Some(vec![1, 2, 3]));
+        let filtered: Option<&OverlayContext> =
+            Some(&b_ctx).filter(|c| c.session_id == 5);
+        assert!(filtered.is_none(), "session 6's context must not pass a session-5 filter");
+        assert!(stored_backdrop_png(filtered).is_err());
     }
 
     #[test]
