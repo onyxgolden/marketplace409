@@ -5,6 +5,13 @@ import {
   getCaptureRelease,
 } from "@/lib/capture/downloads";
 
+// Content-only public page (release data is a build-time constant): render
+// statically so it can be served from the edge. The root layout's
+// server-side session read would otherwise force every route dynamic; under
+// force-static the layout prerenders with a null user and SWRIdentityBridge
+// resolves identity client-side (fail-closed).
+export const dynamic = "force-static";
+
 export const metadata = {
   title: "Download FORGE Capture | FORGE",
   description:
