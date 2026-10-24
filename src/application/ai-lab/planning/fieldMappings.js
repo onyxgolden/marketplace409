@@ -174,6 +174,18 @@ export function isCivilDate(s) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
+/**
+ * Baseline/snapshot version identities are positive integers (rung-4
+ * migration: version_number integer not null, >= 1). The projection
+ * (projectRow) deliberately keeps passing finite numbers through so
+ * the evaluator can name a malformed version distinctly from a
+ * missing one; this predicate is the single version-identity check
+ * the evaluator applies before ordering or binding (P677-006).
+ */
+export function isVersionIdentity(v) {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1;
+}
+
 /** Civil-day difference toStr - fromStr for YYYY-MM-DD dates. */
 export function civilDayDiff(fromStr, toStr) {
   const a = Date.parse(`${fromStr}T00:00:00Z`);

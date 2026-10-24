@@ -39,10 +39,18 @@
  *   against today's baseline.
  *
  * Scope baselines and scheduling baselines are distinct concepts:
- * this lane reads no scheduling dataset, so it never joins their
- * versions or hashes. A package's scope_baseline_ref resolves
- * against the package baselines only, and is shown separately from
- * the current (max-version) baseline.
+ * this lane does not admit forge_work_scope_baselines, so it never
+ * joins their versions or hashes. A package's scope_baseline_ref is
+ * carried as data, never resolved against scheduling baseline rows
+ * (that would be a false join across source identity domains):
+ * its relationship state is RELATIONSHIP_NOT_MODELED, and no
+ * finding asserts the scope reference resolved or missing.
+ *
+ * Evidence citations name real source rows only. Absence findings
+ * cite the actual package row (never an invented row in the absent
+ * dataset); baseline-change evidence cites the actual named and
+ * current baseline rows plus the anchoring snapshot; tie-conflict
+ * evidence cites every conflicting snapshot.
  *
  * Conclusions: READY (exact) / QUALIFIED (findings named, assessment
  * still publishable) / UNVERIFIABLE (tied latest snapshots — no
@@ -67,7 +75,7 @@
 
 import { canonicalJson, sha256Hex } from "../rental-ops/canonical.js";
 import { JobRefusal } from "./jobContracts.js";
-import { isCivilDate, utcCivilDate } from "./fieldMappings.js";
+import { isCivilDate, isVersionIdentity, utcCivilDate } from "./fieldMappings.js";
 
 export const CONTROLS_EVALUATOR_VERSION = "planning-controls-evaluator@1";
 export const CONTROLS_WINDOW = "planning-latest-through-asof";
@@ -106,7 +114,8 @@ const QUESTION_TEXT = Object.freeze({
   BASELINE_DATES_INVERTED: "What are the correct baseline dates? The recorded finish precedes the recorded start.",
   BASELINE_DATES_INVALID: "What are the correct baseline dates? The recorded dates are missing or not civil dates.",
   BASELINE_CHANGED: "The current baseline differs from the snapshot's named baseline — confirm the historical status stays anchored to the named baseline and is not rewritten against today's baseline.",
-  SCOPE_BASELINE_UNRESOLVED: "Which baseline does the package's scope baseline reference name? The referenced row does not exist for this package.",
+  BASELINE_VERSION_INVALID: "What is the correct positive-integer version for this baseline? The recorded version_number is fractional, zero, negative, or not a number, so this row cannot anchor any snapshot.",
+  SNAPSHOT_BASELINE_VERSION_INVALID: "What baseline version does this snapshot name? The recorded baseline_version is not a positive integer, so it cannot resolve against any baseline.",
   NO_SNAPSHOTS: "Where is the progress evidence for this package? No progress snapshot exists.",
   FUTURE_SNAPSHOT: "Does this future-dated snapshot belong to the current reporting period? It is excluded from current claims.",
   SNAPSHOT_BASELINE_MISSING: "Which baseline does this snapshot's baseline_version name? No baseline row carries that version for this package.",
@@ -172,15 +181,26 @@ export function evaluateControlsSnapshot(snapshot) {
 
   for (const p of packages) {
     const findings = [];
-    const pushFinding = (kind, dataset, recordRef, detail) => {
-      findings.push({ kind, dataset, record_ref: recordRef, detail });
+    const pushFinding = (kind, dataset, recordRef, detail, evidence) => {
+      findings.push({ kind, dataset, record_ref: recordRef, detail,
+        evidence: evidence ?? [{ dataset, record_ref: recordRef }] });
     };
     const pkgBaselines = baselinesByPackage.get(p.package_ref) ?? [];
     const pkgSnapshots = snapshotsByPackage.get(p.package_ref) ?? [];
 
     // --- baselines: version groups, current, scope ---
+    // Version identities are positive integers (rung-4 migration).
+    // A corrupt version is named and excluded from ordering and
+    // binding — it can never become current by matching another
+    // corrupt value, and it never participates in duplicate
+    // detection (each invalid row carries its own finding).
     const versionGroups = new Map();
     for (const b of pkgBaselines) {
+      if (!isVersionIdentity(b.version_number)) {
+        pushFinding("BASELINE_VERSION_INVALID", "forge_work_package_baselines", b.baseline_ref,
+          `version_number ${String(b.version_number)} is not a positive integer; this baseline row cannot anchor any snapshot and is excluded from version ordering`);
+        continue;
+      }
       const g = versionGroups.get(b.version_number) ?? [];
       g.push(b);
       versionGroups.set(b.version_number, g);
@@ -192,7 +212,9 @@ export function evaluateControlsSnapshot(snapshot) {
       }
     }
     if (pkgBaselines.length === 0) {
-      pushFinding("BASELINE_MISSING", "forge_work_package_baselines", p.package_ref,
+      // Absence cites the actual package row, never an invented row
+      // in the absent baselines dataset (P677-004).
+      pushFinding("BASELINE_MISSING", "forge_work_packages", p.package_ref,
         "no baseline row exists for this package; no snapshot can resolve against a named baseline");
     }
     for (const b of pkgBaselines) {
@@ -207,8 +229,9 @@ export function evaluateControlsSnapshot(snapshot) {
     }
     let currentBaseline = null;
     let currentState = "ABSENT";
-    if (pkgBaselines.length > 0) {
-      const maxVersion = Math.max(...pkgBaselines.map((b) => b.version_number));
+    const validBaselines = pkgBaselines.filter((b) => isVersionIdentity(b.version_number));
+    if (validBaselines.length > 0) {
+      const maxVersion = Math.max(...validBaselines.map((b) => b.version_number));
       const group = versionGroups.get(maxVersion) ?? [];
       if (group.length > 1) {
         currentState = "AMBIGUOUS";
@@ -218,19 +241,15 @@ export function evaluateControlsSnapshot(snapshot) {
         currentBaseline = { baseline_ref: row.baseline_ref, version_number: row.version_number, baseline_start: row.baseline_start ?? null, baseline_finish: row.baseline_finish ?? null };
       }
     }
-    let scopeBaselineVersion = null;
-    let scopeBaselineResolved = false;
-    if (p.scope_baseline_ref !== undefined && p.scope_baseline_ref !== null) {
-      const row = pkgBaselines.find((b) => b.baseline_ref === p.scope_baseline_ref);
-      if (row) {
-        scopeBaselineVersion = row.version_number;
-        scopeBaselineResolved = true;
-      } else {
-        unresolvedBaselineRefs += 1;
-        pushFinding("SCOPE_BASELINE_UNRESOLVED", "forge_work_packages", p.package_ref,
-          `scope baseline reference '${p.scope_baseline_ref}' names no baseline row for this package`);
-      }
-    }
+    // Scope baselines live in forge_work_scope_baselines — a distinct
+    // source identity domain this lane does not admit (brief §8).
+    // The scope pointer is carried, never resolved against
+    // scheduling baseline rows: asserting resolved/unresolved from
+    // the wrong table is a false join. No finding is emitted for
+    // the scope pointer either way (P677-005).
+    const scopeBaselineVersion = null;
+    const scopeBaselineResolved = false;
+    const scopeBaselineState = "RELATIONSHIP_NOT_MODELED";
 
     // --- package-level fields ---
     if (p.status === undefined || p.status === null || !PACKAGE_STATUSES.includes(p.status)) {
@@ -295,6 +314,12 @@ export function evaluateControlsSnapshot(snapshot) {
         unresolvedBaselineRefs += 1;
         pushFinding("SNAPSHOT_BASELINE_MISSING", "forge_work_progress_snapshots", s.snapshot_ref,
           "baseline_version is missing; the snapshot names no baseline and cannot resolve");
+      } else if (!isVersionIdentity(s.baseline_version)) {
+        // Malformed is named distinctly from missing: a corrupt
+        // version cannot become authoritative by matching another
+        // corrupt value, and it never reaches group lookup.
+        pushFinding("SNAPSHOT_BASELINE_VERSION_INVALID", "forge_work_progress_snapshots", s.snapshot_ref,
+          `baseline_version ${String(s.baseline_version)} is not a positive integer; the snapshot cannot resolve against any baseline`);
       } else {
         const group = versionGroups.get(s.baseline_version) ?? [];
         if (group.length === 0) {
@@ -319,7 +344,9 @@ export function evaluateControlsSnapshot(snapshot) {
     let latestState = "NONE";
     let latestRow = null;
     if (pkgSnapshots.length === 0) {
-      pushFinding("NO_SNAPSHOTS", "forge_work_progress_snapshots", p.package_ref,
+      // Absence cites the actual package row, never an invented row
+      // in the absent snapshots dataset (P677-004).
+      pushFinding("NO_SNAPSHOTS", "forge_work_packages", p.package_ref,
         "no progress snapshot exists for this package");
     } else if (eligible.length > 0) {
       const maxDate = eligible.map((r) => r.status_date).sort().at(-1);
@@ -329,8 +356,12 @@ export function evaluateControlsSnapshot(snapshot) {
       })));
       if (distinct.size > 1) {
         tieConflicts += 1;
-        pushFinding("SNAPSHOT_TIE_CONFLICT", "forge_work_progress_snapshots", p.package_ref,
-          `${group.length} incompatible snapshots share the latest status_date ${maxDate} with no source-defined order; no latest snapshot is chosen`);
+        // Tie evidence cites every conflicting snapshot; the row's
+        // primary record is the deterministically first tied row
+        // (P677-004).
+        pushFinding("SNAPSHOT_TIE_CONFLICT", "forge_work_progress_snapshots", group[0].snapshot_ref,
+          `${group.length} incompatible snapshots share the latest status_date ${maxDate} with no source-defined order; no latest snapshot is chosen`,
+          group.map((r) => ({ dataset: "forge_work_progress_snapshots", record_ref: r.snapshot_ref })));
         latestState = "TIE_CONFLICT";
       } else {
         latestRow = group[0];
@@ -349,8 +380,15 @@ export function evaluateControlsSnapshot(snapshot) {
     const baselineChanged = namedBaseline !== null && currentBaseline !== null
       && namedBaseline.version_number !== currentBaseline.version_number;
     if (baselineChanged) {
-      pushFinding("BASELINE_CHANGED", "forge_work_package_baselines", p.package_ref,
-        `latest snapshot is anchored to baseline version ${namedBaseline.version_number} while the current baseline is version ${currentBaseline.version_number}; the historical status stays anchored to the named baseline`);
+      // Change evidence cites the actual named and current baseline
+      // rows plus the anchoring snapshot (P677-004).
+      pushFinding("BASELINE_CHANGED", "forge_work_package_baselines", namedBaseline.baseline_ref,
+        `latest snapshot is anchored to baseline version ${namedBaseline.version_number} while the current baseline is version ${currentBaseline.version_number}; the historical status stays anchored to the named baseline`,
+        [
+          { dataset: "forge_work_package_baselines", record_ref: namedBaseline.baseline_ref },
+          { dataset: "forge_work_package_baselines", record_ref: currentBaseline.baseline_ref },
+          ...(latestRow ? [{ dataset: "forge_work_progress_snapshots", record_ref: latestRow.snapshot_ref }] : []),
+        ]);
     }
 
     // --- conclusion (PARTIAL degrades READY, never UNVERIFIABLE) ---
@@ -373,6 +411,8 @@ export function evaluateControlsSnapshot(snapshot) {
     for (const b of pkgBaselines) evidence.push({ dataset: "forge_work_package_baselines", record_ref: b.baseline_ref });
     for (const s of pkgSnapshots) evidence.push({ dataset: "forge_work_progress_snapshots", record_ref: s.snapshot_ref });
 
+    const latestActual100 = latestRow !== null && latestRow.actual_pct === 100;
+
     const packageRow = {
       row_id: rowIdFor({ agent, scope, section: "packages", kind: "package", dataset: "forge_work_packages", record: p.package_ref }),
       package_ref: p.package_ref,
@@ -386,10 +426,13 @@ export function evaluateControlsSnapshot(snapshot) {
       percent_complete_state: percentState,
       completion_note: p.percent_complete === 100
         ? "100% is a reported claim, never independently observed physical completion"
-        : null,
+        : latestActual100
+          ? "Latest snapshot claims 100% actual progress — a reported claim, never independently observed physical completion"
+          : null,
       scope_baseline_ref: p.scope_baseline_ref ?? null,
       scope_baseline_version: scopeBaselineVersion,
       scope_baseline_resolved: scopeBaselineResolved,
+      scope_baseline_state: scopeBaselineState,
       baselines: pkgBaselines.map((b) => ({
         baseline_ref: b.baseline_ref, version_number: b.version_number,
         baseline_start: b.baseline_start ?? null, baseline_finish: b.baseline_finish ?? null,
@@ -413,7 +456,7 @@ export function evaluateControlsSnapshot(snapshot) {
       integrityRows.push({
         row_id: rowIdFor({ agent, scope, section: "integrity", kind: f.kind, dataset: f.dataset, record: f.record_ref }),
         kind: f.kind, dataset: f.dataset, record_ref: f.record_ref, detail: f.detail ?? "",
-        evidence: [{ dataset: f.dataset, record_ref: f.record_ref }],
+        evidence: f.evidence,
       });
     }
     if (namedBaseline) {
@@ -440,14 +483,14 @@ export function evaluateControlsSnapshot(snapshot) {
         kind: "RESOLVE_FINDING", record_ref: f.record_ref, dataset: f.dataset,
         action: "resolve-finding",
         detail: `Resolve ${f.kind}: ${f.detail}`,
-        evidence: [{ dataset: f.dataset, record_ref: f.record_ref }],
+        evidence: f.evidence,
       });
       questionRows.push({
         row_id: rowIdFor({ agent, scope, section: "questions", kind: "OPEN_QUESTION", dataset: f.dataset, record: f.record_ref, discriminator: f.kind }),
         kind: "OPEN_QUESTION", record_ref: f.record_ref, dataset: f.dataset,
         question: QUESTION_TEXT[f.kind] ?? `What resolves ${f.kind} for this record?`,
         detail: f.detail,
-        evidence: [{ dataset: f.dataset, record_ref: f.record_ref }],
+        evidence: f.evidence,
       });
     }
     if (p.percent_complete === 100) {
@@ -464,6 +507,29 @@ export function evaluateControlsSnapshot(snapshot) {
         question: QUESTION_TEXT.COMPLETION_CLAIM,
         detail: "package percent_complete is 100",
         evidence: [{ dataset: "forge_work_packages", record_ref: p.package_ref }],
+      });
+    }
+    // Snapshot-only 100% (P677-007): the completion guard applies to
+    // the latest eligible snapshot's ACTUAL claim, not just the
+    // package rollup. Only actual_pct counts — planned_pct is a plan
+    // figure, never a physical-completion claim — and only the
+    // latest eligible snapshot bears the current claim: future
+    // excluded, null, and zero claims carry no question, and no
+    // package status is inferred from the number.
+    if (latestActual100) {
+      checklistRows.push({
+        row_id: rowIdFor({ agent, scope, section: "checklist", kind: "CONFIRM_COMPLETION_CLAIM", dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref, discriminator: "SNAPSHOT" }),
+        kind: "CONFIRM_COMPLETION_CLAIM", record_ref: latestRow.snapshot_ref, dataset: "forge_work_progress_snapshots",
+        action: "confirm-completion-claim",
+        detail: "Confirm the latest snapshot's 100% actual progress claim with observed physical completion evidence; a sourced 100% alone is not completion",
+        evidence: [{ dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref }],
+      });
+      questionRows.push({
+        row_id: rowIdFor({ agent, scope, section: "questions", kind: "OPEN_QUESTION", dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref, discriminator: "COMPLETION_CLAIM_SNAPSHOT" }),
+        kind: "OPEN_QUESTION", record_ref: latestRow.snapshot_ref, dataset: "forge_work_progress_snapshots",
+        question: QUESTION_TEXT.COMPLETION_CLAIM,
+        detail: `latest snapshot ${latestRow.snapshot_ref} actual_pct is 100`,
+        evidence: [{ dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref }],
       });
     }
   }

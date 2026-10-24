@@ -534,8 +534,9 @@ describe("controlsEvidenceAssessment (P2b-2)", () => {
     expect(pkg.named_baseline.version_number).toBe(2);
     expect(pkg.current_baseline.version_number).toBe(2);
     expect(pkg.baseline_changed).toBe(false);
-    expect(pkg.scope_baseline_version).toBe(2);
-    expect(pkg.scope_baseline_resolved).toBe(true);
+    expect(pkg.scope_baseline_version).toBeNull();
+    expect(pkg.scope_baseline_resolved).toBe(false);
+    expect(pkg.scope_baseline_state).toBe("RELATIONSHIP_NOT_MODELED");
     expect(report.sections.integrity.rows).toHaveLength(0);
     expect(report.status).toBe("DRAFT");
     expect(report.execution_authorized).toBe(false);

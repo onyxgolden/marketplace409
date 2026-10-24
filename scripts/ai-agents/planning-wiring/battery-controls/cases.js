@@ -83,7 +83,7 @@ const A = [
       packages: [
         { id: "PKG-A", conclusion: "READY", latest_snapshot: "S-A2", latest_status_date: "2026-10-26",
           named_baseline_version: 2, current_baseline_version: 2, baseline_changed: false,
-          scope_baseline_version: 2, scope_baseline_resolved: true, package_percent_complete: 55,
+          scope_baseline_version: null, scope_baseline_resolved: false, scope_baseline_state: "RELATIONSHIP_NOT_MODELED", package_percent_complete: 55,
           latest_pcts: { planned_pct: 60, actual_pct: 55, earned_pct: 58 } },
         { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1", latest_status_date: "2026-10-12",
           named_baseline_version: 1, current_baseline_version: 1, baseline_changed: false,
@@ -288,6 +288,123 @@ const A = [
       packages: [{ id: "PKG-A", conclusion: "QUALIFIED" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
       integrity_kinds_include: ["UNKNOWN_STATUS"] },
   },
+  {
+    id: "A21", group: "A", title: "P677-007 snapshot-only 100%: latest actual 100 with package 55 carries a snapshot completion question, never package status",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").actual_pct = 100;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY", package_percent_complete: 55 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      questions_include: ["observed physical completion"],
+      questions_records_include: [{ dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }] },
+  },
+  {
+    id: "A22", group: "A", title: "P677-007 package-only 100%: package 100 with snapshots below 100 carries the package completion question only",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_packages.find((p) => p.package_ref === "PKG-A").percent_complete = 100;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY", package_percent_complete: 100 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      questions_include: ["observed physical completion"],
+      questions_records_include: [{ dataset: "forge_work_packages", record_ref: "PKG-A" }] },
+  },
+  {
+    id: "A23", group: "A", title: "P677-007 null actual claim carries no completion question",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").actual_pct = null;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      questions_text_absent: ["observed physical completion"] },
+  },
+  {
+    id: "A24", group: "A", title: "P677-007 zero actual claim carries no completion question",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").actual_pct = 0;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      questions_text_absent: ["observed physical completion"] },
+  },
+  {
+    id: "A25", group: "A", title: "P677-007 future-excluded 100% carries no completion question: only the latest eligible claim counts",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.push({ ...d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2"), snapshot_ref: "S-A3", status_date: "2026-10-27", actual_pct: 100 });
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", latest_snapshot: "S-A2" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["FUTURE_SNAPSHOT"],
+      questions_text_absent: ["observed physical completion"] },
+  },
+  {
+    id: "A26", group: "A", title: "P677-007 planned-only 100% carries no completion question: planned semantics stay distinct from physical claims",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").planned_pct = 100;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      questions_text_absent: ["observed physical completion"] },
+  },
+  {
+    id: "A27", group: "A", title: "P677-006 fractional versions 2.5 are invalid: corrupt version never becomes current by matching another corrupt value",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines.find((b) => b.baseline_ref === "BL-A2").version_number = 2.5;
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").baseline_version = 2.5;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", named_baseline_version: null, current_baseline_version: 1 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_VERSION_INVALID", "SNAPSHOT_BASELINE_VERSION_INVALID"] },
+  },
+  {
+    id: "A28", group: "A", title: "P677-006 zero versions are invalid: version 0 names no baseline and never becomes current",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines.find((b) => b.baseline_ref === "BL-A2").version_number = 0;
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").baseline_version = 0;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", named_baseline_version: null, current_baseline_version: 1 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_VERSION_INVALID", "SNAPSHOT_BASELINE_VERSION_INVALID"] },
+  },
+  {
+    id: "A29", group: "A", title: "P677-006 negative versions are invalid: version -1 names no baseline and never becomes current",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines.find((b) => b.baseline_ref === "BL-A2").version_number = -1;
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").baseline_version = -1;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", named_baseline_version: null, current_baseline_version: 1 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_VERSION_INVALID", "SNAPSHOT_BASELINE_VERSION_INVALID"] },
+  },
+  {
+    id: "A30", group: "A", title: "P677-006 string versions are invalid: version '2' is malformed, never authoritative; typed admission nulls the snapshot claim (MISSING) and marks the snapshot PARTIAL, qualifying every package",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines.find((b) => b.baseline_ref === "BL-A2").version_number = "2";
+        d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2").baseline_version = "2";
+      })) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", named_baseline_version: null, current_baseline_version: 1 }, { id: "PKG-B", conclusion: "QUALIFIED", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_VERSION_INVALID", "SNAPSHOT_BASELINE_MISSING"] },
+  },
+  {
+    id: "A31", group: "A", title: "P677-006 null baseline version is malformed, snapshot naming valid 2 is missing: malformed and missing stay distinct",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines.find((b) => b.baseline_ref === "BL-A2").version_number = null;
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", named_baseline_version: null, current_baseline_version: 1 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_VERSION_INVALID", "SNAPSHOT_BASELINE_MISSING"] },
+  },
 ];
 
 export { A };
@@ -295,29 +412,29 @@ export { A };
 // --- Group B: coverage / version / calendar / mapping -------------
 const B = [
   {
-    id: "B01", group: "B", title: "scope baseline unresolved: scope_baseline_ref names no baseline row — SCOPE_BASELINE_UNRESOLVED",
+    id: "B01", group: "B", title: "scope baseline pointer is carried, never resolved against scheduling rows: BL-MISSING names no finding, READY",
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {
         d.forge_work_packages.find((p) => p.package_ref === "PKG-A").scope_baseline_ref = "BL-MISSING";
       })) }),
     expect: { outcome: "COMPLETED",
-      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", scope_baseline_version: null, scope_baseline_resolved: false }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
-      integrity_kinds_include: ["SCOPE_BASELINE_UNRESOLVED"] },
+      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: null, scope_baseline_resolved: false, scope_baseline_state: "RELATIONSHIP_NOT_MODELED" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds: [] },
   },
   {
-    id: "B02", group: "B", title: "scope baseline resolved and equal to current: READY, scope version shown",
+    id: "B02", group: "B", title: "scope baseline pointer is carried, never resolved: canonical BL-A2 is NOT_MODELED, still READY",
     build: () => ({ host: hostWith(), request: requestWith(), spec: canonicalControlsSpec() }),
     expect: { outcome: "COMPLETED",
-      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: 2, scope_baseline_resolved: true }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }] },
+      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: null, scope_baseline_resolved: false, scope_baseline_state: "RELATIONSHIP_NOT_MODELED" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }] },
   },
   {
-    id: "B03", group: "B", title: "scope baseline older than current is not a defect: scope v1 vs current v2 still READY, both shown",
+    id: "B03", group: "B", title: "scope baseline pointer is carried, never resolved: scope v1 vs current v2 still READY, scope NOT_MODELED",
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {
         d.forge_work_packages.find((p) => p.package_ref === "PKG-A").scope_baseline_ref = "BL-A1";
       })) }),
     expect: { outcome: "COMPLETED",
-      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: 1, scope_baseline_resolved: true,
+      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: null, scope_baseline_resolved: false, scope_baseline_state: "RELATIONSHIP_NOT_MODELED",
         current_baseline_version: 2 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }] },
   },
   {
@@ -449,6 +566,60 @@ const B = [
       }), { pageSize: 1 }) }),
     expect: { outcome: "COMPLETED",
       packages: [{ id: "PKG-A", conclusion: "READY", current_baseline_version: 2 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }] },
+  },
+  {
+    id: "B21", group: "B", title: "P677-005 scope ref from another namespace (SCOPE-A) is carried, never resolved, never a finding",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_packages.find((p) => p.package_ref === "PKG-A").scope_baseline_ref = "SCOPE-A";
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "READY", scope_baseline_version: null, scope_baseline_resolved: false, scope_baseline_state: "RELATIONSHIP_NOT_MODELED" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds: [] },
+  },
+  {
+    id: "B22", group: "B", title: "P677-004 missing-baseline evidence cites real rows: package row, never an invented baseline row",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_package_baselines = d.forge_work_package_baselines.filter((b) => b.package_ref !== "PKG-A");
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED" }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_MISSING"],
+      integrity_evidence_in_spans: true },
+  },
+  {
+    id: "B23", group: "B", title: "P677-004 no-snapshots evidence cites the real package row, never an invented snapshot row",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots = d.forge_work_progress_snapshots.filter((s) => s.package_ref !== "PKG-A");
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", latest_snapshot: null }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["NO_SNAPSHOTS"],
+      integrity_evidence_in_spans: true },
+  },
+  {
+    id: "B24", group: "B", title: "P677-004 baseline-changed evidence cites the named and current baseline rows plus the anchoring snapshot",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots = d.forge_work_progress_snapshots.filter((s) => s.snapshot_ref !== "S-A2");
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "QUALIFIED", latest_snapshot: "S-A1", named_baseline_version: 1, current_baseline_version: 2, baseline_changed: true }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["BASELINE_CHANGED"],
+      integrity_evidence_in_spans: true },
+  },
+  {
+    id: "B25", group: "B", title: "P677-004 tie-conflict evidence cites every conflicting snapshot, never the package id as a snapshot row",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_progress_snapshots.push({ ...d.forge_work_progress_snapshots.find((s) => s.snapshot_ref === "S-A2"), snapshot_ref: "TIED", actual_pct: 99 });
+      })) }),
+    expect: { outcome: "COMPLETED",
+      packages: [{ id: "PKG-A", conclusion: "UNVERIFIABLE", latest_snapshot: null }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
+      integrity_kinds_include: ["SNAPSHOT_TIE_CONFLICT"],
+      integrity_evidence_in_spans: true },
   },
 ];
 

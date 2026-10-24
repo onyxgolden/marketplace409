@@ -28,6 +28,14 @@
  * - checklist_kinds_include: every listed checklist kind must be present.
  * - questions_include: every listed substring must appear in some
  *   question row's question text.
+ * - questions_records_include: every listed { field: value } must
+ *   match some question row exactly (source-binding assertions).
+ * - questions_text_absent: no question row's text may contain any
+ *   listed substring (absence assertions).
+ * - integrity_evidence_in_spans: every integrity row's every
+ *   evidence citation must have a matching published evidence span
+ *   (a citation without a span cites a row the source never
+ *   admitted — a fictitious row).
  * - financial_all_not_modeled: every financial measure in the
  *   report's financial section is NOT_MODELED and the section scope
  *   is FINANCIAL_SCOPE_EXCLUDED.
@@ -158,6 +166,9 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
         if (want.scope_baseline_resolved !== undefined && got.scope_baseline_resolved !== want.scope_baseline_resolved) {
           fail(caseId, `package ${want.id} scope_baseline_resolved ${got.scope_baseline_resolved} !== expected ${want.scope_baseline_resolved}`);
         }
+        if (want.scope_baseline_state !== undefined && got.scope_baseline_state !== want.scope_baseline_state) {
+          fail(caseId, `package ${want.id} scope_baseline_state ${got.scope_baseline_state} !== expected ${want.scope_baseline_state}`);
+        }
         if (want.latest_pcts !== undefined) {
           const snap = (got.snapshots ?? []).find((s) => s.snapshot_ref === got.latest_snapshot_ref);
           if (!snap) fail(caseId, `package ${want.id} has no latest snapshot row for pct assertion`);
@@ -203,6 +214,29 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
       const hay = (report.sections.questions.rows ?? []).map((r) => r.question ?? "").join("\n");
       for (const needle of expect.questions_include) {
         if (!hay.includes(needle)) fail(caseId, `questions do not mention ${needle}`);
+      }
+    }
+    if (expect.questions_records_include !== undefined) {
+      const rows = report.sections.questions.rows ?? [];
+      for (const want of expect.questions_records_include) {
+        const hit = rows.some((r) => Object.entries(want).every(([k, v]) => r[k] === v));
+        if (!hit) fail(caseId, `no question row matches ${canonicalJson(want)}`);
+      }
+    }
+    if (expect.questions_text_absent !== undefined) {
+      const hay = (report.sections.questions.rows ?? []).map((r) => r.question ?? "").join("\n");
+      for (const needle of expect.questions_text_absent) {
+        if (hay.includes(needle)) fail(caseId, `questions must not mention ${needle}`);
+      }
+    }
+    if (expect.integrity_evidence_in_spans) {
+      const spanKeys = new Set((item.evidence_spans ?? []).map((s) => `${s.dataset}:${s.record_ref}`));
+      for (const row of report.sections.integrity.rows ?? []) {
+        for (const ev of row.evidence ?? []) {
+          if (!spanKeys.has(`${ev.dataset}:${ev.record_ref}`)) {
+            fail(caseId, `integrity ${row.kind} cites ${ev.dataset}:${ev.record_ref}, which has no evidence span (fictitious row)`);
+          }
+        }
       }
     }
     if (expect.financial_all_not_modeled) {

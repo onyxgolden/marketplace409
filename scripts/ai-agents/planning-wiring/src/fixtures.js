@@ -72,8 +72,11 @@ export function canonicalSpec() {
  *
  * WM project WM-1 (owner owner-1), two packages:
  * - PKG-A (in_progress, 55%): baselines v1 (2026-10-01→2026-11-30)
- *   and v2 (2026-10-05→2026-12-05, current); scope baseline BL-A2
- *   (v2, resolved, equals current). Snapshots S-A1 (2026-10-19,
+ *   and v2 (2026-10-05→2026-12-05, current); scope baseline pointer
+ *   BL-A2 is carried, never resolved against scheduling baseline
+ *   rows (scope/scheduling baselines are distinct domains; the
+ *   scope relationship is RELATIONSHIP_NOT_MODELED in this lane).
+ *   Snapshots S-A1 (2026-10-19,
  *   named v1, historical) and S-A2 (2026-10-26, named v2, latest,
  *   named == current, no baseline change).
  * - PKG-B (in_progress, 20%): baseline v1 only (current); no scope
