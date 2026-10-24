@@ -24,6 +24,12 @@
  *   block set) — the app's assembly only fetches by predecessor,
  *   which misses successor-side ties; this adapter does not repeat
  *   that gap.
+ * - P2b-2 controls: forge_work_packages rows whose project_ref
+ *   equals the scope project id. forge_work_package_baselines and
+ *   forge_work_progress_snapshots rows whose package_ref is a
+ *   package of the scope project (mirrors the holidays rule:
+ *   membership in the spec's served population, not a raw
+ *   project_ref on the row — these rows carry no project_ref).
  *
  * Fault knobs (test-only, set by the harness — never by a job
  * request): failDataset, leakyOwners (return every owner's rows),
@@ -86,6 +92,15 @@ export function createSyntheticAdapter({ datasets, faults = {}, authorizedGlobal
           );
           served = served.filter((r) => r === null || typeof r !== "object"
             || blockIds.has(r.predecessor_ref) || blockIds.has(r.successor_ref));
+        } else if (dataset === "forge_work_packages") {
+          served = served.filter((r) => r === null || typeof r !== "object" || r.project_ref === scopeId);
+        } else if (dataset === "forge_work_package_baselines" || dataset === "forge_work_progress_snapshots") {
+          const servedPackages = new Set(
+            (datasets.forge_work_packages ?? [])
+              .filter((p) => p !== null && typeof p === "object" && p.project_ref === scopeId)
+              .map((p) => p.package_ref),
+          );
+          served = served.filter((r) => r === null || typeof r !== "object" || servedPackages.has(r.package_ref));
         }
       }
       if (faults.getterCanaryDataset === dataset && served.length > 0) {

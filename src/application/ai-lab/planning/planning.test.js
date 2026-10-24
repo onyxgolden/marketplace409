@@ -1,22 +1,24 @@
 /**
- * Focused vitest suite for the P2b-1 planning application surface.
- * Mirrors the P2a rental-ops test pattern (globals, node env).
- * Covers every mapping rule in sourceMappings.js plus the withhold
- * rules, the serializer's duplicate-identity rule, and the decision
- * contract. The 80-case battery (scripts/ai-agents/planning-wiring/
- * battery/) is the exhaustive wiring proof; these tests are the
- * readable unit net.
+ * Focused vitest suite for the P2b-1/P2b-2 planning application
+ * surface. Mirrors the P2a rental-ops test pattern (globals, node
+ * env). Covers every mapping rule in sourceMappings.js plus the
+ * withhold rules, the serializer's duplicate-identity rule, the
+ * decision contract, and (P2b-2) the controls evidence evaluator.
+ * The batteries (scripts/ai-agents/planning-wiring/battery/ and
+ * battery-controls/) are the exhaustive wiring proof; these tests
+ * are the readable unit net.
  */
 import { describe, expect, it } from "vitest";
 import { Budget } from "../rental-ops/budgets.js";
 import { PLANNING_BUDGET_LIMITS } from "../../../../scripts/ai-agents/planning-wiring/src/planningBudget.js";
-import { PLANNING_DATASETS, projectRow } from "./fieldMappings.js";
+import { CONTROLS_DATASETS, PLANNING_DATASETS, projectRow } from "./fieldMappings.js";
 import {
-  JOB_KINDS, JobRefusal, descriptorFor, requireSchedulerScope, resolveMode, validateJobRequest,
+  JOB_KINDS, JobRefusal, descriptorFor, requireControlsScope, requireSchedulerScope, resolveMode, validateJobRequest,
 } from "./jobContracts.js";
 import { buildSnapshot } from "./snapshotBuilder.js";
 import { buildNetwork } from "./sourceMappings.js";
 import { evaluateSchedulerSnapshot } from "./schedulerAssessment.js";
+import { evaluateControlsSnapshot } from "./controlsEvidenceAssessment.js";
 import { reportRowIds, serializePrivateItem } from "./privateItemSerializer.js";
 import { validateDecision } from "./decisionValidator.js";
 
@@ -119,9 +121,9 @@ describe("jobContracts", () => {
     expect(() => resolveMode("LIVE")).toThrow(JobRefusal);
     expect(() => resolveMode("PRODUCTION")).toThrow(JobRefusal);
   });
-  it("descriptors: Scheduler WIRED_INERT, Controls/Manager NOT_BUILT", () => {
+  it("descriptors: Scheduler + Controls WIRED_INERT (P2b-2 gate move), Manager NOT_BUILT", () => {
     expect(descriptorFor(JOB_KINDS.SCHEDULER_PLANNING_REVIEW).readiness).toBe("WIRED_INERT");
-    expect(descriptorFor(JOB_KINDS.CONTROLS_EVIDENCE_REVIEW).readiness).toBe("NOT_BUILT_P2B2");
+    expect(descriptorFor(JOB_KINDS.CONTROLS_EVIDENCE_REVIEW).readiness).toBe("WIRED_INERT");
     expect(descriptorFor(JOB_KINDS.PM_PLAN_HEALTH_REVIEW).readiness).toBe("NOT_BUILT_P2B3");
     expect(descriptorFor("nope")).toBeNull();
   });
@@ -489,5 +491,143 @@ describe("privateItemSerializer + decisionValidator", () => {
     expect(() => validateDecision(item, { ...base, row_id: "sch-nope" })).toThrow(/UNKNOWN_ROW/);
     expect(() => validateDecision(item, { ...base, decision: "approve-schedule" })).toThrow(/BAD_DECISION/);
     expect(() => validateDecision(item, { ...base, decision: "execute" })).toThrow(/BAD_DECISION/);
+  });
+});
+
+describe("controlsEvidenceAssessment (P2b-2)", () => {
+  const scope = { type: "work-management-project", id: "WM-1" };
+  function controlsSnapshot(overrides = {}) {
+    return {
+      owner_ref: "owner-1", project_scope_ref: scope, as_of: AS_OF,
+      digest: "digest-controls-unit", consistency: "COMPLETE",
+      coverage_gaps: [], collection_errors: [], conflicts: [],
+      records: {
+        forge_work_packages: [
+          { package_ref: "PKG-A", project_ref: "WM-1", owner_ref: "owner-1", status: "in_progress",
+            planned_start: "2026-10-01", planned_finish: "2026-11-30", actual_start: "2026-10-01", actual_finish: null,
+            percent_complete: 55, scope_baseline_ref: "BL-A2" },
+        ],
+        forge_work_package_baselines: [
+          { baseline_ref: "BL-A1", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+          { baseline_ref: "BL-A2", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 2, baseline_start: "2026-10-05", baseline_finish: "2026-12-05", frozen_at: "2026-10-03T12:00:00.000Z" },
+        ],
+        forge_work_progress_snapshots: [
+          { snapshot_ref: "S-A2", package_ref: "PKG-A", owner_ref: "owner-1", status_date: "2026-10-26", baseline_version: 2, planned_pct: 60, actual_pct: 55, earned_pct: 58 },
+        ],
+      },
+      evidence: {},
+      ...overrides,
+    };
+  }
+  function pkgOf(report, ref = "PKG-A") {
+    return report.sections.packages.rows.find((p) => p.package_ref === ref);
+  }
+  function kindsOf(report) {
+    return report.sections.integrity.rows.map((r) => r.kind);
+  }
+
+  it("canonical package resolves READY with named == current baseline and no findings", () => {
+    const report = evaluateControlsSnapshot(controlsSnapshot());
+    const pkg = pkgOf(report);
+    expect(pkg.conclusion).toBe("READY");
+    expect(pkg.latest_snapshot_ref).toBe("S-A2");
+    expect(pkg.named_baseline.version_number).toBe(2);
+    expect(pkg.current_baseline.version_number).toBe(2);
+    expect(pkg.baseline_changed).toBe(false);
+    expect(pkg.scope_baseline_version).toBe(2);
+    expect(pkg.scope_baseline_resolved).toBe(true);
+    expect(report.sections.integrity.rows).toHaveLength(0);
+    expect(report.status).toBe("DRAFT");
+    expect(report.execution_authorized).toBe(false);
+    expect(report.sections.financial.planned_value).toBe("NOT_MODELED");
+    expect(report.sections.financial.scope).toBe("FINANCIAL_SCOPE_EXCLUDED");
+  });
+
+  it("named baseline missing is a finding, never a fallback to the current baseline", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots[0].baseline_version = 9;
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(pkg.conclusion).toBe("QUALIFIED");
+    expect(pkg.latest_snapshot_ref).toBe("S-A2");
+    expect(pkg.named_baseline).toBeNull();
+    expect(pkg.baseline_changed).toBe(false);
+    expect(kindsOf(report)).toContain("SNAPSHOT_BASELINE_MISSING");
+    expect(pkg.current_baseline.version_number).toBe(2);
+  });
+
+  it("baseline changed shows both baselines and qualifies, never rewrites history", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots[0].baseline_version = 1;
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(pkg.named_baseline.version_number).toBe(1);
+    expect(pkg.current_baseline.version_number).toBe(2);
+    expect(pkg.baseline_changed).toBe(true);
+    expect(kindsOf(report)).toContain("BASELINE_CHANGED");
+    expect(pkg.conclusion).toBe("QUALIFIED");
+  });
+
+  it("tied incompatible latest snapshots mark the package UNVERIFIABLE", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots.push(
+      { snapshot_ref: "S-A3", package_ref: "PKG-A", owner_ref: "owner-1", status_date: "2026-10-26", baseline_version: 2, planned_pct: 61, actual_pct: 55, earned_pct: 58 },
+    );
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(pkg.conclusion).toBe("UNVERIFIABLE");
+    expect(pkg.latest_snapshot_ref).toBeNull();
+    expect(pkg.latest_state).toBe("TIE_CONFLICT");
+    expect(kindsOf(report)).toContain("SNAPSHOT_TIE_CONFLICT");
+  });
+
+  it("future snapshots are flagged and excluded; null progress is unknown, never zero", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots.push(
+      { snapshot_ref: "S-A9", package_ref: "PKG-A", owner_ref: "owner-1", status_date: "2026-11-02", baseline_version: 2, planned_pct: 70, actual_pct: null, earned_pct: null },
+    );
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(pkg.latest_snapshot_ref).toBe("S-A2");
+    expect(kindsOf(report)).toContain("FUTURE_SNAPSHOT");
+    const future = pkg.snapshots.find((s) => s.snapshot_ref === "S-A9");
+    expect(future.state).toBe("FUTURE_EXCLUDED");
+    expect(future.pct_states.actual).toBe("UNKNOWN");
+    expect(future.pct_states.earned).toBe("UNKNOWN");
+  });
+
+  it("out-of-range progress is a finding; a sourced 100% is a reported claim with a completion question", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_packages[0].percent_complete = 100;
+    snap.records.forge_work_progress_snapshots[0].actual_pct = 140;
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(kindsOf(report)).toContain("PROGRESS_OUT_OF_RANGE");
+    expect(pkg.completion_note).toMatch(/reported claim/);
+    expect(report.sections.questions.rows.some((q) => q.question.includes("observed physical completion"))).toBe(true);
+    expect(report.sections.checklist.rows.some((c) => c.kind === "CONFIRM_COMPLETION_CLAIM")).toBe(true);
+  });
+
+  it("controls scope gate refuses a scheduling-project scope before any read", () => {
+    expect(() => requireControlsScope({ project_scope_ref: { type: "scheduling-project", id: "P-1" } }))
+      .toThrow(/SCOPE_TYPE_MISMATCH/);
+    expect(() => requireControlsScope({ project_scope_ref: scope })).not.toThrow();
+  });
+
+  it("controls report serializes to a ctl- item with a controls title and ctl- row ids", () => {
+    const snap = controlsSnapshot();
+    const report = evaluateControlsSnapshot(snap);
+    const item = serializePrivateItem({ report, snapshot: snap, publishedAt: AS_OF });
+    expect(item.item_id.startsWith("ctl-")).toBe(true);
+    expect(item.title).toBe("Project controls evidence review — 2026-10-26");
+    expect(item.pinned.evaluator_version).toBe("planning-controls-evaluator@1");
+    expect(item.row_ids.every((id) => id === "report" || id.startsWith("ctl-"))).toBe(true);
+    expect(new Set(item.row_ids).size).toBe(item.row_ids.length);
+  });
+
+  it("controls dataset list is packages-first with exactly three datasets", () => {
+    expect([...CONTROLS_DATASETS]).toEqual([
+      "forge_work_packages", "forge_work_package_baselines", "forge_work_progress_snapshots",
+    ]);
   });
 });

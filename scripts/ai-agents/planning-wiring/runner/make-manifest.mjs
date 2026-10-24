@@ -38,6 +38,7 @@ export const CLOSURE_FILES = [
   "src/application/ai-lab/planning/snapshotBuilder.js",
   "src/application/ai-lab/planning/sourceMappings.js",
   "src/application/ai-lab/planning/schedulerAssessment.js",
+  "src/application/ai-lab/planning/controlsEvidenceAssessment.js",
   "src/application/ai-lab/planning/privateItemSerializer.js",
   "src/application/ai-lab/planning/decisionValidator.js",
   // Shared P2a primitives (imported, not copied).
@@ -51,12 +52,18 @@ export const CLOSURE_FILES = [
   "scripts/ai-agents/planning-wiring/battery/run-battery.js",
   "scripts/ai-agents/planning-wiring/battery/oracle.js",
   "scripts/ai-agents/planning-wiring/battery/cases.js",
+  // Controls battery + oracle (P2b-2; same pinning rule).
+  "scripts/ai-agents/planning-wiring/battery-controls/run-battery.js",
+  "scripts/ai-agents/planning-wiring/battery-controls/oracle.js",
+  "scripts/ai-agents/planning-wiring/battery-controls/cases.js",
   // Tests (discovered only from this manifest).
   "scripts/ai-agents/planning-wiring/tests/run-tests.js",
   "scripts/ai-agents/planning-wiring/tests/runner.test.js",
   "scripts/ai-agents/planning-wiring/tests/synthetic.test.js",
+  "scripts/ai-agents/planning-wiring/tests/controls.test.js",
   // Preview child (spawned only after authentication).
   "scripts/ai-agents/planning-wiring/preview/preview-child.mjs",
+  "scripts/ai-agents/planning-wiring/preview/preview-controls-child.mjs",
 ];
 
 function sha256(bytes) {

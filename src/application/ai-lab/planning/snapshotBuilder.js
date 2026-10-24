@@ -17,11 +17,20 @@ const REF_FIELD = Object.freeze({
   schedule_dependencies: "dependency_ref",
   schedule_calendar_holidays: "holiday_ref",
   schedule_blackout_windows: "blackout_ref",
+  forge_work_packages: "package_ref",
+  forge_work_package_baselines: "baseline_ref",
+  forge_work_progress_snapshots: "snapshot_ref",
 });
 
 /** Datasets whose rows carry a project_ref that must equal the scope project. */
 const PROJECT_SCOPED = new Set([
   "schedule_projects", "schedule_lanes", "schedule_blocks", "schedule_blackout_windows",
+  "forge_work_packages",
+]);
+
+/** Controls datasets scoped by package membership (not project_ref). */
+const PACKAGE_MEMBER_SCOPED = new Set([
+  "forge_work_package_baselines", "forge_work_progress_snapshots",
 ]);
 
 function withReadTimeout(promise, dataset) {
@@ -85,6 +94,18 @@ function raceDeadline(promise, signal) {
  *   is a scope leak and refuses (the adapter serves holidays only
  *   for calendars it serves; the builder re-checks once calendars
  *   are collected — collection order puts calendars first).
+ * - P2b-2 controls: forge_work_package_baselines and
+ *   forge_work_progress_snapshots carry a package_ref, not a
+ *   project_ref: a row for a package outside the admitted package
+ *   population is a scope leak and refuses (the adapter serves
+ *   baselines/snapshots only for admitted packages; the builder
+ *   re-checks once packages are collected — collection order puts
+ *   packages first). When the packages collection itself failed,
+ *   membership cannot be checked: the row is fail-closed (excluded)
+ *   and the dataset is marked incomplete with a
+ *   BASELINE/SNAPSHOT_PACKAGE_UNVERIFIED gap, mirroring the
+ *   holidays rule — a failed category qualifies conclusions, never
+ *   cascades into a whole-run refusal.
  *
  * `clock` is injected ({ nowIso() }) so fixed-clock runs are exact.
  * `signal` is the invocation deadline's AbortSignal: it is offered
@@ -111,6 +132,7 @@ export async function buildSnapshot({
   let partial = false;
   const scopeProjectId = request.project_scope_ref?.id ?? null;
   const admittedCalendarRefs = new Set();
+  const admittedPackageRefs = new Set();
 
   for (const dataset of datasets) {
     const admitted = [];
@@ -121,6 +143,7 @@ export async function buildSnapshot({
     let errored = false;
     let hasFieldInvalid = false;
     let holidaysUnverified = false;
+    let packagesUnverified = false;
     const attestedRevisions = new Set();
     const attestedExpected = new Set();
     let terminalAttestedExpected = false;
@@ -218,6 +241,24 @@ export async function buildSnapshot({
           }
           throw new JobRefusal("SCOPE_VIOLATION", `holiday for calendar '${String(row.calendar_ref)}' outside the admitted calendar set`);
         }
+        if (PACKAGE_MEMBER_SCOPED.has(dataset) && !admittedPackageRefs.has(row.package_ref)) {
+          if (datasetErrored["forge_work_packages"]) {
+            // P2b-2 mirror of the holidays rule: when the packages
+            // collection itself failed, baseline/snapshot package
+            // membership cannot be scope-checked. Fail closed on
+            // the ROW and mark the dataset incomplete; the
+            // packages-incomplete qualification already covers
+            // every conclusion drawn from this snapshot.
+            partial = true;
+            packagesUnverified = true;
+            const gapCode = dataset === "forge_work_package_baselines"
+              ? "BASELINE_PACKAGE_UNVERIFIED" : "SNAPSHOT_PACKAGE_UNVERIFIED";
+            coverageGaps.push({ dataset, code: gapCode,
+              detail: `${dataset} row '${String(row[REF_FIELD[dataset]])}' cannot be scope-checked because forge_work_packages collection failed; the row is excluded` });
+            continue;
+          }
+          throw new JobRefusal("SCOPE_VIOLATION", `${dataset} row for package '${String(row.package_ref)}' outside the admitted package population`);
+        }
         const ref = row[REF_FIELD[dataset]];
         if (typeof ref !== "string" || ref.length === 0) {
           partial = true;
@@ -278,6 +319,9 @@ export async function buildSnapshot({
     if (dataset === "schedule_calendars") {
       for (const a of admitted) admittedCalendarRefs.add(a.row.calendar_ref);
     }
+    if (dataset === "forge_work_packages") {
+      for (const a of admitted) admittedPackageRefs.add(a.row.package_ref);
+    }
     const received = seenCount;
     const expectedValues = [...attestedExpected];
     const expectedAgreed = expectedValues.length === 1 ? expectedValues[0] : null;
@@ -314,6 +358,7 @@ export async function buildSnapshot({
     }
     if (errored) { complete = false; allDatasetsAttested = false; }
     if (holidaysUnverified) complete = false;
+    if (packagesUnverified) complete = false;
     datasetErrored[dataset] = errored;
     // usable: collection-complete AND free of invalid projected
     // fields. complete/pages_complete keep their collection-only

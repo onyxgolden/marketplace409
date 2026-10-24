@@ -66,19 +66,14 @@ test("replay is idempotent; changed bytes conflict", async () => {
   await assert.rejects(() => publisher.publish(tampered), /REPUBLISH_CONFLICT/);
 });
 
-test("Controls and Project Manager kinds refuse with the P2b-1 sequencing gate", async () => {
-  for (const [job_kind, window] of [
-    ["project-controls-evidence-review", { name: "planning-latest-through-asof" }],
-    ["project-manager-plan-health-review", { name: "planning-review-snapshot" }],
-  ]) {
-    const result = await runJob({
-      hostConfig: CANONICAL_HOST,
-      request: { ...canonicalRequest(), job_kind, window },
-      adapterSpec: canonicalSpec(), publisher: createMemoryPublisher(), clock,
-    });
-    assert.equal(result.outcome, "REFUSED");
-    assert.equal(result.code, "JOB_NOT_BUILT_IN_SLICE");
-  }
+test("P2b-2 sequencing-gate move: Project Manager kind still refuses JOB_NOT_BUILT_IN_SLICE; Controls kind is built", async () => {
+  const result = await runJob({
+    hostConfig: CANONICAL_HOST,
+    request: { ...canonicalRequest(), job_kind: "project-manager-plan-health-review", window: { name: "planning-review-snapshot" } },
+    adapterSpec: canonicalSpec(), publisher: createMemoryPublisher(), clock,
+  });
+  assert.equal(result.outcome, "REFUSED");
+  assert.equal(result.code, "JOB_NOT_BUILT_IN_SLICE");
 });
 
 test("typed scope binding: a package id equal to the project id is not the registered scope", async () => {

@@ -65,6 +65,80 @@ export function canonicalSpec() {
   };
 }
 
+/**
+ * Synthetic project-controls fixtures — invented rows, never real
+ * project data (P2b-2). Canonical controls population (CANONICAL_
+ * CONTROLS), review date 2026-10-26 (as_of 2026-10-26T12:00:00Z):
+ *
+ * WM project WM-1 (owner owner-1), two packages:
+ * - PKG-A (in_progress, 55%): baselines v1 (2026-10-01→2026-11-30)
+ *   and v2 (2026-10-05→2026-12-05, current); scope baseline BL-A2
+ *   (v2, resolved, equals current). Snapshots S-A1 (2026-10-19,
+ *   named v1, historical) and S-A2 (2026-10-26, named v2, latest,
+ *   named == current, no baseline change).
+ * - PKG-B (in_progress, 20%): baseline v1 only (current); no scope
+ *   baseline. Snapshot S-B1 (2026-10-12, named v1, latest).
+ *
+ * Both packages conclude READY under the canonical fixture: every
+ * snapshot resolves against its named baseline, no finding applies.
+ */
+export const CANONICAL_CONTROLS_AS_OF = "2026-10-26T12:00:00.000Z";
+
+export const CANONICAL_CONTROLS = Object.freeze({
+  forge_work_packages: [
+    {
+      package_ref: "PKG-A", project_ref: "WM-1", owner_ref: "owner-1", status: "in_progress",
+      planned_start: "2026-10-05", planned_finish: "2026-12-05", actual_start: "2026-10-05", actual_finish: null,
+      percent_complete: 55, scope_baseline_ref: "BL-A2",
+    },
+    {
+      package_ref: "PKG-B", project_ref: "WM-1", owner_ref: "owner-1", status: "in_progress",
+      planned_start: "2026-10-01", planned_finish: "2026-11-15", actual_start: "2026-10-01", actual_finish: null,
+      percent_complete: 20, scope_baseline_ref: null,
+    },
+  ],
+  forge_work_package_baselines: [
+    { baseline_ref: "BL-A1", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+    { baseline_ref: "BL-A2", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 2, baseline_start: "2026-10-05", baseline_finish: "2026-12-05", frozen_at: "2026-10-03T12:00:00.000Z" },
+    { baseline_ref: "BL-B1", package_ref: "PKG-B", owner_ref: "owner-1", version_number: 1, baseline_start: "2026-10-01", baseline_finish: "2026-11-15", frozen_at: "2026-09-28T12:00:00.000Z" },
+  ],
+  forge_work_progress_snapshots: [
+    { snapshot_ref: "S-A1", package_ref: "PKG-A", owner_ref: "owner-1", status_date: "2026-10-19", baseline_version: 1, planned_pct: 40, actual_pct: 35, earned_pct: 38 },
+    { snapshot_ref: "S-A2", package_ref: "PKG-A", owner_ref: "owner-1", status_date: "2026-10-26", baseline_version: 2, planned_pct: 60, actual_pct: 55, earned_pct: 58 },
+    { snapshot_ref: "S-B1", package_ref: "PKG-B", owner_ref: "owner-1", status_date: "2026-10-12", baseline_version: 1, planned_pct: 20, actual_pct: 20, earned_pct: 20 },
+  ],
+});
+
+export const CANONICAL_CONTROLS_HOST = Object.freeze({
+  mode: "SYNTHETIC_PREVIEW",
+  registered_principal: "principal-1",
+  registered_owner: "owner-1",
+  registered_project_scope: { type: "work-management-project", id: "WM-1" },
+  adapter_kind: "synthetic",
+});
+
+export function canonicalControlsRequest() {
+  return {
+    principal_ref: "principal-1",
+    owner_ref: "owner-1",
+    project_scope_ref: { type: "work-management-project", id: "WM-1" },
+    job_kind: "project-controls-evidence-review",
+    job_version: 1,
+    as_of: CANONICAL_CONTROLS_AS_OF,
+    window: { name: "planning-latest-through-asof" },
+    snapshot_request_id: "snap-controls-canonical-1",
+  };
+}
+
+export function canonicalControlsSpec() {
+  return {
+    kind: "synthetic",
+    datasets: CANONICAL_CONTROLS,
+    faults: {},
+    authorized_global_calendar_refs: [],
+  };
+}
+
 export const CANONICAL_HOST = Object.freeze({
   mode: "SYNTHETIC_PREVIEW",
   registered_principal: "principal-1",
