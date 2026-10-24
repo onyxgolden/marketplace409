@@ -6,7 +6,7 @@
 // valid input and the reducer fails soft as the backstop.
 
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { SYSTEM_PALETTE, effectiveColor } from "@/domains/roomDesigner/designSystems";
 
 const inputClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-xs text-white";
@@ -64,39 +64,61 @@ function NewSystemForm({ systems, onAdd, onCancel, autoFocus = false }) {
 
 /** Side-panel manager: list, rename, recolor, delete, add. */
 export function SystemsSection({ design, dispatch }) {
+  // Starts collapsed like every palette category (owner decision): expanded,
+  // the explainer + one row per system + the New System form cover most of a
+  // phone screen before any work starts. Only the body unmounts — the systems
+  // themselves live in the design document, so collapsing loses nothing.
+  const [collapsed, setCollapsed] = useState(true);
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
   const systems = design.systems || [];
   const members = (id) => [...(design.pipes || []), ...(design.symbols || [])].filter((m) => m.systemId === id).length;
   return (
     <div className="mt-4 border-t border-gray-800 pt-3" data-testid="systems-section">
-      <h2 className="mb-1 text-sm font-semibold text-white">Systems</h2>
-      <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
-        Group pipes and equipment into systems (cooling water, steam…). Everything in a system draws in its color;
-        any item can still take its own color from its inspector.
-      </p>
-      <ul className="space-y-1">
-        {systems.map((s) => (
-          <li key={s.id} className="flex items-center gap-1">
-            <input type="color" value={s.color} aria-label={`Color of ${s.name}`}
-              onChange={(e) => dispatch({ type: "UPDATE_SYSTEM", systemId: s.id, fields: { color: e.target.value }, coalesce: `system-color:${s.id}` })}
-              className="h-6 w-8 cursor-pointer rounded bg-gray-800" />
-            <input type="text" defaultValue={s.name} key={s.name} maxLength={60} aria-label={`Name of ${s.name}`}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v && v !== s.name && !nameTaken(systems, v, s.id)) dispatch({ type: "UPDATE_SYSTEM", systemId: s.id, fields: { name: v } });
-                else e.target.value = s.name;
-              }}
-              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-              className="block w-full rounded bg-gray-800 px-2 py-1 text-xs text-white" />
-            <span className="w-6 text-right text-[11px] text-gray-500" title="Items in this system">{members(s.id)}</span>
-            <button type="button" aria-label={`Delete system ${s.name}`} title="Delete system (its items stay, unassigned)"
-              onClick={() => dispatch({ type: "DELETE_SYSTEM", systemId: s.id })}
-              className="rounded p-1 text-gray-400 hover:bg-red-900/60 hover:text-red-200">
-              <Trash2 size={12} />
-            </button>
-          </li>
-        ))}
-      </ul>
-      <NewSystemForm systems={systems} onAdd={(name, color) => dispatch({ type: "ADD_SYSTEM", name, color })} />
+      <h2 className="mb-1">
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls="systems-section-body"
+          aria-label={`${collapsed ? "Expand" : "Collapse"} systems`}
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex w-full items-center gap-1 text-left text-sm font-semibold text-white hover:text-gray-300"
+        >
+          <Chevron className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          Systems ({systems.length})
+        </button>
+      </h2>
+      {!collapsed && (
+        <div id="systems-section-body">
+          <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
+            Group pipes and equipment into systems (cooling water, steam…). Everything in a system draws in its color;
+            any item can still take its own color from its inspector.
+          </p>
+          <ul className="space-y-1">
+            {systems.map((s) => (
+              <li key={s.id} className="flex items-center gap-1">
+                <input type="color" value={s.color} aria-label={`Color of ${s.name}`}
+                  onChange={(e) => dispatch({ type: "UPDATE_SYSTEM", systemId: s.id, fields: { color: e.target.value }, coalesce: `system-color:${s.id}` })}
+                  className="h-6 w-8 cursor-pointer rounded bg-gray-800" />
+                <input type="text" defaultValue={s.name} key={s.name} maxLength={60} aria-label={`Name of ${s.name}`}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== s.name && !nameTaken(systems, v, s.id)) dispatch({ type: "UPDATE_SYSTEM", systemId: s.id, fields: { name: v } });
+                    else e.target.value = s.name;
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  className="block w-full rounded bg-gray-800 px-2 py-1 text-xs text-white" />
+                <span className="w-6 text-right text-[11px] text-gray-500" title="Items in this system">{members(s.id)}</span>
+                <button type="button" aria-label={`Delete system ${s.name}`} title="Delete system (its items stay, unassigned)"
+                  onClick={() => dispatch({ type: "DELETE_SYSTEM", systemId: s.id })}
+                  className="rounded p-1 text-gray-400 hover:bg-red-900/60 hover:text-red-200">
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <NewSystemForm systems={systems} onAdd={(name, color) => dispatch({ type: "ADD_SYSTEM", name, color })} />
+        </div>
+      )}
     </div>
   );
 }
