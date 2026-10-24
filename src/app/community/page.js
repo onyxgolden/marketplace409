@@ -1,5 +1,12 @@
 import Header from "@/components/Header";
 
+// Content-only public page: render statically so it can be served from the
+// edge. The root layout's server-side session read would otherwise force
+// every route dynamic; under force-static the layout prerenders with a null
+// user and SWRIdentityBridge resolves identity client-side (fail-closed).
+// Header resolves its own user state client-side.
+export const dynamic = "force-static";
+
 export const metadata = {
   title: "Community Hub | 409 Marketplace",
   description:
