@@ -30,6 +30,12 @@
  *   question row's question text.
  * - questions_records_include: every listed { field: value } must
  *   match some question row exactly (source-binding assertions).
+ * - checklist_evidence_include / questions_evidence_include: every
+ *   listed { kind, dataset, record_ref } must match a row of that
+ *   kind in the section whose evidence array contains exactly that
+ *   { dataset, record_ref } entry. Row-field matches are NOT enough:
+ *   a row whose evidence uses a bare `record` key (P677-007A) must
+ *   fail even when another row cites the same snapshot.
  * - questions_text_absent: no question row's text may contain any
  *   listed substring (absence assertions).
  * - integrity_evidence_in_spans: every integrity row's every
@@ -221,6 +227,16 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
       for (const want of expect.questions_records_include) {
         const hit = rows.some((r) => Object.entries(want).every(([k, v]) => r[k] === v));
         if (!hit) fail(caseId, `no question row matches ${canonicalJson(want)}`);
+      }
+    }
+    for (const [key, section] of [["checklist_evidence_include", "checklist"], ["questions_evidence_include", "questions"]]) {
+      if (expect[key] !== undefined) {
+        const rows = report.sections[section]?.rows ?? [];
+        for (const want of expect[key]) {
+          const hit = rows.some((r) => r.kind === want.kind && r.dataset === want.dataset && r.record_ref === want.record_ref
+            && (r.evidence ?? []).some((e) => e.dataset === want.dataset && e.record_ref === want.record_ref));
+          if (!hit) fail(caseId, `no ${section} ${want.kind} row carries evidence ${want.dataset}:${want.record_ref}`);
+        }
       }
     }
     if (expect.questions_text_absent !== undefined) {

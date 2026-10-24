@@ -297,7 +297,9 @@ const A = [
     expect: { outcome: "COMPLETED",
       packages: [{ id: "PKG-A", conclusion: "READY", package_percent_complete: 55 }, { id: "PKG-B", conclusion: "READY", latest_snapshot: "S-B1" }],
       questions_include: ["observed physical completion"],
-      questions_records_include: [{ dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }] },
+      questions_records_include: [{ dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }],
+      checklist_evidence_include: [{ kind: "CONFIRM_COMPLETION_CLAIM", dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }],
+      questions_evidence_include: [{ kind: "OPEN_QUESTION", dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }] },
   },
   {
     id: "A22", group: "A", title: "P677-007 package-only 100%: package 100 with snapshots below 100 carries the package completion question only",

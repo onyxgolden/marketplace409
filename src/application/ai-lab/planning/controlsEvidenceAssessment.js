@@ -522,14 +522,14 @@ export function evaluateControlsSnapshot(snapshot) {
         kind: "CONFIRM_COMPLETION_CLAIM", record_ref: latestRow.snapshot_ref, dataset: "forge_work_progress_snapshots",
         action: "confirm-completion-claim",
         detail: "Confirm the latest snapshot's 100% actual progress claim with observed physical completion evidence; a sourced 100% alone is not completion",
-        evidence: [{ dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref }],
+        evidence: [{ dataset: "forge_work_progress_snapshots", record_ref: latestRow.snapshot_ref }],
       });
       questionRows.push({
         row_id: rowIdFor({ agent, scope, section: "questions", kind: "OPEN_QUESTION", dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref, discriminator: "COMPLETION_CLAIM_SNAPSHOT" }),
         kind: "OPEN_QUESTION", record_ref: latestRow.snapshot_ref, dataset: "forge_work_progress_snapshots",
         question: QUESTION_TEXT.COMPLETION_CLAIM,
         detail: `latest snapshot ${latestRow.snapshot_ref} actual_pct is 100`,
-        evidence: [{ dataset: "forge_work_progress_snapshots", record: latestRow.snapshot_ref }],
+        evidence: [{ dataset: "forge_work_progress_snapshots", record_ref: latestRow.snapshot_ref }],
       });
     }
   }

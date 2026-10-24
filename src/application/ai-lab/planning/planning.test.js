@@ -609,6 +609,34 @@ describe("controlsEvidenceAssessment (P2b-2)", () => {
     expect(report.sections.checklist.rows.some((c) => c.kind === "CONFIRM_COMPLETION_CLAIM")).toBe(true);
   });
 
+  it("P677-007A snapshot-only 100%: checklist completion row carries its snapshot evidence as record_ref", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots[0].actual_pct = 100;
+    const report = evaluateControlsSnapshot(snap);
+    const row = report.sections.checklist.rows.find((c) =>
+      c.kind === "CONFIRM_COMPLETION_CLAIM"
+      && c.dataset === "forge_work_progress_snapshots"
+      && c.record_ref === "S-A2");
+    expect(row).toBeDefined();
+    expect(row.record_ref).toBe("S-A2");
+    expect(row.dataset).toBe("forge_work_progress_snapshots");
+    expect(row.evidence).toEqual([{ dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }]);
+  });
+
+  it("P677-007A snapshot-only 100%: question completion row carries its snapshot evidence as record_ref", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_progress_snapshots[0].actual_pct = 100;
+    const report = evaluateControlsSnapshot(snap);
+    const row = report.sections.questions.rows.find((q) =>
+      q.kind === "OPEN_QUESTION"
+      && q.dataset === "forge_work_progress_snapshots"
+      && q.record_ref === "S-A2");
+    expect(row).toBeDefined();
+    expect(row.record_ref).toBe("S-A2");
+    expect(row.dataset).toBe("forge_work_progress_snapshots");
+    expect(row.evidence).toEqual([{ dataset: "forge_work_progress_snapshots", record_ref: "S-A2" }]);
+  });
+
   it("controls scope gate refuses a scheduling-project scope before any read", () => {
     expect(() => requireControlsScope({ project_scope_ref: { type: "scheduling-project", id: "P-1" } }))
       .toThrow(/SCOPE_TYPE_MISMATCH/);
