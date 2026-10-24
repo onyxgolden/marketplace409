@@ -1,0 +1,1 @@
+{"description":"P2b-1 Scheduler planning-review wiring: inert runner, synthetic repository, battery and preview (DISABLED + SYNTHETIC_PREVIEW only)","engines":{"node":">=24"},"name":"planning-wiring","private":true,"scripts":{"battery":"node battery/run-battery.js","manifest":"node runner/make-manifest.mjs","tests":"node tests/run-tests.js"},"type":"module","version":"1.0.0"}
