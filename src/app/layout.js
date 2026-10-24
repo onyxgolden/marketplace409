@@ -43,8 +43,14 @@ export const viewport = {
 };
 
 export default async function RootLayout({ children }) {
-  // Resolve the signed-in user server-side (cookie read, no network) so the
-  // SWR cache identity is initialized before any page hydrates from disk.
+  // Resolve the signed-in user server-side so the SWR cache identity is
+  // initialized before any page hydrates from disk. The proxy has already
+  // validated and refreshed the session for this request and persisted any
+  // rotated cookies, so this getSession() resolves from those refreshed
+  // request cookies. getSession() can itself refresh an expired session,
+  // and a refresh attempted here could not persist its cookies from a
+  // Server Component — that is why the proxy matcher stays matched for
+  // every page route (P671-001).
   // Signed out or auth unavailable: the bridge stays fail-closed (memory-only).
   let initialUserId = null;
   try {
