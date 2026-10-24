@@ -98,6 +98,9 @@ Delta is exactly the 4 new P1 regression tests. Zero regressions.
 
 ## Push
 
-Single commit on `fix/designer-pinch-raf` (PR #675 updates in place) via
-`~/workspace/bin/push.sh`; PR head verified moved via the GitHub API and
-tree verified identical. Receipt in `~/workspace/push-receipts/`.
+- Commit `c0e0b12` (local) → API-replayed as `fa72b41` on
+  `fix/designer-pinch-raf`; tree `8f9acb9` verified identical local vs
+  remote.
+- PR #675 head verified via API: `fa72b41239e31f052e0e75aea489082f468653ab`
+  (open, mergeable).
+- Receipt: `~/workspace/push-receipts/fix_designer-pinch-raf-20261024-063652.json`.
