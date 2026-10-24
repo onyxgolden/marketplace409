@@ -129,25 +129,51 @@ pub struct Monitor {
     /// Top-left of this monitor in virtual-desktop coordinates. May be
     /// negative when the monitor sits left of / above the primary.
     pub origin_virtual: (i32, i32),
-    /// Size in Windows logical pixels.
+    /// Size in Windows logical pixels. Derived FROM the authoritative
+    /// physical size below by dividing by `scale` and rounding — this
+    /// division is lossy whenever `size_physical` is not an exact multiple
+    /// of `scale` (e.g. a 2560px-wide monitor at 150%: 2560/1.5 = 1706.666…,
+    /// which Windows itself reports/rounds to 1707 logical px). Used for
+    /// window-placement APIs (Tauri `position`/`inner_size` take logical
+    /// units), which is the one place this lossy value is actually correct
+    /// to use, since Windows applies the SAME lossy convention there.
     pub size_logical: (u32, u32),
     /// DPI scale factor: 1.0 = 96 DPI, 1.25, 1.5, 2.0, …
     pub scale: f64,
+    /// Authoritative physical (device-pixel) size, taken directly from the
+    /// OS (e.g. Win32 `rcMonitor`) at enumeration time — never recomputed
+    /// from `size_logical * scale`.
+    ///
+    /// 2026-10-24 root cause (months-long "blank frame on the secondary
+    /// monitor" bug): `size_logical` is already a ROUNDED value (see its
+    /// doc comment above). Reconstructing physical size by multiplying
+    /// that rounded value back out — `round(size_logical * scale)` — is a
+    /// DOUBLE rounding that does not invert cleanly. For this monitor:
+    /// `round(2560 / 1.5) = 1707`, then `round(1707 * 1.5) = round(2560.5)
+    /// = 2561` — one pixel WIDER than the real 2560px screen. The native
+    /// BitBlt capture then reads one column past the real monitor into
+    /// nothing, and the resulting frame is a uniform color, which the
+    /// blank-frame hard-fail correctly (but confusingly) rejects. This is
+    /// not a rare edge case: it reproduces for ANY physical dimension not
+    /// evenly divisible by 3 at the very common 150% Windows scale
+    /// (2560, 1920, 1366, 1280… most real monitor widths). Storing the
+    /// true value here instead of re-deriving it is the fix — a
+    /// round-trip through a rounded intermediate cannot be repaired by
+    /// choosing a different rounding function on the way back out, only
+    /// by not discarding the original value in the first place. Required
+    /// (no serde default), same as every other field here: a `Monitor` is
+    /// always freshly enumerated from the OS within one process, never
+    /// cached or sent across the worker IPC boundary (each process calls
+    /// `list_monitors()` itself), so there is no legacy-JSON compatibility
+    /// case to default around.
+    pub size_physical: (u64, u64),
 }
 
 impl Monitor {
-    /// Physical (device-pixel) size, derived from logical size × scale.
-    pub fn size_physical(&self) -> (u64, u64) {
-        (
-            (self.size_logical.0 as f64 * self.scale).round() as u64,
-            (self.size_logical.1 as f64 * self.scale).round() as u64,
-        )
-    }
-
     /// This monitor's bounds in virtual-desktop/physical coordinates.
     /// (For a per-monitor-aware process the two coincide; see module docs.)
     pub fn bounds_virtual(&self) -> RectI {
-        let (w, h) = self.size_physical();
+        let (w, h) = self.size_physical;
         RectI {
             x: self.origin_virtual.0 as i64,
             y: self.origin_virtual.1 as i64,
@@ -269,6 +295,7 @@ mod tests {
                 origin_virtual: (0, 0),
                 size_logical: (1920, 1080),
                 scale: 1.0,
+                size_physical: (1920, 1080),
             },
             Monitor {
                 id: "secondary".into(),
@@ -276,6 +303,7 @@ mod tests {
                 origin_virtual: (-3840, 0),
                 size_logical: (2560, 1440),
                 scale: 1.5,
+                size_physical: (3840, 2160),
             },
         ]
     }
@@ -283,7 +311,7 @@ mod tests {
     #[test]
     fn physical_size_derives_from_logical_times_scale() {
         let m = &fixture()[1];
-        assert_eq!(m.size_physical(), (3840, 2160));
+        assert_eq!(m.size_physical, (3840, 2160));
         assert_eq!(
             m.bounds_virtual(),
             RectI {
@@ -291,6 +319,41 @@ mod tests {
                 y: 0,
                 w: 3840,
                 h: 2160
+            }
+        );
+    }
+
+    /// Root-cause regression (2026-10-24): `bounds_virtual` must use the
+    /// authoritative `size_physical`, never re-derive it from
+    /// `size_logical * scale`. A 2560px-wide monitor at 150% has
+    /// `size_logical.0 == 1707` (rounded from 1706.666…), and
+    /// `round(1707 * 1.5) == 2561` — one pixel past the real screen. That
+    /// extra column is exactly what produced "blank frame: screen blit for
+    /// rect (2560,0) 2561x1440" on the real secondary monitor: BitBlt
+    /// reading past the true edge returns a uniform (blank) result.
+    #[test]
+    fn bounds_virtual_uses_true_physical_size_not_a_lossy_rederivation() {
+        let m = Monitor {
+            id: "display5".into(),
+            name: "\\\\.\\DISPLAY5".into(),
+            origin_virtual: (2560, 0),
+            size_logical: (1707, 960),
+            scale: 1.5,
+            size_physical: (2560, 1440),
+        };
+        // The buggy re-derivation would produce 2561, not 2560.
+        assert_ne!(
+            (m.size_logical.0 as f64 * m.scale).round() as u64,
+            m.size_physical.0,
+            "fixture no longer reproduces the double-rounding case this test guards"
+        );
+        assert_eq!(
+            m.bounds_virtual(),
+            RectI {
+                x: 2560,
+                y: 0,
+                w: 2560,
+                h: 1440
             }
         );
     }

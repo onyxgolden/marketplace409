@@ -250,7 +250,7 @@ impl From<&Monitor> for MonitorDto {
             origin_virtual: m.origin_virtual,
             size_logical: m.size_logical,
             scale: m.scale,
-            size_physical: m.size_physical(),
+            size_physical: m.size_physical,
         }
     }
 }
