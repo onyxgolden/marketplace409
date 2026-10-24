@@ -94,7 +94,37 @@ function makeLctx() {
   };
 }
 
-function makeHarness({ invokeImpl, budgetMs = 5000 } = {}) {
+/// Fake monotonic clock + timer queue: lets a test advance `now()`
+/// independently of when (or whether) a scheduled `setTimeoutFn`
+/// callback actually fires — needed to reproduce C639-005's exact
+/// counterexample (a stage's promise resolves only after real time has
+/// passed the deadline, while its own reject-timer has not fired yet).
+function fakeClock() {
+  let t = 0;
+  const pending = [];
+  return {
+    now: () => t,
+    advance(ms) {
+      t += ms;
+    },
+    setTimeoutFn(fn, ms) {
+      const entry = { fn, ms, fired: false };
+      pending.push(entry);
+      return entry;
+    },
+    clearTimeoutFn(entry) {
+      if (entry) entry.fired = true;
+    },
+  };
+}
+
+function makeHarness({
+  invokeImpl,
+  budgetMs = 5000,
+  now,
+  setTimeoutFn,
+  clearTimeoutFn,
+} = {}) {
   const order = [];
   const calls = [];
   const els = {
@@ -131,6 +161,9 @@ function makeHarness({ invokeImpl, budgetMs = 5000 } = {}) {
     doc,
     win,
     budgetMs,
+    ...(now ? { now } : {}),
+    ...(setTimeoutFn ? { setTimeoutFn } : {}),
+    ...(clearTimeoutFn ? { clearTimeoutFn } : {}),
   });
   return { els, doc, win, calls, order, controller };
 }
@@ -378,7 +411,10 @@ describe("overlay phase markers (C639 §5)", () => {
   it("reports preview_unavailable with the failure detail", async () => {
     const h = makeHarness({
       budgetMs: 150,
-      invokeImpl: () => new Promise(() => {}),
+      invokeImpl: (cmd) => {
+        if (cmd === "overlay_context") return Promise.resolve({ dpr: 2 });
+        return new Promise(() => {}); // backdrop/image stall
+      },
     });
     await h.controller.init();
     const phases = h.calls.filter((c) => c.cmd === "capture_overlay_phase");
@@ -387,6 +423,24 @@ describe("overlay phase markers (C639 §5)", () => {
     expect(last.args.phase).toBe("preview_unavailable");
     expect(last.args.detail).toMatch(/did not complete in time/);
     expect(typeof last.args.ms).toBe("number");
+  });
+
+  it("reports context_unavailable (not preview_unavailable) when the context stage itself stalls (C639-006)", async () => {
+    // Context failure is now its own distinctly-named, immediate
+    // short-circuit — it never falls through to attempt the
+    // backdrop/image stage at all.
+    const h = makeHarness({
+      budgetMs: 150,
+      invokeImpl: () => new Promise(() => {}), // everything stalls
+    });
+    await h.controller.init();
+    const phases = h.calls.filter((c) => c.cmd === "capture_overlay_phase");
+    expect(phases.map((c) => c.args.phase)).toEqual([
+      "page_boot",
+      "context_unavailable",
+    ]);
+    const last = phases[phases.length - 1];
+    expect(last.args.detail).toMatch(/did not complete in time/);
   });
 });
 
@@ -463,5 +517,136 @@ describe("retry (C639)", () => {
     await p1;
     expect(h.controller._state().backdropReady).toBe(true);
     expect(h.els.backdrop._src).toBe("data:image/png;base64,NEW");
+  });
+
+  it("backdropReady is false immediately when retry starts, before the backend round trip resolves (C639 supplementary)", async () => {
+    let releaseRetry;
+    const retryGate = new Promise((r) => (releaseRetry = r));
+    const h = makeHarness({
+      budgetMs: 2000,
+      invokeImpl: (cmd) => {
+        if (cmd === "retry_region_backdrop") return retryGate;
+        if (cmd === "overlay_context") return Promise.resolve({ dpr: 2 });
+        if (cmd === "region_pick_backdrop")
+          return Promise.resolve({ png_b64: "AAA=" });
+        return Promise.resolve({});
+      },
+    });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p;
+    expect(h.controller._state().backdropReady).toBe(true);
+    const retryP = h.controller.onRetry();
+    // The backend hides the overlay for the duration of the native
+    // re-acquisition (still pending here, gated by retryGate). A
+    // drag+release queued right now must not read backdropReady=true
+    // and invoke a concurrent capture against the hidden picker.
+    expect(h.controller._state().backdropReady).toBe(false);
+    releaseRetry();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await retryP;
+  });
+});
+
+describe("withDeadline is a hard aggregate budget, not timer-vs-microtask racing (C639-005)", () => {
+  it("rejects a stage whose promise resolves only after real time has already passed the deadline", async () => {
+    // Reproduces the reviewer's exact counterexample: time advances past
+    // the budget, then the stage's promise resolves anyway (e.g. a very
+    // late reply) — all while withDeadline's OWN reject-timer has not
+    // fired yet. Scheduling a timer and trusting whichever callback the
+    // event loop happens to run first is not a hard deadline; the fix
+    // re-checks the monotonic clock at the moment of fulfillment.
+    const clock = fakeClock();
+    let resolveCtx;
+    const ctxPromise = new Promise((r) => (resolveCtx = r));
+    const h = makeHarness({
+      budgetMs: 5000,
+      now: clock.now,
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      invokeImpl: (cmd) => {
+        if (cmd === "overlay_context") return ctxPromise;
+        return Promise.resolve({});
+      },
+    });
+    const p = h.controller.init();
+    await Promise.resolve();
+    clock.advance(6000); // past the 5,000 ms budget
+    resolveCtx({ dpr: 2, backdrop_blank: false }); // late reply, not a hang
+    await p;
+    expect(h.controller._state().backdropReady).toBe(false);
+    expect(h.els.hint.textContent).toMatch(/Preview unavailable/);
+  });
+});
+
+describe("context readiness gates commit, not image readiness alone (C639-006)", () => {
+  it("an overlay_context failure disables commit even when the backdrop image itself would succeed", async () => {
+    const h = makeHarness({
+      budgetMs: 2000,
+      invokeImpl: (cmd) => {
+        if (cmd === "overlay_context")
+          return Promise.reject(new Error("ipc failed"));
+        if (cmd === "region_pick_backdrop")
+          return Promise.resolve({ png_b64: "AAA=" });
+        return Promise.resolve({});
+      },
+    });
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    await p;
+    expect(h.controller._state().backdropReady).toBe(false);
+    expect(h.els.hint.textContent).toMatch(/Preview unavailable/);
+    // The mapping prerequisite was never established: the backdrop step
+    // must never even have been attempted.
+    expect(h.calls.some((c) => c.cmd === "region_pick_backdrop")).toBe(
+      false
+    );
+  });
+
+  it("a late first init's context reply cannot clobber a newer init's dpr/blank-warning", async () => {
+    let releaseFirstCtx;
+    const firstCtxGate = new Promise((r) => (releaseFirstCtx = r));
+    let ctxCalls = 0;
+    const h = makeHarness({
+      budgetMs: 5000,
+      invokeImpl: (cmd) => {
+        if (cmd === "overlay_context") {
+          ctxCalls++;
+          if (ctxCalls === 1) {
+            return firstCtxGate.then(() => ({
+              dpr: 9,
+              backdrop_blank: true,
+            }));
+          }
+          return Promise.resolve({ dpr: 3, backdrop_blank: false });
+        }
+        if (cmd === "region_pick_backdrop")
+          return Promise.resolve({ png_b64: "AAA=" });
+        return Promise.resolve({});
+      },
+    });
+    const p1 = h.controller.init();
+    for (let i = 0; i < 20 && ctxCalls === 0; i++) await Promise.resolve();
+    expect(ctxCalls).toBe(1);
+    const p2 = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p2;
+    expect(h.controller._state().dpr).toBe(3);
+    expect(h.els.blankwarn.style.display).not.toBe("block");
+    // Release the first (stale) init's context reply late: its
+    // generation is spent, so it must return before touching dpr/the
+    // warning — the newer controller's state stands.
+    releaseFirstCtx();
+    await p1;
+    expect(h.controller._state().dpr).toBe(3);
+    expect(h.els.blankwarn.style.display).not.toBe("block");
   });
 });
