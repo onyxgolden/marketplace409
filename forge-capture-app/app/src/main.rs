@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use forge_capture_core::ai_edit;
@@ -2216,6 +2216,85 @@ fn run_on_main_thread_sync<R: Send + 'static>(
     })
 }
 
+/// C639-007C.7: a bounded channel (what `run_on_main_thread_sync` uses)
+/// cannot tell a late-running main-thread closure "the waiter already gave
+/// up" — once the receiving end is dropped on timeout, a closure that
+/// finally runs afterward just has its `send` silently discarded. For a
+/// closure whose action is a committing side effect the caller is relying
+/// on to be paired with a later restore (the Retry hide below), that is
+/// exactly backwards: the mutation still happens, with nobody left who
+/// knows to undo it. `AbandonableBridge` makes "has anyone already given
+/// up" and "what did the action decide" one piece of state, guarded by one
+/// lock, so the two can never race past each other: either the waiter
+/// observes the action's result (it committed first), or the action, once
+/// it finally runs, observes the abandonment and skips its own body
+/// entirely (the waiter gave up first) — there is no third interleaving
+/// where the action runs after the waiter has already walked away.
+enum AbandonableOutcome<T> {
+    Pending,
+    Abandoned,
+    Done(T),
+}
+
+struct AbandonableBridge<T> {
+    state: Mutex<AbandonableOutcome<T>>,
+    cv: Condvar,
+}
+
+impl<T: Clone> AbandonableBridge<T> {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(AbandonableOutcome::Pending),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Run `action` — but only if the waiter has not already abandoned
+    /// this bridge. Called from the main-thread closure, whenever it
+    /// actually runs (immediately, or long after a busy main thread
+    /// finally drains its queue). If `action` does run, its result is
+    /// recorded and the waiter is woken; if the bridge is already
+    /// `Abandoned`, `action` is never invoked at all — no hide, no window
+    /// lookup, nothing.
+    fn settle(&self, action: impl FnOnce() -> T) {
+        let mut guard = self.state.lock().unwrap();
+        if matches!(*guard, AbandonableOutcome::Abandoned) {
+            return;
+        }
+        let result = action();
+        *guard = AbandonableOutcome::Done(result);
+        self.cv.notify_all();
+    }
+
+    /// Block up to `timeout` for `settle` to run. If `action` committed in
+    /// time — including the boundary where it committed right as the
+    /// timeout elapsed, which this re-checks under the same lock rather
+    /// than trusting a separate timed-out flag — its result is returned.
+    /// Otherwise the bridge is marked `Abandoned`, atomically, so that a
+    /// not-yet-run `settle` call skips `action` entirely once it does run.
+    fn wait_or_abandon(&self, timeout: Duration) -> Result<T, String> {
+        let guard = self.state.lock().unwrap();
+        let (mut guard, _) = self
+            .cv
+            .wait_timeout_while(guard, timeout, |s| matches!(s, AbandonableOutcome::Pending))
+            .unwrap();
+        if matches!(*guard, AbandonableOutcome::Pending) {
+            *guard = AbandonableOutcome::Abandoned;
+            return Err(
+                "main-thread task did not reply within the bound (treated as abandoned)"
+                    .to_string(),
+            );
+        }
+        match &*guard {
+            AbandonableOutcome::Done(v) => Ok(v.clone()),
+            AbandonableOutcome::Abandoned => {
+                unreachable!("only wait_or_abandon ever sets Abandoned, and it returns immediately after")
+            }
+            AbandonableOutcome::Pending => unreachable!("handled above"),
+        }
+    }
+}
+
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
 /// plus its `.forge.json` sidecar next to it. Purely local file copy.
 #[tauri::command]
@@ -3237,6 +3316,39 @@ async fn retry_region_backdrop(
     .map_err(|e| format!("retry background task failed: {e}"))?
 }
 
+/// C639-007C.7: dispatch the Retry hide's recheck-lookup-hide step through
+/// `AbandonableBridge` rather than the plain-channel `run_on_main_thread_
+/// sync`, so a main-thread closure that only gets to run after its caller
+/// has already timed out can detect that and skip the hide entirely — see
+/// the bridge's own doc comment and the call site in
+/// `retry_region_backdrop_blocking` for the full failure mode this closes.
+fn retry_hide_overlay_or_abandon(
+    app: tauri::AppHandle,
+    retry_session: u64,
+) -> Result<tauri::WebviewWindow, String> {
+    let bridge = Arc::new(AbandonableBridge::<Result<tauri::WebviewWindow, String>>::new());
+    let bridge_for_main = bridge.clone();
+    app.clone().run_on_main_thread(move || {
+        bridge_for_main.settle(move || -> Result<tauri::WebviewWindow, String> {
+            let state = app.state::<AppState>();
+            if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+                return Err(
+                    "region pick was cancelled or superseded before retry could run".to_string(),
+                );
+            }
+            let window = app
+                .get_webview_window("overlay")
+                .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
+            window
+                .hide()
+                .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+            Ok(window)
+        });
+    })
+    .map_err(|e| format!("cannot dispatch to main thread: {e}"))?;
+    bridge.wait_or_abandon(Duration::from_secs(5))?
+}
+
 /// C639-007C.4: `retry_session` is the session id the PAGE that issued this
 /// command was built with (its own URL — see `open_region_overlay_claimed`),
 /// never inferred from whichever `pending_overlay` happens to be current
@@ -3295,31 +3407,40 @@ fn retry_region_backdrop_blocking(
     // `open_region_overlay_claimed`), the label lookup below would resolve
     // to B's window and hide it, stranding B hidden even though this retry
     // is a stale request that must touch nothing of B's. Dispatching the
-    // recheck + label lookup + hide as one `run_on_main_thread_sync`
-    // closure serializes it against that exact build closure on Tauri's
-    // single main-event-loop thread — the two can never interleave, so the
-    // lookup here can only ever resolve to whichever window is actually
-    // live at that one instant, never a window a concurrent build swapped
-    // onto the label between two separate steps. The resolved handle is
-    // returned and reused for every later show/focus/close in this
-    // function (below) instead of being reacquired by label again, per
-    // the same requirement.
+    // recheck + label lookup + hide as one main-thread closure serializes
+    // it against that exact build closure on Tauri's single
+    // main-event-loop thread — the two can never interleave, so the lookup
+    // here can only ever resolve to whichever window is actually live at
+    // that one instant, never a window a concurrent build swapped onto the
+    // label between two separate steps. The resolved handle is returned
+    // and reused for every later show/focus/close in this function (below)
+    // instead of being reacquired by label again, per the same
+    // requirement.
+    //
+    // C639-007C.7: this hide is dispatched through `AbandonableBridge`
+    // instead of the plain-channel `run_on_main_thread_sync`. A channel
+    // bridge bounds only the WAITER's patience, not the closure's: if the
+    // main thread is busy past the 5s bound, `run_on_main_thread_sync`
+    // returns a timeout error and this function used to return right
+    // here, but the already-queued closure keeps running to completion
+    // whenever the main thread gets to it — ownership is still unchanged
+    // (nothing retired it; the caller merely gave up), so it would hide
+    // the live picker and then discard its own result into a dropped
+    // receiver, stranding the user on an invisible overlay with no caller
+    // left to show it back and a live reservation that only the 60s
+    // watchdog would eventually clear. `AbandonableBridge` closes that
+    // gap: on timeout the bridge is marked abandoned under the same lock
+    // the closure checks before it does anything at all, so a closure
+    // that has not yet run when the timeout fires skips the hide
+    // entirely — never touches ownership, never looks up the window,
+    // never hides it. The one case where the closure might already be
+    // past that check and mid-hide right as the timeout fires is handled
+    // by `wait_or_abandon`'s own re-check under the lock, which then
+    // yields the real result instead of a spurious abandonment — this
+    // function's existing restore-on-failure / commit-on-success path
+    // below still runs exactly as it always has for that result.
     let app_for_hide = app.clone();
-    let window = run_on_main_thread_sync(app, move || -> Result<tauri::WebviewWindow, String> {
-        let state = app_for_hide.state::<AppState>();
-        if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
-            return Err(
-                "region pick was cancelled or superseded before retry could run".to_string(),
-            );
-        }
-        let window = app_for_hide
-            .get_webview_window("overlay")
-            .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
-        window
-            .hide()
-            .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
-        Ok(window)
-    })??;
+    let window = retry_hide_overlay_or_abandon(app_for_hide, retry_session)?;
     // Let the compositor settle so the hidden window is truly gone from
     // the next frame; without this the retry could capture the picker.
     std::thread::sleep(Duration::from_millis(250));
@@ -6315,6 +6436,147 @@ mod region_picker_tests {
             Some(5),
             "a refused take must not even clear the stale context it declined to consume"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.7 freeze: AbandonableBridge (Retry hide timeout-vs-late-
+    // closure race). These exercise the real synchronization primitive
+    // with real threads standing in for "a main thread busy past the
+    // waiter's bound" and "the waiter giving up" — no live Tauri app,
+    // same discipline as every other test in this module, but genuine
+    // concurrency rather than a pure function call, because the bug this
+    // closes is a genuine race between two threads.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn abandonable_bridge_delivers_the_result_when_settle_runs_in_time() {
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let calls = Arc::new(Mutex::new(0u32));
+        let calls_for_main = calls.clone();
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(move || {
+                *calls_for_main.lock().unwrap() += 1;
+                42
+            });
+        });
+        let got = bridge
+            .wait_or_abandon(Duration::from_secs(5))
+            .expect("settle ran well within the bound");
+        main_thread.join().unwrap();
+        assert_eq!(got, 42);
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn abandonable_bridge_timeout_then_late_settle_never_runs_its_action() {
+        // The exact failing interleaving from the verdict: dispatch A,
+        // hold the main-thread closure past the waiter's bound, let the
+        // waiter time out, THEN release the queued closure. The action
+        // (which in production is the owner-check-then-hide) must never
+        // run at all once the waiter has already given up — not run and
+        // discarded, not run and compensated after the fact: never run.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let calls = Arc::new(Mutex::new(0u32));
+
+        // Nothing ever calls settle() before the bound elapses — this
+        // stands in for "the main thread is busy and hasn't serviced the
+        // queued closure yet," which is the scenario the verdict names.
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(50))
+            .expect_err("nothing settled in time; must be treated as abandoned");
+        assert!(
+            err.contains("abandoned"),
+            "timeout must be reported as an abandonment, got: {err}"
+        );
+
+        // The queued closure is now released — it finally gets to run,
+        // well after the waiter already left.
+        let calls_for_late = calls.clone();
+        bridge.settle(move || {
+            *calls_for_late.lock().unwrap() += 1;
+            7
+        });
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            0,
+            "a closure that runs after abandonment must never execute its action body \
+             (no hide, no window lookup, nothing)"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_protects_a_newer_generation_installed_after_abandonment() {
+        // Freeze step 5: install B's window before releasing A's stale
+        // (already-abandoned) closure, and prove A's closure never
+        // touches it — not a hide, not a show, not a focus, not a close.
+        // Modeled as a shared "currently labeled overlay window" the
+        // action would look up and act on in production; the action
+        // itself records every window it ever touched.
+        let bridge = Arc::new(AbandonableBridge::<Result<(), String>>::new());
+        let shared_window_label = Arc::new(Mutex::new("A"));
+        let touched = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+        // A's waiter gives up — the main thread never got around to A's
+        // closure in time.
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before B is ever installed");
+        assert!(err.contains("abandoned"));
+
+        // B is installed strictly after A's waiter already abandoned —
+        // e.g. a newer generation's window-build closure running on the
+        // same single main-thread event loop.
+        *shared_window_label.lock().unwrap() = "B";
+
+        // A's queued closure finally runs now. Production shape: look up
+        // whatever is currently labeled "overlay" and hide/show/focus/
+        // close it. This must be a complete no-op given the bridge is
+        // already abandoned.
+        let touched_for_action = touched.clone();
+        let label_for_action = shared_window_label.clone();
+        bridge.settle(move || {
+            touched_for_action
+                .lock()
+                .unwrap()
+                .push(*label_for_action.lock().unwrap());
+            Ok(())
+        });
+
+        assert!(
+            touched.lock().unwrap().is_empty(),
+            "an abandoned A closure must never touch the currently-labeled window, \
+             even after a newer generation (B) has taken it over"
+        );
+        assert_eq!(
+            *shared_window_label.lock().unwrap(),
+            "B",
+            "B's label must be completely untouched by A's abandoned closure"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_boundary_commit_right_at_the_deadline_is_still_delivered() {
+        // "Account for the boundary where the closure hides successfully
+        // just before five seconds but the receiver times out before
+        // consuming the result" — settle() runs concurrently with the
+        // wait, close enough to the bound that a naive channel-timeout
+        // implementation could plausibly race it. wait_or_abandon must
+        // still deliver the real result rather than reporting a spurious
+        // abandonment, because it re-checks the authoritative state under
+        // the same lock the action commits through, not a separate flag.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let main_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            bridge_for_main.settle(|| 99);
+        });
+        let got = bridge
+            .wait_or_abandon(Duration::from_millis(500))
+            .expect("a commit that lands before the bound must be delivered, not abandoned");
+        main_thread.join().unwrap();
+        assert_eq!(got, 99);
     }
 }
 
