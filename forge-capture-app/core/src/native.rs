@@ -45,10 +45,16 @@ use crate::result::CaptureError;
 use crate::scroll::{ScrollDriver, ScrollTarget};
 
 /// One captured piece: RGBA bytes (row-major) for `rect`.
+///
+/// `rgba` is the final composited frame (cursor drawn in when requested).
+/// `raw_rgba` is the screen pixels as captured, BEFORE cursor composition —
+/// the blank-frame diagnostic must evaluate the raw source, because cursor
+/// pixels would otherwise defeat the solid-color check on an empty frame.
 #[derive(Debug, Clone)]
 pub struct NativeFrame {
     pub rect: RectI,
     pub rgba: Vec<u8>,
+    pub raw_rgba: Vec<u8>,
     pub cursor: CursorState,
 }
 
@@ -751,6 +757,12 @@ mod win {
                 return Err(e);
             }
 
+            // Preserve the validated pre-cursor pixels: `rgba` below is
+            // mutated into the cursor-composited frame, but the engine-level
+            // solid-color warning (composite-wide, not per-tile) must still
+            // evaluate the raw source.
+            let raw_rgba = rgba.clone();
+
             let mut cursor = CursorState {
                 captured: false,
                 position_physical: None,
@@ -824,7 +836,12 @@ mod win {
             let _ = DeleteDC(mem_dc);
             ReleaseDC(None, screen_dc);
 
-            Ok(NativeFrame { rect, rgba, cursor })
+            Ok(NativeFrame {
+                rect,
+                rgba,
+                raw_rgba,
+                cursor,
+            })
         }
     }
 
@@ -1042,6 +1059,7 @@ mod win {
                         }
                         Ok(NativeFrame {
                             rect,
+                            raw_rgba: rgba.clone(),
                             rgba,
                             cursor: CursorState {
                                 captured: false,
@@ -1905,6 +1923,8 @@ mod linux {
             reply.depth,
             x.byte_order,
         )?;
+        // C639-005: snapshot the raw screen pixels BEFORE cursor composition.
+        let raw_rgba = rgba.clone();
         let mut cursor = CursorState {
             captured: false,
             position_physical: None,
@@ -1918,7 +1938,12 @@ mod linux {
                 };
             }
         }
-        Ok(NativeFrame { rect, rgba, cursor })
+        Ok(NativeFrame {
+            rect,
+            rgba,
+            raw_rgba,
+            cursor,
+        })
     }
 
     pub(super) fn cursor_pos() -> Result<(i32, i32), CaptureError> {

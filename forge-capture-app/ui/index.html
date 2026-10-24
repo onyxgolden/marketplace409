@@ -203,6 +203,27 @@
     </div>
   </dialog>
 
+  <!-- Capture preview: opens automatically after every successful capture
+       so the scribe workflow (capture → preview → export) can start
+       immediately. The image is the saved PNG; actions mirror the
+       session-library row for the same capture. Preview-only: the manual
+       annotation canvas is a separate slice, not claimed here. -->
+  <dialog id="preview-dialog">
+    <h2>Capture preview</h2>
+    <div id="preview-meta" class="dialog-sub"></div>
+    <div class="preview-image-wrap">
+      <img id="preview-image" alt="Captured screenshot preview" />
+    </div>
+    <div id="preview-status" class="status" role="status"></div>
+    <div id="preview-warnings" class="status warning" role="status" hidden></div>
+    <div class="dialog-actions">
+      <button id="preview-close" type="button" class="ghost-btn">Close</button>
+      <button id="preview-copy" type="button">Copy</button>
+      <button id="preview-edit" type="button">AI Edit</button>
+      <button id="preview-save-as" type="button" class="primary-btn">Save as…</button>
+    </div>
+  </dialog>
+
   <script src="forge-upload.js"></script>
   <script type="module" src="main.js"></script>
   <script type="module" src="record.js"></script>
