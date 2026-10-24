@@ -1142,10 +1142,27 @@ fn run_capture_via_worker(
     let y = rect.y.round() as i64;
     let w = rect.w.round().max(1.0) as u64;
     let h = rect.h.round().max(1.0) as u64;
+    // C639-007: for an overlay-originated capture, the delay and admission
+    // stages below must be able to observe a cancel/supersede that lands
+    // while they are in flight, not only once the worker has already
+    // replied. A direct (non-overlay) request has no `active_pick` claim to
+    // be cancelled against — never cancellable here, same as before.
     let reply = state
         .capture_supervisor
-        .execute_region(session_id, x, y, w, h, include_cursor, delay_ms)
+        .execute_region(session_id, x, y, w, h, include_cursor, delay_ms, || {
+            is_overlay_request && !pick_still_active(*state.active_pick.lock().unwrap(), session_id)
+        })
         .map_err(|e| format!("capture worker: {e}"))?;
+    // C639-007: fence PUBLICATION itself, not only the focus-steal below.
+    // The worker round trip above can take up to ~3.5s; a cancel/supersede
+    // landing during it must mean no artifact and no capture-saved event —
+    // "cancelled" cannot mean "saved anyway, just without focus."
+    if is_overlay_request && !pick_still_active(*state.active_pick.lock().unwrap(), session_id) {
+        return Err(
+            "region pick was cancelled or superseded before the capture could be saved"
+                .to_string(),
+        );
+    }
     let mut artifact = CaptureArtifact::new(
         id.to_string(),
         CaptureKind::Region,
@@ -2105,14 +2122,54 @@ fn open_region_overlay(
     // claim it as the active pick immediately (C639-007): a cancel, or a
     // newer pick starting, during the blocking backdrop acquisition below
     // must be able to supersede this one before it ever installs a
-    // window — not only after.
+    // window — not only after. `previous_active` is whatever this attempt
+    // displaced; if THIS attempt fails for any reason, it is restored
+    // (C639-001A/C639-007) rather than left cleared or stuck — a refused
+    // admission must never silently revoke a different, still-legitimate
+    // pick's ownership of `active_pick` (e.g. this attempt losing the
+    // single worker slot to a concurrent in-flight pick must not make
+    // that other, actually-in-flight pick wrongly abort as "superseded").
     let session_id = mint_capture_session(&state);
-    *state.active_pick.lock().unwrap() = Some(session_id);
+    let previous_active = {
+        let mut active = state.active_pick.lock().unwrap();
+        let previous = *active;
+        *active = Some(session_id);
+        previous
+    };
+    let result = open_region_overlay_claimed(
+        app,
+        &state,
+        monitor,
+        monitor_id,
+        delay_ms,
+        include_cursor,
+        session_id,
+    );
+    if result.is_err() {
+        restore_pick_if_current(&state, session_id, previous_active);
+    }
+    result
+}
+
+/// The body of `open_region_overlay` that runs once `session_id` has
+/// already claimed `active_pick`. Split out so every failure path — from
+/// here through the main-thread window build — funnels through the same
+/// restore-on-failure cleanup in the caller, instead of each early return
+/// having to remember to clean up itself.
+fn open_region_overlay_claimed(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    monitor: &Monitor,
+    monitor_id: &str,
+    delay_ms: u64,
+    include_cursor: bool,
+    session_id: u64,
+) -> Result<(), String> {
     // 1. Frozen backdrop first, while no overlay window exists. Runs in
     // the supervised capture worker (C639 Option C) — a blocking native
     // round trip, fine here since this whole function is already off the
     // main thread.
-    let backdrop_png = capture_region_backdrop(&state, session_id, &monitor.id)?;
+    let backdrop_png = capture_region_backdrop(state, session_id, &monitor.id)?;
     let (_, _, rgba) =
         decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
     let backdrop_blank = solid_frame_rgba(&rgba);
@@ -2127,33 +2184,55 @@ fn open_region_overlay(
     let app_for_build = app.clone();
     // C639-007: re-check the active-pick token AND install the context
     // under ONE held lock, so a cancel (or a newer pick) landing between
-    // "the backdrop finished" and "this context/window exists" can never
-    // slip through — either this call completes its whole install first
-    // (window included — the lock stays held across the main-thread
-    // dispatch below), or the other side's clear/supersede happens first
-    // and this call aborts, never a partial mix of both.
-    let active = state.active_pick.lock().unwrap();
-    if !pick_still_active(*active, session_id) {
-        return Err(
-            "region pick was cancelled or superseded before the backdrop finished".to_string(),
-        );
+    // "the backdrop finished" and "this context exists" can never slip
+    // through. Unlike before (C639-001A), this lock is released as soon as
+    // the context is installed — NOT held across the main-thread dispatch
+    // below, which can block for up to 5 seconds. Holding a shared
+    // cancellation/session lock across that wait is exactly what let
+    // `cancel_region_pick` get stuck behind a slow/busy main thread and
+    // then lose to an already-queued window build.
+    {
+        let active = state.active_pick.lock().unwrap();
+        if !pick_still_active(*active, session_id) {
+            return Err(
+                "region pick was cancelled or superseded before the backdrop finished"
+                    .to_string(),
+            );
+        }
+        *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
+            monitor_id: monitor_id.to_string(),
+            origin_virtual: monitor.origin_virtual,
+            dpr: monitor.scale,
+            delay_ms,
+            include_cursor,
+            backdrop_png: Some(backdrop_png),
+            session_id,
+            backdrop_blank,
+        });
     }
-    *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
-        monitor_id: monitor_id.to_string(),
-        origin_virtual: monitor.origin_virtual,
-        dpr: monitor.scale,
-        delay_ms,
-        include_cursor,
-        backdrop_png: Some(backdrop_png),
-        session_id,
-        backdrop_blank,
-    });
     // C639-001: window CREATION is marshaled onto the main thread — the
     // one window action here most tied to owning the platform message
     // loop. `.set_focus()` travels with it in the same dispatch so the
     // window is built and focused as one main-thread unit, rather than a
     // second bounded round trip for a cosmetic follow-up.
+    //
+    // C639-001A: the closure re-validates `active_pick` itself, holding the
+    // lock only for the duration of its own (fast, main-thread-local)
+    // check-and-build — never across the cross-thread dispatch/wait. This
+    // is what makes the re-check meaningful even for a closure that was
+    // queued before a cancel/timeout and only gets around to running
+    // later: a delayed task must still be unable to create/focus a window
+    // for a session that is no longer current, whether it runs on time or
+    // late (dispatch timeout, or just a busy main thread).
     run_on_main_thread_sync(app, move || -> Result<(), String> {
+        let state = app_for_build.state::<AppState>();
+        let active = state.active_pick.lock().unwrap();
+        if !pick_still_active(*active, session_id) {
+            return Err(
+                "region pick was cancelled or superseded before the window could open"
+                    .to_string(),
+            );
+        }
         let window = tauri::WebviewWindowBuilder::new(
             &app_for_build,
             "overlay",
@@ -2171,11 +2250,30 @@ fn open_region_overlay(
         // Esc / right-click cancel lives in the overlay page, so the
         // window must own keyboard focus for the escape hatches to work.
         let _ = window.set_focus();
+        drop(active);
         Ok(())
     })??;
-    drop(active);
     spawn_overlay_watchdog(app.clone(), session_id);
     Ok(())
+}
+
+/// C639-001A / C639-007: give back exactly the `active_pick` claim
+/// `session_id` took, restoring whatever it displaced — but only if
+/// nothing newer has already claimed over it since. Used on every failure
+/// path of a claimed pick attempt (backdrop error, cancelled/superseded
+/// mid-flight, main-thread dispatch timeout, window-build failure). Also
+/// clears `pending_overlay` if it still belongs to this same session, so a
+/// failed attempt never leaves a context with no window behind it.
+fn restore_pick_if_current(state: &State<AppState>, session_id: u64, previous_active: Option<u64>) {
+    let mut active = state.active_pick.lock().unwrap();
+    if *active == Some(session_id) {
+        *active = previous_active;
+    }
+    drop(active);
+    let mut pending = state.pending_overlay.lock().unwrap();
+    if pending.as_ref().map(|c| c.session_id) == Some(session_id) {
+        *pending = None;
+    }
 }
 
 /// Close the overlay window, propagating a failure instead of silently
@@ -2306,21 +2404,38 @@ fn capture_worker_main() -> i32 {
             )
         }
         (WorkerOp::Region, RequestTarget::Region { x, y, w, h }) => {
+            // C639-003 hardening (cross-check, 2026-10-24): the parent-owned
+            // delay contract guarantees delay_ms=0 on the wire always — the
+            // user's wait already ran as its own pre-admission stage before
+            // this worker was even spawned (see `execute_region`). A
+            // nonzero value here is a protocol violation, not a request to
+            // honor: no caller sends one today, but silently sleeping
+            // inside the worker's own fixed CAPTURE_DEADLINE_MS budget
+            // would be exactly the kind of latent footgun a future
+            // "simplification" could reactivate. Fail loud instead.
+            if req.delay_ms != 0 {
+                eprintln!(
+                    "[capture-worker] rejecting nonzero wire delay_ms={} \
+                     (parent-owned delay contract violated)",
+                    req.delay_ms
+                );
+                return worker_exit_err(
+                    &req,
+                    ReplyStatus::WorkerError,
+                    "decode",
+                    &format!(
+                        "worker received nonzero delay_ms={} (must be 0; delay is parent-owned)",
+                        req.delay_ms
+                    ),
+                );
+            }
             let rect = Rect {
                 x: *x as f64,
                 y: *y as f64,
                 w: *w as f64,
                 h: *h as f64,
             };
-            let inner = CaptureMode::RegionVirtual { rect };
-            let mode = if req.delay_ms > 0 {
-                CaptureMode::Delayed {
-                    mode: Box::new(inner),
-                    delay_ms: req.delay_ms,
-                }
-            } else {
-                inner
-            };
+            let mode = CaptureMode::RegionVirtual { rect };
             (mode, format!("region {x},{y} {w}x{h}"))
         }
         _ => {
