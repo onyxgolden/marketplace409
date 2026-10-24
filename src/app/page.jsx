@@ -17,13 +17,22 @@ export const metadata = {
 
 async function loadWorkspaceHub() {
   const supabaseServer = await createClient();
+  // The public listings count runs on the shared anon client and never reads
+  // the signed-in user, so it is independent of auth resolution: start it now
+  // (Promise.resolve makes the lazy query builder execute) and let it run
+  // concurrently with the auth round trip instead of strictly after it. The
+  // no-op catch only guards against an unhandled rejection if auth throws
+  // first; the await below still surfaces any failure exactly as before.
+  const listingsCountPromise = Promise.resolve(
+    supabase.from("listings").select("*", { count: "exact", head: true })
+  );
+  listingsCountPromise.catch(() => {});
+
   const {
     data: { user },
   } = await supabaseServer.auth.getUser();
 
-  const { count: listingsCount } = await supabase
-    .from("listings")
-    .select("*", { count: "exact", head: true });
+  const { count: listingsCount } = await listingsCountPromise;
 
   const stats = {
     marketplace:

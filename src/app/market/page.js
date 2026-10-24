@@ -37,13 +37,24 @@ export default async function Home() {
     featuredBusinesses: null,
     petOfTheWeek: null,
   };
+  // Counts and featured are independent cached reads (separate cache keys,
+  // neither consumes the other's result), so start both up front and let
+  // them run concurrently instead of awaiting them in series. Each promise is
+  // still awaited under its own try/catch below, so a failure degrades only
+  // its own section, with the same log line and the same fallback values as
+  // before. The no-op catches only guard against an unhandled rejection from
+  // a fast failure while the other read is still in flight.
+  const countsPromise = getMarketplaceCounts();
+  countsPromise.catch(() => {});
+  const featuredPromise = getMarketplaceFeatured();
+  featuredPromise.catch(() => {});
   try {
-    counts = await getMarketplaceCounts();
+    counts = await countsPromise;
   } catch (error) {
     console.error("Marketplace counts unavailable", error);
   }
   try {
-    featured = await getMarketplaceFeatured();
+    featured = await featuredPromise;
   } catch (error) {
     console.error("Marketplace featured content unavailable", error);
   }
