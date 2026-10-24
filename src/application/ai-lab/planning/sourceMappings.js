@@ -252,20 +252,37 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
   // eligibility. A dataset whose collection did not complete
   // (failed page, unattested expected total, revision conflict)
   // leaves its population incomplete, and no conclusion drawn
-  // from it may publish READY. When the snapshot carries no
-  // per-dataset facts at all but is PARTIAL, coverage is unknown
-  // and is treated as incomplete (fail-closed). A complete
-  // population with a merely stale or duplicate-conflicted
-  // snapshot keeps its conclusions — staleness and first-wins
-  // conflicts are diagnosed, not coverage gaps.
+  // from it may publish READY. P676-001A/003A: a dataset that
+  // completed collection but carries invalid projected fields is
+  // NOT usable either — the invalid value is undefined in the
+  // admitted row, so an invalid calendar exclusion is ABSENT from
+  // the exclusion set, and dates computed without it are not
+  // all-clear. The gate therefore reads usable (complete AND no
+  // FIELD_INVALID), never the completeness booleans alone. When
+  // the snapshot carries no per-dataset facts at all but is
+  // PARTIAL, coverage is unknown and is treated as incomplete
+  // (fail-closed). A complete population with a merely stale or
+  // duplicate-conflicted snapshot keeps its conclusions —
+  // staleness and first-wins conflicts are diagnosed, not
+  // coverage gaps.
   const datasetFacts = snapshot.datasets ?? {};
   const incompleteDatasets = PLANNING_DATASETS.filter((ds) => {
     const facts = datasetFacts[ds];
     if (facts) return facts.complete !== true;
     return snapshot.consistency === "PARTIAL";
   });
+  const unusableDatasets = PLANNING_DATASETS.filter((ds) => {
+    const facts = datasetFacts[ds];
+    // usable === false is the only unusable signal; a missing
+    // usable field (hand-built snapshots in older tests) is
+    // treated as usable, exactly as before this gate existed.
+    return facts ? facts.usable === false : false;
+  });
   const coverageQualification = incompleteDatasets.length > 0
     ? `incomplete coverage: ${[...incompleteDatasets].sort().join(", ")} — conclusions from incomplete populations are qualified, never all-clear`
+    : null;
+  const unusableQualification = unusableDatasets.length > 0
+    ? `unusable input: ${[...unusableDatasets].sort().join(", ")} — invalid projected fields make the admitted population unusable as a basis; conclusions from it are qualified, never all-clear`
     : null;
 
   const calendarsById = new Map(calendars.map((c) => [c.calendar_ref, c]));
@@ -476,6 +493,11 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
     // drawn from it — a READY below degrades to QUALIFIED via
     // qualifications.length, and NOT_MODELED rows carry the note.
     if (coverageQualification) qualifications.push(coverageQualification);
+    // P676-001A/003A: unusable input qualifies the same way.
+    // Qualifying the component automatically qualifies its
+    // lookahead rows, because their computed_conclusion is the
+    // component's conclusion (schedulerAssessment).
+    if (unusableQualification) qualifications.push(unusableQualification);
 
     if (missingCal) {
       for (const m of members) {
@@ -620,7 +642,29 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
       }
       return row;
     });
-    const outEdges = result.edges;
+    // P676-002A: withholding applies to EVERY computed edge result
+    // in the report, not just the activities. An edge whose
+    // endpoint activity is withholdAll was computed from the same
+    // relaxed graph, so its weight, tight, critical AND driving
+    // conclusions are withheld — publishing them would re-assert
+    // the exact conclusions the activity withholding retracts.
+    // Declared identity/type/lag_workdays are preserved (they are
+    // source facts, not computations). An edge touching only a
+    // withholdLate activity keeps its forward-derived weight and
+    // tight (they depend on early dates only) but loses critical,
+    // which depends on late dates and float. critical_subgraph
+    // filtering below already excludes withheld members.
+    const outEdges = result.edges.map((e) => {
+      if (withholdAll.has(e.predecessor) || withholdAll.has(e.successor)) {
+        return { ...e, weight: null, tight: null, critical: null, driving: null,
+          withheld: "all-computed-withheld: an endpoint activity's computed fields are withheld, so this edge's computed values are withheld" };
+      }
+      if (withholdLate.has(e.predecessor) || withholdLate.has(e.successor)) {
+        return { ...e, critical: null,
+          withheld: "late-withheld: an endpoint activity's late dates are withheld, so this edge's criticality is withheld" };
+      }
+      return e;
+    });
     const criticalActivities = result.critical_subgraph.activities.filter((id) => !withholdAll.has(id) && !withholdLate.has(id));
     const criticalEdges = result.critical_subgraph.edges.filter((tid) => {
       const t = compTies.find((x) => x.id === tid);

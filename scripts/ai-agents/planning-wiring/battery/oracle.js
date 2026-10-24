@@ -17,8 +17,11 @@
  * - components: [{ id, conclusion, prototype_status?,
  *   activities_null?, withheld_all?, activities: { id: { es, ef,
  *   ls, lf, total_float, critical, civil_start,
- *   civil_finish_boundary } } }] — activity fields present in the
- *   expectation are asserted; absent fields are not.
+ *   civil_finish_boundary } }, edges: { tie_ref: { weight, tight,
+ *   critical, withheld? } } }] — activity fields present in the
+ *   expectation are asserted; absent fields are not. Edge fields
+ *   are asserted exactly, except withheld, which is a substring
+ *   match (null asserts the edge carries no withheld reason).
  * - no_ready_components: no component row may conclude READY
  *   (incomplete-coverage freeze: a missing category must qualify
  *   every conclusion drawn from it).
@@ -170,6 +173,24 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
             for (const [k, v] of Object.entries(fields)) {
               const reportField = ACTIVITY_FIELD_MAP[k] ?? k;
               if (a[reportField] !== v) fail(caseId, `component ${want.id} activity ${id} field ${k} = ${a[reportField]} !== expected ${v}`);
+            }
+          }
+        }
+        if (want.edges !== undefined) {
+          const byTie = new Map((got.edges ?? []).map((e) => [e.tie_ref, e]));
+          for (const [tieRef, fields] of Object.entries(want.edges)) {
+            const e = byTie.get(tieRef);
+            if (!e) fail(caseId, `component ${want.id} missing edge ${tieRef}`);
+            for (const [k, v] of Object.entries(fields)) {
+              if (k === "withheld") {
+                if (v === null) {
+                  if (e.withheld !== null) fail(caseId, `component ${want.id} edge ${tieRef} must carry no withheld reason (got ${e.withheld})`);
+                } else if (!e.withheld || !e.withheld.includes(v)) {
+                  fail(caseId, `component ${want.id} edge ${tieRef} withheld ${e.withheld ?? "none"} must include ${v}`);
+                }
+              } else if (e[k] !== v) {
+                fail(caseId, `component ${want.id} edge ${tieRef} field ${k} = ${e[k]} !== expected ${v}`);
+              }
             }
           }
         }

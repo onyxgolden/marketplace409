@@ -163,6 +163,27 @@ export function isoWeekdayOf(dateStr) {
 const SCALAR = (v) => v === null || ["string", "number", "boolean"].includes(typeof v);
 
 /**
+ * Typed validity for an admitted scalar field (P676-001A/003A).
+ * Date fields: any allowlisted name ending in _date, plus
+ * actual_start / actual_finish (no suffix). A date value must be
+ * null/undefined (absent) or a strict civil date — a string like
+ * "not-a-date", a number, or a boolean is NOT a date. Numeric
+ * fields (duration_days, percent_complete, lag_days) must be
+ * null/undefined or a finite number. Every other admitted field
+ * (refs, codes, enum values) is scalar-only by design: unknown enum
+ * values are qualification findings downstream, not invalidity.
+ */
+function isValidTypedValue(field, v) {
+  if (field === "actual_start" || field === "actual_finish" || field.endsWith("_date")) {
+    return v === null || v === undefined || isCivilDate(v);
+  }
+  if (field === "duration_days" || field === "percent_complete" || field === "lag_days") {
+    return v === null || v === undefined || (typeof v === "number" && Number.isFinite(v));
+  }
+  return true;
+}
+
+/**
  * A working_days mask is valid only as an array of distinct weekday
  * ints in the source convention (0=Sun..6=Sat). Anything else is an
  * invalid calendar mask — the calendar record cannot define a clock
@@ -183,8 +204,24 @@ export function validWorkingDaysMask(v) {
  * Project one raw source row through the allowlist. Returns
  * { row, dropped, invalid } — dropped lists non-allowlisted field
  * names (never their values), invalid lists allowlisted fields whose
- * values were non-scalar (replaced with undefined; downstream
- * validation turns those into integrity rows, never silent data).
+ * values were non-scalar OR scalar-but-wrong-typed (replaced with
+ * undefined; the FIELD_INVALID coverage error is preserved on the
+ * dataset, so downstream validation turns those into integrity rows
+ * and the usability gate qualifies conclusions drawn from them —
+ * never silent data).
+ *
+ * Typed validation (P676-001A/003A): scalar-vs-object shape is NOT
+ * enough. A date field carrying a non-date scalar ("not-a-date") or
+ * a numeric field carrying a non-number is FIELD_INVALID, exactly
+ * like a non-scalar value. Date fields are any allowlisted field
+ * whose name ends in _date, plus actual_start / actual_finish
+ * (which do not carry the suffix). Numeric fields are the admitted
+ * duration / progress / lag measures. Enum fields
+ * (relationship_type, block_type, constraint_type) stay scalar-only
+ * ON PURPOSE: downstream code deliberately treats unknown enum
+ * values as qualification findings (UNSUPPORTED_TIE_TYPE etc.),
+ * not as invalid input — marking them FIELD_INVALID here would
+ * turn those findings into coverage errors and break P676-002.
  *
  * The single structural exception: schedule_calendars.working_days
  * is a jsonb array in the source, so it is admitted as an array
@@ -212,6 +249,7 @@ export function projectRow(dataset, raw) {
       continue;
     }
     if (!SCALAR(v)) { row[field] = undefined; invalid.push(field); continue; }
+    if (!isValidTypedValue(field, v)) { row[field] = undefined; invalid.push(field); continue; }
     row[field] = v;
   }
   return { row, dropped, invalid };

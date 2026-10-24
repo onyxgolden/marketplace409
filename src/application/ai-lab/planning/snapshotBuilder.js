@@ -119,6 +119,7 @@ export async function buildSnapshot({
     let cursor = null;
     let complete = false;
     let errored = false;
+    let hasFieldInvalid = false;
     let holidaysUnverified = false;
     const attestedRevisions = new Set();
     const attestedExpected = new Set();
@@ -168,8 +169,16 @@ export async function buildSnapshot({
         // silently dropped — the invalid list is recorded, not
         // discarded. Scope-critical omissions refuse below; the
         // field itself stays undefined (never defaulted).
+        // P676-001A/003A: a dataset carrying any FIELD_INVALID is
+        // NOT a usable basis even when collection completed — the
+        // invalid value is undefined in the admitted row, so a
+        // calendar exclusion with an invalid date is ABSENT from
+        // the exclusion set, and dates computed without it are not
+        // all-clear. The gate (sourceMappings) reads `usable`,
+        // never `complete` alone.
         if (invalid.length > 0) {
           partial = true;
+          hasFieldInvalid = true;
           for (const field of invalid) {
             collectionErrors.push({ dataset, code: "FIELD_INVALID", field });
           }
@@ -306,9 +315,15 @@ export async function buildSnapshot({
     if (errored) { complete = false; allDatasetsAttested = false; }
     if (holidaysUnverified) complete = false;
     datasetErrored[dataset] = errored;
+    // usable: collection-complete AND free of invalid projected
+    // fields. complete/pages_complete keep their collection-only
+    // meaning (the adapter delivered every page); usable is the
+    // gate-relevant signal — a complete population containing an
+    // invalid calendar exclusion is not a usable basis.
     datasetFacts[dataset] = {
       expected: expectedAgreed, received, complete,
       pages_complete: complete,
+      usable: complete && !hasFieldInvalid,
       revision: attestedRevisions.size === 1 ? [...attestedRevisions][0] : null,
     };
   }

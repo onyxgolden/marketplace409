@@ -110,6 +110,7 @@ export function evaluateSchedulerSnapshot(snapshot, { horizonDays = MATH_HORIZON
       component_id: c.component_id, tie_ref: e.id,
       predecessor: e.predecessor, successor: e.successor, type: e.type,
       lag_workdays: e.lag_workdays, weight: e.weight, tight: e.tight, critical: e.critical,
+      withheld: e.withheld ?? null,
       evidence: [{ dataset: "schedule_dependencies", record_ref: e.id }],
     }));
     return {

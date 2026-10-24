@@ -1,5 +1,5 @@
 /**
- * Planning battery cases (80). Each case runs the full inert
+ * Planning battery cases (84). Each case runs the full inert
  * runner three times against ONE shared publisher with a fixed clock
  * and fixed source; the published item must be byte-identical across
  * runs and must match the oracle's expectation for the case.
@@ -11,7 +11,7 @@
  * canonical JSON primitives for digest recomputation.
  *
  * Groups: A domain/boundary (20), B coverage/version/calendar/
- * mapping (20), C authority/prohibited-data/operation/injection
+ * mapping (24), C authority/prohibited-data/operation/injection
  * (20), D budget/durability/replay/timeout (20).
  *
  * A case's `build` returns { host, request, spec, faults?, clock }.
@@ -532,6 +532,56 @@ const B = [
       })) }),
     expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
       collection_error_codes_include: ["FIELD_INVALID"], integrity_kinds_include: ["MISSING_DURATION"] },
+  },
+  {
+    id: "B28", group: "B", title: "P676-001A/003A: an object-typed holiday_date qualifies every conclusion, never READY on dates computed without the exclusion",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_calendar_holidays[0].holiday_date = { bad: 1 };
+      })) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
+      collection_error_codes_include: ["FIELD_INVALID"],
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B29", group: "B", title: "P676-001A/003A: an invalid-scalar holiday_date ('not-a-date') qualifies every conclusion, never CONSISTENT + READY",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_calendar_holidays[0].holiday_date = "not-a-date";
+      })) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
+      collection_error_codes_include: ["FIELD_INVALID"],
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B30", group: "B", title: "P676-001A/003A: an invalid-scalar blackout start_date (false) qualifies every conclusion, never a silently dropped exclusion",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blackout_windows[0].start_date = false;
+      })) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
+      collection_error_codes_include: ["FIELD_INVALID"],
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B31", group: "B", title: "P676-002A: a surviving supported tie in a qualified component publishes withheld edge conclusions, never computed weight/tight/critical",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_dependencies[0].relationship_type = "XX";
+      })) }),
+    expect: { outcome: "COMPLETED",
+      components: [
+        { id: "comp-A", conclusion: "QUALIFIED", withheld_all: ["A", "B", "C"],
+          activities: {
+            A: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+            B: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+            C: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+          },
+          edges: { "T-BC": { weight: null, tight: null, critical: null, withheld: "all-computed-withheld" } } },
+        { id: "comp-D", conclusion: "READY",
+          activities: { D: { es: 0, ef: 0, ls: 0, lf: 0, total_float: 0, critical: true, civil_start: "2026-10-26", civil_finish_boundary: "2026-10-26" } } },
+      ],
+      integrity_kinds_include: ["UNSUPPORTED_TIE_TYPE"] },
   },
 ];
 

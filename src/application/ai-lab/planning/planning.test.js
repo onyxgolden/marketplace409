@@ -333,6 +333,81 @@ describe("sourceMappings + schedulerAssessment", () => {
       expect(a.critical).toBeNull();
     }
   });
+  it("P676-001A/003A: invalid calendar inputs qualify the component and lookahead, never READY", async () => {
+    const base = () => datasets({
+      schedule_blocks: [block("A", { duration_days: 2 }), block("B", { duration_days: 3 }),
+        block("C", { block_type: "milestone", duration_days: 0, start_date: "2026-10-28" })],
+      schedule_dependencies: [tie("T-AB", "A", "B"), tie("T-BC", "B", "C")],
+    });
+    const variants = [
+      ["object holiday_date", { schedule_calendar_holidays: [{ holiday_ref: "HOL-1", calendar_ref: "CAL-1", owner_ref: "owner-1", holiday_date: { bad: 1 } }] }, "schedule_calendar_holidays"],
+      ["object blackout start_date", { schedule_blackout_windows: [{ blackout_ref: "BLK-1", project_ref: "P-1", owner_ref: "owner-1", start_date: { bad: 1 }, end_date: "2026-10-30" }] }, "schedule_blackout_windows"],
+      ["invalid-scalar holiday_date", { schedule_calendar_holidays: [{ holiday_ref: "HOL-1", calendar_ref: "CAL-1", owner_ref: "owner-1", holiday_date: "not-a-date" }] }, "schedule_calendar_holidays"],
+      ["invalid-scalar blackout start_date", { schedule_blackout_windows: [{ blackout_ref: "BLK-1", project_ref: "P-1", owner_ref: "owner-1", start_date: false, end_date: "2026-10-30" }] }, "schedule_blackout_windows"],
+    ];
+    for (const [label, override, ds] of variants) {
+      const snap = await snapshotFor({ ...base(), ...override });
+      // Collection completed — the point of the residual: complete
+      // alone must not imply a usable basis.
+      expect(snap.datasets[ds].complete).toBe(true);
+      expect(snap.datasets[ds].usable).toBe(false);
+      expect(snap.collection_errors.some((e) => e.dataset === ds && e.code === "FIELD_INVALID")).toBe(true);
+      const report = evaluateSchedulerSnapshot(snap);
+      const comp = report.sections.components.rows[0];
+      expect(comp.conclusion).toBe("QUALIFIED");
+      expect(comp.qualifications.join(" ")).toMatch(new RegExp(ds));
+      for (const r of report.sections.lookahead.rows) {
+        expect(r.computed_conclusion).not.toBe("READY");
+      }
+      void label;
+    }
+    // Valid-input positive: a real holiday + blackout still yields READY.
+    const good = await snapshotFor(base());
+    expect(good.datasets.schedule_calendar_holidays.usable).toBe(true);
+    expect(good.datasets.schedule_blackout_windows.usable).toBe(true);
+    expect(evaluateSchedulerSnapshot(good).sections.components.rows[0].conclusion).toBe("READY");
+  });
+  it("P676-002A: a surviving supported tie in a qualified component publishes withheld edge conclusions, never computed ones", async () => {
+    const snap = await snapshotFor(datasets({
+      schedule_blocks: [block("A"), block("B"), block("C"), block("E"), block("F")],
+      schedule_dependencies: [tie("T-AB", "A", "B", { relationship_type: "XX" }), tie("T-BC", "B", "C"), tie("T-EF", "E", "F")],
+    }));
+    const report = evaluateSchedulerSnapshot(snap);
+    const rows = report.sections.components.rows;
+    const compA = rows.find((r) => r.activity_ids.includes("A"));
+    expect(compA.conclusion).toBe("QUALIFIED");
+    for (const a of compA.activities) {
+      expect(a.es_tick).toBeNull();
+      expect(a.critical).toBeNull();
+    }
+    const bc = compA.edges.find((e) => e.tie_ref === "T-BC");
+    expect(bc).toMatchObject({ predecessor: "B", successor: "C", type: "FS", lag_workdays: 0 });
+    expect(bc.weight).toBeNull();
+    expect(bc.tight).toBeNull();
+    expect(bc.critical).toBeNull();
+    expect(bc.withheld).toMatch(/all-computed-withheld/);
+    expect(compA.critical_subgraph).toEqual({ activities: [], edges: [] });
+    // Unaffected-component positive: E-F stays fully computed.
+    const compEF = rows.find((r) => r.activity_ids.includes("E"));
+    expect(compEF.conclusion).toBe("READY");
+    const ef = compEF.edges.find((e) => e.tie_ref === "T-EF");
+    expect(ef.weight).toBe(1);
+    expect(ef.tight).toBe(true);
+    expect(ef.critical).toBe(true);
+    expect(ef.withheld).toBeNull();
+  });
+  it("P676-002A: a late-withheld edge loses criticality but keeps forward-derived weight/tight", async () => {
+    const snap = await snapshotFor(datasets({
+      schedule_blocks: [block("A"), block("B", { constraint_type: "SNLT", constraint_date: "2026-10-28" })],
+      schedule_dependencies: [tie("T-AB", "A", "B")],
+    }));
+    const report = evaluateSchedulerSnapshot(snap);
+    const edge = report.sections.components.rows[0].edges.find((e) => e.tie_ref === "T-AB");
+    expect(edge.weight).not.toBeNull();
+    expect(edge.tight).toBe(true);
+    expect(edge.critical).toBeNull();
+    expect(edge.withheld).toMatch(/late-withheld/);
+  });
   it("mixed calendars fail the component; must_start_on withholds successors; SNLT withholds late fields", async () => {
     const mixed = await snapshotFor(datasets({
       schedule_calendars: [
