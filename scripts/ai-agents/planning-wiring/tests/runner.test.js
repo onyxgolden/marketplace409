@@ -2,7 +2,7 @@
  * Planning runner node:test suite. Runs through the full inert
  * runner (not the units): DISABLED zero-access, ACTIVATION_REQUIRED
  * for live shapes, sequencing gates, scope binding, idempotent
- * replay, and the worker deadline. The battery (80 cases) is the
+ * replay, and the worker deadline. The battery (97 cases) is the
  * exhaustive proof; these tests are the readable regression net.
  */
 import test from "node:test";
@@ -66,19 +66,14 @@ test("replay is idempotent; changed bytes conflict", async () => {
   await assert.rejects(() => publisher.publish(tampered), /REPUBLISH_CONFLICT/);
 });
 
-test("Controls and Project Manager kinds refuse with the P2b-1 sequencing gate", async () => {
-  for (const [job_kind, window] of [
-    ["project-controls-evidence-review", { name: "planning-latest-through-asof" }],
-    ["project-manager-plan-health-review", { name: "planning-review-snapshot" }],
-  ]) {
-    const result = await runJob({
-      hostConfig: CANONICAL_HOST,
-      request: { ...canonicalRequest(), job_kind, window },
-      adapterSpec: canonicalSpec(), publisher: createMemoryPublisher(), clock,
-    });
-    assert.equal(result.outcome, "REFUSED");
-    assert.equal(result.code, "JOB_NOT_BUILT_IN_SLICE");
-  }
+test("P2b-2 sequencing-gate move: Project Manager kind still refuses JOB_NOT_BUILT_IN_SLICE; Controls kind is built", async () => {
+  const result = await runJob({
+    hostConfig: CANONICAL_HOST,
+    request: { ...canonicalRequest(), job_kind: "project-manager-plan-health-review", window: { name: "planning-review-snapshot" } },
+    adapterSpec: canonicalSpec(), publisher: createMemoryPublisher(), clock,
+  });
+  assert.equal(result.outcome, "REFUSED");
+  assert.equal(result.code, "JOB_NOT_BUILT_IN_SLICE");
 });
 
 test("typed scope binding: a package id equal to the project id is not the registered scope", async () => {
@@ -102,4 +97,56 @@ test("synchronous adapter runaway is terminated by the preemptive deadline", asy
   assert.equal(result.outcome, "REFUSED");
   assert.equal(result.code, "EXECUTION_TIMEOUT");
   assert.ok(Date.now() - started < 15000, `deadline must settle near 5 s, took ${Date.now() - started} ms`);
+});
+
+// --- P677-003: the manifest must pin the actual transitive closure ---
+// Independent re-implementation of the import walk (not the
+// generator's own guard): if either is weakened, the other still
+// catches a reachable-but-unlisted executable. trust-entry.mjs was
+// the hole — imported by run-tests.js, absent from the manifest,
+// executed before any verification.
+
+test("manifest pins the complete transitive executable closure", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { dirname, join, resolve, relative, sep } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const wiring = resolve(here, "..");
+  const root = resolve(wiring, "..", "..", "..");
+  const manifest = JSON.parse(readFileSync(join(here, "..", "runner", "manifest.json"), "utf8"));
+  const listed = new Set(Object.keys(manifest.files));
+  // The two P677-003 verdict-named holes must be listed explicitly.
+  assert.ok(listed.has("runner/trust-entry.mjs"), "trust-entry.mjs must be manifest-listed");
+  assert.ok(listed.has("../scheduler-prototype/src/canonical.js"), "scheduler canonical helper must be manifest-listed");
+  const reached = new Set(listed);
+  const queue = [...listed];
+  const patterns = [
+    /from\s+["']([^"']+)["']/g,
+    /import\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /new\s+URL\s*\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g,
+  ];
+  while (queue.length > 0) {
+    const key = queue.shift();
+    const abs = join(wiring, key);
+    if (!/\.(m?js)$/.test(abs) || !existsSync(abs)) continue;
+    const text = readFileSync(abs, "utf8");
+    const specs = new Set();
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) specs.add(m[1]);
+    }
+    for (const spec of specs) {
+      if (!spec.startsWith(".")) continue;
+      const base = resolve(dirname(abs), spec);
+      for (const cand of [base, `${base}.js`, `${base}.mjs`, `${base}.json`, join(base, "index.js"), join(base, "index.mjs")]) {
+        if (!existsSync(cand) || !cand.startsWith(root + sep)) continue;
+        const candKey = relative(wiring, cand);
+        if (!reached.has(candKey)) { reached.add(candKey); queue.push(candKey); }
+        break;
+      }
+    }
+  }
+  const unlisted = [...reached].filter((k) => !listed.has(k)).sort();
+  assert.deepEqual(unlisted, [], `reachable but unlisted executables: ${unlisted.join(", ")}`);
 });

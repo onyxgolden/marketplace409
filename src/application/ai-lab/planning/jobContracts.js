@@ -10,12 +10,12 @@
  * path that turns a caller-supplied value into a live mode.
  *
  * Slice order (P2b brief §1): P2b-1 Scheduler → P2b-2 Project Controls
- * → P2b-3 Project Manager, one PR per slice. This slice builds the
- * Scheduler job only. The Controls and Project Manager descriptors
- * ship as data (all three jobs DISABLED per the brief) with readiness
- * NOT_BUILT_P2B2 / NOT_BUILT_P2B3; the execution worker refuses
- * those kinds with JOB_NOT_BUILT_IN_SLICE until their slices land —
- * the same sequencing-gate pattern P2a-1 left for P2a-2.
+ * → P2b-3 Project Manager, one PR per slice. P2b-1 built the
+ * Scheduler job; this slice builds the Project Controls job (the
+ * Project Manager descriptor still ships as data with readiness
+ * NOT_BUILT_P2B3; the execution worker refuses that kind with
+ * JOB_NOT_BUILT_IN_SLICE until its slice lands — the same
+ * sequencing-gate pattern P2a-1 left for P2a-2).
  *
  * Identity model (brief §4): a scheduling project ID, a
  * work-management project ID, a package ID and a generic project_id
@@ -23,8 +23,11 @@
  * scope ({type, id}); cross-domain association requires an explicit
  * owner-scoped mapping registered by the host — never inferred from
  * equal strings, labels, property links or similar dates. The
- * Scheduler job requires a scheduling-project scope; any other scope
- * type refuses SCOPE_TYPE_MISMATCH before any adapter is opened.
+ * Scheduler job requires a scheduling-project scope and the
+ * Controls job requires a work-management-project scope; any other
+ * scope type refuses SCOPE_TYPE_MISMATCH before any adapter is
+ * opened. P2b-2 reads NO scheduling datasets, so it makes no
+ * scheduling↔work-management mapping claim at all.
  */
 
 export const JOB_CONTRACT_VERSION = "planning-job@1";
@@ -43,7 +46,7 @@ export const JOB_KINDS = Object.freeze({
   PM_PLAN_HEALTH_REVIEW: "project-manager-plan-health-review",
 });
 
-/** Typed project-scope types. Only scheduling-project is served by P2b-1. */
+/** Typed project-scope types. P2b-1 serves scheduling-project; P2b-2 serves work-management-project. */
 export const PROJECT_SCOPE_TYPES = Object.freeze([
   "scheduling-project",
   "work-management-project",
@@ -77,7 +80,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     proposed_trigger: "Monday 08:15 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "planning latest through as_of",
     window_name: "planning-latest-through-asof",
-    readiness: "NOT_BUILT_P2B2",
+    readiness: "WIRED_INERT",
   }),
   Object.freeze({
     job_id: "project-manager-plan-health-review@1",
@@ -207,6 +210,24 @@ export function requireSchedulerScope(request) {
     throw new JobRefusal(
       "SCOPE_TYPE_MISMATCH",
       `scheduler-planning-review requires a scheduling-project scope, not '${String(request.project_scope_ref?.type)}'; cross-domain association requires an explicit host-registered mapping`,
+    );
+  }
+}
+
+/**
+ * The Controls job serves work-management-project scopes only: its
+ * population is the packages of one registered work-management
+ * project. A scheduling-project, package or generic scope is a
+ * different identity type and refuses before any adapter is opened.
+ * (A package scope does NOT serve the job either: the job's unit is
+ * the project population, and a single package id is not that
+ * population — the runner's host registration binds the project.)
+ */
+export function requireControlsScope(request) {
+  if (request.project_scope_ref?.type !== "work-management-project") {
+    throw new JobRefusal(
+      "SCOPE_TYPE_MISMATCH",
+      `project-controls-evidence-review requires a work-management-project scope, not '${String(request.project_scope_ref?.type)}'; cross-domain association requires an explicit host-registered mapping`,
     );
   }
 }

@@ -640,9 +640,11 @@ const C = [
     expect: { outcome: "REFUSED", code: "UNKNOWN_AGENT" },
   },
   {
-    id: "C11", group: "C", title: "Project Controls kind in P2b-1 refuses JOB_NOT_BUILT_IN_SLICE (P2a-1 precedent for P2a-2)",
-    build: () => ({ host: hostWith(), request: requestWith({ job_kind: "project-controls-evidence-review", window: { name: "planning-latest-through-asof" } }), spec: canonicalSpec() }),
-    expect: { outcome: "REFUSED", code: "JOB_NOT_BUILT_IN_SLICE" },
+    id: "C11", group: "C", title: "P2b-2 sequencing-gate move: Project Controls kind now routes to the controls evaluator (JOB_NOT_BUILT_IN_SLICE no longer applies); with scheduler datasets only it yields a COMPLETED empty-controls report",
+    build: () => ({ host: hostWith({ registered_project_scope: { type: "work-management-project", id: "WM-1" } }),
+      request: requestWith({ job_kind: "project-controls-evidence-review", project_scope_ref: { type: "work-management-project", id: "WM-1" }, window: { name: "planning-latest-through-asof" } }),
+      spec: canonicalSpec() }),
+    expect: { outcome: "COMPLETED", published_count: 1, report_status: "DRAFT", snapshot_consistency: "CONSISTENT" },
   },
   {
     id: "C12", group: "C", title: "Project Manager kind in P2b-1 refuses JOB_NOT_BUILT_IN_SLICE",

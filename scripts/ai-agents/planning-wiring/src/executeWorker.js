@@ -26,10 +26,11 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { PLANNING_BUDGET_LIMITS } from "./planningBudget.js";
 import { Budget } from "../../../../src/application/ai-lab/rental-ops/budgets.js";
-import { PLANNING_DATASETS } from "../../../../src/application/ai-lab/planning/fieldMappings.js";
-import { JOB_KINDS, JobRefusal, requireSchedulerScope } from "../../../../src/application/ai-lab/planning/jobContracts.js";
+import { CONTROLS_DATASETS, PLANNING_DATASETS } from "../../../../src/application/ai-lab/planning/fieldMappings.js";
+import { JOB_KINDS, JobRefusal, requireControlsScope, requireSchedulerScope } from "../../../../src/application/ai-lab/planning/jobContracts.js";
 import { buildSnapshot } from "../../../../src/application/ai-lab/planning/snapshotBuilder.js";
 import { evaluateSchedulerSnapshot } from "../../../../src/application/ai-lab/planning/schedulerAssessment.js";
+import { evaluateControlsSnapshot } from "../../../../src/application/ai-lab/planning/controlsEvidenceAssessment.js";
 import { createSyntheticAdapter } from "./syntheticRepository.js";
 
 function adapterFromSpec(spec) {
@@ -44,16 +45,24 @@ function adapterFromSpec(spec) {
 }
 
 /**
- * Evaluator dispatch. The runner validated the job kind before the
- * spawn; the Scheduler kind is the only P2b-1 evaluator. Controls
- * and Project Manager kinds refuse with the P2b-1 sequencing gate
- * (JOB_NOT_BUILT_IN_SLICE — the P2a-1 precedent for P2a-2), never
- * fall through to the wrong evaluator.
+ * Job-kind dispatch (scope check + datasets + evaluator). The
+ * runner validated the job kind before the spawn; dispatch is by
+ * kind, never by scope contents — a Scheduler kind with a
+ * work-management scope refuses SCOPE_TYPE_MISMATCH at the scope
+ * gate, never falls through to the controls evaluator, and vice
+ * versa. The Project Manager kind still refuses with the
+ * sequencing gate (JOB_NOT_BUILT_IN_SLICE — the P2a-1 precedent
+ * for P2a-2), never falls through to the wrong evaluator.
  */
-function evaluatorFor(kind) {
-  if (kind === JOB_KINDS.SCHEDULER_PLANNING_REVIEW) return evaluateSchedulerSnapshot;
-  if (kind === JOB_KINDS.CONTROLS_EVIDENCE_REVIEW || kind === JOB_KINDS.PM_PLAN_HEALTH_REVIEW) {
-    throw new JobRefusal("JOB_NOT_BUILT_IN_SLICE", `job kind '${kind}' is not built in P2b-1; its slice has not landed`);
+function jobDispatch(kind) {
+  if (kind === JOB_KINDS.SCHEDULER_PLANNING_REVIEW) {
+    return { scopeCheck: requireSchedulerScope, datasets: PLANNING_DATASETS, evaluator: evaluateSchedulerSnapshot };
+  }
+  if (kind === JOB_KINDS.CONTROLS_EVIDENCE_REVIEW) {
+    return { scopeCheck: requireControlsScope, datasets: CONTROLS_DATASETS, evaluator: evaluateControlsSnapshot };
+  }
+  if (kind === JOB_KINDS.PM_PLAN_HEALTH_REVIEW) {
+    throw new JobRefusal("JOB_NOT_BUILT_IN_SLICE", `job kind '${kind}' is not built in P2b-2; its slice has not landed`);
   }
   throw new JobRefusal("UNKNOWN_AGENT", `no evaluator for job kind '${String(kind)}'`);
 }
@@ -72,14 +81,16 @@ try {
   let snapshot;
   let adapterCalls = 0;
   let adapterClosed = false;
-  // P2b-1 collects the planning dataset list; the Scheduler job
-  // requires a scheduling-project scope (typed identity — a
-  // work-management project id is not a scheduling project id).
-  requireSchedulerScope(workerData.request);
+  // Dispatch by kind: the scope gate runs before any adapter is
+  // opened, and only the job's own dataset list is collected —
+  // a Controls run never touches a scheduling dataset, and a
+  // Scheduler run never touches a controls dataset.
+  const dispatch = jobDispatch(workerData.request?.job_kind);
+  dispatch.scopeCheck(workerData.request);
   try {
     snapshot = await buildSnapshot({
       request: workerData.request, adapter, budget, clock, signal: controller.signal,
-      datasets: PLANNING_DATASETS,
+      datasets: dispatch.datasets,
       authorizedGlobalRefs: new Set(workerData.adapterSpec?.authorized_global_calendar_refs ?? []),
     });
   } finally {
@@ -88,7 +99,7 @@ try {
     try { if (typeof adapter.close === "function") adapter.close(); } catch { /* termination is the backstop */ }
     adapterClosed = adapter.closed === true;
   }
-  const report = evaluatorFor(workerData.request?.job_kind)(snapshot, {});
+  const report = dispatch.evaluator(snapshot, {});
   parentPort.postMessage({
     ok: true, snapshot, report,
     budgetUsed: budget.used, adapterCalls, adapterClosed,

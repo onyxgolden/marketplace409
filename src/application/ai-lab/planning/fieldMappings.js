@@ -49,13 +49,16 @@
  * - schedule_blackout_windows (20260827): id, owner_id,
  *   schedule_project_id, start_date, end_date admitted.
  *   EXCLUDED: label.
- * - NOT admitted at all in P2b-1 (P2b-2 scope, brief §5 table):
+ * - Admitted in P2b-2 (brief §5 table) — the controls datasets:
  *   forge_work_packages, forge_work_package_baselines,
- *   forge_work_progress_snapshots; schedule_wbs_nodes (the WBS tree
- *   is not scheduling input); schedule_hammock_anchors (hammocks are
- *   explicit exclusions, never resolved); schedule_resources,
- *   schedule_resource_assignments, schedule_expenses,
- *   schedule_cost_accounts (resource/cost scope excluded).
+ *   forge_work_progress_snapshots. Their cost/hour/contact/title
+ *   columns stay excluded (see CONTROLS allowlist below).
+ * - NOT admitted at all (either slice): schedule_wbs_nodes (the WBS
+ *   tree is not scheduling input); schedule_hammock_anchors
+ *   (hammocks are explicit exclusions, never resolved);
+ *   schedule_resources, schedule_resource_assignments,
+ *   schedule_expenses, schedule_cost_accounts (resource/cost scope
+ *   excluded).
  * - Financial fields anywhere (PV/EV/AC/CPI/SPI/EAC, contingency,
  *   baseline_cost, baseline_hours, money, hours) are OUT of this
  *   lane entirely, even read-only (brief §2/§8).
@@ -76,6 +79,19 @@ export const PLANNING_DATASETS = Object.freeze([
   "schedule_dependencies",
   "schedule_calendar_holidays",
   "schedule_blackout_windows",
+]);
+
+/**
+ * Datasets the P2b-2 Project Controls job collects, in collection
+ * order. Packages FIRST: baseline/snapshot scope is package
+ * membership, so the snapshot builder must admit the package
+ * population before it can scope-check baselines and snapshots
+ * (the same ordering argument as calendars-before-holidays).
+ */
+export const CONTROLS_DATASETS = Object.freeze([
+  "forge_work_packages",
+  "forge_work_package_baselines",
+  "forge_work_progress_snapshots",
 ]);
 
 export const FIELD_ALLOWLIST = Object.freeze({
@@ -104,6 +120,37 @@ export const FIELD_ALLOWLIST = Object.freeze({
   schedule_blackout_windows: Object.freeze([
     "blackout_ref", "project_ref", "owner_ref", "start_date", "end_date",
   ]),
+  // P2b-2 controls allowlist (brief §5, checked against the live
+  // schema: forge_work_packages rung 1 + rung 4 baselines/snapshots).
+  // forge_work_packages: id, project_id, owner_id, status,
+  // planned/actual start/finish, percent_complete, scope_baseline_id
+  // admitted. EXCLUDED: code, title, description, package_type,
+  // priority, responsible_party (contact), asset/equipment/unit/
+  // area/system/location/work-order/workscope refs, planned/earned/
+  // actual quantities and manhours, progress_basis/method/weight
+  // (measurement configuration, not evidence), blocked/verified/
+  // designated-verifier bookkeeping, version/created/updated.
+  // forge_work_package_baselines: id, package_id, owner_id,
+  // version_number, baseline_start/finish, frozen_at admitted.
+  // EXCLUDED: baseline_hours, baseline_cost (financial — OUT of
+  // this lane entirely, brief §2/§8), created_at.
+  // forge_work_progress_snapshots: id, package_id, owner_id,
+  // status_date, baseline_version, planned/actual/earned_pct
+  // admitted. EXCLUDED: earned/actual hours and costs, etc/eac
+  // hours and costs (financial — OUT), recorded_by, created_at.
+  forge_work_packages: Object.freeze([
+    "package_ref", "project_ref", "owner_ref", "status",
+    "planned_start", "planned_finish", "actual_start", "actual_finish",
+    "percent_complete", "scope_baseline_ref",
+  ]),
+  forge_work_package_baselines: Object.freeze([
+    "baseline_ref", "package_ref", "owner_ref", "version_number",
+    "baseline_start", "baseline_finish", "frozen_at",
+  ]),
+  forge_work_progress_snapshots: Object.freeze([
+    "snapshot_ref", "package_ref", "owner_ref", "status_date",
+    "baseline_version", "planned_pct", "actual_pct", "earned_pct",
+  ]),
 });
 
 /** Raw source block_type values (20260827 check constraint). */
@@ -125,6 +172,18 @@ export function isCivilDate(s) {
   if (m < 1 || m > 12 || d < 1 || d > 31) return false;
   const dt = new Date(Date.UTC(y, m - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/**
+ * Baseline/snapshot version identities are positive integers (rung-4
+ * migration: version_number integer not null, >= 1). The projection
+ * (projectRow) deliberately keeps passing finite numbers through so
+ * the evaluator can name a malformed version distinctly from a
+ * missing one; this predicate is the single version-identity check
+ * the evaluator applies before ordering or binding (P677-006).
+ */
+export function isVersionIdentity(v) {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1;
 }
 
 /** Civil-day difference toStr - fromStr for YYYY-MM-DD dates. */
@@ -173,11 +232,26 @@ const SCALAR = (v) => v === null || ["string", "number", "boolean"].includes(typ
  * (refs, codes, enum values) is scalar-only by design: unknown enum
  * values are qualification findings downstream, not invalidity.
  */
+/** Admitted date fields that do not end in _date (P2b-2 controls). */
+const DATE_FIELDS = Object.freeze(new Set([
+  "actual_start", "actual_finish",
+  "planned_start", "planned_finish",
+  "baseline_start", "baseline_finish",
+  "status_date",
+]));
+
+/** Admitted numeric fields (P2b-1 scheduler + P2b-2 controls). */
+const NUMERIC_FIELDS = Object.freeze(new Set([
+  "duration_days", "percent_complete", "lag_days",
+  "planned_pct", "actual_pct", "earned_pct",
+  "version_number", "baseline_version",
+]));
+
 function isValidTypedValue(field, v) {
-  if (field === "actual_start" || field === "actual_finish" || field.endsWith("_date")) {
+  if (DATE_FIELDS.has(field) || field.endsWith("_date")) {
     return v === null || v === undefined || isCivilDate(v);
   }
-  if (field === "duration_days" || field === "percent_complete" || field === "lag_days") {
+  if (NUMERIC_FIELDS.has(field)) {
     return v === null || v === undefined || (typeof v === "number" && Number.isFinite(v));
   }
   return true;
@@ -214,9 +288,11 @@ export function validWorkingDaysMask(v) {
  * enough. A date field carrying a non-date scalar ("not-a-date") or
  * a numeric field carrying a non-number is FIELD_INVALID, exactly
  * like a non-scalar value. Date fields are any allowlisted field
- * whose name ends in _date, plus actual_start / actual_finish
- * (which do not carry the suffix). Numeric fields are the admitted
- * duration / progress / lag measures. Enum fields
+ * whose name ends in _date, plus the explicit DATE_FIELDS set
+ * (actual/planned/baseline starts and finishes, status_date —
+ * P2b-2 controls fields that do not carry the suffix). Numeric
+ * fields are the admitted duration / progress / lag / version
+ * measures. Enum fields
  * (relationship_type, block_type, constraint_type) stay scalar-only
  * ON PURPOSE: downstream code deliberately treats unknown enum
  * values as qualification findings (UNSUPPORTED_TIE_TYPE etc.),

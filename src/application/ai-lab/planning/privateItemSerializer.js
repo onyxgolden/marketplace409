@@ -1,7 +1,14 @@
 import { canonicalDigest, canonicalJson, sha256Hex } from "../rental-ops/canonical.js";
 import { FIELD_MAPPING_VERSION } from "./fieldMappings.js";
 import { EVALUATOR_VERSION } from "./schedulerAssessment.js";
+import { CONTROLS_EVALUATOR_VERSION } from "./controlsEvidenceAssessment.js";
 import { JobRefusal } from "./jobContracts.js";
+
+/** Per-agent item id prefix, title and evaluator version (P2b-2). */
+export const AGENT_ITEM = Object.freeze({
+  scheduler: Object.freeze({ prefix: "sch", title: "Scheduler planning review", evaluator_version: EVALUATOR_VERSION }),
+  "project-controls": Object.freeze({ prefix: "ctl", title: "Project controls evidence review", evaluator_version: CONTROLS_EVALUATOR_VERSION }),
+});
 
 export const PRIVATE_ITEM_SCHEMA = "planning-private-item@1";
 
@@ -69,8 +76,12 @@ export function reportRowIds(report) {
     }
   };
   // Fixed section order: the report's own section order is the
-  // historical row order (components, lookahead, integrity,
-  // review_list); inventory carries counts, not rows.
+  // historical row order (scheduler: components, lookahead,
+  // integrity, review_list; controls: packages, integrity,
+  // checklist, questions); inventory carries counts, not rows.
+  // The Object.values pass covers every section for both agents;
+  // the fixed-order pass first pins the scheduler order, and the
+  // seen-map makes the second pass a no-op for those rows.
   for (const name of ["components", "lookahead", "integrity", "review_list"]) {
     pushRows(report.sections?.[name]);
   }
@@ -82,7 +93,8 @@ export const EVIDENCE_RETENTION_MS = 24 * 3600 * 1000;
 
 export function serializePrivateItem({ report, snapshot, publishedAt }) {
   const reportDigest = canonicalDigest(report);
-  if (report.agent !== "scheduler") throw new Error(`serializePrivateItem: unknown agent '${String(report.agent)}'`);
+  const agentItem = AGENT_ITEM[report.agent];
+  if (!agentItem) throw new Error(`serializePrivateItem: unknown agent '${String(report.agent)}'`);
   const scope = report.project_scope_ref ?? { type: "scheduling-project", id: "unknown" };
   const tuple = {
     agent: report.agent,
@@ -94,10 +106,10 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
     clock_policy: "explicit-as-of",
     snapshot_digest: snapshot.digest,
     report_digest: reportDigest,
-    engine_version: EVALUATOR_VERSION,
+    engine_version: agentItem.evaluator_version,
     mapping_version: FIELD_MAPPING_VERSION,
   };
-  const itemId = `sch-${sha256Hex(canonicalJson(tuple)).slice(0, 24)}`;
+  const itemId = `${agentItem.prefix}-${sha256Hex(canonicalJson(tuple)).slice(0, 24)}`;
   const evidenceSpans = [];
   for (const dataset of Object.keys(snapshot.evidence).sort()) {
     for (const ref of Object.keys(snapshot.evidence[dataset]).sort()) {
@@ -109,7 +121,7 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
     item_id: itemId,
     kind: "planning-report",
     agent: report.agent,
-    title: `Scheduler planning review — ${report.review_date}`,
+    title: `${agentItem.title} — ${report.review_date}`,
     synthetic: true,
     created_from: {
       snapshot_request_id: snapshot.snapshot_request_id,
@@ -127,7 +139,7 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
     row_ids: reportRowIds(report),
     pinned: {
       mapping_version: FIELD_MAPPING_VERSION,
-      evaluator_version: EVALUATOR_VERSION,
+      evaluator_version: agentItem.evaluator_version,
     },
     published_at: publishedAt,
     execution_authorized: false,
