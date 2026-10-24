@@ -27,16 +27,29 @@ export function reportRowIds(report) {
   // P2a-2: the Property Manager's historical row order is preserved
   // exactly (lease_expirations, integrity, overdue_balances); any
   // other row-bearing sections (the Maintenance Manager's backlog /
-  // overdue / integrity) follow, deduplicated.
+  // overdue / integrity) follow.
+  //
+  // P670-005: a repeated row_id is tolerated ONLY when it is the
+  // same row (identical canonical bytes) presented by two sections —
+  // the intentional backlog/overdue presentation of one work-order
+  // row shares one decision identity. Two DIFFERENT rows carrying
+  // one row_id are refused outright: deduplicating them would mask
+  // an identity collision and let one decision address two issues.
   const ids = ["report"];
-  const seen = new Set();
+  const seen = new Map([["report", null]]);
   const pushRows = (section) => {
     if (section && Array.isArray(section.rows)) {
       for (const row of section.rows) {
-        if (typeof row?.row_id === "string" && !seen.has(row.row_id)) {
-          ids.push(row.row_id);
-          seen.add(row.row_id);
+        if (typeof row?.row_id !== "string") continue;
+        const bytes = canonicalJson(row);
+        if (seen.has(row.row_id)) {
+          if (seen.get(row.row_id) !== bytes) {
+            throw new Error(`reportRowIds: duplicate public row identity '${row.row_id}' — distinct rows share one decision identity; row identities must be collision-safe (kind/dataset/record), never deduplicated into one`);
+          }
+          continue;
         }
+        seen.set(row.row_id, bytes);
+        ids.push(row.row_id);
       }
     }
   };
@@ -47,18 +60,22 @@ export function reportRowIds(report) {
   return ids;
 }
 
-const AGENT_ITEM = {
-  "property-manager": {
+// A Map, not a plain object (panel CP9/O3, the #668 F4.2 pattern
+// family): a prototype-named agent string ("constructor", "toString",
+// "__proto__") must miss the registry and fail closed through the
+// unknown-agent refusal, never resolve through the prototype chain.
+const AGENT_ITEM = new Map([
+  ["property-manager", {
     prefix: "pm",
     title: (asOfDate) => `Property Manager daily exception review — ${asOfDate}`,
     evaluator_version: PM_EVALUATOR_VERSION,
-  },
-  "maintenance-manager": {
+  }],
+  ["maintenance-manager", {
     prefix: "mm",
     title: (asOfDate) => `Maintenance Manager backlog review — ${asOfDate}`,
     evaluator_version: MM_EVALUATOR_VERSION,
-  },
-};
+  }],
+]);
 
 export const EVIDENCE_RETENTION_MS = 24 * 3600 * 1000;
 
@@ -67,7 +84,7 @@ export function serializePrivateItem({ report, snapshot, publishedAt }) {
   // P2a-2: per-agent item identity. The agent is bound into the tuple
   // and the id prefix, so a Maintenance Manager report can never
   // collide with (or silently overwrite) a Property Manager item.
-  const agentItem = AGENT_ITEM[report.agent];
+  const agentItem = AGENT_ITEM.get(report.agent);
   if (!agentItem) throw new Error(`serializePrivateItem: unknown agent '${String(report.agent)}'`);
   const tuple = {
     agent: report.agent,

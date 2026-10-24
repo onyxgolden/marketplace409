@@ -39,6 +39,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     version: 1,
     proposed_trigger: "daily 09:00 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "lease-expiration horizon 60 days",
+    window_name: "lease-expiration-60d",
     readiness: "WIRED_INERT",
   }),
   Object.freeze({
@@ -48,6 +49,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     version: 1,
     proposed_trigger: "daily 09:15 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "open backlog, civil UTC day aging",
+    window_name: "maintenance-backlog-open",
     readiness: "WIRED_INERT",
   }),
 ]);
@@ -91,8 +93,11 @@ export function descriptorFor(kind) {
  *
  * The portfolio and the reporting window are caller LABELS only until
  * the runner binds them: portfolio_ref must equal the host-registered
- * portfolio, and the window must be exactly the one registered window
- * contract — no caller-supplied horizon, no extra nested fields.
+ * portfolio, and the window must be exactly the window contract bound
+ * to the request's job descriptor — a window registered to the OTHER
+ * job is not valid authority for this one and refuses here, before
+ * any adapter is opened; no caller-supplied horizon, no extra nested
+ * fields, and no silent substitution of the job's own window.
  * as_of must be an explicit UTC calendar instant (Zulu); offset or
  * loose date forms refuse.
  */
@@ -114,8 +119,9 @@ export function validateJobRequest(request) {
       throw new JobRefusal("BAD_REQUEST", `${field} must be a non-empty string`);
     }
   }
-  if (!descriptorFor(request.job_kind)) throw new JobRefusal("UNKNOWN_AGENT", `job kind '${request.job_kind}'`);
-  if (request.job_version !== descriptorFor(request.job_kind).version) {
+  const descriptor = descriptorFor(request.job_kind);
+  if (!descriptor) throw new JobRefusal("UNKNOWN_AGENT", `job kind '${request.job_kind}'`);
+  if (request.job_version !== descriptor.version) {
     throw new JobRefusal("BAD_REQUEST", "job_version does not match the registered descriptor");
   }
   if (typeof request.as_of !== "string" || !UTC_INSTANT_RE.test(request.as_of)
@@ -129,6 +135,13 @@ export function validateJobRequest(request) {
   const wKeys = Object.keys(w);
   if (wKeys.length !== 1 || wKeys[0] !== "name" || !REGISTERED_WINDOWS.includes(w.name)) {
     throw new JobRefusal("BAD_REQUEST", `window must be exactly { name: '${REGISTERED_WINDOWS.join("' | '")}' } — no caller-supplied horizon or extra fields`);
+  }
+  // P670-004: the window vocabulary is bound to the job. A window
+  // registered to another job refuses here — validateJobRequest runs
+  // in the runner before any adapter is opened — instead of being
+  // silently rewritten to the job's own window downstream.
+  if (w.name !== descriptor.window_name) {
+    throw new JobRefusal("BAD_REQUEST", `window '${w.name}' is not the registered window for job kind '${request.job_kind}' (expected '${descriptor.window_name}')`);
   }
   return request;
 }

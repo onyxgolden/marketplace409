@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { runJob, createMemoryPublisher } from "../src/runner.js";
 import { MM_SYNTHETIC_REPOSITORIES, MM_PII_CANARIES } from "../fixtures/maintenanceRepositories.js";
 import { validateDecision } from "../../../../src/application/ai-lab/rental-ops/decisionValidator.js";
-import { fixedClock, makeHost, onlyItem, previewSpec } from "./helpers.js";
+import { fixedClock, makeHost, makeRequest, onlyItem, previewSpec } from "./helpers.js";
 
 const MM_REQUEST = {
   principal_ref: "host:workbench-operator", owner_ref: "owner-a", portfolio_ref: "portfolio-a",
@@ -106,6 +106,59 @@ test("MM decisions: accept on a backlog row validates; unknown rows refuse", asy
     () => validateDecision(item, { ...decision, decision_id: "mm-dec-2", row_id: "wo:ghost" }),
     /UNKNOWN_ROW/,
   );
+});
+
+test("P670-004: a cross-job window refuses before any adapter access — both swapped combinations", async () => {
+  // MM job carrying the PM window (ChatGPT's executed WRONG_JOB_WINDOW
+  // probe: previously COMPLETED with the window silently rewritten).
+  const mmPub = createMemoryPublisher();
+  const mmResult = await runJob({
+    hostConfig: makeHost(),
+    request: { ...MM_REQUEST, window: { name: "lease-expiration-60d" } },
+    adapterSpec: previewSpec({ datasets: MM_SYNTHETIC_REPOSITORIES["mm-preview-owner-a"]() }),
+    publisher: mmPub, clock: fixedClock(),
+  });
+  assert.equal(mmResult.outcome, "REFUSED");
+  assert.equal(mmResult.code, "BAD_REQUEST");
+  assert.equal(mmResult.counters.adapter_opens, 0);
+  assert.equal(mmResult.counters.adapter_calls, 0);
+  assert.equal(mmPub.items.size, 0);
+
+  // PM job carrying the MM window.
+  const pmPub = createMemoryPublisher();
+  const pmResult = await runJob({
+    hostConfig: makeHost(),
+    request: { ...makeRequest(), window: { name: "maintenance-backlog-open" } },
+    adapterSpec: previewSpec({ datasets: MM_SYNTHETIC_REPOSITORIES["mm-preview-owner-a"]() }),
+    publisher: pmPub, clock: fixedClock(),
+  });
+  assert.equal(pmResult.outcome, "REFUSED");
+  assert.equal(pmResult.code, "BAD_REQUEST");
+  assert.equal(pmResult.counters.adapter_opens, 0);
+  assert.equal(pmResult.counters.adapter_calls, 0);
+  assert.equal(pmPub.items.size, 0);
+});
+
+test("P670-005: coverage gaps in three datasets publish three distinct, independently decidable identities", async () => {
+  const { result, publisher } = await runMM({ faults: { hideExpected: true } });
+  assert.equal(result.outcome, "COMPLETED");
+  const item = onlyItem(publisher);
+  const coverageIds = item.row_ids.filter((id) => id.startsWith("int:COVERAGE_UNATTESTED:")).sort();
+  assert.deepEqual(coverageIds, [
+    "int:COVERAGE_UNATTESTED:properties:coverage",
+    "int:COVERAGE_UNATTESTED:units:coverage",
+    "int:COVERAGE_UNATTESTED:work_orders:coverage",
+  ]);
+  // A decision on one dataset's issue is addressable independently of
+  // the other two (the aliasing this fix removes made them one).
+  for (const [i, rowId] of coverageIds.entries()) {
+    const validated = validateDecision(item, {
+      item_id: item.item_id, report_digest: item.report_digest, row_id: rowId,
+      actor: "host:workbench-operator", decision: "accept", note: "",
+      at: "2026-10-22T15:00:00.000Z", decision_id: `mm-cov-${i}`,
+    });
+    assert.equal(validated.row_id, rowId);
+  }
 });
 
 test("MM item identity is namespaced: same snapshot bytes under PM and MM never collide", async () => {

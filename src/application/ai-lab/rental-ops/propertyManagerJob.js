@@ -28,8 +28,18 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
   const rec = snapshot.records;
   const diagnostics = [];
   const integrity = [];
-  const pushIntegrity = (kind, dataset, record_ref, extra = {}) =>
-    integrity.push({ row_id: `int:${kind}:${record_ref}`, kind, dataset, record_ref, ...extra });
+  // P670-005 (identity alignment with the MM fix): public row
+  // identity includes the dataset, so genuinely separate issues
+  // (e.g. one coverage gap per dataset) never alias onto one
+  // decision identity. Kinds, counts and calendar semantics are
+  // unchanged.
+  const pushIntegrity = (kind, dataset, record_ref, extra = {}, identityRef = null) =>
+    // identityRef discriminates a finding that is intrinsically
+    // per-citation: SCHEDULE_LEASE_MISMATCH is keyed by the schedule
+    // but its payload names the citing charge's lease, so two charges
+    // on different leases citing one schedule are two distinct
+    // findings and must not share one decision identity (P670-005).
+    integrity.push({ row_id: `int:${kind}:${dataset}:${record_ref}${identityRef === null ? "" : `:${identityRef}`}`, kind, dataset, record_ref, ...extra });
 
   const unitsByRef = new Map(rec.units.map((u) => [u.unit_ref, u]));
   const propertiesByRef = new Map(rec.properties.map((p) => [p.property_ref, p]));
@@ -167,7 +177,7 @@ export function evaluatePropertyManagerSnapshot(snapshot, { policies = ESCALATIO
           // this charge.
           pushIntegrity("SCHEDULE_LEASE_MISMATCH", "schedules", schedule.schedule_ref, {
             lease_ref: schedule.lease_ref ?? null, charge_lease_ref: charge.lease_ref,
-          });
+          }, charge.charge_ref);
           classificationOk = false;
         }
         if (schedule.forge_cutover_date !== undefined && schedule.forge_cutover_date !== null

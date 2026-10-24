@@ -101,6 +101,19 @@ export function civilDayDiff(fromStr, toStr) {
   return Math.round((b - a) / 86400000);
 }
 
+/**
+ * Civil date (YYYY-MM-DD) of an instant in UTC. This is the
+ * Maintenance Manager's aging clock: the P2a-2 brief and the MM job
+ * descriptor specify civil UTC day aging, which is a DIFFERENT civil
+ * calendar from the shared snapshot's America/Chicago as_of_date
+ * (the Rental Manager/Property Manager contract). The two calendars
+ * are kept distinct and named — neither silently governs the other
+ * job's semantics.
+ */
+export function utcCivilDate(isoInstant) {
+  return new Date(isoInstant).toISOString().slice(0, 10);
+}
+
 export function isSafeNonnegIntCents(v) {
   return typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 }

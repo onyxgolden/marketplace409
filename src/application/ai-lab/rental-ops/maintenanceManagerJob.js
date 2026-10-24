@@ -1,7 +1,7 @@
 import { ESCALATION_POLICIES } from "./jobContracts.js";
 import {
   WORK_ORDER_STATUS_MAP,
-  civilDayDiff, isCivilDate, mapStatus,
+  civilDayDiff, isCivilDate, mapStatus, utcCivilDate,
 } from "./fieldMappings.js";
 
 export const EVALUATOR_VERSION = "maintenance-manager-evaluator@1";
@@ -52,13 +52,31 @@ export const AGE_BINS = Object.freeze(["bin_0_7", "bin_8_30", "bin_31_90", "bin_
  *   are explicit integrity rows — never counted as closed, never
  *   silently treated as open.
  * - Aging uses the work-order CREATION date (civil-day difference to
- *   the Chicago as_of_date), never request submission or scheduled
- *   start. A missing/invalid created_date makes aging UNVERIFIABLE
- *   for that row (named integrity row; the row stays in the backlog
- *   with age unknown, never silently dropped).
- * - Due is explicit only: due_date < as_of_date is OVERDUE, due today
- *   is not overdue, missing due dates are UNKNOWN. scheduled_end is
- *   not admitted and is never treated as a due date.
+ *   the MM evaluation date), never request submission or scheduled
+ *   start. The MM evaluation date is the UTC civil date of the as_of
+ *   instant — the brief's civil UTC day convention, exposed on the
+ *   report as as_of_date with as_of_timezone "UTC". It is NOT the
+ *   shared snapshot's America/Chicago as_of_date: that calendar is
+ *   the Property Manager / Rental Manager contract and stays
+ *   untouched in the snapshot envelope. A missing/invalid
+ *   created_date makes aging UNVERIFIABLE for that row (named
+ *   integrity row; the row stays in the backlog with age unknown,
+ *   never silently dropped). A created_date AFTER the evaluation
+ *   date is likewise UNVERIFIABLE (WO_CREATED_DATE_IN_FUTURE): a
+ *   work order cannot have a verified negative age, and it is never
+ *   clamped to zero or counted as youngest backlog.
+ * - Unit/property linkage must AGREE, not merely resolve: when a
+ *   work order names both a unit and a property, the unit's admitted
+ *   property must equal the work order's declared property, or the
+ *   disagreement is a named integrity row (WO_UNIT_PROPERTY_MISMATCH)
+ *   carrying both values — neither source value is overwritten.
+ *   request_ref is carried as an opaque source reference only: no
+ *   authoritative request register is admitted in this slice, so
+ *   orphan-request status is explicitly NOT VERIFIED (a report
+ *   diagnostic), never silently treated as verified linkage.
+ * - Due is explicit only: due_date < evaluation date is OVERDUE, due
+ *   today is not overdue, missing due dates are UNKNOWN.
+ *   scheduled_end is not admitted and is never treated as a due date.
  * - Priority follows the actual source enum; absent/unrecognized
  *   priority is "unclassified", never a defaulted severity.
  * - PM compliance is NOT_MODELED in this wiring slice — not 0%, not
@@ -73,12 +91,19 @@ export const AGE_BINS = Object.freeze(["bin_0_7", "bin_8_30", "bin_31_90", "bin_
  */
 export function evaluateMaintenanceManagerSnapshot(snapshot, { policies = ESCALATION_POLICIES } = {}) {
   void policies; // Review-only job: no escalation touchpoints; kept for the shared evaluator signature.
-  const asOfDate = snapshot.as_of_date;
+  // P670-001: the MM aging/due clock is the UTC civil date of the
+  // as_of instant (the brief's civil UTC day convention) — NOT the
+  // snapshot's shared Chicago as_of_date, which remains the Property
+  // Manager's calendar and is left untouched in the envelope.
+  const asOfDate = utcCivilDate(snapshot.as_of);
   const rec = snapshot.records;
   const diagnostics = [];
   const integrity = [];
+  // P670-005: public row identity includes the dataset, so two
+  // genuinely separate issues (e.g. one coverage gap per dataset)
+  // never alias onto one decision identity.
   const pushIntegrity = (kind, dataset, record_ref, extra = {}) =>
-    integrity.push({ row_id: `int:${kind}:${record_ref}`, kind, dataset, record_ref, ...extra });
+    integrity.push({ row_id: `int:${kind}:${dataset}:${record_ref}`, kind, dataset, record_ref, ...extra });
 
   const unitsByRef = new Map(rec.units.map((u) => [u.unit_ref, u]));
   const propertiesByRef = new Map(rec.properties.map((p) => [p.property_ref, p]));
@@ -106,6 +131,20 @@ export function evaluateMaintenanceManagerSnapshot(snapshot, { policies = ESCALA
     if (wo.property_ref !== undefined && wo.property_ref !== null && !propertiesByRef.has(wo.property_ref)) {
       pushIntegrity("WO_PROPERTY_DANGLING", "work_orders", ref, { property_ref: wo.property_ref });
     }
+    // P670-003: membership is not agreement. When the work order
+    // names a resolvable unit AND a property, the unit's admitted
+    // property must equal the declared property; a contradiction is
+    // a named mismatch carrying both source values (neither is
+    // inferred or overwritten).
+    if (wo.unit_ref !== undefined && wo.unit_ref !== null && unitsByRef.has(wo.unit_ref)
+      && wo.property_ref !== undefined && wo.property_ref !== null) {
+      const unitPropertyRef = unitsByRef.get(wo.unit_ref).property_ref;
+      if (unitPropertyRef !== wo.property_ref) {
+        pushIntegrity("WO_UNIT_PROPERTY_MISMATCH", "work_orders", ref, {
+          unit_ref: wo.unit_ref, property_ref: wo.property_ref, unit_property_ref: unitPropertyRef ?? null,
+        });
+      }
+    }
     const mapped = mapStatus(WORK_ORDER_STATUS_MAP, wo.status);
     if (mapped === "UNKNOWN") {
       pushIntegrity("WO_STATUS_UNSUPPORTED", "work_orders", ref, { source_status: wo.status ?? null });
@@ -126,7 +165,17 @@ export function evaluateMaintenanceManagerSnapshot(snapshot, { policies = ESCALA
       agingVerifiable = false;
     } else {
       ageDays = civilDayDiff(wo.created_date, asOfDate);
-      ageBin = ageBinOf(ageDays);
+      if (ageDays < 0) {
+        // P670-002: a creation date after the evaluation date is a
+        // named integrity condition. The age is unknown/unverifiable
+        // — never published as a verified negative age, never
+        // clamped to zero, never counted as youngest backlog.
+        pushIntegrity("WO_CREATED_DATE_IN_FUTURE", "work_orders", ref, { created_date: wo.created_date });
+        ageDays = null;
+        agingVerifiable = false;
+      } else {
+        ageBin = ageBinOf(ageDays);
+      }
     }
 
     // ---- priority: actual source enum, fail-closed -----------------
@@ -267,6 +316,10 @@ export function evaluateMaintenanceManagerSnapshot(snapshot, { policies = ESCALA
     code: "PM_COMPLIANCE_NOT_MODELED",
     reason: "no authoritative asset/PM-occurrence population was established by the inspected work-order report; PM compliance is NOT_MODELED in this wiring slice (not 0%, not 100%, not an empty register). Enabling that live metric is separate scope.",
   });
+  diagnostics.push({
+    code: "REQUEST_LINKAGE_NOT_VERIFIED",
+    reason: "request_ref is carried as an opaque source reference; no authoritative request register is admitted in this slice, so orphan-request status is explicitly NOT VERIFIED — the absence of a request-linkage integrity row is not evidence that every request linkage resolves.",
+  });
 
   return {
     report_schema: "rental-ops-report@1",
@@ -277,7 +330,9 @@ export function evaluateMaintenanceManagerSnapshot(snapshot, { policies = ESCALA
     portfolio_ref: snapshot.portfolio_ref,
     as_of: snapshot.as_of,
     as_of_date: asOfDate,
-    as_of_timezone: snapshot.as_of_timezone,
+    // The MM report's civil dates are UTC civil dates (P670-001);
+    // the snapshot envelope keeps its own America/Chicago labels.
+    as_of_timezone: "UTC",
     window: { name: "maintenance-backlog-open" },
     snapshot_digest: snapshot.digest,
     snapshot_consistency: snapshot.consistency,

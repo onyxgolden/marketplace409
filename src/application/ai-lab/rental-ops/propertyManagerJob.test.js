@@ -255,3 +255,82 @@ describe("private item + decision binding", () => {
     expect(() => validateDecision(item, { ...ok, note: "x".repeat(501) })).toThrow(/BAD_DECISION/);
   });
 });
+
+describe("serializer identity hardening (P670-005 / panel CP9)", () => {
+  const fakeSnapshot = {
+    digest: "d".repeat(64), evidence: {}, snapshot_request_id: "snap-fake",
+    source_system: "synthetic", collection: { finished_at: "2026-10-22T13:55:00.000Z" },
+  };
+  const fakeReport = (sections, agent = "maintenance-manager") => ({
+    agent, owner_ref: "owner-a", as_of_date: "2026-10-22",
+    window: { name: "maintenance-backlog-open" }, sections,
+  });
+
+  it("two DIFFERENT rows sharing one row_id refuse serialization instead of being deduplicated into one identity", () => {
+    const report = fakeReport({
+      integrity: {
+        rows: [
+          { row_id: "int:COVERAGE_UNATTESTED:coverage", kind: "COVERAGE_UNATTESTED", dataset: "properties", record_ref: "coverage" },
+          { row_id: "int:COVERAGE_UNATTESTED:coverage", kind: "COVERAGE_UNATTESTED", dataset: "units", record_ref: "coverage" },
+        ],
+      },
+    });
+    expect(() => serializePrivateItem({ report, snapshot: fakeSnapshot, publishedAt: "2026-10-22T14:05:00.000Z" }))
+      .toThrow(/duplicate public row identity/);
+  });
+
+  it("the SAME row presented by two sections (backlog + overdue) still shares one identity", () => {
+    const row = { row_id: "wo:wo-1", kind: "BACKLOG_ITEM", work_order_ref: "wo-1" };
+    const report = fakeReport({ backlog: { rows: [row] }, overdue: { rows: [row] } });
+    const item = serializePrivateItem({ report, snapshot: fakeSnapshot, publishedAt: "2026-10-22T14:05:00.000Z" });
+    expect(item.row_ids).toEqual(["report", "wo:wo-1"]);
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "prototype-named agent '%s' fails closed through the unknown-agent refusal (Map registry, no prototype resolution)",
+    (agent) => {
+      const report = fakeReport({ integrity: { rows: [] } }, agent);
+      expect(() => serializePrivateItem({ report, snapshot: fakeSnapshot, publishedAt: "2026-10-22T14:05:00.000Z" }))
+        .toThrow(new RegExp(`unknown agent '${agent}'`));
+    });
+});
+
+describe("per-citation integrity identity (P670-005 discriminator)", () => {
+  const charge = (over = {}) => ({
+    charge_ref: "ch-x", lease_ref: "lease-2", schedule_ref: "sch-1", owner_ref: "owner-a",
+    status: "open", due_date: "2026-10-01", amount_cents: 10000, paid_amount_cents: 0, currency: "USD", ...over,
+  });
+  const schedule = (over = {}) => ({
+    schedule_ref: "sch-1", lease_ref: "lease-1", owner_ref: "owner-a",
+    collection_mode: "forge", forge_cutover_date: "2026-01-01", currency: "USD", ...over,
+  });
+
+  it("two charges on DIFFERENT leases citing one schedule are two distinct mismatch findings with two distinct row identities — serialization succeeds and both are independently decidable", async () => {
+    const { snap, report } = await run(shell({
+      leases: [lease(), lease({ lease_ref: "lease-2", unit_ref: "unit-1" }), lease({ lease_ref: "lease-3", unit_ref: "unit-1" })],
+      charges: [charge({ charge_ref: "ch-2", lease_ref: "lease-2" }), charge({ charge_ref: "ch-3", lease_ref: "lease-3" })],
+      schedules: [schedule()],
+    }));
+    const mismatches = report.sections.integrity.rows.filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH");
+    expect(mismatches.map((r) => r.row_id).sort()).toEqual([
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-3",
+    ]);
+    const item = serializePrivateItem({ report, snapshot: snap, publishedAt: "2026-10-22T14:05:00.000Z" });
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2");
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-3");
+  });
+
+  it("the same schedule cited twice by charges of the SAME lease still yields per-charge identities (no aliasing, no rejection)", async () => {
+    const { report } = await run(shell({
+      leases: [lease(), lease({ lease_ref: "lease-2", unit_ref: "unit-1" })],
+      charges: [charge({ charge_ref: "ch-2a", lease_ref: "lease-2" }), charge({ charge_ref: "ch-2b", lease_ref: "lease-2" })],
+      schedules: [schedule()],
+    }));
+    const ids = report.sections.integrity.rows.filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH").map((r) => r.row_id).sort();
+    expect(ids).toEqual([
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2a",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2b",
+    ]);
+  });
+});

@@ -13,12 +13,14 @@ const DAY = 86400000;
 function dayDiff(fromStr, toStr) {
   return Math.round((Date.parse(`${toStr}T00:00:00Z`) - Date.parse(`${fromStr}T00:00:00Z`)) / DAY);
 }
-function chicagoDate(iso) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(new Date(iso));
-  const get = (t) => parts.find((p) => p.type === t).value;
-  return `${get("year")}-${get("month")}-${get("day")}`;
+// The brief's P2a-2 convention is civil UTC day aging (P670-001):
+// the evaluation date is the UTC civil date of the as_of instant,
+// NOT the America/Chicago date the shared snapshot envelope carries
+// for the Property Manager. (The earlier version of this oracle
+// repeated the evaluator's Chicago-clock error; it is corrected to
+// the brief here, not treated as ground truth.)
+function utcCivilDate(iso) {
+  return new Date(iso).toISOString().slice(0, 10);
 }
 const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)
   && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
@@ -40,7 +42,7 @@ const PRIORITIES = new Set(["urgent", "emergency", "high", "normal", "medium", "
 export function oraclePredict(caseSpec) {
   const faults = caseSpec.faults ?? {};
   const owner = caseSpec.request.owner_ref;
-  const asOfDate = chicagoDate(caseSpec.request.as_of);
+  const asOfDate = utcCivilDate(caseSpec.request.as_of);
   let partial = false;
   const kinds = [];
   const kind = (k) => kinds.push(k);
@@ -86,6 +88,12 @@ export function oraclePredict(caseSpec) {
     const ref = w.work_order_ref;
     if (w.unit_ref !== undefined && w.unit_ref !== null && !units.has(w.unit_ref)) kind("WO_UNIT_DANGLING");
     if (w.property_ref !== undefined && w.property_ref !== null && !props.has(w.property_ref)) kind("WO_PROPERTY_DANGLING");
+    // P670-003: linkage must agree, not merely resolve — a work order
+    // naming a unit and a property whose admitted unit belongs to a
+    // different property is a named mismatch.
+    if (w.unit_ref !== undefined && w.unit_ref !== null && units.has(w.unit_ref)
+      && w.property_ref !== undefined && w.property_ref !== null
+      && units.get(w.unit_ref).property_ref !== w.property_ref) kind("WO_UNIT_PROPERTY_MISMATCH");
     const mapped = typeof w.status === "string" && WO_MAP[w.status] ? WO_MAP[w.status] : "UNKNOWN";
     if (mapped === "UNKNOWN") { kind("WO_STATUS_UNSUPPORTED"); continue; }
     if (mapped === "COMPLETED" || mapped === "CANCELLED") continue;
@@ -94,7 +102,14 @@ export function oraclePredict(caseSpec) {
     let bin = "unknown";
     if (w.created_date === undefined || w.created_date === null) { kind("WO_CREATED_DATE_MISSING"); unknownAge += 1; }
     else if (!isDate(w.created_date)) { kind("WO_CREATED_DATE_INVALID"); unknownAge += 1; }
-    else { age = dayDiff(w.created_date, asOfDate); bin = binOf(age); }
+    else {
+      age = dayDiff(w.created_date, asOfDate);
+      // P670-002: a future creation date is a named integrity
+      // condition with unknown/unverifiable age — never a verified
+      // negative age and never clamped to zero.
+      if (age < 0) { kind("WO_CREATED_DATE_IN_FUTURE"); age = null; unknownAge += 1; }
+      else bin = binOf(age);
+    }
 
     let priority = "unclassified";
     if (w.priority !== undefined && w.priority !== null) {

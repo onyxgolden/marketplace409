@@ -40,7 +40,16 @@ const cases = [];
 /* ---------------- domain (oracle-checked) ---------------- */
 cases.push(kase("D01", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-10-22" })] }), oracle));
 cases.push(kase("D02", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-10-15" })] }), oracle));
-cases.push(kase("D03", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-10-14" })] }), oracle));
+// P670-001 frozen vector (PR #670 fix round): ChatGPT's executed
+// UTC_DAY_BOUNDARY probe. as_of 2026-10-23T02:00Z is 2026-10-22 in
+// America/Chicago but 2026-10-23 in UTC; the brief's civil UTC day
+// aging gives age 8 / bin_8_30 for a 2026-10-15 creation, where the
+// old shared Chicago clock gave 7 / bin_0_7. The oracle predicts
+// from the UTC civil date, so this case fails if either side ever
+// reverts to the Chicago clock.
+cases.push(kase("D03", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-10-15" })] }), oracle, {
+  request: { ...REQUEST, as_of: "2026-10-23T02:00:00.000Z" }, clock_iso: "2026-10-23T01:55:00.000Z",
+}));
 cases.push(kase("D04", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-09-22" })] }), oracle));
 cases.push(kase("D05", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-09-21" })] }), oracle));
 cases.push(kase("D06", "domain", DS({ work_orders: [W("wo-1", { created_date: "2026-07-24" })] }), oracle));
@@ -132,12 +141,17 @@ cases.push(kase("S20", "scope", DS({ work_orders: [W("wo-1")] }), lit("ACTIVATIO
 /* ---------------- budget / durability / security ---------------- */
 const fillerWOs = (n, over = {}) => Array.from({ length: n }, (_, i) => W(`wo-f${i}`, { due_date: "2026-11-01", ...over }));
 // MM budget calibration (3 datasets: properties, units, work_orders):
-// candidates = 3 pages + rows; output records = 21 + 5 per work order
+// candidates = 3 pages + rows; output records = 22 + 5 per work order
 // (row + 2 evidence spans + recommendation + envelope share). The
-// candidate cap (64) and the output-record cap (256) bind together:
-// 47 work orders is the largest completion under both (52 candidates,
-// 256 output records would tip at 48).
-cases.push(kase("B01", "budget", DS({ work_orders: fillerWOs(47) }), oracle));
+// fixed share was 21 until the PR #670 fix round: P670-003's explicit
+// REQUEST_LINKAGE_NOT_VERIFIED result is a real diagnostic record in
+// every MM report, and diagnostics are charged like every other
+// output record (no cap was widened — the same 64-candidate /
+// 256-record caps bind). 46 work orders is now the largest
+// completion: 51 candidates, 252 output records; 47 would charge 257
+// output records and refuse (verified directly against runJob when
+// this case was recalibrated).
+cases.push(kase("B01", "budget", DS({ work_orders: fillerWOs(46) }), oracle));
 cases.push(kase("B02", "budget", DS({ work_orders: fillerWOs(60) }), lit("BUDGET_EXCEEDED", { kind: "candidates" })));
 cases.push(kase("B03", "budget", DS({ work_orders: [W("wo-1", { status: "x".repeat(300000) })] }), lit("BUDGET_EXCEEDED", { kind: "inputBytes" })));
 const nest = (n) => (n === 0 ? 1 : { a: nest(n - 1) });
