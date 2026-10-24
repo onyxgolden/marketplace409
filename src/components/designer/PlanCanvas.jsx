@@ -168,12 +168,92 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // still turn the gesture into a pinch (which discards the tap instead of
   // committing it). {pointerId, run} or null.
   const pendingTap = useRef(null);
-  const [spaceDown, setSpaceDown] = useState(false);
-  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   // Raw cursor position in screen px for the CAD crosshair overlay. Null
   // when the pointer is off the canvas. Screen-space only — never plan
   // data, never dispatched, so it can't touch the document or undo stack.
+  // Declared ahead of the gesture scheduler: the final flush commits the
+  // stashed gesture cursor.
   const [cursorScreen, setCursorScreen] = useState(null);
+  // ---- gesture view-commit scheduler ----
+  // Pinch steps and the touch pan drag used to call setView on EVERY
+  // pointermove, and each commit re-renders the whole SVG (every scene
+  // point's screen coords are recomputed in JS). On a phone with a heavy
+  // scene the render queue falls behind the fingers and the gesture feels
+  // dead. Gesture handlers now compute each next view from refs — the
+  // pending view while a gesture is coalescing, else the last committed
+  // view — using the exact same step math as before, stash it here, and a
+  // single animation frame flushes it to state: at most one commit per
+  // frame. Coalescing changes only WHEN renders happen, never the math.
+  // Gesture end flushes synchronously (see flushGestureView callers), so
+  // release commits the exact final view with no trailing one-frame lag.
+  const pendingViewRef = useRef(null); // latest gesture-computed view awaiting its frame
+  // The cursor position a gesture's moves would have written per event.
+  // Written only at the gesture's final flush — never once per move — so a
+  // touch burst commits the canvas at the frame cadence, not the input
+  // cadence. The crosshair is not the user's focus mid-gesture; what
+  // matters is that it lands exactly where the fingers ended up.
+  // null = nothing pending (a stashed cursor is always an {x, y} object).
+  // Declared with the other gesture refs, ahead of the callbacks that
+  // use it.
+  const gestureCursorRef = useRef(null);
+  const viewFrameRef = useRef(null); // { id } token of the scheduled animation frame, or null
+  const committedViewRef = useRef(view); // last committed view; gesture math's fallback base
+  useEffect(() => {
+    committedViewRef.current = view;
+  }, [view]);
+  const commitPendingView = () => {
+    if (pendingViewRef.current === null) return;
+    const next = pendingViewRef.current;
+    pendingViewRef.current = null;
+    committedViewRef.current = next;
+    setView(next);
+  };
+  // Both scheduler callbacks are stable for the component's life: they
+  // only touch refs and the stable setView (via commitPendingView).
+  const flushGestureView = useCallback(() => {
+    if (viewFrameRef.current !== null) {
+      cancelAnimationFrame(viewFrameRef.current.id);
+      viewFrameRef.current = null;
+    }
+    commitPendingView();
+    // The gesture's moves stashed their cursor positions (see
+    // onPointerMove): the final one commits once here — batched with the
+    // view commit above — so the crosshair still lands exactly where the
+    // fingers ended up, without one render per input event.
+    if (gestureCursorRef.current !== null) {
+      setCursorScreen(gestureCursorRef.current);
+      gestureCursorRef.current = null;
+    }
+  }, []);
+  const scheduleGestureView = useCallback((next) => {
+    pendingViewRef.current = next;
+    if (viewFrameRef.current === null) {
+      // A token, not the bare frame id: the slot is claimed BEFORE
+      // requestAnimationFrame runs, so a callback that fires before the
+      // id assignment lands (mocked/synchronous rAF) still clears its own
+      // slot, and a stale callback can never clear a newer frame's slot.
+      const frame = { id: 0 };
+      viewFrameRef.current = frame;
+      frame.id = requestAnimationFrame(() => {
+        if (viewFrameRef.current === frame) viewFrameRef.current = null;
+        commitPendingView();
+      });
+    }
+  }, []);
+  // The view gesture math starts from: the pending view while a gesture is
+  // coalescing (so a step never applies against a stale committed view —
+  // e.g. when a pinch pair rebases mid-gesture), else the committed view.
+  const gestureView = () => pendingViewRef.current ?? committedViewRef.current;
+  // Stable stash for the gesture cursor (same shape as scheduleGestureView:
+  // the assignment lives in the callback, not the render body).
+  const stashGestureCursor = useCallback((screen) => {
+    gestureCursorRef.current = screen;
+  }, []);
+  // Unmounting mid-gesture: flush whatever is pending and cancel the frame,
+  // so the final view is not lost and no commit fires after teardown.
+  useEffect(() => flushGestureView, [flushGestureView]);
+  const [spaceDown, setSpaceDown] = useState(false);
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
 
   // Leaving the pipe tool abandons the in-progress run. React's sanctioned
   // "adjust state during render" pattern (no effect) so we don't set state
@@ -1041,9 +1121,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const onPointerMove = (e) => {
     const screen = eventPoint(e);
+    // A move consumed by an active pinch stashes its cursor instead of
+    // writing state: the view already rides the coalesced frame, and a
+    // cursor write here would re-render the whole canvas once per input
+    // event — the production defect this gesture work exists to kill.
+    if (trackTouchMove(e)) {
+      stashGestureCursor(screen);
+      return;
+    }
+    // One-finger touch pan: same treatment — the crosshair is suppressed
+    // during pan anyway, so only the view needs the frame cadence.
+    if (e.pointerType === "touch" && drag?.kind === "pan") {
+      stashGestureCursor(screen);
+      const v = gestureView();
+      scheduleGestureView({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) });
+      return;
+    }
     setCursorScreen(screen); // CAD crosshair follows every move
-    // Two-finger pinch zoom / pan consumes the event while active.
-    if (trackTouchMove(e)) return;
     // Pipe tool rubber band: track the cursor even without a drag so the
     // in-progress run previews the next segment and its length.
     if (tool === "pipe" && !drag) {
@@ -1076,6 +1170,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       return;
     }
     if (drag.kind === "pan") {
+      // Touch pan is intercepted above and rides the gesture frame
+      // scheduler (with its cursor stashed for the final flush); the mouse
+      // keeps the direct per-move commit it has always had.
       setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
       return;
     }
@@ -1292,6 +1389,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // drag/commit logic below is a no-op during a pinch: the second finger
     // landing already cleared drag and the draw preview.
     trackTouchEnd(e);
+    // When no pinch survives this lift, the gesture is over: a touch pan
+    // drag ending here commits its exact final view now, not on the
+    // pending frame. (A pinch end already flushed inside trackTouchEnd;
+    // a lift that merely rebases a live pinch must NOT flush — its later
+    // steps keep chaining from the pending view. No-op when idle.)
+    if (!pinch.current) flushGestureView();
     // A deferred touch tap commits on lift — but only for its own pointer,
     // and never when a pinch is in progress (the pinch discarded the tap).
     const tap = pendingTap.current;
@@ -1332,14 +1435,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         dispatch({ type: "ADD_DECK", a: drawPreview.a, b: drawPreview.b });
       }
     }
-    setDrag(null);
-    setDrawPreview(null);
+    // Guard the no-op clears: in this tree a setter call schedules a
+    // commit even when the value is unchanged (measured on an idle
+    // pointerup), so skip the call when there is nothing to clear. A
+    // skipped clear renders nothing new — identical state, identical
+    // output — it only saves the wasted commit.
+    if (drag !== null) setDrag(null);
+    if (drawPreview !== null) setDrawPreview(null);
   };
 
   // A cancelled pointer aborts the gesture: never commit a pending shape or
   // tap. (Separate from onPointerUp, which commits completed drags.)
   const onPointerCancel = (e) => {
     trackTouchEnd(e);
+    // A cancelled gesture keeps the last computed view (the old per-move
+    // commits had already landed it); when no pinch survives the cancel,
+    // flush it synchronously like a lift.
+    if (!pinch.current) flushGestureView();
     pendingTap.current = null;
     setDrag(null);
     setDrawPreview(null);
@@ -1365,14 +1477,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const factor = dist / prevDist;
     const dx = mid.x - prevMid.x;
     const dy = mid.y - prevMid.y;
-    setView((v) => {
-      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
-      const applied = scale / v.scale;
-      return {
-        scale,
-        ox: mid.x - (mid.x - (v.ox + dx)) * applied,
-        oy: mid.y - (mid.y - (v.oy + dy)) * applied,
-      };
+    // Identical math to the old per-move setView updater, applied to the
+    // gesture view (the pending view while coalescing) and committed via
+    // the frame scheduler instead of on every move. Steps chain through
+    // the pending view, so a burst of moves within one frame lands on
+    // exactly the view the old step-by-step commits produced.
+    const v = gestureView();
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+    const applied = scale / v.scale;
+    scheduleGestureView({
+      scale,
+      ox: mid.x - (mid.x - (v.ox + dx)) * applied,
+      oy: mid.y - (mid.y - (v.oy + dy)) * applied,
     });
   };
 
@@ -1440,6 +1556,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       } else {
         pinch.current = null;
       }
+      // The pinch just ended: commit the exact final view synchronously,
+      // not on the pending frame — no trailing one-frame lag on release.
+      // A rebase onto a remaining pair leaves pinch.current set and does
+      // NOT flush: the gesture is still running, and its later steps keep
+      // chaining from the pending view.
+      if (!pinch.current) flushGestureView();
     }
     return had;
   };
@@ -2381,7 +2503,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           // leave mid-gesture; this guards browsers that fire it anyway so
           // a drag is never torn down while its pointer is still captured.
           if (e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
-          setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null;
+          flushGestureView(); setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null;
         }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
