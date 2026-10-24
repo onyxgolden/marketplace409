@@ -14,7 +14,7 @@
 // (4) a mid-gesture pair rebase keeps stepping from the pending view,
 // never from the stale committed one.
 
-import React, { act } from "react";
+import React, { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import PlanCanvas from "./PlanCanvas";
 import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
@@ -277,5 +277,174 @@ describe("PlanCanvas gesture view-commit coalescing (rAF)", () => {
     // pending base gives ≈ 1.2143 — far outside the assertion tolerance.
     expect(expected.scale).toBeCloseTo(1.2143, 3);
     expectView(svg, expected);
+  });
+});
+
+// ---- P1: gesture moves must not commit once per input event --------------
+// ChatGPT's review found the remaining hot path: onPointerMove wrote
+// cursorScreen state on every pointermove even while a pinch or touch pan
+// consumed the event, so a burst scheduled one coalesced view frame while
+// still producing one full PlanCanvas render per move (the reviewer's
+// Profiler probe measured four commits before the frame fired). The fix
+// stashes the gesture cursor in a ref and commits it once at the
+// gesture's final flush — the crosshair is not the user's focus
+// mid-gesture, but it must land exactly where the fingers ended up.
+// These tests count React commits: a held burst must produce ZERO commits
+// before its frame fires, ONE for the coalesced frame, and ONE for the
+// synchronous final flush — never N.
+describe("PlanCanvas gesture render cadence (P1): no per-move commits", () => {
+  let container;
+  let root;
+  let svg;
+  let commits;
+
+  const renderCanvasCounted = () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    commits = 0;
+    act(() => {
+      root.render(
+        <Profiler id="canvas" onRender={() => { commits += 1; }}>
+          <PlanCanvas design={createEmptyDesign()} tool="select" selection={null} dispatch={vi.fn()} />
+        </Profiler>
+      );
+    });
+    svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+  };
+
+  const mouseMove = (x, y) => {
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointermove", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          pointerType: "mouse",
+          clientX: x,
+          clientY: y,
+        })
+      );
+    });
+  };
+
+  // jsdom reports clientWidth/Height as 0, which suppresses the crosshair
+  // HUD; these tests shadow them just long enough to observe it.
+  // (jsdom defines them above HTMLElement.prototype, so a temporary own
+  // property shadows cleanly and deletes away afterwards.)
+  const withViewport = (fn) => {
+    const proto = window.HTMLElement.prototype;
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 1200 });
+    Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 800 });
+    try {
+      fn();
+    } finally {
+      delete proto.clientWidth;
+      delete proto.clientHeight;
+    }
+  };
+
+  const crosshairX = () => {
+    const line = svg.querySelector('line[stroke="#7dd3fc"]');
+    expect(line).not.toBeNull();
+    return parseFloat(line.getAttribute("x1"));
+  };
+
+  beforeEach(() => {
+    rafMode = "queued";
+    installRafMock();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    window.requestAnimationFrame = realRaf;
+    window.cancelAnimationFrame = realCancelRaf;
+  });
+
+  it("pinch burst: moves commit zero times before the frame fires, once on the frame, once on the final flush", () => {
+    renderCanvasCounted();
+    touch(svg, "pointerdown", 1, 140, 60);
+    touch(svg, "pointerdown", 2, 300, 60);
+    const before = commits;
+    for (const [id, x, y] of [
+      [1, 120, 60],
+      [2, 330, 60],
+      [1, 90, 90],
+      [2, 360, 90],
+    ]) {
+      touch(svg, "pointermove", id, x, y);
+    }
+    // P1: one queued frame for the view, but no per-move cursor commits.
+    expect(rafScheduled).toBe(1);
+    expect(rafQueue.size).toBe(1);
+    expect(commits - before).toBe(0);
+    expectView(svg, DEFAULT_VIEW); // nothing committed yet
+    fireFrames();
+    expect(commits - before).toBe(1); // the one coalesced commit
+    expectView(svg, burstExpected()); // math identity survives the fix
+    touch(svg, "pointerup", 1, 90, 90); // pinch ends: synchronous flush
+    touch(svg, "pointerup", 2, 360, 90);
+    expect(rafQueue.size).toBe(0);
+    // The flush commits the final cursor (batched); the second lift is a
+    // complete no-op — the no-op-clear guard skips setters whose state is
+    // already null, so a quiescent pointerup no longer costs a commit
+    // (an idle pointerup committed once per lift on the reviewed head).
+    expect(commits - before).toBe(2);
+    expectView(svg, burstExpected());
+  });
+
+  it("touch pan burst: moves commit zero times; release flushes view + final cursor once", () => {
+    renderCanvasCounted();
+    touch(svg, "pointerdown", 1, 100, 100); // empty background → pan drag
+    const before = commits;
+    touch(svg, "pointermove", 1, 130, 120);
+    touch(svg, "pointermove", 1, 160, 150);
+    expect(rafScheduled).toBe(1);
+    expect(commits - before).toBe(0);
+    expectView(svg, DEFAULT_VIEW);
+    fireFrames();
+    expect(commits - before).toBe(1);
+    expectView(svg, { scale: 1.6, ox: 60 + 60, oy: 60 + 50 });
+    touch(svg, "pointerup", 1, 160, 150); // release: synchronous flush
+    expect(rafQueue.size).toBe(0);
+    // The flush commits the stashed final cursor batched with the real
+    // drag-clear ({kind:"pan"} → null); the null draw-preview clear is
+    // skipped by the no-op guard.
+    expect(commits - before).toBe(2);
+    expectView(svg, { scale: 1.6, ox: 60 + 60, oy: 60 + 50 });
+  });
+
+  it("the final flush commits the gesture's last cursor position", () => {
+    withViewport(() => {
+      renderCanvasCounted();
+      // No cursor yet: pointerdowns alone never wrote cursor state.
+      expect(svg.querySelector('line[stroke="#7dd3fc"]')).toBeNull();
+      touch(svg, "pointerdown", 1, 140, 60);
+      touch(svg, "pointerdown", 2, 300, 60);
+      touch(svg, "pointermove", 1, 120, 60);
+      touch(svg, "pointermove", 2, 330, 60);
+      // Still stashed — the crosshair does not track the fingers
+      // mid-gesture anymore (verdict requirement 1).
+      expect(svg.querySelector('line[stroke="#7dd3fc"]')).toBeNull();
+      touch(svg, "pointerup", 1, 120, 60); // pinch ends: final flush
+      touch(svg, "pointerup", 2, 330, 60);
+      // The last move was finger 2 at x=330: the crosshair lands exactly
+      // where the fingers ended up.
+      expect(crosshairX()).toBe(330);
+    });
+  });
+
+  it("non-gesture moves still update the crosshair immediately (CAD hover behavior unchanged)", () => {
+    withViewport(() => {
+      renderCanvasCounted();
+      const before = commits;
+      mouseMove(400, 300);
+      expect(crosshairX()).toBe(400);
+      expect(commits - before).toBe(1); // the immediate hover commit, as before
+    });
   });
 });
