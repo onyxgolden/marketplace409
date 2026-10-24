@@ -204,6 +204,52 @@ describe("snapshotBuilder", () => {
     expect(snap.consistency).toBe("PARTIAL");
     expect(snap.collection_errors.some((e) => e.code === "CURSOR_FAULT")).toBe(true);
   });
+  it("P676-003: missing/null project_ref on a project-scoped row refuses SCOPE_VIOLATION (no scope by omission)", async () => {
+    // Passthrough adapter: serves rows verbatim, like a leaky
+    // future adapter — the builder's boundary must refuse the
+    // identity-less rows itself, not admit them into the scope.
+    const passthrough = (ds) => ({
+      source_system: "synthetic-repository",
+      async collect(dataset) {
+        const rows = ds[dataset] ?? [];
+        return { rows, next_cursor: null, revision: "rev-1", expected_total: rows.length };
+      },
+      close() {},
+    });
+    const budget = new Budget(PLANNING_BUDGET_LIMITS);
+    await expect(buildSnapshot({
+      request: request(),
+      adapter: passthrough(datasets({ schedule_blocks: [block("A"), block("X", { project_ref: null })] })),
+      budget, clock, datasets: PLANNING_DATASETS, authorizedGlobalRefs: new Set(),
+    })).rejects.toThrow(/SCOPE_VIOLATION/);
+    await expect(buildSnapshot({
+      request: request(),
+      adapter: passthrough(datasets({
+        schedule_projects: [{ project_ref: null, owner_ref: "owner-1", start_date: "2026-10-26", end_date: "2026-12-31", default_calendar_ref: "CAL-1" }],
+      })),
+      budget, clock, datasets: PLANNING_DATASETS, authorizedGlobalRefs: new Set(),
+    })).rejects.toThrow(/SCOPE_VIOLATION/);
+    await expect(buildSnapshot({
+      request: request(),
+      adapter: passthrough(datasets({
+        schedule_lanes: [{ lane_ref: "L-9", owner_ref: "owner-1", calendar_ref: "CAL-1" }],
+      })),
+      budget, clock, datasets: PLANNING_DATASETS, authorizedGlobalRefs: new Set(),
+    })).rejects.toThrow(/SCOPE_VIOLATION/);
+  });
+  it("P676-003: non-scalar allowlisted fields are FIELD_INVALID errors, never silently dropped", async () => {
+    const snap = await snapshotFor(datasets({
+      schedule_blocks: [block("A", { duration_days: { nested: true } })],
+    }));
+    expect(snap.consistency).toBe("PARTIAL");
+    expect(snap.collection_errors.some((e) => e.code === "FIELD_INVALID" && e.field === "duration_days")).toBe(true);
+    const net = buildNetwork(snap);
+    expect(net.findings.some((f) => f.kind === "MISSING_DURATION")).toBe(true);
+    const badCal = await snapshotFor(datasets({
+      schedule_calendars: [{ calendar_ref: "CAL-1", project_ref: "P-1", owner_ref: "owner-1", working_days: [1, 8] }],
+    }));
+    expect(badCal.collection_errors.some((e) => e.code === "FIELD_INVALID" && e.field === "working_days")).toBe(true);
+  });
 });
 
 describe("sourceMappings + schedulerAssessment", () => {
@@ -236,6 +282,56 @@ describe("sourceMappings + schedulerAssessment", () => {
     const net = buildNetwork(snap);
     expect(net.components[0].conclusion).toBe("QUALIFIED");
     expect(net.findings.some((f) => f.kind === "NONZERO_LAG_NOT_MODELED")).toBe(true);
+  });
+  it("P676-001: a failed dependency read can never publish READY components or READY lookahead conclusions", async () => {
+    const failingDeps = {
+      source_system: "synthetic-repository",
+      async collect(dataset, { cursor }) {
+        if (dataset === "schedule_dependencies") throw Object.assign(new Error("source down"), { code: "SOURCE_DOWN" });
+        const base = adapter(datasets({
+          schedule_blocks: [block("A", { duration_days: 2 }), block("B", { duration_days: 3 }),
+            block("C", { block_type: "milestone", duration_days: 0, start_date: "2026-10-28" })],
+          schedule_dependencies: [tie("T-AB", "A", "B"), tie("T-BC", "B", "C")],
+        }), {});
+        return base.collect(dataset, { owner_ref: "owner-1", cursor });
+      },
+      close() {},
+    };
+    const budget = new Budget(PLANNING_BUDGET_LIMITS);
+    const snap = await buildSnapshot({
+      request: request(), adapter: failingDeps, budget, clock,
+      datasets: PLANNING_DATASETS, authorizedGlobalRefs: new Set(),
+    });
+    expect(snap.consistency).toBe("PARTIAL");
+    expect(snap.datasets.schedule_dependencies.complete).toBe(false);
+    const report = evaluateSchedulerSnapshot(snap);
+    expect(report.sections.components.rows.length).toBeGreaterThan(0);
+    for (const c of report.sections.components.rows) {
+      expect(c.conclusion).not.toBe("READY");
+      expect(c.qualifications.join(" ")).toMatch(/schedule_dependencies/);
+    }
+    for (const r of report.sections.lookahead.rows) {
+      expect(r.computed_conclusion).not.toBe("READY");
+    }
+  });
+  it("P676-002: an unsupported relationship type qualifies the component and withholds every computed date", async () => {
+    const snap = await snapshotFor(datasets({
+      schedule_blocks: [block("A"), block("B")],
+      schedule_dependencies: [tie("T-AB", "A", "B", { relationship_type: "XX" })],
+    }));
+    const net = buildNetwork(snap);
+    expect(net.components).toHaveLength(1);
+    expect(net.components[0].conclusion).toBe("QUALIFIED");
+    expect(net.components[0].withheld["A"]).toMatch(/all-computed-withheld/);
+    expect(net.components[0].withheld["B"]).toMatch(/all-computed-withheld/);
+    expect(net.findings.some((f) => f.kind === "UNSUPPORTED_TIE_TYPE")).toBe(true);
+    for (const a of net.components[0].activities) {
+      expect(a.es).toBeNull();
+      expect(a.ef).toBeNull();
+      expect(a.ls).toBeNull();
+      expect(a.lf).toBeNull();
+      expect(a.critical).toBeNull();
+    }
   });
   it("mixed calendars fail the component; must_start_on withholds successors; SNLT withholds late fields", async () => {
     const mixed = await snapshotFor(datasets({

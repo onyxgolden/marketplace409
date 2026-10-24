@@ -63,9 +63,14 @@ function raceDeadline(promise, signal) {
  * filtering — the adapter serves only in-scope rows, and this
  * builder refuses any leak):
  * - Every row's owner_ref must equal the request's owner_ref.
- * - For PROJECT_SCOPED datasets, a non-null project_ref must equal
- *   the scope project id. (schedule_projects rows ARE the scope
- *   project itself; a foreign project row is a leak.)
+ * - For PROJECT_SCOPED datasets, the row's project_ref must be
+ *   PRESENT and equal to the scope project id. A missing/null
+ *   project_ref is a scope refusal, never a pass-through: malformed
+ *   or leaky input must not acquire scope by omission (a project,
+ *   lane, block, or blackout row with no project identity cannot
+ *   anchor or enter the requested population). (schedule_projects
+ *   rows ARE the scope project itself; a foreign or identity-less
+ *   project row is a leak.)
  * - For schedule_calendars, a non-null project_ref must equal the
  *   scope project id; a null project_ref (global/reusable calendar)
  *   is admitted ONLY when its calendar_ref is in the host-owned
@@ -114,6 +119,7 @@ export async function buildSnapshot({
     let cursor = null;
     let complete = false;
     let errored = false;
+    let holidaysUnverified = false;
     const attestedRevisions = new Set();
     const attestedExpected = new Set();
     let terminalAttestedExpected = false;
@@ -151,18 +157,29 @@ export async function buildSnapshot({
       for (const raw of page.rows) {
         budget.measureCandidate(raw, `${dataset} row`);
         seenCount += 1;
-        const { row, dropped } = projectRow(dataset, raw);
+        const { row, dropped, invalid } = projectRow(dataset, raw);
         if (row === null) {
           partial = true;
           collectionErrors.push({ dataset, code: "MALFORMED_ROW" });
           continue;
         }
+        // P676-003: a projected field that failed structural
+        // validation is an explicit integrity/coverage error, never
+        // silently dropped — the invalid list is recorded, not
+        // discarded. Scope-critical omissions refuse below; the
+        // field itself stays undefined (never defaulted).
+        if (invalid.length > 0) {
+          partial = true;
+          for (const field of invalid) {
+            collectionErrors.push({ dataset, code: "FIELD_INVALID", field });
+          }
+        }
         if (row.owner_ref !== request.owner_ref) {
           throw new JobRefusal("SCOPE_VIOLATION", `${dataset} row outside the requested owner scope`);
         }
         if (PROJECT_SCOPED.has(dataset)) {
-          if (row.project_ref !== undefined && row.project_ref !== null && row.project_ref !== scopeProjectId) {
-            throw new JobRefusal("SCOPE_VIOLATION", `${dataset} row for a different project scope`);
+          if (row.project_ref === undefined || row.project_ref === null || row.project_ref !== scopeProjectId) {
+            throw new JobRefusal("SCOPE_VIOLATION", `${dataset} row missing or outside the requested project scope`);
           }
         }
         if (dataset === "schedule_calendars") {
@@ -175,6 +192,21 @@ export async function buildSnapshot({
           }
         }
         if (dataset === "schedule_calendar_holidays" && !admittedCalendarRefs.has(row.calendar_ref)) {
+          if (datasetErrored["schedule_calendars"]) {
+            // P676-001 companion: when the calendars collection
+            // itself failed, holiday membership cannot be
+            // scope-checked — but a failed category must qualify
+            // conclusions, not cascade into a whole-run refusal.
+            // Fail closed on the ROW (never admit an unverifiable
+            // holiday) and mark the holidays dataset incomplete;
+            // the calendars-incomplete qualification already
+            // covers every conclusion drawn from this snapshot.
+            partial = true;
+            holidaysUnverified = true;
+            coverageGaps.push({ dataset, code: "HOLIDAY_CALENDAR_UNVERIFIED",
+              detail: `holiday '${String(row.holiday_ref)}' cannot be scope-checked because schedule_calendars collection failed; the row is excluded` });
+            continue;
+          }
           throw new JobRefusal("SCOPE_VIOLATION", `holiday for calendar '${String(row.calendar_ref)}' outside the admitted calendar set`);
         }
         const ref = row[REF_FIELD[dataset]];
@@ -272,6 +304,7 @@ export async function buildSnapshot({
       }
     }
     if (errored) { complete = false; allDatasetsAttested = false; }
+    if (holidaysUnverified) complete = false;
     datasetErrored[dataset] = errored;
     datasetFacts[dataset] = {
       expected: expectedAgreed, received, complete,

@@ -271,6 +271,25 @@ const A = [
     expect: { outcome: "COMPLETED",
       components: [{ id: "comp-A", conclusion: "NOT_MODELED" }] },
   },
+  {
+    id: "A21", group: "A", title: "P676-002: an unsupported relationship type qualifies the component and withholds every computed date, never a silent non-edge",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_dependencies[0].relationship_type = "XX";
+      })) }),
+    expect: { outcome: "COMPLETED",
+      components: [
+        { id: "comp-A", conclusion: "QUALIFIED", withheld_all: ["A", "B", "C"],
+          activities: {
+            A: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+            B: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+            C: { es: null, ef: null, ls: null, lf: null, total_float: null, critical: null, civil_start: null, civil_finish_boundary: null },
+          } },
+        { id: "comp-D", conclusion: "READY",
+          activities: { D: { es: 0, ef: 0, ls: 0, lf: 0, total_float: 0, critical: true, civil_start: "2026-10-26", civil_finish_boundary: "2026-10-26" } } },
+      ],
+      integrity_kinds_include: ["UNSUPPORTED_TIE_TYPE"] },
+  },
 ];
 
 export { A };
@@ -459,7 +478,60 @@ const B = [
     id: "B20", group: "B", title: "missing category (dataset read fails) yields PARTIAL with a coverage gap, never an all-clear",
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_dependencies" }) }),
-    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_dependencies" },
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_dependencies",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B21", group: "B", title: "P676-001: a failed block read yields PARTIAL and no READY conclusion, never an empty-population all-clear",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_blocks" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_blocks",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B22", group: "B", title: "P676-001: a failed calendar read yields PARTIAL and no READY conclusion, never calendar-less math",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_calendars" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_calendars",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B23", group: "B", title: "P676-001: a failed lane read yields PARTIAL and no READY conclusion, never lane-less math",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_lanes" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_lanes",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B24", group: "B", title: "P676-001: a failed holiday read yields PARTIAL and no READY conclusion, never holiday-blind dates",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_calendar_holidays" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_calendar_holidays",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B25", group: "B", title: "P676-001: a failed blackout read yields PARTIAL and no READY conclusion, never blackout-blind dates",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_blackout_windows" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_blackout_windows",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B26", group: "B", title: "P676-001: a failed project read yields PARTIAL and no READY conclusion, never an anchor-less all-clear",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { failDataset: "schedule_projects" }) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL", diagnostics_include: "schedule_projects",
+      no_ready_components: true, no_ready_lookahead: true },
+  },
+  {
+    id: "B27", group: "B", title: "P676-003: a non-scalar allowlisted field is a FIELD_INVALID coverage error, never a silent drop",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blocks = [block("A", { duration_days: { nested: true } })];
+        d.schedule_dependencies = [];
+      })) }),
+    expect: { outcome: "COMPLETED", snapshot_consistency: "PARTIAL",
+      collection_error_codes_include: ["FIELD_INVALID"], integrity_kinds_include: ["MISSING_DURATION"] },
   },
 ];
 
@@ -593,6 +665,14 @@ const C = [
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {}), { revoked: true }) }),
     expect: { outcome: "REFUSED", code: "PERMISSION_REVOKED", published_count: 0 },
+  },
+  {
+    id: "C21", group: "C", title: "P676-003: a project-scoped row with a missing/null project_ref under a leaky adapter refuses SCOPE_VIOLATION, never acquires scope by omission",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blocks.push(block("X", { project_ref: null }));
+      }), { leakyScope: true }) }),
+    expect: { outcome: "REFUSED", code: "SCOPE_VIOLATION", published_count: 0 },
   },
 ];
 

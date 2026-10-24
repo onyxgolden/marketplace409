@@ -130,7 +130,7 @@ import {
   analyzeComponent, workingDays as prototypeWorkingDays,
 } from "../../../../scripts/ai-agents/scheduler-prototype/src/scheduler.js";
 import {
-  addCivilDays, isCivilDate, isoWeekdayOf,
+  addCivilDays, isCivilDate, isoWeekdayOf, PLANNING_DATASETS,
 } from "./fieldMappings.js";
 
 export const MATH_HORIZON_DAYS = 366;
@@ -247,6 +247,26 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
   const dependencies = records.schedule_dependencies ?? [];
   const holidays = records.schedule_calendar_holidays ?? [];
   const blackouts = records.schedule_blackout_windows ?? [];
+
+  // P676-001: dataset coverage/consistency gates conclusion
+  // eligibility. A dataset whose collection did not complete
+  // (failed page, unattested expected total, revision conflict)
+  // leaves its population incomplete, and no conclusion drawn
+  // from it may publish READY. When the snapshot carries no
+  // per-dataset facts at all but is PARTIAL, coverage is unknown
+  // and is treated as incomplete (fail-closed). A complete
+  // population with a merely stale or duplicate-conflicted
+  // snapshot keeps its conclusions — staleness and first-wins
+  // conflicts are diagnosed, not coverage gaps.
+  const datasetFacts = snapshot.datasets ?? {};
+  const incompleteDatasets = PLANNING_DATASETS.filter((ds) => {
+    const facts = datasetFacts[ds];
+    if (facts) return facts.complete !== true;
+    return snapshot.consistency === "PARTIAL";
+  });
+  const coverageQualification = incompleteDatasets.length > 0
+    ? `incomplete coverage: ${[...incompleteDatasets].sort().join(", ")} — conclusions from incomplete populations are qualified, never all-clear`
+    : null;
 
   const calendarsById = new Map(calendars.map((c) => [c.calendar_ref, c]));
   const lanesById = new Map(lanes.map((l) => [l.lane_ref, l]));
@@ -375,6 +395,11 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
       inventory.ties_unsupported_type += 1;
       find("UNSUPPORTED_TIE_TYPE", "schedule_dependencies", d.dependency_ref,
         `relationship_type '${String(d.relationship_type)}' is not FS/SS/FF/SF; excluded, never reinterpreted`);
+      // P676-002: an unsupported both-endpoint tie IS conclusion-
+      // affecting — it joins the component's qualification set
+      // (supported: false with its reason), never silently a
+      // non-edge. Withholding is applied per component below.
+      tieById.set(d.dependency_ref, { ...d, supported: false, reason: "UNSUPPORTED_TIE_TYPE" });
       continue;
     }
     if (!Number.isInteger(d.lag_days) || d.lag_days !== 0) {
@@ -426,7 +451,14 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
     for (const m of members) for (const d of danglingByActivity.get(m) ?? []) compDangling.push(d);
     const compNonzeroLag = dependencies.filter((d) =>
       memberSet.has(d.predecessor_ref) && memberSet.has(d.successor_ref)
-      && tieById.get(d.dependency_ref)?.supported === false);
+      && tieById.get(d.dependency_ref)?.supported === false
+      && tieById.get(d.dependency_ref)?.reason !== "UNSUPPORTED_TIE_TYPE");
+    // P676-002: unsupported-type ties are their own conclusion-
+    // affecting set — never folded into the nonzero-lag label.
+    const compUnsupportedType = dependencies.filter((d) =>
+      memberSet.has(d.predecessor_ref) && memberSet.has(d.successor_ref)
+      && tieById.get(d.dependency_ref)?.supported === false
+      && tieById.get(d.dependency_ref)?.reason === "UNSUPPORTED_TIE_TYPE");
 
     // Calendar resolution per member (rule 2).
     const resolved = new Map(); // activity id -> { calendar, reason, ref }
@@ -439,6 +471,11 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
     const qualifications = [];
     if (compNonzeroLag.length > 0) qualifications.push(`nonzero-lag ties excluded from math: ${compNonzeroLag.map((d) => d.dependency_ref).sort().join(", ")}`);
     if (compDangling.length > 0) qualifications.push(`dangling/cross-scope ties: ${compDangling.map((d) => d.dependency_ref).sort().join(", ")}`);
+    if (compUnsupportedType.length > 0) qualifications.push(`unsupported relationship types excluded from math: ${compUnsupportedType.map((d) => d.dependency_ref).sort().join(", ")}`);
+    // P676-001: incomplete coverage qualifies every conclusion
+    // drawn from it — a READY below degrades to QUALIFIED via
+    // qualifications.length, and NOT_MODELED rows carry the note.
+    if (coverageQualification) qualifications.push(coverageQualification);
 
     if (missingCal) {
       for (const m of members) {
@@ -523,6 +560,20 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
       constraints.push(conv.constraint);
     }
 
+    // P676-002: an unsupported relationship type could change
+    // EVERY computed date in its component (FS vs SS vs FF vs SF
+    // change all forward/backward math), so the whole component's
+    // computed fields are withheld — QUALIFIED with nothing
+    // computed-looking exposed. This differs from nonzero lag (a
+    // known edge with an unconvertible magnitude, QUALIFIED with
+    // dates shown): an unknown edge type is unknown structure,
+    // not an unknown magnitude.
+    let unsupportedWithholdReason = null;
+    if (compUnsupportedType.length > 0) {
+      unsupportedWithholdReason = `all-computed-withheld: unsupported relationship type ${compUnsupportedType.map((d) => d.dependency_ref).sort().join(", ")} could change every computed date in this component; all computed fields withheld`;
+      for (const m of members) withholdAll.add(m);
+    }
+
     // Dangling ties fail the component in the prototype: pass a
     // synthetic tie record for each dangling tie so analyzeComponent
     // reports DANGLING_TIE (it checks endpoints against activities).
@@ -559,7 +610,7 @@ export function buildNetwork(snapshot, { horizonDays = MATH_HORIZON_DAYS } = {})
     const withheld = {};
     const outActivities = result.activities.map((row) => {
       if (withholdAll.has(row.id)) {
-        withheld[row.id] = "all-computed-withheld: unsupported hard start constraint at or upstream of this activity";
+        withheld[row.id] = unsupportedWithholdReason ?? "all-computed-withheld: unsupported hard start constraint at or upstream of this activity";
         return { ...row, es: null, ef: null, ls: null, lf: null, total_float: null, critical: null,
           civil_start: null, civil_finish_boundary: null, withheld: withheld[row.id] };
       }

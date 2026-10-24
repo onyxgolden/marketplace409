@@ -19,6 +19,11 @@
  *   ls, lf, total_float, critical, civil_start,
  *   civil_finish_boundary } } }] — activity fields present in the
  *   expectation are asserted; absent fields are not.
+ * - no_ready_components: no component row may conclude READY
+ *   (incomplete-coverage freeze: a missing category must qualify
+ *   every conclusion drawn from it).
+ * - no_ready_lookahead: no lookahead row may carry a READY
+ *   computed conclusion.
  * - component_ids: exact ordered list of component ids.
  * - lookahead: [{ block_ref, bucket, disagreement? }] — matched by
  *   block_ref; disagreement asserts the row HAS (true) or LACKS
@@ -174,6 +179,16 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
       const ids = report.sections.components.rows.map((r) => r.component_id);
       if (canonicalJson(ids) !== canonicalJson(expect.component_ids)) {
         fail(caseId, `component ids ${canonicalJson(ids)} !== expected ${canonicalJson(expect.component_ids)}`);
+      }
+    }
+    if (expect.no_ready_components) {
+      for (const row of report.sections.components.rows) {
+        if (row.conclusion === "READY") fail(caseId, `component ${row.component_id} must not conclude READY under incomplete coverage`);
+      }
+    }
+    if (expect.no_ready_lookahead) {
+      for (const row of report.sections.lookahead.rows) {
+        if (row.computed_conclusion === "READY") fail(caseId, `lookahead ${row.block_ref} must not carry a READY computed conclusion under incomplete coverage`);
       }
     }
     if (expect.lookahead !== undefined) {
