@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { runJob, createMemoryPublisher } from "../src/runner.js";
 import { SYNTHETIC_REPOSITORIES, PII_CANARIES } from "../fixtures/repositories.js";
 import { fixedClock, makeHost, makeRequest, runPreview, onlyItem, previewSpec } from "./helpers.js";
+import { validateDecision } from "../../../../src/application/ai-lab/rental-ops/decisionValidator.js";
 
 // DISABLED must return before the adapter spec is ever used: a spec
 // whose datasets would explode on construction proves it.
@@ -147,4 +148,60 @@ test("a blocked reader settles via the bounded read timeout, adapter cleaned up,
   const item = onlyItem(publisher);
   assert.equal(item.report.status, "PARTIAL");
   assert.ok(item.report.exclusions.some((e) => e.dataset === "charges" && e.code === "READ_TIMEOUT"));
+});
+
+test("P670-005A: colon-collision schedule/charge pairs publish two distinct, independently decidable identities (frozen public-run counterexample)", async () => {
+  // ChatGPT's executed counterexample at 1be5e0bb: schedules/charges
+  // ("a:b","c") and ("a","b:c") aliased onto ONE per-citation identity
+  // under raw colon concatenation, and the serializer's duplicate
+  // refusal rejected the whole job uncaught, publishing nothing.
+  const pairData = (mutate) => {
+    const data = SYNTHETIC_REPOSITORIES["preview-basic"]();
+    data.charges = [
+      { charge_ref: "c", schedule_ref: "a:b", lease_ref: "lease-1", owner_ref: "owner-a", status: "open", due_date: "2026-10-01", amount_cents: 10000, paid_amount_cents: 0, currency: "USD" },
+      { charge_ref: "b:c", schedule_ref: "a", lease_ref: "lease-1", owner_ref: "owner-a", status: "open", due_date: "2026-10-01", amount_cents: 10000, paid_amount_cents: 0, currency: "USD" },
+    ];
+    data.schedules = [
+      { schedule_ref: "a:b", lease_ref: "lease-2", owner_ref: "owner-a", collection_mode: "forge", forge_cutover_date: "2026-01-01", currency: "USD" },
+      { schedule_ref: "a", lease_ref: "lease-2", owner_ref: "owner-a", collection_mode: "forge", forge_cutover_date: "2026-01-01", currency: "USD" },
+    ];
+    if (mutate) mutate(data);
+    return data;
+  };
+  const mismatchIds = (item) => item.row_ids.filter((id) => id.includes("SCHEDULE_LEASE_MISMATCH")).sort();
+
+  // The colliding pair: completes, publishes, two DISTINCT identities.
+  const { result, publisher } = await runPreview({ datasets: pairData() });
+  assert.equal(result.outcome, "COMPLETED");
+  assert.equal(result.counters.store_writes, 1);
+  const item = onlyItem(publisher);
+  assert.deepEqual(mismatchIds(item), [
+    "int:SCHEDULE_LEASE_MISMATCH:schedules:1:a:3:b:c",
+    "int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c",
+  ]);
+  // A decision on either emitted row validates independently of the
+  // other (the aliasing made them one identity; the refusal lost both).
+  for (const [i, rowId] of mismatchIds(item).entries()) {
+    const validated = validateDecision(item, {
+      item_id: item.item_id, report_digest: item.report_digest, row_id: rowId,
+      actor: "host:workbench-operator", decision: "accept", note: "",
+      at: "2026-10-22T15:00:00.000Z", decision_id: `pm-005a-${i}`,
+    });
+    assert.equal(validated.row_id, rowId);
+  }
+
+  // Single-pair control: one identity, completes.
+  const single = await runPreview({ datasets: pairData((d) => { d.charges = d.charges.slice(0, 1); }) });
+  assert.equal(single.result.outcome, "COMPLETED");
+  assert.deepEqual(mismatchIds(onlyItem(single.publisher)), [
+    "int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c",
+  ]);
+
+  // Distinct-pair control: second charge_ref "different" — two identities.
+  const distinct = await runPreview({ datasets: pairData((d) => { d.charges[1].charge_ref = "different"; }) });
+  assert.equal(distinct.result.outcome, "COMPLETED");
+  assert.deepEqual(mismatchIds(onlyItem(distinct.publisher)), [
+    "int:SCHEDULE_LEASE_MISMATCH:schedules:1:a:9:different",
+    "int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c",
+  ]);
 });

@@ -2,7 +2,7 @@ import { canonicalDigest, canonicalJson, sha256Hex } from "./canonical.js";
 import { FIELD_MAPPING_VERSION } from "./fieldMappings.js";
 import { EVALUATOR_VERSION as PM_EVALUATOR_VERSION } from "./propertyManagerJob.js";
 import { EVALUATOR_VERSION as MM_EVALUATOR_VERSION } from "./maintenanceManagerJob.js";
-import { ESCALATION_POLICY_VERSION } from "./jobContracts.js";
+import { ESCALATION_POLICY_VERSION, JobRefusal } from "./jobContracts.js";
 
 export const PRIVATE_ITEM_SCHEMA = "rental-ops-private-item@1";
 
@@ -44,7 +44,13 @@ export function reportRowIds(report) {
         const bytes = canonicalJson(row);
         if (seen.has(row.row_id)) {
           if (seen.get(row.row_id) !== bytes) {
-            throw new Error(`reportRowIds: duplicate public row identity '${row.row_id}' — distinct rows share one decision identity; row identities must be collision-safe (kind/dataset/record), never deduplicated into one`);
+            // P670-005A: the refusal is a bounded, NAMED refusal —
+            // the job runner maps JobRefusal to a REFUSED outcome,
+            // so an unexpected identity failure (defense in depth;
+            // the evaluator's identities are injective by
+            // construction) can never escape the job envelope as an
+            // uncaught exception or publish a partial item.
+            throw new JobRefusal("DUPLICATE_ROW_IDENTITY", `duplicate public row identity '${row.row_id}' — distinct rows share one decision identity; row identities must be collision-safe (kind/dataset/record), never deduplicated into one`);
           }
           continue;
         }

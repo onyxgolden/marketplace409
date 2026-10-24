@@ -3,6 +3,7 @@ import { buildSnapshot } from "./snapshotBuilder.js";
 import { evaluatePropertyManagerSnapshot } from "./propertyManagerJob.js";
 import { serializePrivateItem } from "./privateItemSerializer.js";
 import { validateDecision } from "./decisionValidator.js";
+import { JobRefusal } from "./jobContracts.js";
 import { makeAdapter, fixedClock, REQUEST } from "./snapshotBuilder.test.js";
 
 async function run(data, opts = {}) {
@@ -279,6 +280,23 @@ describe("serializer identity hardening (P670-005 / panel CP9)", () => {
       .toThrow(/duplicate public row identity/);
   });
 
+  it("the duplicate-identity refusal is a bounded NAMED JobRefusal, never a plain Error escaping the job envelope (P670-005A)", () => {
+    const report = fakeReport({
+      integrity: {
+        rows: [
+          { row_id: "int:X:dup", kind: "X", dataset: "properties", record_ref: "a" },
+          { row_id: "int:X:dup", kind: "X", dataset: "units", record_ref: "b" },
+        ],
+      },
+    });
+    let caught = null;
+    try {
+      serializePrivateItem({ report, snapshot: fakeSnapshot, publishedAt: "2026-10-22T14:05:00.000Z" });
+    } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(JobRefusal);
+    expect(caught?.code).toBe("DUPLICATE_ROW_IDENTITY");
+  });
+
   it("the SAME row presented by two sections (backlog + overdue) still shares one identity", () => {
     const row = { row_id: "wo:wo-1", kind: "BACKLOG_ITEM", work_order_ref: "wo-1" };
     const report = fakeReport({ backlog: { rows: [row] }, overdue: { rows: [row] } });
@@ -313,12 +331,12 @@ describe("per-citation integrity identity (P670-005 discriminator)", () => {
     }));
     const mismatches = report.sections.integrity.rows.filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH");
     expect(mismatches.map((r) => r.row_id).sort()).toEqual([
-      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2",
-      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-3",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:4:ch-2",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:4:ch-3",
     ]);
     const item = serializePrivateItem({ report, snapshot: snap, publishedAt: "2026-10-22T14:05:00.000Z" });
-    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2");
-    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-3");
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:4:ch-2");
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:4:ch-3");
   });
 
   it("the same schedule cited twice by charges of the SAME lease still yields per-charge identities (no aliasing, no rejection)", async () => {
@@ -329,8 +347,98 @@ describe("per-citation integrity identity (P670-005 discriminator)", () => {
     }));
     const ids = report.sections.integrity.rows.filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH").map((r) => r.row_id).sort();
     expect(ids).toEqual([
-      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2a",
-      "int:SCHEDULE_LEASE_MISMATCH:schedules:sch-1:ch-2b",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:5:ch-2a",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:5:sch-1:5:ch-2b",
     ]);
+  });
+});
+
+describe("per-citation identity injectivity (P670-005A)", () => {
+  const charge = (over = {}) => ({
+    charge_ref: "ch-x", lease_ref: "lease-2", schedule_ref: "sch-1", owner_ref: "owner-a",
+    status: "open", due_date: "2026-10-01", amount_cents: 10000, paid_amount_cents: 0, currency: "USD", ...over,
+  });
+  const schedule = (over = {}) => ({
+    schedule_ref: "sch-1", lease_ref: "lease-1", owner_ref: "owner-a",
+    collection_mode: "forge", forge_cutover_date: "2026-01-01", currency: "USD", ...over,
+  });
+
+  it("ChatGPT's colon-collision pair mints two DISTINCT identities and serializes (was: one shared identity, whole report refused)", async () => {
+    const { snap, report } = await run(shell({
+      leases: [lease(), lease({ lease_ref: "lease-2", unit_ref: "unit-1" })],
+      charges: [
+        charge({ charge_ref: "c", schedule_ref: "a:b", lease_ref: "lease-1" }),
+        charge({ charge_ref: "b:c", schedule_ref: "a", lease_ref: "lease-1" }),
+      ],
+      schedules: [
+        schedule({ schedule_ref: "a:b", lease_ref: "lease-2" }),
+        schedule({ schedule_ref: "a", lease_ref: "lease-2" }),
+      ],
+    }));
+    const ids = report.sections.integrity.rows
+      .filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH").map((r) => r.row_id).sort();
+    expect(ids).toEqual([
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:1:a:3:b:c",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c",
+    ]);
+    const item = serializePrivateItem({ report, snapshot: snap, publishedAt: "2026-10-22T14:05:00.000Z" });
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:1:a:3:b:c");
+    expect(item.row_ids).toContain("int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c");
+  });
+
+  it("adversarial components (empty, delimiter-only, leading/trailing delimiters) never collide and never throw", () => {
+    // Each pair below aliases onto ONE identity under the pre-fix raw
+    // concatenation (identical raw tails, pairwise): the framed
+    // encoding must keep all eight distinct. Driven directly at the
+    // evaluator because snapshot admission drops empty refs upstream
+    // — identity injectivity is a property of the evaluator itself.
+    const pairs = [
+      ["a:b", "c"], ["a", "b:c"],
+      ["x:", "y"], ["x", ":y"],
+      ["", "a:b"], [":a", "b"],
+      [":", ""], ["", ":"],
+    ];
+    const directLease = (ref) => ({
+      lease_ref: ref, unit_ref: "unit-1", property_ref: "prop-1", owner_ref: "owner-a",
+      status: "active", start_date: "2026-01-01", end_date: "2027-01-01",
+      monthly_rent_cents: 100000, currency: "USD",
+    });
+    const snap = {
+      as_of: "2026-10-22T14:00:00.000Z", as_of_date: "2026-10-22", as_of_timezone: "America/Chicago",
+      owner_ref: "owner-a", portfolio_ref: "portfolio-a", digest: "d".repeat(64),
+      consistency: "COMPLETE", stale: false, snapshot_request_id: "snap-direct",
+      source_system: "synthetic", collection: { finished_at: "2026-10-22T13:55:00.000Z" },
+      conflicts: [], coverage_gaps: [], evidence: {}, collection_errors: [],
+      datasets: { charges: { complete: true }, schedules: { complete: true } },
+      records: {
+        properties: [{ property_ref: "prop-1", owner_ref: "owner-a" }],
+        units: [{ unit_ref: "unit-1", property_ref: "prop-1", owner_ref: "owner-a", status: "occupied" }],
+        leases: [directLease("lease-c"), directLease("lease-s")],
+        memberships: [],
+        charges: pairs.map(([schedule_ref, charge_ref]) => ({
+          charge_ref, lease_ref: "lease-c", schedule_ref, owner_ref: "owner-a",
+          status: "open", due_date: "2026-10-01", amount_cents: 10000, paid_amount_cents: 0, currency: "USD",
+        })),
+        schedules: pairs.map(([schedule_ref]) => ({
+          schedule_ref, lease_ref: "lease-s", owner_ref: "owner-a",
+          collection_mode: "forge", forge_cutover_date: "2026-01-01", currency: "USD",
+        })),
+      },
+    };
+    const report = evaluatePropertyManagerSnapshot(snap);
+    const ids = report.sections.integrity.rows
+      .filter((r) => r.kind === "SCHEDULE_LEASE_MISMATCH").map((r) => r.row_id).sort();
+    expect(ids).toEqual([
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:0::1::",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:0::3:a:b",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:1:::0:",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:1:a:3:b:c",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:1:x:2::y",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:2::a:1:b",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:2:x::1:y",
+      "int:SCHEDULE_LEASE_MISMATCH:schedules:3:a:b:1:c",
+    ]);
+    const item = serializePrivateItem({ report, snapshot: snap, publishedAt: "2026-10-22T14:05:00.000Z" });
+    for (const id of ids) expect(item.row_ids).toContain(id);
   });
 });
