@@ -24,12 +24,18 @@ describe("VSDX: forge-test-house.vsdx (detailed)", () => {
   });
 
   it("imports walls at true size from a 1/4\" = 1'-0\" page", () => {
-    expect(design.walls.length).toBeGreaterThanOrEqual(15);
+    // 8 wall runs (exterior + 4 interior partitions) once door/window gaps
+    // correctly rejoin into one wall each, instead of fragmenting into a
+    // separate piece per span the way each Wall shape is individually drawn.
+    expect(design.walls.length).toBe(8);
     const pts = design.walls.flatMap((w) => [w.a, w.b]);
     const w = Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x));
     const h = Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y));
-    expect(w).toBeCloseTo(480, -1);
-    expect(h).toBeCloseTo(336, -1);
+    // 480 x 336 outside, but these are wall CENTERLINES: 6" exterior walls
+    // put the centerline 3" in from each face, same as the DXF importer's
+    // equivalent assertion (dxfImporter.test.js) for the identical house.
+    expect(w).toBeCloseTo(474, -1);
+    expect(h).toBeCloseTo(330, -1);
   });
 
   it("names all five rooms from the Space shapes and maps the furniture masters", () => {
@@ -38,8 +44,10 @@ describe("VSDX: forge-test-house.vsdx (detailed)", () => {
     expect(reopensClean(design)).toEqual([]);
   });
 
-  it.fails("KNOWN GAP: turns the 11 Door/Window shapes (sitting in wall gaps) into openings", () => {
+  it("turns the 11 Door/Window shapes (sitting in wall gaps) into openings", () => {
     expect(design.openings.length).toBe(11);
+    expect(design.openings.filter((o) => o.type === "door")).toHaveLength(5);
+    expect(design.openings.filter((o) => o.type === "window")).toHaveLength(6);
   });
 });
 
