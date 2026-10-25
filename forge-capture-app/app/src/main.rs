@@ -906,7 +906,7 @@ fn build_mode(
         // instead of silently closing someone else's window.
         settle_retire_claim(
             &state.overlay_window_owner,
-            Some(overlay.session_id),
+            overlay.session_id,
             claim,
             || close_overlay_window(app),
         )?;
@@ -2597,32 +2597,32 @@ impl OverlayRetireGate {
     }
 }
 
-/// Resolve a `RetireClaim` already obtained from `claim_retire`: `Won`
-/// means this call is the exclusive owner of the window and must perform
-/// `do_close` itself after clearing `overlay_window_owner` — compared
-/// against `owner_session` when `Some` (an owned retire, which must never
-/// erase or close a NEWER session's window), or unconditionally when
-/// `None` (an orphan reclaim, which has no live session to compare against
-/// by definition). `Coalesced`/`Pending` mean a different in-flight restore
-/// or retire already owns ordering this exact close — this call must not
-/// race it with a second close of its own, and does nothing further. Takes
-/// the raw `overlay_window_owner` mutex rather than `&State<AppState>` so
-/// the claim-resolution logic itself (not just the native close callers
-/// supply) stays unit-testable without a live Tauri app, mirroring
-/// `clear_pick_if_current`'s own reasoning.
+/// Resolve a `RetireClaim` already obtained from `claim_retire` on behalf of
+/// a specific LIVE session: `Won` means this call is the exclusive owner of
+/// the window and must perform `do_close` itself after clearing
+/// `overlay_window_owner` — but only if `overlay_window_owner` still names
+/// `owner_session`, never a NEWER session's window. `Coalesced`/`Pending`
+/// mean a different in-flight restore or retire already owns ordering this
+/// exact close — this call must not race it with a second close of its own,
+/// and does nothing further. Takes the raw `overlay_window_owner` mutex
+/// rather than `&State<AppState>` so the claim-resolution logic itself (not
+/// just the native close callers supply) stays unit-testable without a live
+/// Tauri app, mirroring `clear_pick_if_current`'s own reasoning.
+///
+/// There is no "no live session to compare against" case here any more —
+/// see `settle_orphan_retire_claim` (C639-007C.13) for the orphan reclaim,
+/// which never had a live session to name but still must not unconditionally
+/// clear/close whatever happens to be there once its wait finally ends.
 fn settle_retire_claim(
     overlay_window_owner: &Mutex<Option<u64>>,
-    owner_session: Option<u64>,
+    owner_session: u64,
     claim: RetireClaim<'_>,
     do_close: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     match claim {
         RetireClaim::Won(guard) => {
             let mut owner = overlay_window_owner.lock().unwrap();
-            let owns = match owner_session {
-                Some(session_id) => owns_overlay_window(*owner, session_id),
-                None => true,
-            };
+            let owns = owns_overlay_window(*owner, owner_session);
             if owns {
                 *owner = None;
             }
@@ -2632,6 +2632,66 @@ fn settle_retire_claim(
             result
         }
         RetireClaim::Coalesced | RetireClaim::Pending => Ok(()),
+    }
+}
+
+/// Outcome of `settle_orphan_retire_claim` (C639-007C.13): tells the caller
+/// whether it is safe to proceed straight to building a new window, or
+/// whether to wait for someone else's close, or to refuse outright.
+enum OrphanRetireOutcome {
+    /// This call itself closed the exact window it observed before waiting.
+    Closed,
+    /// The claim coalesced into, or waited behind, a different in-flight
+    /// restore/retire that still owns ordering the close — that owner
+    /// (unchanged by this call) will finish it; the caller should wait for
+    /// the window to actually disappear, same as the pre-C639-007C.13
+    /// behavior.
+    DeferredElsewhere,
+    /// This call won the retire slot, but by the time it did,
+    /// `overlay_window_owner` no longer matched what was observed before
+    /// waiting — a successor session installed and built its own window in
+    /// the interim. That window is live and this call must not touch it:
+    /// neither clear its ownership nor close it, and the caller must not
+    /// wait for it to disappear (it will not).
+    Superseded,
+}
+
+/// Resolve a `RetireClaim` obtained from `claim_retire` by `open_region_
+/// overlay`'s orphan-reclaim branch: unlike `settle_retire_claim`, there is
+/// no live session to compare against — the whole premise of "orphan" is
+/// that `pending_overlay` names no session at all. The only thing to compare
+/// against is `observed_owner`, the exact `overlay_window_owner` value this
+/// branch read BEFORE calling `claim_retire` (never a fresh read taken after
+/// the wait). Clearing/closing is gated on `overlay_window_owner` STILL
+/// holding that exact snapshot at settlement time (C639-007C.13): a
+/// successor session's own window build (which always installs a strictly
+/// newer, freshly-minted session id — ids never repeat, see
+/// `mint_capture_session`) can never match a stale snapshot, so this can
+/// never mistake a brand new live window for the one originally observed,
+/// no matter how long this call ends up waiting on the gate.
+fn settle_orphan_retire_claim(
+    overlay_window_owner: &Mutex<Option<u64>>,
+    observed_owner: Option<u64>,
+    claim: RetireClaim<'_>,
+    do_close: impl FnOnce() -> Result<(), String>,
+) -> Result<OrphanRetireOutcome, String> {
+    match claim {
+        RetireClaim::Won(guard) => {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            let owns = *owner == observed_owner;
+            if owns {
+                *owner = None;
+            }
+            drop(owner);
+            let result = if owns {
+                do_close().map(|_| OrphanRetireOutcome::Closed)
+            } else {
+                Ok(OrphanRetireOutcome::Superseded)
+            };
+            guard.release();
+            result
+        }
+        RetireClaim::Coalesced | RetireClaim::Pending => Ok(OrphanRetireOutcome::DeferredElsewhere),
     }
 }
 
@@ -2662,7 +2722,7 @@ fn retire_owned_overlay_session(
 ) -> Result<(), String> {
     let claim = gate.claim_retire(bound);
     clear_pick_if_current(active_pick, pending_overlay, session_id);
-    settle_retire_claim(overlay_window_owner, Some(session_id), claim, do_close)
+    settle_retire_claim(overlay_window_owner, session_id, claim, do_close)
 }
 
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
@@ -2781,22 +2841,41 @@ fn open_region_overlay(
         // instead of the old ungated, unconditional `close_overlay_window`
         // — means this reclaim can never race that close: if the gate is
         // non-idle, some other in-flight actor already owns ordering it,
-        // and this call does nothing but wait for it below; only a truly
-        // idle gate grants `Won`, at which point there is genuinely no
-        // live restore/retire in flight and an unconditional close (no
-        // session to compare against — this IS the orphan case) is safe.
+        // and this call does nothing but wait for it below.
+        //
+        // C639-007C.13: reaching an idle gate (`Won`) is NOT by itself
+        // proof that an unconditional close is safe — `claim_retire` can
+        // block for up to `OVERLAY_RETIRE_CLAIM_BOUND` behind A's own
+        // in-flight retire, and in that window a whole new opener can run
+        // start-to-finish: observe A's window gone, mint its own session
+        // B, and build a brand new "overlay" window, all before this call
+        // is even granted the slot. Snapshotting `overlay_window_owner`
+        // BEFORE waiting, and binding the close to that exact snapshot via
+        // `settle_orphan_retire_claim`, is what stops this branch from
+        // ever clearing B's ownership or closing B's window just because
+        // it was the one that originally decided "orphan" — B's own,
+        // strictly-newer session id can never match a stale snapshot.
+        let observed_owner = *state.overlay_window_owner.lock().unwrap();
         let claim = state
             .overlay_retire_gate
             .claim_retire(OVERLAY_RETIRE_CLAIM_BOUND);
-        settle_retire_claim(&state.overlay_window_owner, None, claim, || {
+        match settle_orphan_retire_claim(&state.overlay_window_owner, observed_owner, claim, || {
             close_overlay_window(app)
-        })?;
-        if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
-            return Err(
-                "stale overlay window did not close; region pick aborted rather than \
-                 racing a new picker against the old one"
-                    .to_string(),
-            );
+        })? {
+            OrphanRetireOutcome::Superseded => {
+                return Err(
+                    "a region pick is already in progress; cancel it first".to_string(),
+                );
+            }
+            OrphanRetireOutcome::Closed | OrphanRetireOutcome::DeferredElsewhere => {
+                if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
+                    return Err(
+                        "stale overlay window did not close; region pick aborted rather than \
+                         racing a new picker against the old one"
+                            .to_string(),
+                    );
+                }
+            }
         }
     }
     let monitors = current_monitors()?;
@@ -7687,7 +7766,7 @@ mod region_picker_tests {
         // close, release).
         let claim = gate.claim_retire(Duration::from_secs(1));
         clear_pick_if_current(&active_pick, &pending_overlay, 5);
-        settle_retire_claim(&overlay_window_owner, Some(5), claim, || {
+        settle_retire_claim(&overlay_window_owner, 5, claim, || {
             touched.lock().unwrap().push(("close", "A"));
             Ok(())
         })
@@ -7945,6 +8024,132 @@ mod region_picker_tests {
                 RetireClaim::Won(_)
             ),
             "once A's coalesced close has actually finished, the gate must be idle again"
+        );
+    }
+
+    #[test]
+    fn orphan_reclaim_never_closes_or_declaims_a_successor_built_while_it_waited() {
+        // C639-007C.13 freeze test: an opener's orphan-reclaim branch
+        // snapshots `overlay_window_owner` BEFORE calling `claim_retire` —
+        // exactly what `open_region_overlay`'s orphan branch does — because
+        // that call can block for up to `OVERLAY_RETIRE_CLAIM_BOUND` behind
+        // A's own in-flight retire. During that wait, a whole new opener can
+        // run start to finish: observe A's exact close complete, mint its
+        // own session B, and build a brand new "overlay" window, installing
+        // all three of B's bindings (`active_pick`, `pending_overlay`,
+        // `overlay_window_owner`). Once O1 finally wins the now-idle slot,
+        // it must bind its close to the EXACT snapshot it observed before
+        // waiting (`settle_orphan_retire_claim`'s `observed_owner`), not to
+        // whatever `overlay_window_owner` says now — otherwise it tears
+        // down B's live window and erases B's ownership out from under it.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let proceed = Arc::new((Mutex::new(false), Condvar::new()));
+
+        // A holds the retire slot — simulates A's own terminal path, mid
+        // close, with the gate non-idle.
+        let a_claim = match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Won(guard) => guard,
+            _ => panic!("an idle gate must grant A's own retire claim outright"),
+        };
+
+        // O1's orphan check: read `overlay_window_owner` BEFORE waiting —
+        // the exact value the production call site snapshots — then start
+        // waiting on the SAME gate, on its own thread, since A's claim
+        // above makes this block. O1 is deliberately held just past
+        // `claim_retire` (on `proceed`, not yet calling
+        // `settle_orphan_retire_claim`) so the test can install B in the
+        // gap between A's release and O1's actual settlement — the exact
+        // gap the bug lived in.
+        let observed_owner = *overlay_window_owner.lock().unwrap();
+        let gate_for_o1 = gate.clone();
+        let owner_for_o1 = overlay_window_owner.clone();
+        let touched_for_o1 = touched.clone();
+        let proceed_for_o1 = proceed.clone();
+        let o1 = std::thread::spawn(move || {
+            touched_for_o1.lock().unwrap().push("o1_waiting");
+            let claim = gate_for_o1.claim_retire(Duration::from_secs(5));
+            touched_for_o1.lock().unwrap().push("o1_won");
+            let (lock, cv) = &*proceed_for_o1;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cv.wait(go).unwrap();
+            }
+            drop(go);
+            settle_orphan_retire_claim(&owner_for_o1, observed_owner, claim, || {
+                touched_for_o1.lock().unwrap().push("o1_closed_something");
+                Ok(())
+            })
+        });
+
+        // Wait for O1 to actually be blocked waiting on the gate before A
+        // releases it.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_waiting" {
+            std::thread::yield_now();
+        }
+
+        // A's own close finishes: its bookkeeping compare-and-clears the
+        // owner it actually held (mirrors `settle_retire_claim`'s own
+        // clear-before-close-before-release ordering), then releases the
+        // slot — exactly like A's completed retire in the real race.
+        *overlay_window_owner.lock().unwrap() = None;
+        a_claim.release();
+
+        // O1 wakes, wins the now-idle slot, and immediately blocks on
+        // `proceed` — strictly before it has called
+        // `settle_orphan_retire_claim`.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_won" {
+            std::thread::yield_now();
+        }
+
+        // B is admitted and builds its own window here — strictly between
+        // O1 winning the slot and O1 being allowed to settle — installing
+        // all three of its own bindings, exactly like the real build path.
+        *active_pick.lock().unwrap() = Some(9u64);
+        *pending_overlay.lock().unwrap() = Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 9;
+            ctx
+        });
+        *overlay_window_owner.lock().unwrap() = Some(9u64);
+
+        {
+            let (lock, cv) = &*proceed;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let result = o1.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(OrphanRetireOutcome::Superseded)),
+            "O1 must report Superseded once its snapshot no longer matches the live owner, \
+             not an error and not Closed"
+        );
+        assert!(
+            !touched.lock().unwrap().contains(&"o1_closed_something"),
+            "O1 must never invoke its own close once a successor has been installed"
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(9),
+            "B's active_pick binding must remain byte-for-byte intact"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(9),
+            "B's pending_overlay binding must remain byte-for-byte intact"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(9),
+            "O1 must never clear a successor's ownership it was never entitled to touch"
         );
     }
 
