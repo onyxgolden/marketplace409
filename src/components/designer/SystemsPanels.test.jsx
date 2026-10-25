@@ -28,6 +28,10 @@ function type(el, value) {
   act(() => el.dispatchEvent(new window.Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
 }
 const click = (el) => act(() => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+// SystemsSection starts collapsed; tests that exercise its inner controls
+// open it via the disclosure header first.
+const headerButton = () => q('[data-testid="systems-section"] button[aria-expanded]');
+const expandSystems = () => click(headerButton());
 
 function design() {
   let d = addPipeRun(createEmptyDesign("S"), [{ x: 0, y: 0 }, { x: 60, y: 0 }], { id: "l1" });
@@ -36,8 +40,34 @@ function design() {
 }
 
 describe("SystemsSection", () => {
+  it("starts collapsed: header shows the count, body (list + New System form) renders only when expanded", () => {
+    render(<SystemsSection design={design()} dispatch={dispatch} />);
+    const header = headerButton();
+    expect(header).not.toBeNull();
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(header.textContent).toMatch(/Systems \(1\)/);
+    // Collapsed: no explainer, no system rows, no New System form.
+    expect(container.textContent).not.toMatch(/Group pipes and equipment/);
+    expect(q('[aria-label="Color of Steam"]')).toBeNull();
+    expect(q('[aria-label="New system name"]')).toBeNull();
+    expect(q('form[aria-label="New system"]')).toBeNull();
+    // Expand: the aria-controls target mounts with the list and the form.
+    expandSystems();
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(q(`#${header.getAttribute("aria-controls")}`)).not.toBeNull();
+    expect(container.textContent).toMatch(/Group pipes and equipment/);
+    expect(q('[aria-label="Color of Steam"]')).not.toBeNull();
+    expect(q('[aria-label="New system name"]')).not.toBeNull();
+    // Collapse again: body unmounts, header and count stay.
+    click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(q('[aria-label="New system name"]')).toBeNull();
+    expect(header.textContent).toMatch(/Systems \(1\)/);
+  });
+
   it("adds a system with a palette color, and refuses a duplicate name", () => {
     render(<SystemsSection design={design()} dispatch={dispatch} />);
+    expandSystems();
     const name = q('[aria-label="New system name"]');
     type(name, "steam");
     expect(container.textContent).toMatch(/already exists/);
@@ -49,6 +79,7 @@ describe("SystemsSection", () => {
 
   it("recolors (coalesced) and deletes a system", () => {
     render(<SystemsSection design={design()} dispatch={dispatch} />);
+    expandSystems();
     type(q('[aria-label="Color of Steam"]'), "#f59e0b");
     expect(dispatch).toHaveBeenCalledWith({ type: "UPDATE_SYSTEM", systemId: "system_1", fields: { color: "#f59e0b" }, coalesce: "system-color:system_1" });
     click(q('[aria-label="Delete system Steam"]'));
