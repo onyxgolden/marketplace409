@@ -941,7 +941,10 @@ fn build_mode(
         // generation (see `overlay_orphan_already_attempted`), rather than
         // erasing the only evidence that this generation's destruction was
         // never actually confirmed.
-        if matches!(settlement, RetireSettlement::Closed) && gone {
+        if should_clear_overlay_handle_after_close(
+            matches!(settlement, RetireSettlement::Closed),
+            gone,
+        ) {
             clear_overlay_window_handle_if(&state.overlay_window_handle, overlay.session_id);
         }
         must_abort_capture_if_overlay_present(!gone)?;
@@ -3228,8 +3231,15 @@ fn open_region_overlay(
         // call is the one that actually issued the close — a
         // `DeferredElsewhere` settlement means some other in-flight actor
         // owns that clear instead.
-        if matches!(settlement, Ok(RetireSettlement::Closed)) {
-            wait_for_overlay_gone(app, Duration::from_millis(1500));
+        // C639-007C.17: the wait's result must gate the clear, not just
+        // precede it — on timeout the handle record must survive so the
+        // retained-generation recovery path (C639-007C.16/.17) can retry
+        // this exact handle instead of racing a fresh one onto the shared
+        // label. `gone` is short-circuited on `closed` so this call never
+        // blocks on the wait when some other in-flight actor owns it.
+        let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+        let gone = closed && wait_for_overlay_gone(app, Duration::from_millis(1500));
+        if should_clear_overlay_handle_after_close(closed, gone) {
             clear_overlay_window_handle_if(&state.overlay_window_handle, session_id);
         }
     }
@@ -3600,6 +3610,24 @@ fn wait_for_overlay_gone(app: &tauri::AppHandle, timeout: Duration) -> bool {
     true
 }
 
+/// C639-007C.17: the one shared gating decision every synchronous caller
+/// that blocks on `wait_for_overlay_gone` must use before compare-clearing
+/// `overlay_window_handle` — pulled out of each call site so the decision
+/// itself (not a duplicated copy of it) is what a test exercises, and so a
+/// future call site cannot reintroduce the unconditional-clear regression
+/// this closes. `closed` is whether this call is the one that actually
+/// issued the close (`RetireSettlement::Closed`/`OrphanRetireOutcome::
+/// Closed`, never `DeferredElsewhere` — some other in-flight actor owns
+/// that clear instead); `gone` is the caller's own, separate `wait_for_
+/// overlay_gone` result. A timeout (`gone == false`) must never clear the
+/// record, even when this call issued the close: the record is the only
+/// evidence a later admission attempt has to retry closing this exact
+/// retained generation instead of racing a fresh build onto the shared
+/// label.
+fn should_clear_overlay_handle_after_close(closed: bool, gone: bool) -> bool {
+    closed && gone
+}
+
 /// C639-007C.16: the non-blocking counterpart to waiting on `wait_for_
 /// overlay_gone` inline — for call sites that issued `do_close` (got back
 /// `RetireSettlement::Closed`/`OrphanRetireOutcome::Closed`) but must not
@@ -3954,10 +3982,12 @@ fn spawn_overlay_watchdog(app: tauri::AppHandle, session_id: u64) {
             // this watchdog is the one that actually issued the close AND
             // that wait actually confirms destruction — a timeout must
             // retain the record for a later admission attempt to find and
-            // retry, not erase it.
-            if matches!(settlement, Ok(RetireSettlement::Closed))
-                && wait_for_overlay_gone(&app, Duration::from_millis(1500))
-            {
+            // retry, not erase it. `gone` is short-circuited on `closed` so
+            // this watchdog never blocks on the wait when some other
+            // in-flight actor owns it.
+            let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+            let gone = closed && wait_for_overlay_gone(&app, Duration::from_millis(1500));
+            if should_clear_overlay_handle_after_close(closed, gone) {
                 clear_overlay_window_handle_if(&state.overlay_window_handle, session_id);
             }
         }
@@ -4619,10 +4649,12 @@ fn retry_region_backdrop_blocking(
         // only clear `overlay_window_handle` if this call is the one that
         // actually issued the close AND that wait actually confirms
         // destruction — a timeout must retain the record for a later
-        // admission attempt to find and retry, not erase it.
-        if matches!(settlement, Ok(RetireSettlement::Closed))
-            && wait_for_overlay_gone(app, Duration::from_millis(1500))
-        {
+        // admission attempt to find and retry, not erase it. `gone` is
+        // short-circuited on `closed` so this call never blocks on the wait
+        // when some other in-flight actor owns it.
+        let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+        let gone = closed && wait_for_overlay_gone(app, Duration::from_millis(1500));
+        if should_clear_overlay_handle_after_close(closed, gone) {
             clear_overlay_window_handle_if(&state.overlay_window_handle, retry_session);
         }
         return Err(format!("could not restore the region picker window: {e}"));
@@ -9341,6 +9373,35 @@ mod region_picker_tests {
         // by touching A's own (already-cleared) record.
         *combined.lock().unwrap() = Some((B_SESSION, B_GENERATION));
         assert_eq!(*combined.lock().unwrap(), Some((B_SESSION, B_GENERATION)));
+    }
+
+    #[test]
+    fn should_clear_overlay_handle_after_close_requires_both_closed_and_gone() {
+        // C639-007C.17: unlike the freeze test above (which models the
+        // decision inline because `wait_for_overlay_gone` needs a live
+        // `tauri::AppHandle` no unit test can construct), this calls the
+        // actual production primitive every one of the five named call
+        // sites now routes through — `open_region_overlay`'s failure
+        // cleanup (the one site the round-19 verdict found still cleared
+        // unconditionally), the watchdog, the retry-restore failure path,
+        // and the two already-correct `settle_retire_claim` sites alike.
+        // A regression at any of those call sites that stopped checking
+        // this function's return value would still be caught here; a
+        // regression inside this function's own logic is what this test
+        // freezes directly.
+        assert!(
+            should_clear_overlay_handle_after_close(true, true),
+            "this call issued the close and confirmed destruction: must clear"
+        );
+        assert!(
+            !should_clear_overlay_handle_after_close(true, false),
+            "a timeout must retain the record so a later admission can retry this exact handle"
+        );
+        assert!(
+            !should_clear_overlay_handle_after_close(false, true),
+            "a DeferredElsewhere settlement means another in-flight actor owns the clear"
+        );
+        assert!(!should_clear_overlay_handle_after_close(false, false));
     }
 
     #[test]
