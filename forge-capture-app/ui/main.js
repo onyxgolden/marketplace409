@@ -707,16 +707,27 @@ async function listenHotkeyEvents() {
   });
 }
 
+// 2026-10-26: this used to construct `new window.__TAURI_INTERNALS__.Channel()`,
+// which never worked — `Channel` is a class shipped in the `@tauri-apps/api`
+// npm package (wrapping `transformCallback`), not a property Tauri's
+// Rust/webview side injects onto raw internals. This app deliberately
+// carries no `@tauri-apps/api` dependency (see the module header), so that
+// property never existed. Verified against `@tauri-apps/api`'s actual
+// `listen()` (tauri-apps/tauri, packages/api/src/event.ts, stable across
+// tauri-v2.1.1 through tauri-v2.9.5): it never passes a Channel instance to
+// `plugin:event|listen` either — it passes the plain numeric id from
+// `transformCallback(handler)` directly as `handler`, and the backend
+// invokes that callback directly with the full `{event, id, payload}`
+// object, matching what `onMessage` here already expects (`msg.payload`).
 async function listenEvent(event, onMessage) {
   try {
     const internals = window.__TAURI_INTERNALS__;
-    if (!internals || typeof internals.Channel !== "function") {
+    if (!internals || typeof internals.transformCallback !== "function") {
       logPhase("channel-unavailable", `event=${event}`);
       return;
     }
     logPhase("channel-ready", `event=${event}`);
-    const channel = new internals.Channel();
-    channel.onmessage = (msg) => {
+    const handlerId = internals.transformCallback((msg) => {
       logPhase("event-received", `event=${event}`);
       try {
         onMessage(msg);
@@ -725,11 +736,11 @@ async function listenEvent(event, onMessage) {
         logPhase("ui-update-attempted", `event=${event} ok=false error=${e}`);
         throw e;
       }
-    };
+    });
     await internals.invoke("plugin:event|listen", {
       event,
       target: { kind: "Any" },
-      handler: channel,
+      handler: handlerId,
     });
     logPhase("listen-registered", `event=${event}`);
   } catch (e) {
