@@ -250,6 +250,7 @@ impl NativeRasterEngine {
 
         // Native capture, one RGBA buffer per monitor piece.
         let mut tiles: Vec<(RectI, Vec<u8>)> = Vec::with_capacity(pieces.len());
+        let mut raw_tiles: Vec<(RectI, Vec<u8>)> = Vec::with_capacity(pieces.len());
         let mut cursor = CursorState {
             captured: false,
             position_physical: None,
@@ -289,18 +290,42 @@ impl NativeRasterEngine {
             if frame.cursor.captured {
                 cursor = frame.cursor.clone();
             }
-            tiles.push((
-                RectI {
-                    x: rect.x - min_x,
-                    y: rect.y - min_y,
-                    w: rect.w,
-                    h: rect.h,
-                },
-                frame.rgba,
-            ));
+            let tile_rect = RectI {
+                x: rect.x - min_x,
+                y: rect.y - min_y,
+                w: rect.w,
+                h: rect.h,
+            };
+            // C639-005: keep the raw pre-cursor pixels alongside the final
+            // tile so the blank-frame check evaluates the source, not the
+            // cursor composition.
+            raw_tiles.push((tile_rect, frame.raw_rgba));
+            tiles.push((tile_rect, frame.rgba));
         }
 
         let canvas = composite_tiles(canvas_w, canvas_h, &tiles)?;
+        // White-frame diagnosability: a single solid color across the whole
+        // RAW canvas almost always means the native pipeline produced a dead
+        // frame (uninitialized bitmap, BitBlt from the wrong coordinates).
+        // The check runs on the pre-cursor pixels: cursor pixels are not
+        // evidence the desktop content was captured, and would otherwise
+        // defeat the warning on an empty frame. A genuinely solid-color
+        // desktop is legitimate but vanishingly rare — record it as a
+        // warning in the artifact/sidecar rather than failing the capture,
+        // so the preview dialog can surface it. Per-piece blank frames are
+        // still a hard failure inside `native::capture_rect`
+        // (`validate_raw_blit`, pre-cursor) — this is a second, composite-wide
+        // check: a whole-canvas solid color that no single tile's validation
+        // could see.
+        let mut warnings = Vec::new();
+        let raw_canvas = composite_tiles(canvas_w, canvas_h, &raw_tiles)?;
+        if is_solid_color(&raw_canvas) {
+            warnings.push(
+                "captured frame is a single solid color — the capture pipeline \
+                 may have produced a blank frame; verify the saved PNG"
+                    .to_string(),
+            );
+        }
         let png_bytes = png::encode_rgba(canvas_w, canvas_h, &canvas)
             .map_err(|e| CaptureError::EncodeFailed(e.to_string()))?;
 
@@ -325,7 +350,25 @@ impl NativeRasterEngine {
             captured_at,
             if delay_ms > 0 { Some(delay_ms) } else { None },
         )
+        .map(|a| a.with_warnings(warnings))
         .map_err(|e| CaptureError::EncodeFailed(e.to_string()))
+    }
+}
+
+/// A real screen capture is never a single uniform color across the whole
+/// composited canvas (see `native::is_uniform_rgba` for the equivalent
+/// per-piece check): record it as a non-fatal warning rather than a hard
+/// failure, since a multi-tile composite can look uniform for legitimate
+/// reasons a single tile's own validation can't rule out. Pure and
+/// platform-independent.
+fn is_solid_color(rgba: &[u8]) -> bool {
+    if rgba.is_empty() || rgba.len() % 4 != 0 {
+        return false;
+    }
+    let (chunks, _remainder) = rgba.as_chunks::<4>();
+    match chunks.split_first() {
+        None => false,
+        Some((first, rest)) => rest.iter().all(|px| px == first),
     }
 }
 
@@ -465,6 +508,7 @@ mod tests {
             origin_virtual: (0, 0),
             size_logical: (800, 600),
             scale: 1.0,
+            size_physical: (800, 600),
         }]
     }
 
@@ -767,5 +811,47 @@ mod tests {
         let mut dom = DomAwareScrollEngine;
         let r = dom.acquire_scroll(&region_req, &monitors());
         assert!(r.describe().contains("window target"));
+    }
+
+    // C639-005 regression: the blank-frame warning must be evaluated on the
+    // RAW pre-cursor pixels. A uniform source with a visible nonuniform
+    // cursor is still an empty capture and must warn; cursor pixels are not
+    // evidence the desktop content was captured.
+    fn solid_frame(w: u32, h: u32, px: [u8; 4]) -> Vec<u8> {
+        px.repeat((w * h) as usize)
+    }
+
+    #[test]
+    fn solid_color_detects_uniform_raw_frame() {
+        let raw = solid_frame(4, 4, [255, 255, 255, 255]);
+        assert!(is_solid_color(&raw));
+    }
+
+    #[test]
+    fn solid_color_ignores_cursor_pixels_on_raw_check() {
+        // Raw source: uniform white. Final frame: same white with a black
+        // cursor pixel composited in. The warning decision uses the raw
+        // buffer, so it still fires.
+        let raw = solid_frame(4, 4, [255, 255, 255, 255]);
+        let mut final_frame = raw.clone();
+        final_frame[0..4].copy_from_slice(&[0, 0, 0, 255]); // cursor pixel
+        assert!(is_solid_color(&raw));
+        assert!(!is_solid_color(&final_frame));
+        // The engine checks `raw`, not `final_frame`: warning retained.
+    }
+
+    #[test]
+    fn solid_color_does_not_warn_on_genuine_content() {
+        // Nonuniform raw source: no warning, cursor or not.
+        let mut raw = solid_frame(4, 4, [255, 255, 255, 255]);
+        raw[0..4].copy_from_slice(&[255, 0, 0, 255]); // real content pixel
+        assert!(!is_solid_color(&raw));
+    }
+
+    #[test]
+    fn solid_color_rejects_degenerate_buffers() {
+        assert!(!is_solid_color(&[]));
+        assert!(!is_solid_color(&[255, 255, 255])); // not a whole pixel
+        assert!(!is_solid_color(&[255, 255, 255, 255, 0])); // not % 4
     }
 }

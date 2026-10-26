@@ -1162,7 +1162,7 @@ fn monitor_scale_for_target(req: &ScrollRequest, monitors: &[Monitor]) -> f64 {
         .and_then(|(x, y)| {
             monitors.iter().find(|m| {
                 let (ox, oy) = m.origin_virtual;
-                let (pw, ph) = m.size_physical();
+                let (pw, ph) = m.size_physical;
                 x >= ox as i64
                     && y >= oy as i64
                     && x < ox as i64 + pw as i64
@@ -1187,7 +1187,7 @@ fn target_provenance(
                     .iter()
                     .find(|m| {
                         let (ox, oy) = m.origin_virtual;
-                        let (pw, ph) = m.size_physical();
+                        let (pw, ph) = m.size_physical;
                         cx >= ox as i64
                             && cy >= oy as i64
                             && cx < ox as i64 + pw as i64
@@ -1834,6 +1834,7 @@ mod tests {
                 origin_virtual: (0, 0),
                 size_logical: (800, 600),
                 scale: 1.0,
+                size_physical: (800, 600),
             },
             Monitor {
                 id: "m1".into(),
@@ -1841,6 +1842,7 @@ mod tests {
                 origin_virtual: (800, 0),
                 size_logical: (800, 600),
                 scale: 2.0,
+                size_physical: (1600, 1200),
             },
         ]
     }

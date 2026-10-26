@@ -141,6 +141,8 @@ pub struct CaptureArtifact {
     pub delay_ms: Option<u64>,
     /// Scrolling provenance (Rung 2b). `None` for single-frame captures.
     pub scroll_info: Option<ScrollSection>,
+    /// Non-fatal capture warnings (e.g. solid-color frame). Empty normally.
+    pub warnings: Vec<String>,
 }
 
 /// Scrolling provenance carried by [`CaptureKind::Scrolling`] artifacts and
@@ -339,6 +341,7 @@ impl CaptureArtifact {
             captured_at,
             delay_ms,
             scroll_info: None,
+            warnings: Vec::new(),
         })
     }
 
@@ -346,6 +349,12 @@ impl CaptureArtifact {
     /// call sites are untouched.
     pub fn with_scroll_info(mut self, info: ScrollSection) -> Self {
         self.scroll_info = Some(info);
+        self
+    }
+
+    /// Attach non-fatal capture warnings. Builder-style.
+    pub fn with_warnings(mut self, warnings: Vec<String>) -> Self {
+        self.warnings = warnings;
         self
     }
 
@@ -381,6 +390,7 @@ impl CaptureArtifact {
             captured_at: self.captured_at.clone(),
             delay_ms: self.delay_ms,
             scroll: self.scroll_info.clone(),
+            warnings: self.warnings.clone(),
         };
         serde_json::to_string(&sidecar).map_err(|e| ArtifactError::Json(e.to_string()))
     }
@@ -408,6 +418,11 @@ pub struct Sidecar {
     /// the Rung 1 editor ignores it (provenance only, never trusted).
     #[serde(default)]
     pub scroll: Option<ScrollSection>,
+    /// Non-fatal capture warnings (e.g. "frame is a single solid color —
+    /// the capture pipeline may have produced a blank frame"). Optional so
+    /// older sidecars keep parsing; the preview dialog surfaces these.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -482,6 +497,7 @@ mod tests {
             origin_virtual: (0, 0),
             size_logical: (1920, 1080),
             scale: 1.0,
+            size_physical: (1920, 1080),
         }
     }
 

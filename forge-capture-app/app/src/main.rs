@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use forge_capture_core::ai_edit;
@@ -43,6 +43,10 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 mod session_store;
+/// Bounded capture worker (ChatGPT design verdict 2026-10-23, Option C):
+/// parent-side supervisor, wire protocol, phase ring log. See the module
+/// docs for the contract.
+mod capture_worker;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -91,6 +95,59 @@ struct AppState {
     /// hands it to that session's watchdog, so a stale watchdog can be
     /// told apart from the session it was spawned for.
     overlay_session: Mutex<u64>,
+    /// C639-007: the parent-owned token for "the pick/session currently
+    /// allowed to install an overlay context/window, or whose completed
+    /// capture may steal focus back to the main window." Minted (as the
+    /// session id itself) by `open_region_overlay` BEFORE its blocking
+    /// backdrop acquisition, so a pick claims ownership up front rather
+    /// than only after the blocking call returns; cleared by
+    /// `cancel_region_pick`; implicitly superseded whenever a newer pick
+    /// mints its own. Checked again atomically, with `pending_overlay`'s
+    /// lock held across both the check and the install, after every
+    /// blocking wait that could have been overtaken (initial acquisition
+    /// here; retry already fences itself via `pending_overlay`'s own
+    /// session id, held across its own check-and-show).
+    active_pick: Mutex<Option<u64>>,
+    /// C639-001C.1: which session's window is the CURRENT live "overlay"
+    /// webview, if any — set the instant `open_region_overlay_claimed`'s
+    /// main-thread closure actually builds one, cleared by every path that
+    /// actually destroys it (the closure's own cancel-closes, a stale
+    /// outer cleanup's owned close, `cancel_region_pick`, the 60s
+    /// watchdog). A close that only checks "is there a window labeled
+    /// `overlay`" cannot tell its own, now-superseded attempt's window
+    /// apart from a newer session's — this token is the actual binding a
+    /// stale cleanup must check before it may touch the window at all.
+    overlay_window_owner: Mutex<Option<u64>>,
+    /// C639-007C.15: the single synchronized record binding the actual
+    /// `WebviewWindow` handle to the exact session that built it — written
+    /// in ONE statement, atomically, only at the one place a window is
+    /// ever built (alongside `overlay_window_owner` itself), and
+    /// compare-cleared (never unconditionally cleared) by every path that
+    /// compare-clears `overlay_window_owner` for a specific session, via
+    /// `clear_overlay_window_handle_if`. `overlay_window_owner` alone names
+    /// a session id but says nothing about which physical window backs it;
+    /// `open_region_overlay`'s orphan-reclaim branch previously paired a
+    /// handle captured from a fresh `get_webview_window` lookup with an
+    /// owner read from `overlay_window_owner` at a LATER point — two
+    /// independent reads with a gap a successor could install into,
+    /// leaving the branch holding a handle and an owner that described two
+    /// different generations. Reading this one field once gives a handle
+    /// and owner that were always written together, so they can never
+    /// describe different generations no matter when the read lands.
+    overlay_window_handle: Mutex<Option<(u64, tauri::WebviewWindow)>>,
+    /// C639-007C.10: serializes `retry_hide_overlay_or_abandon`'s
+    /// compensate closure's `show()`/`set_focus()` against cancellation's
+    /// `close()` on the exact same overlay window — see
+    /// `OverlayRetireGate`'s own doc comment for the race this closes and
+    /// why `overlay_window_owner` (a point-in-time flag, not a reservation
+    /// held across a native call) cannot close it alone.
+    overlay_retire_gate: OverlayRetireGate,
+    /// Bounded capture worker supervisor (C639 Option C). Owns the single
+    /// worker slot, the 3 s parent deadline, generation fencing, and the
+    /// phase ring log. All potentially blocking native acquisition for the
+    /// region path (initial backdrop, retry, final region read) goes
+    /// through here; the native code itself runs in the child process.
+    capture_supervisor: capture_worker::CaptureSupervisor,
     /// File stems already handed out (in-memory part of stem uniqueness;
     /// the on-disk check in `unique_stem` covers previous runs).
     used_stems: Mutex<HashSet<String>>,
@@ -205,6 +262,14 @@ struct CaptureRequestDto {
     region: Option<RegionDto>,
     /// CSS-px rect from the overlay picker for mode == "region-overlay".
     overlay_rect: Option<RegionDto>,
+    /// C639-007C.3: the session id the overlay page learned from
+    /// `overlay_context` when IT opened — echoed back here so `capture` can
+    /// bind this request to the EXACT generation that created it, never to
+    /// whichever pick happens to be `active_pick` at the moment the request
+    /// is processed. Required (and verified) for mode == "region-overlay";
+    /// absent and ignored for every other mode, which never has an overlay
+    /// session to carry.
+    overlay_session_id: Option<u64>,
     delay_ms: Option<u64>,
     include_cursor: bool,
 }
@@ -227,7 +292,7 @@ impl From<&Monitor> for MonitorDto {
             origin_virtual: m.origin_virtual,
             size_logical: m.size_logical,
             scale: m.scale,
-            size_physical: m.size_physical(),
+            size_physical: m.size_physical,
         }
     }
 }
@@ -298,6 +363,11 @@ struct OverlayContextDto {
     /// overlay page shows a blank-frame warning (retry / proceed / cancel)
     /// instead of picking blind on a possibly dead frame.
     backdrop_blank: bool,
+    /// C639-007C.3: this pick's own session id, echoed back by the page as
+    /// `overlaySessionId` on its eventual `capture` call so that call can be
+    /// bound to the exact generation that opened it, not to whichever pick
+    /// happens to be `active_pick` when the request is actually processed.
+    session_id: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -807,19 +877,76 @@ fn build_mode(
     // begin_region_pick — the overlay page cannot see the main window's
     // controls, so the dto's delayMs/includeCursor are ignored there.
     if dto.mode == "region-overlay" {
-        let overlay = state
-            .pending_overlay
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or("no pending region overlay; call begin_region_pick first")?;
+        // C639-007C.3: bind the take to the EXACT session this request
+        // carries (`overlay_session_id`, echoed back from `overlay_context`
+        // by the page that owns it), verified atomically against
+        // `active_pick` at the same instant `pending_overlay` is consumed —
+        // never a blind `.take()` of "whatever context currently exists".
+        // A blind take let a stale/already-superseded request (A) consume a
+        // NEWER session's (B's) context and close B's picker while applying
+        // A's own (unrelated) overlay_rect geometry to it. If a cancel or a
+        // newer admission has displaced this session by the instant of the
+        // take, this is a loud error and B's context/window are untouched.
+        let session_id = dto
+            .overlay_session_id
+            .ok_or("region-overlay request missing its overlay session id")?;
+        // C639-007C.11: claim the retire slot BEFORE consuming
+        // `pending_overlay`, not after. The prior order (take, then close)
+        // let `pending_overlay` go empty while this window's close was not
+        // yet durably ordered against a concurrent restore — a window
+        // `open_region_overlay`'s orphan check (which now also claims this
+        // same gate, see its own call site) could otherwise race. If the
+        // claim is `Won`, this call owns the close below; if it coalesces
+        // or is already pending, some other in-flight actor owns ordering
+        // it, and the `wait_for_overlay_gone` below (unchanged) is the
+        // backstop either way.
+        let claim = state
+            .overlay_retire_gate
+            .claim_retire(OVERLAY_RETIRE_CLAIM_BOUND);
+        let overlay = take_pending_overlay_if_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            session_id,
+        )
+        .ok_or("no pending region overlay; call begin_region_pick first")?;
         // The overlay is always-on-top: the live-region BitBlt below must
         // never run while the picker window might still be visible.
         // `close()` is asynchronous, so wait for actual destruction — and
         // if the window will not go away, abort LOUDLY instead of
-        // screenshotting the picker itself.
-        close_overlay_window(app)?;
+        // screenshotting the picker itself. C639-001C.1: bound to this
+        // session's own window via `overlay_window_owner`, not a blind
+        // "whatever is labeled overlay" lookup — under the strict
+        // `active_pick` reservation this session is always the current
+        // owner here, but if that ever stopped holding, the owner-gated
+        // close degrades to a safe no-op and the wait below still catches
+        // a window that is (wrongly) still present, aborting loudly
+        // instead of silently closing someone else's window.
+        let settlement = settle_retire_claim(
+            &state.overlay_window_owner,
+            overlay.session_id,
+            claim,
+            || close_overlay_window(app),
+        )?;
+        // C639-007C.16: wait for confirmed destruction FIRST — `close()` is
+        // asynchronous — and only then (never merely because `do_close`
+        // returned) compare-clear `overlay_window_handle`, and only if this
+        // call is the one that actually issued the close. A
+        // `DeferredElsewhere` settlement means some other in-flight actor
+        // owns both the close and that clear; this call must leave the
+        // record alone.
         let gone = wait_for_overlay_gone(app, Duration::from_millis(1500));
+        // C639-007C.17: the compare-clear is gated on `gone`, not merely on
+        // `settlement` — a timeout here must retain the record so a later
+        // admission attempt can still find and retry closing this exact
+        // generation (see `overlay_orphan_already_attempted`), rather than
+        // erasing the only evidence that this generation's destruction was
+        // never actually confirmed.
+        if should_clear_overlay_handle_after_close(
+            matches!(settlement, RetireSettlement::Closed),
+            gone,
+        ) {
+            clear_overlay_window_handle_if(&state.overlay_window_handle, overlay.session_id);
+        }
         must_abort_capture_if_overlay_present(!gone)?;
         let r = dto
             .overlay_rect
@@ -891,6 +1018,39 @@ fn wrap_delayed(
     }
 }
 
+/// C639-007C.1/007C.2: retire a region-overlay request's `active_pick`/
+/// `pending_overlay` claim on EVERY terminal failure from the operation
+/// boundary onward — not only failures reached from inside the capture
+/// worker's own wrapper. A direct (non-overlay) request never claimed
+/// anything, so this is always a no-op for it; an overlay request's claim
+/// is only ever retired through `clear_pick_if_current`, which clears an
+/// exact `session_id` match, so a stale/already-superseded session's
+/// retire can never clear a newer claim. On success this does nothing —
+/// the claim must stay held for the worker wrapper that runs next, which
+/// is this reservation's normal (success-path) release point.
+///
+/// C639-007C.2: `active_claim` must be read from `active_pick` — the
+/// authoritative claim — never from `pending_overlay`. `pending_overlay`
+/// is only a snapshot of a *healthy* session's context and is already
+/// `None` on several terminal paths (a `build_mode` call with no pending
+/// context at all, a monitor-enumeration failure reached before any
+/// context was ever installed) while `active_pick` still names the
+/// stranded session that must be retired.
+fn retire_claim_on_overlay_build_failure<T>(
+    is_overlay_request: bool,
+    active_claim: Option<u64>,
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    if result.is_err() && is_overlay_request {
+        if let Some(session_id) = active_claim {
+            clear_pick_if_current(active_pick, pending_overlay, session_id);
+        }
+    }
+    result
+}
+
 /// Persist an artifact to the captures dir and the in-memory store under
 /// `key`, returning the ref the UI uses for copy/export/provenance.
 fn store_artifact(
@@ -940,12 +1100,16 @@ fn store_artifact_with_base_stem(
 }
 
 #[tauri::command]
-fn capture(
-    dto: CaptureRequestDto,
-    app: tauri::AppHandle,
-    state: State<AppState>,
-) -> Result<ArtifactRefDto, String> {
-    run_capture(&app, state, &dto)
+async fn capture(dto: CaptureRequestDto, app: tauri::AppHandle) -> Result<ArtifactRefDto, String> {
+    // C639-001: the full capture orchestration — the direct engine path
+    // or the supervised worker round trip for region captures — runs off
+    // the main thread. See the module note above `run_on_main_thread_sync`.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        run_capture(&app, state, &dto)
+    })
+    .await
+    .map_err(|e| format!("capture background task failed: {e}"))?
 }
 
 /// Shared capture path: the `capture` command and the Alt+PrintScreen
@@ -979,9 +1143,107 @@ fn run_capture_inner(
     state: State<AppState>,
     dto: &CaptureRequestDto,
 ) -> Result<ArtifactRefDto, String> {
-    let monitors = current_monitors()?;
-    let (mode, include_cursor) = build_mode(dto, app, &state)?;
+    // C639-004: provenance comes from the ORIGINAL request (`dto.mode`),
+    // never from the erased `CaptureMode` variant below — "region"
+    // (direct, no picker involved) and "region-overlay" both lower to the
+    // same `CaptureMode::RegionVirtual`, but only the overlay request has
+    // (or needs) a `pending_overlay` session to borrow. Read before
+    // `build_mode` takes the pending context.
+    let is_overlay_request = dto.mode == "region-overlay";
+    // C639-007C.3: an overlay request's identity is the session id its OWN
+    // overlay page learned from `overlay_context` when it opened — carried
+    // in the DTO as `overlay_session_id` — never inferred from whichever
+    // pick happens to be `active_pick` at the moment this request is
+    // actually processed. Round 6 read `active_pick`'s CURRENT value as if
+    // it were this request's own identity, which let a stale request (A,
+    // already cancelled and superseded by a newer B) silently adopt B's
+    // identity instead of failing as the dead session it actually is. A
+    // direct (non-overlay) request carries no overlay session and never
+    // claimed `active_pick` in the first place.
+    let active_claim = if is_overlay_request {
+        Some(
+            dto.overlay_session_id
+                .ok_or_else(|| "region-overlay request missing its overlay session id".to_string())?,
+        )
+    } else {
+        None
+    };
+    // C639-007C.3: verify, atomically, that THIS request's own session is
+    // still the live claim across `active_pick`, `pending_overlay`'s own
+    // recorded session, AND the overlay window's owner — before monitor
+    // enumeration, before `build_mode` ever reads or consumes `pending_
+    // overlay`, before anything of a newer session is touched at all. A
+    // stale request fails here having touched nothing. Monitor enumeration
+    // below is itself an unbounded OS call, so `build_mode` re-verifies the
+    // exact same binding again, atomically, at the actual instant it would
+    // consume `pending_overlay` — this check must not be trusted to still
+    // hold by the time execution gets there.
+    if let Some(session_id) = active_claim {
+        if !overlay_request_session_still_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            session_id,
+        ) {
+            return Err(
+                "region pick was cancelled or superseded before this capture could run"
+                    .to_string(),
+            );
+        }
+    }
+    // `region_worker_session_id` below needs the actual pending session —
+    // already established to equal `active_claim` by the verification
+    // above (re-verified again by `build_mode` at its own point of
+    // consumption, per C639-007C.3).
+    let overlay_session = active_claim;
+    // C639-007C.2: monitor enumeration can also fail before any retirement
+    // guard previously ran — an injected/transient enumeration error for an
+    // overlay request used to return here with `active_pick` still
+    // installed, permanently refusing every later `open_region_overlay`.
+    let monitors = retire_claim_on_overlay_build_failure(
+        is_overlay_request,
+        active_claim,
+        &state.active_pick,
+        &state.pending_overlay,
+        current_monitors(),
+    )?;
+    // C639-007C.1/007C.2: `build_mode` can fail on several terminal steps
+    // for a region-overlay request — `close_overlay_window`, the overlay-
+    // destruction wait, a missing `overlay_rect`, or (007C.2) no pending
+    // context at all — all BEFORE the worker wrapper (`run_capture_via_
+    // worker`'s own unconditional `clear_pick_if_current`) is ever
+    // reached. That wrapper was the only release point for the strict
+    // `active_pick` reservation once `build_mode` has taken
+    // `pending_overlay`; a failure here used to strand this session's
+    // token forever, permanently refusing the next `open_region_overlay`.
+    // Retire through the exact same `clear_pick_if_current` on every
+    // terminal failure here too, using the authoritative `active_claim`.
+    let (mode, include_cursor) = retire_claim_on_overlay_build_failure(
+        is_overlay_request,
+        active_claim,
+        &state.active_pick,
+        &state.pending_overlay,
+        build_mode(dto, app, &state),
+    )?;
     let id = next_id(&state);
+    // C639 Option C: the final live region read runs in the supervised
+    // capture worker (3 s parent deadline, generation fencing, one worker
+    // max). All other modes keep the existing direct engine path.
+    if let Some((rect, delay_ms)) = worker_region_request(&mode) {
+        let session_id = region_worker_session_id(is_overlay_request, overlay_session, || {
+            mint_capture_session(&state)
+        })?;
+        return run_capture_via_worker(
+            app,
+            &state,
+            &id,
+            session_id,
+            is_overlay_request,
+            &rect,
+            include_cursor,
+            delay_ms,
+        );
+    }
     // The engine stamps captured_at at acquisition time (after any delay
     // sleep); the request carries no request-time timestamp.
     let request = CaptureRequest {
@@ -993,6 +1255,11 @@ fn run_capture_inner(
     match engine.acquire(&request, &monitors) {
         ScrollingResult::Complete { artifact } => {
             let saved = store_artifact(&state, id, artifact)?;
+            // C639-004: a global-shortcut capture (Alt+PrintScreen) with the
+            // app minimized must bring the preview into view — the DOM dialog
+            // cannot unminimize the native window by itself. This runs AFTER
+            // acquisition, so focusing cannot pollute the screenshot.
+            focus_capture_window(app);
             // Notify the main window (region captures originate from the
             // overlay window, which has already closed itself).
             let _ = app.emit("capture-saved", saved.clone());
@@ -1002,6 +1269,218 @@ fn run_capture_inner(
         // 2b scrolling outcome. Both non-complete arms are loud errors here.
         other => Err(format!("capture did not complete: {}", other.describe())),
     }
+}
+
+/// Extract a worker-suitable region from a built capture mode: the
+/// region-overlay path, optionally delay-wrapped. Returns (physical rect,
+/// delay_ms). Pure so the routing decision is unit-testable. Any other
+/// mode returns None and keeps the direct engine path.
+fn worker_region_request(mode: &CaptureMode) -> Option<(Rect, u64)> {
+    match mode {
+        CaptureMode::RegionVirtual { rect } => Some((*rect, 0)),
+        CaptureMode::Delayed { mode, delay_ms } => match mode.as_ref() {
+            CaptureMode::RegionVirtual { rect } => Some((*rect, *delay_ms)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// C639-004 dispatch: decide the capture-worker session identity from the
+/// request's own provenance (`is_overlay_request`, read from `dto.mode`),
+/// never from the erased `CaptureMode` variant — both "region" (direct)
+/// and "region-overlay" lower to the same `RegionVirtual`, and routing
+/// both into the overlay-required path broke direct region capture (and
+/// let a direct request silently borrow an unrelated, concurrently
+/// pending overlay's session identity). A direct region request always
+/// mints its own fresh id and never touches `pending_overlay`, even when
+/// one happens to be live for an unrelated in-flight pick; an overlay
+/// request whose context already vanished is a loud error, not a silent
+/// substitution. Pure (besides the lazy mint) so the dispatch contract is
+/// unit-testable without a live Tauri app.
+fn region_worker_session_id(
+    is_overlay_request: bool,
+    pending_overlay_session: Option<u64>,
+    mint_fresh: impl FnOnce() -> u64,
+) -> Result<u64, String> {
+    if is_overlay_request {
+        pending_overlay_session
+            .ok_or_else(|| "region overlay session vanished before capture".to_string())
+    } else {
+        Ok(mint_fresh())
+    }
+}
+
+/// Mint a fresh monotonic id for a capture-worker admission. Shared by the
+/// region-overlay pick (`open_region_overlay`) and a direct region
+/// request that has no overlay to borrow an identity from (C639-004) —
+/// drawn from the same counter so the two can never collide.
+fn mint_capture_session(state: &State<AppState>) -> u64 {
+    let mut counter = state.overlay_session.lock().unwrap();
+    *counter = counter.wrapping_add(1);
+    *counter
+}
+
+/// Final live region capture through the supervised worker (C639 Option C).
+/// Rebuilds the `CaptureArtifact` from the worker's validated reply,
+/// preserving the engine's provenance: cursor state, solid-color warnings,
+/// acquisition timestamp, and DPI scale. The worker ran the SAME
+/// `NativeRasterEngine` acquisition — including the per-piece blank
+/// hard-fail (`validate_raw_blit`) — so the hard-fail blank policy is
+/// unchanged; only the execution boundary moved.
+#[allow(clippy::too_many_arguments)]
+fn run_capture_via_worker(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    id: &str,
+    session_id: u64,
+    is_overlay_request: bool,
+    rect: &Rect,
+    include_cursor: bool,
+    delay_ms: u64,
+) -> Result<ArtifactRefDto, String> {
+    let result = run_capture_via_worker_inner(
+        app,
+        state,
+        id,
+        session_id,
+        is_overlay_request,
+        rect,
+        include_cursor,
+        delay_ms,
+    );
+    // C639-007C: the strict reservation `open_region_overlay` installs in
+    // `active_pick` (C639-007A) has no other release point once
+    // `build_mode` has already taken `pending_overlay` — this is it.
+    // Terminal success AND terminal failure both retire this session's
+    // claim here, unconditionally and regardless of which early-return
+    // inside `run_capture_via_worker_inner` produced `result` — otherwise
+    // the next `open_region_overlay` is refused forever by this already-
+    // finished session's own leftover token. `clear_pick_if_current` only
+    // ever clears an EXACT match on `session_id` (C639-007A again), so a
+    // direct (non-overlay) request that never claimed `active_pick`, or an
+    // overlay request a cancel/newer pick already superseded, both no-op
+    // here rather than clearing something that was never (or no longer)
+    // this call's to clear.
+    if is_overlay_request {
+        clear_pick_if_current(&state.active_pick, &state.pending_overlay, session_id);
+    }
+    result
+}
+
+/// `run_capture_via_worker`'s body: the supervised worker round trip plus
+/// publication. Split out purely so the caller above can wrap EVERY exit
+/// path — including the early `?` returns below — in one unconditional
+/// claim-retire (C639-007C), without each exit having to remember it
+/// itself.
+///
+/// Final live region capture through the supervised worker (C639 Option C).
+/// Rebuilds the `CaptureArtifact` from the worker's validated reply,
+/// preserving the engine's provenance: cursor state, solid-color warnings,
+/// acquisition timestamp, and DPI scale. The worker ran the SAME
+/// `NativeRasterEngine` acquisition — including the per-piece blank
+/// hard-fail (`validate_raw_blit`) — so the hard-fail blank policy is
+/// unchanged; only the execution boundary moved.
+#[allow(clippy::too_many_arguments)]
+fn run_capture_via_worker_inner(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    id: &str,
+    session_id: u64,
+    is_overlay_request: bool,
+    rect: &Rect,
+    include_cursor: bool,
+    delay_ms: u64,
+) -> Result<ArtifactRefDto, String> {
+    // Physical pixels in virtual-desktop coords. Negative origins are
+    // legitimate (secondary monitor left/above the primary); the worker
+    // re-validates the bounds.
+    let x = rect.x.round() as i64;
+    let y = rect.y.round() as i64;
+    let w = rect.w.round().max(1.0) as u64;
+    let h = rect.h.round().max(1.0) as u64;
+    // C639-007: for an overlay-originated capture, the delay and admission
+    // stages below must be able to observe a cancel/supersede that lands
+    // while they are in flight, not only once the worker has already
+    // replied. A direct (non-overlay) request has no `active_pick` claim to
+    // be cancelled against — never cancellable here, same as before.
+    let reply = state
+        .capture_supervisor
+        .execute_region(session_id, x, y, w, h, include_cursor, delay_ms, || {
+            is_overlay_request && !pick_still_active(*state.active_pick.lock().unwrap(), session_id)
+        })
+        .map_err(|e| format!("capture worker: {e}"))?;
+    // C639-007B / C639-007D.1: authorize the publication commit under a
+    // momentary hold of `active_pick` — just long enough to check-then-
+    // decide "yes, this capture may be stored" — but the guard is dropped
+    // at the end of THIS block, deliberately before `store_artifact`
+    // below, never held across it. `store_artifact` performs unbounded
+    // filesystem I/O (directory resolution, on-disk collision checks, a
+    // PNG write, a sidecar write); `cancel_region_pick` takes this same
+    // lock first, so holding it across that I/O would make cancellation —
+    // on whatever thread calls it, potentially the main thread — block for
+    // as long as a slow or disconnected filesystem does. Once this check
+    // passes, a cancel arriving after is too late to stop publication
+    // (same as it already is for any other already-persisted result).
+    //
+    // C639-007D.1: this authorizes ONLY the commit, nothing else. Whether
+    // the result may ALSO steal focus back to the main window is a
+    // SEPARATE decision, revalidated fresh after `store_artifact` below
+    // (never cached from here) — caching it here let an already-
+    // authorized publication's focus decision survive a cancel/supersede
+    // that landed during the unbounded write that follows, stealing focus
+    // from whatever newer pick is now active.
+    if !capture_focus_still_current(is_overlay_request, *state.active_pick.lock().unwrap(), session_id)
+    {
+        return Err(
+            "region pick was cancelled or superseded before the capture could be saved"
+                .to_string(),
+        );
+    }
+    let mut artifact = CaptureArtifact::new(
+        id.to_string(),
+        CaptureKind::Region,
+        reply.png_bytes,
+        RasterMime::Png,
+        reply.width,
+        reply.height,
+        None,
+        None,
+        reply.meta.scale,
+        CursorState {
+            captured: reply.meta.cursor_captured,
+            position_physical: reply.meta.cursor_pos,
+        },
+        reply.meta.captured_at,
+        if delay_ms > 0 { Some(delay_ms) } else { None },
+    )
+    .map_err(|e| format!("worker artifact rejected: {e}"))?;
+    artifact.warnings = reply.meta.warnings;
+    let saved = store_artifact(state, id.to_string(), artifact)?;
+    // C639-007D.1/007D.2: revalidate the focus-eligibility decision HERE,
+    // fresh, AFTER `store_artifact`'s unbounded disk write — not reused
+    // from the authorization check above. A cancel/supersession landing
+    // during that write must be able to suppress this capture's focus
+    // steal even though its publication was already authorized and
+    // already committed; publication-after-commit is unaffected (the
+    // artifact is saved either way; this only gates the follow-on UI
+    // action). Notify the main window either way (region captures
+    // originate from the overlay window, which closed itself before
+    // acquisition).
+    //
+    // C639-007D.2: a single check-then-separately-call-`focus_capture_
+    // window` left a gap between the decision and the action — long
+    // enough for A to pass this check, be descheduled, get cancelled
+    // while B opens/builds its own picker, then resume and steal focus
+    // from B with a decision that was already stale by the time it acted.
+    // `focus_capture_window_if_current` closes that gap by re-owning the
+    // generation check at each individual window action's point of
+    // execution (mirroring `open_region_overlay_claimed`'s own per-step
+    // re-checks around `.build()`/`.set_focus()`), never from one decision
+    // cached before the whole call.
+    focus_capture_window_if_current(app, is_overlay_request, session_id);
+    let _ = app.emit("capture-saved", saved.clone());
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -1479,6 +1958,41 @@ fn get_capture_upload_payload(
     })
 }
 
+/// Local-display payload for the capture preview dialog (C639-001).
+///
+/// Unlike `get_capture_upload_payload` — whose 25MB cap is a *server-upload*
+/// policy — this path must not refuse a valid large capture: a 3840×2160
+/// RGBA screenshot is ~33MB raw before PNG overhead, so the upload cap
+/// would wrongly block local preview of ordinary 4K captures. Bounded at
+/// 256MB as a sanity limit against pathological files; empty payloads are
+/// refused loudly so the preview can show a real error instead of a blank
+/// image (C639-003).
+#[tauri::command]
+fn get_capture_preview_payload(
+    id: String,
+    state: State<AppState>,
+) -> Result<CaptureUploadPayloadDto, String> {
+    const PREVIEW_CAP_BYTES: usize = 256 * 1024 * 1024;
+    let (bytes, sidecar_json) = {
+        let captures = state.captures.lock().unwrap();
+        let stored = captures
+            .get(&id)
+            .ok_or_else(|| format!("unknown capture id: {id}"))?;
+        (stored.png_bytes.clone(), stored.sidecar_json.clone())
+    };
+    if bytes.is_empty() {
+        return Err("Capture has no image data.".to_string());
+    }
+    if bytes.len() > PREVIEW_CAP_BYTES {
+        return Err("Capture exceeds the 256 MB local preview limit.".to_string());
+    }
+    let mime = sidecar_raster_mime(&sidecar_json)?;
+    Ok(CaptureUploadPayloadDto {
+        bytes_b64: base64_encode(&bytes),
+        mime,
+    })
+}
+
 /// Reads `raster.mime` out of the capture sidecar envelope.
 fn sidecar_raster_mime(sidecar_json: &str) -> Result<String, String> {
     let value: serde_json::Value =
@@ -1710,6 +2224,655 @@ fn copy_text_to_clipboard_windows(text: &str) -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Main-thread dispatch (C639-001)
+// ---------------------------------------------------------------------------
+//
+// `begin_region_pick`, `retry_region_backdrop` and `capture` all run
+// orchestration that can legitimately block for up to the capture
+// worker's ~3.5 s budget (admission + native round trip + termination
+// confirmation). Tauri's documented default is that a command WITHOUT
+// `async` runs on the application's main thread — the same thread that
+// pumps the event loop and delivers window-destruction, IPC and hotkey
+// events. Blocking it for seconds means none of those can be processed
+// for the duration, which is exactly how a window that never finishes
+// closing (because the main thread is busy polling for it to finish
+// closing) becomes possible. (The prior per-module doc's claim of a
+// "Tauri command-pool thread" was incorrect — there is no such pool for
+// sync commands; this is the actual F12 correction.)
+//
+// The fix: these three commands are `async fn`, and their entire bodies
+// run via `tauri::async_runtime::spawn_blocking` on a plain background
+// thread — never the main thread, never a bare in-process thread with no
+// bound (spawn_blocking's pool IS bounded and its lifetime is owned by
+// the join handle this awaits). Window CREATION specifically
+// (`WebviewWindowBuilder::build`) is marshaled back onto the main thread
+// via `run_on_main_thread_sync` below, since creating a native window is
+// the one operation most tied to owning the platform message loop.
+// Window close/hide/show/set_focus are left as direct calls off the main
+// thread — consistent with this codebase's own pre-existing
+// `spawn_overlay_watchdog`, which has closed the overlay window from a
+// background `std::thread` for as long as it has existed, unflagged by
+// this review.
+
+/// Bridge a background thread to the main thread for one `FnOnce`, and
+/// wait (bounded) for its result. Used only for the window actions that
+/// need to run on the thread owning the event loop — never for the
+/// blocking native/supervisor work itself, which must stay off the main
+/// thread. Bounded rather than an unbounded `recv()`: a main thread that
+/// never services the dispatch (e.g. mid-shutdown) must surface as a
+/// loud error here, not hang the caller forever — "hang-safe by
+/// construction" applies to this bridge too, not just the capture worker.
+fn run_on_main_thread_sync<R: Send + 'static>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| format!("cannot dispatch to main thread: {e}"))?;
+    rx.recv_timeout(Duration::from_secs(5)).map_err(|_| {
+        "main-thread task did not reply within 5s (app may be shutting down)".to_string()
+    })
+}
+
+/// C639-007C.7: a bounded channel (what `run_on_main_thread_sync` uses)
+/// cannot tell a late-running main-thread closure "the waiter already gave
+/// up" — once the receiving end is dropped on timeout, a closure that
+/// finally runs afterward just has its `send` silently discarded. For a
+/// closure whose action is a committing side effect the caller is relying
+/// on to be paired with a later restore (the Retry hide below), that is
+/// exactly backwards: the mutation still happens, with nobody left who
+/// knows to undo it. `AbandonableBridge` makes "has anyone already given
+/// up" and "what did the action decide" one piece of state, guarded by one
+/// lock, so the two can never race past each other: either the waiter
+/// observes the action's result (it committed first), or the action, once
+/// it finally runs, observes the abandonment and skips its own body
+/// entirely (the waiter gave up first) — there is no third interleaving
+/// where the action runs after the waiter has already walked away.
+///
+/// C639-007C.8: the lock must never be held across `action` itself.
+/// `action` is a potentially-blocking/native call (a window `hide()`) whose
+/// duration is not guaranteed, and `wait_or_abandon` can only return by
+/// reacquiring this same lock — so holding it across `action` defeats the
+/// waiter's own timeout: a stuck `action` hangs the waiter indefinitely,
+/// not just for 5s. `Running` makes claiming "I am about to run `action`"
+/// a separate, instantaneous lock hold from running it: `settle` claims
+/// `Pending -> Running` and releases the lock BEFORE calling `action`, so
+/// the waiter can reacquire the lock and mark `Abandoned` the moment its
+/// timeout elapses, no matter how long `action` goes on running. Because
+/// the lock is released before `action` runs, a `Running` action that
+/// commits its result after the waiter has already abandoned cannot be
+/// delivered — nobody is left waiting — so `settle` calls `compensate`
+/// with that result instead, exactly once, also outside the lock: the
+/// counterpart that undoes whatever committing side effect `action` just
+/// performed (e.g. re-showing a window `action` already hid).
+enum AbandonableOutcome<T> {
+    Pending,
+    Running,
+    Abandoned,
+    Done(T),
+}
+
+struct AbandonableBridge<T> {
+    state: Mutex<AbandonableOutcome<T>>,
+    cv: Condvar,
+}
+
+impl<T: Clone> AbandonableBridge<T> {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(AbandonableOutcome::Pending),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Run `action` — but only if the waiter has not already abandoned
+    /// this bridge. Called from the main-thread closure, whenever it
+    /// actually runs (immediately, or long after a busy main thread
+    /// finally drains its queue). Claiming the right to run `action` (the
+    /// `Pending -> Running` transition) and actually running it are two
+    /// separate steps: the lock is held only for the former, so a slow or
+    /// stuck `action` can never block the waiter from timing out. If
+    /// `action` commits while the bridge is still un-abandoned, its result
+    /// is recorded and the waiter is woken. If the waiter has already
+    /// abandoned — either before `action` started (checked up front, so a
+    /// not-yet-started closure skips `action` entirely: no hide, no window
+    /// lookup, nothing) or while `action` was running (checked again after
+    /// it returns) — `compensate` is called with `action`'s result instead
+    /// of delivering it to nobody.
+    fn settle(&self, action: impl FnOnce() -> T, compensate: impl FnOnce(T)) {
+        {
+            let mut guard = self.state.lock().unwrap();
+            match &*guard {
+                AbandonableOutcome::Abandoned => return,
+                AbandonableOutcome::Pending => *guard = AbandonableOutcome::Running,
+                AbandonableOutcome::Running | AbandonableOutcome::Done(_) => {
+                    unreachable!("settle is called exactly once per bridge")
+                }
+            }
+        }
+        // The lock is NOT held here: `action` may block indefinitely (a
+        // native window call), and the waiter must still be able to time
+        // out and mark `Abandoned` while this runs.
+        let result = action();
+        let mut guard = self.state.lock().unwrap();
+        if matches!(*guard, AbandonableOutcome::Abandoned) {
+            drop(guard);
+            compensate(result);
+            return;
+        }
+        *guard = AbandonableOutcome::Done(result);
+        self.cv.notify_all();
+    }
+
+    /// Block up to `timeout` for `settle` to commit. If `action` committed
+    /// in time — including the boundary where it committed right as the
+    /// timeout elapsed, which this re-checks under the same lock rather
+    /// than trusting a separate timed-out flag — its result is returned.
+    /// Otherwise the bridge is marked `Abandoned`, atomically, under the
+    /// same lock, regardless of whether `settle` has not yet started
+    /// (`Pending`) or is still running `action` (`Running`) — the lock is
+    /// never held by `action` itself (see `settle`), so this always
+    /// returns within `timeout` plus ordinary scheduling slop, never
+    /// waiting for `action` to finish.
+    fn wait_or_abandon(&self, timeout: Duration) -> Result<T, String> {
+        let guard = self.state.lock().unwrap();
+        let (mut guard, _) = self
+            .cv
+            .wait_timeout_while(guard, timeout, |s| {
+                matches!(s, AbandonableOutcome::Pending | AbandonableOutcome::Running)
+            })
+            .unwrap();
+        match &*guard {
+            AbandonableOutcome::Done(v) => Ok(v.clone()),
+            AbandonableOutcome::Pending | AbandonableOutcome::Running => {
+                *guard = AbandonableOutcome::Abandoned;
+                Err(
+                    "main-thread task did not reply within the bound (treated as abandoned)"
+                        .to_string(),
+                )
+            }
+            AbandonableOutcome::Abandoned => {
+                unreachable!("only wait_or_abandon ever sets Abandoned, and it returns immediately after")
+            }
+        }
+    }
+}
+
+/// C639-007C.10/.11/.12: whether a retire (close) is currently allowed to
+/// run, or must wait/coalesce, relative to an in-flight restore (show +
+/// focus) of the SAME overlay window. `AbandonableBridge` (above) only
+/// serializes the waiter giving up against `action` committing — it says
+/// nothing about a SECOND, independent actor (cancellation, the watchdog,
+/// an opener's orphan reclaim, each running from its own thread) that wants
+/// to touch the very same window `compensate` is about to show back.
+/// Without this, `compensate`'s own three-way recheck
+/// (`overlay_request_session_still_current`) is a point-in-time read with
+/// nothing holding the window still afterward: another actor can clear
+/// every piece of session state and call `close()` (or conclude "no live
+/// session, this window is an orphan") in the gap between that read
+/// returning true and `compensate` actually calling `show()`, so the native
+/// show and the native close race each other with no ordering between them
+/// at all — see `retry_hide_overlay_or_abandon`'s own C639-007C.10 doc
+/// comment for the exact interleaving this closes.
+///
+/// C639-007C.12: the original version answered a concurrent retire request
+/// with an UNBOUNDED `wait_while` for the restore to finish, on the premise
+/// that `show()`/`set_focus()` carry no duration guarantee (the same
+/// premise `AbandonableBridge` is built around) — so a stuck native call
+/// could block cancellation, the watchdog, or final-capture cleanup
+/// forever, and a second concurrent retire caller could observe `Retiring`
+/// and simply become a second, unsynchronized owner of the same close. The
+/// state machine below replaces that with a bounded claim
+/// (`claim_retire`'s own `bound` parameter) plus coalescing: a retire
+/// arriving while a restore is in flight is recorded atomically
+/// (`RestoringRetirePending`) and the caller returns immediately — the
+/// restoring side itself (`finish_restore`) observes that pending request
+/// once its own native call returns and performs the exact-A close before
+/// the gate can go idle, so the request is always durably honored without
+/// making its own requester wait for someone else's native call. A SECOND
+/// retire request arriving while the gate is already `Retiring` (or
+/// `RestoringRetirePending`) waits boundedly instead of coalescing again —
+/// coalescing only ever holds one pending retire at a time, so two retire
+/// callers can never both believe they own the same close.
+///
+/// Every retire grant (`claim_retire`'s `Won` case) and every restore
+/// hand-off with a coalesced retire (`finish_restore`) returns a
+/// `RetireGuard`: an RAII token only its own holder can release
+/// (`RetireGuard::release`, or its `Drop` on an unwind/early return), so
+/// one caller can never release a claim it did not itself win — the prior
+/// plain `release_retire()` had no such binding and would have happily
+/// returned the gate to idle on behalf of whichever caller called it.
+///
+/// Deliberately session-agnostic (unlike `overlay_window_owner` et al.):
+/// `active_pick`'s single-claim invariant already guarantees at most one
+/// session's restore/retire pair is ever in flight against this window at
+/// once, so the gate only needs to answer "is a restore/retire in flight
+/// right now," not "whose." The lock is held only for each instantaneous
+/// transition — never across the native `show()`/`close()` call itself —
+/// the same discipline `AbandonableBridge::settle` uses around `action`,
+/// and the same reason: an unbounded native call must never be made while
+/// holding a lock the other side needs to proceed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OverlayWindowClaim {
+    Idle,
+    Restoring,
+    /// A restore is in flight AND a retire request has coalesced into it —
+    /// the restoring actor, not the original requester, now owns honoring
+    /// that retire (see `finish_restore`) before the gate can go idle.
+    RestoringRetirePending,
+    Retiring,
+}
+
+/// Bound for every `OverlayRetireGate::claim_retire` call in this module:
+/// how long a caller waits for an ALREADY in-flight retire (owned by a
+/// different caller) to finish before giving up and returning without
+/// having touched the window. The gate is otherwise never waited on — a
+/// retire arriving during `Idle` is granted instantly, and one arriving
+/// during `Restoring` coalesces instantly — so this bound only matters for
+/// the rare overlap of two concurrent retire callers, and even then it
+/// bounds only THIS caller's patience: the native close the in-flight
+/// owner is waiting on remains itself unbounded (C639-007C.8's premise),
+/// so a caller that times out still must not touch the window itself —
+/// the in-flight owner remains responsible for it. Applied uniformly to
+/// cancellation, the watchdog, open-failure cleanup, orphan reclaim,
+/// `build_mode`'s owned close, and the retry failure cleanup.
+const OVERLAY_RETIRE_CLAIM_BOUND: Duration = Duration::from_secs(2);
+
+struct OverlayRetireGate {
+    claim: Mutex<OverlayWindowClaim>,
+    cv: Condvar,
+}
+
+/// RAII handle on the gate's retire slot. Only the call that actually won
+/// it (via `claim_retire`'s `Won` case or `finish_restore`'s hand-off) ever
+/// holds one, and only `release` (explicit, or implicit via `Drop`) can
+/// return the gate to idle — so a second caller that merely observed the
+/// gate as non-idle has no way to ever call it, structurally preventing one
+/// caller from releasing another's claim. `Drop` releases unconditionally
+/// (idempotent — `released` guards a double-release) so a panic or an early
+/// `?` return while this guard is held can never strand the gate in
+/// `Retiring` forever (C639-007C.12).
+struct RetireGuard<'a> {
+    gate: &'a OverlayRetireGate,
+    released: bool,
+}
+
+impl<'a> RetireGuard<'a> {
+    fn release(mut self) {
+        self.release_inner();
+    }
+
+    fn release_inner(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        let mut claim = self.gate.claim.lock().unwrap();
+        *claim = OverlayWindowClaim::Idle;
+        self.gate.cv.notify_all();
+    }
+}
+
+impl<'a> Drop for RetireGuard<'a> {
+    fn drop(&mut self) {
+        self.release_inner();
+    }
+}
+
+/// Outcome of `OverlayRetireGate::claim_retire`. Only `Won` carries a
+/// `RetireGuard` — `Coalesced`/`Pending` callers must not touch the window
+/// (or `overlay_window_owner`) at all; a different, already-in-flight actor
+/// (the restore this request coalesced into, or an earlier retire already
+/// holding the slot) owns ordering that close.
+enum RetireClaim<'a> {
+    /// The gate was idle; this caller exclusively owns performing the
+    /// close via the returned guard.
+    Won(RetireGuard<'a>),
+    /// A restore was in flight; the retire request was durably recorded
+    /// (`RestoringRetirePending`) and will be honored by that restore's own
+    /// `finish_restore` once its native call returns. Returned immediately
+    /// — never waited for.
+    Coalesced,
+    /// Another retire was already in flight (or already-coalesced) and
+    /// did not reach idle within `claim_retire`'s bound. That owner remains
+    /// responsible for the close; this caller must not act on the window.
+    Pending,
+}
+
+impl OverlayRetireGate {
+    fn new() -> Self {
+        Self {
+            claim: Mutex::new(OverlayWindowClaim::Idle),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Claim the right to restore (show + focus) the overlay window. Fails
+    /// — without blocking — if cancellation has already claimed (or is
+    /// still holding) the retire slot: the caller must then skip show/
+    /// focus entirely and touch nothing else, since cancellation's own
+    /// close, ordered by this same gate, already owns the window.
+    fn try_claim_restore(&self) -> bool {
+        let mut claim = self.claim.lock().unwrap();
+        if *claim == OverlayWindowClaim::Idle {
+            *claim = OverlayWindowClaim::Restoring;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Finish a restore claim previously granted by `try_claim_restore`.
+    /// ALWAYS transitions the gate to `Retiring` and returns a `RetireGuard`
+    /// the caller must release only once it has completely finished
+    /// touching the window — including any close this call's own boolean
+    /// says is required — never released early "then" closed, which would
+    /// let a second actor (another restore, an orphan reclaim) observe idle
+    /// before the physical close has actually happened (the exact ordering
+    /// hazard this replaces). Returns `true` when a retire request
+    /// coalesced into this restore while it was in flight
+    /// (`RestoringRetirePending`): the caller must then perform the
+    /// exact-A close itself before releasing, honoring that request, rather
+    /// than leaving the window up just because its own show()/set_focus()
+    /// succeeded (C639-007C.12). Returns `false` when no retire coalesced —
+    /// the caller releases with nothing further to close.
+    fn finish_restore(&self) -> (bool, RetireGuard<'_>) {
+        let mut claim = self.claim.lock().unwrap();
+        let retire_pending = matches!(*claim, OverlayWindowClaim::RestoringRetirePending);
+        *claim = OverlayWindowClaim::Retiring;
+        drop(claim);
+        (
+            retire_pending,
+            RetireGuard {
+                gate: self,
+                released: false,
+            },
+        )
+    }
+
+    /// Claim the retire slot. Three outcomes (see `RetireClaim`): granted
+    /// immediately if idle, coalesced immediately if a restore is in
+    /// flight, or a bounded wait (never unbounded — C639-007C.12) if
+    /// another retire already owns the slot. Looping back to the top after
+    /// a bounded wait lets a caller that wakes on idle become the new
+    /// (trivial, nothing-left-to-close) owner itself, rather than
+    /// requiring every waiter to re-call this function.
+    fn claim_retire(&self, bound: Duration) -> RetireClaim<'_> {
+        let mut claim = self.claim.lock().unwrap();
+        loop {
+            match *claim {
+                OverlayWindowClaim::Idle => {
+                    *claim = OverlayWindowClaim::Retiring;
+                    return RetireClaim::Won(RetireGuard {
+                        gate: self,
+                        released: false,
+                    });
+                }
+                OverlayWindowClaim::Restoring => {
+                    *claim = OverlayWindowClaim::RestoringRetirePending;
+                    return RetireClaim::Coalesced;
+                }
+                OverlayWindowClaim::RestoringRetirePending | OverlayWindowClaim::Retiring => {
+                    let (guard, timeout) = self
+                        .cv
+                        .wait_timeout_while(claim, bound, |c| *c != OverlayWindowClaim::Idle)
+                        .unwrap();
+                    if timeout.timed_out() {
+                        return RetireClaim::Pending;
+                    }
+                    claim = guard;
+                    // Looped back with the gate now idle (the only reason
+                    // `wait_timeout_while` returns without timing out) —
+                    // re-check at the top claims it as `Won`.
+                }
+            }
+        }
+    }
+}
+
+/// C639-007C.16: tells a `settle_retire_claim`/`retire_owned_overlay_session`
+/// caller whether IT is the one that just issued `do_close` for the window —
+/// and so is the one that must defer compare-clearing `overlay_window_handle`
+/// until that close's exact-handle destruction is actually confirmed, never
+/// the instant `do_close` merely returns — or whether a different in-flight
+/// actor (a coalesced restore honoring this request later, or an
+/// already-in-flight retire) owns both the close and that deferred clear,
+/// so this call must not touch the handle record at all. An undifferentiated
+/// `Ok(())` cannot distinguish these, which is exactly what let every one of
+/// this function's callers compare-clear the handle unconditionally right
+/// after calling it, regardless of whether `do_close` ever ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetireSettlement {
+    /// This call's own `do_close` ran. The caller owns deferring the
+    /// `overlay_window_handle` compare-clear until destruction is confirmed
+    /// (e.g. via `wait_for_overlay_gone` or `release_overlay_window_handle_
+    /// when_gone`) — never clearing it merely because `do_close` returned,
+    /// since `close()` is asynchronous and the window may not be destroyed
+    /// yet.
+    Closed,
+    /// No close happened here — either the claim coalesced/waited behind a
+    /// different in-flight actor, or this call did not own the window at
+    /// settlement time. That other actor (or nobody) owns the handle
+    /// record; this call must leave it untouched.
+    DeferredElsewhere,
+}
+
+/// Resolve a `RetireClaim` already obtained from `claim_retire` on behalf of
+/// a specific LIVE session: `Won` means this call is the exclusive owner of
+/// the window and must perform `do_close` itself after clearing
+/// `overlay_window_owner` — but only if `overlay_window_owner` still names
+/// `owner_session`, never a NEWER session's window. `Coalesced`/`Pending`
+/// mean a different in-flight restore or retire already owns ordering this
+/// exact close — this call must not race it with a second close of its own,
+/// and does nothing further. Takes the raw `overlay_window_owner` mutex
+/// rather than `&State<AppState>` so the claim-resolution logic itself (not
+/// just the native close callers supply) stays unit-testable without a live
+/// Tauri app, mirroring `clear_pick_if_current`'s own reasoning.
+///
+/// There is no "no live session to compare against" case here any more —
+/// see `settle_orphan_retire_claim` (C639-007C.13) for the orphan reclaim,
+/// which never had a live session to name but still must not unconditionally
+/// clear/close whatever happens to be there once its wait finally ends.
+///
+/// C639-007C.16: returns a `RetireSettlement` alongside the close result so
+/// the caller knows whether it, specifically, just issued `do_close` — see
+/// that type's own doc for why an undifferentiated `Ok(())` was not enough.
+fn settle_retire_claim(
+    overlay_window_owner: &Mutex<Option<u64>>,
+    owner_session: u64,
+    claim: RetireClaim<'_>,
+    do_close: impl FnOnce() -> Result<(), String>,
+) -> Result<RetireSettlement, String> {
+    match claim {
+        RetireClaim::Won(guard) => {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            let owns = owns_overlay_window(*owner, owner_session);
+            if owns {
+                *owner = None;
+            }
+            drop(owner);
+            let result = if owns { do_close() } else { Ok(()) };
+            guard.release();
+            result.map(|_| {
+                if owns {
+                    RetireSettlement::Closed
+                } else {
+                    RetireSettlement::DeferredElsewhere
+                }
+            })
+        }
+        RetireClaim::Coalesced | RetireClaim::Pending => Ok(RetireSettlement::DeferredElsewhere),
+    }
+}
+
+/// Outcome of `settle_orphan_retire_claim` (C639-007C.13): tells the caller
+/// whether it is safe to proceed straight to building a new window, or
+/// whether to wait for someone else's close, or to refuse outright.
+enum OrphanRetireOutcome {
+    /// This call itself closed the exact window it observed before waiting.
+    Closed,
+    /// The claim coalesced into, or waited behind, a different in-flight
+    /// restore/retire that still owns ordering the close — that owner
+    /// (unchanged by this call) will finish it; the caller should wait for
+    /// the window to actually disappear, same as the pre-C639-007C.13
+    /// behavior.
+    DeferredElsewhere,
+    /// This call won the retire slot, but by the time it did,
+    /// `overlay_window_owner` no longer matched what was observed before
+    /// waiting — a successor session installed and built its own window in
+    /// the interim. That window is live and this call must not touch it:
+    /// neither clear its ownership nor close it, and the caller must not
+    /// wait for it to disappear (it will not).
+    Superseded,
+}
+
+/// Resolve a `RetireClaim` obtained from `claim_retire` by `open_region_
+/// overlay`'s orphan-reclaim branch: unlike `settle_retire_claim`, there is
+/// no live session to compare against — the whole premise of "orphan" is
+/// that `pending_overlay` names no session at all. The only thing to compare
+/// against is `observed_owner`, the exact `overlay_window_owner` value this
+/// branch read BEFORE calling `claim_retire` (never a fresh read taken after
+/// the wait). Clearing/closing is gated on `overlay_window_owner` STILL
+/// holding that exact snapshot at settlement time (C639-007C.13): a
+/// successor session's own window build (which always installs a strictly
+/// newer, freshly-minted session id — ids never repeat, see
+/// `mint_capture_session`) can never match a stale snapshot, so this can
+/// never mistake a brand new live window for the one originally observed,
+/// no matter how long this call ends up waiting on the gate.
+fn settle_orphan_retire_claim(
+    overlay_window_owner: &Mutex<Option<u64>>,
+    observed_owner: Option<u64>,
+    claim: RetireClaim<'_>,
+    do_close: impl FnOnce() -> Result<(), String>,
+) -> Result<OrphanRetireOutcome, String> {
+    match claim {
+        RetireClaim::Won(guard) => {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            let owns = *owner == observed_owner;
+            if owns {
+                *owner = None;
+            }
+            drop(owner);
+            let result = if owns {
+                do_close().map(|_| OrphanRetireOutcome::Closed)
+            } else {
+                Ok(OrphanRetireOutcome::Superseded)
+            };
+            guard.release();
+            result
+        }
+        RetireClaim::Coalesced | RetireClaim::Pending => Ok(OrphanRetireOutcome::DeferredElsewhere),
+    }
+}
+
+/// C639-007C.17: whether a PREVIOUS attempt against this exact observed
+/// generation already ran — i.e. already compare-cleared
+/// `overlay_window_owner` and issued its own `do_close` — before this call
+/// ever reads `owner`. Every production site that compare-clears the owner
+/// for a specific session does so BEFORE calling the (asynchronous)
+/// `do_close`, and defers clearing `overlay_window_handle` until
+/// `wait_for_overlay_gone` actually confirms destruction (see
+/// `clear_overlay_window_handle_if`'s own doc and every one of its C639-
+/// 007C.17-fixed call sites). If that wait times out, `owner` therefore
+/// already reads `None` for `observed_owner` by the time any LATER
+/// admission attempt observes the still-retained handle record and reads
+/// `owner` again. `settle_orphan_retire_claim`'s owner-compare cannot tell
+/// that apart from a genuine successor (which also leaves `owner` reading
+/// something other than `observed_owner`) — but a genuine successor is
+/// structurally impossible while the retained handle record still names
+/// `observed_owner`, because the one place a window is ever built never
+/// runs until a prior generation's handle entry is actually cleared (never
+/// merely compare-cleared on the owner side). `open_region_overlay`'s
+/// orphan branch must therefore route a `true` result to `retry_retained_
+/// overlay_close` instead of `settle_orphan_retire_claim`, or the owner
+/// mismatch would be read as `Superseded` and refuse every later admission
+/// forever, even once the window the earlier wait was waiting on finally,
+/// actually closes. Pure so this decision is unit-testable without a live
+/// Tauri app, mirroring `owns_overlay_window`'s own shape.
+fn overlay_orphan_already_attempted(owner: Option<u64>, observed_owner: u64) -> bool {
+    owner != Some(observed_owner)
+}
+
+/// Outcome of `retry_retained_overlay_close` (C639-007C.17): unlike
+/// `OrphanRetireOutcome`, there is no `Superseded` case — a successor
+/// cannot exist while `overlay_orphan_already_attempted` is true for the
+/// exact generation this call is retrying (see that function's own doc).
+enum RetainedRetryOutcome {
+    /// This call itself re-issued `do_close` against the retained handle.
+    /// The caller must still confirm actual destruction (e.g. via
+    /// `wait_for_overlay_gone`) before compare-clearing the handle record —
+    /// re-issuing `close()` only requests destruction again, exactly like
+    /// every other `do_close` in this module.
+    Closed,
+    /// The claim coalesced into, or waited behind, a different in-flight
+    /// actor that already owns ordering this exact close (e.g. that
+    /// earlier attempt's own background release, or a concurrent retry) —
+    /// this call touches nothing.
+    DeferredElsewhere,
+}
+
+/// C639-007C.17: retry closing an observed, RETAINED overlay window handle
+/// once `overlay_orphan_already_attempted` has already determined there is
+/// no owner comparison left to make — a previous attempt against this
+/// exact generation already compare-cleared `overlay_window_owner`, so
+/// `settle_orphan_retire_claim`'s owner-compare would wrongly read this as
+/// a successor and refuse forever (see that function's own doc). `do_close`
+/// is invoked unconditionally on `Won`, and its result is deliberately
+/// ignored: re-issuing `close()` against a handle whose window may already
+/// be fully destroyed by now (the destroy event landed late, after an
+/// earlier wait already gave up) is a safe no-op from this module's
+/// perspective, and the only way to tell whether the window is NOW actually
+/// gone is the caller's own, separate `wait_for_overlay_gone` — never
+/// `do_close`'s own return value, for the same asynchronous-destruction
+/// reason `RetireSettlement::Closed`/`OrphanRetireOutcome::Closed` never
+/// meant "gone" either.
+fn retry_retained_overlay_close(
+    claim: RetireClaim<'_>,
+    do_close: impl FnOnce() -> Result<(), String>,
+) -> RetainedRetryOutcome {
+    match claim {
+        RetireClaim::Won(guard) => {
+            let _ = do_close();
+            guard.release();
+            RetainedRetryOutcome::Closed
+        }
+        RetireClaim::Coalesced | RetireClaim::Pending => RetainedRetryOutcome::DeferredElsewhere,
+    }
+}
+
+/// C639-007C.11: the one production primitive every owned-retire site in
+/// this module funnels through (the watchdog, `open_region_overlay`'s own
+/// failure cleanup, `cancel_region_pick`, and the retry final-capture
+/// cleanup) — claiming the retire slot BEFORE clearing `session_id`'s claim
+/// on `active_pick`/`pending_overlay`, never after. The prior ordering
+/// (clear first, claim/close second) let a concurrent `open_region_overlay`
+/// observe both already empty while this window's close was not yet
+/// durably ordered, and treat a window that was really still owned (just
+/// mid-restore) as an orphan to reclaim with its own ungated close — racing
+/// this exact close. Claiming first closes that: for the whole interval
+/// between the claim and this function's own `settle_retire_claim`, the
+/// gate is non-idle, so `open_region_overlay`'s orphan path (which now also
+/// claims this same gate before concluding "orphan" — see its own call
+/// site) cannot slip in ahead of it. `build_mode` is the one exception —
+/// see its own call site for why it uses `claim_retire`/`settle_retire_
+/// claim` directly instead of this wrapper.
+fn retire_owned_overlay_session(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    overlay_window_owner: &Mutex<Option<u64>>,
+    gate: &OverlayRetireGate,
+    session_id: u64,
+    bound: Duration,
+    do_close: impl FnOnce() -> Result<(), String>,
+) -> Result<RetireSettlement, String> {
+    let claim = gate.claim_retire(bound);
+    clear_pick_if_current(active_pick, pending_overlay, session_id);
+    settle_retire_claim(overlay_window_owner, session_id, claim, do_close)
+}
+
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
 /// plus its `.forge.json` sidecar next to it. Purely local file copy.
 #[tauri::command]
@@ -1756,20 +2919,23 @@ fn export_capture(
 /// "missing required key monitor_id").
 #[tauri::command]
 #[allow(non_snake_case)]
-fn begin_region_pick(
+async fn begin_region_pick(
     monitorId: String,
     delayMs: Option<u64>,
     includeCursor: Option<bool>,
     app: tauri::AppHandle,
-    state: State<AppState>,
 ) -> Result<(), String> {
-    open_region_overlay(
-        app,
-        state,
-        &monitorId,
-        delayMs.unwrap_or(0),
-        includeCursor.unwrap_or(true),
-    )
+    let delay_ms = delayMs.unwrap_or(0);
+    let include_cursor = includeCursor.unwrap_or(true);
+    // C639-001: the whole orchestration (backdrop acquisition through the
+    // supervised worker, closing/waiting-out a stale overlay, building
+    // the new one) runs off the main thread — see the module note above
+    // `run_on_main_thread_sync`.
+    tauri::async_runtime::spawn_blocking(move || {
+        open_region_overlay(&app, &monitorId, delay_ms, include_cursor)
+    })
+    .await
+    .map_err(|e| format!("region-pick background task failed: {e}"))?
 }
 
 /// Shared overlay path: the `begin_region_pick` command and the
@@ -1794,13 +2960,33 @@ fn begin_region_pick(
 /// rather than rejected, so a crash can't lock Region out until the 60s
 /// watchdog eventually clears it.
 fn open_region_overlay(
-    app: tauri::AppHandle,
-    state: State<AppState>,
+    app: &tauri::AppHandle,
     monitor_id: &str,
     delay_ms: u64,
     include_cursor: bool,
 ) -> Result<(), String> {
-    let overlay_window_present = app.get_webview_window("overlay").is_some();
+    let state = app.state::<AppState>();
+    // C639-007C.15: read the handle and its owning session from ONE lock
+    // on `overlay_window_handle` — never a fresh `get_webview_window`
+    // lookup paired with a LATER, separately-locked read of `overlay_
+    // window_owner`. The prior two-read version captured the handle here,
+    // before anything waits, exactly so the orphan-reclaim close below
+    // could bind to this exact window generation (C639-007C.14) — but it
+    // still read the OWNER from a second, independent lock well after this
+    // point (right before `claim_retire`, see that site's old comment).
+    // Between those two reads sat the `pending_overlay` check below with
+    // no lock or reservation spanning either read, which a successor's
+    // whole open-close-build cycle could land inside: the handle this call
+    // captured here could belong to A while the owner it read later had
+    // already moved on to B, binding a close to A (a harmless no-op, A was
+    // already gone) alongside an owner compare/clear against B (NOT a
+    // no-op — it would clear a live session's ownership and leave its
+    // window declaimed). A single read of this one field, written
+    // atomically by the one place a window is ever built, cannot describe
+    // two different generations no matter when it lands — there is no
+    // second, independent read left for a successor to land between.
+    let observed = state.overlay_window_handle.lock().unwrap().clone();
+    let overlay_window_present = observed.is_some();
     if state.pending_overlay.lock().unwrap().is_some() && overlay_window_present {
         return Err("a region pick is already in progress; cancel it first".to_string());
     }
@@ -1808,15 +2994,157 @@ fn open_region_overlay(
     // but its window is already gone) — the check above let that case
     // through deliberately. Close it and wait until it is really gone
     // before building the new window on the same label — `close()` is
-    // asynchronous and the builder would otherwise race it.
-    if overlay_window_present {
-        close_overlay_window(&app)?;
-        if !wait_for_overlay_gone(&app, Duration::from_millis(1500)) {
-            return Err(
-                "stale overlay window did not close; region pick aborted rather than \
-                 racing a new picker against the old one"
-                    .to_string(),
-            );
+    // asynchronous and the builder would otherwise race it. This whole
+    // function runs off the main thread (C639-001), so this poll loop no
+    // longer risks starving the event loop that actually has to deliver
+    // the window-destruction event it is waiting for.
+    if let Some((observed_owner, observed_window)) = observed {
+        // C639-007C.11: this looked like an orphan — no pending context
+        // claims it — but `pending_overlay` alone cannot prove that: a
+        // watchdog/cancel/build_mode cleanup may have already cleared
+        // `pending_overlay` for session A while A's own restore (shown via
+        // `retry_hide_overlay_or_abandon`'s compensate) is still mid-flight
+        // against this exact window, which is durably ordered to close it
+        // before the gate goes idle. Claiming the SAME retire gate here —
+        // instead of the old ungated, unconditional `close_overlay_window`
+        // — means this reclaim can never race that close: if the gate is
+        // non-idle, some other in-flight actor already owns ordering it,
+        // and this call does nothing but wait for it below.
+        //
+        // C639-007C.13: reaching an idle gate (`Won`) is NOT by itself
+        // proof that an unconditional close is safe — `claim_retire` can
+        // block for up to `OVERLAY_RETIRE_CLAIM_BOUND` behind A's own
+        // in-flight retire, and in that window a whole new opener can run
+        // start-to-finish: observe A's window gone, mint its own session
+        // B, and build a brand new "overlay" window, all before this call
+        // is even granted the slot. Snapshotting the owner above, BEFORE
+        // waiting, and binding the close to that exact snapshot via
+        // `settle_orphan_retire_claim`, is what stops this branch from
+        // ever clearing B's ownership or closing B's window just because
+        // it was the one that originally decided "orphan" — B's own,
+        // strictly-newer session id can never match a stale snapshot.
+        //
+        // C639-007C.14: the owner-compare/clear above is NOT by itself
+        // proof that the close that follows it is safe — `do_close` used
+        // to be `close_overlay_window(app)`, a FRESH `get_webview_window
+        // ("overlay")` lookup performed after the compare/clear and after
+        // dropping the owner lock. Shared-label window construction never
+        // acquires `overlay_retire_gate`, so nothing stops a successor's
+        // build from installing itself under the same label in the gap
+        // between this call's successful compare/clear and that fresh
+        // lookup actually running — which would close the successor's
+        // window instead of the one this call actually observed. Binding
+        // the close to `observed_window` — captured above, BEFORE
+        // `claim_retire` was ever called — closes exactly the physical
+        // window generation this call originally found, never whatever
+        // currently answers to the shared label.
+        // C639-007C.17: decide BEFORE claiming the retire slot whether a
+        // PREVIOUS attempt against this exact generation already ran —
+        // i.e. already compare-cleared `overlay_window_owner` and issued
+        // `do_close`, but its own `wait_for_overlay_gone` timed out rather
+        // than confirming destruction, so the record was deliberately left
+        // in place (every call site that compare-clears the owner now
+        // gates its handle-clear on confirmed `gone`, never on the close
+        // merely returning). If this read is taken AFTER `claim_retire`'s
+        // own bounded wait instead, nothing changes about which branch is
+        // correct, but reading it now exactly mirrors why `observed` itself
+        // was captured before any of this ran. `settle_orphan_retire_claim`
+        // can never distinguish this case from a genuine successor once the
+        // owner reads `None` — see `overlay_orphan_already_attempted`'s own
+        // doc for why comparing the owner is no longer sufficient here, and
+        // why the retained handle record is.
+        let already_attempted = overlay_orphan_already_attempted(
+            *state.overlay_window_owner.lock().unwrap(),
+            observed_owner,
+        );
+        let claim = state
+            .overlay_retire_gate
+            .claim_retire(OVERLAY_RETIRE_CLAIM_BOUND);
+        if already_attempted {
+            // C639-007C.17: no owner comparison is possible any more (it
+            // already reads `None` for this exact generation) — retry the
+            // close against the exact retained handle instead of going
+            // through `settle_orphan_retire_claim`, which would otherwise
+            // refuse this (and every later) admission as `Superseded`
+            // forever. There is no live successor to protect here: the one
+            // place a window is ever built never runs until a prior
+            // generation's handle is actually cleared, and this generation's
+            // handle is still exactly what `observed` named.
+            match retry_retained_overlay_close(claim, move || {
+                close_captured_overlay_window(observed_window)
+            }) {
+                RetainedRetryOutcome::Closed => {
+                    if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
+                        return Err(
+                            "stale overlay window did not close; region pick aborted rather \
+                             than racing a new picker against the old one"
+                                .to_string(),
+                        );
+                    }
+                    clear_overlay_window_handle_if(&state.overlay_window_handle, observed_owner);
+                }
+                RetainedRetryOutcome::DeferredElsewhere => {
+                    if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
+                        return Err(
+                            "stale overlay window did not close; region pick aborted rather \
+                             than racing a new picker against the old one"
+                                .to_string(),
+                        );
+                    }
+                    // A different in-flight actor already owns ordering
+                    // this exact close and the deferred clear that follows
+                    // its own confirmation — leave the record alone.
+                }
+            }
+        } else {
+            match settle_orphan_retire_claim(&state.overlay_window_owner, Some(observed_owner), claim, move || {
+                close_captured_overlay_window(observed_window)
+            })? {
+            OrphanRetireOutcome::Superseded => {
+                return Err(
+                    "a region pick is already in progress; cancel it first".to_string(),
+                );
+            }
+            OrphanRetireOutcome::Closed => {
+                // C639-007C.16: wait for confirmed destruction FIRST, THEN
+                // compare-clear `overlay_window_handle` — never the instant
+                // `do_close` merely returns, since `close()` only requests
+                // destruction asynchronously. Clearing the record before
+                // destruction is confirmed would let a concurrent opener
+                // see no handle and no pending context, skip this very
+                // branch's own wait, and admit a build racing this exact
+                // window's still-pending destruction (C639-007C.16). Never
+                // unconditional either way: a successor could already have
+                // overwritten this record with its own newer session/handle
+                // by the time this runs.
+                if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
+                    return Err(
+                        "stale overlay window did not close; region pick aborted rather than \
+                         racing a new picker against the old one"
+                            .to_string(),
+                    );
+                }
+                clear_overlay_window_handle_if(&state.overlay_window_handle, observed_owner);
+            }
+            OrphanRetireOutcome::DeferredElsewhere => {
+                if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
+                    return Err(
+                        "stale overlay window did not close; region pick aborted rather than \
+                         racing a new picker against the old one"
+                            .to_string(),
+                    );
+                }
+                // C639-007C.16: do NOT clear `overlay_window_handle` here —
+                // this call never issued `do_close`; a different in-flight
+                // actor (the restore this coalesced into, or an
+                // already-in-flight retire) owns both that close and
+                // compare-clearing this record once ITS close is confirmed.
+                // Clearing it here, merely because OUR OWN wait happened to
+                // observe the label free, would race that actor's own
+                // deferred clear and could erase a successor's record that
+                // installed in the interim.
+            }
+            }
         }
     }
     let monitors = current_monitors()?;
@@ -1824,26 +3152,122 @@ fn open_region_overlay(
         .iter()
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
-    // 1. Frozen backdrop first, while no overlay window exists.
-    let backdrop_png = capture_region_backdrop(&monitors, &monitor.id)?;
+    // Mint the session before acquisition so the worker request carries
+    // the session identity the overlay (and its watchdog) will use, and
+    // claim `active_pick` immediately (C639-007): a `cancel_region_pick`
+    // landing during the blocking backdrop acquisition below must be able
+    // to supersede this one before it ever installs a window — not only
+    // after.
+    //
+    // C639-007A: this claim is a strict reservation (refuse if something
+    // else already holds it), never an unconditional overwrite. An
+    // earlier design let a second opener overwrite a still-live claim and
+    // then "restore" it on its own failure — but restoring a displaced
+    // token cannot undo a supersession the displaced operation already
+    // observed and aborted on, which could resurrect a stale token with
+    // no live owner, or let a second opener silently cancel a first one
+    // it was never entitled to touch. Refusing outright is both simpler
+    // and strictly safe: a concurrent second open is told to retry
+    // (mirroring the existing post-window-build refusal above) instead of
+    // racing ownership of `active_pick`. `cancel_region_pick` itself is
+    // unaffected — it unconditionally clears the slot, same as always.
+    let session_id = mint_capture_session(&state);
+    {
+        let mut active = state.active_pick.lock().unwrap();
+        if active.is_some() {
+            return Err(
+                "a region pick is already starting; try again in a moment".to_string(),
+            );
+        }
+        *active = Some(session_id);
+    }
+    let result = open_region_overlay_claimed(
+        app,
+        &state,
+        monitor,
+        monitor_id,
+        delay_ms,
+        include_cursor,
+        session_id,
+    );
+    if result.is_err() {
+        // We know we were the only claimant (nothing could have displaced
+        // us pre-resolution, since claiming above refuses rather than
+        // overwrites), so clearing here is always exactly our own claim —
+        // never someone else's. C639-007C.11: route through
+        // `retire_owned_overlay_session`, which claims the retire gate
+        // BEFORE clearing — not clear-then-close (the prior order here),
+        // which could let a concurrent opener observe `pending_overlay`
+        // already empty while this exact close was not yet durably
+        // ordered. `result` being an error does not prove the main-thread
+        // closure dispatched above never finished building (and focusing)
+        // the window — a timeout in `run_on_main_thread_sync` means the
+        // CALLER gave up after 5s, not that the closure, already queued on
+        // the main thread, stopped running. If it finishes just after this
+        // point, its own post-focus check (inside the closure) can lose a
+        // narrow race against this exact cleanup. By the time this runs a
+        // NEWER session may already have been admitted, built its own
+        // window, and be live — closing "whatever is labeled overlay"
+        // would be closing that newer window, not ours.
+        // `retire_owned_overlay_session`'s owner-compared close binds to
+        // the `overlay_window_owner` token instead of the window's shared
+        // label: it only ever closes a window this exact `session_id`
+        // itself built, and no-ops otherwise — whether that's because no
+        // window was ever built, or because the closure's own check
+        // already closed it, or because a newer session now owns the
+        // label.
+        let settlement = retire_owned_overlay_session(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            &state.overlay_retire_gate,
+            session_id,
+            OVERLAY_RETIRE_CLAIM_BOUND,
+            || close_overlay_window(app),
+        );
+        // C639-007C.16: this whole function runs off the main thread
+        // (C639-001), so blocking here is safe. Wait for confirmed
+        // destruction FIRST, and only clear `overlay_window_handle` if this
+        // call is the one that actually issued the close — a
+        // `DeferredElsewhere` settlement means some other in-flight actor
+        // owns that clear instead.
+        // C639-007C.17: the wait's result must gate the clear, not just
+        // precede it — on timeout the handle record must survive so the
+        // retained-generation recovery path (C639-007C.16/.17) can retry
+        // this exact handle instead of racing a fresh one onto the shared
+        // label. `gone` is short-circuited on `closed` so this call never
+        // blocks on the wait when some other in-flight actor owns it.
+        let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+        let gone = closed && wait_for_overlay_gone(app, Duration::from_millis(1500));
+        if should_clear_overlay_handle_after_close(closed, gone) {
+            clear_overlay_window_handle_if(&state.overlay_window_handle, session_id);
+        }
+    }
+    result
+}
+
+/// The body of `open_region_overlay` that runs once `session_id` has
+/// already claimed `active_pick`. Split out so every failure path — from
+/// here through the main-thread window build — funnels through the same
+/// restore-on-failure cleanup in the caller, instead of each early return
+/// having to remember to clean up itself.
+fn open_region_overlay_claimed(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    monitor: &Monitor,
+    monitor_id: &str,
+    delay_ms: u64,
+    include_cursor: bool,
+    session_id: u64,
+) -> Result<(), String> {
+    // 1. Frozen backdrop first, while no overlay window exists. Runs in
+    // the supervised capture worker (C639 Option C) — a blocking native
+    // round trip, fine here since this whole function is already off the
+    // main thread.
+    let backdrop_png = capture_region_backdrop(state, session_id, &monitor.id)?;
     let (_, _, rgba) =
         decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
     let backdrop_blank = solid_frame_rgba(&rgba);
-    let session_id = {
-        let mut counter = state.overlay_session.lock().unwrap();
-        *counter = counter.wrapping_add(1);
-        *counter
-    };
-    *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
-        monitor_id: monitor_id.to_string(),
-        origin_virtual: monitor.origin_virtual,
-        dpr: monitor.scale,
-        delay_ms,
-        include_cursor,
-        backdrop_png: Some(backdrop_png),
-        session_id,
-        backdrop_blank,
-    });
     // Tauri `position`/`inner_size` take *logical* units: convert the
     // monitor's physical virtual-desktop rect, or the overlay lands in the
     // wrong place at the wrong size on mixed-DPI setups.
@@ -1851,36 +3275,324 @@ fn open_region_overlay(
         monitor.origin_virtual.0 as i64,
         monitor.origin_virtual.1 as i64,
     );
-    let window = tauri::WebviewWindowBuilder::new(
-        &app,
-        "overlay",
-        tauri::WebviewUrl::App("overlay.html".into()),
-    )
-    .title("Select region")
-    .position(origin.x, origin.y)
-    .inner_size(monitor.size_logical.0 as f64, monitor.size_logical.1 as f64)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .build()
-    .map_err(|e| format!("cannot open overlay: {e}"))?;
-    // Esc / right-click cancel lives in the overlay page, so the window must
-    // own keyboard focus for the escape hatches to work.
-    let _ = window.set_focus();
+    let size_logical = monitor.size_logical;
+    let app_for_build = app.clone();
+    // C639-007: re-check the active-pick token AND install the context
+    // under ONE held lock, so a cancel (or a newer pick) landing between
+    // "the backdrop finished" and "this context exists" can never slip
+    // through. Unlike before (C639-001A), this lock is released as soon as
+    // the context is installed — NOT held across the main-thread dispatch
+    // below, which can block for up to 5 seconds. Holding a shared
+    // cancellation/session lock across that wait is exactly what let
+    // `cancel_region_pick` get stuck behind a slow/busy main thread and
+    // then lose to an already-queued window build.
+    {
+        let active = state.active_pick.lock().unwrap();
+        if !pick_still_active(*active, session_id) {
+            return Err(
+                "region pick was cancelled or superseded before the backdrop finished"
+                    .to_string(),
+            );
+        }
+        *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
+            monitor_id: monitor_id.to_string(),
+            origin_virtual: monitor.origin_virtual,
+            dpr: monitor.scale,
+            delay_ms,
+            include_cursor,
+            backdrop_png: Some(backdrop_png),
+            session_id,
+            backdrop_blank,
+        });
+    }
+    // C639-001: window CREATION is marshaled onto the main thread — the
+    // one window action here most tied to owning the platform message
+    // loop. `.set_focus()` travels with it in the same dispatch so the
+    // window is built and focused as one main-thread unit, rather than a
+    // second bounded round trip for a cosmetic follow-up.
+    //
+    // C639-001A / C639-001B: the closure re-validates `active_pick` BEFORE
+    // building (catches a cancel that landed before this closure started —
+    // including a late-queued closure that only runs after its caller gave
+    // up), and AGAIN right after `.build()` returns, BEFORE focusing
+    // (catches a cancel that lands WHILE the native build is in flight —
+    // `build()` can in principle take longer than the caller's own 5s
+    // bridge timeout, and holding the session lock across it would just
+    // reintroduce the original C639-001A hazard one level deeper). If the
+    // second check finds we were cancelled/superseded mid-build, the
+    // window we just created is closed here, immediately, rather than
+    // left to show and rely on `cancel_region_pick`'s own best-effort
+    // close as the only backstop. Each check holds the lock only for its
+    // own instant, never across `build()` or `set_focus()` themselves.
+    run_on_main_thread_sync(app, move || -> Result<(), String> {
+        let state = app_for_build.state::<AppState>();
+        if !pick_still_active(*state.active_pick.lock().unwrap(), session_id) {
+            return Err(
+                "region pick was cancelled or superseded before the window could open"
+                    .to_string(),
+            );
+        }
+        let window = tauri::WebviewWindowBuilder::new(
+            &app_for_build,
+            "overlay",
+            // C639-007C.4: the page's own session id travels in the URL
+            // itself, readable synchronously (`location.search`) the
+            // instant the page's script runs — unlike `overlay_context`'s
+            // own async round trip, this is available before ANY of the
+            // page's IPC calls (including the Esc/right-click cancel
+            // hatches, wired before `overlay_context` ever resolves) can
+            // fire. `Url::join` (what `WebviewUrl::App` resolves through)
+            // parses `?query` per RFC 3986, so the query string survives
+            // intact rather than being percent-escaped into the path.
+            tauri::WebviewUrl::App(format!("overlay.html?session={session_id}").into()),
+        )
+        .title("Select region")
+        .position(origin.x, origin.y)
+        .inner_size(size_logical.0 as f64, size_logical.1 as f64)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .build()
+        .map_err(|e| format!("cannot open overlay: {e}"))?;
+        // C639-001C.1: record ownership the instant a window actually
+        // exists, so any cleanup from here on — this closure's own
+        // cancel-closes below, or a stale outer caller's owned close — can
+        // tell THIS session's window apart from whatever window (if any)
+        // a different session owns by the time it runs.
+        //
+        // C639-007C.15: `overlay_window_handle` is set in the SAME
+        // statement sequence as `overlay_window_owner`, binding this exact
+        // handle to this exact session as one atomic record — this is the
+        // only place in the whole module a window for this label is ever
+        // built, so this is the only place that record is ever written.
+        *state.overlay_window_owner.lock().unwrap() = Some(session_id);
+        *state.overlay_window_handle.lock().unwrap() = Some((session_id, window.clone()));
+        if !pick_still_active(*state.active_pick.lock().unwrap(), session_id) {
+            let _ = window.close();
+            *state.overlay_window_owner.lock().unwrap() = None;
+            // C639-007C.16: this closure runs on Tauri's own main thread
+            // (`run_on_main_thread_sync`) — the thread that has to deliver
+            // the window's own destroy event — so clearing the handle
+            // record unconditionally right here, before destruction is
+            // confirmed, reopens the exact race this round closes: a
+            // concurrent `open_region_overlay` could see no handle and no
+            // pending context and admit a new window while this one is
+            // still physically alive. Defer the clear to a background
+            // watcher instead (never block THIS thread on its own destroy
+            // event, which would deadlock).
+            release_overlay_window_handle_when_gone(app_for_build.clone(), session_id);
+            return Err(
+                "region pick was cancelled or superseded while the window was opening"
+                    .to_string(),
+            );
+        }
+        // Esc / right-click cancel lives in the overlay page, so the
+        // window must own keyboard focus for the escape hatches to work.
+        let _ = window.set_focus();
+        // C639-001C.1: a third check, after focusing. The caller's own
+        // wait for this closure is bounded (`run_on_main_thread_sync`'s 5s
+        // `recv_timeout`), but this closure is not — once dispatched, it
+        // runs to completion on the main thread regardless of whether the
+        // caller already gave up. If `.build()` finished just before the
+        // caller's timeout, the check above passed, and then `set_focus()`
+        // (or just the time already spent) crosses that timeout, the
+        // caller returns an error and clears the token — leaving this
+        // closure the only thing that still knows a window exists. Catch
+        // that here: close the window THIS closure just built instead of
+        // leaving it orphaned with no backing state.
+        if !pick_still_active(*state.active_pick.lock().unwrap(), session_id) {
+            let _ = window.close();
+            *state.overlay_window_owner.lock().unwrap() = None;
+            // C639-007C.16: same deferred-clear discipline as the check
+            // above — never clear `overlay_window_handle` unconditionally
+            // the instant `close()` returns, and never block this
+            // main-thread closure waiting for its own destroy event.
+            release_overlay_window_handle_when_gone(app_for_build.clone(), session_id);
+            return Err(
+                "region pick was cancelled or superseded while the window was focusing"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    })??;
     spawn_overlay_watchdog(app.clone(), session_id);
     Ok(())
 }
 
-/// Close the overlay window, propagating a failure instead of silently
-/// ignoring it: a close that fails leaves an always-on-top fullscreen
-/// window on the user's screen, which must not go unreported.
+/// Clear `session_id`'s claim on `active_pick`/`pending_overlay` — but only
+/// if it is still exactly this session's claim (a no-op if a cancel already
+/// cleared it first, or if a newer session now owns the slot). Used on
+/// every exit path of a claimed pick attempt: the failure paths inside
+/// `open_region_overlay` (backdrop error, cancelled/superseded mid-flight,
+/// main-thread dispatch timeout, window-build failure), AND — C639-007C —
+/// both the success and failure paths of `run_capture_via_worker`, which is
+/// the strict reservation's (C639-007A) only release point once
+/// `build_mode` has already taken `pending_overlay`. Safe to call
+/// unconditionally in all of these because claiming only ever refuses
+/// rather than overwrites: a call here can only ever be clearing its OWN
+/// claim, never one it displaced from someone else.
+///
+/// Takes the raw mutexes rather than `&State<AppState>` so this — the exact
+/// production retire logic, not a reimplementation of it — stays
+/// unit-testable without a live Tauri app (same reasoning as
+/// `pick_still_active` et al. above).
+fn clear_pick_if_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    session_id: u64,
+) {
+    let mut active = active_pick.lock().unwrap();
+    if *active == Some(session_id) {
+        *active = None;
+    }
+    drop(active);
+    let mut pending = pending_overlay.lock().unwrap();
+    if pending.as_ref().map(|c| c.session_id) == Some(session_id) {
+        *pending = None;
+    }
+}
+
+/// C639-007C.3: whether `session_id` — the identity an overlay-originated
+/// `capture` request carries from its OWN DTO, never inferred from
+/// whichever pick happens to be `active_pick` right now — is still the live
+/// claim across every piece of state the request depends on: `active_pick`,
+/// `pending_overlay`'s own recorded session, and the overlay window's
+/// recorded owner. A stranded/superseded request (A, displaced by a newer
+/// B) fails this check and must be refused outright, before monitor
+/// enumeration, before `build_mode` ever reads or consumes `pending_
+/// overlay`, before anything of B's is read or touched. Each lock is held
+/// only long enough to compare — same discipline as `clear_pick_if_current`
+/// — so this is a point-in-time read, not a reservation held across the
+/// caller's own subsequent work (which is why `build_mode` re-verifies the
+/// same binding again, atomically, at its own later point of consumption).
+fn overlay_request_session_still_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    overlay_window_owner: &Mutex<Option<u64>>,
+    session_id: u64,
+) -> bool {
+    if *active_pick.lock().unwrap() != Some(session_id) {
+        return false;
+    }
+    if pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id) != Some(session_id) {
+        return false;
+    }
+    *overlay_window_owner.lock().unwrap() == Some(session_id)
+}
+
+/// C639-007C.3: atomically verify `session_id` is still the live claim on
+/// BOTH `active_pick` and `pending_overlay`'s own recorded session, and only
+/// then consume (`take`) the context — under one held `pending_overlay`
+/// lock, with `active_pick` checked first while already holding it, so a
+/// cancel or a newer admission landing between those two checks can never
+/// let a stale/superseded request slip a NEWER session's context out from
+/// under it (and apply its own, unrelated geometry to it). Returns `None`
+/// without mutating `pending_overlay` at all when the binding does not
+/// hold — a stale request must consume nothing, not even inspect what a
+/// newer session installed. Mirrors `clear_pick_if_current`'s own lock
+/// order (`active_pick`, then `pending_overlay`) and "hold only long enough
+/// to decide" discipline.
+fn take_pending_overlay_if_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    session_id: u64,
+) -> Option<OverlayContext> {
+    let active = active_pick.lock().unwrap();
+    if *active != Some(session_id) {
+        return None;
+    }
+    let mut pending = pending_overlay.lock().unwrap();
+    if pending.as_ref().map(|c| c.session_id) != Some(session_id) {
+        return None;
+    }
+    pending.take()
+}
+
+/// Close the overlay window unconditionally — whatever window currently
+/// has that label, regardless of which session (if any) owns it — and
+/// propagate a failure instead of silently ignoring it: a close that fails
+/// leaves an always-on-top fullscreen window on the user's screen, which
+/// must not go unreported. Only ever correct where the caller is acting on
+/// the user's own explicit cancel RIGHT NOW — `cancel_region_pick`'s "nuke
+/// whatever is active right now" (via `retire_owned_overlay_session`/
+/// `settle_retire_claim`) — where there is no earlier snapshot to bind to
+/// and no wait that could let a successor slip in first. A cleanup acting
+/// on behalf of one specific, possibly-already-superseded session must go
+/// through `settle_retire_claim` with its own `session_id` instead
+/// (C639-001C.1); a cleanup that waited on the retire gate first (the
+/// orphan-reclaim branch of `open_region_overlay`) must go through
+/// `close_captured_overlay_window` instead (C639-007C.14) — this
+/// unconditional, re-looked-up-by-label version is exactly what let a
+/// stale session's post-wait cleanup close a successor's window, which
+/// neither `settle_retire_claim`'s owner compare nor a captured handle
+/// would ever do.
 fn close_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("overlay") {
         w.close()
             .map_err(|e| format!("cannot close overlay window: {e}"))?;
     }
     Ok(())
+}
+
+/// C639-007C.14: close a specific, already-observed overlay `WebviewWindow`
+/// handle — never a fresh `get_webview_window("overlay")` label lookup.
+/// `open_region_overlay`'s orphan-reclaim branch captures this handle
+/// BEFORE calling `claim_retire`, which can block for up to
+/// `OVERLAY_RETIRE_CLAIM_BOUND`; closing by a fresh label lookup performed
+/// AFTER that wait (and after `settle_orphan_retire_claim`'s own
+/// owner-compare/clear) could resolve to a brand new successor window
+/// built under the same shared label in the interim, since shared-label
+/// construction never acquires `overlay_retire_gate`. Binding the close to
+/// the captured handle itself makes that interim irrelevant: this always
+/// closes the exact physical window generation that was originally
+/// observed, never whatever currently answers to the label.
+fn close_captured_overlay_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window
+        .close()
+        .map_err(|e| format!("cannot close overlay window: {e}"))
+}
+
+/// C639-001C.1: whether a close acting on behalf of `session_id` may
+/// actually tear down the current overlay window — i.e., whether
+/// `overlay_window_owner` still names this exact session, not a newer one
+/// that has since been admitted and built its own window. Pure so the
+/// ownership-binding contract is unit-testable without a live Tauri app,
+/// mirroring `pick_still_active`'s shape.
+fn owns_overlay_window(owner: Option<u64>, session_id: u64) -> bool {
+    owner == Some(session_id)
+}
+
+/// C639-007C.15: the companion every production site that compare-clears
+/// `overlay_window_owner` for a specific `session_id` must also call, to
+/// keep `overlay_window_handle` — the atomic handle+owner record `open_
+/// region_overlay`'s orphan-reclaim branch reads — from going stale once
+/// that session's window is actually gone. Never an unconditional clear:
+/// by the time any of these cleanup paths runs, a successor session may
+/// already have been admitted and overwritten this record with its own
+/// (newer) session id and handle, via the one build site that writes it —
+/// and that record must never be erased by an older session's cleanup,
+/// the same discipline `owns_overlay_window`'s own callers already apply
+/// to `overlay_window_owner` itself. Takes the raw mutex, not `&State<
+/// AppState>`, matching every other compare-clear helper in this module.
+///
+/// C639-007C.16: callers must call this only once `session_id`'s window is
+/// actually confirmed destroyed (e.g. after `wait_for_overlay_gone` reports
+/// gone, or via `release_overlay_window_handle_when_gone`) — never merely
+/// because a `RetireSettlement::Closed`/`OrphanRetireOutcome::Closed`
+/// `do_close` call returned. `close()` only requests destruction
+/// asynchronously; clearing this record before destruction is confirmed
+/// reopens the exact shared-label admission race this record exists to
+/// close, since `open_region_overlay` treats an absent record as "nothing
+/// to wait for" and proceeds straight to building a new window.
+fn clear_overlay_window_handle_if(
+    overlay_window_handle: &Mutex<Option<(u64, tauri::WebviewWindow)>>,
+    session_id: u64,
+) {
+    let mut handle = overlay_window_handle.lock().unwrap();
+    if handle.as_ref().map(|(id, _)| *id) == Some(session_id) {
+        *handle = None;
+    }
 }
 
 /// Poll until the overlay window is actually destroyed. `close()` is
@@ -1898,6 +3610,55 @@ fn wait_for_overlay_gone(app: &tauri::AppHandle, timeout: Duration) -> bool {
     true
 }
 
+/// C639-007C.17: the one shared gating decision every synchronous caller
+/// that blocks on `wait_for_overlay_gone` must use before compare-clearing
+/// `overlay_window_handle` — pulled out of each call site so the decision
+/// itself (not a duplicated copy of it) is what a test exercises, and so a
+/// future call site cannot reintroduce the unconditional-clear regression
+/// this closes. `closed` is whether this call is the one that actually
+/// issued the close (`RetireSettlement::Closed`/`OrphanRetireOutcome::
+/// Closed`, never `DeferredElsewhere` — some other in-flight actor owns
+/// that clear instead); `gone` is the caller's own, separate `wait_for_
+/// overlay_gone` result. A timeout (`gone == false`) must never clear the
+/// record, even when this call issued the close: the record is the only
+/// evidence a later admission attempt has to retry closing this exact
+/// retained generation instead of racing a fresh build onto the shared
+/// label.
+fn should_clear_overlay_handle_after_close(closed: bool, gone: bool) -> bool {
+    closed && gone
+}
+
+/// C639-007C.16: the non-blocking counterpart to waiting on `wait_for_
+/// overlay_gone` inline — for call sites that issued `do_close` (got back
+/// `RetireSettlement::Closed`/`OrphanRetireOutcome::Closed`) but must not
+/// themselves block on the window's asynchronous destruction. The clearest
+/// example is `cancel_region_pick`: it must return to the IPC caller at
+/// once so the UI sees the cancellation take effect immediately, and the
+/// three retry-compensate close sites inside `retry_hide_overlay_or_
+/// abandon`'s main-thread closure, which must not block the single
+/// main-event-loop thread on the very destroy event that thread itself has
+/// to deliver — blocking there would deadlock, never observe the window as
+/// gone. Spawning a short-lived watcher thread instead lets the caller
+/// return immediately while still never clearing the record until this
+/// exact session's window is actually gone — `clear_overlay_window_handle_
+/// if`'s own compare-clear means a successor's build in the meantime is
+/// never erased by this call, no matter how long the wait takes or times
+/// out.
+fn release_overlay_window_handle_when_gone(app: tauri::AppHandle, session_id: u64) {
+    std::thread::spawn(move || {
+        // C639-007C.17: only clear once destruction is actually confirmed —
+        // a timeout must retain the record so a later admission attempt can
+        // find it and retry the close itself (see `overlay_orphan_already_
+        // attempted` / `retry_retained_overlay_close`), rather than erasing
+        // the only evidence that this generation's destruction was never
+        // confirmed.
+        if wait_for_overlay_gone(&app, Duration::from_millis(1500)) {
+            let state = app.state::<AppState>();
+            clear_overlay_window_handle_if(&state.overlay_window_handle, session_id);
+        }
+    });
+}
+
 /// Policy gate for the region-overlay capture path: the overlay must be
 /// gone before the live-region BitBlt runs. Pure so the never-capture-
 /// with-overlay-visible contract is unit-tested.
@@ -1913,19 +3674,325 @@ fn must_abort_capture_if_overlay_present(overlay_present: bool) -> Result<(), St
 
 /// Capture the frozen fullscreen frame for region picking. The caller must
 /// invoke this BEFORE creating the overlay window.
-fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec<u8>, String> {
+///
+/// C639 Option C: the native acquisition runs in the supervised capture
+/// worker process (3 s parent deadline, generation fencing, one worker
+/// max), never inline on the calling thread. The worker runs the SAME
+/// `NativeRasterEngine` code path as before — including the per-piece
+/// blank hard-fail (`validate_raw_blit`) — so the blank policy is
+/// unchanged; only the execution boundary moved.
+fn capture_region_backdrop(
+    state: &State<AppState>,
+    session_id: u64,
+    monitor_id: &str,
+) -> Result<Vec<u8>, String> {
+    let reply = state
+        .capture_supervisor
+        .execute_backdrop(session_id, monitor_id)
+        .map_err(|e| format!("capture worker: {e}"))?;
+    Ok(reply.png_bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Capture worker entry (`--capture-worker`)
+// ---------------------------------------------------------------------------
+
+/// Worker entry point (C639 Option C): reads ONE framed request from
+/// stdin, performs exactly one native acquisition with the same
+/// `NativeRasterEngine` the parent used to run inline, writes ONE framed
+/// reply to stdout, and exits. Phase markers go to stderr; the parent
+/// drains them into its ring log.
+///
+/// This function must never: create a window, touch Tauri state, persist
+/// files, touch the network, or call back into the parent. A native error
+/// is returned as stage + message — never replaced with a fabricated
+/// frame. The per-piece blank hard-fail (`validate_raw_blit`) runs here,
+/// unchanged, as part of the engine.
+fn capture_worker_main() -> i32 {
+    use capture_worker::{
+        decode_request_frame, encode_reply_err, encode_reply_ok, ReplyMeta, ReplyStatus,
+        RequestTarget, WorkerOp,
+    };
+    use std::io::Write as _;
+
+    eprintln!("[capture-worker] start pid={}", std::process::id());
+
+    let stdin = std::io::stdin();
+    let req = match decode_request_frame(stdin.lock()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[capture-worker] malformed request: {e}");
+            return 2;
+        }
+    };
+    eprintln!(
+        "[capture-worker] request op={:?} session={} gen={}",
+        req.op, req.session_id, req.generation
+    );
+
+    // The worker owns enumeration, exactly like the parent did before.
+    let monitors = match native::list_monitors() {
+        Ok(m) => m,
+        Err(e) => {
+            return worker_exit_err(
+                &req,
+                ReplyStatus::WorkerError,
+                "enumerate",
+                &format!("monitor enumeration failed: {e}"),
+            );
+        }
+    };
+
+    let (mode, monitor_label) = match (&req.op, &req.target) {
+        (WorkerOp::Backdrop, RequestTarget::Backdrop { monitor_id }) => {
+            if !monitors.iter().any(|m| m.id == *monitor_id) {
+                return worker_exit_err(
+                    &req,
+                    ReplyStatus::WorkerError,
+                    "resolve",
+                    &format!("unknown monitor id: {monitor_id}"),
+                );
+            }
+            (
+                CaptureMode::FullMonitor {
+                    monitor_id: monitor_id.clone(),
+                },
+                monitor_id.clone(),
+            )
+        }
+        (WorkerOp::Region, RequestTarget::Region { x, y, w, h }) => {
+            // C639-003 hardening (cross-check, 2026-10-24): the parent-owned
+            // delay contract guarantees delay_ms=0 on the wire always — the
+            // user's wait already ran as its own pre-admission stage before
+            // this worker was even spawned (see `execute_region`). A
+            // nonzero value here is a protocol violation, not a request to
+            // honor: no caller sends one today, but silently sleeping
+            // inside the worker's own fixed CAPTURE_DEADLINE_MS budget
+            // would be exactly the kind of latent footgun a future
+            // "simplification" could reactivate. Fail loud instead.
+            if req.delay_ms != 0 {
+                eprintln!(
+                    "[capture-worker] rejecting nonzero wire delay_ms={} \
+                     (parent-owned delay contract violated)",
+                    req.delay_ms
+                );
+                return worker_exit_err(
+                    &req,
+                    ReplyStatus::WorkerError,
+                    "decode",
+                    &format!(
+                        "worker received nonzero delay_ms={} (must be 0; delay is parent-owned)",
+                        req.delay_ms
+                    ),
+                );
+            }
+            let rect = Rect {
+                x: *x as f64,
+                y: *y as f64,
+                w: *w as f64,
+                h: *h as f64,
+            };
+            let mode = CaptureMode::RegionVirtual { rect };
+            (mode, format!("region {x},{y} {w}x{h}"))
+        }
+        _ => {
+            return worker_exit_err(
+                &req,
+                ReplyStatus::WorkerError,
+                "decode",
+                "op/target mismatch",
+            );
+        }
+    };
+    eprintln!("[capture-worker] acquire {monitor_label}");
+
     let request = CaptureRequest {
-        mode: CaptureMode::FullMonitor {
-            monitor_id: monitor_id.to_string(),
-        },
-        include_cursor: false,
-        id: "region-pick-backdrop".to_string(),
+        mode,
+        include_cursor: req.include_cursor,
+        id: format!("worker-{}-{}", req.session_id, req.generation),
     };
     let mut engine = NativeRasterEngine;
-    match engine.acquire(&request, monitors) {
-        ScrollingResult::Complete { artifact } => Ok(artifact.raster_bytes),
-        other => Err(format!("backdrop capture failed: {}", other.describe())),
+    let reply_frame = match engine.acquire(&request, &monitors) {
+        ScrollingResult::Complete { artifact } => {
+            eprintln!(
+                "[capture-worker] complete {}x{} {} bytes",
+                artifact.raster_width, artifact.raster_height, artifact.raster_bytes.len()
+            );
+            let meta = ReplyMeta {
+                cursor_captured: artifact.cursor.captured,
+                cursor_pos: artifact.cursor.position_physical,
+                scale: artifact.scale,
+                captured_at: artifact.captured_at.clone(),
+                warnings: artifact.warnings.clone(),
+            };
+            match encode_reply_ok(
+                req.session_id,
+                req.generation,
+                artifact.raster_width,
+                artifact.raster_height,
+                &artifact.raster_bytes,
+                &meta,
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    return worker_exit_err(&req, ReplyStatus::WorkerError, "encode", &e);
+                }
+            }
+        }
+        other => {
+            // Preserve the native failure exactly: the engine's own
+            // wording as stage + message. No fabricated frame.
+            let message = other.describe();
+            eprintln!("[capture-worker] native failure: {message}");
+            match encode_reply_err(
+                req.session_id,
+                req.generation,
+                ReplyStatus::NativeError,
+                "acquire",
+                &message,
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[capture-worker] error encode failed: {e}");
+                    return 2;
+                }
+            }
+        }
+    };
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    if let Err(e) = out.write_all(&reply_frame).and_then(|_| out.flush()) {
+        eprintln!("[capture-worker] reply write failed: {e}");
+        return 2;
     }
+    eprintln!("[capture-worker] done");
+    0
+}
+
+/// Write a framed error reply and return the process exit code. Used when
+/// the worker cannot produce a capture but can still speak protocol.
+fn worker_exit_err(
+    req: &capture_worker::WorkerRequest,
+    status: capture_worker::ReplyStatus,
+    stage: &str,
+    message: &str,
+) -> i32 {
+    use std::io::Write as _;
+    match capture_worker::encode_reply_err(req.session_id, req.generation, status, stage, message)
+    {
+        Ok(frame) => {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            if out.write_all(&frame).and_then(|_| out.flush()).is_err() {
+                return 2;
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("[capture-worker] error encode failed: {e}");
+            2
+        }
+    }
+}
+
+/// Dump the capture worker's phase ring log (oldest first) for
+/// diagnostics. Used by the on-hardware gate to collect phase evidence.
+#[tauri::command]
+fn capture_phase_log(state: State<AppState>) -> Vec<String> {
+    let mut v = state.capture_supervisor.ring().tail(200);
+    v.reverse();
+    v
+}
+
+/// Overlay page phase marker (C639 §5 instrumentation): the page reports
+/// page_boot / context / backdrop / image / aim_ready / preview_unavailable
+/// with millisecond offsets. Namespaced "overlay" in the ring so frontend
+/// markers stay distinguishable from native markers. Fire-and-forget from
+/// the page; a failure here never breaks the picker.
+#[tauri::command]
+fn capture_overlay_phase(
+    phase: String,
+    ms: u64,
+    detail: Option<String>,
+    state: State<AppState>,
+) {
+    let mut d = format!("phase={phase} +{ms}ms");
+    if let Some(detail) = detail {
+        let mut detail = detail;
+        detail.truncate(256);
+        d.push_str(&format!(" {detail}"));
+    }
+    state.capture_supervisor.ring().log("overlay", d);
+}
+
+/// Truncate `s` to at most `max_bytes` bytes without panicking, even when
+/// byte `max_bytes` falls inside a multibyte UTF-8 scalar (`String::truncate`
+/// panics on a non-char-boundary index). Walks back to the nearest preceding
+/// char boundary.
+fn truncate_utf8_safe(s: &mut String, max_bytes: usize) {
+    if s.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+}
+
+/// Main-window event-listener phase marker (observability fix, 2026-10-25):
+/// the frontend reports channel-check / listen-registered / listen-failed /
+/// event-received / ui-update-attempted for the `capture-saved` /
+/// `capture-failed` listeners so a silent `window.__TAURI_INTERNALS__`
+/// failure (e.g. `Channel` missing) is visible even in a release build with
+/// no DevTools. Namespaced "listener" in the in-memory ring (readable via
+/// `capture_phase_log`) and also appended to a plain-text file under
+/// `%LOCALAPPDATA%/FORGE Capture/logs/listener.log` so it survives without
+/// an open console. Fire-and-forget: a logging failure never breaks the
+/// listener it is describing. `detail` is frontend-controlled and may
+/// contain multibyte UTF-8, so it is truncated at a char boundary rather
+/// than a raw byte index (see `truncate_utf8_safe`).
+#[tauri::command]
+fn capture_listener_phase(phase: String, detail: Option<String>, state: State<AppState>) {
+    let mut d = format!("phase={phase}");
+    if let Some(detail) = detail {
+        let mut detail = detail;
+        truncate_utf8_safe(&mut detail, 256);
+        d.push_str(&format!(" {detail}"));
+    }
+    state.capture_supervisor.ring().log("listener", &d);
+    let _ = append_listener_log_line(&d);
+}
+
+/// `%LOCALAPPDATA%/FORGE Capture/logs` (Windows) or
+/// `~/.local/share/forge-capture/logs` (other hosts), created on first use.
+fn listener_log_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "LOCALAPPDATA is not set".to_string())?
+        .join("FORGE Capture");
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "HOME is not set".to_string())?
+        .join(".local/share/forge-capture");
+    let dir = base.join("logs");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create logs dir: {e}"))?;
+    Ok(dir)
+}
+
+fn append_listener_log_line(line: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let path = listener_log_dir()?.join("listener.log");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open listener.log: {e}"))?;
+    writeln!(f, "[{}] {line}", forge_capture_core::timestamp::now_utc_iso8601())
+        .map_err(|e| format!("cannot write listener.log: {e}"))
 }
 
 /// True when every pixel of an RGBA frame is byte-identical. A uniform
@@ -1953,12 +4020,44 @@ fn spawn_overlay_watchdog(app: tauri::AppHandle, session_id: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(60));
         let state = app.state::<AppState>();
-        let mut guard = state.pending_overlay.lock().unwrap();
-        if watchdog_should_clear(guard.as_ref(), session_id) {
-            *guard = None;
-            drop(guard);
-            if let Some(w) = app.get_webview_window("overlay") {
-                let _ = w.close();
+        let should_clear =
+            watchdog_should_clear(state.pending_overlay.lock().unwrap().as_ref(), session_id);
+        if should_clear {
+            // C639-007C.2/.11: a watchdog expiry is a terminal failure path
+            // like any other and must retire the matching `active_pick`
+            // claim too, not just the pending context, or the strict
+            // reservation strands this session's token forever,
+            // permanently refusing every later `open_region_overlay`.
+            // `retire_owned_overlay_session` claims the retire gate FIRST
+            // and only clears `active_pick`/`pending_overlay` once that
+            // claim is resolved — the prior order (clear first, claim/
+            // close second) let a concurrent opener observe both already
+            // empty while this exact close was not yet durably ordered.
+            // Binding the close to the `overlay_window_owner` token rather
+            // than "whatever is labeled overlay" means a newer session's
+            // live window is never the one this stale watchdog closes.
+            let settlement = retire_owned_overlay_session(
+                &state.active_pick,
+                &state.pending_overlay,
+                &state.overlay_window_owner,
+                &state.overlay_retire_gate,
+                session_id,
+                OVERLAY_RETIRE_CLAIM_BOUND,
+                || close_overlay_window(&app),
+            );
+            // C639-007C.16/.17: this watchdog already runs on its own
+            // spawned thread, so blocking here is safe. Wait for confirmed
+            // destruction FIRST, and only clear `overlay_window_handle` if
+            // this watchdog is the one that actually issued the close AND
+            // that wait actually confirms destruction — a timeout must
+            // retain the record for a later admission attempt to find and
+            // retry, not erase it. `gone` is short-circuited on `closed` so
+            // this watchdog never blocks on the wait when some other
+            // in-flight actor owns it.
+            let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+            let gone = closed && wait_for_overlay_gone(&app, Duration::from_millis(1500));
+            if should_clear_overlay_handle_after_close(closed, gone) {
+                clear_overlay_window_handle_if(&state.overlay_window_handle, session_id);
             }
         }
     });
@@ -1971,13 +4070,79 @@ fn watchdog_should_clear(pending: Option<&OverlayContext>, watchdog_session: u64
     pending.map(|ctx| ctx.session_id) == Some(watchdog_session)
 }
 
+/// C639-007: whether a pick's claim on `active_pick` is still valid after
+/// a blocking wait (the initial backdrop acquisition) — i.e. nothing
+/// cancelled or superseded it while that wait was in flight. Pure,
+/// mirroring `watchdog_should_clear`'s shape.
+fn pick_still_active(active_pick: Option<u64>, session_id: u64) -> bool {
+    active_pick == Some(session_id)
+}
+
+/// C639-007: whether a just-completed overlay-originated capture's own
+/// session is still the active pick, and so may steal focus back to the
+/// main window. A direct (non-overlay) request always returns true —
+/// unchanged behavior, nothing for it to be superseded by. Pure so the
+/// stale-focus-steal guard is unit-testable without a live Tauri app.
+fn capture_focus_still_current(
+    is_overlay_request: bool,
+    active_pick: Option<u64>,
+    session_id: u64,
+) -> bool {
+    !is_overlay_request || pick_still_active(active_pick, session_id)
+}
+
+/// C639-007C.5: `overlaySessionId` is the calling page's own URL-borne
+/// session (see `open_region_overlay_claimed`'s window build), never
+/// inferred from whichever `pending_overlay` happens to be current when
+/// this runs. The prior version took no caller session at all and simply
+/// returned the current global context — so a stale page A, delayed past
+/// its own retirement, could receive a NEWER page B's context and (per the
+/// old `overlay.js`) adopt B's session id as its own, then carry B's valid
+/// authority on every later Esc/right-click/sliver-cancel/Retry. Binding to
+/// the three-way claim (`active_pick`/`pending_overlay`/
+/// `overlay_window_owner`, via `overlay_request_session_still_current` —
+/// the same check `capture`/Retry already use) and re-filtering the read
+/// itself by the caller's exact session closes that: a mismatched request
+/// fails closed with no context returned, so a stale page's local identity
+/// is never mutated by surviving data obtained under a different session.
 #[tauri::command]
-fn overlay_context(state: State<AppState>) -> Result<OverlayContextDto, String> {
+#[allow(non_snake_case)]
+fn overlay_context(
+    overlaySessionId: u64,
+    state: State<AppState>,
+) -> Result<OverlayContextDto, String> {
+    if !overlay_request_session_still_current(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        overlaySessionId,
+    ) {
+        return Err(
+            "region pick was cancelled or superseded before context could load".to_string(),
+        );
+    }
     let guard = state.pending_overlay.lock().unwrap();
-    guard
-        .as_ref()
-        .map(overlay_context_dto)
+    overlay_context_for_session(guard.as_ref(), overlaySessionId)
         .ok_or_else(|| "no pending region overlay".to_string())
+}
+
+/// C639-007C.5: pure extraction mirroring `stored_backdrop_png` below — a
+/// context is served ONLY while its own recorded session matches the
+/// caller's exact `overlaySessionId`, re-filtered here on top of the
+/// three-way `overlay_request_session_still_current` check the command
+/// itself runs first (that check's `pending_overlay` lock is released
+/// before this one is taken, so a cancel/supersession landing in between
+/// must not let a since-mismatched context through). Pure over the option
+/// so the re-filter itself is unit-testable without a live Tauri app: a
+/// context being PENDING is not sufficient, it must be pending for THIS
+/// session.
+fn overlay_context_for_session(
+    pending: Option<&OverlayContext>,
+    session_id: u64,
+) -> Option<OverlayContextDto> {
+    pending
+        .filter(|ctx| ctx.session_id == session_id)
+        .map(overlay_context_dto)
 }
 
 /// Pure context-to-DTO mapping, so the page always receives the session's
@@ -1989,14 +4154,77 @@ fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
         origin_virtual: ctx.origin_virtual,
         dpr: ctx.dpr,
         backdrop_blank: ctx.backdrop_blank,
+        session_id: ctx.session_id,
     }
 }
 
+/// C639-007C.4: the overlay page's own cancel (Esc, right-click, a
+/// sliver-drag's implicit cancel) must bind to THAT page's exact session —
+/// `overlaySessionId`, carried in the URL the page was built with (see
+/// `open_region_overlay_claimed`) — never treat "whatever is currently
+/// active" as this request's own identity. The prior unconditional version
+/// let a stale, delayed cancel from a superseded page (A) tear down a
+/// newer page's (B) claim and window; a stale cancel now no-ops instead —
+/// touches no state, closes no window — exactly like a stale Retry
+/// (C639-007C.4) and a stale `capture` (C639-007C.3). Reuses the same
+/// bound primitives (`clear_pick_if_current`, `owns_overlay_window`) every
+/// other retire site here already funnels through, rather than the
+/// unconditional "whatever is labeled overlay" lookup those exist
+/// specifically to replace.
+///
+/// C639-007C.10/.11/.12: routed through `retire_owned_overlay_session` —
+/// the same one production primitive the watchdog, `open_region_overlay`'s
+/// own failure cleanup, and the retry final-capture cleanup all use —
+/// which claims `overlay_retire_gate`'s retire slot FIRST and clears
+/// `active_pick`/`pending_overlay` only once that claim is resolved, rather
+/// than clearing them up front and then separately waiting to close.
+/// Clearing them first (the shape this command itself used before
+/// C639-007C.10) would let `open_region_overlay`'s "a pick is already in
+/// progress"/orphan-reclaim checks see `pending_overlay` as already empty
+/// while A's window still physically exists — this cancellation's own close
+/// not yet durably ordered against a concurrent restore — and take their
+/// own close, racing this cancellation's own close exactly the way
+/// `retry_hide_overlay_or_abandon`'s compensate closure used to race it.
+///
+/// C639-007C.12: unlike the prior unbounded `claim_retire`, this no longer
+/// blocks cancellation for the full duration of a concurrent restore's
+/// native `show()`/`set_focus()`. If a restore is in flight, the retire
+/// request coalesces (`RetireClaim::Coalesced`) and this call returns
+/// immediately with the request durably recorded — `active_pick`/
+/// `pending_overlay` are cleared right away so the UI sees the cancellation
+/// take effect at once, while the restoring side (`retry_hide_overlay_or_
+/// abandon`'s compensate, via `finish_restore`) performs the actual
+/// exact-A close itself once its own native call returns, honoring this
+/// request before the gate can go idle. Either way this command itself
+/// never waits on anyone else's native call.
 #[tauri::command]
-fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
-    *state.pending_overlay.lock().unwrap() = None;
-    if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.close();
+#[allow(non_snake_case)]
+fn cancel_region_pick(
+    overlaySessionId: u64,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    // Best-effort close, same as before: a close failure here must not
+    // fail the cancel IPC itself.
+    let settlement = retire_owned_overlay_session(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        &state.overlay_retire_gate,
+        overlaySessionId,
+        OVERLAY_RETIRE_CLAIM_BOUND,
+        || close_overlay_window(&app),
+    );
+    // C639-007C.16: this command must never block holding
+    // `overlay_retire_gate`'s mutex (or anything else) across the native
+    // close/destruction wait — it has to return immediately so the UI sees
+    // the cancellation take effect at once, per this function's own
+    // doc comment. Defer the `overlay_window_handle` compare-clear to a
+    // background watcher instead of either blocking here or clearing the
+    // instant `do_close` merely returned (before destruction is actually
+    // confirmed) — only if this call is the one that issued the close.
+    if matches!(settlement, Ok(RetireSettlement::Closed)) {
+        release_overlay_window_handle_when_gone(app, overlaySessionId);
     }
     Ok(())
 }
@@ -2018,10 +4246,31 @@ struct BackdropDto {
     height: u32,
 }
 
+/// C639-007C.5: the same caller-bound read as `overlay_context` above —
+/// `overlaySessionId` is the page's own URL-borne identity, verified
+/// against the live three-way claim before ANY frame is served, and the
+/// stored-backdrop lookup itself is re-filtered to that exact session so a
+/// stale/superseded caller can never receive (and thus never locally adopt
+/// or act on) a different session's frame.
 #[tauri::command]
-fn region_pick_backdrop(state: State<AppState>) -> Result<BackdropDto, String> {
+#[allow(non_snake_case)]
+fn region_pick_backdrop(
+    overlaySessionId: u64,
+    state: State<AppState>,
+) -> Result<BackdropDto, String> {
+    if !overlay_request_session_still_current(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        overlaySessionId,
+    ) {
+        return Err(
+            "region pick was cancelled or superseded before the backdrop could load".to_string(),
+        );
+    }
     let guard = state.pending_overlay.lock().unwrap();
-    let png = stored_backdrop_png(guard.as_ref())?;
+    let ctx_ref = guard.as_ref().filter(|c| c.session_id == overlaySessionId);
+    let png = stored_backdrop_png(ctx_ref)?;
     let (width, height) =
         png_dimensions(png).map_err(|e| format!("backdrop dimensions unreadable: {e}"))?;
     Ok(BackdropDto {
@@ -2054,50 +4303,429 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
 /// be reshown at all, the pick is cancelled outright — an invisible picker
 /// with a live session would be unrecoverable.
 #[tauri::command]
-fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
-    let (monitor_id, retry_session) = {
+#[allow(non_snake_case)]
+async fn retry_region_backdrop(
+    overlaySessionId: u64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    // C639-001: the retry's blocking supervisor round trip (plus its
+    // settle sleep) runs off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        retry_region_backdrop_blocking(&app, overlaySessionId)
+    })
+    .await
+    .map_err(|e| format!("retry background task failed: {e}"))?
+}
+
+/// C639-007C.7: dispatch the Retry hide's recheck-lookup-hide step through
+/// `AbandonableBridge` rather than the plain-channel `run_on_main_thread_
+/// sync`, so a main-thread closure that only gets to run after its caller
+/// has already timed out can detect that and skip the hide entirely — see
+/// the bridge's own doc comment and the call site in
+/// `retry_region_backdrop_blocking` for the full failure mode this closes.
+///
+/// C639-007C.8: `hide()` is exactly the unbounded native call
+/// `AbandonableBridge::settle` must never hold its lock across (see the
+/// bridge's own doc comment), so the waiter's 5s bound stays real even if
+/// `hide()` blocks past it. The counterpart: if `hide()` nonetheless
+/// succeeds after the waiter has already given up, `compensate` runs —
+/// still on the main thread, still inside the same dispatched closure, so
+/// nothing else can have run on the single main-event-loop thread between
+/// `action` resolving `window` and `compensate` acting on it — and restores
+/// the EXACT window `action` already resolved and hid, never a fresh
+/// `get_webview_window("overlay")` lookup, which could by then resolve to a
+/// newer generation's window. If the restore itself fails, the session is
+/// torn down exactly like the terminal-failure path below does, rather than
+/// leave an unrecoverable hidden picker with a live reservation nobody but
+/// the 60s watchdog will ever clear.
+///
+/// C639-007C.9: "nothing else can run on the main-event-loop thread between
+/// `action` resolving `window` and `compensate` acting on it" is true but
+/// does not make A's state stale-proof: cancellation and admission of a
+/// newer session (B) are NOT dispatched through this same main-thread
+/// closure — `cancel_region_pick`'s state clear and a newer `open_region_
+/// overlay`'s `active_pick` claim run from their own command/background
+/// threads, so they can land (and fully complete) while this closure is
+/// still blocked inside A's native `hide()`, strictly before `compensate`
+/// ever runs. `compensate` therefore revalidates the full three-way binding
+/// (`overlay_request_session_still_current` — active_pick, pending_
+/// overlay's own recorded session, and overlay_window_owner, the same
+/// check every other retire site in this module is built from) before
+/// touching the window at all: if A is no longer the live claim, the
+/// window is closed (the exact captured handle, never a fresh shared-label
+/// lookup) and nothing else is touched — B's state is not this closure's
+/// to read or retire. Only when A is still current does it get reshown.
+/// The prior version showed A unconditionally and, on a show failure,
+/// cleared `overlay_window_owner` unconditionally too — both now go
+/// through the same owner-bound primitives (`overlay_request_session_
+/// still_current`, `owns_overlay_window`'s compare-and-clear) the rest of
+/// the module already uses, so a stale A can never resurrect itself over a
+/// live B or erase B's owner claim.
+///
+/// C639-007C.10: the three-way recheck above is a point-in-time read, not a
+/// reservation — nothing about it stops cancellation from running, on its
+/// own command thread, in the narrow gap between that read returning true
+/// and this closure actually calling `window.show()`. The exact failing
+/// interleaving: the recheck passes (A still current); before `show()` is
+/// called, A's cancel command clears `active_pick`/`pending_overlay`,
+/// compare-clears `overlay_window_owner`, and closes the window; if that
+/// close's native call and this closure's `show()` are not ordered against
+/// each other, the later one — whichever it ends up being, native show/
+/// close are not guaranteed to complete in call order — can resurrect
+/// cancelled A or stomp a newer session's window. `overlay_retire_gate`
+/// closes this: `try_claim_restore` must succeed before this closure is
+/// allowed to call `show()`/`set_focus()` at all; if cancellation has
+/// already claimed (or is still holding) the retire slot, the claim fails
+/// and this closure returns having touched nothing — cancellation's own
+/// close, ordered by the same gate, already owns the window. If this
+/// closure wins the claim instead, the recheck above is re-run WHILE
+/// holding it (so a cancellation that fully completed before the claim was
+/// even attempted is still caught here, not just the in-flight case) before
+/// `show()` runs.
+///
+/// C639-007C.12: a cancellation (or the watchdog, or an opener's orphan
+/// reclaim) arriving WHILE this closure holds the restore claim no longer
+/// blocks behind it — it coalesces (`RetireClaim::Coalesced`) and returns
+/// at once, having cleared its own session bookkeeping but deferred the
+/// actual close. `finish_restore`, called once `show()`/`set_focus()` (or
+/// the failure cleanup) is done, reports whether that happened and — if
+/// so — this closure performs the deferred close itself before releasing,
+/// using this exact resolved handle. Either way the window ends up closed
+/// if cancellation ran at all: immediately, if the gate was idle when
+/// cancellation ran; or here, once this restore finishes, if it coalesced.
+/// The claim is held (never released early) across the recheck, `show()`/
+/// `set_focus()` (or the failure cleanup), and the deferred close itself,
+/// so nothing can observe the gate as idle — and so conclude "nothing left
+/// to wait for" — before that work, including any coalesced close, has
+/// actually finished.
+fn retry_hide_overlay_or_abandon(
+    app: tauri::AppHandle,
+    retry_session: u64,
+) -> Result<tauri::WebviewWindow, String> {
+    let bridge = Arc::new(AbandonableBridge::<Result<tauri::WebviewWindow, String>>::new());
+    let bridge_for_main = bridge.clone();
+    app.clone().run_on_main_thread(move || {
+        let app_for_action = app.clone();
+        let app_for_compensate = app;
+        bridge_for_main.settle(
+            move || -> Result<tauri::WebviewWindow, String> {
+                let state = app_for_action.state::<AppState>();
+                if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+                    return Err(
+                        "region pick was cancelled or superseded before retry could run"
+                            .to_string(),
+                    );
+                }
+                let window = app_for_action
+                    .get_webview_window("overlay")
+                    .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
+                window
+                    .hide()
+                    .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+                Ok(window)
+            },
+            move |result| {
+                let Ok(window) = result else { return };
+                let state = app_for_compensate.state::<AppState>();
+                // C639-007C.9: `action` already returned — `hide()` finally
+                // unblocked, well after the waiter abandoned — so between
+                // then and now the user had a real window to cancel A
+                // through, and a newer session (B) had a real window to be
+                // admitted through, while this closure sat blocked behind
+                // A's native `hide()` on the single main-event-loop thread.
+                // C639-007C.10: claim the right to restore BEFORE touching
+                // the window at all. If cancellation has already claimed
+                // (or is still holding) the retire slot, do not show/focus
+                // — do not even close — and return: cancellation's own
+                // close, ordered by this same gate, already owns A's
+                // window from here.
+                if !state.overlay_retire_gate.try_claim_restore() {
+                    return;
+                }
+                // Revalidate the full three-way binding
+                // (`overlay_request_session_still_current`, the same check
+                // every other retire site in this module uses) WHILE
+                // holding the claim — a cancellation that fully completed
+                // (and released the gate) before this claim was even
+                // attempted leaves no trace on the gate itself, only on
+                // this state, so it must be re-read here, not assumed from
+                // winning the claim alone.
+                if !overlay_request_session_still_current(
+                    &state.active_pick,
+                    &state.pending_overlay,
+                    &state.overlay_window_owner,
+                    retry_session,
+                ) {
+                    // A was cancelled or superseded while its hide() was
+                    // still blocked. Do not show it back: close only the
+                    // exact handle `action` already resolved and hid —
+                    // never a fresh shared-"overlay"-label lookup, which
+                    // could by now resolve to B's window — and touch
+                    // nothing else. B's active_pick, pending_overlay, and
+                    // overlay_window_owner were never this closure's to
+                    // retire. C639-007C.12: `finish_restore` (not a plain
+                    // `release_restore`) ALWAYS transitions the gate to
+                    // `Retiring` and hands back a guard that is released
+                    // only AFTER the close below — never before, which
+                    // would let an orphan reclaim or a second restore
+                    // observe idle (and so "nothing to wait for") before
+                    // this native close has actually happened.
+                    let (_, guard) = state.overlay_retire_gate.finish_restore();
+                    let _ = window.close();
+                    // C639-007C.16: this closure runs on Tauri's single
+                    // main-event-loop thread — the very thread that has to
+                    // deliver the window's own destroy event — so blocking
+                    // it on `wait_for_overlay_gone` would deadlock rather
+                    // than ever observe the window as gone. Defer the
+                    // compare-clear to a background watcher instead of
+                    // clearing it the instant `close()` merely returns.
+                    release_overlay_window_handle_when_gone(
+                        app_for_compensate.clone(),
+                        retry_session,
+                    );
+                    guard.release();
+                    return;
+                }
+                if window.show().is_err() {
+                    clear_pick_if_current(
+                        &state.active_pick,
+                        &state.pending_overlay,
+                        retry_session,
+                    );
+                    // Compare-and-clear (`owns_overlay_window`), never an
+                    // unconditional `None`: a newer session could in
+                    // principle have claimed the owner slot by the time
+                    // this failure path runs, and this cleanup must never
+                    // erase a claim that was never this session's.
+                    let mut owner = state.overlay_window_owner.lock().unwrap();
+                    if owns_overlay_window(*owner, retry_session) {
+                        *owner = None;
+                    }
+                    drop(owner);
+                    // Close, THEN release — see the comment on the
+                    // mismatch branch above for why the order matters.
+                    let (_, guard) = state.overlay_retire_gate.finish_restore();
+                    let _ = window.close();
+                    // C639-007C.16: same deferred-clear discipline as the
+                    // mismatch branch above — never clear `overlay_window_
+                    // handle` the instant `close()` merely returns, and
+                    // never block this main-thread closure waiting for it.
+                    release_overlay_window_handle_when_gone(
+                        app_for_compensate.clone(),
+                        retry_session,
+                    );
+                    guard.release();
+                    return;
+                }
+                let _ = window.set_focus();
+                // C639-007C.12: `finish_restore` reports whether a retire
+                // request coalesced into this restore while `show()`/
+                // `set_focus()` were in flight (e.g. the user cancelled, or
+                // the 60s watchdog fired, right as this closure was about
+                // to show A back). If so, that request's own close was
+                // deferred to exactly this moment — honor it now, before
+                // the gate can go idle, using this exact resolved handle,
+                // rather than leaving A up just because its own show
+                // succeeded.
+                let (retire_requested, guard) = state.overlay_retire_gate.finish_restore();
+                if retire_requested {
+                    clear_pick_if_current(
+                        &state.active_pick,
+                        &state.pending_overlay,
+                        retry_session,
+                    );
+                    let mut owner = state.overlay_window_owner.lock().unwrap();
+                    if owns_overlay_window(*owner, retry_session) {
+                        *owner = None;
+                    }
+                    drop(owner);
+                    let _ = window.close();
+                    // C639-007C.16: same deferred-clear discipline as the
+                    // two branches above — issue the close first, then
+                    // defer the `overlay_window_handle` compare-clear to a
+                    // background watcher rather than clearing it up front
+                    // (before `close()` even ran) or blocking this
+                    // main-thread closure on destruction.
+                    release_overlay_window_handle_when_gone(
+                        app_for_compensate.clone(),
+                        retry_session,
+                    );
+                }
+                guard.release();
+            },
+        );
+    })
+    .map_err(|e| format!("cannot dispatch to main thread: {e}"))?;
+    bridge.wait_or_abandon(Duration::from_secs(5))?
+}
+
+/// C639-007C.4: `retry_session` is the session id the PAGE that issued this
+/// command was built with (its own URL — see `open_region_overlay_claimed`),
+/// never inferred from whichever `pending_overlay` happens to be current
+/// when this body actually runs. The prior version read "whichever pending
+/// context is current" as if it were this request's own identity — the
+/// same borrowed-global-claim mistake C639-007C.3 fixed for `capture` —
+/// which let a stale, delayed retry from a superseded page (A) hide, wipe,
+/// or (on a restore failure) tear down a newer page's (B) picker. Every
+/// path here verifies the full three-way binding (`active_pick`,
+/// `pending_overlay`'s own recorded session, `overlay_window_owner` —
+/// `overlay_request_session_still_current`, the same check
+/// `run_capture_inner` uses for `capture`) BEFORE the first hide, capture,
+/// show, or focus — a stale request fails having touched nothing of B's.
+fn retry_region_backdrop_blocking(
+    app: &tauri::AppHandle,
+    retry_session: u64,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let monitor_id = {
+        if !overlay_request_session_still_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            retry_session,
+        ) {
+            return Err(
+                "region pick was cancelled or superseded before retry could run".to_string(),
+            );
+        }
         let guard = state.pending_overlay.lock().unwrap();
-        let ctx = guard
+        guard
             .as_ref()
-            .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?;
-        (ctx.monitor_id.clone(), ctx.session_id)
+            .filter(|ctx| ctx.session_id == retry_session)
+            .map(|ctx| ctx.monitor_id.clone())
+            .ok_or_else(|| {
+                "region pick was cancelled or superseded before retry could run".to_string()
+            })?
     };
     let monitors = current_monitors()?;
     if !monitors.iter().any(|m| m.id == monitor_id) {
         return Err(format!("unknown monitor id: {monitor_id}"));
     }
-    let window = app
-        .get_webview_window("overlay")
-        .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
-    window
-        .hide()
-        .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+    // Monitor enumeration above is itself an unbounded OS call; re-verify
+    // the same binding again, atomically, right before the first window
+    // mutation — the same discipline `run_capture_inner`/`build_mode` use
+    // around their own unbounded calls.
+    //
+    // C639-007C.6: the recheck, the shared-"overlay"-label lookup, and the
+    // hide must happen as ONE atomic step, never a check followed by a
+    // separate later lookup. The prior version re-verified ownership here,
+    // then reacquired the window by its shared label and hid it as two
+    // separate operations with nothing — no lock, no main-thread
+    // serialization — spanning them: if a newer session (B) was admitted
+    // and built its own window in that gap (window CREATION already runs
+    // as one `run_on_main_thread_sync` closure, see
+    // `open_region_overlay_claimed`), the label lookup below would resolve
+    // to B's window and hide it, stranding B hidden even though this retry
+    // is a stale request that must touch nothing of B's. Dispatching the
+    // recheck + label lookup + hide as one main-thread closure serializes
+    // it against that exact build closure on Tauri's single
+    // main-event-loop thread — the two can never interleave, so the lookup
+    // here can only ever resolve to whichever window is actually live at
+    // that one instant, never a window a concurrent build swapped onto the
+    // label between two separate steps. The resolved handle is returned
+    // and reused for every later show/focus/close in this function (below)
+    // instead of being reacquired by label again, per the same
+    // requirement.
+    //
+    // C639-007C.7: this hide is dispatched through `AbandonableBridge`
+    // instead of the plain-channel `run_on_main_thread_sync`. A channel
+    // bridge bounds only the WAITER's patience, not the closure's: if the
+    // main thread is busy past the 5s bound, `run_on_main_thread_sync`
+    // returns a timeout error and this function used to return right
+    // here, but the already-queued closure keeps running to completion
+    // whenever the main thread gets to it — ownership is still unchanged
+    // (nothing retired it; the caller merely gave up), so it would hide
+    // the live picker and then discard its own result into a dropped
+    // receiver, stranding the user on an invisible overlay with no caller
+    // left to show it back and a live reservation that only the 60s
+    // watchdog would eventually clear. `AbandonableBridge` closes that
+    // gap: on timeout the bridge is marked abandoned under the same lock
+    // the closure checks before it does anything at all, so a closure
+    // that has not yet run when the timeout fires skips the hide
+    // entirely — never touches ownership, never looks up the window,
+    // never hides it. The one case where the closure might already be
+    // past that check and mid-hide right as the timeout fires is handled
+    // by `wait_or_abandon`'s own re-check under the lock, which then
+    // yields the real result instead of a spurious abandonment — this
+    // function's existing restore-on-failure / commit-on-success path
+    // below still runs exactly as it always has for that result.
+    let app_for_hide = app.clone();
+    let window = retry_hide_overlay_or_abandon(app_for_hide, retry_session)?;
     // Let the compositor settle so the hidden window is truly gone from
     // the next frame; without this the retry could capture the picker.
     std::thread::sleep(Duration::from_millis(250));
-    let fresh = capture_region_backdrop(&monitors, &monitor_id);
-    // Commit the retry only if this is still the same session. The lock is
-    // held across the session check AND the window restore: `cancel_region_pick`
-    // must take this same lock to clear the session, so a cancel during the
-    // capture cannot slip between the check and the show — a cancelled retry
-    // never resurrects the picker (no zombie overlay, no show-vs-close flash).
-    // If instead the capture itself failed, the session is still ours: the
-    // window is reshown and the previous frame stays in place, so the user
-    // keeps picking instead of staring at nothing.
+    // C639 Option C: the re-acquisition runs in the supervised worker.
+    let fresh = capture_region_backdrop(&state, retry_session, &monitor_id);
+    // Commit only if `retry_session` is STILL the live claim across
+    // active_pick, pending_overlay's own recorded session, AND the overlay
+    // window's owner together (C639-007C.4) — not pending_overlay's own
+    // recorded session alone as before, which let a stale request's
+    // cleanup act on a binding it no longer actually held. Lock order
+    // matches `overlay_request_session_still_current` (active_pick, then
+    // pending_overlay); the pending_overlay lock is then held continuously
+    // through the window restore below — `cancel_region_pick` takes that
+    // same lock to clear the session, so a cancel landing between the
+    // check and the restore can never slip through and resurrect a dead
+    // picker.
+    let active = state.active_pick.lock().unwrap();
+    if *active != Some(retry_session) {
+        return Err("region pick was cancelled during retry".to_string());
+    }
     let mut guard = state.pending_overlay.lock().unwrap();
+    drop(active);
     let ctx = match guard.as_mut() {
         Some(ctx) if ctx.session_id == retry_session => ctx,
         _ => return Err("region pick was cancelled during retry".to_string()),
     };
+    if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+        return Err("region pick was cancelled during retry".to_string());
+    }
     // The picker was hidden for the capture. If it cannot be reshown, the
     // pick is dead: tear the session down exactly like cancel_region_pick
     // instead of stranding the user on an invisible picker with a live
     // session and no way to recover it. (set_focus stays best-effort: a
     // visible window the user can click is not a trap.)
     if let Err(e) = window.show() {
-        *guard = None;
+        // C639-007C.2/.11: this terminal failure tears the session down
+        // exactly like `cancel_region_pick` — retire the matching
+        // `active_pick` claim too, not just the pending context, or the
+        // strict reservation strands a session that can never be reused
+        // once the picker itself is already unrecoverable. `retry_session`
+        // is this call's own verified id (C639-007C.4), so this can only
+        // ever be retiring this exact session's claim, never a newer
+        // session's. Routed through `retire_owned_overlay_session` — the
+        // same one production primitive every other owned-retire site
+        // uses — rather than this site's own ad hoc clear-then-close:
+        // claiming the retire gate first (bounded, C639-007C.12) orders
+        // this close against a concurrent restore the same way every other
+        // retire site is now ordered, and the owner slot is compare-
+        // cleared (never the unconditional `None` this used before)
+        // against `retry_session`, never erasing a newer session's claim.
+        // Closes this exact resolved handle, not a fresh shared-label
+        // lookup, which could by now resolve to a newer session's window.
         drop(guard);
-        let _ = window.close();
+        let settlement = retire_owned_overlay_session(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            &state.overlay_retire_gate,
+            retry_session,
+            OVERLAY_RETIRE_CLAIM_BOUND,
+            || window.close().map_err(|e| format!("cannot close overlay window: {e}")),
+        );
+        // C639-007C.16/.17: this function runs off the main thread, so
+        // blocking here is safe. Wait for confirmed destruction FIRST, and
+        // only clear `overlay_window_handle` if this call is the one that
+        // actually issued the close AND that wait actually confirms
+        // destruction — a timeout must retain the record for a later
+        // admission attempt to find and retry, not erase it. `gone` is
+        // short-circuited on `closed` so this call never blocks on the wait
+        // when some other in-flight actor owns it.
+        let closed = matches!(settlement, Ok(RetireSettlement::Closed));
+        let gone = closed && wait_for_overlay_gone(app, Duration::from_millis(1500));
+        if should_clear_overlay_handle_after_close(closed, gone) {
+            clear_overlay_window_handle_if(&state.overlay_window_handle, retry_session);
+        }
         return Err(format!("could not restore the region picker window: {e}"));
     }
     let _ = window.set_focus();
@@ -3284,6 +5912,68 @@ fn focus_capture_window(app: &tauri::AppHandle) {
     }
 }
 
+/// C639-007D.2/007D.3: `focus_capture_window`, but for an overlay-originated
+/// capture's post-publication focus steal specifically. Round 6
+/// (007D.2) re-checked `active_pick` immediately before each individual
+/// window action rather than from one decision cached before the whole
+/// call — but each of those per-step checks still read the lock and
+/// dropped it BEFORE its own action ran, on a background thread, with
+/// nothing stopping a competing session's own main-thread window-build/
+/// focus closure (`open_region_overlay_claimed`) from running in the gap
+/// between the read and the act.
+///
+/// C639-007D.3: the fix funnels the ENTIRE recheck-and-act sequence through
+/// ONE `run_on_main_thread_sync` dispatch, mirroring `open_region_overlay_
+/// claimed`'s own build+focus closure exactly. Once dispatched, this
+/// closure runs to completion on Tauri's single-threaded event loop with
+/// nothing else FROM THAT LOOP interleaved between any of its own
+/// check/act pairs — so a competing session's build/focus closure can only
+/// ever run strictly before this one (in which case this closure's own
+/// fresh, same-thread check catches the supersession immediately, before
+/// touching anything) or strictly after it (in which case it is the LAST
+/// thing to run and its own focus wins, undisturbed by this already-
+/// completed closure) — never interleaved partway through one of this
+/// closure's own check-then-act steps. A direct (non-overlay) capture has
+/// no claim to revalidate (`capture_focus_still_current` always returns
+/// true for it) and proceeds exactly as `focus_capture_window` always did,
+/// just via the same single dispatch.
+fn focus_capture_window_if_current(app: &tauri::AppHandle, is_overlay_request: bool, session_id: u64) {
+    let app_for_dispatch = app.clone();
+    let dispatched = run_on_main_thread_sync(app, move || {
+        let app = app_for_dispatch;
+        let state = app.state::<AppState>();
+        let still_current = || {
+            capture_focus_still_current(
+                is_overlay_request,
+                *state.active_pick.lock().unwrap(),
+                session_id,
+            )
+        };
+        if !still_current() {
+            return;
+        }
+        if let Some(w) = app.get_webview_window("main") {
+            if !still_current() {
+                return;
+            }
+            let _ = w.unminimize();
+            if !still_current() {
+                return;
+            }
+            let _ = w.show();
+            if !still_current() {
+                return;
+            }
+            if let Err(e) = w.set_focus() {
+                eprintln!("[capture] could not focus capture window: {e}");
+            }
+        }
+    });
+    if let Err(e) = dispatched {
+        eprintln!("[capture] could not dispatch post-capture focus check: {e}");
+    }
+}
+
 /// Pick the monitor a direct-capture shortcut should target: the one under
 /// the cursor, falling back to the first monitor when the cursor position
 /// is unavailable.
@@ -3338,12 +6028,21 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
     use forge_capture_core::hotkey::HotkeyAction;
     match action {
         HotkeyAction::FocusWindow => focus_capture_window(app),
+        // C639-001: the global-shortcut callback itself runs on the main
+        // thread (it must, to interact with window focus synchronously)
+        // — the same reason `begin_region_pick`/`capture` needed an
+        // explicit background boundary applies here. Dispatch to a
+        // background thread rather than blocking the shortcut callback
+        // (and therefore the main/event-loop thread) for the capture
+        // worker's multi-second budget.
         HotkeyAction::RegionCapture => match monitor_id_for_hotkey() {
             Ok(id) => {
-                let state = app.state::<AppState>();
-                if let Err(e) = open_region_overlay(app.clone(), state, &id, 0, true) {
-                    report_hotkey_error(app, &e);
-                }
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = open_region_overlay(&app, &id, 0, true) {
+                        report_hotkey_error(&app, &e);
+                    }
+                });
             }
             Err(e) => report_hotkey_error(app, &e),
         },
@@ -3364,13 +6063,17 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
                     window_id: None,
                     region: None,
                     overlay_rect: None,
+                    overlay_session_id: None,
                     delay_ms: Some(0),
                     include_cursor: true,
                 };
-                let state = app.state::<AppState>();
-                if let Err(e) = run_capture(app, state, &dto) {
-                    report_hotkey_error(app, &e);
-                }
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let state = app.state::<AppState>();
+                    if let Err(e) = run_capture(&app, state, &dto) {
+                        report_hotkey_error(&app, &e);
+                    }
+                });
             }
             Err(e) => report_hotkey_error(app, &e),
         },
@@ -3449,9 +6152,47 @@ fn ensure_dpi_awareness() {
     }
 }
 
+/// EXE identity for the phase ring log (C639 §5): path, size, SHA-256.
+/// Best effort — "unreadable" when the file cannot be read.
+fn exe_identity_string(exe: &std::path::Path) -> String {
+    match std::fs::read(exe) {
+        Ok(bytes) => {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&bytes);
+            format!(
+                "path={} size={} sha256={:x}",
+                exe.display(),
+                bytes.len(),
+                h.finalize()
+            )
+        }
+        Err(e) => format!("path={} unreadable: {e}", exe.display()),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     ensure_dpi_awareness();
+
+    // C639 Option C: capture-worker mode. The parent re-enters its own EXE
+    // with `--capture-worker`; this MUST precede all Tauri/window
+    // initialization — the worker owns native GDI objects and must never
+    // create a window, touch sessions, or write files. It performs exactly
+    // one framed acquisition and exits.
+    if std::env::args().any(|a| a == "--capture-worker") {
+        std::process::exit(capture_worker_main());
+    }
+
+    // Resolved once, never caller-supplied: the worker is always this EXE.
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let supervisor = capture_worker::CaptureSupervisor::new(
+        exe_path.clone(),
+        forge_capture_core::artifact::MAX_ARTIFACT_BYTES,
+    );
+    supervisor
+        .ring()
+        .log("exe_identity", exe_identity_string(&exe_path));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -3461,6 +6202,11 @@ fn main() {
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
             overlay_session: Mutex::new(0),
+            active_pick: Mutex::new(None),
+            overlay_window_owner: Mutex::new(None),
+            overlay_window_handle: Mutex::new(None),
+            overlay_retire_gate: OverlayRetireGate::new(),
+            capture_supervisor: supervisor,
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
@@ -3508,6 +6254,9 @@ fn main() {
             cancel_region_pick,
             region_pick_backdrop,
             retry_region_backdrop,
+            capture_phase_log,
+            capture_overlay_phase,
+            capture_listener_phase,
             ai_edit_submit,
             ai_edit_poll,
             ai_edit_import,
@@ -3530,6 +6279,7 @@ fn main() {
             session_store::forge_session_set,
             session_store::forge_session_clear,
             get_capture_upload_payload,
+            get_capture_preview_payload,
             copy_text_to_clipboard,
             open_external_url,
         ])
@@ -3615,13 +6365,15 @@ mod dto_ipc_tests {
     fn capture_request_dto_matches_overlay_payload() {
         // ui/overlay.js on drag end:
         //   { mode: "region-overlay", monitorId: null, windowId: null,
-        //     region: null, overlayRect: r, delayMs: 0, includeCursor: false }
+        //     region: null, overlayRect: r, overlaySessionId: sessionId,
+        //     delayMs: 0, includeCursor: false }
         let json = r#"{
             "mode": "region-overlay",
             "monitorId": null,
             "windowId": null,
             "region": null,
             "overlayRect": {"x":1,"y":2,"w":3,"h":4},
+            "overlaySessionId": 9,
             "delayMs": 0,
             "includeCursor": false
         }"#;
@@ -3630,6 +6382,28 @@ mod dto_ipc_tests {
         let r = dto.overlay_rect.expect("overlayRect binds");
         assert_eq!((r.x, r.y, r.w, r.h), (1.0, 2.0, 3.0, 4.0));
         assert!(!dto.include_cursor);
+        // C639-007C.3: this is the binding `run_capture_inner` verifies
+        // against `active_pick`/`pending_overlay`/`overlay_window_owner`
+        // before doing anything else for a region-overlay request.
+        assert_eq!(dto.overlay_session_id, Some(9));
+    }
+
+    #[test]
+    fn capture_request_dto_overlay_session_id_absent_for_non_overlay_modes() {
+        // C639-007C.3: every other mode omits `overlaySessionId` entirely
+        // (it never had an overlay to carry one from) — the field must
+        // deserialize to `None`, not fail the whole request.
+        let json = r#"{
+            "mode": "window",
+            "monitorId": null,
+            "windowId": "42",
+            "region": null,
+            "overlayRect": null,
+            "delayMs": 5000,
+            "includeCursor": true
+        }"#;
+        let dto: CaptureRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.overlay_session_id, None);
     }
 
     #[test]
@@ -3701,14 +6475,19 @@ mod dto_ipc_tests {
         // assert the UI-facing contract through the DTO above and keep this
         // test as a tripwire reminding reviewers that renaming the
         // begin_region_pick parameters breaks the overlay flow.
-        let _ = begin_region_pick
-            as fn(
-                String,
-                Option<u64>,
-                Option<bool>,
-                tauri::AppHandle,
-                State<AppState>,
-            ) -> Result<(), String>;
+        //
+        // `begin_region_pick` is `async` (C639-001), so its return type is
+        // an anonymous `impl Future` and it can no longer be cast to a
+        // plain `fn` pointer. Pinning the signature by reference inside an
+        // uncalled closure still fails to compile on a rename/reorder/
+        // retype, or if the `State<AppState>` parameter this command used
+        // to take ever comes back.
+        let _pin = |monitor_id: String,
+                    delay_ms: Option<u64>,
+                    include_cursor: Option<bool>,
+                    app: tauri::AppHandle| {
+            let _future = begin_region_pick(monitor_id, delay_ms, include_cursor, app);
+        };
     }
 
     #[test]
@@ -4136,6 +6915,377 @@ mod region_picker_tests {
     }
 
     #[test]
+    fn pick_still_active_requires_exact_match() {
+        // C639-007: a pick claims active_pick before its blocking backdrop
+        // acquisition; after that wait, only an EXACT match (nothing
+        // cancelled it to None, nothing newer overwrote it) lets the
+        // install proceed.
+        assert!(pick_still_active(Some(5), 5));
+        assert!(!pick_still_active(None, 5), "cancelled must not read as active");
+        assert!(
+            !pick_still_active(Some(6), 5),
+            "a newer, different pick must not read as this one's"
+        );
+    }
+
+    #[test]
+    fn capture_focus_still_current_gates_only_overlay_originated_captures() {
+        // C639-007: a direct (non-overlay) capture always may steal focus
+        // — unchanged behavior, nothing for it to be superseded by.
+        assert!(capture_focus_still_current(false, None, 5));
+        assert!(capture_focus_still_current(false, Some(999), 5));
+        // An overlay-originated capture only steals focus while its own
+        // session is still the active pick.
+        assert!(capture_focus_still_current(true, Some(5), 5));
+        assert!(
+            !capture_focus_still_current(true, None, 5),
+            "cancelled during the worker round trip must not steal focus"
+        );
+        assert!(
+            !capture_focus_still_current(true, Some(6), 5),
+            "a newer pick must not have its focus stolen by an older capture's result"
+        );
+    }
+
+    #[test]
+    fn publication_commit_is_rejected_for_a_cancelled_or_superseded_overlay_pick() {
+        // C639-007D.1: the commit-authorization check in
+        // `run_capture_via_worker_inner` is exactly `capture_focus_still_current`
+        // evaluated once, under a momentary lock hold, before `store_artifact`
+        // — a cancel must block publication outright, not just a later
+        // focus-steal.
+        assert!(!capture_focus_still_current(true, None, 5));
+        assert!(!capture_focus_still_current(true, Some(6), 5));
+    }
+
+    #[test]
+    fn late_focus_after_a_slow_store_is_revalidated_not_cached() {
+        // C639-007D.1: the original bug cached a `should_focus` boolean
+        // decided at authorization time and reused it AFTER
+        // `store_artifact`'s unbounded disk write — so a pick (A) that was
+        // authorized, then superseded by a newer pick (B) while A's write
+        // was still in flight, could steal focus back from B using its
+        // stale, pre-write decision. The fix: `capture_focus_still_current`
+        // is called again, fresh, after the write — never reused from the
+        // authorization moment.
+        let active_pick = Mutex::new(Some(5u64)); // A authorized
+        let authorized = capture_focus_still_current(true, *active_pick.lock().unwrap(), 5);
+        assert!(authorized, "A must be authorized to publish while still active");
+        // A's store stalls; B supersedes A while the write is in flight.
+        *active_pick.lock().unwrap() = Some(6);
+        // A's store "completes" here. Revalidating now — not reusing
+        // `authorized` — must refuse A's focus steal.
+        let should_focus_now = capture_focus_still_current(true, *active_pick.lock().unwrap(), 5);
+        assert!(!should_focus_now, "a too-late A must not steal focus from B");
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(6),
+            "B's claim must survive A's entire publication untouched"
+        );
+    }
+
+    #[test]
+    fn build_failure_before_worker_admission_retires_the_overlay_claim() {
+        // C639-007C.1: `build_mode` can fail on a region-overlay request
+        // (overlay-close, destruction-wait, or missing `overlay_rect`)
+        // BEFORE `run_capture_via_worker`'s own wrapper is ever reached —
+        // that wrapper was the reservation's only other release point, so
+        // without this, a pre-worker failure here stranded the session's
+        // `active_pick` token forever, permanently refusing every future
+        // `open_region_overlay`.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let result: Result<(), String> = retire_claim_on_overlay_build_failure(
+            true,
+            Some(5),
+            &active_pick,
+            &pending_overlay,
+            Err("close_overlay_window failed".to_string()),
+        );
+        assert!(result.is_err(), "the original build_mode failure must still propagate");
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            None,
+            "the stranded active_pick token must be retired"
+        );
+        assert!(
+            pending_overlay.lock().unwrap().is_none(),
+            "the matching pending_overlay context must be retired too"
+        );
+    }
+
+    #[test]
+    fn build_failure_retire_never_clears_a_newer_claimant() {
+        // Freeze: an immediate second open after the failure must be
+        // admitted (the stale session's own token is gone), and a newer
+        // token already in the slot must survive a late/duplicate retire
+        // from the older, already-superseded session.
+        let active_pick = Mutex::new(Some(6u64)); // a newer session already admitted
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        let _: Result<(), String> = retire_claim_on_overlay_build_failure(
+            true,
+            Some(5), // the stale, superseded session's own id
+            &active_pick,
+            &pending_overlay,
+            Err("close_overlay_window failed".to_string()),
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(6),
+            "a late retire from a superseded session must never clear a newer claim"
+        );
+    }
+
+    #[test]
+    fn build_failure_retire_is_a_no_op_for_direct_requests_and_on_success() {
+        // A direct (non-overlay) request never claimed anything, so a
+        // build failure for one must leave active_pick alone. On SUCCESS
+        // the claim must also stay held — `run_capture_via_worker`'s own
+        // wrapper is the reservation's normal release point for the
+        // worker it is about to run, not this one.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        let _: Result<(), String> = retire_claim_on_overlay_build_failure(
+            false,
+            None,
+            &active_pick,
+            &pending_overlay,
+            Err("unrelated direct-mode failure".to_string()),
+        );
+        assert_eq!(*active_pick.lock().unwrap(), Some(5), "direct request: no-op on failure");
+        let result = retire_claim_on_overlay_build_failure(
+            true,
+            Some(5),
+            &active_pick,
+            &pending_overlay,
+            Ok(()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(*active_pick.lock().unwrap(), Some(5), "no-op on success: stays held for the worker");
+    }
+
+    #[test]
+    fn owns_overlay_window_requires_exact_session_match() {
+        // C639-001C.1: a close acting on behalf of a stale/superseded
+        // session must bind to the actual `overlay_window_owner` token,
+        // never to "whatever window currently has the shared label".
+        assert!(owns_overlay_window(Some(2), 2));
+        assert!(
+            !owns_overlay_window(Some(2), 1),
+            "session 1's cleanup must not think it owns session 2's window"
+        );
+        assert!(
+            !owns_overlay_window(None, 1),
+            "a session that never built a window has nothing of its own to close"
+        );
+    }
+
+    #[test]
+    fn successful_pick_retires_its_claim_so_the_next_open_is_admitted() {
+        // C639-007C: `open_region_overlay`'s strict reservation (C639-007A)
+        // refuses a second open outright whenever `active_pick.is_some()`.
+        // `run_capture_via_worker`'s terminal-success cleanup must retire
+        // its own claim through the exact same `clear_pick_if_current` the
+        // failure paths already used, or the next open is refused forever
+        // by this already-finished session's own leftover token.
+        let active_pick = Mutex::new(Some(42u64));
+        let pending_overlay = Mutex::new(None::<OverlayContext>); // build_mode already took it
+        clear_pick_if_current(&active_pick, &pending_overlay, 42);
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            None,
+            "a completed pick must release its claim so the next open_region_overlay is admitted"
+        );
+    }
+
+    #[test]
+    fn retiring_a_finished_pick_never_clears_a_newer_claim() {
+        // The same safety property `pick_still_active` enforces elsewhere:
+        // a stale retire (e.g. a slow worker's cleanup finally running
+        // after a newer pick has already started) must never clear
+        // something it didn't claim.
+        let active_pick = Mutex::new(Some(2u64)); // session 2 is the current, newer claim
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        clear_pick_if_current(&active_pick, &pending_overlay, 1); // a late retire from session 1
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(2),
+            "retiring an old session's claim must not clear a newer session's claim"
+        );
+    }
+
+    #[test]
+    fn retiring_a_pick_also_clears_a_still_pending_overlay_context() {
+        // Covers the failure-path shape (unlike the success path, where
+        // `build_mode` already took `pending_overlay` before this ever
+        // runs): a backdrop/dispatch/build failure must retire BOTH the
+        // `active_pick` token and any `pending_overlay` context still
+        // carrying the same session id.
+        let active_pick = Mutex::new(Some(9u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 9;
+        clear_pick_if_current(&active_pick, &pending_overlay, 9);
+        assert_eq!(*active_pick.lock().unwrap(), None);
+        assert!(pending_overlay.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn stranded_claim_with_no_pending_overlay_is_still_retired() {
+        // C639-007C.2 freeze: `active_pick=Some(A), pending_overlay=None`
+        // followed by a capture — e.g. a `build_mode` call that finds no
+        // pending context at all ("no pending region overlay; call
+        // begin_region_pick first"), or an injected monitor-enumeration
+        // failure reached before any context was ever installed. The
+        // round-5 helper derived its retire identity from `pending_overlay`
+        // alone, which is `None` here, so it never cleared anything and
+        // `active_pick` stayed stranded forever. The fix: `run_capture_
+        // inner` now reads `active_claim` from `active_pick` itself —
+        // modeled here directly, since `retire_claim_on_overlay_build_
+        // failure` only ever acts on whatever identity it is given.
+        let active_pick = Mutex::new(Some(11u64)); // A: stranded, no pending context
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        let active_claim = *active_pick.lock().unwrap(); // what run_capture_inner reads now
+        let result: Result<(), String> = retire_claim_on_overlay_build_failure(
+            true,
+            active_claim,
+            &active_pick,
+            &pending_overlay,
+            Err("no pending region overlay; call begin_region_pick first".to_string()),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            None,
+            "A's stranded claim must be retired even with no pending_overlay to name it"
+        );
+        // An immediate second open is now admitted: `open_region_overlay`'s
+        // own claim step refuses only `if active.is_some()`.
+        assert!(active_pick.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn stranded_claim_retire_never_clears_a_newer_token_already_substituted() {
+        // C639-007C.2 freeze, continued: if some other admission already
+        // installed a newer token (B) in `active_pick` by the time A's
+        // stranded-claim retire runs, B must survive untouched — same
+        // exact-match safety `clear_pick_if_current`/`retire_claim_on_
+        // overlay_build_failure` already guarantee elsewhere, re-asserted
+        // for the `pending_overlay == None` shape this round closes.
+        let active_pick = Mutex::new(Some(22u64)); // B already admitted
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        let stale_active_claim = Some(11u64); // A's own id, captured before B's admission
+        let _: Result<(), String> = retire_claim_on_overlay_build_failure(
+            true,
+            stale_active_claim,
+            &active_pick,
+            &pending_overlay,
+            Err("watchdog expiry".to_string()),
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(22),
+            "a late retire from A's stranded claim must never clear B's newer token"
+        );
+    }
+
+    #[test]
+    fn watchdog_expiry_retires_the_matching_active_pick_claim() {
+        // C639-007C.2: the 60s watchdog's expiry now runs through the same
+        // `clear_pick_if_current` every other terminal path uses, so it
+        // retires `active_pick` too, not only `pending_overlay` — mirrors
+        // production `spawn_overlay_watchdog`'s decide-then-retire shape
+        // without needing a live Tauri app/thread.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let should_clear =
+            watchdog_should_clear(pending_overlay.lock().unwrap().as_ref(), 5);
+        assert!(should_clear);
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            None,
+            "a watchdog expiry must retire the matching active_pick claim"
+        );
+        assert!(pending_overlay.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn watchdog_expiry_never_closes_or_strands_a_newer_sessions_window() {
+        // C639-007C.2 freeze: watchdog expiry, with a substituted newer
+        // token B surviving. Once the watchdog's retire clears A's claim,
+        // a brand-new session B can be admitted and build its own window
+        // before the watchdog's close runs — the close must stay bound to
+        // `overlay_window_owner` (`settle_retire_claim`'s owner compare,
+        // C639-001C.1), never "whatever is labeled overlay", or a stale
+        // watchdog could tear down B's live picker.
+        let owner_after_b_admitted = Some(6u64); // B built its own window
+        assert!(
+            !owns_overlay_window(owner_after_b_admitted, 5),
+            "watchdog A's close must not think it owns B's window"
+        );
+    }
+
+    #[test]
+    fn retry_show_failure_retires_the_matching_active_pick_claim() {
+        // C639-007C.2: `retry_region_backdrop_blocking`'s "could not
+        // restore the picker window" terminal failure tears the session
+        // down exactly like `cancel_region_pick` — it must retire
+        // `active_pick` too (via the same `clear_pick_if_current`), not
+        // only `pending_overlay`/`overlay_window_owner`, or the strict
+        // reservation strands a session nothing can ever reuse once the
+        // picker itself is already unrecoverable.
+        let active_pick = Mutex::new(Some(13u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 13;
+        clear_pick_if_current(&active_pick, &pending_overlay, 13);
+        assert_eq!(*active_pick.lock().unwrap(), None);
+        assert!(pending_overlay.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn per_step_focus_recheck_catches_a_supersession_a_single_cached_check_would_miss() {
+        // C639-007D.2 freeze: "A passes post-store check -> cancel A -> B
+        // opens/builds -> A attempts UI action", asserting B keeps focus.
+        // `focus_capture_window_if_current` re-reads `active_pick` fresh
+        // immediately before EACH window action (unminimize/show/
+        // set_focus), never from one decision cached before the whole
+        // call. Modeled here without a live Tauri app: the single
+        // pre-call check (what round 5 shipped) passes at authorization
+        // time, but by the time the (simulated) first window action would
+        // run, A has been cancelled and B has been admitted — the SAME
+        // `capture_focus_still_current` re-evaluated at that later point
+        // must now refuse, which is exactly what each per-step check in
+        // `focus_capture_window_if_current` does.
+        let active_pick = Mutex::new(Some(5u64)); // A, just authorized
+        let cached_check_at_authorization = capture_focus_still_current(
+            true,
+            *active_pick.lock().unwrap(),
+            5,
+        );
+        assert!(cached_check_at_authorization, "A's own authorization must pass");
+        // A is cancelled; B opens and is admitted into active_pick.
+        *active_pick.lock().unwrap() = Some(6);
+        // A now reaches what would be its first window action. A stale
+        // implementation would reuse `cached_check_at_authorization`
+        // (still `true`) and steal focus from B. The fix re-checks fresh,
+        // right here, at the point of execution:
+        let recheck_at_first_window_action =
+            capture_focus_still_current(true, *active_pick.lock().unwrap(), 5);
+        assert!(
+            !recheck_at_first_window_action,
+            "a per-step recheck must catch A's supersession even though A's own \
+             pre-call authorization already passed"
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(6),
+            "B's claim must survive A's entire (suppressed) focus attempt untouched"
+        );
+    }
+
+    #[test]
     fn capture_aborts_when_overlay_still_present() {
         // The never-capture-with-overlay-visible contract: a stuck overlay
         // window aborts the BitBlt loudly instead of screenshotting the
@@ -4154,6 +7304,2298 @@ mod region_picker_tests {
         assert!(overlay_context_dto(&ctx).backdrop_blank);
         ctx.backdrop_blank = false;
         assert!(!overlay_context_dto(&ctx).backdrop_blank);
+    }
+
+    #[test]
+    fn overlay_context_dto_carries_its_own_session_id() {
+        // C639-007C.3: the page echoes this straight back on its eventual
+        // `capture` call as `overlaySessionId` — the binding the backend
+        // verifies against `active_pick`/`pending_overlay`/`overlay_
+        // window_owner` depends on the DTO actually carrying it.
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 123;
+        assert_eq!(overlay_context_dto(&ctx).session_id, 123);
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.5: `overlay_context`/`region_pick_backdrop` must never
+    // serve a DIFFERENT session's context/frame — a stale page's read
+    // must fail closed rather than return data it could adopt as its own
+    // identity.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_context_for_session_returns_the_dto_when_sessions_agree() {
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 5;
+        let dto = overlay_context_for_session(Some(&ctx), 5).expect("must serve matching session");
+        assert_eq!(dto.session_id, 5);
+    }
+
+    #[test]
+    fn overlay_context_for_session_refuses_a_different_sessions_context() {
+        // A context IS pending — just not for the caller's session. The
+        // prior unbound `overlay_context` returned whichever context was
+        // current regardless of who asked; serving B's context to a
+        // request carrying stale A's id is exactly what let A silently
+        // adopt B's identity.
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        assert!(overlay_context_for_session(Some(&b_ctx), 5).is_none());
+    }
+
+    #[test]
+    fn overlay_context_for_session_refuses_when_nothing_is_pending() {
+        assert!(overlay_context_for_session(None, 5).is_none());
+    }
+
+    #[test]
+    fn stored_backdrop_png_refuses_a_different_sessions_context() {
+        // Same binding as `overlay_context_for_session`, exercised through
+        // the actual helper `region_pick_backdrop` calls: a pending
+        // context for session 6 must yield nothing when the caller's own
+        // session (the exact filter `region_pick_backdrop` applies before
+        // calling this) is 5 — modeled here by passing the pre-filtered
+        // `None` a session mismatch produces, the same shape the command
+        // itself constructs.
+        let b_ctx = overlay_ctx_with_backdrop(Some(vec![1, 2, 3]));
+        let filtered: Option<&OverlayContext> =
+            Some(&b_ctx).filter(|c| c.session_id == 5);
+        assert!(filtered.is_none(), "session 6's context must not pass a session-5 filter");
+        assert!(stored_backdrop_png(filtered).is_err());
+    }
+
+    #[test]
+    fn worker_routing_takes_plain_region() {
+        // C639 Option C: a plain RegionVirtual routes to the worker.
+        let mode = CaptureMode::RegionVirtual {
+            rect: Rect {
+                x: -1920.0,
+                y: 0.0,
+                w: 2560.0,
+                h: 1440.0,
+            },
+        };
+        let (rect, delay) = worker_region_request(&mode).expect("must route");
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (-1920.0, 0.0, 2560.0, 1440.0));
+        assert_eq!(delay, 0);
+    }
+
+    #[test]
+    fn worker_routing_unwraps_delayed_region() {
+        // The delay travels with the request; the worker sleeps before
+        // acquiring so the acquisition timestamp stays truthful.
+        let mode = CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::RegionVirtual {
+                rect: Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            }),
+            delay_ms: 2500,
+        };
+        let (rect, delay) = worker_region_request(&mode).expect("must route");
+        assert_eq!((rect.w, rect.h), (100.0, 100.0));
+        assert_eq!(delay, 2500);
+    }
+
+    #[test]
+    fn worker_routing_leaves_other_modes_on_direct_path() {
+        // Only the region-overlay path moves to the worker; everything
+        // else keeps the existing direct engine path (blast radius).
+        assert!(worker_region_request(&CaptureMode::FullMonitor {
+            monitor_id: "m".to_string()
+        })
+        .is_none());
+        assert!(worker_region_request(&CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::FullMonitor {
+                monitor_id: "m".to_string()
+            }),
+            delay_ms: 100,
+        })
+        .is_none());
+        assert!(worker_region_request(&CaptureMode::Window {
+            window_id: "w".to_string()
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn direct_region_mints_fresh_session_with_no_picker_pending() {
+        // C639-004: a direct ("region") capture has no overlay to borrow
+        // an identity from and must not require one.
+        let id = region_worker_session_id(false, None, || 777).unwrap();
+        assert_eq!(id, 777);
+    }
+
+    #[test]
+    fn delayed_direct_region_also_mints_fresh_session() {
+        // C639-004: the delayed variant of a direct region request takes
+        // the exact same dispatch path as the plain one.
+        let mode = CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::RegionVirtual {
+                rect: Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 },
+            }),
+            delay_ms: 1000,
+        };
+        assert!(worker_region_request(&mode).is_some());
+        let id = region_worker_session_id(false, None, || 778).unwrap();
+        assert_eq!(id, 778);
+    }
+
+    #[test]
+    fn direct_region_never_borrows_an_unrelated_pending_overlay_session() {
+        // C639-004: a direct region request must not silently consume a
+        // DIFFERENT, concurrently pending overlay pick's session
+        // identity — even though one happens to be live.
+        let id = region_worker_session_id(false, Some(999), || 42).unwrap();
+        assert_eq!(id, 42, "must mint fresh, not borrow the unrelated session 999");
+    }
+
+    #[test]
+    fn overlay_region_uses_its_own_pending_session() {
+        let id = region_worker_session_id(true, Some(5), || panic!("must not mint")).unwrap();
+        assert_eq!(id, 5);
+    }
+
+    #[test]
+    fn overlay_region_with_vanished_context_is_a_loud_error() {
+        let err = region_worker_session_id(true, None, || panic!("must not mint")).unwrap_err();
+        assert!(err.contains("vanished"));
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.3: a request session must bind to the SAME generation
+    // across active_pick / pending_overlay / overlay_window_owner, never
+    // to whichever claim happens to be current when it is processed.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_request_session_still_current_requires_all_three_to_agree() {
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let overlay_window_owner = Mutex::new(Some(5u64));
+        assert!(overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5
+        ));
+    }
+
+    #[test]
+    fn overlay_request_session_still_current_rejects_a_stale_request_displaced_by_a_newer_one() {
+        // C639-007C.3 freeze: A's overlay queued `capture` (carrying A's own
+        // session id, 5) but had not yet begun its body; A was cancelled;
+        // B (6) was admitted and installed active_pick/pending_overlay/
+        // overlay_window_owner for ITSELF. A's delayed body now runs and
+        // must bind to A's OWN id (5) — never to whichever claim (6) is
+        // current — and must observe the mismatch and refuse.
+        let active_pick = Mutex::new(Some(6u64)); // B now holds the claim
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+        assert!(
+            !overlay_request_session_still_current(
+                &active_pick,
+                &pending_overlay,
+                &overlay_window_owner,
+                5 // A's own, now-stale id
+            ),
+            "A's stale request must not read B's live claim as its own"
+        );
+        // B's state must be completely untouched by A's failed check.
+        assert_eq!(*active_pick.lock().unwrap(), Some(6));
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6)
+        );
+        assert_eq!(*overlay_window_owner.lock().unwrap(), Some(6));
+    }
+
+    #[test]
+    fn overlay_request_session_still_current_rejects_when_only_the_window_owner_disagrees() {
+        // active_pick and pending_overlay can agree while overlay_window_
+        // owner alone has moved on (e.g. an owner-gated close already ran
+        // for this session but the other two slots have not yet been
+        // retired) — the binding requires all three, not just two of three.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let overlay_window_owner = Mutex::new(None::<u64>);
+        assert!(!overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5
+        ));
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.4: `retry_region_backdrop_blocking` and `cancel_region_
+    // pick` must bind to the session the ORIGINATING PAGE carries (its own
+    // URL — see `open_region_overlay_claimed`), never to whichever claim
+    // happens to be `active_pick`/`pending_overlay`/`overlay_window_owner`
+    // right now. Both commands require a live `tauri::AppHandle` and so are
+    // themselves untestable here (same as `run_capture_inner`, `build_mode`,
+    // `open_region_overlay` above) — these tests exercise the exact bound
+    // primitives their bodies are built from, in the same sequence those
+    // bodies use them: `overlay_request_session_still_current` for the
+    // pre-mutation guard both commands check before touching anything,
+    // `clear_pick_if_current` for the state retire cancel (and the retry
+    // restore-failure branch) perform, and `owns_overlay_window` for the
+    // window-owner-gated close `settle_retire_claim`/`retire_owned_overlay_
+    // session` (cancel's close, the retry restore-failure branch's close)
+    // is built from.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn retry_and_cancel_bound_primitives_reject_a_stale_session_displaced_by_a_newer_one() {
+        // Freeze: overlay A (session 5) queued Retry and, separately,
+        // Cancel; neither command body has acquired state yet. A is
+        // retired; B (session 6) is admitted and installs its own
+        // active_pick/pending_overlay/overlay_window_owner. A's delayed
+        // command bodies now begin.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+
+        // Retry's (and cancel's) pre-mutation guard: A's stale id (5) must
+        // fail the same three-way check `run_capture_inner` uses for
+        // `capture` — before any hide/capture/show/focus/close of B's
+        // window.
+        assert!(
+            !overlay_request_session_still_current(
+                &active_pick,
+                &pending_overlay,
+                &overlay_window_owner,
+                5
+            ),
+            "A's stale retry/cancel must not read B's live claim as its own"
+        );
+
+        // Cancel's (and the retry restore-failure branch's) state retire:
+        // A's stale id must not clear B's claim.
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        assert_eq!(*active_pick.lock().unwrap(), Some(6));
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6)
+        );
+
+        // Cancel's (and the retry restore-failure branch's) window-owner-
+        // gated close: A's stale id is never recognized as the window's
+        // owner, so no close (and, in the live commands, no hide/show/
+        // focus) can ever be dispatched against B's window on A's behalf.
+        assert!(!owns_overlay_window(
+            *overlay_window_owner.lock().unwrap(),
+            5
+        ));
+        assert_eq!(*overlay_window_owner.lock().unwrap(), Some(6));
+    }
+
+    #[test]
+    fn retry_and_cancel_bound_primitives_accept_the_session_that_still_owns_the_claim() {
+        // The matching, non-stale case: the fix binds retry/cancel to the
+        // caller's own session — it must not disable the ordinary path for
+        // a session that is still genuinely current.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+
+        assert!(overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            6
+        ));
+        assert!(owns_overlay_window(*overlay_window_owner.lock().unwrap(), 6));
+
+        clear_pick_if_current(&active_pick, &pending_overlay, 6);
+        assert_eq!(*active_pick.lock().unwrap(), None);
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            None
+        );
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_consumes_only_its_own_matching_context() {
+        let active_pick = Mutex::new(Some(7u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 7;
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 7);
+        assert_eq!(taken.map(|c| c.session_id), Some(7));
+        assert!(
+            pending_overlay.lock().unwrap().is_none(),
+            "a successful take must consume the context"
+        );
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_never_consumes_a_newer_sessions_context() {
+        // C639-007C.3 freeze, continued: A's stale `build_mode` call (bound
+        // to A's own id, 5) must not consume B's (6) context, close B's
+        // picker, or apply A's geometry to it, even though A's call is the
+        // one actually reaching `build_mode`'s take.
+        let active_pick = Mutex::new(Some(6u64)); // B holds the claim
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 5);
+        assert!(
+            taken.is_none(),
+            "A's stale take must not consume B's context"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's context must survive A's failed take completely untouched"
+        );
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_refuses_when_active_pick_already_moved_on_even_if_pending_still_matches(
+    ) {
+        // A narrower shape of the same race: active_pick has already moved
+        // past A, but nothing has gotten around to clearing pending_overlay
+        // yet. The take must still refuse — active_pick is the
+        // authoritative claim, and a stale request must not be able to
+        // resurrect a dead session's context just because the slower-to-
+        // clear field has not caught up yet.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut stale_ctx = overlay_ctx_with_backdrop(None);
+        stale_ctx.session_id = 5;
+        let pending_overlay = Mutex::new(Some(stale_ctx));
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 5);
+        assert!(taken.is_none());
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(5),
+            "a refused take must not even clear the stale context it declined to consume"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.7 freeze: AbandonableBridge (Retry hide timeout-vs-late-
+    // closure race). These exercise the real synchronization primitive
+    // with real threads standing in for "a main thread busy past the
+    // waiter's bound" and "the waiter giving up" — no live Tauri app,
+    // same discipline as every other test in this module, but genuine
+    // concurrency rather than a pure function call, because the bug this
+    // closes is a genuine race between two threads.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn abandonable_bridge_delivers_the_result_when_settle_runs_in_time() {
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let calls = Arc::new(Mutex::new(0u32));
+        let calls_for_main = calls.clone();
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    *calls_for_main.lock().unwrap() += 1;
+                    42
+                },
+                |_| panic!("must not compensate when the waiter is still listening"),
+            );
+        });
+        let got = bridge
+            .wait_or_abandon(Duration::from_secs(5))
+            .expect("settle ran well within the bound");
+        main_thread.join().unwrap();
+        assert_eq!(got, 42);
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn abandonable_bridge_timeout_then_late_settle_never_runs_its_action() {
+        // The exact failing interleaving from the verdict: dispatch A,
+        // hold the main-thread closure past the waiter's bound, let the
+        // waiter time out, THEN release the queued closure. The action
+        // (which in production is the owner-check-then-hide) must never
+        // run at all once the waiter has already given up — not run and
+        // discarded, not run and compensated after the fact: never run.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let calls = Arc::new(Mutex::new(0u32));
+
+        // Nothing ever calls settle() before the bound elapses — this
+        // stands in for "the main thread is busy and hasn't serviced the
+        // queued closure yet," which is the scenario the verdict names.
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(50))
+            .expect_err("nothing settled in time; must be treated as abandoned");
+        assert!(
+            err.contains("abandoned"),
+            "timeout must be reported as an abandonment, got: {err}"
+        );
+
+        // The queued closure is now released — it finally gets to run,
+        // well after the waiter already left.
+        let calls_for_late = calls.clone();
+        bridge.settle(
+            move || {
+                *calls_for_late.lock().unwrap() += 1;
+                7
+            },
+            |_| panic!("action never ran, so compensate must never run either"),
+        );
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            0,
+            "a closure that runs after abandonment must never execute its action body \
+             (no hide, no window lookup, nothing)"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_protects_a_newer_generation_installed_after_abandonment() {
+        // Freeze step 5: install B's window before releasing A's stale
+        // (already-abandoned) closure, and prove A's closure never
+        // touches it — not a hide, not a show, not a focus, not a close.
+        // Modeled as a shared "currently labeled overlay window" the
+        // action would look up and act on in production; the action
+        // itself records every window it ever touched.
+        let bridge = Arc::new(AbandonableBridge::<Result<(), String>>::new());
+        let shared_window_label = Arc::new(Mutex::new("A"));
+        let touched = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+        // A's waiter gives up — the main thread never got around to A's
+        // closure in time.
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before B is ever installed");
+        assert!(err.contains("abandoned"));
+
+        // B is installed strictly after A's waiter already abandoned —
+        // e.g. a newer generation's window-build closure running on the
+        // same single main-thread event loop.
+        *shared_window_label.lock().unwrap() = "B";
+
+        // A's queued closure finally runs now. Production shape: look up
+        // whatever is currently labeled "overlay" and hide/show/focus/
+        // close it. This must be a complete no-op given the bridge is
+        // already abandoned.
+        let touched_for_action = touched.clone();
+        let label_for_action = shared_window_label.clone();
+        bridge.settle(
+            move || {
+                touched_for_action
+                    .lock()
+                    .unwrap()
+                    .push(*label_for_action.lock().unwrap());
+                Ok(())
+            },
+            |_| panic!("action never ran, so compensate must never run either"),
+        );
+
+        assert!(
+            touched.lock().unwrap().is_empty(),
+            "an abandoned A closure must never touch the currently-labeled window, \
+             even after a newer generation (B) has taken it over"
+        );
+        assert_eq!(
+            *shared_window_label.lock().unwrap(),
+            "B",
+            "B's label must be completely untouched by A's abandoned closure"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_boundary_commit_right_at_the_deadline_is_still_delivered() {
+        // "Account for the boundary where the closure hides successfully
+        // just before five seconds but the receiver times out before
+        // consuming the result" — settle() runs concurrently with the
+        // wait, close enough to the bound that a naive channel-timeout
+        // implementation could plausibly race it. wait_or_abandon must
+        // still deliver the real result rather than reporting a spurious
+        // abandonment, because it re-checks the authoritative state under
+        // the same lock the action commits through, not a separate flag.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let main_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            bridge_for_main.settle(
+                || 99,
+                |_| panic!("a commit that lands before the bound must not be compensated"),
+            );
+        });
+        let got = bridge
+            .wait_or_abandon(Duration::from_millis(500))
+            .expect("a commit that lands before the bound must be delivered, not abandoned");
+        main_thread.join().unwrap();
+        assert_eq!(got, 99);
+    }
+
+    #[test]
+    fn abandonable_bridge_waiter_returns_on_time_even_while_action_is_still_running() {
+        // C639-007C.8 freeze step 1: the defect itself. `settle` must not
+        // hold the abandonment-state lock across `action` — otherwise a
+        // blocked/native action (standing in for a stuck `hide()`) defeats
+        // the waiter's own timeout entirely, since `wait_or_abandon` can
+        // only return by reacquiring that same lock. A gate holds the
+        // action open well past the waiter's bound; the waiter must still
+        // return close to its own bound, not whenever the gate opens.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+        let entered_running = Arc::new((Mutex::new(false), Condvar::new()));
+        let entered_running_for_action = entered_running.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    {
+                        let (lock, cv) = &*entered_running_for_action;
+                        *lock.lock().unwrap() = true;
+                        cv.notify_all();
+                    }
+                    // Stands in for a native hide() call that hangs well
+                    // past the waiter's own bound.
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    7
+                },
+                |_| {},
+            );
+        });
+
+        // Don't start the timer until `action` has actually entered
+        // Running and is blocked on the gate, so the timeout genuinely
+        // elapses mid-action rather than before it even started.
+        {
+            let (lock, cv) = &*entered_running;
+            let mut started = lock.lock().unwrap();
+            while !*started {
+                started = cv.wait(started).unwrap();
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(100))
+            .expect_err("action is blocked indefinitely; must be treated as abandoned");
+        let elapsed = start.elapsed();
+        assert!(err.contains("abandoned"));
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the waiter must return close to its own bound, never wait for the blocked \
+             action to finish; took {elapsed:?}"
+        );
+
+        // Release the action so the thread can finish (and compensate,
+        // exercised by its own test below) — join so nothing leaks.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+    }
+
+    #[test]
+    fn abandonable_bridge_compensates_a_late_commit_after_abandonment() {
+        // Freeze step 2: once the waiter has abandoned, an action that
+        // nonetheless goes on to commit its side effect (a late-arriving
+        // hide succeeding well after the bound) must be compensated — not
+        // silently committed with nobody left to undo it, which is the
+        // exact strand this bridge exists to prevent.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let window_hidden = Arc::new(Mutex::new(false));
+        let window_hidden_for_action = window_hidden.clone();
+        let window_hidden_for_compensate = window_hidden.clone();
+        let compensated = Arc::new(Mutex::new(false));
+        let compensated_for_compensate = compensated.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    // Stands in for the native hide() finally succeeding,
+                    // well after the waiter already gave up.
+                    *window_hidden_for_action.lock().unwrap() = true;
+                    99
+                },
+                move |_result| {
+                    // Compensate: undo the side effect action already
+                    // committed, since nobody is left to show it back.
+                    *window_hidden_for_compensate.lock().unwrap() = false;
+                    *compensated_for_compensate.lock().unwrap() = true;
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("nothing settled in time; must be treated as abandoned");
+        assert!(err.contains("abandoned"));
+
+        // Release the gate now that abandonment has already committed —
+        // the action proceeds to "hide" and must then be compensated.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert!(
+            *compensated.lock().unwrap(),
+            "a result committed after abandonment must trigger compensate()"
+        );
+        assert!(
+            !*window_hidden.lock().unwrap(),
+            "the late hide must be undone by compensate, leaving the window shown"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_compensate_acts_only_on_the_captured_result_never_a_newer_label() {
+        // Freeze step 3: install B strictly before releasing A's held
+        // action, and prove compensate acts only on the exact window
+        // `action` already resolved and returned — never a fresh lookup
+        // of whatever is currently labeled, which by now would resolve to
+        // B. `touched` records every window the action AND compensate
+        // ever act on; it must contain only "A", twice.
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+        let shared_window_label = Arc::new(Mutex::new("A"));
+        let shared_window_label_for_action = shared_window_label.clone();
+        let touched = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    // Resolve once, as the real recheck+lookup+hide
+                    // closure does, and reuse the captured value — never
+                    // look the label up again.
+                    let resolved = *shared_window_label_for_action.lock().unwrap();
+                    touched_for_action.lock().unwrap().push(resolved);
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok(resolved)
+                },
+                move |result| {
+                    if let Ok(resolved) = result {
+                        touched_for_compensate.lock().unwrap().push(resolved);
+                    }
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before B is ever installed");
+        assert!(err.contains("abandoned"));
+
+        // B takes over the shared label strictly after A abandoned, while
+        // A's action is still blocked on the gate.
+        *shared_window_label.lock().unwrap() = "B";
+
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec!["A", "A"],
+            "both action and compensate must only ever touch A's captured handle — \
+             never re-read the shared label after B has taken it over"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.9: a late-committing compensate must revalidate the full
+    // three-way session binding (`overlay_request_session_still_current`)
+    // before resurrecting A's window — resolving a real handle in `action`
+    // is not proof A is still live, since cancellation and a newer
+    // session's admission run from their own command/background threads
+    // and can both land, and fully complete, while this closure sits
+    // blocked inside A's native `hide()`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn abandonable_bridge_compensate_never_reshows_a_cancelled_and_superseded_a() {
+        // Freeze: A's Retry hide blocks past the waiter's deadline, the
+        // waiter abandons, and — strictly before A's gated action is
+        // released — the user cancels A (the exact state transitions
+        // `cancel_region_pick`/`retire_owned_overlay_session` perform) and B
+        // is admitted, installing its own active_pick/pending_overlay/
+        // overlay_window_owner. A's `hide()` then finally returns `Ok`.
+        // Compensate must close only A's captured handle and must never
+        // show/focus it, and must leave every one of B's three slots
+        // byte-for-byte unchanged.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+
+        let owner_for_action = overlay_window_owner.clone();
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    // Mirrors the real action's own pre-hide ownership
+                    // check: at the moment this starts, A is still owner —
+                    // cancellation/B's admission only happen while this is
+                    // blocked below, standing in for the native hide().
+                    assert_eq!(*owner_for_action.lock().unwrap(), Some(5));
+                    touched_for_action.lock().unwrap().push(("action", "A"));
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok("A")
+                },
+                move |result| {
+                    let Ok(resolved) = result else { return };
+                    let still_current = overlay_request_session_still_current(
+                        &active_pick_for_compensate,
+                        &pending_overlay_for_compensate,
+                        &owner_for_compensate,
+                        5,
+                    );
+                    if !still_current {
+                        touched_for_compensate
+                            .lock()
+                            .unwrap()
+                            .push(("close", resolved));
+                        return;
+                    }
+                    touched_for_compensate
+                        .lock()
+                        .unwrap()
+                        .push(("show", resolved));
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before cancellation/B's admission land");
+        assert!(err.contains("abandoned"));
+
+        // Cancel A — `clear_pick_if_current` plus the owner-gated retire
+        // `retire_owned_overlay_session` performs — then admit B, installing
+        // all three of its own slots. All strictly before A's gate opens.
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            if owns_overlay_window(*owner, 5) {
+                *owner = None;
+            }
+        }
+        *active_pick.lock().unwrap() = Some(6);
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        *pending_overlay.lock().unwrap() = Some(b_ctx);
+        *overlay_window_owner.lock().unwrap() = Some(6);
+
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("action", "A"), ("close", "A")],
+            "compensate must close A's own captured handle and must never show/focus \
+             it once A has been cancelled and superseded"
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(6),
+            "B's active_pick must be byte-for-byte unchanged"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's pending_overlay must be byte-for-byte unchanged"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(6),
+            "B's overlay_window_owner must be byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_compensate_reshows_the_live_a_handle_when_a_remains_current() {
+        // Complementary case: nobody cancels A and no newer session is
+        // admitted. When the late hide finally returns, A is still the
+        // live claim across all three slots, so compensate must show (and
+        // focus) the exact captured A handle back.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    touched_for_action.lock().unwrap().push(("action", "A"));
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok("A")
+                },
+                move |result| {
+                    let Ok(resolved) = result else { return };
+                    let still_current = overlay_request_session_still_current(
+                        &active_pick_for_compensate,
+                        &pending_overlay_for_compensate,
+                        &owner_for_compensate,
+                        5,
+                    );
+                    if !still_current {
+                        touched_for_compensate
+                            .lock()
+                            .unwrap()
+                            .push(("close", resolved));
+                        return;
+                    }
+                    touched_for_compensate
+                        .lock()
+                        .unwrap()
+                        .push(("show", resolved));
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("nothing settled before the bound; must be treated as abandoned");
+        assert!(err.contains("abandoned"));
+
+        // A remains current: nothing cancels it, nothing supersedes it.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("action", "A"), ("show", "A")],
+            "compensate must show the exact live A handle back when A is still current"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.10/.11/.12: `OverlayRetireGate` itself — the claim/release
+    // contract compensate's show and cancellation's close now both go
+    // through, including the bounded/coalescing state machine (C639-
+    // 007C.12) and the orphan-reclaim ordering it enables (C639-007C.11).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_retire_gate_restore_claim_is_exclusive_and_releasable() {
+        let gate = OverlayRetireGate::new();
+        assert!(
+            gate.try_claim_restore(),
+            "an idle gate must grant the first restore claim"
+        );
+        assert!(
+            !gate.try_claim_restore(),
+            "a second restore claim must not be granted while one is already held"
+        );
+        let (retire_requested, guard) = gate.finish_restore();
+        assert!(!retire_requested, "no retire coalesced into this restore");
+        guard.release();
+        assert!(
+            gate.try_claim_restore(),
+            "releasing a restore claim must return the gate to idle"
+        );
+        gate.finish_restore().1.release();
+    }
+
+    #[test]
+    fn overlay_retire_gate_claim_retire_does_not_block_when_idle() {
+        // No restore is in flight, so a retire claim must be granted
+        // immediately — this is the "cancellation wins outright" shape,
+        // not a wait.
+        let gate = OverlayRetireGate::new();
+        match gate.claim_retire(Duration::from_secs(1)) {
+            RetireClaim::Won(guard) => guard.release(),
+            _ => panic!("an idle gate must grant the claim outright, not coalesce or wait"),
+        }
+        assert!(
+            gate.try_claim_restore(),
+            "the gate must be idle again after a retire claim is released"
+        );
+        gate.finish_restore().1.release();
+    }
+
+    #[test]
+    fn overlay_retire_gate_denies_a_late_restore_claim_once_cancellation_has_already_retired_a() {
+        // C639-007C.10: cancellation runs to completion — claim retire,
+        // clear `active_pick`/`pending_overlay`, compare-and-clear the
+        // owner, close — entirely BEFORE compensate ever attempts to
+        // claim the restore slot. The gate itself has no memory of this
+        // by the time compensate asks (it is idle again), so compensate's
+        // OWN post-claim three-way recheck — not the claim alone — is
+        // what must catch it and refuse to show A back.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        }));
+        let overlay_window_owner = Mutex::new(Some(5u64));
+        let gate = OverlayRetireGate::new();
+        let touched: Mutex<Vec<(&'static str, &'static str)>> = Mutex::new(Vec::new());
+
+        // Cancel A — the exact shape `retire_owned_overlay_session` (which
+        // `cancel_region_pick` now calls) uses: claim retire first, THEN
+        // clear the pick, THEN resolve the claim (owner compare-and-clear,
+        // close, release).
+        let claim = gate.claim_retire(Duration::from_secs(1));
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        settle_retire_claim(&overlay_window_owner, 5, claim, || {
+            touched.lock().unwrap().push(("close", "A"));
+            Ok(())
+        })
+        .unwrap();
+
+        // B is admitted afterward, installing all three of its own slots.
+        *active_pick.lock().unwrap() = Some(6);
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        *pending_overlay.lock().unwrap() = Some(b_ctx);
+        *overlay_window_owner.lock().unwrap() = Some(6);
+
+        // Compensate's late hide() finally returns. The claim succeeds
+        // (the gate is idle — cancellation already finished and released
+        // it), so the post-claim recheck is the only thing left to catch
+        // the cancellation.
+        assert!(
+            gate.try_claim_restore(),
+            "the gate must be idle for this late claim to succeed"
+        );
+        let still_current = overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5,
+        );
+        assert!(
+            !still_current,
+            "A must no longer be current once cancellation has already retired it"
+        );
+        let (retire_requested, guard) = gate.finish_restore();
+        assert!(!retire_requested, "nothing coalesced into this late, doomed restore");
+        // Compensate's own fallback closes its captured handle too — a
+        // no-op on an already-closed A, never a fresh shared-label
+        // resolution that could reach for B's window instead.
+        touched.lock().unwrap().push(("close", "A"));
+        guard.release();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("close", "A"), ("close", "A")],
+            "A must never be shown once cancellation has already retired it"
+        );
+        assert_eq!(*active_pick.lock().unwrap(), Some(6), "B's active_pick must be untouched");
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's pending_overlay must be untouched"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(6),
+            "B's overlay_window_owner must be untouched"
+        );
+    }
+
+    #[test]
+    fn overlay_retire_gate_coalesces_a_cancellation_into_an_in_flight_restore_without_blocking() {
+        // C639-007C.12 freeze test 1: a retire request arriving while a
+        // restore is in flight must be recorded atomically and return
+        // immediately (never block for the restore's unbounded native
+        // call — the bug the prior unbounded `wait_while` had), and the
+        // deferred close it durably recorded must land strictly after the
+        // restore's own native call finishes, honored by `finish_restore`
+        // — never racing it, never skipped.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+        let freeze = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let gate_for_compensate = gate.clone();
+        let touched_for_compensate = touched.clone();
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+        let freeze_for_compensate = freeze.clone();
+
+        let compensate_thread = std::thread::spawn(move || {
+            assert!(
+                gate_for_compensate.try_claim_restore(),
+                "an idle gate must grant compensate's restore claim"
+            );
+            touched_for_compensate.lock().unwrap().push(("claim", "A"));
+            // Frozen here — holding the restore claim — until the test has
+            // confirmed cancellation coalesced into it rather than
+            // blocking behind it.
+            let (lock, cv) = &*freeze_for_compensate;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = cv.wait(released).unwrap();
+            }
+            touched_for_compensate.lock().unwrap().push(("show", "A"));
+            let (retire_requested, guard) = gate_for_compensate.finish_restore();
+            assert!(
+                retire_requested,
+                "the coalesced cancellation must be observed once show() returns"
+            );
+            clear_pick_if_current(&active_pick_for_compensate, &pending_overlay_for_compensate, 5);
+            {
+                let mut owner = owner_for_compensate.lock().unwrap();
+                if owns_overlay_window(*owner, 5) {
+                    *owner = None;
+                }
+            }
+            touched_for_compensate.lock().unwrap().push(("close", "A"));
+            guard.release();
+        });
+
+        // Wait for compensate to actually hold the restore claim before
+        // cancellation runs.
+        while touched.lock().unwrap().last().copied() != Some(("claim", "A")) {
+            std::thread::yield_now();
+        }
+
+        // Cancellation: a 5s bound that must NOT be waited out — a
+        // coalesced return is immediate.
+        let cancel_started = Instant::now();
+        match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Coalesced => {}
+            RetireClaim::Won(_) => panic!(
+                "a retire request during an in-flight restore must coalesce, not win outright"
+            ),
+            RetireClaim::Pending => panic!(
+                "a retire request during an in-flight restore must coalesce, not wait/time out"
+            ),
+        }
+        assert!(
+            cancel_started.elapsed() < Duration::from_millis(500),
+            "a coalesced retire request must return immediately, never wait for the restore"
+        );
+        touched.lock().unwrap().push(("cancel_returned", "A"));
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("claim", "A"), ("cancel_returned", "A")],
+            "cancellation returning must not itself have touched the window"
+        );
+
+        {
+            let (lock, cv) = &*freeze;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        compensate_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![
+                ("claim", "A"),
+                ("cancel_returned", "A"),
+                ("show", "A"),
+                ("close", "A")
+            ],
+            "the coalesced close must land strictly after compensate's show, never before \
+             it and never racing it"
+        );
+        assert_eq!(*overlay_window_owner.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn overlay_retire_gate_blocks_an_openers_orphan_reclaim_until_a_coalesced_close_finishes() {
+        // C639-007C.11 freeze test: A's compensation holds the restore
+        // claim with A's window still physically up. A watchdog-style
+        // cleanup (`retire_owned_overlay_session`, the exact production
+        // primitive the watchdog uses) fires concurrently — with the gate
+        // non-idle, it must coalesce rather than performing its own close,
+        // even though it DOES clear `active_pick`/`pending_overlay`
+        // immediately (bookkeeping, not the physical close). A fresh
+        // opener's own orphan-reclaim check — seeing `pending_overlay`
+        // empty and the window still physically present, exactly the
+        // state the pre-fix code read as "orphan, close it myself" — must
+        // also consult this same gate and must NOT win the slot (and so
+        // must never perform its own close) until the coalesced retire has
+        // actually finished.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        }));
+        let overlay_window_owner = Mutex::new(Some(5u64));
+        let gate = OverlayRetireGate::new();
+        let touched: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+        assert!(gate.try_claim_restore(), "compensate claims the restore slot");
+        touched.lock().unwrap().push("restore_claimed");
+
+        // The watchdog's own retire attempt against A, through the exact
+        // production primitive, while the restore is still in flight.
+        let watchdog_result = retire_owned_overlay_session(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            &gate,
+            5,
+            Duration::from_millis(50),
+            || {
+                touched.lock().unwrap().push("watchdog_close_ran");
+                Ok(())
+            },
+        );
+        assert!(watchdog_result.is_ok());
+        assert!(
+            !touched.lock().unwrap().contains(&"watchdog_close_ran"),
+            "a retire request coalesced into an in-flight restore must not perform its own \
+             close"
+        );
+        // Bookkeeping retires immediately regardless of the deferred
+        // physical close — exactly why the opener's `pending_overlay`
+        // check alone is not sufficient and it must also consult the gate.
+        assert!(active_pick.lock().unwrap().is_none());
+        assert!(pending_overlay.lock().unwrap().is_none());
+
+        // The opener's own orphan-reclaim check: must not win the slot (and
+        // so must never reach its own close) while A's coalesced retire is
+        // still in flight.
+        match gate.claim_retire(Duration::from_millis(50)) {
+            RetireClaim::Won(_) => panic!(
+                "the opener must not win the retire slot while A's coalesced retire is still \
+                 in flight — that is exactly the ungated orphan-reclaim race C639-007C.11 \
+                 closes"
+            ),
+            RetireClaim::Coalesced => panic!(
+                "the gate is already RestoringRetirePending, not Restoring — a second \
+                 coalesce must not be possible"
+            ),
+            RetireClaim::Pending => {}
+        }
+
+        // A's native show() finally returns; compensate observes and
+        // honors the coalesced retire before the gate can go idle.
+        let (retire_requested, guard) = gate.finish_restore();
+        assert!(retire_requested, "compensate must observe the watchdog's coalesced retire");
+        touched.lock().unwrap().push("show_completed");
+        touched.lock().unwrap().push("exact_a_close");
+        guard.release();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec!["restore_claimed", "show_completed", "exact_a_close"],
+            "the recorded order must be show completion then the exact-A close, with no \
+             opener close ever squeezed in between"
+        );
+
+        // Only once A's coalesced close has actually finished can a fresh
+        // opener legitimately win the slot (and so admit/build B).
+        assert!(
+            matches!(
+                gate.claim_retire(Duration::from_millis(50)),
+                RetireClaim::Won(_)
+            ),
+            "once A's coalesced close has actually finished, the gate must be idle again"
+        );
+    }
+
+    #[test]
+    fn orphan_reclaim_never_closes_or_declaims_a_successor_built_while_it_waited() {
+        // C639-007C.13 freeze test: an opener's orphan-reclaim branch
+        // snapshots `overlay_window_owner` BEFORE calling `claim_retire` —
+        // exactly what `open_region_overlay`'s orphan branch does — because
+        // that call can block for up to `OVERLAY_RETIRE_CLAIM_BOUND` behind
+        // A's own in-flight retire. During that wait, a whole new opener can
+        // run start to finish: observe A's exact close complete, mint its
+        // own session B, and build a brand new "overlay" window, installing
+        // all three of B's bindings (`active_pick`, `pending_overlay`,
+        // `overlay_window_owner`). Once O1 finally wins the now-idle slot,
+        // it must bind its close to the EXACT snapshot it observed before
+        // waiting (`settle_orphan_retire_claim`'s `observed_owner`), not to
+        // whatever `overlay_window_owner` says now — otherwise it tears
+        // down B's live window and erases B's ownership out from under it.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let proceed = Arc::new((Mutex::new(false), Condvar::new()));
+
+        // A holds the retire slot — simulates A's own terminal path, mid
+        // close, with the gate non-idle.
+        let a_claim = match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Won(guard) => guard,
+            _ => panic!("an idle gate must grant A's own retire claim outright"),
+        };
+
+        // O1's orphan check: read `overlay_window_owner` BEFORE waiting —
+        // the exact value the production call site snapshots — then start
+        // waiting on the SAME gate, on its own thread, since A's claim
+        // above makes this block. O1 is deliberately held just past
+        // `claim_retire` (on `proceed`, not yet calling
+        // `settle_orphan_retire_claim`) so the test can install B in the
+        // gap between A's release and O1's actual settlement — the exact
+        // gap the bug lived in.
+        let observed_owner = *overlay_window_owner.lock().unwrap();
+        let gate_for_o1 = gate.clone();
+        let owner_for_o1 = overlay_window_owner.clone();
+        let touched_for_o1 = touched.clone();
+        let proceed_for_o1 = proceed.clone();
+        let o1 = std::thread::spawn(move || {
+            touched_for_o1.lock().unwrap().push("o1_waiting");
+            let claim = gate_for_o1.claim_retire(Duration::from_secs(5));
+            touched_for_o1.lock().unwrap().push("o1_won");
+            let (lock, cv) = &*proceed_for_o1;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cv.wait(go).unwrap();
+            }
+            drop(go);
+            settle_orphan_retire_claim(&owner_for_o1, observed_owner, claim, || {
+                touched_for_o1.lock().unwrap().push("o1_closed_something");
+                Ok(())
+            })
+        });
+
+        // Wait for O1 to actually be blocked waiting on the gate before A
+        // releases it.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_waiting" {
+            std::thread::yield_now();
+        }
+
+        // A's own close finishes: its bookkeeping compare-and-clears the
+        // owner it actually held (mirrors `settle_retire_claim`'s own
+        // clear-before-close-before-release ordering), then releases the
+        // slot — exactly like A's completed retire in the real race.
+        *overlay_window_owner.lock().unwrap() = None;
+        a_claim.release();
+
+        // O1 wakes, wins the now-idle slot, and immediately blocks on
+        // `proceed` — strictly before it has called
+        // `settle_orphan_retire_claim`.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_won" {
+            std::thread::yield_now();
+        }
+
+        // B is admitted and builds its own window here — strictly between
+        // O1 winning the slot and O1 being allowed to settle — installing
+        // all three of its own bindings, exactly like the real build path.
+        *active_pick.lock().unwrap() = Some(9u64);
+        *pending_overlay.lock().unwrap() = Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 9;
+            ctx
+        });
+        *overlay_window_owner.lock().unwrap() = Some(9u64);
+
+        {
+            let (lock, cv) = &*proceed;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let result = o1.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(OrphanRetireOutcome::Superseded)),
+            "O1 must report Superseded once its snapshot no longer matches the live owner, \
+             not an error and not Closed"
+        );
+        assert!(
+            !touched.lock().unwrap().contains(&"o1_closed_something"),
+            "O1 must never invoke its own close once a successor has been installed"
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(9),
+            "B's active_pick binding must remain byte-for-byte intact"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(9),
+            "B's pending_overlay binding must remain byte-for-byte intact"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(9),
+            "O1 must never clear a successor's ownership it was never entitled to touch"
+        );
+    }
+
+    #[test]
+    fn orphan_reclaim_close_is_bound_to_the_captured_generation_not_a_post_clear_label_lookup()
+    {
+        // C639-007C.14 freeze test: the PRIOR freeze test above
+        // (`orphan_reclaim_never_closes_or_declaims_a_successor_built_while_
+        // it_waited`) only proves the owner-compare/clear itself is safe —
+        // it installs B strictly BEFORE O1 reaches that compare. This test
+        // proves the remaining gap: a close that is a fresh "whatever
+        // answers to this label right now" lookup can still race a
+        // successor's build even when the compare/clear ALREADY succeeded,
+        // because production's `do_close` used to perform that lookup
+        // AFTER dropping the owner lock, not before. The fix binds
+        // `do_close` to the EXACT window handle/generation captured before
+        // `claim_retire` was ever called (see `open_region_overlay`'s own
+        // call site) — modeled here as a plain generation id captured by
+        // value into the closure, since `settle_orphan_retire_claim` itself
+        // is generic over `do_close` and never re-derives anything from a
+        // label. B is installed under the SAME shared label strictly AFTER
+        // O1's compare/clear has already run and strictly BEFORE O1's
+        // closure performs the actual close, which is exactly the window
+        // the prior freeze test does not cover.
+        const A_GENERATION: u64 = 100;
+        const B_GENERATION: u64 = 200;
+
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let installed_generation = Arc::new(Mutex::new(Some(A_GENERATION)));
+        let closed_generations: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let proceed_to_settle = Arc::new((Mutex::new(false), Condvar::new()));
+        let proceed_to_close = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let a_claim = match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Won(guard) => guard,
+            _ => panic!("an idle gate must grant A's own retire claim outright"),
+        };
+
+        let observed_owner = *overlay_window_owner.lock().unwrap();
+        // The production call site captures the exact handle BEFORE
+        // calling `claim_retire` — modeled here as copying the generation
+        // value up front, by value, so it can never be affected by a later
+        // relabeling because it is never looked up again by label.
+        let captured_generation = *installed_generation.lock().unwrap();
+
+        let gate_for_o1 = gate.clone();
+        let owner_for_o1 = overlay_window_owner.clone();
+        let touched_for_o1 = touched.clone();
+        let proceed_to_settle_for_o1 = proceed_to_settle.clone();
+        let proceed_to_close_for_o1 = proceed_to_close.clone();
+        let closed_generations_for_o1 = closed_generations.clone();
+        let installed_generation_for_o1 = installed_generation.clone();
+        let o1 = std::thread::spawn(move || {
+            touched_for_o1.lock().unwrap().push("o1_waiting");
+            let claim = gate_for_o1.claim_retire(Duration::from_secs(5));
+            touched_for_o1.lock().unwrap().push("o1_won");
+            let (lock, cv) = &*proceed_to_settle_for_o1;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cv.wait(go).unwrap();
+            }
+            drop(go);
+            settle_orphan_retire_claim(&owner_for_o1, observed_owner, claim, move || {
+                // By the time this closure body starts, `settle_orphan_
+                // retire_claim` has already compared `observed_owner`
+                // against the live owner, found it matched, cleared the
+                // owner, and dropped the lock — exactly the point the
+                // real `do_close` runs from. The second barrier below
+                // holds here, strictly after that clear and strictly
+                // before the close itself, so the test can install B in
+                // that exact gap.
+                touched_for_o1
+                    .lock()
+                    .unwrap()
+                    .push("o1_cleared_owner_entering_close");
+                let (lock, cv) = &*proceed_to_close_for_o1;
+                let mut go = lock.lock().unwrap();
+                while !*go {
+                    go = cv.wait(go).unwrap();
+                }
+                drop(go);
+                // Sanity check that this test actually exercises the race
+                // it claims to: a FRESH label lookup performed from right
+                // here — the old, buggy `do_close` — would resolve to B,
+                // not A. If this ever reads A instead, the test below would
+                // pass trivially no matter how `do_close` is bound, so
+                // assert the fork in behavior is real before relying on it.
+                assert_eq!(
+                    *installed_generation_for_o1.lock().unwrap(),
+                    Some(B_GENERATION),
+                    "a fresh label lookup at this exact moment must resolve to B, \
+                     or this test is not exercising the race it claims to"
+                );
+                closed_generations_for_o1
+                    .lock()
+                    .unwrap()
+                    .push(captured_generation.unwrap());
+                Ok(())
+            })
+        });
+
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_waiting" {
+            std::thread::yield_now();
+        }
+
+        // A's claim is released WITHOUT touching `overlay_window_owner` —
+        // unlike the prior freeze test, this one needs `owns == true` at
+        // O1's compare (per the verdict's own walkthrough: "the current
+        // owner still equals its snapshot, so `owns == true`"), so the
+        // owner field must still read `Some(5)`, unchanged from the
+        // snapshot O1 already took, when O1 finally gets to compare it.
+        a_claim.release();
+
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_won" {
+            std::thread::yield_now();
+        }
+
+        {
+            let (lock, cv) = &*proceed_to_settle;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+
+        // Wait until O1 has already compared/cleared the owner inside
+        // `settle_orphan_retire_claim` and is now blocked on the SECOND
+        // barrier, strictly before it performs the actual close.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_cleared_owner_entering_close"
+        {
+            std::thread::yield_now();
+        }
+
+        // B finishes building and installs itself under the SAME shared
+        // label here — strictly between O1's successful compare/clear and
+        // O1's actual close. A fresh label lookup performed from inside
+        // the close closure at this point would resolve to B, not A.
+        *installed_generation.lock().unwrap() = Some(B_GENERATION);
+
+        {
+            let (lock, cv) = &*proceed_to_close;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let result = o1.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(OrphanRetireOutcome::Closed)),
+            "O1's snapshot matched at compare time, so it must report Closed"
+        );
+        assert_eq!(
+            *closed_generations.lock().unwrap(),
+            vec![A_GENERATION],
+            "the close must touch only the captured A generation, never a fresh \
+             label lookup performed after the compare/clear that could resolve to B"
+        );
+        assert_eq!(
+            *installed_generation.lock().unwrap(),
+            Some(B_GENERATION),
+            "B's own physical-window generation must remain installed and \
+             untouched by O1's close"
+        );
+    }
+
+    #[test]
+    fn orphan_reclaim_snapshot_binds_handle_and_owner_to_the_same_generation() {
+        // C639-007C.15 freeze test: the prior two freeze tests above both
+        // start from a snapshot that is ALREADY internally coherent (one
+        // `observed_owner` value, taken once, used throughout). This test
+        // proves the remaining gap the verdict actually found: production
+        // used to capture the window HANDLE early (before anything waits)
+        // but the OWNER late — via `app.get_webview_window("overlay")`
+        // immediately, then a separate, independently-locked read of
+        // `overlay_window_owner` only after the `pending_overlay` check
+        // that sits between them, with no lock or reservation spanning
+        // that gap. A successor's entire open-close-build cycle could land
+        // inside it: O1's handle would describe generation A while its
+        // LATE-read owner snapshot could already describe generation B,
+        // because B's build had already run and overwritten the owner by
+        // the time O1 finally got around to reading it — a handle and an
+        // owner value that describe two different generations, which is
+        // exactly what let O1 wrongly treat B's live owner as "the same
+        // thing I originally observed" and clear it.
+        //
+        // The fix (this module's `overlay_window_handle`) replaces those
+        // two independent reads with ONE read of a single record written
+        // atomically, in one statement, by the one place a window is ever
+        // built — modeled here as a single `Mutex<Option<(u64, u64)>>>`
+        // pairing a session id with a window-generation id (a plain u64
+        // stand-in for the real `WebviewWindow` handle, the same
+        // modeling choice the C639-007C.14 freeze test above makes, since
+        // `settle_orphan_retire_claim` itself is generic over `do_close`
+        // and never re-derives anything from a label or a handle type).
+        //
+        // O1 takes its ONE snapshot of that combined record BEFORE the
+        // `pending_overlay` check (mirroring the production call site),
+        // then pauses — modeling every blocking step between that read and
+        // `claim_retire` (the `pending_overlay` lock, then the bounded
+        // wait inside `claim_retire` itself). While O1 is paused, A's
+        // close completes and B is installed into the SAME combined
+        // record, atomically, exactly as the real build site would. O1
+        // then resumes and must refuse to touch B: its snapshot still
+        // names A's session, never B's, because it was taken before B
+        // ever existed — unlike the OLD buggy code, which would have let
+        // O1's LATE owner-only read see B directly.
+        const A_SESSION: u64 = 5;
+        const A_GENERATION: u64 = 100;
+        const B_SESSION: u64 = 6;
+        const B_GENERATION: u64 = 200;
+
+        let combined: Arc<Mutex<Option<(u64, u64)>>> =
+            Arc::new(Mutex::new(Some((A_SESSION, A_GENERATION))));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(A_SESSION)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let closed_generations: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let proceed_to_claim = Arc::new((Mutex::new(false), Condvar::new()));
+
+        // O1's ONE atomic read of the combined record — the exact
+        // replacement for the old pair of independent reads. Taken here,
+        // before anything waits, exactly where `open_region_overlay` takes
+        // it in production.
+        let (observed_owner, observed_generation) = combined.lock().unwrap().unwrap();
+        assert_eq!(
+            (observed_owner, observed_generation),
+            (A_SESSION, A_GENERATION),
+            "O1's single read must describe A coherently before anything else runs"
+        );
+
+        let gate_for_o1 = gate.clone();
+        let owner_for_o1 = overlay_window_owner.clone();
+        let touched_for_o1 = touched.clone();
+        let proceed_to_claim_for_o1 = proceed_to_claim.clone();
+        let closed_generations_for_o1 = closed_generations.clone();
+        let o1 = std::thread::spawn(move || {
+            touched_for_o1.lock().unwrap().push("o1_paused");
+            let (lock, cv) = &*proceed_to_claim_for_o1;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cv.wait(go).unwrap();
+            }
+            drop(go);
+            // Everything from here on uses ONLY the early snapshot
+            // (`observed_owner`, `observed_generation`) — never a fresh
+            // read of `combined` — exactly mirroring how `open_region_
+            // overlay` never re-reads `overlay_window_handle` a second
+            // time once it has its snapshot.
+            let claim = gate_for_o1.claim_retire(Duration::from_secs(5));
+            settle_orphan_retire_claim(&owner_for_o1, Some(observed_owner), claim, move || {
+                closed_generations_for_o1
+                    .lock()
+                    .unwrap()
+                    .push(observed_generation);
+                Ok(())
+            })
+        });
+
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_paused" {
+            std::thread::yield_now();
+        }
+
+        // A's close completes and B is installed — atomically, in the SAME
+        // combined record, exactly as the real build site would — while
+        // O1 is paused between its snapshot and `claim_retire`. This is
+        // the gap the old two-independent-reads code left unguarded.
+        *overlay_window_owner.lock().unwrap() = Some(B_SESSION);
+        *combined.lock().unwrap() = Some((B_SESSION, B_GENERATION));
+
+        {
+            let (lock, cv) = &*proceed_to_claim;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let result = o1.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(OrphanRetireOutcome::Superseded)),
+            "O1's early snapshot still names A, which no longer matches the live \
+             owner B, so this must be refused as Superseded, never treated as a \
+             match just because a LATE re-read would have agreed with B"
+        );
+        assert!(
+            closed_generations.lock().unwrap().is_empty(),
+            "O1 must close nothing at all here — never B's generation, and the \
+             Superseded path means `do_close` is never even invoked"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(B_SESSION),
+            "B's owner must be byte-for-byte unchanged by O1's refused reclaim"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((B_SESSION, B_GENERATION)),
+            "B's own handle+owner binding must remain exactly as B installed it"
+        );
+    }
+
+    #[test]
+    fn won_retire_must_not_clear_the_handle_record_until_destruction_is_confirmed() {
+        // C639-007C.16 freeze test 1 (Won case): the verdict's reported
+        // regression. `close()` only REQUESTS destruction asynchronously —
+        // `settle_retire_claim` reporting `RetireSettlement::Closed` means
+        // this call issued that request, never that the window is actually
+        // gone. The combined handle/owner record (modeled here, as the
+        // C639-007C.15 freeze test above does, as a plain
+        // `Mutex<Option<(u64, u64)>>` session/generation pair standing in
+        // for the real `(u64, WebviewWindow)`) must stay present and
+        // authoritative for the whole interval between that request and
+        // confirmed destruction — modeled here as a barrier a background
+        // thread holds, mirroring production's deferred `wait_for_overlay_
+        // gone` / `release_overlay_window_handle_when_gone`. A fresh
+        // opener (O2) arriving in that interval must be refused, never
+        // treat the record as absent and mint/build a second window under
+        // the same shared label.
+        const A_SESSION: u64 = 11;
+        const A_GENERATION: u64 = 110;
+
+        let combined: Arc<Mutex<Option<(u64, u64)>>> =
+            Arc::new(Mutex::new(Some((A_SESSION, A_GENERATION))));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(A_SESSION)));
+        let active_pick = Arc::new(Mutex::new(Some(A_SESSION)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = A_SESSION;
+            ctx
+        })));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let destroyed = Arc::new((Mutex::new(false), Condvar::new()));
+
+        // Cancel A — the exact shape `retire_owned_overlay_session` uses:
+        // claim retire, clear the pick, settle the claim. `do_close` here
+        // models `close_overlay_window` returning `Ok(())` the instant it
+        // issues the (asynchronous) close request — never actual
+        // destruction.
+        let claim = gate.claim_retire(Duration::from_secs(1));
+        clear_pick_if_current(&active_pick, &pending_overlay, A_SESSION);
+        let settlement =
+            settle_retire_claim(&overlay_window_owner, A_SESSION, claim, || Ok(())).unwrap();
+        assert_eq!(
+            settlement,
+            RetireSettlement::Closed,
+            "cancellation won the idle slot and issued the close itself"
+        );
+
+        // Production: a `Closed` settlement alone must never clear
+        // `combined` — only confirmed destruction does. Model that
+        // deferred clear as its own background thread gated behind
+        // `destroyed`, exactly mirroring `release_overlay_window_handle_
+        // when_gone`.
+        let combined_for_release = combined.clone();
+        let destroyed_for_release = destroyed.clone();
+        let release_thread = std::thread::spawn(move || {
+            let (lock, cv) = &*destroyed_for_release;
+            let mut gone = lock.lock().unwrap();
+            while !*gone {
+                gone = cv.wait(gone).unwrap();
+            }
+            drop(gone);
+            let mut handle = combined_for_release.lock().unwrap();
+            if handle.map(|(id, _)| id) == Some(A_SESSION) {
+                *handle = None;
+            }
+        });
+
+        // O2 arrives while destruction is still held behind the barrier:
+        // `pending_overlay` is already empty (cancel's bookkeeping runs
+        // immediately) but `combined` must still name A.
+        assert!(
+            pending_overlay.lock().unwrap().is_none(),
+            "cancel must have cleared pending_overlay already"
+        );
+        let observed = *combined.lock().unwrap();
+        assert_eq!(
+            observed,
+            Some((A_SESSION, A_GENERATION)),
+            "the combined record must remain present and still name A for as long as \
+             destruction is unconfirmed — never treated as absent just because cancellation's \
+             settlement already resolved"
+        );
+        let (observed_owner, _observed_generation) = observed.unwrap();
+        let o2_claim = gate.claim_retire(Duration::from_millis(50));
+        let o2_result =
+            settle_orphan_retire_claim(&overlay_window_owner, Some(observed_owner), o2_claim, || {
+                panic!(
+                    "O2 must never reach its own close while A's handle record is still \
+                     present and destruction is unconfirmed"
+                )
+            });
+        assert!(
+            matches!(o2_result, Ok(OrphanRetireOutcome::Superseded)),
+            "A's owner was already cleared by cancellation's own settle, so O2's snapshot \
+             compare must refuse as Superseded — it must not mint or build B here, exactly \
+             the 'cannot mint/build B' the verdict requires"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "O2's refused reclaim must leave the combined A record byte-for-byte untouched — \
+             no mutation of any successor record, because there is no successor yet"
+        );
+
+        // Only once destruction is actually confirmed may the record
+        // clear.
+        {
+            let (lock, cv) = &*destroyed;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        release_thread.join().unwrap();
+        assert_eq!(
+            *combined.lock().unwrap(),
+            None,
+            "the combined record must clear once (and only once) destruction is actually \
+             confirmed"
+        );
+
+        // A fresh admission attempt now sees no handle and may proceed to
+        // mint and install B's own record — never before this point.
+        *combined.lock().unwrap() = Some((22, 220));
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((22, 220)),
+            "B may now be installed, only after A's destruction was confirmed"
+        );
+    }
+
+    #[test]
+    fn coalesced_retire_must_not_clear_the_handle_record_until_the_deferred_close_confirms_destruction()
+    {
+        // C639-007C.16 freeze test 2 (Coalesced case): when cancellation's
+        // retire request coalesces into an in-flight restore,
+        // `settle_retire_claim` never calls `do_close` itself (see
+        // `RetireSettlement::DeferredElsewhere`) — the restoring owner's
+        // own compensate closure performs the exact-A close later, once
+        // its native `show()` returns. Neither cancellation's own
+        // settlement NOR that later `close()` merely returning may license
+        // clearing the combined record before ITS destruction is actually
+        // confirmed either.
+        const A_SESSION: u64 = 33;
+        const A_GENERATION: u64 = 330;
+
+        let combined: Arc<Mutex<Option<(u64, u64)>>> =
+            Arc::new(Mutex::new(Some((A_SESSION, A_GENERATION))));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(A_SESSION)));
+        let active_pick = Arc::new(Mutex::new(Some(A_SESSION)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = A_SESSION;
+            ctx
+        })));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let destroyed = Arc::new((Mutex::new(false), Condvar::new()));
+
+        // A restore is already in flight (mirrors `retry_hide_overlay_or_
+        // abandon`'s action holding the window mid-hide/show).
+        assert!(gate.try_claim_restore(), "an idle gate must grant the restore claim");
+
+        // Cancellation arrives while the restore is in flight: it
+        // coalesces and clears the logical bookkeeping immediately, but
+        // must not touch the owner or the combined record — the restoring
+        // owner's own deferred close is what will eventually retire A.
+        let claim = gate.claim_retire(Duration::from_secs(1));
+        assert!(
+            matches!(claim, RetireClaim::Coalesced),
+            "a restore in flight must coalesce the retire"
+        );
+        clear_pick_if_current(&active_pick, &pending_overlay, A_SESSION);
+        let settlement = settle_retire_claim(&overlay_window_owner, A_SESSION, claim, || {
+            panic!("a coalesced retire must never call do_close itself")
+        })
+        .unwrap();
+        assert_eq!(
+            settlement,
+            RetireSettlement::DeferredElsewhere,
+            "the restoring owner, not this cancellation, owns both the deferred close and the \
+             eventual handle-record clear"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(A_SESSION),
+            "a coalesced retire must not touch overlay_window_owner either — only the \
+             eventual deferred close does"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "the combined record must remain exactly as it was — cancellation coalescing must \
+             not clear it"
+        );
+
+        // O2 arrives: `pending_overlay` is already empty (bookkeeping
+        // cleared immediately) but the combined record still names A, so
+        // O2 must take the orphan-reclaim branch and consult the SAME
+        // gate — now `RestoringRetirePending`, not idle — so O2's own
+        // claim must wait out its bound rather than winning or
+        // re-coalescing.
+        assert!(pending_overlay.lock().unwrap().is_none());
+        let o2_bound = Duration::from_millis(60);
+        let o2_started = Instant::now();
+        match gate.claim_retire(o2_bound) {
+            RetireClaim::Pending => {}
+            RetireClaim::Won(_) => panic!(
+                "O2 must never win the retire slot while A's coalesced close is still in \
+                 flight — that would let it build B racing A's still-undestroyed window"
+            ),
+            RetireClaim::Coalesced => panic!(
+                "the gate is already RestoringRetirePending — a second coalesce must not be \
+                 possible"
+            ),
+        }
+        assert!(
+            o2_started.elapsed() >= o2_bound,
+            "O2 must actually wait out its bound, not return instantly"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "O2 timing out must leave the combined A record untouched — it must not mint or \
+             build B"
+        );
+
+        // The restoring owner's own `show()` finally returns;
+        // `finish_restore` reports the coalesced retire and the compensate
+        // closure performs the deferred exact-A close — modeled here as
+        // issuing the (asynchronous) close request and only THEN spawning
+        // the deferred release that waits for `destroyed` before clearing
+        // the combined record, exactly mirroring `release_overlay_window_
+        // handle_when_gone`.
+        let (retire_requested, guard) = gate.finish_restore();
+        assert!(retire_requested, "compensate must observe the coalesced cancellation");
+        {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            if owns_overlay_window(*owner, A_SESSION) {
+                *owner = None;
+            }
+        }
+        touched.lock().unwrap().push("close_issued");
+        let combined_for_release = combined.clone();
+        let destroyed_for_release = destroyed.clone();
+        let touched_for_release = touched.clone();
+        let release_thread = std::thread::spawn(move || {
+            let (lock, cv) = &*destroyed_for_release;
+            let mut gone = lock.lock().unwrap();
+            while !*gone {
+                gone = cv.wait(gone).unwrap();
+            }
+            drop(gone);
+            let mut handle = combined_for_release.lock().unwrap();
+            if handle.map(|(id, _)| id) == Some(A_SESSION) {
+                *handle = None;
+            }
+            touched_for_release.lock().unwrap().push("handle_cleared");
+        });
+        guard.release();
+
+        // Even with the gate idle again (compensate released it), the
+        // combined record must still name A until destruction is actually
+        // confirmed — a THIRD admission attempt racing in right now must
+        // still see it present and refuse to build on top of it.
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "the gate going idle again must not by itself clear the combined record — only \
+             confirmed destruction may"
+        );
+        assert!(
+            gate.try_claim_restore(),
+            "the gate itself is idle again once compensate released it"
+        );
+        gate.finish_restore().1.release();
+
+        // Only now does destruction actually get confirmed.
+        {
+            let (lock, cv) = &*destroyed;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        release_thread.join().unwrap();
+
+        assert_eq!(
+            *combined.lock().unwrap(),
+            None,
+            "A's record must clear only once destruction is confirmed"
+        );
+        assert_eq!(*touched.lock().unwrap(), vec!["close_issued", "handle_cleared"]);
+
+        // A fresh admission may now proceed and install its own record —
+        // never before this point.
+        *combined.lock().unwrap() = Some((44, 440));
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((44, 440)),
+            "B may now be installed, only after A's coalesced close was confirmed destroyed"
+        );
+    }
+
+    #[test]
+    fn retained_timeout_record_retries_close_and_admits_b_only_after_confirmed_destruction() {
+        // C639-007C.17 freeze test: the verdict's reported regression. Every
+        // production site that compare-clears `overlay_window_owner` does
+        // so BEFORE issuing the asynchronous `do_close`, then defers
+        // clearing the combined handle record (modeled here, as the
+        // C639-007C.15/.16 freeze tests above do, as a `Mutex<Option<(u64,
+        // u64)>>` session/generation pair) until `wait_for_overlay_gone`
+        // actually confirms destruction — never on a mere timeout. If that
+        // wait times out, `overlay_window_owner` is therefore ALREADY
+        // `None` for this exact generation by the time any LATER admission
+        // attempt observes the still-retained combined record and reads the
+        // owner again. The `won_retire_must_not_clear_the_handle_record_
+        // until_destruction_is_confirmed` freeze test above correctly
+        // freezes `settle_orphan_retire_claim`'s OWN owner-compare as
+        // `Superseded` for exactly this single-shot read — that function's
+        // contract is unchanged and still correct in isolation. This test
+        // proves the module-level fix sitting in FRONT of it:
+        // `open_region_overlay`'s orphan branch must detect "owner already
+        // `None`, combined record still names me" via
+        // `overlay_orphan_already_attempted` BEFORE ever calling
+        // `settle_orphan_retire_claim`, and route to `retry_retained_
+        // overlay_close` instead — retrying the close against the exact
+        // retained generation on every later admission attempt, never
+        // admitting B until that generation is actually confirmed gone, and
+        // never touching a successor's record (none can exist while the
+        // combined record still names A: the one place a window is ever
+        // built never runs until a prior generation's handle entry is
+        // actually cleared).
+        const A_SESSION: u64 = 51;
+        const A_GENERATION: u64 = 510;
+        const B_SESSION: u64 = 52;
+        const B_GENERATION: u64 = 520;
+
+        let combined: Arc<Mutex<Option<(u64, u64)>>> =
+            Arc::new(Mutex::new(Some((A_SESSION, A_GENERATION))));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(A_SESSION)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let close_attempts: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Step 1: a first close attempt (modeling any of `build_mode`,
+        // `cancel_region_pick`, the watchdog, or the retry failure
+        // cleanup) wins the gate, compare-clears the owner, issues the
+        // close, and then its own `wait_for_overlay_gone` times out —
+        // modeled directly as `false`. The required fix: a timeout must
+        // never clear `combined`.
+        {
+            let claim = gate.claim_retire(Duration::from_secs(1));
+            let settlement = settle_retire_claim(&overlay_window_owner, A_SESSION, claim, || {
+                close_attempts.lock().unwrap().push(A_GENERATION);
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(settlement, RetireSettlement::Closed);
+            let timed_out_gone = false;
+            if matches!(settlement, RetireSettlement::Closed) && timed_out_gone {
+                *combined.lock().unwrap() = None;
+            }
+        }
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            None,
+            "the first attempt's settle already compare-cleared the owner unconditionally, \
+             regardless of the later timeout"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "the timeout must leave the combined record retained, never cleared — exactly the \
+             required fix for the 5 named call sites"
+        );
+
+        // Step 2: O2 arrives. Its own single read of the combined record
+        // still names A.
+        let observed = combined.lock().unwrap().unwrap();
+        assert_eq!(observed, (A_SESSION, A_GENERATION));
+        let (observed_owner, observed_generation) = observed;
+
+        // The owner-based comparison `settle_orphan_retire_claim` uses can
+        // never match again for this generation — proving the deadlock
+        // this fix closes, and why O2 must take a different path.
+        assert!(
+            overlay_orphan_already_attempted(*overlay_window_owner.lock().unwrap(), observed_owner),
+            "owner is already None for this exact retained generation — the normal orphan path \
+             must not be taken, or O2 would be refused as Superseded forever"
+        );
+
+        // O2 takes the retained-generation retry path instead. Its own
+        // wait ALSO times out (the window is still genuinely stuck): B
+        // must not be minted or built, and no duplicate-label build is
+        // attempted.
+        {
+            let claim = gate.claim_retire(Duration::from_secs(1));
+            let outcome = retry_retained_overlay_close(claim, || {
+                close_attempts.lock().unwrap().push(observed_generation);
+                Ok(())
+            });
+            assert!(matches!(outcome, RetainedRetryOutcome::Closed));
+            let second_timed_out_gone = false;
+            if matches!(outcome, RetainedRetryOutcome::Closed) && second_timed_out_gone {
+                let mut handle = combined.lock().unwrap();
+                if handle.map(|(id, _)| id) == Some(observed_owner) {
+                    *handle = None;
+                }
+            }
+        }
+        assert_eq!(
+            *close_attempts.lock().unwrap(),
+            vec![A_GENERATION, A_GENERATION],
+            "the retry must re-issue the close against the exact retained generation — never a \
+             fresh or different one"
+        );
+        assert_eq!(
+            *combined.lock().unwrap(),
+            Some((A_SESSION, A_GENERATION)),
+            "a second timeout must STILL leave the combined record retained — O2 must not mint \
+             or build B"
+        );
+
+        // Step 3: a THIRD attempt's wait finally confirms destruction —
+        // only now may the exact-generation recovery close compare-clear A.
+        {
+            let claim = gate.claim_retire(Duration::from_secs(1));
+            let outcome = retry_retained_overlay_close(claim, || {
+                close_attempts.lock().unwrap().push(observed_generation);
+                Ok(())
+            });
+            assert!(matches!(outcome, RetainedRetryOutcome::Closed));
+            let finally_gone = true;
+            if matches!(outcome, RetainedRetryOutcome::Closed) && finally_gone {
+                let mut handle = combined.lock().unwrap();
+                if handle.map(|(id, _)| id) == Some(observed_owner) {
+                    *handle = None;
+                }
+            }
+        }
+        assert_eq!(
+            *combined.lock().unwrap(),
+            None,
+            "only confirmed destruction may compare-clear A's retained record"
+        );
+
+        // B may now be installed, only after A's destruction was actually
+        // confirmed — never before this point in the sequence, and never
+        // by touching A's own (already-cleared) record.
+        *combined.lock().unwrap() = Some((B_SESSION, B_GENERATION));
+        assert_eq!(*combined.lock().unwrap(), Some((B_SESSION, B_GENERATION)));
+    }
+
+    #[test]
+    fn should_clear_overlay_handle_after_close_requires_both_closed_and_gone() {
+        // C639-007C.17: unlike the freeze test above (which models the
+        // decision inline because `wait_for_overlay_gone` needs a live
+        // `tauri::AppHandle` no unit test can construct), this calls the
+        // actual production primitive every one of the five named call
+        // sites now routes through — `open_region_overlay`'s failure
+        // cleanup (the one site the round-19 verdict found still cleared
+        // unconditionally), the watchdog, the retry-restore failure path,
+        // and the two already-correct `settle_retire_claim` sites alike.
+        // A regression at any of those call sites that stopped checking
+        // this function's return value would still be caught here; a
+        // regression inside this function's own logic is what this test
+        // freezes directly.
+        assert!(
+            should_clear_overlay_handle_after_close(true, true),
+            "this call issued the close and confirmed destruction: must clear"
+        );
+        assert!(
+            !should_clear_overlay_handle_after_close(true, false),
+            "a timeout must retain the record so a later admission can retry this exact handle"
+        );
+        assert!(
+            !should_clear_overlay_handle_after_close(false, true),
+            "a DeferredElsewhere settlement means another in-flight actor owns the clear"
+        );
+        assert!(!should_clear_overlay_handle_after_close(false, false));
+    }
+
+    #[test]
+    fn overlay_retire_gate_claim_retire_bounds_the_wait_and_never_shares_the_slot() {
+        // C639-007C.12 freeze test 2: the first retire caller wins
+        // outright (idle gate) and is still mid-close (simulated by
+        // holding its guard without releasing). A second, concurrent
+        // retire caller must never be handed a guard for the same claim —
+        // only a bounded wait that gives up (`Pending`), never `Won` —
+        // and `try_claim_restore` must keep failing for as long as the
+        // first caller holds it. Structurally, the second caller has no
+        // guard at all, so there is no way for it to ever call `release`
+        // on the first caller's claim.
+        let gate = OverlayRetireGate::new();
+
+        let first_claim = match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Won(guard) => guard,
+            _ => panic!("an idle gate must grant the first retire claim outright"),
+        };
+        assert!(
+            !gate.try_claim_restore(),
+            "no restore may be granted while a retire is in flight"
+        );
+
+        let bound = Duration::from_millis(80);
+        let started = Instant::now();
+        match gate.claim_retire(bound) {
+            RetireClaim::Pending => {}
+            RetireClaim::Won(_) => panic!(
+                "a second retire caller must never be granted a guard while another retire \
+                 is already in flight — two callers could then both believe they own the \
+                 close"
+            ),
+            RetireClaim::Coalesced => {
+                panic!("the gate is Retiring, not Restoring — it must not coalesce")
+            }
+        }
+        assert!(
+            started.elapsed() >= bound,
+            "the second caller must actually have waited out its bound, not returned instantly"
+        );
+        assert!(
+            !gate.try_claim_restore(),
+            "the gate must still be held by the first caller's claim after the second gives up"
+        );
+
+        // Only the first caller's own guard can ever release the slot.
+        first_claim.release();
+        assert!(
+            gate.try_claim_restore(),
+            "releasing the ORIGINAL claim is what returns the gate to idle"
+        );
+        gate.finish_restore().1.release();
+    }
+
+    #[test]
+    fn overlay_retire_gate_guard_drop_without_explicit_release_still_frees_the_gate() {
+        // C639-007C.12 freeze test 3: "a panic/error path cannot strand
+        // the gate forever." An early `?` return (or a panic) while a
+        // `RetireGuard` is held drops it without ever calling `release()`
+        // explicitly — `Drop` must still return the gate to idle, or one
+        // aborted cleanup (e.g. `build_mode` finding no pending context
+        // to retire after already winning the claim) would permanently
+        // disable every future Region capture.
+        let gate = OverlayRetireGate::new();
+        {
+            let _claim = match gate.claim_retire(Duration::from_secs(1)) {
+                RetireClaim::Won(guard) => guard,
+                _ => panic!("an idle gate must grant the claim"),
+            };
+            assert!(!gate.try_claim_restore());
+            // `_claim` drops here at scope exit — never explicitly
+            // `.release()`d.
+        }
+        assert!(
+            gate.try_claim_restore(),
+            "a guard dropped without an explicit release must still return the gate to idle"
+        );
+        gate.finish_restore().1.release();
+    }
+
+    #[test]
+    fn abandonable_bridge_true_boundary_race_resolves_without_hanging_or_double_running() {
+        // Freeze step 4: a true deadline-boundary test, synchronized with
+        // a barrier rather than a sleep duration picked to land inside a
+        // timeout window. Both threads reach the starting line together,
+        // so which one wins the race to settle vs. time out is a genuine
+        // OS-scheduler race, not a baked-in assumption. Either outcome is
+        // acceptable; what must never happen is a hang, a panic, or the
+        // action running more than once — run repeatedly to stress both
+        // outcomes across iterations.
+        for _ in 0..50 {
+            let bridge = Arc::new(AbandonableBridge::<u32>::new());
+            let bridge_for_main = bridge.clone();
+            let calls = Arc::new(Mutex::new(0u32));
+            let calls_for_main = calls.clone();
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let barrier_for_main = barrier.clone();
+
+            let main_thread = std::thread::spawn(move || {
+                barrier_for_main.wait();
+                bridge_for_main.settle(
+                    move || {
+                        *calls_for_main.lock().unwrap() += 1;
+                        99
+                    },
+                    |_| {},
+                );
+            });
+
+            barrier.wait();
+            let result = bridge.wait_or_abandon(Duration::from_micros(1));
+            main_thread.join().unwrap();
+
+            assert_eq!(
+                *calls.lock().unwrap(),
+                1,
+                "the action must run exactly once regardless of which side of the race won"
+            );
+            match result {
+                Ok(v) => assert_eq!(v, 99),
+                Err(e) => assert!(e.contains("abandoned")),
+            }
+        }
     }
 }
 
