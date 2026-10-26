@@ -12,6 +12,21 @@ function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
 
+// Observability for the vendored event-listener path (2026-10-25): a silent
+// `window.__TAURI_INTERNALS__.Channel` failure left no trace anywhere — not
+// even a release-build DevTools console exists to see it in. logPhase mirrors
+// each step to the backend's phase ring and to
+// `%LOCALAPPDATA%/FORGE Capture/logs/listener.log`, and is always
+// fire-and-forget: a logging failure must never affect the listener it
+// describes.
+function logPhase(phase, detail) {
+  try {
+    void invoke("capture_listener_phase", { phase, detail: detail || null });
+  } catch {
+    /* non-fatal: logging never blocks the listener path */
+  }
+}
+
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
 
@@ -692,15 +707,30 @@ async function listenHotkeyEvents() {
 async function listenEvent(event, onMessage) {
   try {
     const internals = window.__TAURI_INTERNALS__;
-    if (!internals || typeof internals.Channel !== "function") return;
+    if (!internals || typeof internals.Channel !== "function") {
+      logPhase("channel-unavailable", `event=${event}`);
+      return;
+    }
+    logPhase("channel-ready", `event=${event}`);
     const channel = new internals.Channel();
-    channel.onmessage = onMessage;
+    channel.onmessage = (msg) => {
+      logPhase("event-received", `event=${event}`);
+      try {
+        onMessage(msg);
+        logPhase("ui-update-attempted", `event=${event} ok=true`);
+      } catch (e) {
+        logPhase("ui-update-attempted", `event=${event} ok=false error=${e}`);
+        throw e;
+      }
+    };
     await internals.invoke("plugin:event|listen", {
       event,
       target: { kind: "Any" },
       handler: channel,
     });
+    logPhase("listen-registered", `event=${event}`);
   } catch (e) {
+    logPhase("listen-failed", `event=${event} error=${e}`);
     /* the session list just won't auto-update for this event */
   }
 }

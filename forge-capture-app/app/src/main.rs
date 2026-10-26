@@ -3926,6 +3926,58 @@ fn capture_overlay_phase(
     state.capture_supervisor.ring().log("overlay", d);
 }
 
+/// Main-window event-listener phase marker (observability fix, 2026-10-25):
+/// the frontend reports channel-check / listen-registered / listen-failed /
+/// event-received / ui-update-attempted for the `capture-saved` /
+/// `capture-failed` listeners so a silent `window.__TAURI_INTERNALS__`
+/// failure (e.g. `Channel` missing) is visible even in a release build with
+/// no DevTools. Namespaced "listener" in the in-memory ring (readable via
+/// `capture_phase_log`) and also appended to a plain-text file under
+/// `%LOCALAPPDATA%/FORGE Capture/logs/listener.log` so it survives without
+/// an open console. Fire-and-forget: a logging failure never breaks the
+/// listener it is describing.
+#[tauri::command]
+fn capture_listener_phase(phase: String, detail: Option<String>, state: State<AppState>) {
+    let mut d = format!("phase={phase}");
+    if let Some(detail) = detail {
+        let mut detail = detail;
+        detail.truncate(256);
+        d.push_str(&format!(" {detail}"));
+    }
+    state.capture_supervisor.ring().log("listener", &d);
+    let _ = append_listener_log_line(&d);
+}
+
+/// `%LOCALAPPDATA%/FORGE Capture/logs` (Windows) or
+/// `~/.local/share/forge-capture/logs` (other hosts), created on first use.
+fn listener_log_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "LOCALAPPDATA is not set".to_string())?
+        .join("FORGE Capture");
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "HOME is not set".to_string())?
+        .join(".local/share/forge-capture");
+    let dir = base.join("logs");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create logs dir: {e}"))?;
+    Ok(dir)
+}
+
+fn append_listener_log_line(line: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let path = listener_log_dir()?.join("listener.log");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open listener.log: {e}"))?;
+    writeln!(f, "[{}] {line}", forge_capture_core::timestamp::now_utc_iso8601())
+        .map_err(|e| format!("cannot write listener.log: {e}"))
+}
+
 /// True when every pixel of an RGBA frame is byte-identical. A uniform
 /// frame usually means a dead/blank capture pipeline — but a genuinely
 /// solid-color desktop is also uniform, so this only raises the
@@ -6187,6 +6239,7 @@ fn main() {
             retry_region_backdrop,
             capture_phase_log,
             capture_overlay_phase,
+            capture_listener_phase,
             ai_edit_submit,
             ai_edit_poll,
             ai_edit_import,
