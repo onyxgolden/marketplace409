@@ -3926,6 +3926,21 @@ fn capture_overlay_phase(
     state.capture_supervisor.ring().log("overlay", d);
 }
 
+/// Truncate `s` to at most `max_bytes` bytes without panicking, even when
+/// byte `max_bytes` falls inside a multibyte UTF-8 scalar (`String::truncate`
+/// panics on a non-char-boundary index). Walks back to the nearest preceding
+/// char boundary.
+fn truncate_utf8_safe(s: &mut String, max_bytes: usize) {
+    if s.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+}
+
 /// Main-window event-listener phase marker (observability fix, 2026-10-25):
 /// the frontend reports channel-check / listen-registered / listen-failed /
 /// event-received / ui-update-attempted for the `capture-saved` /
@@ -3935,13 +3950,15 @@ fn capture_overlay_phase(
 /// `capture_phase_log`) and also appended to a plain-text file under
 /// `%LOCALAPPDATA%/FORGE Capture/logs/listener.log` so it survives without
 /// an open console. Fire-and-forget: a logging failure never breaks the
-/// listener it is describing.
+/// listener it is describing. `detail` is frontend-controlled and may
+/// contain multibyte UTF-8, so it is truncated at a char boundary rather
+/// than a raw byte index (see `truncate_utf8_safe`).
 #[tauri::command]
 fn capture_listener_phase(phase: String, detail: Option<String>, state: State<AppState>) {
     let mut d = format!("phase={phase}");
     if let Some(detail) = detail {
         let mut detail = detail;
-        detail.truncate(256);
+        truncate_utf8_safe(&mut detail, 256);
         d.push_str(&format!(" {detail}"));
     }
     state.capture_supervisor.ring().log("listener", &d);

@@ -21,7 +21,10 @@ function invoke(cmd, args) {
 // describes.
 function logPhase(phase, detail) {
   try {
-    void invoke("capture_listener_phase", { phase, detail: detail || null });
+    invoke("capture_listener_phase", { phase, detail: detail || null }).catch(() => {
+      /* non-fatal: a rejected diagnostic invoke must never surface as an
+         unhandled rejection or affect the listener path */
+    });
   } catch {
     /* non-fatal: logging never blocks the listener path */
   }
