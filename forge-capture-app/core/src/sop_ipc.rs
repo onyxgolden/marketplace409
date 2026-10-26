@@ -106,9 +106,36 @@ pub fn confine_relative_path(relative: &str) -> Result<(), PathConfinementError>
     Ok(())
 }
 
-/// Brief §2.1 request shape.
+/// C2P1-001 fix-round bounds. Every one of these is enforced by
+/// [`validate_request`]/[`decode_framed`] — never just documented. Chosen
+/// generously for real use (a session caps at 50 frames per
+/// [`crate::sop_session::MAX_FRAMES_PER_SESSION`], so these are well
+/// above anything a legitimate request needs) and cheap insurance against
+/// an unbounded/attacker-controlled sidecar boundary, same reasoning as
+/// [`crate::annotations::MAX_ITEMS`]/`MAX_TEXT_CHARS`.
+pub const MAX_REQUEST_ID_CHARS: usize = 128;
+pub const MAX_TIMEOUT_MS: u64 = 5 * 60 * 1000; // 5 minutes
+pub const MAX_DIGESTS_PER_REQUEST: usize = 64;
+pub const MAX_PATHS_PER_REQUEST: usize = 64;
+/// Hard ceiling on one framed IPC message, checked by [`decode_framed`]
+/// **before** the payload is ever buffered/allocated — a declared length
+/// above this is refused immediately rather than causing an unbounded
+/// read.
+pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024;
+
+/// True only for a lowercase-or-uppercase 64-character hex string (a
+/// SHA-256 digest's canonical text form). Used for every digest/
+/// model-manifest identity field at the IPC boundary — never accepted as
+/// a bare non-empty string.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Brief §2.1 request shape. `deny_unknown_fields`: an unrecognized field
+/// on the wire is refused at deserialization, never silently ignored —
+/// brief §2.1's "unknown fields... fail closed."
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcRequest {
     pub request_id: String,
     pub schema_version: u32,
@@ -121,7 +148,7 @@ pub struct IpcRequest {
 
 /// Brief §2.1: "Responses echo the request and input identities."
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcResponse {
     pub request_id: String,
     pub schema_version: u32,
@@ -130,7 +157,7 @@ pub struct IpcResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResult {
     Ok { payload: serde_json::Value },
     Err { code: String, message: String },
@@ -141,27 +168,64 @@ pub enum IpcResult {
 /// session root fail closed" (brief §2.1) — this is the fail-closed gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestValidationError {
-    UnsupportedSchemaVersion { found: u32, max_supported: u32 },
+    UnsupportedSchemaVersion { found: u32, min_supported: u32, max_supported: u32 },
     EmptyRequestId,
+    RequestIdTooLong { found: usize, max: usize },
+    TimeoutOutOfBounds { found_ms: u64, max_ms: u64 },
+    TooManyDigests { found: usize, max: usize },
+    TooManyPaths { found: usize, max: usize },
+    InvalidDigest { field: &'static str, value: String },
     PathConfinement(PathConfinementError),
 }
 
-/// Validates a request's protocol-level shape: supported schema version,
-/// non-empty request id, and every bounded path already lexically
-/// confined (since [`BoundedPath`] can only be constructed via
-/// [`BoundedPath::new`], a request built any other way than by hand
-/// already satisfies this — this function exists for requests
-/// deserialized from the wire, where a malformed/old client could have
-/// sent something that bypasses the constructor).
+/// Validates a request's protocol-level shape: supported schema version
+/// (exactly in `[1, SIDECAR_PROTOCOL_VERSION]` — `0` is refused, not just
+/// anything above the max), bounded request id, bounded/well-formed
+/// digests, bounded timeout, bounded path count, and every bounded path
+/// already lexically confined (since [`BoundedPath`] can only be
+/// constructed via [`BoundedPath::new`], a request built any other way
+/// than by hand already satisfies that specific check — this function
+/// exists for requests deserialized from the wire, where a malformed/old
+/// client could have sent something that bypasses the constructor).
 pub fn validate_request(req: &IpcRequest) -> Result<(), RequestValidationError> {
-    if req.schema_version > SIDECAR_PROTOCOL_VERSION {
+    if req.schema_version == 0 || req.schema_version > SIDECAR_PROTOCOL_VERSION {
         return Err(RequestValidationError::UnsupportedSchemaVersion {
             found: req.schema_version,
+            min_supported: 1,
             max_supported: SIDECAR_PROTOCOL_VERSION,
         });
     }
     if req.request_id.is_empty() {
         return Err(RequestValidationError::EmptyRequestId);
+    }
+    if req.request_id.chars().count() > MAX_REQUEST_ID_CHARS {
+        return Err(RequestValidationError::RequestIdTooLong {
+            found: req.request_id.chars().count(),
+            max: MAX_REQUEST_ID_CHARS,
+        });
+    }
+    if req.timeout_ms == 0 || req.timeout_ms > MAX_TIMEOUT_MS {
+        return Err(RequestValidationError::TimeoutOutOfBounds { found_ms: req.timeout_ms, max_ms: MAX_TIMEOUT_MS });
+    }
+    if req.input_digests_sha256.len() > MAX_DIGESTS_PER_REQUEST {
+        return Err(RequestValidationError::TooManyDigests {
+            found: req.input_digests_sha256.len(),
+            max: MAX_DIGESTS_PER_REQUEST,
+        });
+    }
+    if req.bounded_paths.len() > MAX_PATHS_PER_REQUEST {
+        return Err(RequestValidationError::TooManyPaths { found: req.bounded_paths.len(), max: MAX_PATHS_PER_REQUEST });
+    }
+    for digest in &req.input_digests_sha256 {
+        if !is_sha256_hex(digest) {
+            return Err(RequestValidationError::InvalidDigest { field: "input_digests_sha256", value: digest.clone() });
+        }
+    }
+    if !is_sha256_hex(&req.model_manifest_sha256) {
+        return Err(RequestValidationError::InvalidDigest {
+            field: "model_manifest_sha256",
+            value: req.model_manifest_sha256.clone(),
+        });
     }
     for path in &req.bounded_paths {
         confine_relative_path(path.as_str()).map_err(RequestValidationError::PathConfinement)?;
@@ -185,6 +249,11 @@ pub enum FrameDecodeError {
     NeedMoreHeaderBytes,
     /// Length header read, but the full payload hasn't arrived yet.
     NeedMorePayloadBytes { declared_len: u32, have: usize },
+    /// The declared length exceeds [`MAX_FRAME_BYTES`] — refused
+    /// immediately, before any attempt to buffer or wait for that many
+    /// bytes, so a corrupt/hostile length header can never force an
+    /// unbounded read.
+    FrameTooLarge { declared_len: u32, max: u32 },
 }
 
 /// Decodes exactly one length-prefixed message from the front of `buf`.
@@ -192,12 +261,19 @@ pub enum FrameDecodeError {
 /// `buf` — callers read in a loop, feeding more bytes and retrying on
 /// `NeedMore*` until a full message is available. This function never
 /// panics or reads past what `buf` actually contains, which matters for
-/// a boundary driven by an external process's own write timing.
+/// a boundary driven by an external process's own write timing. A
+/// declared length above [`MAX_FRAME_BYTES`] is refused before the
+/// `have < total_needed` check, so a hostile 4 GiB header can never be
+/// used to stall this function waiting on bytes that will never arrive in
+/// a legitimate message.
 pub fn decode_framed(buf: &[u8]) -> Result<(&[u8], &[u8]), FrameDecodeError> {
     if buf.len() < 4 {
         return Err(FrameDecodeError::NeedMoreHeaderBytes);
     }
     let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    if len > MAX_FRAME_BYTES {
+        return Err(FrameDecodeError::FrameTooLarge { declared_len: len, max: MAX_FRAME_BYTES });
+    }
     let total_needed = 4 + len as usize;
     if buf.len() < total_needed {
         return Err(FrameDecodeError::NeedMorePayloadBytes { declared_len: len, have: buf.len() - 4 });
@@ -301,7 +377,23 @@ mod tests {
         req.schema_version = SIDECAR_PROTOCOL_VERSION + 1;
         assert_eq!(
             validate_request(&req),
-            Err(RequestValidationError::UnsupportedSchemaVersion { found: SIDECAR_PROTOCOL_VERSION + 1, max_supported: SIDECAR_PROTOCOL_VERSION })
+            Err(RequestValidationError::UnsupportedSchemaVersion {
+                found: SIDECAR_PROTOCOL_VERSION + 1,
+                min_supported: 1,
+                max_supported: SIDECAR_PROTOCOL_VERSION
+            })
+        );
+    }
+
+    #[test]
+    fn validate_request_fails_closed_on_schema_version_zero() {
+        // C2P1-001: the original version check only rejected ABOVE the
+        // max, so 0 (never a real version) slipped through.
+        let mut req = valid_request();
+        req.schema_version = 0;
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::UnsupportedSchemaVersion { found: 0, min_supported: 1, max_supported: SIDECAR_PROTOCOL_VERSION })
         );
     }
 
@@ -310,6 +402,119 @@ mod tests {
         let mut req = valid_request();
         req.request_id = String::new();
         assert_eq!(validate_request(&req), Err(RequestValidationError::EmptyRequestId));
+    }
+
+    #[test]
+    fn validate_request_rejects_an_oversized_request_id() {
+        let mut req = valid_request();
+        req.request_id = "x".repeat(MAX_REQUEST_ID_CHARS + 1);
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::RequestIdTooLong { found: MAX_REQUEST_ID_CHARS + 1, max: MAX_REQUEST_ID_CHARS })
+        );
+    }
+
+    #[test]
+    fn validate_request_accepts_exactly_the_max_request_id_length() {
+        let mut req = valid_request();
+        req.request_id = "x".repeat(MAX_REQUEST_ID_CHARS);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn validate_request_rejects_a_zero_timeout() {
+        let mut req = valid_request();
+        req.timeout_ms = 0;
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::TimeoutOutOfBounds { found_ms: 0, max_ms: MAX_TIMEOUT_MS })
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_an_excessive_timeout() {
+        let mut req = valid_request();
+        req.timeout_ms = MAX_TIMEOUT_MS + 1;
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::TimeoutOutOfBounds { found_ms: MAX_TIMEOUT_MS + 1, max_ms: MAX_TIMEOUT_MS })
+        );
+    }
+
+    #[test]
+    fn validate_request_accepts_exactly_the_max_timeout() {
+        let mut req = valid_request();
+        req.timeout_ms = MAX_TIMEOUT_MS;
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn validate_request_rejects_too_many_digests() {
+        let mut req = valid_request();
+        req.input_digests_sha256 = (0..MAX_DIGESTS_PER_REQUEST + 1).map(|_| "a".repeat(64)).collect();
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::TooManyDigests { found: MAX_DIGESTS_PER_REQUEST + 1, max: MAX_DIGESTS_PER_REQUEST })
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_too_many_paths() {
+        let mut req = valid_request();
+        req.bounded_paths = (0..MAX_PATHS_PER_REQUEST + 1).map(|i| BoundedPath::new(&format!("f{i}.png")).unwrap()).collect();
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::TooManyPaths { found: MAX_PATHS_PER_REQUEST + 1, max: MAX_PATHS_PER_REQUEST })
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_a_malformed_input_digest() {
+        let mut req = valid_request();
+        req.input_digests_sha256 = vec!["not-a-hex-digest".to_string()];
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::InvalidDigest { field: "input_digests_sha256", value: "not-a-hex-digest".to_string() })
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_a_digest_of_the_wrong_length() {
+        let mut req = valid_request();
+        req.input_digests_sha256 = vec!["a".repeat(63)]; // one short
+        assert!(matches!(validate_request(&req), Err(RequestValidationError::InvalidDigest { .. })));
+    }
+
+    #[test]
+    fn validate_request_rejects_a_malformed_model_manifest_digest() {
+        let mut req = valid_request();
+        req.model_manifest_sha256 = "zz".repeat(32); // right length, not hex
+        assert_eq!(
+            validate_request(&req),
+            Err(RequestValidationError::InvalidDigest { field: "model_manifest_sha256", value: "zz".repeat(32) })
+        );
+    }
+
+    #[test]
+    fn ipc_request_deserialization_rejects_an_unknown_field() {
+        let json = r#"{
+            "requestId": "r1", "schemaVersion": 1, "operation": "ocr",
+            "inputDigestsSha256": [], "boundedPaths": [], "timeoutMs": 1000,
+            "modelManifestSha256": "a",
+            "unknownExtraField": "should fail closed"
+        }"#;
+        let result: Result<IpcRequest, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ipc_response_deserialization_rejects_an_unknown_field() {
+        let json = r#"{
+            "requestId": "r1", "schemaVersion": 1, "echoedInputDigestsSha256": [],
+            "result": {"status": "ok", "payload": {}}, "unknownExtraField": "x"
+        }"#;
+        let result: Result<IpcResponse, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 
     // --- framing ---
@@ -321,6 +526,33 @@ mod tests {
         let (decoded, rest) = decode_framed(&framed).unwrap();
         assert_eq!(decoded, payload);
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn decode_framed_refuses_a_declared_length_over_the_cap_before_waiting_for_the_bytes() {
+        // C2P1-001: a hostile/corrupt 4-byte length header claiming
+        // slightly more than MAX_FRAME_BYTES must be refused immediately
+        // - never treated as "need more bytes" and left waiting on a
+        // payload that would exceed the bound even if it arrived.
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&(MAX_FRAME_BYTES + 1).to_be_bytes());
+        assert_eq!(
+            decode_framed(&framed),
+            Err(FrameDecodeError::FrameTooLarge { declared_len: MAX_FRAME_BYTES + 1, max: MAX_FRAME_BYTES })
+        );
+    }
+
+    #[test]
+    fn decode_framed_accepts_exactly_the_max_frame_bytes_declared_length() {
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&MAX_FRAME_BYTES.to_be_bytes());
+        // Declared length is at the cap but the actual buffer doesn't
+        // carry that many bytes yet - must be NeedMorePayloadBytes, not
+        // FrameTooLarge (the cap itself is a valid, acceptable size).
+        assert_eq!(
+            decode_framed(&framed),
+            Err(FrameDecodeError::NeedMorePayloadBytes { declared_len: MAX_FRAME_BYTES, have: 0 })
+        );
     }
 
     #[test]

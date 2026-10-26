@@ -273,9 +273,20 @@ pub struct SopSessionV1 {
 /// Every variant carries a stable, machine-readable shape (no bare
 /// strings) so callers/tests assert the exact failure, same convention as
 /// [`crate::annotations`]'s validation errors.
+///
+/// C2P1-002/003 fix round: this enum grew substantially because the prior
+/// version only checked a small structural subset (schema/kind/id, frame
+/// count, ID uniqueness) and left the actually safety-relevant invariants
+/// — review/export state being *derived* rather than trusted, every
+/// persisted path being confined, and the edit-event log being a real,
+/// chain-validated history — entirely unchecked. A deserialized document
+/// could claim `reviewState=VERIFIED`/`exportEligible=true` while still
+/// having unresolved redactions or pending frames, or carry a path like
+/// `../outside`. Every new variant below closes one specific gap named in
+/// `results/chatgpt/capture-c2-p1-review-2026-10-26.md`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionError {
-    UnsupportedSchemaVersion { found: u32, max_supported: u32 },
+    UnsupportedSchemaVersion { found: u32, min_supported: u32, max_supported: u32 },
     WrongKind { found: String },
     TooManyFrames { found: usize, max: usize },
     DuplicateFrameId { frame_id: String },
@@ -285,46 +296,110 @@ pub enum SessionError {
     EmptySessionId,
     EmptyFrameId,
     EmptyStepId,
+    /// A persisted relative path (source/provenance-sidecar/redacted-
+    /// derivative) is not confined to the session root — the exact same
+    /// grammar [`crate::sop_ipc::confine_relative_path`] enforces at the
+    /// IPC boundary, applied here too so a session file itself can never
+    /// carry an escaping path regardless of how it was produced.
+    InvalidRelativePath { frame_id: String, field: &'static str },
+    /// A digest field isn't a well-formed 64-char lowercase/uppercase hex
+    /// SHA-256 string.
+    InvalidDigestFormat { frame_id: String, field: &'static str },
+    InvalidFrameDimensions { frame_id: String },
+    InvalidClickBox { frame_id: String },
+    /// A `CaptionDraft.source_frame_ids` entry names a frame id that
+    /// doesn't exist in `source_frames`.
+    CaptionReferencesUnknownFrame { step_id: String, frame_id: String },
+    EmptyRedactionCandidateId { frame_id: String },
+    DuplicateRedactionCandidateId { frame_id: String, candidate_id: String },
+    InvalidRedactionCandidateBox { frame_id: String, candidate_id: String },
+    InvalidRedactionCandidateScore { frame_id: String, candidate_id: String },
+    /// The session claims a review/export state its actual frame
+    /// verification + redaction disposition data doesn't support — the
+    /// core fix for "a session can self-assert VERIFIED/exportable."
+    ReviewStateNotSatisfied { reason: &'static str },
+    ExportEligibleNotSatisfied { reason: &'static str },
+    DuplicateEditEventId { event_id: String },
+    DuplicateEditEventSequence { sequence: u64 },
+    /// The event chain isn't contiguous starting at the first event's own
+    /// `sequence` (a gap, or not sorted into a contiguous run at all).
+    EditEventSequenceGap { expected: u64, found: u64 },
+    /// `session_revision_before` doesn't equal the running revision the
+    /// chain had reached, or `session_revision_after` isn't exactly
+    /// `session_revision_before + 1`.
+    EditEventRevisionMismatch { event_id: String },
 }
 
 /// Parses and validates a session document from JSON bytes. Schema
 /// version is checked *before* full deserialization is attempted (a
 /// `schemaVersion` field alone is read first), mirroring
 /// [`crate::annotations::parse_sidecar`] — a newer, unrecognized schema is
-/// reported as unsupported rather than silently misparsed.
+/// reported as unsupported rather than silently misparsed. `0` is refused
+/// the same as anything above the max — it is never a real version
+/// (C2P1-001/002 fix round: the original check only rejected ABOVE the
+/// max, leaving a lower-bound hole).
 pub fn parse_session(json: &[u8]) -> Result<SopSessionV1, SessionError> {
     #[derive(Deserialize)]
     struct VersionProbe {
         #[serde(rename = "schemaVersion")]
         schema_version: u32,
     }
-    let probe: VersionProbe = serde_json::from_slice(json).map_err(|_| SessionError::UnsupportedSchemaVersion {
+    let unsupported_probe_err = SessionError::UnsupportedSchemaVersion {
         found: 0,
+        min_supported: 1,
         max_supported: SOP_SESSION_SCHEMA_VERSION,
-    })?;
-    if probe.schema_version > SOP_SESSION_SCHEMA_VERSION {
+    };
+    let probe: VersionProbe = serde_json::from_slice(json).map_err(|_| unsupported_probe_err.clone())?;
+    if probe.schema_version == 0 || probe.schema_version > SOP_SESSION_SCHEMA_VERSION {
         return Err(SessionError::UnsupportedSchemaVersion {
             found: probe.schema_version,
+            min_supported: 1,
             max_supported: SOP_SESSION_SCHEMA_VERSION,
         });
     }
-    let session: SopSessionV1 =
-        serde_json::from_slice(json).map_err(|_| SessionError::UnsupportedSchemaVersion {
-            found: probe.schema_version,
-            max_supported: SOP_SESSION_SCHEMA_VERSION,
-        })?;
+    let session: SopSessionV1 = serde_json::from_slice(json).map_err(|_| SessionError::UnsupportedSchemaVersion {
+        found: probe.schema_version,
+        min_supported: 1,
+        max_supported: SOP_SESSION_SCHEMA_VERSION,
+    })?;
     validate_session(&session)?;
     Ok(session)
 }
 
-/// Structural + limit validation on an already-deserialized session.
-/// Separate from [`parse_session`] so in-memory sessions built by the
-/// shell (not round-tripped through JSON) can still be validated before
-/// being written.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn all_frames_verified(session: &SopSessionV1) -> bool {
+    !session.source_frames.is_empty()
+        && session.source_frames.iter().all(|f| f.verification == FrameVerification::Verified)
+}
+
+fn all_redactions_resolved(session: &SopSessionV1) -> bool {
+    session
+        .source_frames
+        .iter()
+        .all(|f| f.redaction_candidates.iter().all(|c| c.disposition != Disposition::Pending))
+}
+
+/// Structural + limit + cross-reference validation on an already-
+/// deserialized session. Separate from [`parse_session`] so in-memory
+/// sessions built by the shell (not round-tripped through JSON) can still
+/// be validated before being written.
+///
+/// This is the single place `reviewState`/`exportEligible` are checked
+/// against the data that's supposed to justify them — nothing downstream
+/// should re-derive or re-trust those two fields independently. A session
+/// claiming `VERIFIED` while any frame isn't
+/// [`FrameVerification::Verified`], any redaction candidate is still
+/// [`Disposition::Pending`], or no `review_receipt` is present is
+/// refused outright; a session claiming `export_eligible` without
+/// `review_state == Verified` is refused the same way.
 pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
-    if session.schema_version > SOP_SESSION_SCHEMA_VERSION {
+    if session.schema_version == 0 || session.schema_version > SOP_SESSION_SCHEMA_VERSION {
         return Err(SessionError::UnsupportedSchemaVersion {
             found: session.schema_version,
+            min_supported: 1,
             max_supported: SOP_SESSION_SCHEMA_VERSION,
         });
     }
@@ -342,8 +417,6 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
     }
 
     let mut seen_frame_ids = std::collections::HashSet::new();
-    let mut total_ocr_tokens = 0usize;
-    let mut total_ocr_json_bytes = 0usize;
     for frame in &session.source_frames {
         if frame.frame_id.is_empty() {
             return Err(SessionError::EmptyFrameId);
@@ -351,15 +424,75 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
         if !seen_frame_ids.insert(frame.frame_id.clone()) {
             return Err(SessionError::DuplicateFrameId { frame_id: frame.frame_id.clone() });
         }
-        // OCR token accounting happens against a session-level pool in
-        // the real pipeline (tokens live alongside the frame's OCR
-        // result, not inline on SourceFrame in this slice's shape) — this
-        // slice validates the CAP mechanics against synthetic counts a
-        // caller supplies via `validate_ocr_budget`, kept separate so
-        // this function stays independent of how/where OCR tokens are
-        // actually stored once C2-P2 adds that.
-        let _ = &mut total_ocr_tokens;
-        let _ = &mut total_ocr_json_bytes;
+
+        crate::sop_ipc::confine_relative_path(&frame.source_relative_path)
+            .map_err(|_| SessionError::InvalidRelativePath { frame_id: frame.frame_id.clone(), field: "source_relative_path" })?;
+        if let Some(p) = &frame.provenance_sidecar_relative_path {
+            crate::sop_ipc::confine_relative_path(p)
+                .map_err(|_| SessionError::InvalidRelativePath { frame_id: frame.frame_id.clone(), field: "provenance_sidecar_relative_path" })?;
+        }
+        if let Some(p) = &frame.redacted_derivative_relative_path {
+            crate::sop_ipc::confine_relative_path(p)
+                .map_err(|_| SessionError::InvalidRelativePath { frame_id: frame.frame_id.clone(), field: "redacted_derivative_relative_path" })?;
+        }
+
+        if !is_sha256_hex(&frame.raster_sha256) {
+            return Err(SessionError::InvalidDigestFormat { frame_id: frame.frame_id.clone(), field: "raster_sha256" });
+        }
+        if let Some(d) = &frame.provenance_sidecar_blob_sha256 {
+            if !is_sha256_hex(d) {
+                return Err(SessionError::InvalidDigestFormat { frame_id: frame.frame_id.clone(), field: "provenance_sidecar_blob_sha256" });
+            }
+        }
+        if let Some(d) = &frame.redacted_derivative_sha256 {
+            if !is_sha256_hex(d) {
+                return Err(SessionError::InvalidDigestFormat { frame_id: frame.frame_id.clone(), field: "redacted_derivative_sha256" });
+            }
+        }
+
+        if frame.width == 0 || frame.height == 0 {
+            return Err(SessionError::InvalidFrameDimensions { frame_id: frame.frame_id.clone() });
+        }
+        if let Some((x, y, w, h)) = frame.click_box {
+            let in_bounds = x >= 0
+                && y >= 0
+                && w > 0
+                && h > 0
+                && (x as i128 + w as i128) <= frame.width as i128
+                && (y as i128 + h as i128) <= frame.height as i128;
+            if !in_bounds {
+                return Err(SessionError::InvalidClickBox { frame_id: frame.frame_id.clone() });
+            }
+        }
+
+        let mut seen_candidate_ids = std::collections::HashSet::new();
+        for candidate in &frame.redaction_candidates {
+            if candidate.candidate_id.is_empty() {
+                return Err(SessionError::EmptyRedactionCandidateId { frame_id: frame.frame_id.clone() });
+            }
+            if !seen_candidate_ids.insert(candidate.candidate_id.clone()) {
+                return Err(SessionError::DuplicateRedactionCandidateId {
+                    frame_id: frame.frame_id.clone(),
+                    candidate_id: candidate.candidate_id.clone(),
+                });
+            }
+            let (_, _, ow, oh) = candidate.original_box;
+            let (_, _, ew, eh) = candidate.expanded_box;
+            if ow == 0 || oh == 0 || ew == 0 || eh == 0 {
+                return Err(SessionError::InvalidRedactionCandidateBox {
+                    frame_id: frame.frame_id.clone(),
+                    candidate_id: candidate.candidate_id.clone(),
+                });
+            }
+            if let Some(score) = candidate.score {
+                if !(0.0..=1.0).contains(&score) || !score.is_finite() {
+                    return Err(SessionError::InvalidRedactionCandidateScore {
+                        frame_id: frame.frame_id.clone(),
+                        candidate_id: candidate.candidate_id.clone(),
+                    });
+                }
+            }
+        }
     }
 
     let mut seen_step_ids = std::collections::HashSet::new();
@@ -370,6 +503,79 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
         if !seen_step_ids.insert(caption.step_id.clone()) {
             return Err(SessionError::DuplicateStepId { step_id: caption.step_id.clone() });
         }
+        for frame_id in &caption.source_frame_ids {
+            if !seen_frame_ids.contains(frame_id) {
+                return Err(SessionError::CaptionReferencesUnknownFrame {
+                    step_id: caption.step_id.clone(),
+                    frame_id: frame_id.clone(),
+                });
+            }
+        }
+    }
+
+    validate_edit_event_chain(&session.edit_events)?;
+
+    // The review/export derivation gate: checked last, after every
+    // underlying fact it depends on (frame verification, redaction
+    // disposition) is already known to be structurally valid.
+    if session.review_state == ReviewState::Verified {
+        if !all_frames_verified(session) {
+            return Err(SessionError::ReviewStateNotSatisfied { reason: "not every source frame is FrameVerification::Verified" });
+        }
+        if !all_redactions_resolved(session) {
+            return Err(SessionError::ReviewStateNotSatisfied { reason: "a redaction candidate is still Disposition::Pending" });
+        }
+        if session.review_receipt.is_none() {
+            return Err(SessionError::ReviewStateNotSatisfied { reason: "VERIFIED requires a review_receipt" });
+        }
+    }
+    if session.export_eligible && session.review_state != ReviewState::Verified {
+        return Err(SessionError::ExportEligibleNotSatisfied { reason: "export_eligible requires review_state == Verified" });
+    }
+
+    Ok(())
+}
+
+/// Structural validation of the append-only edit-event log (C2P1-003):
+/// every `sequence` is unique and forms a contiguous run (no gaps) from
+/// the first event's own starting sequence; every `event_id` is unique;
+/// and each event's `session_revision_before`/`session_revision_after`
+/// chains exactly — `before` must equal the running revision the prior
+/// event left behind (or the first event's own claimed starting
+/// revision), and `after` must be exactly `before + 1`. Events are
+/// checked in `sequence` order regardless of the log's on-disk array
+/// order, matching [`project_steps`]'s own replay order.
+pub fn validate_edit_event_chain(events: &[EditEvent]) -> Result<(), SessionError> {
+    let mut sorted: Vec<&EditEvent> = events.iter().collect();
+    sorted.sort_by_key(|e| e.sequence);
+
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_sequences = std::collections::HashSet::new();
+    let mut expected_sequence: Option<u64> = None;
+    let mut expected_revision: Option<u64> = None;
+
+    for event in &sorted {
+        if !seen_ids.insert(event.event_id.clone()) {
+            return Err(SessionError::DuplicateEditEventId { event_id: event.event_id.clone() });
+        }
+        if !seen_sequences.insert(event.sequence) {
+            return Err(SessionError::DuplicateEditEventSequence { sequence: event.sequence });
+        }
+        if let Some(expected) = expected_sequence {
+            if event.sequence != expected {
+                return Err(SessionError::EditEventSequenceGap { expected, found: event.sequence });
+            }
+        } else {
+            expected_revision = Some(event.session_revision_before);
+        }
+        if Some(event.session_revision_before) != expected_revision {
+            return Err(SessionError::EditEventRevisionMismatch { event_id: event.event_id.clone() });
+        }
+        if event.session_revision_after != event.session_revision_before + 1 {
+            return Err(SessionError::EditEventRevisionMismatch { event_id: event.event_id.clone() });
+        }
+        expected_sequence = Some(event.sequence + 1);
+        expected_revision = Some(event.session_revision_after);
     }
 
     Ok(())
@@ -478,13 +684,22 @@ pub fn project_steps(captions: &[CaptionDraft], edit_events: &[EditEvent]) -> Ve
                 }
             }
             EditOperation::Insert { after_step_id, new_step_id, text: new_text } => {
-                if !order.contains(new_step_id) {
+                if order.contains(new_step_id) {
+                    // Colliding with an existing id is a no-op, same
+                    // reasoning as every other invalid-target case here.
+                } else {
+                    // C2P1-003: an unknown `after_step_id` must be a
+                    // no-op (the documented contract for every other
+                    // operation's unknown-target case), not silently
+                    // fall back to appending at the end.
                     let insert_at = match after_step_id {
-                        Some(after) => order.iter().position(|s| s == after).map(|i| i + 1).unwrap_or(order.len()),
-                        None => 0,
+                        Some(after) => order.iter().position(|s| s == after).map(|i| i + 1),
+                        None => Some(0),
                     };
-                    order.insert(insert_at.min(order.len()), new_step_id.clone());
-                    text.insert(new_step_id.clone(), new_text.clone());
+                    if let Some(insert_at) = insert_at {
+                        order.insert(insert_at.min(order.len()), new_step_id.clone());
+                        text.insert(new_step_id.clone(), new_text.clone());
+                    }
                 }
             }
             EditOperation::Delete { step_id } => {
@@ -492,28 +707,73 @@ pub fn project_steps(captions: &[CaptionDraft], edit_events: &[EditEvent]) -> Ve
                 text.remove(step_id);
             }
             EditOperation::Reorder { new_order } => {
-                // Only accept a reorder that's a permutation of the
-                // CURRENT step set — a reorder naming unknown/missing
-                // steps is ignored rather than silently dropping steps
-                // from the visible sequence.
+                // Must be an exact PERMUTATION of the current step list:
+                // same length as the actual Vec (not just the same SET —
+                // a HashSet silently dedupes, so `[s1, s1, s2]` has the
+                // same set as `{s1, s2}` but is not a valid permutation
+                // and would otherwise plant a literal duplicate into
+                // `order`), every id distinct, and the same set of ids as
+                // current. A reorder naming unknown/missing/duplicated
+                // steps is ignored rather than corrupting the list.
+                let no_duplicates_in_new_order = {
+                    let as_set: std::collections::HashSet<&String> = new_order.iter().collect();
+                    as_set.len() == new_order.len()
+                };
                 let current: std::collections::HashSet<&String> = order.iter().collect();
                 let proposed: std::collections::HashSet<&String> = new_order.iter().collect();
-                if current.len() == proposed.len() && current == proposed {
+                if new_order.len() == order.len() && no_duplicates_in_new_order && current == proposed {
                     order = new_order.clone();
                 }
             }
             EditOperation::Split { step_id, into } => {
                 if let Some(pos) = order.iter().position(|s| s == step_id) {
                     let replacement_ids: Vec<String> = into.iter().map(|(id, _)| id.clone()).collect();
-                    order.splice(pos..=pos, replacement_ids.clone());
-                    text.remove(step_id);
-                    for (id, step_text) in into {
-                        text.insert(id.clone(), step_text.clone());
+                    // Every replacement id must be distinct from every
+                    // OTHER existing step (the one being split is exempt
+                    // — it's being replaced) and from each other, or the
+                    // split is refused outright rather than silently
+                    // overwriting/colliding with unrelated steps.
+                    let replacement_ids_distinct = {
+                        let as_set: std::collections::HashSet<&String> = replacement_ids.iter().collect();
+                        as_set.len() == replacement_ids.len()
+                    };
+                    let collides_with_other_existing_step = replacement_ids
+                        .iter()
+                        .any(|id| id != step_id && order.iter().any(|existing| existing == id));
+                    if replacement_ids_distinct && !collides_with_other_existing_step {
+                        order.splice(pos..=pos, replacement_ids.clone());
+                        text.remove(step_id);
+                        for (id, step_text) in into {
+                            text.insert(id.clone(), step_text.clone());
+                        }
                     }
                 }
             }
             EditOperation::Merge { step_ids, into_step_id, text: merged_text } => {
-                if let Some(first_pos) = step_ids.first().and_then(|first| order.iter().position(|s| s == first)) {
+                // Every named step must exist, be mutually distinct, and
+                // occupy a CONSECUTIVE run in the current order — merging
+                // non-adjacent or repeated/missing steps is refused
+                // rather than silently merging whatever subset happened
+                // to resolve. The destination id must not collide with a
+                // step that survives the merge.
+                let all_distinct = {
+                    let as_set: std::collections::HashSet<&String> = step_ids.iter().collect();
+                    as_set.len() == step_ids.len()
+                };
+                let positions: Option<Vec<usize>> =
+                    step_ids.iter().map(|id| order.iter().position(|s| s == id)).collect();
+                let consecutive = positions.as_ref().is_some_and(|ps| {
+                    if ps.is_empty() {
+                        return false;
+                    }
+                    let mut sorted = ps.clone();
+                    sorted.sort_unstable();
+                    sorted.iter().enumerate().all(|(i, &p)| p == sorted[0] + i)
+                });
+                let destination_collides =
+                    order.iter().any(|existing| existing == into_step_id && !step_ids.contains(existing));
+                if !step_ids.is_empty() && all_distinct && positions.is_some() && consecutive && !destination_collides {
+                    let first_pos = *positions.unwrap().iter().min().unwrap();
                     order.retain(|s| !step_ids.contains(s));
                     let insert_at = first_pos.min(order.len());
                     order.insert(insert_at, into_step_id.clone());
@@ -540,6 +800,36 @@ pub fn project_steps(captions: &[CaptionDraft], edit_events: &[EditEvent]) -> Ve
     order
         .into_iter()
         .filter_map(|id| text.get(&id).cloned().map(|t| (id, t)))
+        .collect()
+}
+
+/// C2P1-003 repair: "a redaction change does not invalidate captions/
+/// review eligibility, while no other enforced state transition supplies
+/// that protection." Returns every caption `step_id` whose text should be
+/// treated as stale because a [`EditOperation::RedactionChange`] event
+/// exists for one of that step's `source_frame_ids` — a caller (the shell
+/// or the review-state check) uses this to force re-review/re-caption
+/// rather than keep showing a caption that was generated against a
+/// redaction state that has since changed. This does not mutate
+/// `review_state`/`export_eligible` itself — [`validate_session`]'s own
+/// `all_redactions_resolved`/`all_frames_verified` checks are what
+/// actually block a stale session from claiming `VERIFIED`; this function
+/// is the UI/caption-facing half of the same guarantee.
+pub fn invalidated_step_ids(captions: &[CaptionDraft], edit_events: &[EditEvent]) -> std::collections::HashSet<String> {
+    let redacted_frame_ids: std::collections::HashSet<&String> = edit_events
+        .iter()
+        .filter_map(|e| match &e.operation {
+            EditOperation::RedactionChange { frame_id, .. } => Some(frame_id),
+            _ => None,
+        })
+        .collect();
+    if redacted_frame_ids.is_empty() {
+        return std::collections::HashSet::new();
+    }
+    captions
+        .iter()
+        .filter(|c| c.source_frame_ids.iter().any(|f| redacted_frame_ids.contains(f)))
+        .map(|c| c.step_id.clone())
         .collect()
 }
 
@@ -614,7 +904,21 @@ mod tests {
         let err = validate_session(&s).unwrap_err();
         assert_eq!(
             err,
-            SessionError::UnsupportedSchemaVersion { found: SOP_SESSION_SCHEMA_VERSION + 1, max_supported: SOP_SESSION_SCHEMA_VERSION }
+            SessionError::UnsupportedSchemaVersion {
+                found: SOP_SESSION_SCHEMA_VERSION + 1,
+                min_supported: 1,
+                max_supported: SOP_SESSION_SCHEMA_VERSION
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_schema_version_zero() {
+        let mut s = base_session();
+        s.schema_version = 0;
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::UnsupportedSchemaVersion { found: 0, min_supported: 1, max_supported: SOP_SESSION_SCHEMA_VERSION }
         );
     }
 
@@ -622,7 +926,10 @@ mod tests {
     fn parse_session_checks_version_before_full_deserialization() {
         let json = br#"{"schemaVersion": 99, "kind": "wrong"}"#;
         let err = parse_session(json).unwrap_err();
-        assert_eq!(err, SessionError::UnsupportedSchemaVersion { found: 99, max_supported: SOP_SESSION_SCHEMA_VERSION });
+        assert_eq!(
+            err,
+            SessionError::UnsupportedSchemaVersion { found: 99, min_supported: 1, max_supported: SOP_SESSION_SCHEMA_VERSION }
+        );
     }
 
     #[test]
@@ -915,5 +1222,381 @@ mod tests {
     #[test]
     fn sha256_hex_changes_with_the_input() {
         assert_ne!(sha256_hex(b"a"), sha256_hex(b"b"));
+    }
+
+    // ============================================================
+    // C2P1-002/003 fix-round tests (2026-10-26 re-review)
+    // ============================================================
+
+    fn redaction_candidate(id: &str, disposition: Disposition) -> RedactionCandidate {
+        RedactionCandidate {
+            candidate_id: id.to_string(),
+            detector_id: "rule.email".to_string(),
+            reason_code: "EMAIL".to_string(),
+            source_token_ids: vec![],
+            original_box: (0, 0, 10, 10),
+            expanded_box: (0, 0, 14, 14),
+            score: Some(0.9),
+            disposition,
+            disposition_event_id: None,
+        }
+    }
+
+    // --- C2P1-002: path/digest/dimension/box/cross-reference validation ---
+
+    #[test]
+    fn rejects_a_source_relative_path_that_escapes_the_session_root() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.source_relative_path = "../outside.png".to_string();
+        s.source_frames.push(f);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::InvalidRelativePath { frame_id: "f1".to_string(), field: "source_relative_path" }
+        );
+    }
+
+    #[test]
+    fn rejects_a_malformed_raster_digest() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.raster_sha256 = "not-hex".to_string();
+        s.source_frames.push(f);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::InvalidDigestFormat { frame_id: "f1".to_string(), field: "raster_sha256" }
+        );
+    }
+
+    #[test]
+    fn rejects_a_zero_width_frame() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.width = 0;
+        s.source_frames.push(f);
+        assert_eq!(validate_session(&s).unwrap_err(), SessionError::InvalidFrameDimensions { frame_id: "f1".to_string() });
+    }
+
+    #[test]
+    fn rejects_a_click_box_that_extends_past_the_frame_bounds() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.click_box = Some((90, 90, 50, 50)); // 90+50=140 > width 100
+        s.source_frames.push(f);
+        assert_eq!(validate_session(&s).unwrap_err(), SessionError::InvalidClickBox { frame_id: "f1".to_string() });
+    }
+
+    #[test]
+    fn accepts_a_click_box_exactly_at_the_frame_edge() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.click_box = Some((90, 90, 10, 10)); // 90+10=100, exactly at bound
+        s.source_frames.push(f);
+        assert!(validate_session(&s).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_caption_referencing_an_unknown_frame() {
+        let mut s = base_session();
+        s.source_frames.push(frame("f1", SourceStorage::SessionEncrypted));
+        let mut c = caption("s1", "text");
+        c.source_frame_ids = vec!["ghost-frame".to_string()];
+        s.captions.push(c);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::CaptionReferencesUnknownFrame { step_id: "s1".to_string(), frame_id: "ghost-frame".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_redaction_candidate_ids_on_the_same_frame() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.redaction_candidates = vec![redaction_candidate("c1", Disposition::Redact), redaction_candidate("c1", Disposition::Redact)];
+        s.source_frames.push(f);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::DuplicateRedactionCandidateId { frame_id: "f1".to_string(), candidate_id: "c1".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_a_redaction_candidate_score_outside_zero_to_one() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        let mut c = redaction_candidate("c1", Disposition::Redact);
+        c.score = Some(1.5);
+        f.redaction_candidates = vec![c];
+        s.source_frames.push(f);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::InvalidRedactionCandidateScore { frame_id: "f1".to_string(), candidate_id: "c1".to_string() }
+        );
+    }
+
+    // --- C2P1-002: the core fix — review_state/export_eligible must be earned, not trusted ---
+
+    #[test]
+    fn rejects_verified_review_state_when_a_frame_is_not_verified() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.verification = FrameVerification::Pending; // not Verified
+        s.source_frames.push(f);
+        s.review_state = ReviewState::Verified;
+        s.review_receipt = Some("receipt-1".to_string());
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::ReviewStateNotSatisfied { reason: "not every source frame is FrameVerification::Verified" }
+        );
+    }
+
+    #[test]
+    fn rejects_verified_review_state_when_a_redaction_candidate_is_still_pending() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.verification = FrameVerification::Verified;
+        f.redaction_candidates = vec![redaction_candidate("c1", Disposition::Pending)];
+        s.source_frames.push(f);
+        s.review_state = ReviewState::Verified;
+        s.review_receipt = Some("receipt-1".to_string());
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::ReviewStateNotSatisfied { reason: "a redaction candidate is still Disposition::Pending" }
+        );
+    }
+
+    #[test]
+    fn rejects_verified_review_state_with_no_review_receipt() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.verification = FrameVerification::Verified;
+        s.source_frames.push(f);
+        s.review_state = ReviewState::Verified;
+        s.review_receipt = None;
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::ReviewStateNotSatisfied { reason: "VERIFIED requires a review_receipt" }
+        );
+    }
+
+    #[test]
+    fn rejects_export_eligible_without_a_verified_review_state() {
+        let mut s = base_session();
+        s.review_state = ReviewState::InProgress;
+        s.export_eligible = true;
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::ExportEligibleNotSatisfied { reason: "export_eligible requires review_state == Verified" }
+        );
+    }
+
+    #[test]
+    fn accepts_a_genuinely_verified_and_export_eligible_session_end_to_end() {
+        let mut s = base_session();
+        let mut f = frame("f1", SourceStorage::SessionEncrypted);
+        f.verification = FrameVerification::Verified;
+        f.redaction_candidates = vec![redaction_candidate("c1", Disposition::Redact)];
+        s.source_frames.push(f);
+        s.review_state = ReviewState::Verified;
+        s.review_receipt = Some("receipt-1".to_string());
+        s.export_eligible = true;
+        assert!(validate_session(&s).is_ok());
+    }
+
+    #[test]
+    fn a_pending_session_with_no_frames_cannot_claim_verified() {
+        // Guards against the vacuous-truth hole: Iterator::all on an empty
+        // collection is true, so a session with zero frames must not be
+        // able to claim VERIFIED just because "every frame (of none) is
+        // verified" is trivially satisfied.
+        let mut s = base_session();
+        s.review_state = ReviewState::Verified;
+        s.review_receipt = Some("receipt-1".to_string());
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::ReviewStateNotSatisfied { reason: "not every source frame is FrameVerification::Verified" }
+        );
+    }
+
+    // --- C2P1-003: edit-event chain structural validation ---
+
+    #[test]
+    fn rejects_a_duplicate_edit_event_id() {
+        let mut e2 = event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "y".to_string() });
+        e2.event_id = "ev-0".to_string(); // collides with event(0, ..)'s id
+        let events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() }), e2];
+        assert_eq!(
+            validate_edit_event_chain(&events).unwrap_err(),
+            SessionError::DuplicateEditEventId { event_id: "ev-0".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_a_duplicate_sequence_number() {
+        let e1 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() });
+        let mut e2 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "y".to_string() });
+        e2.event_id = "ev-distinct".to_string();
+        assert_eq!(
+            validate_edit_event_chain(&[e1, e2]).unwrap_err(),
+            SessionError::DuplicateEditEventSequence { sequence: 0 }
+        );
+    }
+
+    #[test]
+    fn rejects_a_gap_in_the_sequence() {
+        let e1 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() });
+        let e2 = event(2, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "y".to_string() }); // skips 1
+        assert_eq!(
+            validate_edit_event_chain(&[e1, e2]).unwrap_err(),
+            SessionError::EditEventSequenceGap { expected: 1, found: 2 }
+        );
+    }
+
+    #[test]
+    fn rejects_a_revision_chain_that_does_not_follow_from_the_prior_event() {
+        let e1 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() }); // before=0,after=1
+        let mut e2 = event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "y".to_string() });
+        e2.session_revision_before = 5; // should be 1, continuing from e1's after
+        assert_eq!(
+            validate_edit_event_chain(&[e1, e2]).unwrap_err(),
+            SessionError::EditEventRevisionMismatch { event_id: "ev-1".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_an_after_revision_that_is_not_exactly_before_plus_one() {
+        let mut e1 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() });
+        e1.session_revision_after = 5; // should be before(0)+1=1
+        assert_eq!(
+            validate_edit_event_chain(&[e1]).unwrap_err(),
+            SessionError::EditEventRevisionMismatch { event_id: "ev-0".to_string() }
+        );
+    }
+
+    #[test]
+    fn accepts_a_well_formed_contiguous_event_chain_in_any_array_order() {
+        let e0 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() });
+        let e1 = event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() });
+        let e2 = event(2, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "c".to_string() });
+        // Deliberately out of array order.
+        assert!(validate_edit_event_chain(&[e2, e0, e1]).is_ok());
+    }
+
+    #[test]
+    fn validate_session_rejects_a_broken_edit_event_chain() {
+        let mut s = base_session();
+        s.source_frames.push(frame("f1", SourceStorage::SessionEncrypted));
+        let mut e2 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "y".to_string() });
+        e2.event_id = "ev-dup".to_string();
+        e2.event_id = "ev-0".to_string(); // deliberate duplicate id
+        s.edit_events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() }), e2];
+        assert!(matches!(validate_session(&s), Err(SessionError::DuplicateEditEventId { .. })));
+    }
+
+    // --- C2P1-003: projector bug fixes ---
+
+    #[test]
+    fn reorder_rejects_a_list_with_a_duplicate_even_though_the_set_matches() {
+        // The exact C2P1-003 bug: [s1, s1, s2] has the same SET as
+        // {s1, s2} but is not a valid permutation - must be ignored, not
+        // planted into `order` as a literal duplicate.
+        let captions = vec![caption("s1", "A"), caption("s2", "B")];
+        let events = vec![event(0, EditOperation::Reorder { new_order: vec!["s1".to_string(), "s1".to_string(), "s2".to_string()] })];
+        let projected = project_steps(&captions, &events);
+        let ids: Vec<&String> = projected.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["s1", "s2"]); // unchanged, no duplicate
+    }
+
+    #[test]
+    fn insert_with_an_unknown_after_step_id_is_a_no_op_not_an_append() {
+        // The exact C2P1-003 bug: an unknown after_step_id used to fall
+        // back to appending at the end instead of no-op'ing like every
+        // other invalid-target case.
+        let captions = vec![caption("s1", "A"), caption("s2", "B")];
+        let events = vec![event(
+            0,
+            EditOperation::Insert { after_step_id: Some("ghost".to_string()), new_step_id: "new".to_string(), text: "X".to_string() },
+        )];
+        let projected = project_steps(&captions, &events);
+        let ids: Vec<&String> = projected.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["s1", "s2"]); // "new" never inserted
+    }
+
+    #[test]
+    fn split_refuses_when_a_replacement_id_collides_with_another_existing_step() {
+        let captions = vec![caption("s1", "Click and drag"), caption("s2", "Next")];
+        let events = vec![event(
+            0,
+            EditOperation::Split { step_id: "s1".to_string(), into: vec![("s2".to_string(), "Click".to_string())] }, // collides with existing s2
+        )];
+        let projected = project_steps(&captions, &events);
+        // Split refused entirely: original two steps, unchanged text.
+        assert_eq!(projected, vec![("s1".to_string(), "Click and drag".to_string()), ("s2".to_string(), "Next".to_string())]);
+    }
+
+    #[test]
+    fn merge_refuses_non_consecutive_steps() {
+        let captions = vec![caption("s1", "A"), caption("s2", "B"), caption("s3", "C")];
+        let events = vec![event(
+            0,
+            EditOperation::Merge { step_ids: vec!["s1".to_string(), "s3".to_string()], into_step_id: "merged".to_string(), text: "AC".to_string() },
+        )];
+        let projected = project_steps(&captions, &events);
+        let ids: Vec<&String> = projected.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["s1", "s2", "s3"]); // merge refused, nothing changed
+    }
+
+    #[test]
+    fn merge_refuses_a_duplicated_source_step_id() {
+        let captions = vec![caption("s1", "A"), caption("s2", "B")];
+        let events = vec![event(
+            0,
+            EditOperation::Merge { step_ids: vec!["s1".to_string(), "s1".to_string()], into_step_id: "merged".to_string(), text: "AA".to_string() },
+        )];
+        let projected = project_steps(&captions, &events);
+        let ids: Vec<&String> = projected.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["s1", "s2"]);
+    }
+
+    #[test]
+    fn merge_refuses_when_the_destination_id_collides_with_a_surviving_step() {
+        let captions = vec![caption("s1", "A"), caption("s2", "B"), caption("s3", "C")];
+        let events = vec![event(
+            0,
+            EditOperation::Merge { step_ids: vec!["s1".to_string(), "s2".to_string()], into_step_id: "s3".to_string(), text: "AB".to_string() },
+        )];
+        let projected = project_steps(&captions, &events);
+        let ids: Vec<&String> = projected.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["s1", "s2", "s3"]); // refused: "s3" survives and would collide
+    }
+
+    #[test]
+    fn merge_still_accepts_a_valid_consecutive_merge() {
+        let captions = vec![caption("s1", "Click"), caption("s2", "Drag"), caption("s3", "Release")];
+        let events = vec![event(
+            0,
+            EditOperation::Merge { step_ids: vec!["s1".to_string(), "s2".to_string()], into_step_id: "s1-2".to_string(), text: "Click and drag".to_string() },
+        )];
+        let projected = project_steps(&captions, &events);
+        assert_eq!(projected, vec![("s1-2".to_string(), "Click and drag".to_string()), ("s3".to_string(), "Release".to_string())]);
+    }
+
+    // --- C2P1-003: redaction-invalidates-caption ---
+
+    #[test]
+    fn invalidated_step_ids_is_empty_with_no_redaction_change_events() {
+        let captions = vec![caption("s1", "A")];
+        assert!(invalidated_step_ids(&captions, &[]).is_empty());
+    }
+
+    #[test]
+    fn invalidated_step_ids_flags_a_caption_whose_frame_had_a_redaction_change() {
+        let mut c = caption("s1", "A");
+        c.source_frame_ids = vec!["f1".to_string()];
+        let captions = vec![c, caption("s2", "B")]; // s2 references no frame
+        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact })];
+        let invalidated = invalidated_step_ids(&captions, &events);
+        assert!(invalidated.contains("s1"));
+        assert!(!invalidated.contains("s2"));
     }
 }
