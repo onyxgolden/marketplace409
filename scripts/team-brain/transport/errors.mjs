@@ -35,6 +35,9 @@ export const CODES = {
   NOT_ADMIN_ORIGIN: "NOT_ADMIN_ORIGIN",
   // Git shadow importer
   INTAKE_BLOCKED: "INTAKE_BLOCKED",
+  // Logical API dispatch
+  UNKNOWN_OPERATION: "UNKNOWN_OPERATION",
+  ADMIN_OPERATION_VIA_ENVELOPE_FORBIDDEN: "ADMIN_OPERATION_VIA_ENVELOPE_FORBIDDEN",
 };
 
 export function fail(code, message, details) {
