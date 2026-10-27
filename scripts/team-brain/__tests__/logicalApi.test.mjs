@@ -18,7 +18,7 @@ function keypair() {
   return generateKeyPairSync("ed25519");
 }
 
-function setup({ principalId = "muse", operation = "submit_task", grantedOps = [operation] } = {}) {
+function setup({ principalId = "muse", operation = "submit_task", grantedOps = [operation], reviewedHead } = {}) {
   const registry = createRegistry();
   const { publicKey, privateKey } = keypair();
   const keyId = `${principalId}-key`;
@@ -37,7 +37,9 @@ function setup({ principalId = "muse", operation = "submit_task", grantedOps = [
       keyId,
       issuedAt: T0,
       operation,
-      resource: { repo: "onyxgolden/forge-ai-drop", scope: "lane-x" },
+      resource: reviewedHead
+        ? { repo: "onyxgolden/forge-ai-drop", scope: "lane-x", reviewed_head: reviewedHead }
+        : { repo: "onyxgolden/forge-ai-drop", scope: "lane-x" },
       nonce: "n1",
       payload: { note: "hello" },
     },
@@ -168,5 +170,64 @@ describe("handleEnvelope — structural admin boundary", () => {
       // "well the tier gate didn't even get a chance to run" ordering bug.
       expect(e.code).toBe(CODES.ADMIN_OPERATION_VIA_ENVELOPE_FORBIDDEN);
     }
+  });
+});
+
+describe("handleEnvelope — external head-binding pin (Grok P2 fix)", () => {
+  const CLAIMED_HEAD = "a".repeat(40);
+  const OTHER_HEAD = "b".repeat(40);
+
+  it("fails with HEAD_BINDING_MISMATCH when a supplied external pin names a different reviewed_head", () => {
+    const { registry, envelope } = setup({ operation: "submit_task", reviewedHead: CLAIMED_HEAD });
+    let called = false;
+    const api = createApi(registry, { submit_task: () => (called = true) });
+    try {
+      handleEnvelope(api, envelope, {
+        resource: { repo: "onyxgolden/forge-ai-drop", reviewed_head: OTHER_HEAD },
+      });
+      throw new Error("expected HEAD_BINDING_MISMATCH");
+    } catch (e) {
+      expect(e.code).toBe(CODES.HEAD_BINDING_MISMATCH);
+    }
+    expect(called).toBe(false);
+  });
+
+  it("succeeds when a supplied external pin matches the envelope reviewed_head", () => {
+    const { registry, envelope } = setup({ operation: "submit_task", reviewedHead: CLAIMED_HEAD });
+    const api = createApi(registry, {
+      submit_task: () => ({ accepted: true }),
+    });
+    const result = handleEnvelope(api, envelope, {
+      resource: { repo: "onyxgolden/forge-ai-drop", reviewed_head: CLAIMED_HEAD },
+    });
+    expect(result).toEqual({ accepted: true });
+  });
+
+  it("fails with RESOURCE_BINDING_MISMATCH when a supplied external pin names a different repo", () => {
+    const { registry, envelope } = setup({ operation: "submit_task", reviewedHead: CLAIMED_HEAD });
+    let called = false;
+    const api = createApi(registry, { submit_task: () => (called = true) });
+    try {
+      handleEnvelope(api, envelope, {
+        resource: { repo: "onyxgolden/other-repo", reviewed_head: CLAIMED_HEAD },
+      });
+      throw new Error("expected RESOURCE_BINDING_MISMATCH");
+    } catch (e) {
+      expect(e.code).toBe(CODES.RESOURCE_BINDING_MISMATCH);
+    }
+    expect(called).toBe(false);
+  });
+
+  it("existing handleEnvelope calls without a pin still pass (no silent behaviour change for them)", () => {
+    // A no-pin call does NOT enforce head binding: an envelope claiming any
+    // reviewed_head is dispatched, because there is no external pin to check
+    // it against. That honest non-enforcement is the fix — previously the
+    // dispatcher passed the envelope's own resource and falsely claimed the
+    // check had run.
+    const { registry, envelope } = setup({ operation: "submit_task", reviewedHead: CLAIMED_HEAD });
+    const api = createApi(registry, {
+      submit_task: () => ({ accepted: true }),
+    });
+    expect(handleEnvelope(api, envelope)).toEqual({ accepted: true });
   });
 });

@@ -81,7 +81,22 @@ export function createApi(registry, handlers) {
 // on any trust failure), THEN structurally refuses dispatch for an
 // ADMIN_ONLY operation regardless of grants, THEN dispatches to the
 // matching handler if one was registered.
-export function handleEnvelope(api, envelope) {
+//
+// `expected` is an optional external pin, in verifyAndAuthorize's expected
+// shape: { operation?, resource?: { repo, reviewed_head? } }.
+//
+// Head-binding honesty (Grok P2 fix): verifyAndAuthorize only enforces
+// reviewed_head when an external expected resource is supplied. This
+// dispatcher previously passed the envelope's own resource as the expected
+// resource, so the head check compared the envelope to itself and could
+// never fire. Now, when a caller supplies an external expected pin, it is
+// passed through unchanged; when no external expected is supplied, no
+// expected resource is passed at all. A dispatcher call without an
+// external pin does NOT enforce head binding — signature, signer-binding,
+// grant, and replay checks still run, but head binding is not claimed.
+// A caller that enforces a pin (the P3 orchestrator, later) must supply
+// it as this third argument.
+export function handleEnvelope(api, envelope, expected) {
   const tier = operationTier(envelope.operation);
   if (tier === "ADMIN_ONLY") {
     fail(
@@ -100,10 +115,12 @@ export function handleEnvelope(api, envelope) {
   // resource) - an agent grant naming an ADMIN_ONLY operation would (if
   // one ever existed) pass THAT check, which is exactly why the tier gate
   // above runs first and unconditionally, not as a fallback.
-  const verifyResult = verifyAndAuthorize(api.registry, envelope, {
-    operation: envelope.operation,
-    resource: envelope.resource,
-  });
+  //
+  // Do NOT pass the envelope's own resource here as the expected resource:
+  // that would compare the envelope to itself and falsely claim head
+  // binding. Pass the caller's external expected through unchanged, or
+  // nothing when no external pin was supplied.
+  const verifyResult = verifyAndAuthorize(api.registry, envelope, expected);
 
   const handler = api.handlers[envelope.operation];
   if (!handler) {
