@@ -38,6 +38,10 @@ export const P3_CODES = {
   // Fix round 2 (TBP3-006A): a task-derived intent claimed or delivered
   // without the authoritative task collection.
   APPLICABILITY_REQUIRED: "APPLICABILITY_REQUIRED",
+  // Fix round 3 (TBP3-006B): the explicit task binding and the task
+  // identity carried by the payload disagree, or a stored entry names a
+  // task its binding does not match. Neither identity silently wins.
+  CONFLICTING_TASK_BINDING: "CONFLICTING_TASK_BINDING",
   // Fix round 1 (TBP3-004/010)
   TIMEOUT_LIMIT: "TIMEOUT_LIMIT",
   NOT_WAITING: "NOT_WAITING",

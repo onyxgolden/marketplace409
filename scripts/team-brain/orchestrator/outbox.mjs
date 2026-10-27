@@ -36,6 +36,12 @@
 // claim/delivery require current applicability against the authoritative
 // task collection with no nullable bypass. cancelOutboxForTask remains a
 // convenience for eager cancellation; correctness never depends on it.
+//
+// Fix round 3 (TBP3-006B): the explicit binding and the payload task
+// identity must agree exactly. enqueueOutbox refuses a contradictory or
+// malformed binding at admission (before dedup/replay), and claim/delivery
+// revalidate the stored binding, so legacy persisted entries that carry
+// the same contradiction fail closed instead of claiming or delivering.
 
 import { createHash } from "node:crypto";
 import { CODES, fail, P3_CODES } from "./errors.mjs";
@@ -72,6 +78,41 @@ export function canonicalPayloadHash(payload) {
 // (TBP3-002). Canonical form is preserved, so the hash is unchanged.
 function clonePayload(payload) {
   return JSON.parse(stableStringify(payload));
+}
+
+// A payload task identity under this contract: a nonempty taskId string
+// carried by a plain-object payload (fix round 3, TBP3-006B). Anything
+// else — absent, empty, non-string, or a non-object payload — is not a
+// task identity and carries no binding meaning, so it can neither agree
+// nor disagree with an explicit binding.
+function payloadTaskIdentity(payload) {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  return typeof payload.taskId === "string" && payload.taskId.length > 0 ? payload.taskId : null;
+}
+
+// The stored task binding of an entry, revalidated at claim/delivery
+// (fix round 3, TBP3-006B). Legacy persisted entries predate the
+// admission equality rule and can carry a sourceTaskId that disagrees
+// with the task their payload names — or a payload that names a task
+// while the entry carries no binding at all, which would otherwise bypass
+// applicability entirely. Either shape fails closed here, before
+// applicability, lease, or payload checks, so a contradictory entry can
+// never claim or deliver. Entries whose payload names no task are
+// unaffected.
+function checkStoredTaskBinding(entry) {
+  const payloadIdentity = payloadTaskIdentity(entry.payload);
+  if (!payloadIdentity) return;
+  if (entry.sourceTaskId !== payloadIdentity) {
+    fail(
+      P3_CODES.CONFLICTING_TASK_BINDING,
+      `Outbox operation ${entry.operationId} stored task binding conflicts with its payload task identity (bound ${entry.sourceTaskId ?? "none"}, payload ${payloadIdentity})`,
+      {
+        operationId: entry.operationId,
+        sourceTaskId: entry.sourceTaskId ?? null,
+        payloadTaskId: payloadIdentity,
+      },
+    );
+  }
 }
 
 function validatePath(targetPath, allowedPathPrefixes) {
@@ -114,14 +155,33 @@ export function enqueueOutbox(
   // The task binding is computed BEFORE the replay check, so it is part
   // of replay identity (fix round 2, TBP3-006A): a replay may not
   // rebind an operation ID to a different source task or revision.
-  // An explicit sourceTaskId wins; otherwise a taskId carried by the
-  // payload is inferred, as in fix round 1.
-  const sourceTaskId =
-    typeof entry.sourceTaskId === "string" && entry.sourceTaskId.length > 0
-      ? entry.sourceTaskId
-      : payloadSnapshot !== null && typeof payloadSnapshot === "object" && !Array.isArray(payloadSnapshot) && typeof payloadSnapshot.taskId === "string"
-        ? payloadSnapshot.taskId
-        : null;
+  // Fix round 3 (TBP3-006B): when both an explicit binding and a payload
+  // task identity are present they must agree exactly, before admission
+  // or replay. Neither silently wins: a contradiction is refused here,
+  // so an intent whose payload names an already-answered task can never
+  // bind its applicability to an unrelated live task. An explicit
+  // binding that is supplied but is not a nonempty string is likewise
+  // malformed, never silently ignored in favour of inference. Otherwise
+  // the explicit binding wins when present, and a payload taskId is
+  // inferred, as in fix round 1.
+  const explicitTaskId =
+    typeof entry.sourceTaskId === "string" && entry.sourceTaskId.length > 0 ? entry.sourceTaskId : null;
+  if (entry.sourceTaskId !== undefined && entry.sourceTaskId !== null && explicitTaskId === null) {
+    fail(
+      P3_CODES.CONFLICTING_TASK_BINDING,
+      `Outbox entry ${operationId} has a malformed explicit task binding (sourceTaskId must be a nonempty string when supplied)`,
+      { operationId, sourceTaskId: entry.sourceTaskId },
+    );
+  }
+  const inferredTaskId = payloadTaskIdentity(payloadSnapshot);
+  if (explicitTaskId && inferredTaskId && explicitTaskId !== inferredTaskId) {
+    fail(
+      P3_CODES.CONFLICTING_TASK_BINDING,
+      `Outbox entry ${operationId} binds conflicting task identities (explicit ${explicitTaskId}, payload ${inferredTaskId})`,
+      { operationId, sourceTaskId: explicitTaskId, payloadTaskId: inferredTaskId },
+    );
+  }
+  const sourceTaskId = explicitTaskId ?? inferredTaskId;
   const sourceTaskRevision =
     typeof entry.sourceTaskRevision === "string" && entry.sourceTaskRevision.length > 0
       ? entry.sourceTaskRevision
@@ -279,6 +339,9 @@ export function claimOutbox({ entries, operationId, owner, now, tasks = null }) 
   }
   // Applicability is checked before lease handling: a stale intent must
   // never advance, regardless of lease state (fix round 2, TBP3-006A).
+  // The stored binding is revalidated first (fix round 3, TBP3-006B):
+  // a legacy contradictory entry fails on its binding, not as stale.
+  checkStoredTaskBinding(entry);
   checkIntentApplicability(entry, tasks);
   checkPayloadConsistency(entry);
   const nowMs = utcIsoToMs(now, "now");
@@ -325,6 +388,8 @@ export function recordDelivery({ entries, operationId, owner, generation, gitRes
   }
   // Applicability precedes lease handling: a stale intent is refused as
   // stale even when the lease is also wrong (fix round 2, TBP3-006A).
+  // The stored binding is revalidated first (fix round 3, TBP3-006B).
+  checkStoredTaskBinding(entry);
   checkIntentApplicability(entry, tasks);
   if (entry.state !== "CLAIMED" || !entry.lease || entry.lease.owner !== owner || entry.lease.generation !== generation) {
     fail(P3_CODES.STALE_LEASE, `Outbox claim for ${operationId} does not match owner/generation`, {
