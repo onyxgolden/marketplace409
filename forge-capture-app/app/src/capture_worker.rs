@@ -762,6 +762,14 @@ pub struct CaptureSupervisor {
     /// when a zombie finally exits.
     slot: Arc<Mutex<Slot>>,
     generation: Mutex<u64>,
+    /// C639-002A: the active worker's kill-on-parent-exit Job handle
+    /// (Windows only; always `None` elsewhere). OWNED here — not leaked via
+    /// `mem::forget` — and closed once this worker's exit is confirmed
+    /// (`retire_with`), or, if exit could not be confirmed within the
+    /// bound, kept alive and closed later by the reaper once ITS wait()
+    /// confirms the process actually exited. Shared with the reaper thread
+    /// for that reason, same pattern as `slot`.
+    job: Arc<Mutex<Option<JobHandle>>>,
 }
 
 impl CaptureSupervisor {
@@ -791,6 +799,7 @@ impl CaptureSupervisor {
             ring,
             slot: Arc::new(Mutex::new(Slot::Empty)),
             generation: Mutex::new(0),
+            job: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -829,6 +838,13 @@ impl CaptureSupervisor {
     /// worker's own `delay_ms` is always 0: the capture it performs happens
     /// immediately once spawned, which is already after the user's wait
     /// has elapsed, so the engine's acquisition timestamp stays truthful.
+    /// `is_cancelled` (C639-007) is polled once per delay chunk AND once
+    /// more right before admission — a revocable token carried through both
+    /// stages. An affirmative at either point aborts with
+    /// `SupervisorError::Cancelled` before the worker is ever spawned. The
+    /// caller is responsible for also re-checking before it publishes the
+    /// result the worker eventually returns; this only covers the stages
+    /// that happen before the worker is admitted.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_region(
         &self,
@@ -839,8 +855,18 @@ impl CaptureSupervisor {
         h: u64,
         include_cursor: bool,
         delay_ms: u64,
+        mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<WorkerReply, SupervisorError> {
-        run_delay_stage(delay_ms.min(MAX_DELAY_MS), &self.ring);
+        if !run_delay_stage(delay_ms.min(MAX_DELAY_MS), &self.ring, &mut is_cancelled) {
+            self.ring
+                .log("region_cancelled_during_delay", format!("session={session_id}"));
+            return Err(SupervisorError::Cancelled);
+        }
+        if is_cancelled() {
+            self.ring
+                .log("region_cancelled_before_admission", format!("session={session_id}"));
+            return Err(SupervisorError::Cancelled);
+        }
         self.run(WorkerRequest {
             op: WorkerOp::Region,
             session_id,
@@ -910,8 +936,10 @@ impl CaptureSupervisor {
                 return Err(SupervisorError::SpawnFailed(e));
             }
         };
-        #[cfg(windows)]
-        contain_in_job(&child, &self.ring);
+        // C639-002A: own the Job handle (if containment succeeded) instead
+        // of leaking it — closed in `retire_with` once this generation's
+        // exit is confirmed, or by the reaper if confirmation timed out.
+        *self.job.lock().unwrap() = contain_in_job(&child, &self.ring);
 
         // The request frame is small (<64 KiB); a single write_all cannot
         // fill the pipe buffer, so this cannot block behind a wedged child.
@@ -1083,6 +1111,13 @@ impl CaptureSupervisor {
 
     fn retire_with(&self, mut child: Child, generation: u64, grace_first: bool) -> bool {
         let confirmed = confirm_exit(&mut child, &self.ring, grace_first);
+        // C639-002A: close the Job handle only once exit is actually
+        // confirmed. If it is not (the Zombie branch below), the handle
+        // stays owned — closing it early would release the
+        // KILL_ON_JOB_CLOSE guarantee before we know the process is gone.
+        if confirmed {
+            self.job.lock().unwrap().take();
+        }
         let mut slot = self.slot.lock().unwrap();
         let owned = matches!(
             *slot,
@@ -1097,7 +1132,13 @@ impl CaptureSupervisor {
         }
         drop(slot);
         if !confirmed {
-            spawn_reaper(child, generation, Arc::clone(&self.slot), self.ring.clone());
+            spawn_reaper(
+                child,
+                generation,
+                Arc::clone(&self.slot),
+                Arc::clone(&self.job),
+                self.ring.clone(),
+            );
         }
         owned
     }
@@ -1122,17 +1163,23 @@ impl CaptureSupervisor {
 
 /// Run the user-requested pre-capture wait as its own bounded stage, BEFORE
 /// the worker is admitted/spawned. Chunked (rather than one long sleep) so
-/// the stage is structurally interruptible — no cancellation source is
-/// wired to it today, but a future one can check between chunks without
-/// touching the execution-deadline math at all. `ms` is assumed already
-/// clamped to `MAX_DELAY_MS` by the caller.
-fn run_delay_stage(ms: u64, ring: &RingLog) {
+/// the stage is structurally interruptible: `is_cancelled` (C639-007) is
+/// polled once per chunk, and an affirmative ends the wait immediately
+/// rather than running it out. `ms` is assumed already clamped to
+/// `MAX_DELAY_MS` by the caller. Returns true if the full wait elapsed (or
+/// `ms == 0`), false if it was cut short by cancellation — the caller must
+/// not proceed to admission on false.
+fn run_delay_stage(ms: u64, ring: &RingLog, mut is_cancelled: impl FnMut() -> bool) -> bool {
     if ms == 0 {
-        return;
+        return true;
     }
     ring.log("delay_stage_start", format!("ms={ms}"));
     let deadline = Instant::now() + Duration::from_millis(ms);
     loop {
+        if is_cancelled() {
+            ring.log("delay_stage_cancelled", format!("ms={ms}"));
+            return false;
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
@@ -1140,6 +1187,7 @@ fn run_delay_stage(ms: u64, ring: &RingLog) {
         std::thread::sleep(remaining.min(Duration::from_millis(DELAY_POLL_MS)));
     }
     ring.log("delay_stage_done", format!("ms={ms}"));
+    true
 }
 
 // --- termination --------------------------------------------------------------
@@ -1182,10 +1230,17 @@ fn poll_until_exit(child: &mut Child, ring: &RingLog, deadline: Instant) -> bool
 /// not be padded with an unearned extra grace window.
 ///
 /// Returns true only once an exit status was actually observed.
+///
+/// C639-002A: grace and kill-confirmation share ONE absolute deadline
+/// (`TERMINATION_CONFIRM_MS` total from entry), not two sequential windows
+/// of their own — Option C promises at most 500 ms *additional* cleanup,
+/// not up to 1,000 ms. Whatever the grace window doesn't use is still
+/// available to the post-kill wait; whatever it already spent is not given
+/// back.
 fn confirm_exit(child: &mut Child, ring: &RingLog, grace_first: bool) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
     if grace_first {
-        let grace_deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
-        if poll_until_exit(child, ring, grace_deadline) {
+        if poll_until_exit(child, ring, deadline) {
             return true;
         }
         ring.log("worker_reap_kill", "worker lingered after reply; killing");
@@ -1193,8 +1248,7 @@ fn confirm_exit(child: &mut Child, ring: &RingLog, grace_first: bool) -> bool {
     ring.log("worker_kill", "requesting termination");
     // Best effort: a child that already exited makes kill() fail harmlessly.
     let _ = child.kill();
-    let kill_deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
-    let confirmed = poll_until_exit(child, ring, kill_deadline);
+    let confirmed = poll_until_exit(child, ring, deadline);
     if !confirmed {
         ring.log(
             "worker_termination_unconfirmed",
@@ -1214,6 +1268,7 @@ fn spawn_reaper(
     mut child: Child,
     generation: u64,
     slot: Arc<Mutex<Slot>>,
+    job: Arc<Mutex<Option<JobHandle>>>,
     ring: RingLog,
 ) {
     ring.log("zombie_reaper_spawned", format!("gen={generation}"));
@@ -1222,6 +1277,10 @@ fn spawn_reaper(
             let mut s = slot.lock().unwrap();
             if *s == (Slot::Zombie { generation }) {
                 *s = Slot::Empty;
+                // C639-002A: NOW confirmed — close the Job handle this
+                // zombie was still holding onto. Scoped to the same
+                // "still ours" guard as the slot transition.
+                job.lock().unwrap().take();
                 ring.log(
                     "zombie_reaped",
                     format!("gen={generation}: exited {status:?}; slot free"),
@@ -1260,12 +1319,46 @@ fn drain_stderr(stderr: ChildStderr, ring: &RingLog) {
 // Windows: kill-on-parent-exit job containment (best effort)
 // ---------------------------------------------------------------------------
 
+/// C639-002A: an OWNED kill-on-parent-exit Job handle. Closing it (`Drop`)
+/// does not weaken the crash guarantee: `KILL_ON_JOB_CLOSE` fires on
+/// handle-close OR parent-process-exit, whichever happens first, and this
+/// handle is only ever closed after the worker's own exit is already
+/// confirmed (or, for a zombie, after the reaper confirms it) — never
+/// while the worker could still be running.
+#[cfg(windows)]
+struct JobHandle(windows::Win32::Foundation::HANDLE);
+
+// SAFETY: a Win32 HANDLE is an opaque OS-managed token, not a pointer into
+// memory this process reads/writes; CloseHandle is documented safe to call
+// from any thread, not only the one that created the handle.
+#[cfg(windows)]
+unsafe impl Send for JobHandle {}
+
+#[cfg(windows)]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// Non-Windows builds never construct a `JobHandle`; the type still exists
+/// so `CaptureSupervisor`'s `job` field (and the retirement/reaper plumbing
+/// that touches it) stays platform-uniform instead of `#[cfg]`-forked
+/// throughout the module.
+#[cfg(not(windows))]
+struct JobHandle;
+
 /// Best-effort containment: place the worker in a Job object with
 /// KILL_ON_JOB_CLOSE so a parent crash can never orphan a capture worker.
 /// Any failure only logs — containment is defense in depth, not a gate.
 /// Signatures verified against the vendored `windows` 0.62 sources.
+/// Returns the OWNED handle (C639-002A: never leaked via `mem::forget`) —
+/// the caller is responsible for closing it once this worker's exit is
+/// confirmed.
 #[cfg(windows)]
-fn contain_in_job(child: &Child, ring: &RingLog) {
+fn contain_in_job(child: &Child, ring: &RingLog) -> Option<JobHandle> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::core::PCWSTR;
@@ -1286,7 +1379,7 @@ fn contain_in_job(child: &Child, ring: &RingLog) {
             Ok(h) => h,
             Err(e) => {
                 ring.log("job_contain_failed", format!("CreateJobObjectW: {e}"));
-                return;
+                return None;
             }
         };
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -1302,7 +1395,7 @@ fn contain_in_job(child: &Child, ring: &RingLog) {
         ) {
             ring.log("job_contain_failed", format!("SetInformationJobObject: {e}"));
             let _ = CloseHandle(job);
-            return;
+            return None;
         }
         let proc = HANDLE(child.as_raw_handle() as *mut std::ffi::c_void);
         if let Err(e) = AssignProcessToJobObject(job, proc) {
@@ -1311,14 +1404,16 @@ fn contain_in_job(child: &Child, ring: &RingLog) {
                 format!("AssignProcessToJobObject: {e}"),
             );
             let _ = CloseHandle(job);
-            return;
+            return None;
         }
-        // Intentionally leaked: the job must outlive this function so the
-        // worker stays contained for the whole request. The OS reaps the
-        // job object when the parent process exits (KILL_ON_JOB_CLOSE).
-        std::mem::forget(job);
         ring.log("job_contained", "worker in KILL_ON_JOB_CLOSE job");
+        Some(JobHandle(job))
     }
+}
+
+#[cfg(not(windows))]
+fn contain_in_job(_child: &Child, _ring: &RingLog) -> Option<JobHandle> {
+    None
 }
 
 #[cfg(test)]
@@ -1749,7 +1844,17 @@ mod tests {
         // (too-short) declared length — a definitive Malformed outcome —
         // then hangs instead of exiting. Malformed must still resolve
         // promptly, and the slot must not free until the hung child's
-        // kill is confirmed.
+        // exit is actually confirmed — never speculatively.
+        //
+        // C639-002A: grace and kill-confirmation now share ONE 500 ms
+        // budget (not two separate 500 ms windows). This hung child never
+        // exits on its own, so grace consumes the whole shared budget and
+        // the kill issued right after it may not be confirmed within THIS
+        // SAME request — that is an accepted Zombie outcome, not a bug:
+        // the kill (SIGKILL, unblockable) was already sent, and the
+        // reaper confirms it and frees the slot shortly after. The test
+        // tolerates a short reaper window rather than requiring
+        // same-request confirmation.
         let sup = CaptureSupervisor::with_child_args(
             PathBuf::from("/bin/sh"),
             vec![
@@ -1763,13 +1868,36 @@ mod tests {
             Err(SupervisorError::Malformed(_)) => {}
             other => panic!("expected Malformed, got {other:?}"),
         }
-        assert!(t0.elapsed() < Duration::from_secs(5), "took {:?}", t0.elapsed());
-        match sup.execute_backdrop(32, "MON") {
-            Err(SupervisorError::CaptureBusy) | Err(SupervisorError::WorkerUnavailable) => {
-                panic!("slot was not freed after confirmed kill")
+        // Bounded to the shared grace+kill-confirm budget (plus poll/
+        // process overhead), not the old separate-windows ~1 s worst case.
+        assert!(
+            t0.elapsed() < Duration::from_millis(TERMINATION_CONFIRM_MS + 300),
+            "took {:?}",
+            t0.elapsed()
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match sup.execute_backdrop(32, "MON") {
+                Err(SupervisorError::CaptureBusy) | Err(SupervisorError::WorkerUnavailable) => {
+                    if Instant::now() >= deadline {
+                        panic!("slot was not freed after the hung child's kill was confirmed");
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                _ => break,
             }
-            _ => {}
         }
+        // C639-002A verification gap (flagged in the fix-round cross-check):
+        // availability alone cannot tell "released after confirming the
+        // kill" apart from "released without ever confirming" — require
+        // the actual confirmation event (`poll_until_exit`'s
+        // `worker_terminated` log, written only once an exit status was
+        // truly observed) to have landed in the ring.
+        let ring = sup.ring().tail(64);
+        assert!(
+            ring.iter().any(|line| line.contains("worker_terminated")),
+            "no confirmed-exit event ever landed in the ring: {ring:?}"
+        );
     }
 
     #[test]
@@ -1851,8 +1979,9 @@ mod tests {
             .spawn()
             .unwrap();
         let slot = Arc::new(Mutex::new(Slot::Zombie { generation: 5 }));
+        let job = Arc::new(Mutex::new(None));
         let ring = RingLog::new(16);
-        spawn_reaper(child, 5, Arc::clone(&slot), ring);
+        spawn_reaper(child, 5, Arc::clone(&slot), job, ring);
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(*slot.lock().unwrap(), Slot::Zombie { generation: 5 });
         std::thread::sleep(Duration::from_millis(2200));
@@ -1873,7 +2002,9 @@ mod tests {
             1024,
         );
         let t0 = Instant::now();
-        let reply = sup.execute_region(51, 0, 0, 10, 10, false, 300).unwrap();
+        let reply = sup
+            .execute_region(51, 0, 0, 10, 10, false, 300, || false)
+            .unwrap();
         let dt = t0.elapsed();
         assert_eq!(reply.session_id, 51);
         assert!(dt >= Duration::from_millis(300), "delay stage too short: {dt:?}");
@@ -1890,7 +2021,9 @@ mod tests {
             1024,
         );
         let t0 = Instant::now();
-        let err = sup2.execute_region(52, 0, 0, 10, 10, false, 300).unwrap_err();
+        let err = sup2
+            .execute_region(52, 0, 0, 10, 10, false, 300, || false)
+            .unwrap_err();
         let dt = t0.elapsed();
         assert_eq!(err, SupervisorError::Timeout);
         assert!(
@@ -1901,6 +2034,67 @@ mod tests {
             dt < Duration::from_millis(300 + CAPTURE_DEADLINE_MS + 2000),
             "budget inflated by delay: took {dt:?}"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn execute_region_cancelled_during_delay_never_admits_the_worker() {
+        // C639-007 probe: cancellation during the delay stage must stop the
+        // request before the worker is ever spawned/admitted — not just
+        // eventually resolve. A sentinel file the child would create on
+        // spawn proves admission never happened.
+        let sentinel = std::env::temp_dir()
+            .join(format!("forge-capture-test-sentinel-{}", std::process::id()));
+        std::fs::remove_file(&sentinel).ok();
+        let f = write_reply_file(61, 1, 64);
+        let f_str = f.to_string_lossy().into_owned();
+        let sentinel_str = sentinel.to_string_lossy().into_owned();
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec![
+                "-c".to_string(),
+                format!("touch {sentinel_str}; cat {f_str}"),
+            ],
+            1024,
+        );
+        let t0 = Instant::now();
+        // "Cancelled" from the very first poll: the delay stage must bail
+        // before its first sleep, let alone running the full 2s out.
+        let err = sup
+            .execute_region(61, 0, 0, 10, 10, false, 2000, || true)
+            .unwrap_err();
+        let dt = t0.elapsed();
+        assert_eq!(err, SupervisorError::Cancelled);
+        assert!(dt < Duration::from_millis(500), "cancel did not cut the delay short: {dt:?}");
+        assert!(
+            !sentinel.exists(),
+            "worker was admitted/spawned despite cancellation before admission"
+        );
+        std::fs::remove_file(&f).ok();
+        std::fs::remove_file(&sentinel).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn execute_region_cancelled_right_before_admission_with_no_delay() {
+        // C639-007 probe: even with delay_ms=0 (no delay stage to check
+        // inside), a cancellation flag already set must still be observed
+        // once, immediately before admission.
+        let sentinel = std::env::temp_dir()
+            .join(format!("forge-capture-test-sentinel2-{}", std::process::id()));
+        std::fs::remove_file(&sentinel).ok();
+        let sentinel_str = sentinel.to_string_lossy().into_owned();
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), format!("touch {sentinel_str}")],
+            1024,
+        );
+        let err = sup
+            .execute_region(62, 0, 0, 10, 10, false, 0, || true)
+            .unwrap_err();
+        assert_eq!(err, SupervisorError::Cancelled);
+        assert!(!sentinel.exists(), "worker was admitted despite pre-set cancellation");
+        std::fs::remove_file(&sentinel).ok();
     }
 
     #[test]
