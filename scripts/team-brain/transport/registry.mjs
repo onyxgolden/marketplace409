@@ -17,7 +17,7 @@
 import { types } from "node:util";
 import { verifyEnvelopeSignature, canonicalize } from "./envelope.mjs";
 import { fail, CODES } from "./errors.mjs";
-import { validateResource } from "./envelopeValidator.mjs";
+import { validateResource, validateEnvelope } from "./envelopeValidator.mjs";
 
 const ADMIN_ORIGIN = "jason-admin";
 
@@ -276,6 +276,16 @@ export function verifyAndAuthorize(registry, envelope, expected, opts = {}) {
   if (typeof expected === "object" && expected !== null && types.isProxy(expected)) {
     fail(CODES.MALFORMED_ENVELOPE, "expected pin must not be a proxy object", { reason: "PROXY_OBJECT" });
   }
+  // TBP2-002D: the shared closed, descriptor-safe admission runs
+  // BEFORE resolveKey reads envelope.key_id below. The old order
+  // resolved the key first, so an ordinary accessor on key_id
+  // executed once before validation ever ran. validateEnvelope
+  // inspects descriptors before reading values (same validator
+  // verifyEnvelopeSignature runs — not a parallel one), so an
+  // accessor is refused with zero invocations. No envelope field —
+  // operation, key_id, principal_id, or identity field — is read
+  // before this line on this path.
+  validateEnvelope(envelope);
   // TBP2-003: an external pin is itself validated before anything else.
   // A malformed or unknown pin field is refused, never silently ignored,
   // so a caller cannot accidentally believe it pinned something it did

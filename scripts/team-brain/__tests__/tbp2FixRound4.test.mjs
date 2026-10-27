@@ -337,7 +337,11 @@ describe("TBP2-007C bounded producer and resume state", () => {
     const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"] });
     expect(first.truncated).toBe(true);
     expect(typeof first.resumeFrontier).toBe("string");
-    expect(first.resumeFrontier.startsWith("tb-frontier:v2:")).toBe(true);
+    // Fix round 5 migrated the frontier format v2 -> v3 (bounded
+    // count-plus-position instead of a serialized accounted list);
+    // the behavioral assertions below (three polls, oldest first,
+    // tail only on resume, no false caught-up) are unchanged.
+    expect(first.resumeFrontier.startsWith("tb-frontier:v3:")).toBe(true);
     expect(first.newCursor).toBe(seed);
     expect(first.newCursor).not.toBe(head);
     expect(first.events.map((e) => e.path)).toEqual(["commands/oldest.md"]);

@@ -28,6 +28,7 @@
 
 import { types } from "node:util";
 import { verifyAndAuthorize, recordSeenOperation, reserveSeenOperation, releaseSeenOperation } from "./registry.mjs";
+import { validateEnvelope } from "./envelopeValidator.mjs";
 import { fail, CODES } from "./errors.mjs";
 
 export const AGENT_OPERATIONS = new Set([
@@ -107,6 +108,16 @@ export function handleEnvelope(api, envelope, expected) {
   if (typeof expected === "object" && expected !== null && types.isProxy(expected)) {
     fail(CODES.MALFORMED_ENVELOPE, "expected pin must not be a proxy object", { reason: "PROXY_OBJECT" });
   }
+  // TBP2-002D: the shared closed, descriptor-safe admission runs
+  // BEFORE any envelope field is read. The tier gate, handler lookup,
+  // and error messages below all read envelope.operation; an ordinary
+  // accessor on that field would otherwise execute before validation
+  // ever ran. validateEnvelope inspects descriptors (Reflect.ownKeys)
+  // before reading values, so an accessor is refused with zero
+  // invocations — and a Proxy is refused trap-free above and inside.
+  // This is the SAME validator verifyEnvelopeSignature runs, not a
+  // parallel one: the admitted shape is one shape, not two.
+  validateEnvelope(envelope);
   const tier = operationTier(envelope.operation);
   if (tier === "ADMIN_ONLY") {
     fail(

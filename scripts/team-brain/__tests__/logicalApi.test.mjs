@@ -160,7 +160,13 @@ describe("handleEnvelope — structural admin boundary", () => {
 
   it("the admin-tier block fires before signature verification would even run (checked via a deliberately forged admin-op envelope)", () => {
     const { registry, envelope } = setup({ operation: "revoke_authorization", grantedOps: ["revoke_authorization"] });
-    const forged = { ...envelope, signature: "not-a-real-signature" };
+    // TBP2-002D: admission (shape validation) now precedes the tier
+    // gate, so the forged signature must itself be shape-valid
+    // base64 for this test to reach the tier gate at all — the
+    // property under test is unchanged: the tier block fires before
+    // CRYPTO verification runs (these bytes are not the real
+    // signature, so verification would fail if it ever ran).
+    const forged = { ...envelope, signature: Buffer.from("not-a-real-signature").toString("base64") };
     const api = createApi(registry, {});
     try {
       handleEnvelope(api, forged);
