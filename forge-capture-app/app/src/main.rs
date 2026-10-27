@@ -2818,7 +2818,14 @@ fn open_region_overlay(
     include_cursor: bool,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let overlay_window_present = app.get_webview_window("overlay").is_some();
+    // C639-007C.14: captured HERE, before anything waits on the retire
+    // gate, so the orphan-reclaim close below can be bound to this exact
+    // window handle/generation — never a fresh `get_webview_window`
+    // lookup performed after the wait, which could by then resolve to a
+    // brand new successor window built under the same shared "overlay"
+    // label. See the close site's own comment for the race this closes.
+    let observed_overlay_window = app.get_webview_window("overlay");
+    let overlay_window_present = observed_overlay_window.is_some();
     if state.pending_overlay.lock().unwrap().is_some() && overlay_window_present {
         return Err("a region pick is already in progress; cancel it first".to_string());
     }
@@ -2830,7 +2837,7 @@ fn open_region_overlay(
     // function runs off the main thread (C639-001), so this poll loop no
     // longer risks starving the event loop that actually has to deliver
     // the window-destruction event it is waiting for.
-    if overlay_window_present {
+    if let Some(observed_window) = observed_overlay_window {
         // C639-007C.11: this looked like an orphan — no pending context
         // claims it — but `pending_overlay` alone cannot prove that: a
         // watchdog/cancel/build_mode cleanup may have already cleared
@@ -2855,12 +2862,27 @@ fn open_region_overlay(
         // ever clearing B's ownership or closing B's window just because
         // it was the one that originally decided "orphan" — B's own,
         // strictly-newer session id can never match a stale snapshot.
+        //
+        // C639-007C.14: the owner-compare/clear above is NOT by itself
+        // proof that the close that follows it is safe — `do_close` used
+        // to be `close_overlay_window(app)`, a FRESH `get_webview_window
+        // ("overlay")` lookup performed after the compare/clear and after
+        // dropping the owner lock. Shared-label window construction never
+        // acquires `overlay_retire_gate`, so nothing stops a successor's
+        // build from installing itself under the same label in the gap
+        // between this call's successful compare/clear and that fresh
+        // lookup actually running — which would close the successor's
+        // window instead of the one this call actually observed. Binding
+        // the close to `observed_window` — captured above, BEFORE
+        // `claim_retire` was ever called — closes exactly the physical
+        // window generation this call originally found, never whatever
+        // currently answers to the shared label.
         let observed_owner = *state.overlay_window_owner.lock().unwrap();
         let claim = state
             .overlay_retire_gate
             .claim_retire(OVERLAY_RETIRE_CLAIM_BOUND);
-        match settle_orphan_retire_claim(&state.overlay_window_owner, observed_owner, claim, || {
-            close_overlay_window(app)
+        match settle_orphan_retire_claim(&state.overlay_window_owner, observed_owner, claim, move || {
+            close_captured_overlay_window(observed_window)
         })? {
             OrphanRetireOutcome::Superseded => {
                 return Err(
@@ -3204,24 +3226,44 @@ fn take_pending_overlay_if_current(
 /// has that label, regardless of which session (if any) owns it — and
 /// propagate a failure instead of silently ignoring it: a close that fails
 /// leaves an always-on-top fullscreen window on the user's screen, which
-/// must not go unreported. Only ever correct where the caller is deliberately
-/// reclaiming an ORPHAN (no live session claims this window at all, so there
-/// is no ownership to respect) or acting on the user's own explicit cancel —
-/// `cancel_region_pick`'s "nuke whatever is active right now" (via
-/// `retire_owned_overlay_session`/`settle_retire_claim`) and the
-/// orphan-reclaim branch of `open_region_overlay`. A cleanup acting on
-/// behalf of one specific, possibly-already-superseded session must go
+/// must not go unreported. Only ever correct where the caller is acting on
+/// the user's own explicit cancel RIGHT NOW — `cancel_region_pick`'s "nuke
+/// whatever is active right now" (via `retire_owned_overlay_session`/
+/// `settle_retire_claim`) — where there is no earlier snapshot to bind to
+/// and no wait that could let a successor slip in first. A cleanup acting
+/// on behalf of one specific, possibly-already-superseded session must go
 /// through `settle_retire_claim` with its own `session_id` instead
-/// (C639-001C.1) — this unconditional version is exactly the "whatever is
-/// labeled overlay" lookup that let a stale session's cleanup close a
-/// newer session's window, which `settle_retire_claim`'s owner compare
-/// exists to prevent.
+/// (C639-001C.1); a cleanup that waited on the retire gate first (the
+/// orphan-reclaim branch of `open_region_overlay`) must go through
+/// `close_captured_overlay_window` instead (C639-007C.14) — this
+/// unconditional, re-looked-up-by-label version is exactly what let a
+/// stale session's post-wait cleanup close a successor's window, which
+/// neither `settle_retire_claim`'s owner compare nor a captured handle
+/// would ever do.
 fn close_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("overlay") {
         w.close()
             .map_err(|e| format!("cannot close overlay window: {e}"))?;
     }
     Ok(())
+}
+
+/// C639-007C.14: close a specific, already-observed overlay `WebviewWindow`
+/// handle — never a fresh `get_webview_window("overlay")` label lookup.
+/// `open_region_overlay`'s orphan-reclaim branch captures this handle
+/// BEFORE calling `claim_retire`, which can block for up to
+/// `OVERLAY_RETIRE_CLAIM_BOUND`; closing by a fresh label lookup performed
+/// AFTER that wait (and after `settle_orphan_retire_claim`'s own
+/// owner-compare/clear) could resolve to a brand new successor window
+/// built under the same shared label in the interim, since shared-label
+/// construction never acquires `overlay_retire_gate`. Binding the close to
+/// the captured handle itself makes that interim irrelevant: this always
+/// closes the exact physical window generation that was originally
+/// observed, never whatever currently answers to the label.
+fn close_captured_overlay_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window
+        .close()
+        .map_err(|e| format!("cannot close overlay window: {e}"))
 }
 
 /// C639-001C.1: whether a close acting on behalf of `session_id` may
@@ -8150,6 +8192,167 @@ mod region_picker_tests {
             *overlay_window_owner.lock().unwrap(),
             Some(9),
             "O1 must never clear a successor's ownership it was never entitled to touch"
+        );
+    }
+
+    #[test]
+    fn orphan_reclaim_close_is_bound_to_the_captured_generation_not_a_post_clear_label_lookup()
+    {
+        // C639-007C.14 freeze test: the PRIOR freeze test above
+        // (`orphan_reclaim_never_closes_or_declaims_a_successor_built_while_
+        // it_waited`) only proves the owner-compare/clear itself is safe —
+        // it installs B strictly BEFORE O1 reaches that compare. This test
+        // proves the remaining gap: a close that is a fresh "whatever
+        // answers to this label right now" lookup can still race a
+        // successor's build even when the compare/clear ALREADY succeeded,
+        // because production's `do_close` used to perform that lookup
+        // AFTER dropping the owner lock, not before. The fix binds
+        // `do_close` to the EXACT window handle/generation captured before
+        // `claim_retire` was ever called (see `open_region_overlay`'s own
+        // call site) — modeled here as a plain generation id captured by
+        // value into the closure, since `settle_orphan_retire_claim` itself
+        // is generic over `do_close` and never re-derives anything from a
+        // label. B is installed under the SAME shared label strictly AFTER
+        // O1's compare/clear has already run and strictly BEFORE O1's
+        // closure performs the actual close, which is exactly the window
+        // the prior freeze test does not cover.
+        const A_GENERATION: u64 = 100;
+        const B_GENERATION: u64 = 200;
+
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let installed_generation = Arc::new(Mutex::new(Some(A_GENERATION)));
+        let closed_generations: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let touched: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let proceed_to_settle = Arc::new((Mutex::new(false), Condvar::new()));
+        let proceed_to_close = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let a_claim = match gate.claim_retire(Duration::from_secs(5)) {
+            RetireClaim::Won(guard) => guard,
+            _ => panic!("an idle gate must grant A's own retire claim outright"),
+        };
+
+        let observed_owner = *overlay_window_owner.lock().unwrap();
+        // The production call site captures the exact handle BEFORE
+        // calling `claim_retire` — modeled here as copying the generation
+        // value up front, by value, so it can never be affected by a later
+        // relabeling because it is never looked up again by label.
+        let captured_generation = *installed_generation.lock().unwrap();
+
+        let gate_for_o1 = gate.clone();
+        let owner_for_o1 = overlay_window_owner.clone();
+        let touched_for_o1 = touched.clone();
+        let proceed_to_settle_for_o1 = proceed_to_settle.clone();
+        let proceed_to_close_for_o1 = proceed_to_close.clone();
+        let closed_generations_for_o1 = closed_generations.clone();
+        let installed_generation_for_o1 = installed_generation.clone();
+        let o1 = std::thread::spawn(move || {
+            touched_for_o1.lock().unwrap().push("o1_waiting");
+            let claim = gate_for_o1.claim_retire(Duration::from_secs(5));
+            touched_for_o1.lock().unwrap().push("o1_won");
+            let (lock, cv) = &*proceed_to_settle_for_o1;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cv.wait(go).unwrap();
+            }
+            drop(go);
+            settle_orphan_retire_claim(&owner_for_o1, observed_owner, claim, move || {
+                // By the time this closure body starts, `settle_orphan_
+                // retire_claim` has already compared `observed_owner`
+                // against the live owner, found it matched, cleared the
+                // owner, and dropped the lock — exactly the point the
+                // real `do_close` runs from. The second barrier below
+                // holds here, strictly after that clear and strictly
+                // before the close itself, so the test can install B in
+                // that exact gap.
+                touched_for_o1
+                    .lock()
+                    .unwrap()
+                    .push("o1_cleared_owner_entering_close");
+                let (lock, cv) = &*proceed_to_close_for_o1;
+                let mut go = lock.lock().unwrap();
+                while !*go {
+                    go = cv.wait(go).unwrap();
+                }
+                drop(go);
+                // Sanity check that this test actually exercises the race
+                // it claims to: a FRESH label lookup performed from right
+                // here — the old, buggy `do_close` — would resolve to B,
+                // not A. If this ever reads A instead, the test below would
+                // pass trivially no matter how `do_close` is bound, so
+                // assert the fork in behavior is real before relying on it.
+                assert_eq!(
+                    *installed_generation_for_o1.lock().unwrap(),
+                    Some(B_GENERATION),
+                    "a fresh label lookup at this exact moment must resolve to B, \
+                     or this test is not exercising the race it claims to"
+                );
+                closed_generations_for_o1
+                    .lock()
+                    .unwrap()
+                    .push(captured_generation.unwrap());
+                Ok(())
+            })
+        });
+
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_waiting" {
+            std::thread::yield_now();
+        }
+
+        // A's claim is released WITHOUT touching `overlay_window_owner` —
+        // unlike the prior freeze test, this one needs `owns == true` at
+        // O1's compare (per the verdict's own walkthrough: "the current
+        // owner still equals its snapshot, so `owns == true`"), so the
+        // owner field must still read `Some(5)`, unchanged from the
+        // snapshot O1 already took, when O1 finally gets to compare it.
+        a_claim.release();
+
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_won" {
+            std::thread::yield_now();
+        }
+
+        {
+            let (lock, cv) = &*proceed_to_settle;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+
+        // Wait until O1 has already compared/cleared the owner inside
+        // `settle_orphan_retire_claim` and is now blocked on the SECOND
+        // barrier, strictly before it performs the actual close.
+        while *touched.lock().unwrap().last().unwrap_or(&"") != "o1_cleared_owner_entering_close"
+        {
+            std::thread::yield_now();
+        }
+
+        // B finishes building and installs itself under the SAME shared
+        // label here — strictly between O1's successful compare/clear and
+        // O1's actual close. A fresh label lookup performed from inside
+        // the close closure at this point would resolve to B, not A.
+        *installed_generation.lock().unwrap() = Some(B_GENERATION);
+
+        {
+            let (lock, cv) = &*proceed_to_close;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let result = o1.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(OrphanRetireOutcome::Closed)),
+            "O1's snapshot matched at compare time, so it must report Closed"
+        );
+        assert_eq!(
+            *closed_generations.lock().unwrap(),
+            vec![A_GENERATION],
+            "the close must touch only the captured A generation, never a fresh \
+             label lookup performed after the compare/clear that could resolve to B"
+        );
+        assert_eq!(
+            *installed_generation.lock().unwrap(),
+            Some(B_GENERATION),
+            "B's own physical-window generation must remain installed and \
+             untouched by O1's close"
         );
     }
 
