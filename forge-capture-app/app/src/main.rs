@@ -238,6 +238,14 @@ struct CaptureRequestDto {
     region: Option<RegionDto>,
     /// CSS-px rect from the overlay picker for mode == "region-overlay".
     overlay_rect: Option<RegionDto>,
+    /// C639-007C.3: the session id the overlay page learned from
+    /// `overlay_context` when IT opened — echoed back here so `capture` can
+    /// bind this request to the EXACT generation that created it, never to
+    /// whichever pick happens to be `active_pick` at the moment the request
+    /// is processed. Required (and verified) for mode == "region-overlay";
+    /// absent and ignored for every other mode, which never has an overlay
+    /// session to carry.
+    overlay_session_id: Option<u64>,
     delay_ms: Option<u64>,
     include_cursor: bool,
 }
@@ -331,6 +339,11 @@ struct OverlayContextDto {
     /// overlay page shows a blank-frame warning (retry / proceed / cancel)
     /// instead of picking blind on a possibly dead frame.
     backdrop_blank: bool,
+    /// C639-007C.3: this pick's own session id, echoed back by the page as
+    /// `overlaySessionId` on its eventual `capture` call so that call can be
+    /// bound to the exact generation that opened it, not to whichever pick
+    /// happens to be `active_pick` when the request is actually processed.
+    session_id: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -840,12 +853,25 @@ fn build_mode(
     // begin_region_pick — the overlay page cannot see the main window's
     // controls, so the dto's delayMs/includeCursor are ignored there.
     if dto.mode == "region-overlay" {
-        let overlay = state
-            .pending_overlay
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or("no pending region overlay; call begin_region_pick first")?;
+        // C639-007C.3: bind the take to the EXACT session this request
+        // carries (`overlay_session_id`, echoed back from `overlay_context`
+        // by the page that owns it), verified atomically against
+        // `active_pick` at the same instant `pending_overlay` is consumed —
+        // never a blind `.take()` of "whatever context currently exists".
+        // A blind take let a stale/already-superseded request (A) consume a
+        // NEWER session's (B's) context and close B's picker while applying
+        // A's own (unrelated) overlay_rect geometry to it. If a cancel or a
+        // newer admission has displaced this session by the instant of the
+        // take, this is a loud error and B's context/window are untouched.
+        let session_id = dto
+            .overlay_session_id
+            .ok_or("region-overlay request missing its overlay session id")?;
+        let overlay = take_pending_overlay_if_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            session_id,
+        )
+        .ok_or("no pending region overlay; call begin_region_pick first")?;
         // The overlay is always-on-top: the live-region BitBlt below must
         // never run while the picker window might still be visible.
         // `close()` is asynchronous, so wait for actual destruction — and
@@ -1063,30 +1089,52 @@ fn run_capture_inner(
     // (or needs) a `pending_overlay` session to borrow. Read before
     // `build_mode` takes the pending context.
     let is_overlay_request = dto.mode == "region-overlay";
-    // C639-007C.2: the identity used to RETIRE a stranded claim must come
-    // from `active_pick` — the authoritative claim — read fresh right here
-    // at the operation boundary, BEFORE monitor enumeration and BEFORE
-    // `build_mode` ever gets a chance to consume `pending_overlay`.
-    // `pending_overlay` can already be `None` here (independently cleared,
-    // or a request that never called `begin_region_pick` at all) while
-    // `active_pick` still names a stranded session from an earlier partial
-    // failure; retiring via `pending_overlay`'s snapshot alone missed
-    // exactly that case.
+    // C639-007C.3: an overlay request's identity is the session id its OWN
+    // overlay page learned from `overlay_context` when it opened — carried
+    // in the DTO as `overlay_session_id` — never inferred from whichever
+    // pick happens to be `active_pick` at the moment this request is
+    // actually processed. Round 6 read `active_pick`'s CURRENT value as if
+    // it were this request's own identity, which let a stale request (A,
+    // already cancelled and superseded by a newer B) silently adopt B's
+    // identity instead of failing as the dead session it actually is. A
+    // direct (non-overlay) request carries no overlay session and never
+    // claimed `active_pick` in the first place.
     let active_claim = if is_overlay_request {
-        *state.active_pick.lock().unwrap()
+        Some(
+            dto.overlay_session_id
+                .ok_or_else(|| "region-overlay request missing its overlay session id".to_string())?,
+        )
     } else {
         None
     };
-    // `region_worker_session_id` below still needs the actual pending
-    // session (once `build_mode` succeeds, `pending_overlay` itself is
-    // already consumed) — kept separate from `active_claim` above, which
-    // exists purely to retire a stranded reservation on failure.
-    let overlay_session = state
-        .pending_overlay
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|o| o.session_id);
+    // C639-007C.3: verify, atomically, that THIS request's own session is
+    // still the live claim across `active_pick`, `pending_overlay`'s own
+    // recorded session, AND the overlay window's owner — before monitor
+    // enumeration, before `build_mode` ever reads or consumes `pending_
+    // overlay`, before anything of a newer session is touched at all. A
+    // stale request fails here having touched nothing. Monitor enumeration
+    // below is itself an unbounded OS call, so `build_mode` re-verifies the
+    // exact same binding again, atomically, at the actual instant it would
+    // consume `pending_overlay` — this check must not be trusted to still
+    // hold by the time execution gets there.
+    if let Some(session_id) = active_claim {
+        if !overlay_request_session_still_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            session_id,
+        ) {
+            return Err(
+                "region pick was cancelled or superseded before this capture could run"
+                    .to_string(),
+            );
+        }
+    }
+    // `region_worker_session_id` below needs the actual pending session —
+    // already established to equal `active_claim` by the verification
+    // above (re-verified again by `build_mode` at its own point of
+    // consumption, per C639-007C.3).
+    let overlay_session = active_claim;
     // C639-007C.2: monitor enumeration can also fail before any retirement
     // guard previously ran — an injected/transient enumeration error for an
     // overlay request used to return here with `active_pick` still
@@ -1369,7 +1417,7 @@ fn run_capture_via_worker_inner(
     // execution (mirroring `open_region_overlay_claimed`'s own per-step
     // re-checks around `.build()`/`.set_focus()`), never from one decision
     // cached before the whole call.
-    focus_capture_window_if_current(app, &state.active_pick, is_overlay_request, session_id);
+    focus_capture_window_if_current(app, is_overlay_request, session_id);
     let _ = app.emit("capture-saved", saved.clone());
     Ok(saved)
 }
@@ -2534,6 +2582,62 @@ fn clear_pick_if_current(
     }
 }
 
+/// C639-007C.3: whether `session_id` — the identity an overlay-originated
+/// `capture` request carries from its OWN DTO, never inferred from
+/// whichever pick happens to be `active_pick` right now — is still the live
+/// claim across every piece of state the request depends on: `active_pick`,
+/// `pending_overlay`'s own recorded session, and the overlay window's
+/// recorded owner. A stranded/superseded request (A, displaced by a newer
+/// B) fails this check and must be refused outright, before monitor
+/// enumeration, before `build_mode` ever reads or consumes `pending_
+/// overlay`, before anything of B's is read or touched. Each lock is held
+/// only long enough to compare — same discipline as `clear_pick_if_current`
+/// — so this is a point-in-time read, not a reservation held across the
+/// caller's own subsequent work (which is why `build_mode` re-verifies the
+/// same binding again, atomically, at its own later point of consumption).
+fn overlay_request_session_still_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    overlay_window_owner: &Mutex<Option<u64>>,
+    session_id: u64,
+) -> bool {
+    if *active_pick.lock().unwrap() != Some(session_id) {
+        return false;
+    }
+    if pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id) != Some(session_id) {
+        return false;
+    }
+    *overlay_window_owner.lock().unwrap() == Some(session_id)
+}
+
+/// C639-007C.3: atomically verify `session_id` is still the live claim on
+/// BOTH `active_pick` and `pending_overlay`'s own recorded session, and only
+/// then consume (`take`) the context — under one held `pending_overlay`
+/// lock, with `active_pick` checked first while already holding it, so a
+/// cancel or a newer admission landing between those two checks can never
+/// let a stale/superseded request slip a NEWER session's context out from
+/// under it (and apply its own, unrelated geometry to it). Returns `None`
+/// without mutating `pending_overlay` at all when the binding does not
+/// hold — a stale request must consume nothing, not even inspect what a
+/// newer session installed. Mirrors `clear_pick_if_current`'s own lock
+/// order (`active_pick`, then `pending_overlay`) and "hold only long enough
+/// to decide" discipline.
+fn take_pending_overlay_if_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    session_id: u64,
+) -> Option<OverlayContext> {
+    let active = active_pick.lock().unwrap();
+    if *active != Some(session_id) {
+        return None;
+    }
+    let mut pending = pending_overlay.lock().unwrap();
+    if pending.as_ref().map(|c| c.session_id) != Some(session_id) {
+        return None;
+    }
+    pending.take()
+}
+
 /// Close the overlay window unconditionally — whatever window currently
 /// has that label, regardless of which session (if any) owns it — and
 /// propagate a failure instead of silently ignoring it: a close that fails
@@ -2960,6 +3064,7 @@ fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
         origin_virtual: ctx.origin_virtual,
         dpr: ctx.dpr,
         backdrop_blank: ctx.backdrop_blank,
+        session_id: ctx.session_id,
     }
 }
 
@@ -4282,48 +4387,65 @@ fn focus_capture_window(app: &tauri::AppHandle) {
     }
 }
 
-/// C639-007D.2: `focus_capture_window`, but for an overlay-originated
-/// capture's post-publication focus steal specifically — re-owns the
-/// `active_pick` generation check at each individual window action's own
-/// point of execution, rather than from one `capture_focus_still_current`
-/// decision cached before the whole call. A direct (non-overlay) capture
-/// has no claim to revalidate (`capture_focus_still_current` always
-/// returns true for it) and always proceeds, same as `focus_capture_window`
-/// always did.
+/// C639-007D.2/007D.3: `focus_capture_window`, but for an overlay-originated
+/// capture's post-publication focus steal specifically. Round 6
+/// (007D.2) re-checked `active_pick` immediately before each individual
+/// window action rather than from one decision cached before the whole
+/// call — but each of those per-step checks still read the lock and
+/// dropped it BEFORE its own action ran, on a background thread, with
+/// nothing stopping a competing session's own main-thread window-build/
+/// focus closure (`open_region_overlay_claimed`) from running in the gap
+/// between the read and the act.
 ///
-/// This mirrors `open_region_overlay_claimed`'s own main-thread closure,
-/// which re-checks `active_pick` immediately before `.build()`, again
-/// before `.set_focus()`, and again after — never holding the lock across
-/// any of those actions themselves. The lock here is likewise never held
-/// across `unminimize`/`show`/`set_focus`: each is a short, already-off-
-/// main-thread OS call (see the module note above `run_on_main_thread_
-/// sync`), not the unbounded filesystem I/O or main-thread dispatch wait
-/// `active_pick` must never be held across.
-fn focus_capture_window_if_current(
-    app: &tauri::AppHandle,
-    active_pick: &Mutex<Option<u64>>,
-    is_overlay_request: bool,
-    session_id: u64,
-) {
-    let still_current = || capture_focus_still_current(is_overlay_request, *active_pick.lock().unwrap(), session_id);
-    if !still_current() {
-        return;
-    }
-    if let Some(w) = app.get_webview_window("main") {
+/// C639-007D.3: the fix funnels the ENTIRE recheck-and-act sequence through
+/// ONE `run_on_main_thread_sync` dispatch, mirroring `open_region_overlay_
+/// claimed`'s own build+focus closure exactly. Once dispatched, this
+/// closure runs to completion on Tauri's single-threaded event loop with
+/// nothing else FROM THAT LOOP interleaved between any of its own
+/// check/act pairs — so a competing session's build/focus closure can only
+/// ever run strictly before this one (in which case this closure's own
+/// fresh, same-thread check catches the supersession immediately, before
+/// touching anything) or strictly after it (in which case it is the LAST
+/// thing to run and its own focus wins, undisturbed by this already-
+/// completed closure) — never interleaved partway through one of this
+/// closure's own check-then-act steps. A direct (non-overlay) capture has
+/// no claim to revalidate (`capture_focus_still_current` always returns
+/// true for it) and proceeds exactly as `focus_capture_window` always did,
+/// just via the same single dispatch.
+fn focus_capture_window_if_current(app: &tauri::AppHandle, is_overlay_request: bool, session_id: u64) {
+    let app_for_dispatch = app.clone();
+    let dispatched = run_on_main_thread_sync(app, move || {
+        let app = app_for_dispatch;
+        let state = app.state::<AppState>();
+        let still_current = || {
+            capture_focus_still_current(
+                is_overlay_request,
+                *state.active_pick.lock().unwrap(),
+                session_id,
+            )
+        };
         if !still_current() {
             return;
         }
-        let _ = w.unminimize();
-        if !still_current() {
-            return;
+        if let Some(w) = app.get_webview_window("main") {
+            if !still_current() {
+                return;
+            }
+            let _ = w.unminimize();
+            if !still_current() {
+                return;
+            }
+            let _ = w.show();
+            if !still_current() {
+                return;
+            }
+            if let Err(e) = w.set_focus() {
+                eprintln!("[capture] could not focus capture window: {e}");
+            }
         }
-        let _ = w.show();
-        if !still_current() {
-            return;
-        }
-        if let Err(e) = w.set_focus() {
-            eprintln!("[capture] could not focus capture window: {e}");
-        }
+    });
+    if let Err(e) = dispatched {
+        eprintln!("[capture] could not dispatch post-capture focus check: {e}");
     }
 }
 
@@ -4416,6 +4538,7 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
                     window_id: None,
                     region: None,
                     overlay_rect: None,
+                    overlay_session_id: None,
                     delay_ms: Some(0),
                     include_cursor: true,
                 };
@@ -4714,13 +4837,15 @@ mod dto_ipc_tests {
     fn capture_request_dto_matches_overlay_payload() {
         // ui/overlay.js on drag end:
         //   { mode: "region-overlay", monitorId: null, windowId: null,
-        //     region: null, overlayRect: r, delayMs: 0, includeCursor: false }
+        //     region: null, overlayRect: r, overlaySessionId: sessionId,
+        //     delayMs: 0, includeCursor: false }
         let json = r#"{
             "mode": "region-overlay",
             "monitorId": null,
             "windowId": null,
             "region": null,
             "overlayRect": {"x":1,"y":2,"w":3,"h":4},
+            "overlaySessionId": 9,
             "delayMs": 0,
             "includeCursor": false
         }"#;
@@ -4729,6 +4854,28 @@ mod dto_ipc_tests {
         let r = dto.overlay_rect.expect("overlayRect binds");
         assert_eq!((r.x, r.y, r.w, r.h), (1.0, 2.0, 3.0, 4.0));
         assert!(!dto.include_cursor);
+        // C639-007C.3: this is the binding `run_capture_inner` verifies
+        // against `active_pick`/`pending_overlay`/`overlay_window_owner`
+        // before doing anything else for a region-overlay request.
+        assert_eq!(dto.overlay_session_id, Some(9));
+    }
+
+    #[test]
+    fn capture_request_dto_overlay_session_id_absent_for_non_overlay_modes() {
+        // C639-007C.3: every other mode omits `overlaySessionId` entirely
+        // (it never had an overlay to carry one from) — the field must
+        // deserialize to `None`, not fail the whole request.
+        let json = r#"{
+            "mode": "window",
+            "monitorId": null,
+            "windowId": "42",
+            "region": null,
+            "overlayRect": null,
+            "delayMs": 5000,
+            "includeCursor": true
+        }"#;
+        let dto: CaptureRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.overlay_session_id, None);
     }
 
     #[test]
@@ -5632,6 +5779,17 @@ mod region_picker_tests {
     }
 
     #[test]
+    fn overlay_context_dto_carries_its_own_session_id() {
+        // C639-007C.3: the page echoes this straight back on its eventual
+        // `capture` call as `overlaySessionId` — the binding the backend
+        // verifies against `active_pick`/`pending_overlay`/`overlay_
+        // window_owner` depends on the DTO actually carrying it.
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 123;
+        assert_eq!(overlay_context_dto(&ctx).session_id, 123);
+    }
+
+    #[test]
     fn worker_routing_takes_plain_region() {
         // C639 Option C: a plain RegionVirtual routes to the worker.
         let mode = CaptureMode::RegionVirtual {
@@ -5725,6 +5883,132 @@ mod region_picker_tests {
     fn overlay_region_with_vanished_context_is_a_loud_error() {
         let err = region_worker_session_id(true, None, || panic!("must not mint")).unwrap_err();
         assert!(err.contains("vanished"));
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.3: a request session must bind to the SAME generation
+    // across active_pick / pending_overlay / overlay_window_owner, never
+    // to whichever claim happens to be current when it is processed.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_request_session_still_current_requires_all_three_to_agree() {
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let overlay_window_owner = Mutex::new(Some(5u64));
+        assert!(overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5
+        ));
+    }
+
+    #[test]
+    fn overlay_request_session_still_current_rejects_a_stale_request_displaced_by_a_newer_one() {
+        // C639-007C.3 freeze: A's overlay queued `capture` (carrying A's own
+        // session id, 5) but had not yet begun its body; A was cancelled;
+        // B (6) was admitted and installed active_pick/pending_overlay/
+        // overlay_window_owner for ITSELF. A's delayed body now runs and
+        // must bind to A's OWN id (5) — never to whichever claim (6) is
+        // current — and must observe the mismatch and refuse.
+        let active_pick = Mutex::new(Some(6u64)); // B now holds the claim
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+        assert!(
+            !overlay_request_session_still_current(
+                &active_pick,
+                &pending_overlay,
+                &overlay_window_owner,
+                5 // A's own, now-stale id
+            ),
+            "A's stale request must not read B's live claim as its own"
+        );
+        // B's state must be completely untouched by A's failed check.
+        assert_eq!(*active_pick.lock().unwrap(), Some(6));
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6)
+        );
+        assert_eq!(*overlay_window_owner.lock().unwrap(), Some(6));
+    }
+
+    #[test]
+    fn overlay_request_session_still_current_rejects_when_only_the_window_owner_disagrees() {
+        // active_pick and pending_overlay can agree while overlay_window_
+        // owner alone has moved on (e.g. an owner-gated close already ran
+        // for this session but the other two slots have not yet been
+        // retired) — the binding requires all three, not just two of three.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 5;
+        let overlay_window_owner = Mutex::new(None::<u64>);
+        assert!(!overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5
+        ));
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_consumes_only_its_own_matching_context() {
+        let active_pick = Mutex::new(Some(7u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 7;
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 7);
+        assert_eq!(taken.map(|c| c.session_id), Some(7));
+        assert!(
+            pending_overlay.lock().unwrap().is_none(),
+            "a successful take must consume the context"
+        );
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_never_consumes_a_newer_sessions_context() {
+        // C639-007C.3 freeze, continued: A's stale `build_mode` call (bound
+        // to A's own id, 5) must not consume B's (6) context, close B's
+        // picker, or apply A's geometry to it, even though A's call is the
+        // one actually reaching `build_mode`'s take.
+        let active_pick = Mutex::new(Some(6u64)); // B holds the claim
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 5);
+        assert!(
+            taken.is_none(),
+            "A's stale take must not consume B's context"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's context must survive A's failed take completely untouched"
+        );
+    }
+
+    #[test]
+    fn take_pending_overlay_if_current_refuses_when_active_pick_already_moved_on_even_if_pending_still_matches(
+    ) {
+        // A narrower shape of the same race: active_pick has already moved
+        // past A, but nothing has gotten around to clearing pending_overlay
+        // yet. The take must still refuse — active_pick is the
+        // authoritative claim, and a stale request must not be able to
+        // resurrect a dead session's context just because the slower-to-
+        // clear field has not caught up yet.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut stale_ctx = overlay_ctx_with_backdrop(None);
+        stale_ctx.session_id = 5;
+        let pending_overlay = Mutex::new(Some(stale_ctx));
+        let taken = take_pending_overlay_if_current(&active_pick, &pending_overlay, 5);
+        assert!(taken.is_none());
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(5),
+            "a refused take must not even clear the stale context it declined to consume"
+        );
     }
 }
 

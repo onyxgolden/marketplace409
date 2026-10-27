@@ -146,7 +146,8 @@ function makeHarness({
   const baseInvoke =
     invokeImpl ||
     ((cmd) => {
-      if (cmd === "overlay_context") return Promise.resolve({ dpr: 2 });
+      if (cmd === "overlay_context")
+        return Promise.resolve({ dpr: 2, session_id: 42 });
       if (cmd === "region_pick_backdrop")
         return Promise.resolve({ png_b64: "AAA=", width: 64, height: 48 });
       return Promise.resolve({});
@@ -318,6 +319,24 @@ describe("preview-unavailable honesty (C639)", () => {
     const captures = h.calls.filter((c) => c.cmd === "capture");
     expect(captures).toHaveLength(1);
     expect(captures[0].args.dto.mode).toBe("region-overlay");
+  });
+
+  it("C639-007C.3: echoes overlay_context's own session id back on capture", async () => {
+    // The backend binds this capture to the EXACT generation that opened
+    // this page via this field — it must be the session id this page
+    // itself learned at init, not omitted/guessed.
+    const h = makeHarness({ budgetMs: 2000 });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p;
+    h.calls.length = 0;
+    await drag(h.controller, h.doc, 10, 10, 200, 200);
+    const captures = h.calls.filter((c) => c.cmd === "capture");
+    expect(captures).toHaveLength(1);
+    expect(captures[0].args.dto.overlaySessionId).toBe(42);
   });
 
   it("a sliver drag cancels instead of capturing", async () => {
