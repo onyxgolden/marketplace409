@@ -149,6 +149,16 @@ export function createOverlayController({
       promise.then(
         (v) => {
           clearTimeoutFn(t);
+          // C639-005: the promise resolving does not by itself prove we
+          // are still inside budget — a resolved microtask can run before
+          // an already-due zero-delay timer task, so scheduling a timer
+          // and trusting whichever callback the event loop happens to run
+          // first is not a hard aggregate deadline. Re-check the
+          // monotonic deadline at the moment of fulfillment.
+          if (now() >= deadline) {
+            reject(new Error(`${what} did not complete in time`));
+            return;
+          }
           resolve(v);
         },
         (e) => {
@@ -223,23 +233,38 @@ export function createOverlayController({
       }
     };
     mark("page_boot");
+    let ctx;
     try {
-      const ctx = await withDeadline(
+      ctx = await withDeadline(
         invoke("overlay_context"),
         deadline,
         "overlay_context"
       );
-      mark("context");
-      if (ctx && ctx.dpr) dpr = ctx.dpr;
-      // Blank-frame warning: the frozen frame came back a single solid
-      // color. Retry re-captures with the picker hidden; proceed picks on
-      // the frame as-is (legit for a truly solid-color desktop); Esc still
-      // cancels.
-      if (ctx && ctx.backdrop_blank) els.blankwarn.style.display = "block";
-    } catch {
-      /* fall back to window.devicePixelRatio; the backdrop step decides */
+    } catch (err) {
+      if (myGen !== gen) return;
+      // C639-006: without the mapping context (DPR, origin, blank flag)
+      // the Option C mapping prerequisite is not established. Falling
+      // through to attempt a backdrop/image anyway would let a correctly
+      // loaded IMAGE alone enable commit on a stale/default DPR — silently
+      // capturing the wrong pixels on a mixed-DPI setup. Degrade exactly
+      // like an image failure: honest "preview unavailable", commit stays
+      // disabled, Esc/cancel and aim tools stay live.
+      mark("context_unavailable", (err && err.message) || String(err));
+      showPreviewUnavailable(true, err);
+      showAimTools();
+      return;
     }
-    if (myGen !== gen) return;
+    // C639-006: check generation/deadline BEFORE touching any state a
+    // newer controller might already own (dpr, the blank-frame warning)
+    // — an old, superseded init must never mutate it.
+    if (myGen !== gen || now() >= deadline) return;
+    mark("context");
+    if (ctx && ctx.dpr) dpr = ctx.dpr;
+    // Blank-frame warning: the frozen frame came back a single solid
+    // color. Retry re-captures with the picker hidden; proceed picks on
+    // the frame as-is (legit for a truly solid-color desktop); Esc still
+    // cancels.
+    if (ctx && ctx.backdrop_blank) els.blankwarn.style.display = "block";
     try {
       const shot = await withDeadline(
         invoke("region_pick_backdrop"),
@@ -247,10 +272,14 @@ export function createOverlayController({
         "region_pick_backdrop"
       );
       mark("backdrop");
-      if (myGen !== gen) return;
+      if (myGen !== gen || now() >= deadline) return;
       await loadBackdropImage(shot.png_b64, deadline);
       mark("image");
-      if (myGen !== gen) return;
+      // C639-005: re-check generation AND the monotonic deadline
+      // immediately before committing `backdropReady` — the one flag
+      // that enables commit — even though every await above already
+      // goes through `withDeadline`.
+      if (myGen !== gen || now() >= deadline) return;
       els.backdrop.style.display = "block";
       backdropReady = true;
       setLoading(false);
@@ -266,6 +295,13 @@ export function createOverlayController({
 
   async function onRetry() {
     els.bwRetry.disabled = true;
+    // C639 supplementary finding: invalidate readiness at retry START,
+    // not after the retry resolves — the backend hides the overlay
+    // window for the duration of the native re-acquisition, so a
+    // drag+release queued during that window must not still read
+    // backdropReady=true and invoke a concurrent capture against a
+    // hidden picker.
+    backdropReady = false;
     try {
       const deadline = now() + budgetMs;
       await withDeadline(
@@ -276,7 +312,6 @@ export function createOverlayController({
       // Re-read the session: the retry stored a fresh frame and an updated
       // blank flag, so the warning reappears only if still blank.
       els.blankwarn.style.display = "none";
-      backdropReady = false;
       els.backdrop.removeAttribute("src");
       await init();
     } catch (err) {

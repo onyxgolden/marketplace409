@@ -51,12 +51,21 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // hardware claims)
 // ---------------------------------------------------------------------------
 
-/// Total budget per native capture request, from parent admission.
+/// Total budget per native capture request, from parent admission. This
+/// bound is always exactly `CAPTURE_DEADLINE_MS` — a user-requested delay
+/// (C639-003) is an explicit, separately-bounded stage the caller runs
+/// BEFORE admission, never an extension of this budget.
 pub const CAPTURE_DEADLINE_MS: u64 = 3000;
 /// Extra bound for confirming worker termination, off the UI thread.
 pub const TERMINATION_CONFIRM_MS: u64 = 500;
 /// Poll granularity while confirming termination.
 const TERMINATION_POLL_MS: u64 = 10;
+/// Sane ceiling for a caller-requested pre-capture delay (C639-003): bounds
+/// the arithmetic and the user experience alike. Enforced at the delay
+/// stage, not folded into the native execution deadline.
+pub const MAX_DELAY_MS: u64 = 60_000;
+/// Chunk size for the cancellable delay-stage sleep loop.
+const DELAY_POLL_MS: u64 = 50;
 /// Worker requests are small descriptors; anything larger is malformed.
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
 /// Error text (stage + message) is bounded; success payloads are bounded
@@ -341,6 +350,12 @@ impl<'a> Cursor<'a> {
 
 /// Encode + validate a worker request into one framed byte vector.
 pub fn encode_request(req: &WorkerRequest) -> Result<Vec<u8>, String> {
+    if req.delay_ms > MAX_DELAY_MS {
+        return Err(format!(
+            "delay_ms exceeds bound: {} > {MAX_DELAY_MS}",
+            req.delay_ms
+        ));
+    }
     let mut body = Vec::with_capacity(64);
     body.push(req.op.opcode());
     be_u64(req.session_id, &mut body);
@@ -802,10 +817,18 @@ impl CaptureSupervisor {
     }
 
     /// Final live region read (physical px, virtual-desktop coords).
-    /// `delay_ms` is a user-requested pre-capture wait: it runs inside the
-    /// worker (so the acquisition timestamp stays truthful) and the parent
-    /// deadline below is extended by it — a legitimate wait must not read
-    /// as a stall. The 3 s acquisition bound itself is never extended.
+    ///
+    /// `delay_ms` (C639-003) is a user-requested pre-capture wait. It is an
+    /// explicit stage the PARENT runs here, entirely BEFORE the worker is
+    /// even admitted/spawned — never folded into the fixed 3,000 ms native
+    /// execution deadline. This keeps the acquisition-stall bound literal
+    /// (process startup, enumeration and acquisition always get exactly
+    /// `CAPTURE_DEADLINE_MS`, regardless of how long the user asked to
+    /// wait first) and makes the wait itself a distinct, boundable stage
+    /// rather than opaque time hidden inside the worker round-trip. The
+    /// worker's own `delay_ms` is always 0: the capture it performs happens
+    /// immediately once spawned, which is already after the user's wait
+    /// has elapsed, so the engine's acquisition timestamp stays truthful.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_region(
         &self,
@@ -817,19 +840,13 @@ impl CaptureSupervisor {
         include_cursor: bool,
         delay_ms: u64,
     ) -> Result<WorkerReply, SupervisorError> {
-        // NOTE: the deadline below covers the worker round-trip. The delay
-        // itself is worker-side (it preserves acquisition-time stamping);
-        // callers must add delay_ms to their own patience, or — as the
-        // region-overlay path does — keep delay_ms small. A large delay
-        // would trip the parent deadline by design: the deadline bounds the
-        // *worker*, not the user's requested wait. To keep the contract
-        // literal, the parent deadline below is extended by delay_ms.
+        run_delay_stage(delay_ms.min(MAX_DELAY_MS), &self.ring);
         self.run(WorkerRequest {
             op: WorkerOp::Region,
             session_id,
             generation: 0,
             include_cursor,
-            delay_ms,
+            delay_ms: 0,
             target: RequestTarget::Region { x, y, w, h },
         })
     }
@@ -868,11 +885,11 @@ impl CaptureSupervisor {
     fn run(&self, req: WorkerRequest) -> Result<WorkerReply, SupervisorError> {
         let generation = self.admit()?;
         let req = WorkerRequest { generation, ..req };
-        // The user-requested delay runs inside the worker; the parent's
-        // deadline bounds the worker round-trip, so extend it by the delay
-        // rather than letting a legitimate wait read as a stall.
-        let deadline =
-            Instant::now() + Duration::from_millis(CAPTURE_DEADLINE_MS + req.delay_ms);
+        // C639-003: the native execution budget is always exactly
+        // CAPTURE_DEADLINE_MS. Any user-requested delay already ran as its
+        // own stage before admission (see `run_delay_stage`/
+        // `execute_region`) — it never extends this bound.
+        let deadline = Instant::now() + Duration::from_millis(CAPTURE_DEADLINE_MS);
         self.ring.log(
             "worker_admit",
             format!(
@@ -902,14 +919,12 @@ impl CaptureSupervisor {
             let wr = stdin.write_all(&frame).and_then(|_| stdin.flush());
             drop(stdin); // EOF: end of request
             if let Err(e) = wr {
-                let _ = child.kill();
-                self.release_if(generation);
                 self.ring.log("worker_request_write_failed", e.to_string());
+                self.retire(child, generation);
                 return Err(SupervisorError::SpawnFailed(format!("request write: {e}")));
             }
         } else {
-            let _ = child.kill();
-            self.release_if(generation);
+            self.retire(child, generation);
             return Err(SupervisorError::SpawnFailed("no stdin pipe".to_string()));
         }
         self.ring.log("worker_request_written", format!("gen={generation}"));
@@ -926,8 +941,7 @@ impl CaptureSupervisor {
                 let _ = tx.send(res);
             });
         } else {
-            let _ = child.kill();
-            self.release_if(generation);
+            self.retire(child, generation);
             return Err(SupervisorError::SpawnFailed("no stdout pipe".to_string()));
         }
         // Stderr drain: worker phase markers -> ring log. Same lifetime
@@ -940,7 +954,7 @@ impl CaptureSupervisor {
         let remaining = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(remaining) {
             Ok(Ok(Ok(reply))) => {
-                // Validate identity + fence the generation before publishing.
+                // Validate identity before publishing.
                 if reply.session_id != req.session_id || reply.generation != generation {
                     self.ring.log(
                         "worker_identity_mismatch",
@@ -949,26 +963,25 @@ impl CaptureSupervisor {
                             req.session_id, reply.session_id, reply.generation
                         ),
                     );
-                    let _ = child.kill();
-                    self.release_if(generation);
+                    self.retire(child, generation);
                     return Err(SupervisorError::Malformed(
                         "reply identity does not match the admitted request".to_string(),
                     ));
                 }
-                // One parent-owned terminal transition.
-                {
-                    let mut slot = self.slot.lock().unwrap();
-                    if *slot != (Slot::Active { generation }) {
-                        // Fenced while the reply was in flight (timeout won
-                        // the race): discard the late success.
-                        self.ring.log(
-                            "worker_late_reply_discarded",
-                            format!("gen={generation}"),
-                        );
-                        let _ = child.kill();
-                        return Err(SupervisorError::Cancelled);
-                    }
-                    *slot = Slot::Empty;
+                // C639-002: confirm the child's actual exit BEFORE the
+                // slot's one parent-owned terminal transition — never free
+                // (or late-discard against) occupancy ahead of a confirmed
+                // exit. `retire` returns whether the slot still held this
+                // generation's Active state (i.e. nothing fenced it first).
+                let owned = self.retire(child, generation);
+                if !owned {
+                    // Fenced while the reply was in flight (timeout won
+                    // the race): discard the late success.
+                    self.ring.log(
+                        "worker_late_reply_discarded",
+                        format!("gen={generation}"),
+                    );
+                    return Err(SupervisorError::Cancelled);
                 }
                 self.ring.log(
                     "worker_reply_admitted",
@@ -979,25 +992,22 @@ impl CaptureSupervisor {
                         reply.png_bytes.len()
                     ),
                 );
-                reap_gracefully(child, &self.ring);
                 Ok(reply)
             }
             Ok(Ok(Err(err))) => {
                 // The worker answered with a native/worker error: a
                 // definitive outcome. Preserve stage + message exactly.
                 if err.session_id != req.session_id || err.generation != generation {
-                    let _ = child.kill();
-                    self.release_if(generation);
+                    self.retire(child, generation);
                     return Err(SupervisorError::Malformed(
                         "error reply identity does not match".to_string(),
                     ));
                 }
-                self.release_if(generation);
                 self.ring.log(
                     "worker_error_reply",
                     format!("gen={generation} stage={}", err.stage),
                 );
-                reap_gracefully(child, &self.ring);
+                self.retire(child, generation);
                 Err(match err.status {
                     ReplyStatus::NativeError => SupervisorError::NativeError {
                         stage: err.stage,
@@ -1007,53 +1017,89 @@ impl CaptureSupervisor {
                 })
             }
             Ok(Err(decode_err)) => {
-                // The worker spoke, but not protocol: kill, release.
+                // The worker spoke, but not protocol: retire, release.
                 self.ring
                     .log("worker_malformed", format!("gen={generation}: {decode_err}"));
-                let _ = child.kill();
-                self.release_if(generation);
-                reap_gracefully(child, &self.ring);
+                self.retire(child, generation);
                 Err(SupervisorError::Malformed(decode_err))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.ring
                     .log("worker_timeout", format!("gen={generation}: no reply in deadline"));
-                // Fence FIRST: the generation is terminal the moment the
-                // deadline fires. A reply arriving between here and the
+                // Fence FIRST, with the lock held only for the transition
+                // itself: the generation is terminal the moment the
+                // deadline fires, so a reply arriving between here and the
                 // termination confirmation can no longer commit — timeout
-                // wins the race unless success was already admitted.
-                let zombied = {
+                // wins the race unless success was already admitted. The
+                // termination wait itself (bounded, up to
+                // TERMINATION_CONFIRM_MS) runs with NO lock held, so a
+                // concurrent admission attempt sees Fenced/Zombie and
+                // refuses immediately rather than blocking on this
+                // request's cleanup (C639-002).
+                {
                     let mut slot = self.slot.lock().unwrap();
                     *slot = Slot::Fenced { generation };
-                    self.ring.log("generation_fenced", format!("gen={generation}"));
-                    let confirmed = terminate_promptly(&mut child, &self.ring);
-                    if confirmed {
-                        *slot = Slot::Empty;
-                        false
-                    } else {
-                        // Termination unconfirmed: retain the occupied slot
-                        // and refuse further captures until the reaper
-                        // confirms the zombie exited.
-                        *slot = Slot::Zombie { generation };
-                        true
-                    }
-                };
-                if zombied {
-                    spawn_reaper(child, generation, Arc::clone(&self.slot), self.ring.clone());
                 }
+                self.ring.log("generation_fenced", format!("gen={generation}"));
+                self.retire_now(child, generation);
                 Err(SupervisorError::Timeout)
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 // Reader died without delivering: treat as malformed.
                 self.ring.log("worker_reader_gone", format!("gen={generation}"));
-                let _ = child.kill();
-                self.release_if(generation);
-                reap_gracefully(child, &self.ring);
+                self.retire(child, generation);
                 Err(SupervisorError::Malformed(
                     "reply reader terminated without a reply".to_string(),
                 ))
             }
         }
+    }
+
+    /// The single owned-child retirement protocol used by EVERY terminal
+    /// branch of `run` (C639-002): confirm the child's actual exit —
+    /// bounded, with the slot lock held only for the instantaneous state
+    /// transition, never across the wait itself — before the slot can be
+    /// freed. If exit cannot be confirmed within the bound, the slot is
+    /// marked `Zombie` (occupied; further captures refused) and a single
+    /// reaper thread takes over, exactly like the timeout path already
+    /// did. Returns true iff the slot still held `Active`/`Fenced` for
+    /// `generation` at the moment this call resolved it (i.e. this call
+    /// owns the terminal transition — nothing else raced it); false means
+    /// a prior call already resolved this generation, so the caller's
+    /// outcome must be discarded (late reply after fencing).
+    ///
+    /// `retire` (the common case) gives an already-answered worker one
+    /// grace window before killing it; `retire_now` (the timeout path)
+    /// kills immediately — the worker already blew its budget, so an
+    /// extra grace window would needlessly delay the ≤500 ms termination
+    /// bound the module promises.
+    fn retire(&self, child: Child, generation: u64) -> bool {
+        self.retire_with(child, generation, /* grace_first */ true)
+    }
+
+    fn retire_now(&self, child: Child, generation: u64) -> bool {
+        self.retire_with(child, generation, /* grace_first */ false)
+    }
+
+    fn retire_with(&self, mut child: Child, generation: u64, grace_first: bool) -> bool {
+        let confirmed = confirm_exit(&mut child, &self.ring, grace_first);
+        let mut slot = self.slot.lock().unwrap();
+        let owned = matches!(
+            *slot,
+            Slot::Active { generation: g } | Slot::Fenced { generation: g } if g == generation
+        );
+        if owned {
+            *slot = if confirmed {
+                Slot::Empty
+            } else {
+                Slot::Zombie { generation }
+            };
+        }
+        drop(slot);
+        if !confirmed {
+            spawn_reaper(child, generation, Arc::clone(&self.slot), self.ring.clone());
+        }
+        owned
     }
 
     fn spawn_child(&self) -> Result<Child, String> {
@@ -1072,18 +1118,36 @@ impl CaptureSupervisor {
     }
 }
 
+// --- delay stage (C639-003) ---------------------------------------------------
+
+/// Run the user-requested pre-capture wait as its own bounded stage, BEFORE
+/// the worker is admitted/spawned. Chunked (rather than one long sleep) so
+/// the stage is structurally interruptible — no cancellation source is
+/// wired to it today, but a future one can check between chunks without
+/// touching the execution-deadline math at all. `ms` is assumed already
+/// clamped to `MAX_DELAY_MS` by the caller.
+fn run_delay_stage(ms: u64, ring: &RingLog) {
+    if ms == 0 {
+        return;
+    }
+    ring.log("delay_stage_start", format!("ms={ms}"));
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(DELAY_POLL_MS)));
+    }
+    ring.log("delay_stage_done", format!("ms={ms}"));
+}
+
 // --- termination --------------------------------------------------------------
 
-/// Ask the worker to terminate and wait at most TERMINATION_CONFIRM_MS
-/// for confirmation, off the UI thread. `Child::kill` is asynchronous by
-/// nature (TerminateProcess / SIGKILL); pending I/O can delay exit, hence
-/// the occupied-slot rule when confirmation fails. Returns true when the
-/// exit was confirmed.
-fn terminate_promptly(child: &mut Child, ring: &RingLog) -> bool {
-    ring.log("worker_kill", "requesting termination");
-    // Best effort: a child that already exited makes kill() fail harmlessly.
-    let _ = child.kill();
-    let deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
+/// Poll `child` with `try_wait` until it reports exit or `deadline` passes.
+/// Never a synchronous `wait()` on a hung child. Returns true only once an
+/// exit status was actually observed.
+fn poll_until_exit(child: &mut Child, ring: &RingLog, deadline: Instant) -> bool {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -1092,7 +1156,7 @@ fn terminate_promptly(child: &mut Child, ring: &RingLog) -> bool {
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    break;
+                    return false;
                 }
                 std::thread::sleep(Duration::from_millis(TERMINATION_POLL_MS));
             }
@@ -1102,37 +1166,50 @@ fn terminate_promptly(child: &mut Child, ring: &RingLog) -> bool {
             }
         }
     }
-    ring.log(
-        "worker_termination_unconfirmed",
-        "slot retained occupied; further captures refused",
-    );
-    false
 }
 
-/// Reap a well-behaved child after a definitive outcome: bounded grace
-/// wait, then kill. Never a synchronous join on a hung worker — this is
-/// only called when the worker already answered.
-fn reap_gracefully(mut child: Child, ring: &RingLog) {
-    let deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(TERMINATION_POLL_MS));
-            }
-            Err(_) => return,
+/// The one retirement-confirmation primitive used by every terminal branch
+/// (C639-002): confirm the child's actual exit, bounded by at most two
+/// `TERMINATION_CONFIRM_MS` windows, off whatever thread calls this — never
+/// a synchronous join on a hung worker, never `TerminateThread`.
+///
+/// `grace_first`: when the worker already spoke (success, a native/worker
+/// error reply, or malformed-but-spoke), it is expected to exit on its own
+/// almost immediately — give it one bounded grace window before an
+/// explicit kill. When `grace_first` is false (the timeout path), the
+/// worker already blew its budget, so termination is requested
+/// immediately: the module's ≤500 ms termination-confirmation bound must
+/// not be padded with an unearned extra grace window.
+///
+/// Returns true only once an exit status was actually observed.
+fn confirm_exit(child: &mut Child, ring: &RingLog, grace_first: bool) -> bool {
+    if grace_first {
+        let grace_deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
+        if poll_until_exit(child, ring, grace_deadline) {
+            return true;
         }
+        ring.log("worker_reap_kill", "worker lingered after reply; killing");
     }
+    ring.log("worker_kill", "requesting termination");
+    // Best effort: a child that already exited makes kill() fail harmlessly.
     let _ = child.kill();
-    ring.log("worker_reap_kill", "worker lingered after reply; killed");
+    let kill_deadline = Instant::now() + Duration::from_millis(TERMINATION_CONFIRM_MS);
+    let confirmed = poll_until_exit(child, ring, kill_deadline);
+    if !confirmed {
+        ring.log(
+            "worker_termination_unconfirmed",
+            "slot retained occupied; further captures refused",
+        );
+    }
+    confirmed
 }
 
 /// One reaper per unconfirmed termination (at most one zombie exists, so
-/// at most one reaper): waits for the zombie's actual exit, then frees the
-/// slot if it is still ours. No thread-per-retry growth.
+/// at most one reaper): blocks on the zombie's actual exit, then frees the
+/// slot if it is still ours — but ONLY on a confirmed exit (C639-002): a
+/// `wait()` error is not confirmation, and must leave the slot occupied
+/// (`WORKER_UNAVAILABLE`) rather than silently freeing a capability whose
+/// true state was never observed. No thread-per-retry growth.
 fn spawn_reaper(
     mut child: Child,
     generation: u64,
@@ -1140,12 +1217,22 @@ fn spawn_reaper(
     ring: RingLog,
 ) {
     ring.log("zombie_reaper_spawned", format!("gen={generation}"));
-    std::thread::spawn(move || {
-        let _ = child.wait(); // bounded by the zombie's actual exit
-        let mut s = slot.lock().unwrap();
-        if *s == (Slot::Zombie { generation }) {
-            *s = Slot::Empty;
-            ring.log("zombie_reaped", format!("gen={generation}: slot free"));
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => {
+            let mut s = slot.lock().unwrap();
+            if *s == (Slot::Zombie { generation }) {
+                *s = Slot::Empty;
+                ring.log(
+                    "zombie_reaped",
+                    format!("gen={generation}: exited {status:?}; slot free"),
+                );
+            }
+        }
+        Err(e) => {
+            ring.log(
+                "zombie_reap_wait_error",
+                format!("gen={generation}: {e}; slot stays occupied"),
+            );
         }
     });
 }
@@ -1336,6 +1423,17 @@ mod tests {
         let mut frame = encode_request(&sample_backdrop_req()).unwrap();
         frame.extend_from_slice(&[0u8; 8]); // trailing garbage, length lies
         assert!(decode_request_frame(IoCursor::new(&frame)).is_err());
+    }
+
+    #[test]
+    fn request_rejects_delay_beyond_bound() {
+        // C639-003: delay inputs are bounded at the wire boundary, not
+        // just clamped silently deep inside timing arithmetic.
+        let req = WorkerRequest {
+            delay_ms: MAX_DELAY_MS + 1,
+            ..sample_backdrop_req()
+        };
+        assert!(encode_request(&req).is_err());
     }
 
     #[test]
@@ -1609,6 +1707,200 @@ mod tests {
         }
         assert!(t0.elapsed() < Duration::from_secs(1), "must refuse immediately");
         let _ = h.join();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn supervisor_reply_then_hang_confirms_exit_before_freeing_slot() {
+        // C639-002 probe: the worker answers successfully, then hangs
+        // instead of exiting. The reply must still be delivered, and the
+        // slot must not free until the hung child's kill is actually
+        // confirmed — proven here by a fresh admission right after
+        // succeeding, which must not be refused as Busy/Unavailable.
+        let f = write_reply_file(21, 1, 64);
+        let f_str = f.to_string_lossy().into_owned();
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), format!("cat {f_str}; sleep 30")],
+            1024,
+        );
+        let t0 = Instant::now();
+        let reply = sup.execute_backdrop(21, "MON").unwrap();
+        assert_eq!(reply.session_id, 21);
+        // Bounded: one grace window + a kill confirmation, not a 30 s wait.
+        assert!(t0.elapsed() < Duration::from_secs(5), "took {:?}", t0.elapsed());
+        let f2 = write_reply_file(22, 1, 64);
+        std::fs::rename(&f2, &f).unwrap();
+        match sup.execute_backdrop(22, "MON") {
+            Err(SupervisorError::CaptureBusy) | Err(SupervisorError::WorkerUnavailable) => {
+                panic!("slot was not freed after the hung child's kill was confirmed")
+            }
+            other => {
+                assert_eq!(other.unwrap().session_id, 22);
+            }
+        }
+        std::fs::remove_file(&f).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn supervisor_malformed_then_hang_confirms_kill_before_releasing() {
+        // C639-002 probe: the worker writes a frame with an invalid
+        // (too-short) declared length — a definitive Malformed outcome —
+        // then hangs instead of exiting. Malformed must still resolve
+        // promptly, and the slot must not free until the hung child's
+        // kill is confirmed.
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec![
+                "-c".to_string(),
+                "printf '\\000\\000\\000\\004xxxx'; sleep 30".to_string(),
+            ],
+            1024,
+        );
+        let t0 = Instant::now();
+        match sup.execute_backdrop(31, "MON") {
+            Err(SupervisorError::Malformed(_)) => {}
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+        assert!(t0.elapsed() < Duration::from_secs(5), "took {:?}", t0.elapsed());
+        match sup.execute_backdrop(32, "MON") {
+            Err(SupervisorError::CaptureBusy) | Err(SupervisorError::WorkerUnavailable) => {
+                panic!("slot was not freed after confirmed kill")
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn supervisor_identity_mismatch_is_malformed_and_frees_slot() {
+        // C639-002 probe: the worker replies with a different
+        // session/generation than the admitted request. The mismatched
+        // reply must be rejected (never published), and the slot must
+        // not leak — proven by a correctly-identified request succeeding
+        // on the SAME supervisor right after.
+        let f = write_reply_file(999, 999, 64); // wrong identity on purpose
+        let f_str = f.to_string_lossy().into_owned();
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), format!("cat {f_str}")],
+            1024,
+        );
+        match sup.execute_backdrop(41, "MON") {
+            Err(SupervisorError::Malformed(_)) => {}
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+        let f2 = write_reply_file(41, 1, 64);
+        std::fs::rename(&f2, &f).unwrap();
+        let reply = sup.execute_backdrop(41, "MON").unwrap();
+        assert_eq!(reply.session_id, 41);
+        std::fs::remove_file(&f).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn supervisor_concurrent_admission_during_termination_confirm_is_not_blocked() {
+        // C639-002 probe: while the timeout path's post-fence
+        // termination-confirmation wait is in flight (bounded by
+        // TERMINATION_CONFIRM_MS, with no slot lock held across it), a
+        // concurrent admission attempt must return immediately
+        // (Busy/Unavailable), never block on that wait. Regression guard
+        // for the prior bug: the slot lock used to be held across the
+        // whole termination-confirm poll.
+        let sup = Arc::new(CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), "sleep 30".to_string()],
+            1024,
+        ));
+        let sup2 = Arc::clone(&sup);
+        let h = std::thread::spawn(move || sup2.execute_backdrop(1, "MON"));
+        // Land in the post-deadline cleanup window: just after the 3 s
+        // deadline fires, before the first call has returned.
+        std::thread::sleep(Duration::from_millis(CAPTURE_DEADLINE_MS + 50));
+        let t0 = Instant::now();
+        let outcome = sup.execute_backdrop(2, "MON");
+        let dt = t0.elapsed();
+        assert!(
+            matches!(
+                outcome,
+                Err(SupervisorError::CaptureBusy) | Err(SupervisorError::WorkerUnavailable)
+            ),
+            "unexpected: {outcome:?}"
+        );
+        assert!(
+            dt < Duration::from_millis(TERMINATION_CONFIRM_MS),
+            "concurrent admission blocked on cleanup: took {dt:?}"
+        );
+        let _ = h.join();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn zombie_reaper_keeps_slot_occupied_until_child_actually_exits() {
+        // C639-002 probe ("failed termination/wait"): SIGKILL is
+        // unblockable on POSIX, so a real "kill succeeded but the
+        // process outlives the confirm window" cannot be forced
+        // deterministically here — this instead exercises the reaper's
+        // own contract directly: the slot must stay Zombie for as long
+        // as the child is genuinely still alive, and only flip to Empty
+        // once `wait()` actually observes its exit, never speculatively.
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 2")
+            .spawn()
+            .unwrap();
+        let slot = Arc::new(Mutex::new(Slot::Zombie { generation: 5 }));
+        let ring = RingLog::new(16);
+        spawn_reaper(child, 5, Arc::clone(&slot), ring);
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*slot.lock().unwrap(), Slot::Zombie { generation: 5 });
+        std::thread::sleep(Duration::from_millis(2200));
+        assert_eq!(*slot.lock().unwrap(), Slot::Empty);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn execute_region_delay_stage_runs_before_the_fixed_native_budget() {
+        // C639-003 probe: a legitimate delay costs roughly delay_ms wall
+        // clock (the parent's own pre-admission stage), not meaningfully
+        // more — the native round trip itself is fast.
+        let f = write_reply_file(51, 1, 64);
+        let f_str = f.to_string_lossy().into_owned();
+        let sup = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), format!("cat {f_str}")],
+            1024,
+        );
+        let t0 = Instant::now();
+        let reply = sup.execute_region(51, 0, 0, 10, 10, false, 300).unwrap();
+        let dt = t0.elapsed();
+        assert_eq!(reply.session_id, 51);
+        assert!(dt >= Duration::from_millis(300), "delay stage too short: {dt:?}");
+        assert!(dt < Duration::from_millis(1500), "delay stage leaked into budget: {dt:?}");
+        std::fs::remove_file(&f).ok();
+
+        // C639-003 probe: a worker that never replies, requested with a
+        // delay, must be bounded to delay_ms + CAPTURE_DEADLINE_MS —
+        // never the delay stacked on top of an inflated or duplicated
+        // native budget.
+        let sup2 = CaptureSupervisor::with_child_args(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), "sleep 30".to_string()],
+            1024,
+        );
+        let t0 = Instant::now();
+        let err = sup2.execute_region(52, 0, 0, 10, 10, false, 300).unwrap_err();
+        let dt = t0.elapsed();
+        assert_eq!(err, SupervisorError::Timeout);
+        assert!(
+            dt >= Duration::from_millis(300 + CAPTURE_DEADLINE_MS),
+            "took {dt:?}"
+        );
+        assert!(
+            dt < Duration::from_millis(300 + CAPTURE_DEADLINE_MS + 2000),
+            "budget inflated by delay: took {dt:?}"
+        );
     }
 
     #[test]

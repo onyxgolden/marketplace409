@@ -95,6 +95,19 @@ struct AppState {
     /// hands it to that session's watchdog, so a stale watchdog can be
     /// told apart from the session it was spawned for.
     overlay_session: Mutex<u64>,
+    /// C639-007: the parent-owned token for "the pick/session currently
+    /// allowed to install an overlay context/window, or whose completed
+    /// capture may steal focus back to the main window." Minted (as the
+    /// session id itself) by `open_region_overlay` BEFORE its blocking
+    /// backdrop acquisition, so a pick claims ownership up front rather
+    /// than only after the blocking call returns; cleared by
+    /// `cancel_region_pick`; implicitly superseded whenever a newer pick
+    /// mints its own. Checked again atomically, with `pending_overlay`'s
+    /// lock held across both the check and the install, after every
+    /// blocking wait that could have been overtaken (initial acquisition
+    /// here; retry already fences itself via `pending_overlay`'s own
+    /// session id, held across its own check-and-show).
+    active_pick: Mutex<Option<u64>>,
     /// Bounded capture worker supervisor (C639 Option C). Owns the single
     /// worker slot, the 3 s parent deadline, generation fencing, and the
     /// phase ring log. All potentially blocking native acquisition for the
@@ -950,12 +963,16 @@ fn store_artifact_with_base_stem(
 }
 
 #[tauri::command]
-fn capture(
-    dto: CaptureRequestDto,
-    app: tauri::AppHandle,
-    state: State<AppState>,
-) -> Result<ArtifactRefDto, String> {
-    run_capture(&app, state, &dto)
+async fn capture(dto: CaptureRequestDto, app: tauri::AppHandle) -> Result<ArtifactRefDto, String> {
+    // C639-001: the full capture orchestration — the direct engine path
+    // or the supervised worker round trip for region captures — runs off
+    // the main thread. See the module note above `run_on_main_thread_sync`.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        run_capture(&app, state, &dto)
+    })
+    .await
+    .map_err(|e| format!("capture background task failed: {e}"))?
 }
 
 /// Shared capture path: the `capture` command and the Alt+PrintScreen
@@ -990,8 +1007,13 @@ fn run_capture_inner(
     dto: &CaptureRequestDto,
 ) -> Result<ArtifactRefDto, String> {
     let monitors = current_monitors()?;
-    // C639: the region-overlay session id must be read before `build_mode`
-    // takes the pending context.
+    // C639-004: provenance comes from the ORIGINAL request (`dto.mode`),
+    // never from the erased `CaptureMode` variant below — "region"
+    // (direct, no picker involved) and "region-overlay" both lower to the
+    // same `CaptureMode::RegionVirtual`, but only the overlay request has
+    // (or needs) a `pending_overlay` session to borrow. Read before
+    // `build_mode` takes the pending context.
+    let is_overlay_request = dto.mode == "region-overlay";
     let overlay_session = state
         .pending_overlay
         .lock()
@@ -1004,13 +1026,15 @@ fn run_capture_inner(
     // capture worker (3 s parent deadline, generation fencing, one worker
     // max). All other modes keep the existing direct engine path.
     if let Some((rect, delay_ms)) = worker_region_request(&mode) {
-        let session_id =
-            overlay_session.ok_or("region overlay session vanished before capture")?;
+        let session_id = region_worker_session_id(is_overlay_request, overlay_session, || {
+            mint_capture_session(&state)
+        })?;
         return run_capture_via_worker(
             app,
             &state,
             &id,
             session_id,
+            is_overlay_request,
             &rect,
             include_cursor,
             delay_ms,
@@ -1058,6 +1082,41 @@ fn worker_region_request(mode: &CaptureMode) -> Option<(Rect, u64)> {
     }
 }
 
+/// C639-004 dispatch: decide the capture-worker session identity from the
+/// request's own provenance (`is_overlay_request`, read from `dto.mode`),
+/// never from the erased `CaptureMode` variant — both "region" (direct)
+/// and "region-overlay" lower to the same `RegionVirtual`, and routing
+/// both into the overlay-required path broke direct region capture (and
+/// let a direct request silently borrow an unrelated, concurrently
+/// pending overlay's session identity). A direct region request always
+/// mints its own fresh id and never touches `pending_overlay`, even when
+/// one happens to be live for an unrelated in-flight pick; an overlay
+/// request whose context already vanished is a loud error, not a silent
+/// substitution. Pure (besides the lazy mint) so the dispatch contract is
+/// unit-testable without a live Tauri app.
+fn region_worker_session_id(
+    is_overlay_request: bool,
+    pending_overlay_session: Option<u64>,
+    mint_fresh: impl FnOnce() -> u64,
+) -> Result<u64, String> {
+    if is_overlay_request {
+        pending_overlay_session
+            .ok_or_else(|| "region overlay session vanished before capture".to_string())
+    } else {
+        Ok(mint_fresh())
+    }
+}
+
+/// Mint a fresh monotonic id for a capture-worker admission. Shared by the
+/// region-overlay pick (`open_region_overlay`) and a direct region
+/// request that has no overlay to borrow an identity from (C639-004) —
+/// drawn from the same counter so the two can never collide.
+fn mint_capture_session(state: &State<AppState>) -> u64 {
+    let mut counter = state.overlay_session.lock().unwrap();
+    *counter = counter.wrapping_add(1);
+    *counter
+}
+
 /// Final live region capture through the supervised worker (C639 Option C).
 /// Rebuilds the `CaptureArtifact` from the worker's validated reply,
 /// preserving the engine's provenance: cursor state, solid-color warnings,
@@ -1065,11 +1124,13 @@ fn worker_region_request(mode: &CaptureMode) -> Option<(Rect, u64)> {
 /// `NativeRasterEngine` acquisition — including the per-piece blank
 /// hard-fail (`validate_raw_blit`) — so the hard-fail blank policy is
 /// unchanged; only the execution boundary moved.
+#[allow(clippy::too_many_arguments)]
 fn run_capture_via_worker(
     app: &tauri::AppHandle,
     state: &State<AppState>,
     id: &str,
     session_id: u64,
+    is_overlay_request: bool,
     rect: &Rect,
     include_cursor: bool,
     delay_ms: u64,
@@ -1107,7 +1168,20 @@ fn run_capture_via_worker(
     let saved = store_artifact(state, id.to_string(), artifact)?;
     // Notify the main window (region captures originate from the overlay
     // window, which closed itself before acquisition).
-    focus_capture_window(app);
+    //
+    // C639-007: a direct (non-overlay) capture always may bring the main
+    // window forward, same as before. An overlay-originated capture only
+    // steals focus while its own session is still the active pick — if a
+    // NEWER pick has superseded it (or it was cancelled) during this
+    // worker's round trip, yanking focus now would pull the user out of
+    // whatever they are doing next. The artifact is saved and announced
+    // either way regardless — discarding a successfully captured result
+    // would be a worse regression than a skipped focus steal.
+    let still_current =
+        capture_focus_still_current(is_overlay_request, *state.active_pick.lock().unwrap(), session_id);
+    if still_current {
+        focus_capture_window(app);
+    }
     let _ = app.emit("capture-saved", saved.clone());
     Ok(saved)
 }
@@ -1853,6 +1927,59 @@ fn copy_text_to_clipboard_windows(text: &str) -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Main-thread dispatch (C639-001)
+// ---------------------------------------------------------------------------
+//
+// `begin_region_pick`, `retry_region_backdrop` and `capture` all run
+// orchestration that can legitimately block for up to the capture
+// worker's ~3.5 s budget (admission + native round trip + termination
+// confirmation). Tauri's documented default is that a command WITHOUT
+// `async` runs on the application's main thread — the same thread that
+// pumps the event loop and delivers window-destruction, IPC and hotkey
+// events. Blocking it for seconds means none of those can be processed
+// for the duration, which is exactly how a window that never finishes
+// closing (because the main thread is busy polling for it to finish
+// closing) becomes possible. (The prior per-module doc's claim of a
+// "Tauri command-pool thread" was incorrect — there is no such pool for
+// sync commands; this is the actual F12 correction.)
+//
+// The fix: these three commands are `async fn`, and their entire bodies
+// run via `tauri::async_runtime::spawn_blocking` on a plain background
+// thread — never the main thread, never a bare in-process thread with no
+// bound (spawn_blocking's pool IS bounded and its lifetime is owned by
+// the join handle this awaits). Window CREATION specifically
+// (`WebviewWindowBuilder::build`) is marshaled back onto the main thread
+// via `run_on_main_thread_sync` below, since creating a native window is
+// the one operation most tied to owning the platform message loop.
+// Window close/hide/show/set_focus are left as direct calls off the main
+// thread — consistent with this codebase's own pre-existing
+// `spawn_overlay_watchdog`, which has closed the overlay window from a
+// background `std::thread` for as long as it has existed, unflagged by
+// this review.
+
+/// Bridge a background thread to the main thread for one `FnOnce`, and
+/// wait (bounded) for its result. Used only for the window actions that
+/// need to run on the thread owning the event loop — never for the
+/// blocking native/supervisor work itself, which must stay off the main
+/// thread. Bounded rather than an unbounded `recv()`: a main thread that
+/// never services the dispatch (e.g. mid-shutdown) must surface as a
+/// loud error here, not hang the caller forever — "hang-safe by
+/// construction" applies to this bridge too, not just the capture worker.
+fn run_on_main_thread_sync<R: Send + 'static>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| format!("cannot dispatch to main thread: {e}"))?;
+    rx.recv_timeout(Duration::from_secs(5)).map_err(|_| {
+        "main-thread task did not reply within 5s (app may be shutting down)".to_string()
+    })
+}
+
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
 /// plus its `.forge.json` sidecar next to it. Purely local file copy.
 #[tauri::command]
@@ -1899,20 +2026,23 @@ fn export_capture(
 /// "missing required key monitor_id").
 #[tauri::command]
 #[allow(non_snake_case)]
-fn begin_region_pick(
+async fn begin_region_pick(
     monitorId: String,
     delayMs: Option<u64>,
     includeCursor: Option<bool>,
     app: tauri::AppHandle,
-    state: State<AppState>,
 ) -> Result<(), String> {
-    open_region_overlay(
-        app,
-        state,
-        &monitorId,
-        delayMs.unwrap_or(0),
-        includeCursor.unwrap_or(true),
-    )
+    let delay_ms = delayMs.unwrap_or(0);
+    let include_cursor = includeCursor.unwrap_or(true);
+    // C639-001: the whole orchestration (backdrop acquisition through the
+    // supervised worker, closing/waiting-out a stale overlay, building
+    // the new one) runs off the main thread — see the module note above
+    // `run_on_main_thread_sync`.
+    tauri::async_runtime::spawn_blocking(move || {
+        open_region_overlay(&app, &monitorId, delay_ms, include_cursor)
+    })
+    .await
+    .map_err(|e| format!("region-pick background task failed: {e}"))?
 }
 
 /// Shared overlay path: the `begin_region_pick` command and the
@@ -1937,12 +2067,12 @@ fn begin_region_pick(
 /// rather than rejected, so a crash can't lock Region out until the 60s
 /// watchdog eventually clears it.
 fn open_region_overlay(
-    app: tauri::AppHandle,
-    state: State<AppState>,
+    app: &tauri::AppHandle,
     monitor_id: &str,
     delay_ms: u64,
     include_cursor: bool,
 ) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let overlay_window_present = app.get_webview_window("overlay").is_some();
     if state.pending_overlay.lock().unwrap().is_some() && overlay_window_present {
         return Err("a region pick is already in progress; cancel it first".to_string());
@@ -1951,10 +2081,13 @@ fn open_region_overlay(
     // but its window is already gone) — the check above let that case
     // through deliberately. Close it and wait until it is really gone
     // before building the new window on the same label — `close()` is
-    // asynchronous and the builder would otherwise race it.
+    // asynchronous and the builder would otherwise race it. This whole
+    // function runs off the main thread (C639-001), so this poll loop no
+    // longer risks starving the event loop that actually has to deliver
+    // the window-destruction event it is waiting for.
     if overlay_window_present {
-        close_overlay_window(&app)?;
-        if !wait_for_overlay_gone(&app, Duration::from_millis(1500)) {
+        close_overlay_window(app)?;
+        if !wait_for_overlay_gone(app, Duration::from_millis(1500)) {
             return Err(
                 "stale overlay window did not close; region pick aborted rather than \
                  racing a new picker against the old one"
@@ -1968,18 +2101,43 @@ fn open_region_overlay(
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
     // Mint the session before acquisition so the worker request carries
-    // the session identity the overlay (and its watchdog) will use.
-    let session_id = {
-        let mut counter = state.overlay_session.lock().unwrap();
-        *counter = counter.wrapping_add(1);
-        *counter
-    };
+    // the session identity the overlay (and its watchdog) will use, and
+    // claim it as the active pick immediately (C639-007): a cancel, or a
+    // newer pick starting, during the blocking backdrop acquisition below
+    // must be able to supersede this one before it ever installs a
+    // window — not only after.
+    let session_id = mint_capture_session(&state);
+    *state.active_pick.lock().unwrap() = Some(session_id);
     // 1. Frozen backdrop first, while no overlay window exists. Runs in
-    // the supervised capture worker (C639 Option C).
+    // the supervised capture worker (C639 Option C) — a blocking native
+    // round trip, fine here since this whole function is already off the
+    // main thread.
     let backdrop_png = capture_region_backdrop(&state, session_id, &monitor.id)?;
     let (_, _, rgba) =
         decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
     let backdrop_blank = solid_frame_rgba(&rgba);
+    // Tauri `position`/`inner_size` take *logical* units: convert the
+    // monitor's physical virtual-desktop rect, or the overlay lands in the
+    // wrong place at the wrong size on mixed-DPI setups.
+    let origin = monitor.virtual_to_logical_placement(
+        monitor.origin_virtual.0 as i64,
+        monitor.origin_virtual.1 as i64,
+    );
+    let size_logical = monitor.size_logical;
+    let app_for_build = app.clone();
+    // C639-007: re-check the active-pick token AND install the context
+    // under ONE held lock, so a cancel (or a newer pick) landing between
+    // "the backdrop finished" and "this context/window exists" can never
+    // slip through — either this call completes its whole install first
+    // (window included — the lock stays held across the main-thread
+    // dispatch below), or the other side's clear/supersede happens first
+    // and this call aborts, never a partial mix of both.
+    let active = state.active_pick.lock().unwrap();
+    if !pick_still_active(*active, session_id) {
+        return Err(
+            "region pick was cancelled or superseded before the backdrop finished".to_string(),
+        );
+    }
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         monitor_id: monitor_id.to_string(),
         origin_virtual: monitor.origin_virtual,
@@ -1990,30 +2148,32 @@ fn open_region_overlay(
         session_id,
         backdrop_blank,
     });
-    // Tauri `position`/`inner_size` take *logical* units: convert the
-    // monitor's physical virtual-desktop rect, or the overlay lands in the
-    // wrong place at the wrong size on mixed-DPI setups.
-    let origin = monitor.virtual_to_logical_placement(
-        monitor.origin_virtual.0 as i64,
-        monitor.origin_virtual.1 as i64,
-    );
-    let window = tauri::WebviewWindowBuilder::new(
-        &app,
-        "overlay",
-        tauri::WebviewUrl::App("overlay.html".into()),
-    )
-    .title("Select region")
-    .position(origin.x, origin.y)
-    .inner_size(monitor.size_logical.0 as f64, monitor.size_logical.1 as f64)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .build()
-    .map_err(|e| format!("cannot open overlay: {e}"))?;
-    // Esc / right-click cancel lives in the overlay page, so the window must
-    // own keyboard focus for the escape hatches to work.
-    let _ = window.set_focus();
+    // C639-001: window CREATION is marshaled onto the main thread — the
+    // one window action here most tied to owning the platform message
+    // loop. `.set_focus()` travels with it in the same dispatch so the
+    // window is built and focused as one main-thread unit, rather than a
+    // second bounded round trip for a cosmetic follow-up.
+    run_on_main_thread_sync(app, move || -> Result<(), String> {
+        let window = tauri::WebviewWindowBuilder::new(
+            &app_for_build,
+            "overlay",
+            tauri::WebviewUrl::App("overlay.html".into()),
+        )
+        .title("Select region")
+        .position(origin.x, origin.y)
+        .inner_size(size_logical.0 as f64, size_logical.1 as f64)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .build()
+        .map_err(|e| format!("cannot open overlay: {e}"))?;
+        // Esc / right-click cancel lives in the overlay page, so the
+        // window must own keyboard focus for the escape hatches to work.
+        let _ = window.set_focus();
+        Ok(())
+    })??;
+    drop(active);
     spawn_overlay_watchdog(app.clone(), session_id);
     Ok(())
 }
@@ -2337,6 +2497,27 @@ fn watchdog_should_clear(pending: Option<&OverlayContext>, watchdog_session: u64
     pending.map(|ctx| ctx.session_id) == Some(watchdog_session)
 }
 
+/// C639-007: whether a pick's claim on `active_pick` is still valid after
+/// a blocking wait (the initial backdrop acquisition) — i.e. nothing
+/// cancelled or superseded it while that wait was in flight. Pure,
+/// mirroring `watchdog_should_clear`'s shape.
+fn pick_still_active(active_pick: Option<u64>, session_id: u64) -> bool {
+    active_pick == Some(session_id)
+}
+
+/// C639-007: whether a just-completed overlay-originated capture's own
+/// session is still the active pick, and so may steal focus back to the
+/// main window. A direct (non-overlay) request always returns true —
+/// unchanged behavior, nothing for it to be superseded by. Pure so the
+/// stale-focus-steal guard is unit-testable without a live Tauri app.
+fn capture_focus_still_current(
+    is_overlay_request: bool,
+    active_pick: Option<u64>,
+    session_id: u64,
+) -> bool {
+    !is_overlay_request || pick_still_active(active_pick, session_id)
+}
+
 #[tauri::command]
 fn overlay_context(state: State<AppState>) -> Result<OverlayContextDto, String> {
     let guard = state.pending_overlay.lock().unwrap();
@@ -2360,6 +2541,12 @@ fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
 
 #[tauri::command]
 fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+    // C639-007: fence the active-pick token FIRST (same lock order as
+    // `open_region_overlay`'s install: active_pick, then pending_overlay)
+    // so an initial acquisition that is still in flight sees the
+    // supersession the instant it re-checks, and can never win a race
+    // against this clear.
+    *state.active_pick.lock().unwrap() = None;
     *state.pending_overlay.lock().unwrap() = None;
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.close();
@@ -2420,7 +2607,16 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
 /// be reshown at all, the pick is cancelled outright — an invisible picker
 /// with a live session would be unrecoverable.
 #[tauri::command]
-fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+async fn retry_region_backdrop(app: tauri::AppHandle) -> Result<(), String> {
+    // C639-001: the retry's blocking supervisor round trip (plus its
+    // settle sleep) runs off the main thread.
+    tauri::async_runtime::spawn_blocking(move || retry_region_backdrop_blocking(&app))
+        .await
+        .map_err(|e| format!("retry background task failed: {e}"))?
+}
+
+fn retry_region_backdrop_blocking(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let (monitor_id, retry_session) = {
         let guard = state.pending_overlay.lock().unwrap();
         let ctx = guard
@@ -3705,12 +3901,21 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
     use forge_capture_core::hotkey::HotkeyAction;
     match action {
         HotkeyAction::FocusWindow => focus_capture_window(app),
+        // C639-001: the global-shortcut callback itself runs on the main
+        // thread (it must, to interact with window focus synchronously)
+        // — the same reason `begin_region_pick`/`capture` needed an
+        // explicit background boundary applies here. Dispatch to a
+        // background thread rather than blocking the shortcut callback
+        // (and therefore the main/event-loop thread) for the capture
+        // worker's multi-second budget.
         HotkeyAction::RegionCapture => match monitor_id_for_hotkey() {
             Ok(id) => {
-                let state = app.state::<AppState>();
-                if let Err(e) = open_region_overlay(app.clone(), state, &id, 0, true) {
-                    report_hotkey_error(app, &e);
-                }
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = open_region_overlay(&app, &id, 0, true) {
+                        report_hotkey_error(&app, &e);
+                    }
+                });
             }
             Err(e) => report_hotkey_error(app, &e),
         },
@@ -3734,10 +3939,13 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
                     delay_ms: Some(0),
                     include_cursor: true,
                 };
-                let state = app.state::<AppState>();
-                if let Err(e) = run_capture(app, state, &dto) {
-                    report_hotkey_error(app, &e);
-                }
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let state = app.state::<AppState>();
+                    if let Err(e) = run_capture(&app, state, &dto) {
+                        report_hotkey_error(&app, &e);
+                    }
+                });
             }
             Err(e) => report_hotkey_error(app, &e),
         },
@@ -3866,6 +4074,7 @@ fn main() {
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
             overlay_session: Mutex::new(0),
+            active_pick: Mutex::new(None),
             capture_supervisor: supervisor,
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
@@ -4110,14 +4319,19 @@ mod dto_ipc_tests {
         // assert the UI-facing contract through the DTO above and keep this
         // test as a tripwire reminding reviewers that renaming the
         // begin_region_pick parameters breaks the overlay flow.
-        let _ = begin_region_pick
-            as fn(
-                String,
-                Option<u64>,
-                Option<bool>,
-                tauri::AppHandle,
-                State<AppState>,
-            ) -> Result<(), String>;
+        //
+        // `begin_region_pick` is `async` (C639-001), so its return type is
+        // an anonymous `impl Future` and it can no longer be cast to a
+        // plain `fn` pointer. Pinning the signature by reference inside an
+        // uncalled closure still fails to compile on a rename/reorder/
+        // retype, or if the `State<AppState>` parameter this command used
+        // to take ever comes back.
+        let _pin = |monitor_id: String,
+                    delay_ms: Option<u64>,
+                    include_cursor: Option<bool>,
+                    app: tauri::AppHandle| {
+            let _future = begin_region_pick(monitor_id, delay_ms, include_cursor, app);
+        };
     }
 
     #[test]
@@ -4545,6 +4759,39 @@ mod region_picker_tests {
     }
 
     #[test]
+    fn pick_still_active_requires_exact_match() {
+        // C639-007: a pick claims active_pick before its blocking backdrop
+        // acquisition; after that wait, only an EXACT match (nothing
+        // cancelled it to None, nothing newer overwrote it) lets the
+        // install proceed.
+        assert!(pick_still_active(Some(5), 5));
+        assert!(!pick_still_active(None, 5), "cancelled must not read as active");
+        assert!(
+            !pick_still_active(Some(6), 5),
+            "a newer, different pick must not read as this one's"
+        );
+    }
+
+    #[test]
+    fn capture_focus_still_current_gates_only_overlay_originated_captures() {
+        // C639-007: a direct (non-overlay) capture always may steal focus
+        // — unchanged behavior, nothing for it to be superseded by.
+        assert!(capture_focus_still_current(false, None, 5));
+        assert!(capture_focus_still_current(false, Some(999), 5));
+        // An overlay-originated capture only steals focus while its own
+        // session is still the active pick.
+        assert!(capture_focus_still_current(true, Some(5), 5));
+        assert!(
+            !capture_focus_still_current(true, None, 5),
+            "cancelled during the worker round trip must not steal focus"
+        );
+        assert!(
+            !capture_focus_still_current(true, Some(6), 5),
+            "a newer pick must not have its focus stolen by an older capture's result"
+        );
+    }
+
+    #[test]
     fn capture_aborts_when_overlay_still_present() {
         // The never-capture-with-overlay-visible contract: a stuck overlay
         // window aborts the BitBlt loudly instead of screenshotting the
@@ -4615,6 +4862,50 @@ mod region_picker_tests {
             window_id: "w".to_string()
         })
         .is_none());
+    }
+
+    #[test]
+    fn direct_region_mints_fresh_session_with_no_picker_pending() {
+        // C639-004: a direct ("region") capture has no overlay to borrow
+        // an identity from and must not require one.
+        let id = region_worker_session_id(false, None, || 777).unwrap();
+        assert_eq!(id, 777);
+    }
+
+    #[test]
+    fn delayed_direct_region_also_mints_fresh_session() {
+        // C639-004: the delayed variant of a direct region request takes
+        // the exact same dispatch path as the plain one.
+        let mode = CaptureMode::Delayed {
+            mode: Box::new(CaptureMode::RegionVirtual {
+                rect: Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 },
+            }),
+            delay_ms: 1000,
+        };
+        assert!(worker_region_request(&mode).is_some());
+        let id = region_worker_session_id(false, None, || 778).unwrap();
+        assert_eq!(id, 778);
+    }
+
+    #[test]
+    fn direct_region_never_borrows_an_unrelated_pending_overlay_session() {
+        // C639-004: a direct region request must not silently consume a
+        // DIFFERENT, concurrently pending overlay pick's session
+        // identity — even though one happens to be live.
+        let id = region_worker_session_id(false, Some(999), || 42).unwrap();
+        assert_eq!(id, 42, "must mint fresh, not borrow the unrelated session 999");
+    }
+
+    #[test]
+    fn overlay_region_uses_its_own_pending_session() {
+        let id = region_worker_session_id(true, Some(5), || panic!("must not mint")).unwrap();
+        assert_eq!(id, 5);
+    }
+
+    #[test]
+    fn overlay_region_with_vanished_context_is_a_loud_error() {
+        let err = region_worker_session_id(true, None, || panic!("must not mint")).unwrap_err();
+        assert!(err.contains("vanished"));
     }
 }
 
