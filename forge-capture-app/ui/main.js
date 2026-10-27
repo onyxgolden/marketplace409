@@ -6,6 +6,7 @@
 // frontend side.) The AI Edit session state machine lives in ai-edit.js.
 import { AiEditSession } from "./ai-edit.js";
 import { formatCaptureFailedStatus, previewDataUrl } from "./main-core.js";
+import { createPreviewController } from "./preview-controller.js";
 
 function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -238,7 +239,7 @@ function captureItem(ref) {
   // shows the most recent one it was asked to show).
   const previewBtn = document.createElement("button");
   previewBtn.textContent = "Preview";
-  previewBtn.onclick = () => void showPreview(ref);
+  previewBtn.onclick = () => void openPreview(ref);
 
   // AI Edit — on every captured image. The original is never modified;
   // the finished edit arrives as a new versioned copy in this list.
@@ -307,102 +308,10 @@ function captureItem(ref) {
   // Snagit-style: a fresh capture opens its own preview automatically. This
   // runs after the dedup guard above, so it fires exactly once per capture
   // id no matter which path (the event or a direct invoke() return) got
-  // here first.
-  void showPreview(ref);
-}
-
-// ---------------------------------------------------------------------------
-// Capture preview dialog — Snagit-style: shows the actual image right after
-// a capture, with Copy / Save As / Edit, and is reopenable from history via
-// each row's own "Preview" button. The dialog always reflects whichever
-// capture it was most recently asked to show; a rapid second capture simply
-// replaces the image rather than stacking another window.
-// ---------------------------------------------------------------------------
-
-let previewRef = null;
-
-function setPreviewStatus(text, kind) {
-  const el = $("preview-status");
-  el.textContent = text || "";
-  el.className = "status" + (kind ? " " + kind : "");
-}
-
-async function showPreview(ref) {
-  if (!ref) return;
-  previewRef = ref;
-  $("preview-meta").textContent = `${ref.kind} — ${ref.width}x${ref.height}`;
-  const img = $("preview-image");
-  img.removeAttribute("src");
-  setPreviewStatus("Loading preview…");
-  const dialog = $("preview-dialog");
-  if (!dialog.open) dialog.showModal();
-  try {
-    // Read-only: the same bytes-over-IPC payload the Save-to-FORGE upload
-    // path already uses (base64 + MIME), never a raw file:// URL or a wider
-    // Tauri asset-protocol scope. Capped at 25 MB there, so a very large
-    // capture (an uncommon but real case on a big multi-monitor desktop)
-    // reports that honestly below instead of showing a broken image.
-    const payload = await invoke("get_capture_upload_payload", { id: ref.id });
-    if (previewRef !== ref) return;
-    const url = previewDataUrl(payload);
-    if (!url) throw new Error("preview payload was empty or malformed");
-    // PNG magic check (89 50 4E 47 → base64 "iVBOR"): if the capture
-    // pipeline ever hands us non-image bytes, say so with the byte count
-    // instead of rendering a silent white box.
-    if (payload.mime === "image/png" && !payload.bytes_b64.startsWith("iVBOR")) {
-      throw new Error(
-        `capture bytes are not a PNG (${payload.bytes_b64.length} base64 chars)`
-      );
-    }
-    // Wait for the image to actually decode: a data: URL that fails to
-    // decode renders as a silent blank box, so report it instead of
-    // clearing "Loading preview…" prematurely.
-    await new Promise((resolve, reject) => {
-      img.onload = () => {
-        img.onload = img.onerror = null;
-        resolve();
-      };
-      img.onerror = () => {
-        img.onload = img.onerror = null;
-        reject(new Error("preview image could not be decoded"));
-      };
-      img.src = url;
-    });
-    // A capture superseded by a second one while this was still loading
-    // must not clobber the newer preview that may already be showing.
-    if (previewRef !== ref) return;
-    setPreviewStatus("");
-  } catch (e) {
-    if (previewRef !== ref) return;
-    setPreviewStatus(`Preview unavailable (${e.message || e}) — Copy and Save As still work.`, "warning");
-  }
-}
-
-function initPreviewDialog() {
-  $("preview-copy").onclick = async () => {
-    if (!previewRef) return;
-    try {
-      await invoke("copy_to_clipboard", { id: previewRef.id });
-      setPreviewStatus("Copied to clipboard.", "ok");
-    } catch (e) {
-      setPreviewStatus(`Copy failed: ${e}`, "error");
-    }
-  };
-  $("preview-save-as").onclick = async () => {
-    if (!previewRef) return;
-    try {
-      const path = await invoke("export_capture", { id: previewRef.id });
-      setPreviewStatus(`Saved a copy to ${path}`, "ok");
-    } catch (e) {
-      setPreviewStatus(`Save As failed: ${e}`, "error");
-    }
-  };
-  $("preview-edit").onclick = () => {
-    if (!previewRef) return;
-    $("preview-dialog").close();
-    openAiEditDialog(previewRef);
-  };
-  $("preview-close").onclick = () => $("preview-dialog").close();
+  // here first. Routes through the generation-guarded preview controller
+  // (see "Capture preview dialog" below) — the race-prone ad hoc preview
+  // implementation this replaced is gone, not left running alongside it.
+  void openPreview(ref);
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +466,117 @@ async function probeForgeSaveButtons() {
 window.ForgeSaveUI = { saveToForge, probeForgeSaveButtons };
 
 // ---------------------------------------------------------------------------
+// Capture preview dialog
+// ---------------------------------------------------------------------------
+// Opens automatically after every successful capture so the scribe workflow
+// (capture → preview → export) can start immediately. The dialog shows the
+// saved PNG, its metadata, and actions for the same capture: Copy, AI Edit,
+// Save as… (export), Close.
+//
+// The preview state machine lives in preview-controller.js: one
+// capture-bound generation guards every async completion, close invalidates
+// pending loads, and the action buttons stay disabled until the displayed
+// image has actually decoded for the current capture.
+//
+// Scope note (PR #639 fix round): this dialog is preview-only. The "AI Edit"
+// button opens the existing AI Edit dialog; the manual annotation canvas
+// (arrows/boxes/text) is a separate scoped slice, not claimed here.
+
+let previewController = null;
+
+function defaultImageLoader(img, src, isCurrent) {
+  return new Promise((resolve, reject) => {
+    const onLoad = () => {
+      cleanup();
+      // Decode may still have finished for a stale generation; the
+      // controller re-checks, but abandon early when we already know.
+      if (!isCurrent()) reject(new Error("stale"));
+      else resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("decode failed"));
+    };
+    const cleanup = () => {
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+    };
+    img.addEventListener("load", onLoad);
+    img.addEventListener("error", onError);
+    img.src = src;
+  });
+}
+
+function initPreviewController() {
+  const dlg = $("preview-dialog");
+  previewController = createPreviewController({
+    invoke,
+    els: {
+      meta: $("preview-meta"),
+      status: $("preview-status"),
+      warnings: $("preview-warnings"),
+      image: $("preview-image"),
+    },
+    dialog: {
+      show: () => {
+        if (!dlg.open) dlg.showModal();
+      },
+      close: () => dlg.close(),
+      isOpen: () => dlg.open,
+    },
+    loadImage: defaultImageLoader,
+    actions: {
+      buttons: [$("preview-copy"), $("preview-edit"), $("preview-save-as")],
+    },
+  });
+}
+
+function openPreview(ref) {
+  if (previewController) void previewController.open(ref);
+}
+
+function closePreview() {
+  if (previewController) previewController.close();
+}
+
+async function onPreviewCopy() {
+  const id = previewController && previewController.targetId();
+  if (!id) return;
+  try {
+    await invoke("copy_to_clipboard", { id });
+    setPreviewStatus("Copied to clipboard.", "ok");
+  } catch (e) {
+    setPreviewStatus(`Copy failed: ${e}`, "error");
+  }
+}
+
+function setPreviewStatus(text, kind) {
+  const el = $("preview-status");
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+async function onPreviewSaveAs() {
+  const id = previewController && previewController.targetId();
+  if (!id) return;
+  try {
+    const path = await invoke("export_capture", { id });
+    setPreviewStatus(`Exported to ${path}`, "ok");
+  } catch (e) {
+    setPreviewStatus(`Export failed: ${e}`, "error");
+  }
+}
+
+function onPreviewAiEdit() {
+  const id = previewController && previewController.targetId();
+  if (!id) return;
+  // Close the preview first so the dialogs don't stack.
+  closePreview();
+  // Reuse the session-library ref shape the AI Edit dialog expects.
+  openAiEditDialog({ id });
+}
+
+// ---------------------------------------------------------------------------
 // Capture
 // ---------------------------------------------------------------------------
 
@@ -601,6 +621,8 @@ async function doCapture() {
         includeCursor: includeCursor(),
       },
     });
+    // captureItem() opens the preview itself (Snagit-style auto-open covers
+    // every capture path, direct or event-driven) — no separate trigger here.
     captureItem(ref);
     setStatus(`Saved ${ref.width}x${ref.height}.`, "ok");
   } catch (e) {
@@ -710,7 +732,12 @@ async function init() {
   $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
   $("ai-edit-submit").addEventListener("click", onAiEditSubmit);
   $("ai-edit-cancel").addEventListener("click", onAiEditCancel);
-  initPreviewDialog();
+  // Capture preview dialog buttons.
+  $("preview-close").addEventListener("click", closePreview);
+  $("preview-copy").addEventListener("click", () => void onPreviewCopy());
+  $("preview-save-as").addEventListener("click", () => void onPreviewSaveAs());
+  $("preview-edit").addEventListener("click", onPreviewAiEdit);
+  initPreviewController();
   onModeChange();
   onScrollTargetChange();
   await listenCaptureSaved();

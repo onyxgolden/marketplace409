@@ -993,6 +993,11 @@ fn run_capture_inner(
     match engine.acquire(&request, &monitors) {
         ScrollingResult::Complete { artifact } => {
             let saved = store_artifact(&state, id, artifact)?;
+            // C639-004: a global-shortcut capture (Alt+PrintScreen) with the
+            // app minimized must bring the preview into view — the DOM dialog
+            // cannot unminimize the native window by itself. This runs AFTER
+            // acquisition, so focusing cannot pollute the screenshot.
+            focus_capture_window(app);
             // Notify the main window (region captures originate from the
             // overlay window, which has already closed itself).
             let _ = app.emit("capture-saved", saved.clone());
@@ -1471,6 +1476,41 @@ fn get_capture_upload_payload(
     };
     if bytes.len() > UPLOAD_CAP_BYTES {
         return Err("Capture exceeds the 25 MB FORGE upload cap.".to_string());
+    }
+    let mime = sidecar_raster_mime(&sidecar_json)?;
+    Ok(CaptureUploadPayloadDto {
+        bytes_b64: base64_encode(&bytes),
+        mime,
+    })
+}
+
+/// Local-display payload for the capture preview dialog (C639-001).
+///
+/// Unlike `get_capture_upload_payload` — whose 25MB cap is a *server-upload*
+/// policy — this path must not refuse a valid large capture: a 3840×2160
+/// RGBA screenshot is ~33MB raw before PNG overhead, so the upload cap
+/// would wrongly block local preview of ordinary 4K captures. Bounded at
+/// 256MB as a sanity limit against pathological files; empty payloads are
+/// refused loudly so the preview can show a real error instead of a blank
+/// image (C639-003).
+#[tauri::command]
+fn get_capture_preview_payload(
+    id: String,
+    state: State<AppState>,
+) -> Result<CaptureUploadPayloadDto, String> {
+    const PREVIEW_CAP_BYTES: usize = 256 * 1024 * 1024;
+    let (bytes, sidecar_json) = {
+        let captures = state.captures.lock().unwrap();
+        let stored = captures
+            .get(&id)
+            .ok_or_else(|| format!("unknown capture id: {id}"))?;
+        (stored.png_bytes.clone(), stored.sidecar_json.clone())
+    };
+    if bytes.is_empty() {
+        return Err("Capture has no image data.".to_string());
+    }
+    if bytes.len() > PREVIEW_CAP_BYTES {
+        return Err("Capture exceeds the 256 MB local preview limit.".to_string());
     }
     let mime = sidecar_raster_mime(&sidecar_json)?;
     Ok(CaptureUploadPayloadDto {
@@ -3530,6 +3570,7 @@ fn main() {
             session_store::forge_session_set,
             session_store::forge_session_clear,
             get_capture_upload_payload,
+            get_capture_preview_payload,
             copy_text_to_clipboard,
             open_external_url,
         ])
