@@ -61,7 +61,17 @@
  *   complete. Unknown statuses force qualified coverage. No status
  *   is inferred from a percentage, no missing package supplies a
  *   denominator, and scheduler block percents are never averaged
- *   into package completion (unrelated measures).
+ *   into package completion (unrelated measures). The population
+ *   is authoritative only when the controls snapshot's package
+ *   dataset is complete and usable with no expected-count
+ *   conflict; otherwise the denominator is WITHHELD and observed
+ *   counts are labeled as a subset, never an accounted population.
+ *   A verified empty population (expected 0, received 0) is
+ *   ACCOUNTED 0 of 0 — distinct from an unknown population. The
+ *   section carries a bounded source-linked basis (one contributor
+ *   per admitted package, citing its package span) and minted
+ *   completion questions carry the package's actual status/claim
+ *   with its available span evidence.
  * - Every sourced 100% / terminal-status claim carries its
  *   completion question and the unverified-physical-progress
  *   label: a claim is a reported claim, never independently
@@ -324,6 +334,26 @@ function carryRow({ agent, scope, section, sourceSection, sourceRow, snapshotSpa
   if (sourceRow.disagreement !== undefined) row.disagreement = sourceRow.disagreement;
   if (sourceRow.block_ref !== undefined) row.block_ref = sourceRow.block_ref;
   if (sourceRow.task_code !== undefined) row.task_code = sourceRow.task_code;
+  // P678-001: a carried Scheduler component row keeps its analysis
+  // outcome verbatim — conclusion, reason, qualifications — so a
+  // failed component analysis is visible as a finding with its
+  // source reason, never silently dropped. A NOT_MODELED component
+  // gets a factual detail line (the source row carries no detail):
+  // the agenda renders this row, so the failure reaches the human.
+  if (sourceRow.component_id !== undefined) row.component_id = sourceRow.component_id;
+  if (sourceRow.conclusion !== undefined) row.conclusion = sourceRow.conclusion;
+  if (sourceRow.prototype_status !== undefined) row.prototype_status = sourceRow.prototype_status;
+  if (sourceRow.prototype_reason !== undefined) row.prototype_reason = sourceRow.prototype_reason;
+  if (sourceRow.prototype_detail !== undefined) row.prototype_detail = sourceRow.prototype_detail;
+  if (sourceRow.qualifications !== undefined) row.qualifications = sourceRow.qualifications;
+  if (sourceRow.withheld !== undefined) row.withheld = sourceRow.withheld;
+  if (sourceSection === "components" && sourceRow.conclusion === "NOT_MODELED") {
+    const reason = sourceRow.prototype_reason ?? null;
+    const extra = typeof sourceRow.prototype_detail === "string" && sourceRow.prototype_detail.length > 0
+      ? ` — ${sourceRow.prototype_detail}` : "";
+    row.detail = `Scheduler component ${sourceRow.component_id} analysis did not complete: ${sourceRow.conclusion}`
+      + `${reason ? ` (${reason})` : ""}${extra}. Combined conclusions cannot treat this component as modeled; resolve the predecessor analysis failure first.`;
+  }
   return { row };
 }
 
@@ -387,8 +417,24 @@ export function evaluateManagerComposition({
       agent: "scheduler", scope, section: "findings_scheduler", sourceSection: "review_list",
       sourceRows: schedulerReport.sections?.review_list?.rows, snapshotSpanKeys: spanKeys,
     });
-    schedulerFindings = [...integrity.rows, ...reviews.rows];
-    gaps.push(...integrity.gaps, ...reviews.gaps);
+    // P678-001: a Scheduler component whose analysis did not
+    // complete (NOT_MODELED) is a finding, not an absence. Carrying
+    // only the failed class keeps healthy/qualified components out
+    // of the findings list; their qualifications already surface via
+    // lookahead disagreements and review rows. The carried row is
+    // normalized to a schedule_projects citation of the component
+    // (the source row carries no dataset/record_ref of its own).
+    // No schedule math is recomputed here and the Scheduler is not
+    // changed: the leg's own conclusion and reason are carried.
+    const failedComponents = carrySection({
+      agent: "scheduler", scope, section: "findings_scheduler", sourceSection: "components",
+      sourceRows: (schedulerReport.sections?.components?.rows ?? [])
+        .filter((r) => r.conclusion === "NOT_MODELED")
+        .map((r) => ({ ...r, kind: "component", dataset: "schedule_projects", record_ref: r.component_id })),
+      snapshotSpanKeys: spanKeys,
+    });
+    schedulerFindings = [...integrity.rows, ...reviews.rows, ...failedComponents.rows];
+    gaps.push(...integrity.gaps, ...reviews.gaps, ...failedComponents.gaps);
     const milestones = carrySection({
       agent: "scheduler", scope, section: "milestones", sourceSection: "lookahead",
       sourceRows: schedulerReport.sections?.lookahead?.rows, snapshotSpanKeys: spanKeys,
@@ -416,19 +462,68 @@ export function evaluateManagerComposition({
   for (const g of gaps) diagnostics.push({ source: "composition", code: g.code, reason: g.detail });
 
   // --- completion accounting (controls leg only; scheduler block percents never averaged in) ---
+  // P678-003: completion is qualified by the CONTROLS package
+  // population's own coverage — the controls snapshot's
+  // forge_work_packages dataset facts (expected/received/complete/
+  // usable) plus an expected-count conflict gap. Nothing else
+  // gates it: overall snapshot consistency, baseline/snapshot
+  // dataset failures, and unrelated baseline gaps do not erase a
+  // demonstrably complete package population (the unrelated-
+  // baseline-failure control). When the population is not
+  // authoritative the denominator is WITHHELD (admitted/terminal/
+  // cancelled null) while observed subset counts are kept and
+  // explicitly labeled — a verified empty population (expected 0,
+  // received 0, complete, usable) is ACCOUNTED 0 of 0, which is
+  // distinct from an unknown population.
+  // P678-004: the section carries a bounded source-linked basis
+  // (one contributor per admitted package, citing its package span)
+  // so the evidence consumer can verify every operand; minted
+  // completion questions carry the package's actual status/claim
+  // and its available span evidence, never an invented claim.
+  const packagePopulation = (snapshot) => {
+    const facts = snapshot?.datasets?.forge_work_packages ?? null;
+    const conflict = (snapshot?.coverage_gaps ?? [])
+      .some((g) => g.dataset === "forge_work_packages" && g.code === "EXPECTED_COUNT_CONFLICT");
+    const authoritative = facts !== null && facts.complete === true && facts.usable === true && !conflict;
+    let reason;
+    if (facts === null) reason = "no package coverage facts in the controls snapshot";
+    else if (conflict) reason = "package expected count conflict across pages";
+    else if (facts.complete !== true) reason = "package coverage incomplete (expected count unattested or unmet)";
+    else if (facts.usable !== true) reason = "package coverage complete but unusable (invalid projected fields)";
+    else reason = "package population complete and usable";
+    return {
+      authoritative,
+      expected: facts?.expected ?? null,
+      received: facts?.received ?? null,
+      complete: facts?.complete ?? false,
+      usable: facts?.usable ?? false,
+      conflict,
+      reason,
+    };
+  };
   let completion;
   const mintedCompletionQuestions = [];
   if (!controlsBind.bound) {
+    const population = {
+      authoritative: false, expected: null, received: null,
+      complete: false, usable: false, conflict: false,
+      reason: "controls predecessor envelope is unbound",
+    };
     completion = {
       state: "WITHHELD",
       reason: "controls predecessor envelope is unbound; completion cannot be accounted from an untrusted envelope",
+      population,
       admitted_packages: null, terminal_count: null, cancelled_count: null,
-      counts_by_status: {}, unknown_statuses: [],
+      counts_by_status: {}, observed_packages: 0, observed_terminal_count: 0,
+      unknown_statuses: [],
       terminal_statuses: [...TERMINAL_PACKAGE_STATUSES],
       progress_label: "unverified-physical-progress",
+      basis: { population, contributors: [] },
     };
   } else {
     const pkgRows = controlsReport.sections?.packages?.rows ?? [];
+    const population = packagePopulation(controlsSnapshot);
+    const controlsSpanKeys = admittedSpanKeys(controlsSnapshot);
     const countsByStatus = {};
     const unknownStatuses = [];
     let terminalCount = 0;
@@ -443,21 +538,45 @@ export function evaluateManagerComposition({
         unknownStatuses.push(p.package_ref ?? p.row_id ?? "unknown");
       }
     }
+    const basisContributors = pkgRows.map((p) => {
+      const ref = p.package_ref ?? null;
+      const key = `forge_work_packages:${ref}`;
+      const bound = ref !== null && controlsSpanKeys.has(key);
+      const contributor = {
+        package_ref: ref,
+        status: p.status ?? null,
+        percent_complete_claim: p.percent_complete_claim ?? null,
+        evidence: bound ? [{ dataset: "forge_work_packages", record_ref: ref }] : [],
+        evidence_state: bound ? "BOUND" : "PARTIAL",
+      };
+      if (!bound) contributor.unresolved_evidence = [key];
+      return contributor;
+    });
     // Completion questions: every 100% claim / terminal-status
     // package must carry one. The controls leg asks them; if a
     // claim arrives without its question, mint it here rather
-    // than publishing the claim bare.
+    // than publishing the claim bare — with the package's ACTUAL
+    // status/claim and its available span evidence. A terminal
+    // status at 55% (or with no percent) is never worded as a
+    // "100% progress claim": that claim was never made.
     const carriedQuestions = controlsFindings.filter((r) => r.source_section === "questions");
     for (const p of pkgRows) {
-      const claimsComplete = p.percent_complete_claim === 100
-        || TERMINAL_PACKAGE_STATUSES.includes(p.status ?? "");
-      if (!claimsComplete) continue;
+      const claim100 = p.percent_complete_claim === 100;
+      const terminal = TERMINAL_PACKAGE_STATUSES.includes(p.status ?? "");
+      if (!claim100 && !terminal) continue;
       const snapshotRefs = new Set((p.snapshots ?? []).map((s) => s.snapshot_ref));
       const hasQuestion = carriedQuestions.some((q) =>
         (q.record_ref === p.package_ref || snapshotRefs.has(q.record_ref))
-        && typeof q.question === "string" && q.question.includes("100% progress claim"));
+        && typeof q.question === "string"
+        && (q.question.includes("100% progress claim") || q.question.includes("terminal status")));
       if (hasQuestion) continue;
-      mintedCompletionQuestions.push({
+      const ref = p.package_ref ?? null;
+      const key = `forge_work_packages:${ref}`;
+      const bound = ref !== null && controlsSpanKeys.has(key);
+      const clarification = claim100
+        ? "Is the 100% progress claim supported by observed physical completion evidence? A sourced 100% is a reported claim, never independently observed completion."
+        : `Package ${ref} reports terminal status '${p.status}' with declared progress ${p.percent_complete_claim === null || p.percent_complete_claim === undefined ? "not stated" : `${p.percent_complete_claim}%`}. Is the terminal status supported by observed physical completion evidence? A terminal status is a reported claim, never independently observed completion.`;
+      const minted = {
         row_id: rowIdFor({
           agent, scope, section: "agenda", kind: "COMPLETION_QUESTION",
           dataset: "forge_work_packages", record: p.package_ref ?? "", discriminator: "minted",
@@ -467,24 +586,32 @@ export function evaluateManagerComposition({
         source_row_id: null,
         kind: "COMPLETION_QUESTION",
         dataset: "forge_work_packages",
-        record_ref: p.package_ref ?? null,
-        requested_clarification: "Is the 100% progress claim supported by observed physical completion evidence? A sourced 100% is a reported claim, never independently observed completion.",
+        record_ref: ref,
+        requested_clarification: clarification,
         responsible_role: "project reviewer",
-        evidence: [],
-        evidence_state: "UNAVAILABLE",
+        evidence: bound ? [{ dataset: "forge_work_packages", record_ref: ref }] : [],
+        evidence_state: bound ? "BOUND" : "PARTIAL",
         progress_label: "unverified-physical-progress",
-      });
+      };
+      if (!bound) minted.unresolved_evidence = [key];
+      mintedCompletionQuestions.push(minted);
     }
     completion = {
-      state: unknownStatuses.length > 0 ? "QUALIFIED" : "ACCOUNTED",
-      admitted_packages: pkgRows.length,
-      terminal_count: terminalCount,
-      cancelled_count: cancelledCount,
+      state: !population.authoritative ? "WITHHELD" : (unknownStatuses.length > 0 ? "QUALIFIED" : "ACCOUNTED"),
+      population,
+      admitted_packages: population.authoritative ? pkgRows.length : null,
+      terminal_count: population.authoritative ? terminalCount : null,
+      cancelled_count: population.authoritative ? cancelledCount : null,
       counts_by_status: countsByStatus,
+      observed_packages: pkgRows.length,
+      observed_terminal_count: terminalCount,
       unknown_statuses: unknownStatuses,
       terminal_statuses: [...TERMINAL_PACKAGE_STATUSES],
       progress_label: "unverified-physical-progress",
-      note: "Counts are source-defined terminal statuses over the admitted package population. Cancelled packages are counted separately, never as complete. Package percent_complete values are claims, never observed physical completion, and scheduler block percents are a different population that is never averaged into this accounting.",
+      basis: { population, contributors: basisContributors },
+      note: population.authoritative
+        ? "Counts are source-defined terminal statuses over the admitted package population. Cancelled packages are counted separately, never as complete. Package percent_complete values are claims, never observed physical completion, and scheduler block percents are a different population that is never averaged into this accounting."
+        : `Package population is not authoritative (${population.reason}): the denominator is withheld. Counts by status and the basis below are observed-subset counts only, explicitly labeled, never an accounted population.`,
     };
   }
 
@@ -503,7 +630,7 @@ export function evaluateManagerComposition({
   // --- review agenda: carried items + minted questions + gap questions ---
   const agendaRows = [];
   const pushAgenda = (carried) => {
-    agendaRows.push({
+    const agendaRow = {
       row_id: rowIdFor({
         agent, scope, section: "agenda", kind: carried.kind ?? "carried",
         dataset: carried.dataset ?? "", record: carried.record_ref ?? "", discriminator: carried.source_row_id ?? "",
@@ -519,10 +646,16 @@ export function evaluateManagerComposition({
       responsible_role: "project reviewer",
       evidence: carried.evidence ?? [],
       evidence_state: carried.evidence_state ?? "BOUND",
-    });
+    };
+    // P678-002: the agenda copy of a PARTIAL row must name the same
+    // unresolved citations as the finding, or the evidence gate
+    // would demand a span for a subject reference that is not an
+    // admitted record (and the cycle positive would refuse).
+    if (carried.unresolved_evidence !== undefined) agendaRow.unresolved_evidence = carried.unresolved_evidence;
+    agendaRows.push(agendaRow);
   };
   for (const row of schedulerFindings) {
-    if (row.source_section === "review_list") pushAgenda(row);
+    if (row.source_section === "review_list" || row.source_section === "components") pushAgenda(row);
   }
   for (const row of controlsFindings) {
     if (row.source_section === "checklist" || row.source_section === "questions") pushAgenda(row);

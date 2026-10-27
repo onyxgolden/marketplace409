@@ -684,7 +684,7 @@ describe("managerComposition (P2b-3)", () => {
   }
   // A snapshot whose digest recomputes exactly as the composition
   // verifies it: canonicalDigest over {envelope, records}.
-  function legSnapshot(scope, { consistency = "CONSISTENT", evidence = {} } = {}) {
+  function legSnapshot(scope, { consistency = "CONSISTENT", evidence = {}, datasets = {} } = {}) {
     const envelope = {
       schema_version: "planning-snapshot@1",
       snapshot_request_id: "snap-leg-unit-1", owner_ref: "owner-1",
@@ -692,7 +692,7 @@ describe("managerComposition (P2b-3)", () => {
       source_system: "synthetic-repository", source_revision: "rev-1",
       collection: { started_at: AS_OF, finished_at: AS_OF },
       as_of: AS_OF, review_date: "2026-10-26", as_of_timezone: "UTC",
-      mapping_version: FIELD_MAPPING_VERSION, datasets: {},
+      mapping_version: FIELD_MAPPING_VERSION, datasets,
       consistency, coverage_gaps: [], stale: false, conflicts: [],
       collection_errors: [],
     };
@@ -727,9 +727,25 @@ describe("managerComposition (P2b-3)", () => {
     };
   }
   function boundPair({ schedulerSections: sSections, controlsSections: cSections,
-    schedulerEvidence = {}, controlsEvidence = {} } = {}) {
+    schedulerEvidence = {}, controlsEvidence = {}, controlsDatasets } = {}) {
     const sSnap = legSnapshot(SCHED_SCOPE, { evidence: schedulerEvidence });
-    const cSnap = legSnapshot(CTL_SCOPE, { evidence: controlsEvidence });
+    // P678-003: the controls leg snapshot must attest its package
+    // population exactly — snapshotBuilder always emits datasets
+    // facts in production-shaped inputs, and the population gate
+    // withholds (WITHHELD) when the fact is absent, because an
+    // unattested population has no authoritative denominator. The
+    // old {} shorthand modeled no such attestation. Default: the
+    // fact matching the fixture's package rows, complete and
+    // usable; callers may override controlsDatasets to model
+    // unattested/conflict populations.
+    const pkgRows = cSections?.sections?.packages?.rows ?? [];
+    const cDatasets = controlsDatasets ?? {
+      forge_work_packages: {
+        expected: pkgRows.length, received: pkgRows.length,
+        complete: true, pages_complete: true, usable: true, revision: "rev-1",
+      },
+    };
+    const cSnap = legSnapshot(CTL_SCOPE, { evidence: controlsEvidence, datasets: cDatasets });
     const sRep = legReport("scheduler", JOB_KINDS.SCHEDULER_PLANNING_REVIEW,
       "planning-scheduler-report@1", SCHED_SCOPE, sSnap.digest, schedulerSections(sSections));
     const cRep = legReport("project-controls", JOB_KINDS.CONTROLS_EVIDENCE_REVIEW,
@@ -957,6 +973,27 @@ describe("managerComposition (P2b-3)", () => {
     });
     expect(report.sections.completion.unknown_statuses).toEqual(["PKG-X"]);
     expect(report.sections.completion.progress_label).toBe("unverified-physical-progress");
+  });
+
+  it("P678-003: an unattested package population withholds the denominator instead of accounting it", () => {
+    const pair = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "in_progress", percent_complete_claim: 55, snapshots: [] },
+      ] } } },
+      controlsDatasets: {
+        forge_work_packages: {
+          expected: null, received: 1,
+          complete: false, pages_complete: true, usable: false, revision: "rev-1",
+        },
+      },
+    });
+    const report = compose(pair);
+    expect(report.sections.completion.state).toBe("WITHHELD");
+    expect(report.sections.completion.admitted_packages).toBe(null);
+    expect(report.sections.completion.terminal_count).toBe(null);
+    expect(report.sections.completion.cancelled_count).toBe(null);
+    expect(report.sections.completion.observed_packages).toBe(1);
+    expect(report.sections.completion.population.authoritative).toBe(false);
   });
 
   it("milestone rows cite the Scheduler's computed values verbatim, never recomputed", () => {

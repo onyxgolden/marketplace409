@@ -1,5 +1,5 @@
 /**
- * Project Manager battery cases (80). Each case runs the full inert
+ * Project Manager battery cases (86). Each case runs the full inert
  * runner three times against ONE shared publisher with a fixed clock
  * and fixed source; the published item must be byte-identical across
  * runs and must match the oracle's expectation for the case.
@@ -187,7 +187,8 @@ const A = [
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {}), { failDataset: "forge_work_packages" }) }),
     expect: { outcome: "COMPLETED", conclusion: "QUALIFIED", snapshot_consistency: "PARTIAL",
-      collection_error_codes_include: ["SOURCE_DOWN"] },
+      collection_error_codes_include: ["SOURCE_DOWN"],
+      completion: { state: "WITHHELD", admitted_packages: null, terminal_count: null, observed_packages: 0, population_authoritative: false } },
   },
   {
     id: "A19", group: "A", title: "permission revoked refuses PERMISSION_REVOKED and publishes nothing",
@@ -217,14 +218,16 @@ const B = [
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {}), { failDataset: "forge_work_package_baselines" }) }),
     expect: { outcome: "COMPLETED", conclusion: "QUALIFIED", snapshot_consistency: "PARTIAL",
-      collection_error_codes_include: ["SOURCE_DOWN"] },
+      collection_error_codes_include: ["SOURCE_DOWN"],
+      completion: { state: "ACCOUNTED", admitted_packages: 2, terminal_count: 0, population_authoritative: true } },
   },
   {
     id: "B03", group: "B", title: "controls leg missing snapshots dataset: PARTIAL, QUALIFIED",
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => {}), { failDataset: "forge_work_progress_snapshots" }) }),
     expect: { outcome: "COMPLETED", conclusion: "QUALIFIED", snapshot_consistency: "PARTIAL",
-      collection_error_codes_include: ["SOURCE_DOWN"] },
+      collection_error_codes_include: ["SOURCE_DOWN"],
+      completion: { state: "ACCOUNTED", admitted_packages: 2, terminal_count: 0, population_authoritative: true } },
   },
   {
     id: "B04", group: "B", title: "mixed source revisions: REVISION_UNATTESTED gap, PARTIAL, QUALIFIED",
@@ -294,7 +297,8 @@ const B = [
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => { d.forge_work_packages.push(pkg("PKG-X", { status: "flying" })); })) }),
     expect: { outcome: "COMPLETED",
-      completion: { state: "QUALIFIED", admitted_packages: 3, terminal_count: 0, unknown_statuses_include: ["PKG-X"] } },
+      completion: { state: "QUALIFIED", admitted_packages: 3, terminal_count: 0, unknown_statuses_include: ["PKG-X"] },
+      agenda_kinds_absent: ["COMPLETION_QUESTION"] },
   },
   {
     id: "B14", group: "B", title: "complete 100% package: terminal 1 of 3, controls question carried (not minted)",
@@ -313,7 +317,8 @@ const B = [
     build: () => ({ host: hostWith(), request: requestWith(),
       spec: specWith(datasetsWith((d) => { d.forge_work_packages.push(pkg("PKG-D", { status: "cancelled" })); })) }),
     expect: { outcome: "COMPLETED",
-      completion: { admitted_packages: 3, terminal_count: 0, cancelled_count: 1, counts_by_status: { in_progress: 2, cancelled: 1 } } },
+      completion: { admitted_packages: 3, terminal_count: 0, cancelled_count: 1, counts_by_status: { in_progress: 2, cancelled: 1 } },
+      agenda_kinds_absent: ["COMPLETION_QUESTION"] },
   },
   {
     id: "B16", group: "B", title: "verified-closed package counts as terminal",
@@ -331,7 +336,9 @@ const B = [
       })) }),
     expect: { outcome: "COMPLETED",
       completion: { admitted_packages: 3, terminal_count: 1 },
-      agenda_records_include: [{ record_ref: "PKG-C", kind: "COMPLETION_QUESTION" }] },
+      agenda_records_include: [{ record_ref: "PKG-C", kind: "COMPLETION_QUESTION", evidence_state: "BOUND" }],
+      completion_basis_include: [{ package_ref: "PKG-C", status: "complete", evidence_state: "BOUND" }],
+      forbidden_strings_absent: ["100% progress claim"] },
   },
   {
     id: "B18", group: "B", title: "no milestones: milestones section is empty, conclusions still QUALIFIED on checklist rows",
@@ -633,4 +640,95 @@ const D = [
   },
 ];
 
-export const CASES = [...A, ...B, ...C, ...D];
+// --- Group E: P678 fix-round regressions (ChatGPT NEEDS CHANGES 2026-10-25) ---
+// Each case names the verdict finding it pins. E01 is the positive
+// control (it passes before the fix); E02/E03/E04/E05 fail before
+// the fix in exactly the verdict's way and pass after it.
+const E = [
+  {
+    id: "E01", group: "E", title: "P678-001 positive + P678-003 verified-empty positive: single feasible task, no dependencies, controls datasets verified empty → READY, completion ACCOUNTED 0 of 0",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blocks = d.schedule_blocks.filter((b) => b.block_ref === "A");
+        d.schedule_dependencies = [];
+        d.forge_work_packages = [];
+        d.forge_work_package_baselines = [];
+        d.forge_work_progress_snapshots = [];
+      })) }),
+    expect: { outcome: "COMPLETED", report_status: "DRAFT", conclusion: "READY",
+      empty_sections: ["findings_scheduler", "findings_controls", "milestones", "agenda"],
+      completion: { state: "ACCOUNTED", admitted_packages: 0, terminal_count: 0, cancelled_count: 0, counts_by_status: {}, population_authoritative: true },
+      predecessor_statuses: { scheduler: "BOUND", "project-controls": "BOUND" },
+      row_ids_digest_format: true, distinct_row_ids: true, report_digest_recomputes: true, adapter_datasets_only: true },
+  },
+  {
+    id: "E02", group: "E", title: "P678-001 duration-1000: Scheduler component NOT_MODELED / CALENDAR_HORIZON_EXCEEDED is carried as a finding and agenda row — Manager is QUALIFIED, never READY",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blocks = d.schedule_blocks.filter((b) => b.block_ref === "A");
+        d.schedule_blocks.find((b) => b.block_ref === "A").duration_days = 1000;
+        d.schedule_dependencies = [];
+        d.forge_work_packages = [];
+        d.forge_work_package_baselines = [];
+        d.forge_work_progress_snapshots = [];
+      })) }),
+    expect: { outcome: "COMPLETED", conclusion: "QUALIFIED",
+      findings_records_include: [{ section: "findings_scheduler", kind: "component", record_ref: "comp-A", conclusion: "NOT_MODELED", prototype_status: "CALENDAR_HORIZON_EXCEEDED", evidence_state: "BOUND" }],
+      agenda_kinds_include: ["component"],
+      agenda_records_include: [{ record_ref: "comp-A", kind: "component" }],
+      completion: { state: "ACCOUNTED", admitted_packages: 0, terminal_count: 0 },
+      predecessor_statuses: { scheduler: "BOUND", "project-controls": "BOUND" } },
+  },
+  {
+    id: "E03", group: "E", title: "P678-001 FNLT unsatisfiable: Scheduler component NOT_MODELED / CONSTRAINT_UNSATISFIABLE is carried as a finding and agenda row — Manager is QUALIFIED, never READY",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.schedule_blocks = d.schedule_blocks.filter((b) => b.block_ref === "A");
+        const a = d.schedule_blocks.find((b) => b.block_ref === "A");
+        a.constraint_type = "FNLT"; a.constraint_date = "2026-10-26";
+        d.schedule_dependencies = [];
+        d.forge_work_packages = [];
+        d.forge_work_package_baselines = [];
+        d.forge_work_progress_snapshots = [];
+      })) }),
+    expect: { outcome: "COMPLETED", conclusion: "QUALIFIED",
+      findings_records_include: [{ section: "findings_scheduler", kind: "component", record_ref: "comp-A", conclusion: "NOT_MODELED", prototype_status: "CONSTRAINT_UNSATISFIABLE", evidence_state: "BOUND" }],
+      agenda_kinds_include: ["component"],
+      agenda_records_include: [{ record_ref: "comp-A", kind: "component" }],
+      completion: { state: "ACCOUNTED", admitted_packages: 0, terminal_count: 0 },
+      predecessor_statuses: { scheduler: "BOUND", "project-controls": "BOUND" } },
+  },
+  {
+    id: "E04", group: "E", title: "P678-003 unattested population: hideExpected leaves package coverage unattested and incomplete — completion WITHHELD, denominator withheld, observed subset labeled",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {}), { hideExpected: true }) }),
+    expect: { outcome: "COMPLETED", conclusion: "QUALIFIED", snapshot_consistency: "PARTIAL",
+      completion: { state: "WITHHELD", admitted_packages: null, terminal_count: null, observed_packages: 2, observed_terminal_count: 0, population_authoritative: false } },
+  },
+  {
+    id: "E05", group: "E", title: "P678-004 terminal status with null percent: minted question carries the package span and asks about the terminal status, never an invented 100% claim",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_packages.push(pkg("PKG-C", { status: "complete", percent_complete: null, actual_finish: "2026-10-20" }));
+      })) }),
+    expect: { outcome: "COMPLETED",
+      completion: { admitted_packages: 3, terminal_count: 1 },
+      agenda_records_include: [{ record_ref: "PKG-C", kind: "COMPLETION_QUESTION", evidence_state: "BOUND" }],
+      completion_basis_include: [{ package_ref: "PKG-C", status: "complete", evidence_state: "BOUND" }],
+      forbidden_strings_absent: ["100% progress claim"] },
+  },
+  {
+    id: "E06", group: "E", title: "P678-004 snapshot-only 100%: the controls snapshot question is carried, the composition mints nothing",
+    build: () => ({ host: hostWith(), request: requestWith(),
+      spec: specWith(datasetsWith((d) => {
+        d.forge_work_packages.push(pkg("PKG-C", { status: "in_progress", percent_complete: 20 }));
+        d.forge_work_progress_snapshots.push(snap("S-C1", "PKG-C", "2026-10-20", 1, { planned_pct: 100, actual_pct: 100, earned_pct: 100 }));
+      })) }),
+    expect: { outcome: "COMPLETED",
+      completion: { admitted_packages: 3, terminal_count: 0 },
+      agenda_records_include: [{ record_ref: "S-C1", kind: "OPEN_QUESTION" }],
+      agenda_kinds_absent: ["COMPLETION_QUESTION"] },
+  },
+];
+
+export const CASES = [...A, ...B, ...C, ...D, ...E];

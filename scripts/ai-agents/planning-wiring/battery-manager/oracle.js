@@ -32,7 +32,12 @@
  *   (no assigned_to / assignee / person keys, and no
  *   responsible_role other than "project reviewer").
  * - completion: { state?, admitted_packages?, terminal_count?,
- *   cancelled_count?, counts_by_status?, unknown_statuses_include? }.
+ *   cancelled_count?, counts_by_status?, unknown_statuses_include?,
+ *   observed_packages?, observed_terminal_count?,
+ *   population_authoritative? }.
+ * - empty_sections: every listed section must have zero rows.
+ * - completion_basis_include: every listed { package_ref?, status?,
+ *   evidence_state? } must match some completion basis contributor.
  * - relationships_state: the relationships section state.
  * - predecessor_statuses: { scheduler?, controls? } BOUND/WITHHELD.
  * - predecessor_gaps_include: every listed gap code must appear in
@@ -233,6 +238,28 @@ export function assertExpectation({ caseId, expect, runs, items, publisherBefore
         for (const u of want.unknown_statuses_include) {
           if (!(c.unknown_statuses ?? []).includes(u)) fail(caseId, `completion unknown_statuses missing ${u}`);
         }
+      }
+      if (want.observed_packages !== undefined && c.observed_packages !== want.observed_packages) {
+        fail(caseId, `completion observed_packages ${c.observed_packages} !== expected ${want.observed_packages}`);
+      }
+      if (want.observed_terminal_count !== undefined && c.observed_terminal_count !== want.observed_terminal_count) {
+        fail(caseId, `completion observed_terminal_count ${c.observed_terminal_count} !== expected ${want.observed_terminal_count}`);
+      }
+      if (want.population_authoritative !== undefined && c.population?.authoritative !== want.population_authoritative) {
+        fail(caseId, `completion population authoritative ${c.population?.authoritative} !== expected ${want.population_authoritative}`);
+      }
+    }
+    if (expect.empty_sections !== undefined) {
+      for (const name of expect.empty_sections) {
+        const rows = s[name]?.rows ?? null;
+        if (!Array.isArray(rows) || rows.length !== 0) fail(caseId, `section ${name} must have no rows`);
+      }
+    }
+    if (expect.completion_basis_include !== undefined) {
+      const contributors = s.completion?.basis?.contributors ?? [];
+      for (const want of expect.completion_basis_include) {
+        const hit = contributors.some((r) => Object.entries(want).every(([k, v]) => r[k] === v));
+        if (!hit) fail(caseId, `no completion basis contributor matches ${canonicalJson(want)}`);
       }
     }
     if (expect.relationships_state !== undefined && s.relationships?.state !== expect.relationships_state) {
