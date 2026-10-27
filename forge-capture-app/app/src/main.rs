@@ -3382,6 +3382,29 @@ async fn retry_region_backdrop(
 /// torn down exactly like the terminal-failure path below does, rather than
 /// leave an unrecoverable hidden picker with a live reservation nobody but
 /// the 60s watchdog will ever clear.
+///
+/// C639-007C.9: "nothing else can run on the main-event-loop thread between
+/// `action` resolving `window` and `compensate` acting on it" is true but
+/// does not make A's state stale-proof: cancellation and admission of a
+/// newer session (B) are NOT dispatched through this same main-thread
+/// closure — `cancel_region_pick`'s state clear and a newer `open_region_
+/// overlay`'s `active_pick` claim run from their own command/background
+/// threads, so they can land (and fully complete) while this closure is
+/// still blocked inside A's native `hide()`, strictly before `compensate`
+/// ever runs. `compensate` therefore revalidates the full three-way binding
+/// (`overlay_request_session_still_current` — active_pick, pending_
+/// overlay's own recorded session, and overlay_window_owner, the same
+/// check every other retire site in this module is built from) before
+/// touching the window at all: if A is no longer the live claim, the
+/// window is closed (the exact captured handle, never a fresh shared-label
+/// lookup) and nothing else is touched — B's state is not this closure's
+/// to read or retire. Only when A is still current does it get reshown.
+/// The prior version showed A unconditionally and, on a show failure,
+/// cleared `overlay_window_owner` unconditionally too — both now go
+/// through the same owner-bound primitives (`overlay_request_session_
+/// still_current`, `owns_overlay_window`'s compare-and-clear) the rest of
+/// the module already uses, so a stale A can never resurrect itself over a
+/// live B or erase B's owner claim.
 fn retry_hide_overlay_or_abandon(
     app: tauri::AppHandle,
     retry_session: u64,
@@ -3411,13 +3434,50 @@ fn retry_hide_overlay_or_abandon(
             move |result| {
                 let Ok(window) = result else { return };
                 let state = app_for_compensate.state::<AppState>();
+                // C639-007C.9: `action` already returned — `hide()` finally
+                // unblocked, well after the waiter abandoned — so between
+                // then and now the user had a real window to cancel A
+                // through, and a newer session (B) had a real window to be
+                // admitted through, while this closure sat blocked behind
+                // A's native `hide()` on the single main-event-loop thread.
+                // Revalidate the full three-way binding
+                // (`overlay_request_session_still_current`, the same check
+                // every other retire site in this module uses) before
+                // deciding whether to resurrect A's window — resolving a
+                // real handle in `action` is not proof A is still live.
+                if !overlay_request_session_still_current(
+                    &state.active_pick,
+                    &state.pending_overlay,
+                    &state.overlay_window_owner,
+                    retry_session,
+                ) {
+                    // A was cancelled or superseded while its hide() was
+                    // still blocked. Do not show it back: close only the
+                    // exact handle `action` already resolved and hid —
+                    // never a fresh shared-"overlay"-label lookup, which
+                    // could by now resolve to B's window — and touch
+                    // nothing else. B's active_pick, pending_overlay, and
+                    // overlay_window_owner were never this closure's to
+                    // retire.
+                    let _ = window.close();
+                    return;
+                }
                 if window.show().is_err() {
                     clear_pick_if_current(
                         &state.active_pick,
                         &state.pending_overlay,
                         retry_session,
                     );
-                    *state.overlay_window_owner.lock().unwrap() = None;
+                    // Compare-and-clear (`owns_overlay_window`), never an
+                    // unconditional `None`: a newer session could in
+                    // principle have claimed the owner slot by the time
+                    // this failure path runs, and this cleanup must never
+                    // erase a claim that was never this session's.
+                    let mut owner = state.overlay_window_owner.lock().unwrap();
+                    if owns_overlay_window(*owner, retry_session) {
+                        *owner = None;
+                    }
+                    drop(owner);
                     let _ = window.close();
                     return;
                 }
@@ -6866,6 +6926,220 @@ mod region_picker_tests {
             vec!["A", "A"],
             "both action and compensate must only ever touch A's captured handle — \
              never re-read the shared label after B has taken it over"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.9: a late-committing compensate must revalidate the full
+    // three-way session binding (`overlay_request_session_still_current`)
+    // before resurrecting A's window — resolving a real handle in `action`
+    // is not proof A is still live, since cancellation and a newer
+    // session's admission run from their own command/background threads
+    // and can both land, and fully complete, while this closure sits
+    // blocked inside A's native `hide()`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn abandonable_bridge_compensate_never_reshows_a_cancelled_and_superseded_a() {
+        // Freeze: A's Retry hide blocks past the waiter's deadline, the
+        // waiter abandons, and — strictly before A's gated action is
+        // released — the user cancels A (the exact state transitions
+        // `cancel_region_pick`/`close_owned_overlay_window` perform) and B
+        // is admitted, installing its own active_pick/pending_overlay/
+        // overlay_window_owner. A's `hide()` then finally returns `Ok`.
+        // Compensate must close only A's captured handle and must never
+        // show/focus it, and must leave every one of B's three slots
+        // byte-for-byte unchanged.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+
+        let owner_for_action = overlay_window_owner.clone();
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    // Mirrors the real action's own pre-hide ownership
+                    // check: at the moment this starts, A is still owner —
+                    // cancellation/B's admission only happen while this is
+                    // blocked below, standing in for the native hide().
+                    assert_eq!(*owner_for_action.lock().unwrap(), Some(5));
+                    touched_for_action.lock().unwrap().push(("action", "A"));
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok("A")
+                },
+                move |result| {
+                    let Ok(resolved) = result else { return };
+                    let still_current = overlay_request_session_still_current(
+                        &active_pick_for_compensate,
+                        &pending_overlay_for_compensate,
+                        &owner_for_compensate,
+                        5,
+                    );
+                    if !still_current {
+                        touched_for_compensate
+                            .lock()
+                            .unwrap()
+                            .push(("close", resolved));
+                        return;
+                    }
+                    touched_for_compensate
+                        .lock()
+                        .unwrap()
+                        .push(("show", resolved));
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before cancellation/B's admission land");
+        assert!(err.contains("abandoned"));
+
+        // Cancel A — `clear_pick_if_current` plus the owner-gated retire
+        // `close_owned_overlay_window` performs — then admit B, installing
+        // all three of its own slots. All strictly before A's gate opens.
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            if owns_overlay_window(*owner, 5) {
+                *owner = None;
+            }
+        }
+        *active_pick.lock().unwrap() = Some(6);
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        *pending_overlay.lock().unwrap() = Some(b_ctx);
+        *overlay_window_owner.lock().unwrap() = Some(6);
+
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("action", "A"), ("close", "A")],
+            "compensate must close A's own captured handle and must never show/focus \
+             it once A has been cancelled and superseded"
+        );
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(6),
+            "B's active_pick must be byte-for-byte unchanged"
+        );
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's pending_overlay must be byte-for-byte unchanged"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(6),
+            "B's overlay_window_owner must be byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_compensate_reshows_the_live_a_handle_when_a_remains_current() {
+        // Complementary case: nobody cancels A and no newer session is
+        // admitted. When the late hide finally returns, A is still the
+        // live claim across all three slots, so compensate must show (and
+        // focus) the exact captured A handle back.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    touched_for_action.lock().unwrap().push(("action", "A"));
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok("A")
+                },
+                move |result| {
+                    let Ok(resolved) = result else { return };
+                    let still_current = overlay_request_session_still_current(
+                        &active_pick_for_compensate,
+                        &pending_overlay_for_compensate,
+                        &owner_for_compensate,
+                        5,
+                    );
+                    if !still_current {
+                        touched_for_compensate
+                            .lock()
+                            .unwrap()
+                            .push(("close", resolved));
+                        return;
+                    }
+                    touched_for_compensate
+                        .lock()
+                        .unwrap()
+                        .push(("show", resolved));
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("nothing settled before the bound; must be treated as abandoned");
+        assert!(err.contains("abandoned"));
+
+        // A remains current: nothing cancels it, nothing supersedes it.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("action", "A"), ("show", "A")],
+            "compensate must show the exact live A handle back when A is still current"
         );
     }
 
