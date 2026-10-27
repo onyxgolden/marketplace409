@@ -10,6 +10,7 @@
 // local Git + mocked HTTP only; production flag OFF").
 
 import { createHash, sign as cryptoSign, verify as cryptoVerify } from "node:crypto";
+import { types } from "node:util";
 import { fail, CODES } from "./errors.mjs";
 import { validateEnvelope, validateBuildFields } from "./envelopeValidator.mjs";
 
@@ -35,6 +36,14 @@ export function canonicalize(value) {
 // Policy: those keys are data, never prototype mutation, at every
 // nesting level, for payload/resource/all signed content.
 function sortKeysDeep(value) {
+  // TBP2-002C: canonicalization must never read through a Proxy —
+  // Object.keys / property reads on a Proxy invoke its traps. A Proxy
+  // is refused trap-free (util.types.isProxy) before any reflection,
+  // at every nesting level, so canonical bytes can never be produced
+  // from an object whose observable fields differ from its signed bytes.
+  if (value !== null && typeof value === "object" && types.isProxy(value)) {
+    fail(CODES.MALFORMED_ENVELOPE, "proxy objects are not canonicalizable", { reason: "PROXY_OBJECT" });
+  }
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value !== null && typeof value === "object") {
     const sorted = Object.create(null);
@@ -56,6 +65,18 @@ export function sha256Hex(canonicalJsonString) {
 // payload_sha256/signature, which this function computes. `privateKey` is a
 // node:crypto KeyObject (Ed25519).
 export function buildEnvelope(fields, privateKey) {
+  // TBP2-002C: validate BEFORE reading any field. The old order read
+  // fields[key] first, which executes a getter trap on a Proxy or an
+  // accessor object. validateBuildFields inspects descriptors before
+  // reading values, so it refuses a Proxy/accessor/hidden field without
+  // executing user code; only then does the required-field loop read
+  // already-validated data properties.
+  if (typeof fields === "object" && fields !== null && types.isProxy(fields)) {
+    fail(CODES.MALFORMED_ENVELOPE, "envelope fields must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
+  // TBP2-002: a malformed envelope must not be signed into existence.
+  // The closed validator runs here, before any signing bytes exist.
+  validateBuildFields(fields);
   const required = [
     "operationId",
     "principalId",
@@ -71,9 +92,6 @@ export function buildEnvelope(fields, privateKey) {
       fail(CODES.MALFORMED_ENVELOPE, `envelope missing required field: ${key}`, { key });
     }
   }
-  // TBP2-002: a malformed envelope must not be signed into existence.
-  // The closed validator runs here, before any signing bytes exist.
-  validateBuildFields(fields);
   const payloadCanonical = canonicalize(fields.payload);
   const unsigned = {
     schema_version: SCHEMA_VERSION,
@@ -104,6 +122,11 @@ export function buildEnvelope(fields, privateKey) {
 export function verifyEnvelopeSignature(envelope, publicKey) {
   if (!envelope || typeof envelope !== "object") {
     fail(CODES.MALFORMED_ENVELOPE, "envelope is not an object");
+  }
+  // TBP2-002C: refuse a Proxy trap-free before validateEnvelope reads
+  // any field (validateEnvelope guards too; this is the outer gate).
+  if (types.isProxy(envelope)) {
+    fail(CODES.MALFORMED_ENVELOPE, "envelope must not be a proxy object", { reason: "PROXY_OBJECT" });
   }
   // TBP2-002: the closed validator runs before any canonicalization,
   // hashing, or signature check, so a correctly signed but malformed or

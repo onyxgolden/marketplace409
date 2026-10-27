@@ -14,6 +14,7 @@
 // `origin: "jason-admin"` — never derived from an ordinary signed envelope,
 // never satisfiable by a principal registering/granting itself.
 
+import { types } from "node:util";
 import { verifyEnvelopeSignature, canonicalize } from "./envelope.mjs";
 import { fail, CODES } from "./errors.mjs";
 import { validateResource } from "./envelopeValidator.mjs";
@@ -130,8 +131,18 @@ export function revokeAuthorization(registry, adminCtx, grantId, reason, now) {
 // `operation` on `resource.repo`/`resource.scope`. Scope "*" on the grant
 // matches any requested scope; an exact grant scope must match exactly —
 // no prefix/wildcard matching on the REQUEST side, only on a grant that was
+// TBP2-002C: shared trap-free Proxy gate for entry points that read
+// envelope/resource fields directly (the seen helpers below read
+// envelope.operation_id before replayIdentity runs).
+function rejectProxyValue(value, path) {
+  if (typeof value === "object" && value !== null && types.isProxy(value)) {
+    fail(CODES.MALFORMED_ENVELOPE, `${path} must not be a proxy object`, { reason: "PROXY_OBJECT", path });
+  }
+}
+
 // explicitly registered as "*".
 export function checkAuthorized(registry, principalId, operation, resource) {
+  rejectProxyValue(resource, "resource");
   for (const grant of registry.grants.values()) {
     if (grant.revokedAt) continue;
     if (grant.principalId !== principalId) continue;
@@ -150,6 +161,11 @@ export function checkAuthorized(registry, principalId, operation, resource) {
 // the payload digest let a different operation, scope, head, actor, or
 // nonce ride in as an "identical" replay.
 export function replayIdentity(envelope) {
+  // TBP2-002C: refuse a Proxy trap-free before reading any envelope
+  // field (canonicalize guards too, but this reads fields first).
+  if (typeof envelope === "object" && envelope !== null && types.isProxy(envelope)) {
+    fail(CODES.MALFORMED_ENVELOPE, "envelope must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
   return canonicalize({
     schema_version: envelope.schema_version,
     operation_id: envelope.operation_id,
@@ -182,6 +198,7 @@ function seenEntry(entry) {
 // for the same operation_id with any changed binding. Does not record
 // anything — recording is a separate, explicit step.
 export function checkSeenOperation(registry, envelope) {
+  rejectProxyValue(envelope, "envelope");
   const seen = seenEntry(registry.seenOperations.get(envelope.operation_id));
   if (seen === undefined) return;
   if (seen.status === "pending") {
@@ -205,6 +222,7 @@ export function checkSeenOperation(registry, envelope) {
 // path, so a reservation can never silently overwrite a completed
 // record.
 export function reserveSeenOperation(registry, envelope) {
+  rejectProxyValue(envelope, "envelope");
   checkSeenOperation(registry, envelope);
   registry.seenOperations.set(envelope.operation_id, { identity: replayIdentity(envelope), status: "pending" });
 }
@@ -213,6 +231,7 @@ export function reserveSeenOperation(registry, envelope) {
 // Only a pending entry is cleared — a completed record is never
 // deleted by a later failure, so a failed retry cannot erase history.
 export function releaseSeenOperation(registry, envelope) {
+  rejectProxyValue(envelope, "envelope");
   const seen = seenEntry(registry.seenOperations.get(envelope.operation_id));
   if (seen && seen.status === "pending") {
     registry.seenOperations.delete(envelope.operation_id);
@@ -225,6 +244,7 @@ export function releaseSeenOperation(registry, envelope) {
 // handler execution would let a failed or never-handled operation
 // masquerade as completed work.
 export function recordSeenOperation(registry, envelope) {
+  rejectProxyValue(envelope, "envelope");
   registry.seenOperations.set(envelope.operation_id, { identity: replayIdentity(envelope), status: "completed" });
 }
 
@@ -247,6 +267,15 @@ export function recordSeenOperation(registry, envelope) {
 // after successful handling — that is what handleEnvelope does, so a
 // handler failure or a missing handler never marks the operation seen.
 export function verifyAndAuthorize(registry, envelope, expected, opts = {}) {
+  // TBP2-002C: refuse a Proxy envelope trap-free BEFORE any envelope
+  // field is read. The old code resolved envelope.key_id first, which
+  // executes a get trap on a Proxy envelope before validation runs.
+  if (typeof envelope === "object" && envelope !== null && types.isProxy(envelope)) {
+    fail(CODES.MALFORMED_ENVELOPE, "envelope must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
+  if (typeof expected === "object" && expected !== null && types.isProxy(expected)) {
+    fail(CODES.MALFORMED_ENVELOPE, "expected pin must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
   // TBP2-003: an external pin is itself validated before anything else.
   // A malformed or unknown pin field is refused, never silently ignored,
   // so a caller cannot accidentally believe it pinned something it did
@@ -256,11 +285,39 @@ export function verifyAndAuthorize(registry, envelope, expected, opts = {}) {
     if (typeof expected !== "object" || Array.isArray(expected)) {
       fail(CODES.MALFORMED_ENVELOPE, "expected pin must be an object", { reason: "EXPECTED_NOT_AN_OBJECT" });
     }
+    const expectedProto = Object.getPrototypeOf(expected);
+    if (expectedProto !== Object.prototype && expectedProto !== null) {
+      fail(CODES.MALFORMED_ENVELOPE, "expected pin must be a plain record", { reason: "EXPECTED_NOT_AN_OBJECT" });
+    }
     // TBP2-003A: the outer expected schema is closed to its documented
     // fields (operation/resource), not just the nested resource. A
     // misplaced reviewed_head at the outer level previously passed
     // silently while the caller believed a pin was requested.
-    for (const key of Object.keys(expected)) {
+    // TBP2-002C: Object.keys cannot see hidden fields, so the outer
+    // loop iterates Reflect.ownKeys and inspects every descriptor
+    // BEFORE reading any field value. A non-enumerable outer field
+    // (e.g. a hidden reviewed_head) is refused, not silently ignored,
+    // and an accessor is refused without invoking its getter.
+    for (const key of Reflect.ownKeys(expected)) {
+      if (typeof key !== "string") {
+        fail(CODES.MALFORMED_ENVELOPE, "expected pin must not contain symbol fields", {
+          field: String(key),
+          reason: "SYMBOL_FIELD",
+        });
+      }
+      const desc = Object.getOwnPropertyDescriptor(expected, key);
+      if (!desc || desc.get || desc.set) {
+        fail(CODES.MALFORMED_ENVELOPE, `expected pin field ${key} must be a plain data field`, {
+          field: key,
+          reason: "ACCESSOR_FIELD",
+        });
+      }
+      if (!desc.enumerable) {
+        fail(CODES.MALFORMED_ENVELOPE, `expected pin field ${key} must be enumerable (hidden fields are refused)`, {
+          field: key,
+          reason: "HIDDEN_FIELD",
+        });
+      }
       if (key !== "operation" && key !== "resource") {
         fail(CODES.MALFORMED_ENVELOPE, `unknown expected pin field: ${key}`, { field: key });
       }

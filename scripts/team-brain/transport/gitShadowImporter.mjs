@@ -90,26 +90,87 @@ function scopeHashFor(scopePaths) {
   return createHash("sha256").update(JSON.stringify(scopePaths ?? []), "utf8").digest("hex");
 }
 
-function makeFrontier(head, scopePaths, inspected) {
-  return `tb-frontier:v1:${head}:${scopeHashFor(scopePaths)}:${inspected.join(",")}`;
+// TBP2-007C frontier v2: `tb-frontier:v2:<head>:<scopeHash>:<base>:<accountedCsv>:<partialCommit>:<partialConsumed>`
+// - `base` is the original plain cursor (empty when the scan started
+//   from the beginning). It MUST be carried: the accounted list alone
+//   does not exclude the cursor's history. A frontier with no fully
+//   processed commit yet (a pure partial, accounted empty) resumed
+//   via ^accounted alone would re-list the cursor commit itself and
+//   everything before it. Resuming excludes ^base AND ^accounted.
+// - `accounted` is the set of commits FULLY processed, in order. It is a
+//   lower set (ancestors-closed) within the pending range: polls process
+//   oldest-first, so every pending ancestor of an accounted commit is
+//   itself accounted. Resuming via ^<accounted> is therefore safe —
+//   excluding an accounted commit's ancestors excludes only commits
+//   already accounted (or covered by the base cursor).
+// - `partial` is an optional partially processed commit: { commit,
+//   consumed } where consumed is the number of that commit's
+//   deterministic pathOrder entries already handled (events emitted
+//   or quarantined, in pathOrder order). The next poll recomputes the
+//   same pathOrder and skips exactly that prefix.
+// - A v1 frontier is REJECTED, not reinterpreted: v1's "inspected" list
+//   was a newest capped window (an upper set), so its ancestors were
+//   still pending and ^-exclusion would lose them. No production v1
+//   frontier exists (P2 is unmerged), so rejecting with a
+//   restart-from-original-cursor message loses nothing real.
+function makeFrontier(head, scopePaths, accounted, partial = null, base = null) {
+  const partialCommit = partial ? partial.commit : "";
+  const partialConsumed = partial ? String(partial.consumed) : "";
+  return `tb-frontier:v2:${head}:${scopeHashFor(scopePaths)}:${base ?? ""}:${accounted.join(",")}:${partialCommit}:${partialConsumed}`;
 }
 
 function parseFrontier(cursorCommit) {
-  if (typeof cursorCommit !== "string" || !cursorCommit.startsWith("tb-frontier:v1:")) return null;
-  const rest = cursorCommit.slice("tb-frontier:v1:".length);
+  if (typeof cursorCommit !== "string") return null;
+  if (cursorCommit.startsWith("tb-frontier:v1:")) {
+    fail(
+      CODES.INTAKE_BLOCKED,
+      "legacy frontier v1 is not resumable under the corrected lower-set accounting — restart from the original cursor",
+      { cursorCommit }
+    );
+  }
+  if (!cursorCommit.startsWith("tb-frontier:v2:")) return null;
+  const rest = cursorCommit.slice("tb-frontier:v2:".length);
   const parts = rest.split(":");
-  if (parts.length !== 3) {
+  if (parts.length !== 6) {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
-  const [head, scopeHash, csv] = parts;
+  const [head, scopeHash, base, csv, partialCommit, partialConsumed] = parts;
   if (!/^[0-9a-f]{40}$/.test(head) || !/^[0-9a-f]{64}$/.test(scopeHash)) {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
-  const inspected = csv ? csv.split(",") : [];
-  if (inspected.some((s) => !/^[0-9a-f]{40}$/.test(s))) {
+  if (base !== "" && !/^[0-9a-f]{40}$/.test(base)) {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
-  return { head, scopeHash, inspected };
+  const accounted = csv ? csv.split(",") : [];
+  if (accounted.some((s) => !/^[0-9a-f]{40}$/.test(s))) {
+    fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
+  }
+  if ((partialCommit === "") !== (partialConsumed === "")) {
+    fail(
+      CODES.INTAKE_BLOCKED,
+      "malformed resumable frontier cursor (partial commit and consumed count must both be present or both absent)",
+      { cursorCommit }
+    );
+  }
+  let partial = null;
+  if (partialCommit !== "") {
+    if (!/^[0-9a-f]{40}$/.test(partialCommit) || !/^[0-9]+$/.test(partialConsumed)) {
+      fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
+    }
+    const consumed = Number(partialConsumed);
+    if (!Number.isSafeInteger(consumed) || consumed <= 0) {
+      fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor (partial consumed count must be a positive integer)", {
+        cursorCommit,
+      });
+    }
+    if (accounted.includes(partialCommit)) {
+      fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor (partial commit is also listed as accounted)", {
+        cursorCommit,
+      });
+    }
+    partial = { commit: partialCommit, consumed };
+  }
+  return { head, scopeHash, base: base === "" ? null : base, accounted, partial };
 }
 
 function git(repoPath, args, opts = {}) {
@@ -177,8 +238,8 @@ function pathDepth(path) {
 
 // name-status diff between two trees (a parent commit, or the empty tree
 // for a root commit's "first parent") and a commit, restricted to
-// `scopePaths` prefixes if given. Returns [{status, path}] where status
-// is one of A (added), M (modified), D (deleted).
+// `scopePaths` prefixes if given. Yields [status, path] tuples, status
+// one of A (added), M (modified), D (deleted), lazily.
 //
 // TBP2-005: this uses `-z` (NUL-delimited) output and literal path
 // handling end to end. The old line/tab parsing dropped any path Git
@@ -187,7 +248,17 @@ function pathDepth(path) {
 // vanished while the cursor still advanced. With -z, Git emits raw
 // bytes, no quoting, and a path is either in scope (admitted or
 // quarantined) or out of scope — never silently lost inside scope.
-function diffNameStatus(repoPath, fromRef, toRef, scopePaths, opts = {}) {
+//
+// TBP2-007C: this is a GENERATOR, not an array. The old diffNameStatus
+// split the whole diff into a parts array and stored every scoped
+// record before any cap was applied, so a later pathOrder cap did not
+// undo that admission. Here the output string is scanned by index
+// (never split) and records are yielded one at a time; the caller
+// stops pulling at budget + one lookahead, so records after the stop
+// are never even scanned. The raw subprocess string itself is bounded
+// by the 10 MiB subprocess cap and is not candidate storage —
+// candidate storage is exactly the caller's capped pathOrder.
+function* diffNameStatusIter(repoPath, fromRef, toRef, scopePaths, opts = {}) {
   const args = ["diff", "--name-status", "-z", "--no-renames", fromRef, toRef];
   let out;
   try {
@@ -198,16 +269,133 @@ function diffNameStatus(repoPath, fromRef, toRef, scopePaths, opts = {}) {
   }
   // -z records are: status NUL path NUL status NUL path NUL ... (no
   // trailing newline semantics, no quoting, no tab separator).
-  const parts = out.split("\0");
-  const changes = [];
-  for (let i = 0; i + 1 < parts.length; i += 2) {
-    const status = parts[i];
-    const path = parts[i + 1];
-    if (!status || path === undefined || path === "") continue;
+  let i = 0;
+  while (i < out.length) {
+    const statusEnd = out.indexOf("\0", i);
+    if (statusEnd === -1) break;
+    const status = out.slice(i, statusEnd);
+    const pathEnd = out.indexOf("\0", statusEnd + 1);
+    if (pathEnd === -1) break;
+    const path = out.slice(statusEnd + 1, pathEnd);
+    i = pathEnd + 1;
+    if (!status || path === "") continue;
     if (scopePaths && scopePaths.length > 0 && !scopePaths.some((p) => path.startsWith(p))) continue;
-    changes.push({ status: status[0], path });
+    yield [status[0], path];
   }
-  return changes;
+}
+
+// TBP2-007C bounded producer: the oldest-first capped window of pending
+// commits, with an exact hasMore flag.
+//
+// Git applies --max-count BEFORE --reverse, so `rev-list --topo-order
+// --reverse --max-count N` returns the NEWEST N commits in reverse
+// order — not the oldest prefix — and treating that window as fully
+// accounted loses every older commit (the TBP2-007C bug). Git offers
+// no oldest-window primitive, so this producer counts the pending
+// range first (rev-list --count), then asks for the oldest window by
+// skipping the newest (total - take) commits and taking the rest,
+// then reversing the window in JS to oldest-first. The returned list
+// is a lower set (ancestors-closed within pending): every pending
+// ancestor of a listed commit is itself listed or already accounted,
+// so resuming via ^<accounted> can never exclude an uninspected
+// ancestor. Honest tradeoff, stated not hidden: the internal walk is
+// O(pending) and deadline-bounded (a timeout throws INTAKE_BLOCKED
+// with the cursor preserved); what is bounded at the command is the
+// OUTPUT and ADMISSION — at most `cap` commits are ever returned —
+// not the walk. The incorrect alternative (newest window) is not used.
+function listPendingCommits(repoPath, { head, accounted, cursorCommit, base }, cap, opts = {}) {
+  let rangeArgs;
+  if (accounted !== null) {
+    // Frontier resume: head with ^base (the original cursor's history)
+    // and ^accounted. Accounted is a lower set, so ^-exclusion removes
+    // exactly the accounted commits and their (already accounted or
+    // pre-cursor) ancestors, never a pending one. The ^base exclusion
+    // is essential when accounted is still empty (a pure partial):
+    // without it, the cursor commit itself would re-list as pending.
+    rangeArgs = [head, ...(base ? [`^${base}`] : []), ...accounted.map((s) => `^${s}`)];
+  } else if (cursorCommit) {
+    rangeArgs = [`${cursorCommit}..${head}`];
+  } else {
+    rangeArgs = [head];
+  }
+  let countOut;
+  try {
+    countOut = git(repoPath, ["rev-list", "--count", ...rangeArgs], opts);
+  } catch (e) {
+    if (e instanceof Error && e.name === "TeamBrainTrustError") throw e;
+    fail(CODES.INTAKE_BLOCKED, "could not count pending commits for the bounded producer", { error: String(e) });
+  }
+  const total = Number.parseInt(countOut.trim(), 10);
+  if (!Number.isFinite(total) || total < 0) {
+    fail(CODES.INTAKE_BLOCKED, "git rev-list --count returned a non-numeric count", { countOut });
+  }
+  if (total === 0) return { commits: [], hasMore: false };
+  const hasMore = total > cap;
+  const take = Math.min(total, cap);
+  const skip = total - take;
+  let listOut;
+  try {
+    listOut = git(repoPath, ["rev-list", "--topo-order", "--skip", String(skip), "--max-count", String(take), ...rangeArgs], opts);
+  } catch (e) {
+    if (e instanceof Error && e.name === "TeamBrainTrustError") throw e;
+    fail(CODES.INTAKE_BLOCKED, "could not list the oldest pending commits for the bounded producer", { error: String(e) });
+  }
+  const newestFirst = listOut.trim() ? listOut.trim().split("\n") : [];
+  if (newestFirst.length !== take) {
+    fail(CODES.INTAKE_BLOCKED, "bounded producer returned an inconsistent commit count (repository changed during the poll)", {
+      expected: take,
+      actual: newestFirst.length,
+    });
+  }
+  return { commits: newestFirst.reverse(), hasMore };
+}
+
+// TBP2-007C bounded per-commit path collection: the deterministic
+// pathOrder for one commit (union of its parents' in-scope diff paths,
+// in parent order, deduplicated), starting at startIndex (for resuming
+// a partially processed commit) and collecting at most `budget` paths.
+//
+// Storage bound, stated plainly: stored records are exactly the
+// returned pathOrder (at most `budget` paths) plus the per-parent
+// status of those same paths. Consumption stops at budget + ONE
+// documented lookahead record: when a further distinct path is found
+// after the budget is full, hasMore is set and that lookahead record
+// is DISCARDED, not stored — so no record beyond the budget is ever
+// retained. Status for a path in a later parent is recorded only when
+// that parent's iterator reaches it; for a single-parent commit the
+// status is complete for every collected path, and for merges the
+// event kind is decided from blob SHAs, not diff status, so a missing
+// later-parent status is never read. Duplicates across parents are
+// recorded for status but never counted twice.
+function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, startIndex, budget, opts = {}) {
+  const statusByParent = parentRefs.map(() => new Map());
+  const pathOrder = [];
+  const seen = new Set();
+  let skipped = 0;
+  let hasMore = false;
+  outer: for (let parentIndex = 0; parentIndex < parentRefs.length; parentIndex++) {
+    const parent = parentRefs[parentIndex];
+    for (const [status, path] of diffNameStatusIter(repoPath, parent, commit, scopePaths, opts)) {
+      if (seen.has(path)) {
+        statusByParent[parentIndex].set(path, status);
+        continue;
+      }
+      if (skipped < startIndex) {
+        seen.add(path);
+        statusByParent[parentIndex].set(path, status);
+        skipped += 1;
+        continue;
+      }
+      if (pathOrder.length >= budget) {
+        hasMore = true;
+        break outer; // lookahead record discarded, not stored
+      }
+      seen.add(path);
+      statusByParent[parentIndex].set(path, status);
+      pathOrder.push(path);
+    }
+  }
+  return { pathOrder, statusByParent, hasMore };
 }
 
 // TBP2-006A.1: does a parent commit's history ever contain `path`?
@@ -346,37 +534,24 @@ export function scanSince(
     return { events: [], newCursor: head, quarantined: [], truncated: false, resumeFrontier: null };
   }
 
-  // TBP2-007B: bound history production AT the Git command, not after
-  // materializing it. rev-list is asked for at most
-  // MAX_COMMITS_PER_POLL + 1 commits: if it returns the extra one,
-  // more history exists beyond the cap, and only the first cap
-  // commits are inspected. The full range is never enumerated and
-  // then sliced. On a frontier resume, every already-inspected
-  // commit is excluded at the Git command itself (^<sha> excludes
-  // that commit and its ancestors), so the returned list is exactly
-  // the uninspected remainder, in the same deterministic
-  // topo-reverse order, with no re-emission and no loss.
-  let revListArgs;
-  if (frontier) {
-    revListArgs = [
-      "rev-list",
-      "--topo-order",
-      "--reverse",
-      "--max-count",
-      String(MAX_COMMITS_PER_POLL + 1),
-      head,
-      ...frontier.inspected.map((s) => `^${s}`),
-    ];
-  } else {
-    const range = cursorCommit ? `${cursorCommit}..${head}` : head;
-    revListArgs = ["rev-list", "--topo-order", "--reverse", "--max-count", String(MAX_COMMITS_PER_POLL + 1), range];
-  }
-  const commitList = git(repoPath, revListArgs, gitOpts()).trim();
-  let commits = commitList ? commitList.split("\n") : [];
-  const commitCapHit = commits.length > MAX_COMMITS_PER_POLL;
-  if (commitCapHit) {
-    commits = commits.slice(0, MAX_COMMITS_PER_POLL);
-  }
+  // TBP2-007C: the bounded producer (listPendingCommits) returns the
+  // oldest-first capped window of pending commits, with an exact
+  // hasMore flag — never the newest window, never a sliced full
+  // enumeration. On a frontier resume, every already-accounted commit
+  // is excluded at the Git command itself (^<sha> excludes that commit
+  // and its ancestors); because the accounted set is a lower set, that
+  // exclusion removes exactly the accounted commits and their already
+  // accounted ancestors, never a pending one.
+  // The frontier's base cursor, carried forward across resumes: it is
+  // the original plain cursor for a frontier chain, or the plain
+  // cursor for a first poll, or null when scanning from the beginning.
+  const resumeBase = frontier ? frontier.base : (cursorCommit ?? null);
+  const { commits, hasMore: commitCapHit } = listPendingCommits(
+    repoPath,
+    { head, accounted: frontier ? frontier.accounted : null, cursorCommit: frontier ? null : cursorCommit, base: resumeBase },
+    MAX_COMMITS_PER_POLL,
+    gitOpts()
+  );
 
   const events = [];
   const quarantined = [];
@@ -386,8 +561,15 @@ export function scanSince(
   // Commits fully processed by the loop below, in order. A commit is
   // only appended here when its iteration completes without breaking
   // out (deadline, record cap, file cap, or byte cap) — so this list
-  // is exactly the prefix a commit-cap frontier may advance past.
+  // is exactly the prefix a frontier may advance past.
   const processedCommits = [];
+  // TBP2-007C: the input frontier's partial commit, carried forward
+  // until that commit is fully processed (then cleared) or replaced by
+  // a newer partial created by this poll. Carrying it is safe: a
+  // partial commit is never in the accounted list, so it stays in the
+  // next poll's pending range, and its already-consumed path prefix is
+  // skipped again on resume.
+  let currentPartial = frontier?.partial ?? null;
 
   outer: for (const commit of commits) {
     if (expired()) {
@@ -401,70 +583,55 @@ export function scanSince(
     const parents = parentsOf(repoPath, commit, gitOpts());
     const parentRefs = parents.length > 0 ? parents : [EMPTY_TREE_SHA];
 
-    // Per-parent diffs for this commit. A merge's diff against each
-    // parent is inspected (that is what finds side-branch
-    // introductions), but the union is decided once per path below —
-    // never once per parent.
-    const parentDiffs = [];
-    for (const parent of parentRefs) {
-      if (expired()) {
-        truncated = true;
-        break outer;
-      }
-      parentDiffs.push(diffNameStatus(repoPath, parent, commit, scopePaths, gitOpts()));
-    }
-
-    // TBP2-007B: charge-before-inspect candidate admission. The path
-    // list for this commit is built only up to the remaining
-    // changed-files budget, and scanning stops at the first path that
-    // would exceed it — that path is never stored, and no later path
-    // is stored either. A path list is an array, never a Map that
-    // accumulates every candidate before the cap is checked. The
-    // per-parent diff arrays above are Git's bounded output (10 MiB
-    // subprocess cap), not candidate storage: candidate storage is
-    // this capped path list, and only documented bounded lookahead
-    // (scanning diff arrays until the budget is reached) happens
-    // before processing. If the budget is exceeded, the paths already
-    // in the list are still processed below, and the poll then
-    // truncates with its cursor preserved — the unprocessed paths
-    // are not lost, they are simply not yet admitted.
+    // TBP2-007C: the per-commit path list is built by the bounded
+    // collector, never by materializing per-parent diff arrays. A
+    // merge's diff against each parent is still inspected (that is
+    // what finds side-branch introductions), but the union is decided
+    // once per path below — never once per parent — and at most
+    // `remainingFileBudget` paths are stored, plus one discarded
+    // lookahead record that only sets hasMore. If this commit is the
+    // carried partial, collection starts at its consumed prefix, so
+    // already-handled paths are skipped, not re-emitted.
+    const startIndex = currentPartial && currentPartial.commit === commit ? currentPartial.consumed : 0;
     const remainingFileBudget = maxChangedFilesPerPoll - changedFileCount;
-    const pathOrder = [];
-    let candidateBudgetExceeded = false;
-    candidateScan: for (const changes of parentDiffs) {
-      for (const { path } of changes) {
-        if (pathOrder.includes(path)) continue;
-        if (pathOrder.length >= remainingFileBudget) {
-          truncated = true;
-          candidateBudgetExceeded = true;
-          break candidateScan;
-        }
-        pathOrder.push(path);
-      }
-    }
+    const {
+      pathOrder,
+      statusByParent,
+      hasMore: morePaths,
+    } = collectCommitPaths(repoPath, parentRefs, commit, scopePaths, startIndex, remainingFileBudget, gitOpts());
+    // Paths handled for this commit in this poll (events emitted or
+    // quarantined, in pathOrder order). A path that breaks the loop
+    // (deadline, record cap, file cap, byte cap) is NOT counted, so
+    // the next poll retries it; every other path is counted, including
+    // quarantined and merge-visibility paths, so the partial prefix
+    // always advances past handled paths.
+    let processedInCommit = 0;
+    let brokeMidCommit = false;
 
     for (const path of pathOrder) {
-      // Per-parent status for this path, looked up from the diff
-      // arrays by parent index — no candidate Map is built.
-      const statusForParent = (parentIndex) => {
-        const found = parentDiffs[parentIndex].find((c) => c.path === path);
-        return found ? found.status : undefined;
-      };
+      // Per-parent status for this path, from the bounded collector's
+      // status maps (complete for single-parent commits; unused for
+      // merges, where blob SHAs decide the event kind).
+      const statusForParent = (parentIndex) => statusByParent[parentIndex].get(path);
       if (expired()) {
         truncated = true;
-        break outer;
+        brokeMidCommit = true;
+        break;
       }
       if (events.length >= maxRecordsPerBatch) {
         truncated = true;
-        break outer;
+        brokeMidCommit = true;
+        break;
       }
       changedFileCount += 1;
       if (changedFileCount > maxChangedFilesPerPoll) {
         truncated = true;
-        break outer;
+        brokeMidCommit = true;
+        break;
       }
       if (pathDepth(path) > maxPathDepth) {
         quarantined.push({ commit, path, reason: "PATH_DEPTH_EXCEEDED" });
+        processedInCommit += 1;
         continue;
       }
 
@@ -494,7 +661,10 @@ export function scanSince(
         const status = statusForParent(0);
         eventKind = status === "A" ? "ADDED" : status === "D" ? "DELETED" : "MODIFIED";
       } else if (commitBlob === null) {
-        if (!parentBlobs.some((b) => b !== null)) continue; // absent everywhere: no change to record
+        if (!parentBlobs.some((b) => b !== null)) {
+          processedInCommit += 1;
+          continue; // absent everywhere: no change to record, but the path is handled
+        }
         eventKind = "DELETED";
       } else if (parentBlobs.includes(commitBlob)) {
         const distinctParentBlobs = [...new Set(parentBlobs.filter((b) => b !== null))];
@@ -520,7 +690,8 @@ export function scanSince(
         ) {
           eventKind = "MERGE_SELECTED";
         } else {
-          continue; // merge visibility only — already introduced elsewhere
+          processedInCommit += 1;
+          continue; // merge visibility only — already introduced elsewhere, but the path is handled
         }
       } else if (parentBlobs.some((b) => b !== null)) {
         eventKind = "MODIFIED";
@@ -543,7 +714,8 @@ export function scanSince(
         // neither case ever buffers the blob.
         if (expired()) {
           truncated = true;
-          break outer;
+          brokeMidCommit = true;
+          break;
         }
         const size = blobSizeAt(repoPath, commitBlob, gitOpts());
         if (size === null) {
@@ -554,11 +726,13 @@ export function scanSince(
         }
         if (size > maxFileBytes) {
           quarantined.push({ commit, path, reason: "FILE_TOO_LARGE", byteLength: size });
+          processedInCommit += 1;
           continue;
         }
         if (totalBytes + size > maxPollBytes) {
           truncated = true;
-          break outer;
+          brokeMidCommit = true;
+          break;
         }
         const content = readBlob(repoPath, commitBlob, maxFileBytes + 64 * 1024, gitOpts());
         byteLength = content.length;
@@ -594,15 +768,35 @@ export function scanSince(
         firstObservedAt: new Date().toISOString(),
         ...mergeProvenance,
       });
+      processedInCommit += 1;
     }
-    // If the candidate budget was exceeded for this commit, the paths
-    // already processed above are admitted, and the poll truncates
-    // here — the unprocessed paths are not lost, they are simply not
-    // yet admitted, and the cursor is preserved below.
-    if (candidateBudgetExceeded) {
+    // TBP2-007C partial-commit accounting. A poll either fully
+    // processes a commit, partially processes it with recorded partial
+    // state, or does not start it — never silently advances past
+    // unprocessed paths, and never reports a commit as done when its
+    // paths are still pending.
+    if (brokeMidCommit) {
+      const consumed = startIndex + processedInCommit;
+      if (consumed > 0) {
+        currentPartial = { commit, consumed };
+      }
+      // consumed === 0 with no paths handled: the commit was not
+      // started this poll, so any carried partial (for a different
+      // commit) is left untouched, and this commit stays pending.
+      truncated = true;
+      break outer;
+    }
+    if (morePaths) {
+      // All collected paths were handled, but the collector's
+      // lookahead proved further distinct paths exist for this
+      // commit beyond the budget. Record the partial prefix so the
+      // next poll resumes inside this commit, not after it.
+      currentPartial = { commit, consumed: startIndex + pathOrder.length };
+      truncated = true;
       break outer;
     }
     processedCommits.push(commit);
+    if (currentPartial && currentPartial.commit === commit) currentPartial = null;
   }
 
   // Deletion never closes an obligation — this module only records the
@@ -611,18 +805,26 @@ export function scanSince(
   // ADDED/MODIFIED event because a later DELETED event exists for the same
   // path; both are explicit, both are kept.
 
-  // TBP2-007B: a commit-cap frontier is returned ONLY when the
-  // inspected prefix was fully processed (processedCommits covers
-  // every commit in the capped list). If the loop broke early for
-  // any other reason (deadline, record/file/byte cap), the prefix
-  // was not fully processed, so no frontier is returned and the
-  // caller keeps the preserved cursor — advancing a frontier past
-  // unprocessed commits would lose them.
+  // TBP2-007C: a frontier is returned on ANY truncation — commit cap,
+  // file/record/byte cap, deadline, or a partial commit — because the
+  // frontier now carries exact progress: the fully processed commits
+  // (a lower set) plus any partial commit with its consumed prefix.
+  // Resuming from it advances past exactly the accounted work and
+  // resumes inside the partial commit, so no truncation mode can stall
+  // at the same cursor forever. A frontier is never returned when
+  // nothing truncated: then every pending commit was fully processed
+  // and the cursor advances to HEAD.
   let resumeFrontier = null;
-  if (commitCapHit && processedCommits.length === commits.length) {
+  if (commitCapHit && !truncated) {
+    // The producer's window was exhausted without any other
+    // truncation: more history exists beyond the cap, so this poll is
+    // truncated by the commit cap even though every listed commit was
+    // fully processed.
     truncated = true;
-    const allInspected = frontier ? [...frontier.inspected, ...processedCommits] : [...processedCommits];
-    resumeFrontier = makeFrontier(head, scopePaths, allInspected);
+  }
+  if (truncated) {
+    const accounted = frontier ? [...frontier.accounted, ...processedCommits] : [...processedCommits];
+    resumeFrontier = makeFrontier(head, scopePaths, accounted, currentPartial, resumeBase);
   }
 
   return {
@@ -631,11 +833,11 @@ export function scanSince(
     // truncated batch must be resumed from the SAME cursor on the
     // next poll (caller re-runs with more budget or narrower scope),
     // never silently marked caught-up with records missing. The
-    // exception is a commit-cap truncation with a returned
-    // resumeFrontier: passing that frontier as cursorCommit on the
-    // next poll resumes past the fully processed prefix and
-    // eventually reaches the tail; passing newCursor repeats the
-    // same prefix safely but without progress.
+    // resumable path is resumeFrontier: passing it as cursorCommit on
+    // the next poll resumes past the fully processed prefix (and
+    // inside any partial commit) and eventually reaches the tail;
+    // passing newCursor repeats the same prefix safely but without
+    // progress.
     newCursor: truncated ? cursorCommit ?? null : head,
     quarantined,
     truncated,

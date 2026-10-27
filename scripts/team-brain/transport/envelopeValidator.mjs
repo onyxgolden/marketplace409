@@ -35,6 +35,15 @@
 //   and hidden fields are refused: JSON.stringify drops them while a
 //   handler receiving the raw object could still observe them, which
 //   is the same signature-binding collision as the numeric case.
+// - TBP2-002C: hidden-field discovery must iterate Reflect.ownKeys,
+//   not Object.keys (which cannot see non-enumerable fields, so an
+//   enumerable check inside an Object.keys loop could never fire).
+//   Arrays allow `length` (the one standard non-enumerable data
+//   property) and refuse every other own key. Native Proxies are
+//   refused trap-free (util.types.isProxy) before ANY reflection or
+//   field read on the value — at every entry point (validator,
+//   canonicalizer, registry pin, logical API dispatch) — so a get trap
+//   can never supply a field the signature never covered.
 // - expected_row_version is null or a non-negative integer.
 // - payload is a plain object, bounded in depth, total bytes, and any
 //   single string length. A payload that violates a limit is refused
@@ -46,6 +55,7 @@
 //   no unknown field silently ignored. A pin field that is present is a
 //   binding that must be checked by the caller (see registry.mjs).
 
+import { types } from "node:util";
 import { fail, CODES } from "./errors.mjs";
 
 export const MAX_ENVELOPE_BYTES = 512 * 1024;
@@ -82,6 +92,11 @@ function isPlainObject(value) {
   // Map, Set, typed array, or any other exotic object is not a plain
   // JSON record, even if it happens to carry string-keyed fields. Only
   // Object.prototype and null-prototype records are admitted.
+  // TBP2-002C: a native Proxy is never a plain record, and this check
+  // must run BEFORE Object.getPrototypeOf — getPrototypeOf on a Proxy
+  // invokes its getPrototypeOf trap, and util.types.isProxy is trap-free,
+  // so a Proxy is refused here without executing any user code.
+  if (types.isProxy(value)) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
@@ -92,17 +107,35 @@ function isPlainObject(value) {
 // that receives the raw object — the exact unsigned-field collision
 // this validator must close. Descriptors are inspected BEFORE any
 // value is read, so an accessor getter is never invoked here.
+// TBP2-002C: Object.keys enumerates enumerable string keys ONLY, so a
+// loop over Object.keys can never discover a non-enumerable field —
+// checking desc.enumerable inside such a loop was a no-op for hidden
+// fields. This loop iterates Reflect.ownKeys, which returns ALL own
+// keys (enumerable and non-enumerable, string and symbol), so a hidden
+// field is seen and refused. A Proxy is refused before any reflection:
+// Reflect.ownKeys / getOwnPropertyDescriptor on a Proxy would invoke
+// its traps, and util.types.isProxy is trap-free.
 function checkRecordShape(value, field) {
-  if (Object.getOwnPropertySymbols(value).length > 0) {
-    malformed(`${field} must not carry symbol-keyed fields`, { field, reason: "SYMBOL_FIELD" });
+  if (types.isProxy(value)) {
+    malformed(`${field} must not be a proxy object`, { field, reason: "PROXY_OBJECT" });
   }
-  for (const key of Object.keys(value)) {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      malformed(`${field} must not carry symbol-keyed fields`, { field, key: String(key), reason: "SYMBOL_FIELD" });
+    }
     const desc = Object.getOwnPropertyDescriptor(value, key);
-    if (!desc || desc.get || desc.set || !desc.enumerable) {
-      malformed(`${field} fields must be enumerable data properties, not accessors or hidden fields`, {
+    if (!desc || desc.get || desc.set) {
+      malformed(`${field} fields must be enumerable data properties, not accessors`, {
         field,
         key,
-        reason: "ACCESSOR_OR_HIDDEN_FIELD",
+        reason: "ACCESSOR_FIELD",
+      });
+    }
+    if (!desc.enumerable) {
+      malformed(`${field} fields must be enumerable (hidden fields are refused)`, {
+        field,
+        key,
+        reason: "HIDDEN_FIELD",
       });
     }
   }
@@ -138,22 +171,54 @@ function checkJsonValue(value, depth, field) {
     malformed(`payload values must belong to the JSON value domain, not ${t}`, { reason: "NON_JSON_VALUE" });
   }
   if (Array.isArray(value)) {
+    // TBP2-002C: a Proxy wrapping an array reports Array.prototype
+    // via getPrototypeOf, so the Proxy check must come first and is
+    // trap-free (util.types.isProxy), before any reflection on it.
+    if (types.isProxy(value)) {
+      malformed("payload arrays must not be proxy objects", { reason: "PROXY_OBJECT" });
+    }
     if (Object.getPrototypeOf(value) !== Array.prototype) {
       malformed("payload arrays must have Array.prototype", { reason: "NON_JSON_VALUE" });
     }
-    if (Object.getOwnPropertySymbols(value).length > 0) {
-      malformed("payload arrays must not carry symbol-keyed fields", { reason: "SYMBOL_FIELD" });
+    // Array policy, stated plainly: `length` is the one standard
+    // non-enumerable data property of an array and is allowed. Every
+    // other own key — enumerable or hidden, string or symbol — is
+    // refused. Object.keys cannot see hidden keys, so this iterates
+    // Reflect.ownKeys (all own keys) and refuses any key that is not
+    // `length` or a canonical in-range index with an enumerable data
+    // descriptor. A length above the payload byte cap cannot fit in a
+    // signed payload (each element costs at least one byte), so it is
+    // refused here rather than looping over a sparse giant array.
+    const lengthDesc = Object.getOwnPropertyDescriptor(value, "length");
+    if (!lengthDesc || lengthDesc.get || lengthDesc.set || typeof lengthDesc.value !== "number") {
+      malformed("payload arrays must have a plain length property", { reason: "NON_JSON_VALUE" });
     }
-    // Array elements are exactly indices 0..length-1. Any extra own key
-    // is dropped by JSON.stringify but observable to a handler, so it
-    // is refused here rather than silently ignored.
-    if (Object.keys(value).length !== value.length) {
-      malformed("payload arrays must not carry extra own keys", { reason: "NON_JSON_VALUE" });
+    if (value.length > MAX_PAYLOAD_BYTES) {
+      malformed(`payload array length exceeds ${MAX_PAYLOAD_BYTES}`, { reason: "PAYLOAD_TOO_LARGE" });
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      if (key === "length") continue;
+      if (typeof key !== "string") {
+        malformed("payload arrays must not carry symbol-keyed fields", { key: String(key), reason: "SYMBOL_FIELD" });
+      }
+      const idx = Number(key);
+      const isIndex =
+        key !== "" && Number.isInteger(idx) && idx >= 0 && idx < 4294967295 && String(idx) === key;
+      if (!isIndex || idx >= value.length) {
+        malformed("payload arrays must not carry extra own keys", { key, reason: "HIDDEN_FIELD" });
+      }
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      if (!desc || desc.get || desc.set || !desc.enumerable) {
+        malformed("payload array elements must be enumerable data properties", {
+          key,
+          reason: "ACCESSOR_OR_HIDDEN_FIELD",
+        });
+      }
     }
     for (let i = 0; i < value.length; i += 1) {
       const desc = Object.getOwnPropertyDescriptor(value, String(i));
       if (!desc || desc.get || desc.set || !desc.enumerable) {
-        malformed("payload array elements must be enumerable data properties", { reason: "ACCESSOR_OR_HIDDEN_FIELD" });
+        malformed("payload arrays must be dense JSON arrays", { reason: "ACCESSOR_OR_HIDDEN_FIELD" });
       }
       checkJsonValue(desc.value, depth + 1, field);
     }
@@ -261,6 +326,11 @@ export function validateResource(resource, { forPin = false } = {}) {
 }
 
 export function validateEnvelope(envelope) {
+  // TBP2-002C: refuse a Proxy before isPlainObject's getPrototypeOf
+  // (which would invoke its trap) and before any field is read.
+  if (typeof envelope === "object" && envelope !== null && types.isProxy(envelope)) {
+    malformed("envelope must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
   if (!isPlainObject(envelope)) {
     malformed("envelope must be an object", { reason: "NOT_AN_OBJECT" });
   }
@@ -353,6 +423,11 @@ export function parseBoundedJson(rawText) {
 // Same limits as the wire shape, translated field by field, so a malformed
 // envelope cannot be signed into existence either.
 export function validateBuildFields(fields) {
+  // TBP2-002C: refuse a Proxy before any field is read, so a getter
+  // trap is never executed on the construction side either.
+  if (typeof fields === "object" && fields !== null && types.isProxy(fields)) {
+    malformed("envelope fields must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
   if (!isPlainObject(fields)) {
     malformed("envelope fields must be a plain object", { reason: "NOT_AN_OBJECT" });
   }

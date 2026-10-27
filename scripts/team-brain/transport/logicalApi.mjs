@@ -26,6 +26,7 @@
 // (ledger/repository.mjs, already merged) and P3's (orchestrator/queue)
 // job — handlers are supplied by the caller, not implemented here.
 
+import { types } from "node:util";
 import { verifyAndAuthorize, recordSeenOperation, reserveSeenOperation, releaseSeenOperation } from "./registry.mjs";
 import { fail, CODES } from "./errors.mjs";
 
@@ -97,6 +98,15 @@ export function createApi(registry, handlers) {
 // A caller that enforces a pin (the P3 orchestrator, later) must supply
 // it as this third argument.
 export function handleEnvelope(api, envelope, expected) {
+  // TBP2-002C: refuse a Proxy trap-free BEFORE reading envelope.operation.
+  // The old code read envelope.operation first to compute the tier,
+  // which executes a get trap on a Proxy envelope before any validation.
+  if (typeof envelope === "object" && envelope !== null && types.isProxy(envelope)) {
+    fail(CODES.MALFORMED_ENVELOPE, "envelope must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
+  if (typeof expected === "object" && expected !== null && types.isProxy(expected)) {
+    fail(CODES.MALFORMED_ENVELOPE, "expected pin must not be a proxy object", { reason: "PROXY_OBJECT" });
+  }
   const tier = operationTier(envelope.operation);
   if (tier === "ADMIN_ONLY") {
     fail(
