@@ -33,11 +33,23 @@
 //!   with its *own* bounded cleanup window (closes C2P2-001's unbounded
 //!   `kill`/`wait`) and permanently marks the session unusable (closes
 //!   C2P2-003: no failure leaves the child alive with the session
-//!   looking reusable). The worker thread is joined as part of that
-//!   same retirement rather than left detached (closes C2P2-004) — by
-//!   the time retirement's bounded `wait()` confirms the child is dead,
-//!   the worker's blocked I/O has already unblocked, so the join
-//!   returns promptly rather than hanging.
+//!   looking reusable). The worker thread is joined through its own
+//!   bounded wrapper as part of that same retirement rather than left
+//!   detached or joined unconditionally (closes C2P2-004).
+//!
+//! **C2P2-007 fix**: `request()`'s failure paths used to call retirement
+//! and discard its result, then unconditionally `.join()` the worker
+//! with no bound at all. Both are real bugs on their own: a discarded
+//! retirement result let a stale `Timeout`/`Io` error stand in for "the
+//! child is confirmed dead" when retirement itself might have failed to
+//! confirm that (e.g. the process lock was contended past the bound);
+//! and an unconditional join could then hang forever on a worker that
+//! might still be genuinely blocked against a still-live child/pipe.
+//! `retire_now`/[`SidecarCancelHandle::cancel`] now return their real
+//! result, `request()` propagates `RetirementFailed` instead of the
+//! original error whenever retirement itself couldn't be confirmed, and
+//! the worker is always joined through [`join_worker_bounded`], never
+//! a bare `.join()`.
 //!
 //! **C2P2-005 fix**: a dedicated thread drains the child's stderr
 //! continuously from the moment it's spawned, so a filled stderr pipe
@@ -54,12 +66,12 @@ use forge_capture_core::sop_ipc::{
     decode_framed, encode_framed, validate_response, FrameDecodeError, IpcRequest, IpcResponse,
 };
 
-/// How long [`kill_and_wait_bounded`] waits for a killed child to be
-/// reaped before giving up and reporting [`SidecarClientError::RetirementFailed`]
-/// instead of hanging indefinitely. Generous for a process that was
-/// just sent a kill signal (which should be reaped almost immediately
-/// in practice), small enough that a genuinely stuck OS-level wait
-/// cannot silently turn a bounded API into an unbounded one.
+/// How long [`kill_and_wait_bounded`] (and [`join_worker_bounded`]) wait
+/// before giving up and reporting failure instead of hanging
+/// indefinitely. Generous for a process that was just sent a kill
+/// signal (which should be reaped almost immediately in practice),
+/// small enough that a genuinely stuck OS-level wait, or lock
+/// contention, cannot silently turn a bounded API into an unbounded one.
 const RETIREMENT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
@@ -81,32 +93,62 @@ pub enum SidecarClientError {
     ResponseValidation(String),
 }
 
-/// Kills `child` and waits for it to exit, with the *entire* operation —
-/// acquiring the session's process lock, `kill()`, and `wait()` alike —
-/// bounded by [`RETIREMENT_TIMEOUT`]. All three run on one spawned
-/// thread so this function itself never blocks past that bound: if the
-/// lock were contended for longer than the bound (there is no other
-/// long-held critical section on this lock elsewhere in this module,
-/// but a future caller could introduce one), or if `wait()` itself hung
-/// at the OS level, either shows up the same way — a timed-out
-/// `recv_timeout` here — rather than letting an unbounded step upstream
-/// of `wait()` quietly defeat the bound.
+/// Confirms `child` is dead, with the *entire* operation — acquiring
+/// the session's process lock, checking whether it already exited,
+/// `kill()`, and `wait()` alike — bounded by [`RETIREMENT_TIMEOUT`]. All
+/// of that runs on one spawned thread so this function itself never
+/// blocks past that bound: whether the lock is contended, `wait()`
+/// itself hangs at the OS level, or anything in between, it all shows
+/// up the same way — a timed-out `recv_timeout` here — never an
+/// unbounded step the caller has no way to observe (C2P2-007: a prior
+/// version checked "already exited?" *outside* this bounded thread,
+/// which could itself block unboundedly on a contended lock before ever
+/// reaching the parts that were actually bounded).
+///
+/// **The caller must trust this function's result, not assume success.**
+/// [`SidecarSession::request`] and [`SidecarCancelHandle::cancel`] both
+/// propagate it rather than discarding it (C2P2-007's other half: a
+/// discarded retirement failure let a stale `Timeout`/`Io` error stand
+/// in for "the child is confirmed dead" when it might not be).
 fn kill_and_wait_bounded(child: &Arc<Mutex<Child>>) -> Result<(), SidecarClientError> {
     let child = Arc::clone(child);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut guard = child.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(guard.try_wait(), Ok(Some(_))) {
+            let _ = tx.send(Ok(()));
+            return;
+        }
         let _ = guard.kill(); // "already exited" is not a failure here
         let result = guard.wait().map(|_| ()).map_err(|e| e.to_string());
-        let _ = tx.send(result);
+        let _ = tx.send(result.map_err(SidecarClientError::RetirementFailed));
     });
     match rx.recv_timeout(RETIREMENT_TIMEOUT) {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(SidecarClientError::RetirementFailed(e)),
+        Ok(result) => result,
         Err(_) => Err(SidecarClientError::RetirementFailed(
-            "kill()/wait() did not complete within the bounded cleanup period".to_string(),
+            "retirement (lock acquisition, exit check, kill, or wait) did not complete within the bounded cleanup period".to_string(),
         )),
     }
+}
+
+/// Joins `worker`, but bounded by [`RETIREMENT_TIMEOUT`] rather than
+/// unconditionally — C2P2-007: if retirement could not confirm the
+/// child dead, the worker might still be genuinely blocked against a
+/// still-live child/pipe, and an unconditional `.join()` would then hang
+/// the caller indefinitely. Runs the join on its own thread so this
+/// function itself always returns within the bound; in the rare case
+/// the worker truly never unblocks (only possible if retirement itself
+/// already failed to confirm the child dead), that inner thread — and
+/// the worker it's joining — are accepted as leaked rather than hanging
+/// the caller, which already has a definite, honest answer
+/// ([`SidecarClientError::RetirementFailed`]) by that point regardless.
+fn join_worker_bounded(worker: std::thread::JoinHandle<()>) {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = worker.join();
+        let _ = tx.send(());
+    });
+    let _ = rx.recv_timeout(RETIREMENT_TIMEOUT);
 }
 
 /// Reads and discards from `stderr` until the child exits and closes
@@ -149,13 +191,12 @@ pub struct SidecarCancelHandle {
 
 impl SidecarCancelHandle {
     /// Kills the child immediately — brief §2.1: "cancellation kills the
-    /// child and leaves the last durable checkpoint intact." Idempotent:
-    /// calling this again after the session is already retired is a
-    /// no-op, not an error.
+    /// child and leaves the last durable checkpoint intact." Safe to
+    /// call more than once (each call independently, truthfully
+    /// confirms the child's state rather than trusting a flag from an
+    /// earlier call that might itself have failed — C2P2-007).
     pub fn cancel(&self) -> Result<(), SidecarClientError> {
-        if self.retired.swap(true, Ordering::SeqCst) {
-            return Ok(());
-        }
+        self.retired.store(true, Ordering::SeqCst);
         kill_and_wait_bounded(&self.child)
     }
 
@@ -231,8 +272,10 @@ impl SidecarSession {
                 (Some(i), Some(o)) => (i, o),
                 _ => {
                     drop(guard);
-                    self.retire_now();
-                    return Err(SidecarClientError::Io("session's stdin/stdout already unavailable".to_string()));
+                    return match self.retire_now() {
+                        Ok(()) => Err(SidecarClientError::Io("session's stdin/stdout already unavailable".to_string())),
+                        Err(retirement_err) => Err(retirement_err),
+                    };
                 }
             }
         };
@@ -280,36 +323,44 @@ impl SidecarSession {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let outcome = rx.recv_timeout(remaining);
 
-        let result = match outcome {
+        let (needs_retire, outcome_result): (bool, Result<IpcResponse, SidecarClientError>) = match outcome {
             Ok(Ok((payload, stdin, stdout))) => match self.finish_success(&payload, req, stdin, stdout) {
-                Ok(resp) => Ok(resp),
-                Err(e) => {
-                    self.retire_now();
-                    Err(e)
-                }
+                Ok(resp) => (false, Ok(resp)),
+                Err(e) => (true, Err(e)),
             },
-            Ok(Err(reason)) => {
-                self.retire_now();
-                Err(SidecarClientError::Io(reason))
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.retire_now();
-                Err(SidecarClientError::Timeout)
-            }
+            Ok(Err(reason)) => (true, Err(SidecarClientError::Io(reason))),
+            Err(mpsc::RecvTimeoutError::Timeout) => (true, Err(SidecarClientError::Timeout)),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                self.retire_now();
-                Err(SidecarClientError::Io("worker thread ended without a result".to_string()))
+                (true, Err(SidecarClientError::Io("worker thread ended without a result".to_string())))
             }
         };
 
-        // C2P2-004: reap the worker rather than leaving it detached. On
-        // any non-success path above, `retire_now` has already
-        // confirmed (bounded) that the child is dead, so the worker's
-        // blocked write/read — if it was still blocked at all — has
-        // already unblocked; this join returns promptly, not hangs.
-        let _ = worker.join();
+        if !needs_retire {
+            // Success path: the worker already sent its result and is
+            // finishing up on its own - an ordinary join is fine here,
+            // it should return immediately, and there is nothing to
+            // retire.
+            let _ = worker.join();
+            return outcome_result;
+        }
 
-        result
+        // C2P2-007: trust retirement's own, real result rather than the
+        // original timeout/I/O error - that error does not by itself
+        // mean the child is confirmed dead. Only once retirement
+        // confirms that is it safe to assume the worker's blocked I/O
+        // (if any) has already unblocked; either way, the join itself
+        // stays bounded (C2P2-004), never risking a hang on a worker
+        // that might still be blocked against a still-live child/pipe.
+        match self.retire_now() {
+            Ok(()) => {
+                join_worker_bounded(worker);
+                outcome_result
+            }
+            Err(retirement_err) => {
+                join_worker_bounded(worker);
+                Err(retirement_err)
+            }
+        }
     }
 
     /// Validates the response and, only on full success, restores
@@ -333,20 +384,21 @@ impl SidecarSession {
         Ok(resp)
     }
 
-    /// Centralized retirement (C2P2-003): idempotent, called from every
-    /// non-success path in [`Self::request`] as well as from
-    /// [`SidecarCancelHandle::cancel`] and [`Drop`].
-    fn retire_now(&self) {
-        if self.retired.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let _ = kill_and_wait_bounded(&self.child);
+    /// Centralized retirement (C2P2-003): called from every non-success
+    /// path in [`Self::request`] as well as from [`Drop`]. Returns the
+    /// real, truthful result (C2P2-007) rather than assuming success —
+    /// callers that need to know whether the child is actually
+    /// confirmed dead must check it, not infer it from the original
+    /// request error.
+    fn retire_now(&self) -> Result<(), SidecarClientError> {
+        self.retired.store(true, Ordering::SeqCst);
+        kill_and_wait_bounded(&self.child)
     }
 }
 
 impl Drop for SidecarSession {
     fn drop(&mut self) {
-        self.retire_now();
+        let _ = self.retire_now();
     }
 }
 
@@ -502,6 +554,57 @@ mod tests {
         assert!(
             elapsed < RETIREMENT_TIMEOUT + Duration::from_millis(500),
             "retirement must report failure within its own bound, not block on whatever is holding it up (took {elapsed:?})"
+        );
+
+        blocker.join().expect("blocker thread must not panic");
+    }
+
+    #[test]
+    fn retirement_lock_contention_during_a_blocked_request_surfaces_a_bounded_retirement_failed() {
+        // C2P2-007's exact required test: force retirement itself to
+        // fail to confirm the child dead (lock contention) while the
+        // worker thread is genuinely blocked (the child never reads,
+        // so the worker sits in its read loop forever), through the
+        // real `request()` path - not the lower-level primitive
+        // directly. Must prove two things: `request()` returns
+        // `RetirementFailed` (not a stale `Timeout` masking a cleanup
+        // that never actually happened), and it does so within a
+        // bounded time despite the worker potentially still being
+        // blocked against a live child.
+        //
+        // Timing matters here: the lock must become contended *after*
+        // request() has already taken stdin/stdout for its own worker
+        // (an early, uncontended step) but *before* retirement is
+        // attempted once the 300ms deadline fires - contention at the
+        // wrong moment proves nothing about retirement specifically.
+        let mut session = SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_TEST_NEVER_READ", "1")]).unwrap();
+        let child = Arc::clone(&session.child);
+
+        let started = Instant::now();
+        let request_thread = std::thread::spawn(move || {
+            // Small request: write_all succeeds immediately (fits any
+            // ordinary pipe buffer even with nobody reading), so the
+            // worker ends up genuinely blocked in the *read* loop,
+            // waiting for a response the child (which never reads at
+            // all) can never send.
+            let result = session.request(&sample_request(300));
+            (result, started.elapsed())
+        });
+
+        // Let request() get well past its own initial, uncontended
+        // lock use before we take it away from under it.
+        std::thread::sleep(Duration::from_millis(100));
+        let blocker = std::thread::spawn(move || {
+            let _guard = child.lock().unwrap_or_else(|e| e.into_inner());
+            std::thread::sleep(RETIREMENT_TIMEOUT + Duration::from_secs(2));
+        });
+
+        let (result, elapsed) = request_thread.join().unwrap();
+        assert!(matches!(result, Err(SidecarClientError::RetirementFailed(_))), "{:?}", result);
+        assert!(
+            elapsed < Duration::from_millis(300) + RETIREMENT_TIMEOUT + Duration::from_secs(2),
+            "request() must return a bounded RetirementFailed, not hang on the contended lock or an \
+             unbounded join of the still-blocked worker (took {elapsed:?})"
         );
 
         blocker.join().expect("blocker thread must not panic");
