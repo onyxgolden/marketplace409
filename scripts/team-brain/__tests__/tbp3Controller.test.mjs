@@ -335,9 +335,19 @@ describe("structured result validation", () => {
     expect(after.status).toBe("QUEUED");
     expect(after.attempts).toBe(1);
     expect(after.nextAction).toBe("RETRY");
-    ex = executing(r.tasks, "t", "a1");
+    // Fix round 1 (TBP3-001): the reassignment fences with a new
+    // generation, so the second round must use the fresh lease
+    // generation — a hardcoded generation 1 is now correctly stale.
+    const re = assignNext({ tasks: r.tasks, agents: [agent("a1")], now: NOW, snapshotRevision: 0 });
+    expect(re.assignment.lease.generation).toBe(2);
+    ex = {
+      tasks: startExecution({
+        tasks: re.tasks, taskId: "t", agentId: "a1", generation: re.assignment.lease.generation, now: NOW,
+      }),
+      lease: re.assignment.lease,
+    };
     r = submitResult({
-      tasks: ex.tasks, taskId: "t", agentId: "a1", generation: 1,
+      tasks: ex.tasks, taskId: "t", agentId: "a1", generation: ex.lease.generation,
       result: { status: "failed", error: "boom again" }, now: NOW,
     });
     expect(r.accepted).toEqual({ status: "escalated", reason: "RETRY_LIMIT" });

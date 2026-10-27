@@ -9,7 +9,10 @@
 // Task record fields (all inputs validated by createTask):
 //   id, goal, scope, status, filedAt, deps, state ("OPEN"/"CLOSED"),
 //   attempts, maxAttempts, malformedCount, maxMalformed,
-//   ownerAgent, lease, nextAction, blockedOn, question, requiredOutputs,
+//   ownerAgent, lease, assignmentEpoch (monotonic fencing epoch, never
+//   reset on lease clear — fix round 1, TBP3-001), timeoutCount
+//   (expired-lease recoveries, bounded by maxAttempts — TBP3-004),
+//   nextAction, blockedOn, question, requiredOutputs,
 //   result, snapshotRevision, override, repingSent, reportSent,
 //   escalation, transitions.
 //
@@ -26,6 +29,7 @@
 import { CODES, fail, P3_CODES } from "./errors.mjs";
 import { FOUR_HOURS_MS, projectQueue } from "../queue/projection.mjs";
 import { assertNonEmptyString, assertStringArray, utcIsoToMs } from "../ledger/validation.mjs";
+import { stableStringify } from "../report/stableStringify.mjs";
 
 export const LEASE_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_ATTEMPTS = 3;
@@ -99,6 +103,8 @@ export function createTask(fields) {
     maxMalformed,
     ownerAgent: null,
     lease: null,
+    assignmentEpoch: 0,
+    timeoutCount: 0,
     nextAction: null,
     blockedOn: null,
     question: null,
@@ -220,7 +226,12 @@ export function assignNext({ tasks, agents, now, snapshotRevision, trustedAuthor
       (a) => a && !busy.has(a.id) && (a.scopes || []).includes(task.scope),
     );
     if (!agent) continue;
-    const generation = 1;
+    // Fencing epoch: strictly monotonic per task, incremented on every
+    // new assignment and never reset when a lease clears (TBP3-001). An
+    // old attempt's lease generation can therefore never equal a later
+    // assignment's, so stale results fail leaseCheck on every recovery
+    // path (failed, released, expired).
+    const generation = (task.assignmentEpoch || 0) + 1;
     const lease = {
       leaseId: `${task.id}:${generation}`,
       owner: agent.id,
@@ -228,7 +239,7 @@ export function assignNext({ tasks, agents, now, snapshotRevision, trustedAuthor
       issuedAt: now,
       expiresAt: new Date(nowMs + LEASE_MS).toISOString(),
     };
-    const next = transition({ ...task, ownerAgent: agent.id, lease, nextAction: "EXECUTE" }, "ASSIGNED", "ASSIGNED", now);
+    const next = transition({ ...task, ownerAgent: agent.id, lease, assignmentEpoch: generation, nextAction: "EXECUTE" }, "ASSIGNED", "ASSIGNED", now);
     return {
       assignment: { taskId: task.id, agentId: agent.id, lease },
       tasks: replaceTask(tasks, next),
@@ -295,8 +306,10 @@ export function renewLease({ tasks, taskId, agentId, generation, now }) {
     issuedAt: now,
     expiresAt: new Date(nowMs + LEASE_MS).toISOString(),
   };
+  // A renewal advances the fencing epoch too: otherwise a later fresh
+  // assignment (epoch + 1) could collide with this renewed generation.
   return {
-    tasks: replaceTask(tasks, { ...task, lease }),
+    tasks: replaceTask(tasks, { ...task, lease, assignmentEpoch: nextGeneration }),
     lease,
   };
 }
@@ -313,8 +326,13 @@ export function releaseLease({ tasks, taskId, agentId, generation, now }) {
   );
 }
 
-// Reclaim leases past expiry. Expired work returns to QUEUED with its
-// attempts intact — a crash never silently consumes a retry.
+// Reclaim leases past expiry. An expired attempt is an unknown outcome,
+// not a proven failure, so it consumes the separate timeout budget
+// (timeoutCount), never the proven-failure attempts count — but the
+// budget is still bounded (TBP3-004): once timeoutCount reaches
+// maxAttempts the task escalates as TIMEOUT_LIMIT with its age and
+// history preserved, instead of cycling forever through assign/expire.
+// A crash below the limit returns to QUEUED with attempts intact.
 export function reclaimExpiredLeases({ tasks, now }) {
   const nowMs = utcIsoToMs(now, "now");
   let next = tasks;
@@ -324,10 +342,23 @@ export function reclaimExpiredLeases({ tasks, now }) {
       task.lease &&
       nowMs >= utcIsoToMs(task.lease.expiresAt, `lease.expiresAt for ${task.id}`)
     ) {
-      next = replaceTask(
-        next,
-        transition({ ...task, ownerAgent: null, lease: null, nextAction: null }, "QUEUED", "LEASE_EXPIRED", now),
-      );
+      const timeoutCount = (task.timeoutCount || 0) + 1;
+      if (timeoutCount >= task.maxAttempts) {
+        next = replaceTask(
+          next,
+          transition(
+            { ...task, timeoutCount, ownerAgent: null, lease: null, nextAction: null, escalation: { kind: "TIMEOUT_LIMIT", stage: "REPORT_TO_JASON_DUE", sent: false } },
+            "ESCALATED",
+            "TIMEOUT_LIMIT",
+            now,
+          ),
+        );
+      } else {
+        next = replaceTask(
+          next,
+          transition({ ...task, timeoutCount, ownerAgent: null, lease: null, nextAction: null }, "QUEUED", "LEASE_EXPIRED", now),
+        );
+      }
     }
   }
   return next;
@@ -380,7 +411,12 @@ export function submitResult({ tasks, taskId, agentId, generation, result, now }
     if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
       return bad("done result requires an outputs object");
     }
-    const missing = task.requiredOutputs.filter((k) => outputs[k] === undefined);
+    // Own-property check, not prototype lookup (TBP3-003): a required
+    // output named `constructor` (or toString/__proto__) must not pass
+    // via an inherited member of a plain {} outputs object.
+    const missing = task.requiredOutputs.filter(
+      (k) => !Object.prototype.hasOwnProperty.call(outputs, k) || outputs[k] === undefined,
+    );
     if (missing.length > 0) return bad("done result missing required outputs", { missing });
     const next = transition(
       { ...task, result, ownerAgent: null, lease: null, nextAction: null, escalation: task.escalation?.sent ? task.escalation : null },
@@ -441,46 +477,121 @@ export function submitResult({ tasks, taskId, agentId, generation, result, now }
 // hours starts the chain; exactly four hours is pinned to no action due
 // (same boundary as the slice-1 projection). Terminal tasks never
 // escalate: an answered item cancels its unsent escalation.
-export function escalationFor(task, now) {
+// `effectiveFiledMs` (optional) ages the task by its inherited effective
+// filed time — a blocker inherits its oldest blocked descendant's age
+// (TBP3-007) — instead of its own filedAt.
+export function escalationFor(task, now, effectiveFiledMs = null) {
   if (TERMINAL.has(task.status)) return null;
-  const ageMs = utcIsoToMs(now, "now") - utcIsoToMs(task.filedAt, `task.filedAt for ${task.id}`);
+  const filedMs = effectiveFiledMs ?? utcIsoToMs(task.filedAt, `task.filedAt for ${task.id}`);
+  const ageMs = utcIsoToMs(now, "now") - filedMs;
   if (ageMs <= FOUR_HOURS_MS) return null;
   if (!task.repingSent) return { id: task.id, action: "REPING_DUE", ageMs };
   if (!task.reportSent) return { id: task.id, action: "REPORT_TO_JASON_DUE", ageMs };
   return null;
 }
 
+// Effective (inherited-age) filed time per task id, from the slice-1
+// projection: a blocker inherits the earliest effective filed time of
+// every transitively blocked descendant. Exporters use this so status
+// and escalation ages agree with assignment ordering (TBP3-007).
+export function effectiveFiledMsById(tasks, now, trustedAuthorizations = []) {
+  const projection = projectQueue({
+    obligations: toProjectionObligations(tasks),
+    now,
+    trustedAuthorizations,
+  });
+  return projection.effectiveFiledAtMs || {};
+}
+
 // Global oldest across pages of tasks. Pages are never trusted to be
 // sorted: the whole graph is projected once, so an older item on a later
-// page still beats a younger page-local oldest. Duplicate ids are
-// de-duplicated (first occurrence wins); conflicting duplicates are a
-// caller error, not something the controller guesses through.
+// page still beats a younger page-local oldest. Identical duplicate rows
+// de-duplicate; conflicting rows for the same id (different content, any
+// order) are NOT first-wins guessed through (TBP3-005): the snapshot is
+// marked conflicted with oldest null, so a contradictory snapshot can
+// never drive dequeue/closure. Callers must check `conflictedIds`.
 export function oldestAcrossPages(pages, now) {
   const seen = new Map();
+  const conflictedIds = [];
   for (const page of pages || []) {
     for (const task of page || []) {
-      if (!seen.has(task.id)) seen.set(task.id, task);
+      if (!seen.has(task.id)) {
+        seen.set(task.id, task);
+      } else if (stableStringify(seen.get(task.id)) !== stableStringify(task)) {
+        if (!conflictedIds.includes(task.id)) conflictedIds.push(task.id);
+      }
     }
   }
+  if (conflictedIds.length > 0) {
+    return { oldest: null, oldestAgeMs: null, conflictedIds };
+  }
   const all = [...seen.values()];
-  if (all.length === 0) return { oldest: null, oldestAgeMs: null };
+  if (all.length === 0) return { oldest: null, oldestAgeMs: null, conflictedIds: [] };
   const projection = projectQueue({
     obligations: toProjectionObligations(all),
     now,
   });
-  return { oldest: projection.oldest, oldestAgeMs: projection.oldestAgeMs };
+  return { oldest: projection.oldest, oldestAgeMs: projection.oldestAgeMs, conflictedIds: [] };
 }
 
 // Agent state, with no idle state to infer. An agent with no task is
 // UNASSIGNED — never IDLE — until the controller explicitly marks idle.
+// Actual active execution outranks an older waiting item (TBP3-007): a
+// WAITING row must not mask a newer EXECUTING task for the same agent.
 export function agentState(agentId, tasks) {
-  const current = tasks.find(
+  const owned = (tasks || []).filter(
     (t) => t.ownerAgent === agentId && (t.status === "ASSIGNED" || t.status === "EXECUTING" || t.status === "WAITING"),
   );
-  if (!current) return "UNASSIGNED";
-  if (current.status === "WAITING") return "WAITING";
-  if (current.status === "EXECUTING") return "EXECUTING";
-  return "ASSIGNED";
+  if (owned.length === 0) return "UNASSIGNED";
+  const rank = { EXECUTING: 0, ASSIGNED: 1, WAITING: 2 };
+  let current = owned[0];
+  for (const t of owned) {
+    if (rank[t.status] < rank[current.status]) current = t;
+  }
+  return current.status;
+}
+
+// Resume a WAITING task when its awaited external event arrives (blocked
+// tasks) or its awaited input is supplied (needs_input tasks). The event
+// or input binding is verified exactly — a generic self-wake is refused
+// (TBP3-010). Identity, filed age, attempts, and history are preserved;
+// the lease and owner clear and the fencing epoch advances, so the next
+// assignment issues a fresh generation and no stale lease survives.
+// Wrong, stale, or duplicate resume attempts fail closed.
+export function resumeWaiting({ tasks, taskId, now, event, input }) {
+  const task = requireTask(tasks, taskId);
+  if (task.status !== "WAITING") {
+    fail(P3_CODES.NOT_WAITING, `Task ${taskId} is ${task.status}, not WAITING`, { id: taskId });
+  }
+  if (task.blockedOn) {
+    if (event !== task.blockedOn) {
+      fail(P3_CODES.EVENT_MISMATCH, `Resume event for ${taskId} does not match awaited event ${task.blockedOn}`, {
+        id: taskId,
+        awaited: task.blockedOn,
+      });
+    }
+  } else if (task.question) {
+    if (typeof input !== "string" || input.length === 0) {
+      fail(P3_CODES.EVENT_MISMATCH, `Resume for ${taskId} requires the awaited input`, { id: taskId });
+    }
+  } else {
+    fail(P3_CODES.EVENT_MISMATCH, `Task ${taskId} is WAITING with no awaited event or input binding`, { id: taskId });
+  }
+  const next = transition(
+    {
+      ...task,
+      ownerAgent: null,
+      lease: null,
+      nextAction: null,
+      blockedOn: null,
+      question: null,
+      assignmentEpoch: (task.assignmentEpoch || 0) + 1,
+    },
+    "QUEUED",
+    "RESUMED",
+    now,
+  );
+  return replaceTask(tasks, next);
 }
 
 export function controllerIdleReport({ markedIdle = null } = {}) {

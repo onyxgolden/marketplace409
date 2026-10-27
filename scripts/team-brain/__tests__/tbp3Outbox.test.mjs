@@ -90,7 +90,7 @@ describe("outbox claims and delivery", () => {
     const c = claimed("op1", "a1");
     const r = recordDelivery({
       entries: c.entries, operationId: "op1", owner: "a1", generation: 1,
-      gitResponse: { priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
+      gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
       now: NOW,
     });
     expect(r.receipt.newBlob).toBe("bbbb");
@@ -103,7 +103,7 @@ describe("outbox claims and delivery", () => {
     const c = claimed("op1", "a1");
     const r = recordDelivery({
       entries: c.entries, operationId: "op1", owner: "a1", generation: 1,
-      gitResponse: { priorBlob: "zzzz", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
+      gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "zzzz", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
       now: NOW,
     });
     expect(r.refused.code).toBe("CAS_CONFLICT");
@@ -115,12 +115,12 @@ describe("outbox claims and delivery", () => {
     const c = claimed("op1", "a1");
     const first = recordDelivery({
       entries: c.entries, operationId: "op1", owner: "a1", generation: 1,
-      gitResponse: { priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
+      gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
       now: NOW,
     });
     const second = recordDelivery({
       entries: first.entries, operationId: "op1", owner: "a1", generation: 1,
-      gitResponse: { priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
+      gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
       now: NOW,
     });
     expect(second.alreadyDelivered).toBe(true);
@@ -133,7 +133,7 @@ describe("outbox claims and delivery", () => {
     expect(() =>
       recordDelivery({
         entries: c.entries, operationId: "op1", owner: "a1", generation: 7,
-        gitResponse: { priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
+        gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/chatgpt/note.md" },
         now: NOW,
       }),
     ).toThrowError(/does not match owner\/generation/);
@@ -144,7 +144,7 @@ describe("outbox claims and delivery", () => {
     expect(() =>
       recordDelivery({
         entries: c.entries, operationId: "op1", owner: "a1", generation: 1,
-        gitResponse: { priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/claude/other.md" },
+        gitResponse: { repo: "onyxgolden/forge-ai-drop", priorBlob: "aaaa", newBlob: "bbbb", head: "c0ffee", path: "results/claude/other.md" },
         now: NOW,
       }),
     ).toThrowError(/does not match outbox target/);
