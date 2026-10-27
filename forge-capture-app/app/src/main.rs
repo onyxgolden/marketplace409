@@ -2230,8 +2230,26 @@ fn run_on_main_thread_sync<R: Send + 'static>(
 /// it finally runs, observes the abandonment and skips its own body
 /// entirely (the waiter gave up first) — there is no third interleaving
 /// where the action runs after the waiter has already walked away.
+///
+/// C639-007C.8: the lock must never be held across `action` itself.
+/// `action` is a potentially-blocking/native call (a window `hide()`) whose
+/// duration is not guaranteed, and `wait_or_abandon` can only return by
+/// reacquiring this same lock — so holding it across `action` defeats the
+/// waiter's own timeout: a stuck `action` hangs the waiter indefinitely,
+/// not just for 5s. `Running` makes claiming "I am about to run `action`"
+/// a separate, instantaneous lock hold from running it: `settle` claims
+/// `Pending -> Running` and releases the lock BEFORE calling `action`, so
+/// the waiter can reacquire the lock and mark `Abandoned` the moment its
+/// timeout elapses, no matter how long `action` goes on running. Because
+/// the lock is released before `action` runs, a `Running` action that
+/// commits its result after the waiter has already abandoned cannot be
+/// delivered — nobody is left waiting — so `settle` calls `compensate`
+/// with that result instead, exactly once, also outside the lock: the
+/// counterpart that undoes whatever committing side effect `action` just
+/// performed (e.g. re-showing a window `action` already hid).
 enum AbandonableOutcome<T> {
     Pending,
+    Running,
     Abandoned,
     Done(T),
 }
@@ -2252,45 +2270,72 @@ impl<T: Clone> AbandonableBridge<T> {
     /// Run `action` — but only if the waiter has not already abandoned
     /// this bridge. Called from the main-thread closure, whenever it
     /// actually runs (immediately, or long after a busy main thread
-    /// finally drains its queue). If `action` does run, its result is
-    /// recorded and the waiter is woken; if the bridge is already
-    /// `Abandoned`, `action` is never invoked at all — no hide, no window
-    /// lookup, nothing.
-    fn settle(&self, action: impl FnOnce() -> T) {
+    /// finally drains its queue). Claiming the right to run `action` (the
+    /// `Pending -> Running` transition) and actually running it are two
+    /// separate steps: the lock is held only for the former, so a slow or
+    /// stuck `action` can never block the waiter from timing out. If
+    /// `action` commits while the bridge is still un-abandoned, its result
+    /// is recorded and the waiter is woken. If the waiter has already
+    /// abandoned — either before `action` started (checked up front, so a
+    /// not-yet-started closure skips `action` entirely: no hide, no window
+    /// lookup, nothing) or while `action` was running (checked again after
+    /// it returns) — `compensate` is called with `action`'s result instead
+    /// of delivering it to nobody.
+    fn settle(&self, action: impl FnOnce() -> T, compensate: impl FnOnce(T)) {
+        {
+            let mut guard = self.state.lock().unwrap();
+            match &*guard {
+                AbandonableOutcome::Abandoned => return,
+                AbandonableOutcome::Pending => *guard = AbandonableOutcome::Running,
+                AbandonableOutcome::Running | AbandonableOutcome::Done(_) => {
+                    unreachable!("settle is called exactly once per bridge")
+                }
+            }
+        }
+        // The lock is NOT held here: `action` may block indefinitely (a
+        // native window call), and the waiter must still be able to time
+        // out and mark `Abandoned` while this runs.
+        let result = action();
         let mut guard = self.state.lock().unwrap();
         if matches!(*guard, AbandonableOutcome::Abandoned) {
+            drop(guard);
+            compensate(result);
             return;
         }
-        let result = action();
         *guard = AbandonableOutcome::Done(result);
         self.cv.notify_all();
     }
 
-    /// Block up to `timeout` for `settle` to run. If `action` committed in
-    /// time — including the boundary where it committed right as the
+    /// Block up to `timeout` for `settle` to commit. If `action` committed
+    /// in time — including the boundary where it committed right as the
     /// timeout elapsed, which this re-checks under the same lock rather
     /// than trusting a separate timed-out flag — its result is returned.
-    /// Otherwise the bridge is marked `Abandoned`, atomically, so that a
-    /// not-yet-run `settle` call skips `action` entirely once it does run.
+    /// Otherwise the bridge is marked `Abandoned`, atomically, under the
+    /// same lock, regardless of whether `settle` has not yet started
+    /// (`Pending`) or is still running `action` (`Running`) — the lock is
+    /// never held by `action` itself (see `settle`), so this always
+    /// returns within `timeout` plus ordinary scheduling slop, never
+    /// waiting for `action` to finish.
     fn wait_or_abandon(&self, timeout: Duration) -> Result<T, String> {
         let guard = self.state.lock().unwrap();
         let (mut guard, _) = self
             .cv
-            .wait_timeout_while(guard, timeout, |s| matches!(s, AbandonableOutcome::Pending))
+            .wait_timeout_while(guard, timeout, |s| {
+                matches!(s, AbandonableOutcome::Pending | AbandonableOutcome::Running)
+            })
             .unwrap();
-        if matches!(*guard, AbandonableOutcome::Pending) {
-            *guard = AbandonableOutcome::Abandoned;
-            return Err(
-                "main-thread task did not reply within the bound (treated as abandoned)"
-                    .to_string(),
-            );
-        }
         match &*guard {
             AbandonableOutcome::Done(v) => Ok(v.clone()),
+            AbandonableOutcome::Pending | AbandonableOutcome::Running => {
+                *guard = AbandonableOutcome::Abandoned;
+                Err(
+                    "main-thread task did not reply within the bound (treated as abandoned)"
+                        .to_string(),
+                )
+            }
             AbandonableOutcome::Abandoned => {
                 unreachable!("only wait_or_abandon ever sets Abandoned, and it returns immediately after")
             }
-            AbandonableOutcome::Pending => unreachable!("handled above"),
         }
     }
 }
@@ -3322,6 +3367,21 @@ async fn retry_region_backdrop(
 /// has already timed out can detect that and skip the hide entirely — see
 /// the bridge's own doc comment and the call site in
 /// `retry_region_backdrop_blocking` for the full failure mode this closes.
+///
+/// C639-007C.8: `hide()` is exactly the unbounded native call
+/// `AbandonableBridge::settle` must never hold its lock across (see the
+/// bridge's own doc comment), so the waiter's 5s bound stays real even if
+/// `hide()` blocks past it. The counterpart: if `hide()` nonetheless
+/// succeeds after the waiter has already given up, `compensate` runs —
+/// still on the main thread, still inside the same dispatched closure, so
+/// nothing else can have run on the single main-event-loop thread between
+/// `action` resolving `window` and `compensate` acting on it — and restores
+/// the EXACT window `action` already resolved and hid, never a fresh
+/// `get_webview_window("overlay")` lookup, which could by then resolve to a
+/// newer generation's window. If the restore itself fails, the session is
+/// torn down exactly like the terminal-failure path below does, rather than
+/// leave an unrecoverable hidden picker with a live reservation nobody but
+/// the 60s watchdog will ever clear.
 fn retry_hide_overlay_or_abandon(
     app: tauri::AppHandle,
     retry_session: u64,
@@ -3329,21 +3389,41 @@ fn retry_hide_overlay_or_abandon(
     let bridge = Arc::new(AbandonableBridge::<Result<tauri::WebviewWindow, String>>::new());
     let bridge_for_main = bridge.clone();
     app.clone().run_on_main_thread(move || {
-        bridge_for_main.settle(move || -> Result<tauri::WebviewWindow, String> {
-            let state = app.state::<AppState>();
-            if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
-                return Err(
-                    "region pick was cancelled or superseded before retry could run".to_string(),
-                );
-            }
-            let window = app
-                .get_webview_window("overlay")
-                .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
-            window
-                .hide()
-                .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
-            Ok(window)
-        });
+        let app_for_action = app.clone();
+        let app_for_compensate = app;
+        bridge_for_main.settle(
+            move || -> Result<tauri::WebviewWindow, String> {
+                let state = app_for_action.state::<AppState>();
+                if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+                    return Err(
+                        "region pick was cancelled or superseded before retry could run"
+                            .to_string(),
+                    );
+                }
+                let window = app_for_action
+                    .get_webview_window("overlay")
+                    .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
+                window
+                    .hide()
+                    .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+                Ok(window)
+            },
+            move |result| {
+                let Ok(window) = result else { return };
+                let state = app_for_compensate.state::<AppState>();
+                if window.show().is_err() {
+                    clear_pick_if_current(
+                        &state.active_pick,
+                        &state.pending_overlay,
+                        retry_session,
+                    );
+                    *state.overlay_window_owner.lock().unwrap() = None;
+                    let _ = window.close();
+                    return;
+                }
+                let _ = window.set_focus();
+            },
+        );
     })
     .map_err(|e| format!("cannot dispatch to main thread: {e}"))?;
     bridge.wait_or_abandon(Duration::from_secs(5))?
@@ -6455,10 +6535,13 @@ mod region_picker_tests {
         let calls = Arc::new(Mutex::new(0u32));
         let calls_for_main = calls.clone();
         let main_thread = std::thread::spawn(move || {
-            bridge_for_main.settle(move || {
-                *calls_for_main.lock().unwrap() += 1;
-                42
-            });
+            bridge_for_main.settle(
+                move || {
+                    *calls_for_main.lock().unwrap() += 1;
+                    42
+                },
+                |_| panic!("must not compensate when the waiter is still listening"),
+            );
         });
         let got = bridge
             .wait_or_abandon(Duration::from_secs(5))
@@ -6493,10 +6576,13 @@ mod region_picker_tests {
         // The queued closure is now released — it finally gets to run,
         // well after the waiter already left.
         let calls_for_late = calls.clone();
-        bridge.settle(move || {
-            *calls_for_late.lock().unwrap() += 1;
-            7
-        });
+        bridge.settle(
+            move || {
+                *calls_for_late.lock().unwrap() += 1;
+                7
+            },
+            |_| panic!("action never ran, so compensate must never run either"),
+        );
 
         assert_eq!(
             *calls.lock().unwrap(),
@@ -6536,13 +6622,16 @@ mod region_picker_tests {
         // already abandoned.
         let touched_for_action = touched.clone();
         let label_for_action = shared_window_label.clone();
-        bridge.settle(move || {
-            touched_for_action
-                .lock()
-                .unwrap()
-                .push(*label_for_action.lock().unwrap());
-            Ok(())
-        });
+        bridge.settle(
+            move || {
+                touched_for_action
+                    .lock()
+                    .unwrap()
+                    .push(*label_for_action.lock().unwrap());
+                Ok(())
+            },
+            |_| panic!("action never ran, so compensate must never run either"),
+        );
 
         assert!(
             touched.lock().unwrap().is_empty(),
@@ -6570,13 +6659,259 @@ mod region_picker_tests {
         let bridge_for_main = bridge.clone();
         let main_thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(40));
-            bridge_for_main.settle(|| 99);
+            bridge_for_main.settle(
+                || 99,
+                |_| panic!("a commit that lands before the bound must not be compensated"),
+            );
         });
         let got = bridge
             .wait_or_abandon(Duration::from_millis(500))
             .expect("a commit that lands before the bound must be delivered, not abandoned");
         main_thread.join().unwrap();
         assert_eq!(got, 99);
+    }
+
+    #[test]
+    fn abandonable_bridge_waiter_returns_on_time_even_while_action_is_still_running() {
+        // C639-007C.8 freeze step 1: the defect itself. `settle` must not
+        // hold the abandonment-state lock across `action` — otherwise a
+        // blocked/native action (standing in for a stuck `hide()`) defeats
+        // the waiter's own timeout entirely, since `wait_or_abandon` can
+        // only return by reacquiring that same lock. A gate holds the
+        // action open well past the waiter's bound; the waiter must still
+        // return close to its own bound, not whenever the gate opens.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+        let entered_running = Arc::new((Mutex::new(false), Condvar::new()));
+        let entered_running_for_action = entered_running.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    {
+                        let (lock, cv) = &*entered_running_for_action;
+                        *lock.lock().unwrap() = true;
+                        cv.notify_all();
+                    }
+                    // Stands in for a native hide() call that hangs well
+                    // past the waiter's own bound.
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    7
+                },
+                |_| {},
+            );
+        });
+
+        // Don't start the timer until `action` has actually entered
+        // Running and is blocked on the gate, so the timeout genuinely
+        // elapses mid-action rather than before it even started.
+        {
+            let (lock, cv) = &*entered_running;
+            let mut started = lock.lock().unwrap();
+            while !*started {
+                started = cv.wait(started).unwrap();
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(100))
+            .expect_err("action is blocked indefinitely; must be treated as abandoned");
+        let elapsed = start.elapsed();
+        assert!(err.contains("abandoned"));
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the waiter must return close to its own bound, never wait for the blocked \
+             action to finish; took {elapsed:?}"
+        );
+
+        // Release the action so the thread can finish (and compensate,
+        // exercised by its own test below) — join so nothing leaks.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+    }
+
+    #[test]
+    fn abandonable_bridge_compensates_a_late_commit_after_abandonment() {
+        // Freeze step 2: once the waiter has abandoned, an action that
+        // nonetheless goes on to commit its side effect (a late-arriving
+        // hide succeeding well after the bound) must be compensated — not
+        // silently committed with nobody left to undo it, which is the
+        // exact strand this bridge exists to prevent.
+        let bridge = Arc::new(AbandonableBridge::<u32>::new());
+        let bridge_for_main = bridge.clone();
+        let window_hidden = Arc::new(Mutex::new(false));
+        let window_hidden_for_action = window_hidden.clone();
+        let window_hidden_for_compensate = window_hidden.clone();
+        let compensated = Arc::new(Mutex::new(false));
+        let compensated_for_compensate = compensated.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    // Stands in for the native hide() finally succeeding,
+                    // well after the waiter already gave up.
+                    *window_hidden_for_action.lock().unwrap() = true;
+                    99
+                },
+                move |_result| {
+                    // Compensate: undo the side effect action already
+                    // committed, since nobody is left to show it back.
+                    *window_hidden_for_compensate.lock().unwrap() = false;
+                    *compensated_for_compensate.lock().unwrap() = true;
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("nothing settled in time; must be treated as abandoned");
+        assert!(err.contains("abandoned"));
+
+        // Release the gate now that abandonment has already committed —
+        // the action proceeds to "hide" and must then be compensated.
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert!(
+            *compensated.lock().unwrap(),
+            "a result committed after abandonment must trigger compensate()"
+        );
+        assert!(
+            !*window_hidden.lock().unwrap(),
+            "the late hide must be undone by compensate, leaving the window shown"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_compensate_acts_only_on_the_captured_result_never_a_newer_label() {
+        // Freeze step 3: install B strictly before releasing A's held
+        // action, and prove compensate acts only on the exact window
+        // `action` already resolved and returned — never a fresh lookup
+        // of whatever is currently labeled, which by now would resolve to
+        // B. `touched` records every window the action AND compensate
+        // ever act on; it must contain only "A", twice.
+        let bridge = Arc::new(AbandonableBridge::<Result<&'static str, String>>::new());
+        let bridge_for_main = bridge.clone();
+        let shared_window_label = Arc::new(Mutex::new("A"));
+        let shared_window_label_for_action = shared_window_label.clone();
+        let touched = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let touched_for_action = touched.clone();
+        let touched_for_compensate = touched.clone();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_for_action = gate.clone();
+
+        let main_thread = std::thread::spawn(move || {
+            bridge_for_main.settle(
+                move || {
+                    // Resolve once, as the real recheck+lookup+hide
+                    // closure does, and reuse the captured value — never
+                    // look the label up again.
+                    let resolved = *shared_window_label_for_action.lock().unwrap();
+                    touched_for_action.lock().unwrap().push(resolved);
+                    let (lock, cv) = &*gate_for_action;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                    Ok(resolved)
+                },
+                move |result| {
+                    if let Ok(resolved) = result {
+                        touched_for_compensate.lock().unwrap().push(resolved);
+                    }
+                },
+            );
+        });
+
+        let err = bridge
+            .wait_or_abandon(Duration::from_millis(30))
+            .expect_err("A's waiter must time out before B is ever installed");
+        assert!(err.contains("abandoned"));
+
+        // B takes over the shared label strictly after A abandoned, while
+        // A's action is still blocked on the gate.
+        *shared_window_label.lock().unwrap() = "B";
+
+        {
+            let (lock, cv) = &*gate;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        main_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec!["A", "A"],
+            "both action and compensate must only ever touch A's captured handle — \
+             never re-read the shared label after B has taken it over"
+        );
+    }
+
+    #[test]
+    fn abandonable_bridge_true_boundary_race_resolves_without_hanging_or_double_running() {
+        // Freeze step 4: a true deadline-boundary test, synchronized with
+        // a barrier rather than a sleep duration picked to land inside a
+        // timeout window. Both threads reach the starting line together,
+        // so which one wins the race to settle vs. time out is a genuine
+        // OS-scheduler race, not a baked-in assumption. Either outcome is
+        // acceptable; what must never happen is a hang, a panic, or the
+        // action running more than once — run repeatedly to stress both
+        // outcomes across iterations.
+        for _ in 0..50 {
+            let bridge = Arc::new(AbandonableBridge::<u32>::new());
+            let bridge_for_main = bridge.clone();
+            let calls = Arc::new(Mutex::new(0u32));
+            let calls_for_main = calls.clone();
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let barrier_for_main = barrier.clone();
+
+            let main_thread = std::thread::spawn(move || {
+                barrier_for_main.wait();
+                bridge_for_main.settle(
+                    move || {
+                        *calls_for_main.lock().unwrap() += 1;
+                        99
+                    },
+                    |_| {},
+                );
+            });
+
+            barrier.wait();
+            let result = bridge.wait_or_abandon(Duration::from_micros(1));
+            main_thread.join().unwrap();
+
+            assert_eq!(
+                *calls.lock().unwrap(),
+                1,
+                "the action must run exactly once regardless of which side of the race won"
+            );
+            match result {
+                Ok(v) => assert_eq!(v, 99),
+                Err(e) => assert!(e.contains("abandoned")),
+            }
+        }
     }
 }
 
