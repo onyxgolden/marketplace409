@@ -341,7 +341,7 @@ describe("TBP2-007C bounded producer and resume state", () => {
     // count-plus-position instead of a serialized accounted list);
     // the behavioral assertions below (three polls, oldest first,
     // tail only on resume, no false caught-up) are unchanged.
-    expect(first.resumeFrontier.startsWith("tb-frontier:v3:")).toBe(true);
+    expect(first.resumeFrontier.startsWith("tb-frontier:v4:")).toBe(true);
     expect(first.newCursor).toBe(seed);
     expect(first.newCursor).not.toBe(head);
     expect(first.events.map((e) => e.path)).toEqual(["commands/oldest.md"]);

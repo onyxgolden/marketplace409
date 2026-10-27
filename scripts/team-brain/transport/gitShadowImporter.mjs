@@ -75,7 +75,7 @@ function timeoutFor(opts) {
 
 // TBP2-007D bounded frontier: a checkpoint string whose size does NOT
 // grow with the processed history. Format:
-//   tb-frontier:v3:<head>:<scopeHash>:<base>:<accountedCount>:<lastAccounted>:<partialParentIndex>:<partialStreamPos>:<partialCommit>
+//   tb-frontier:v4:<head>:<scopeHash>:<base>:<accountedCount>:<lastAccounted>:<partialParentIndex>:<partialStreamPos>:<partialCommit>:<partialQueryIndex>
 // - `base` is the original plain cursor (empty when the scan started
 //   from the beginning). It MUST be carried: without it, resuming a
 //   scan-from-beginning frontier would re-list history before the
@@ -93,15 +93,33 @@ function timeoutFor(opts) {
 //   pending[accountedCount]. A mismatch fails closed
 //   (INTAKE_BLOCKED), never silently reinterprets.
 // - `partial` is an optional partially processed commit: { commit,
-//   parentIndex, streamPos }. pathOrder is built parent-major from
-//   per-parent diff streams, so a partial is a POSITION in that
-//   iteration, not a count of union entries: resume at parent
-//   parentIndex, skipping the first streamPos in-scope entries of
-//   that parent's stream (counted, never stored), then continue
-//   normally. Parents before parentIndex are skipped entirely; a
-//   later parent's entry that duplicates one of their paths is
-//   detected by a bounded per-path Git membership query (see
-//   isInParentDiff), never by retaining the skipped paths.
+//   parentIndex, streamPos, queryIndex }. pathOrder is built
+//   parent-major from per-parent diff streams, so a partial is a
+//   POSITION in that iteration, not a count of union entries: resume
+//   at parent parentIndex, skipping the first streamPos in-scope
+//   entries of that parent's stream (counted, never stored), then
+//   continue normally. Parents before parentIndex are skipped
+//   entirely; a later parent's entry that duplicates one of their
+//   paths is detected by a bounded per-path Git membership query
+//   (see isInParentDiff), never by retaining the skipped paths.
+// - TBP2-007F: a later parent's entry can also duplicate the resume
+//   parent's CONSUMED PREFIX (paths handled in earlier polls from
+//   that parent's stream, deliberately not retained). That case is
+//   detected by a prefix scan: re-iterate the resume parent's diff
+//   stream by counting and test whether the candidate appears within
+//   its first streamPos in-scope entries — one subprocess, charged
+//   as one query unit, nothing stored.
+// - TBP2-007H: `queryIndex` is the number of dedup checks already
+//   completed for the partial's unresolved candidate, in the fixed
+//   order [resume-prefix scan, skipped parents in order]. When the
+//   per-poll query cap is hit mid-candidate, the frontier stores
+//   that position instead of restarting the checks on the next poll,
+//   so a candidate needing more than MAX_DEDUP_QUERIES_PER_POLL
+//   checks still makes progress: each poll advances queryIndex by
+//   at least one (the poll's first check runs against a fresh
+//   budget), and the candidate resolves once every check has run.
+//   A stored queryIndex that does not match the first unchecked
+//   entry's position fails closed (INTAKE_BLOCKED).
 // - Size invariant, enforced here, not just documented:
 //   makeFrontier refuses to emit a frontier longer than
 //   MAX_FRONTIER_BYTES (512). The format has eight fixed fields, so
@@ -109,12 +127,15 @@ function timeoutFor(opts) {
 //   commit backlog needs ~250 bytes here, where the old v2
 //   comma-separated list needed ~2,050,000 bytes and would
 //   eventually exceed cursor/storage or OS argument limits.
-// - v1 and v2 frontiers are REJECTED, not reinterpreted: v1's
-//   "inspected" list was a newest capped window (an upper set), and
-//   v2's accounted list cannot be converted to a count-plus-position
-//   without re-deriving the partial iteration. No production
-//   frontier of either version exists (P2 is unmerged), so rejecting
-//   with a restart-from-original-cursor message loses nothing real.
+// - v1, v2, and v3 frontiers are REJECTED, not reinterpreted: v1's
+//   "inspected" list was a newest capped window (an upper set), v2's
+//   accounted list cannot be converted to a count-plus-position
+//   without re-deriving the partial iteration, and v3's partial
+//   carries no query position, so a query-capped v3 candidate cannot
+//   be resumed without re-running its checks (which is exactly the
+//   TBP2-007H nonprogress). No production frontier of any version
+//   exists (P2 is unmerged), so rejecting with a
+//   restart-from-original-cursor message loses nothing real.
 export const MAX_FRONTIER_BYTES = 512;
 // TBP2-007E: membership queries against fully-skipped parents are
 // bounded per poll, like every other poll resource. A query is one
@@ -131,7 +152,7 @@ function scopeHashFor(scopePaths) {
 
 function makeFrontier(head, scopePaths, accountedCount, lastAccounted, partial = null, base = null) {
   const s = [
-    "tb-frontier:v3",
+    "tb-frontier:v4",
     head,
     scopeHashFor(scopePaths),
     base ?? "",
@@ -140,6 +161,7 @@ function makeFrontier(head, scopePaths, accountedCount, lastAccounted, partial =
     partial ? String(partial.parentIndex) : "",
     partial ? String(partial.streamPos) : "",
     partial ? partial.commit : "",
+    partial ? String(partial.queryIndex ?? 0) : "",
   ].join(":");
   if (s.length > MAX_FRONTIER_BYTES) {
     fail(CODES.INTAKE_BLOCKED, "resumable frontier exceeds its explicit size bound", {
@@ -152,19 +174,23 @@ function makeFrontier(head, scopePaths, accountedCount, lastAccounted, partial =
 
 function parseFrontier(cursorCommit) {
   if (typeof cursorCommit !== "string") return null;
-  if (cursorCommit.startsWith("tb-frontier:v1:") || cursorCommit.startsWith("tb-frontier:v2:")) {
+  if (
+    cursorCommit.startsWith("tb-frontier:v1:") ||
+    cursorCommit.startsWith("tb-frontier:v2:") ||
+    cursorCommit.startsWith("tb-frontier:v3:")
+  ) {
     fail(
       CODES.INTAKE_BLOCKED,
-      "legacy frontier v1/v2 is not resumable under the bounded count-plus-position accounting — restart from the original cursor",
+      "legacy frontier v1/v2/v3 is not resumable under the bounded count-plus-position-plus-query accounting — restart from the original cursor",
       { cursorCommit }
     );
   }
-  if (!cursorCommit.startsWith("tb-frontier:v3:")) return null;
+  if (!cursorCommit.startsWith("tb-frontier:v4:")) return null;
   const parts = cursorCommit.split(":");
-  if (parts.length !== 10 || parts[0] !== "tb-frontier" || parts[1] !== "v3") {
+  if (parts.length !== 11 || parts[0] !== "tb-frontier" || parts[1] !== "v4") {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
-  const [, , head, scopeHash, base, countStr, lastAccounted, parentIndexStr, streamPosStr, partialCommit] = parts;
+  const [, , head, scopeHash, base, countStr, lastAccounted, parentIndexStr, streamPosStr, partialCommit, queryIndexStr] = parts;
   if (!/^[0-9a-f]{40}$/.test(head) || !/^[0-9a-f]{64}$/.test(scopeHash)) {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
@@ -192,27 +218,40 @@ function parseFrontier(cursorCommit) {
       { cursorCommit }
     );
   }
-  const partialPresent = partialCommit !== "" || parentIndexStr !== "" || streamPosStr !== "";
+  const partialPresent = partialCommit !== "" || parentIndexStr !== "" || streamPosStr !== "" || queryIndexStr !== "";
   let partial = null;
   if (partialPresent) {
-    if (partialCommit === "" || parentIndexStr === "" || streamPosStr === "") {
+    if (partialCommit === "" || parentIndexStr === "" || streamPosStr === "" || queryIndexStr === "") {
       fail(
         CODES.INTAKE_BLOCKED,
-        "malformed resumable frontier cursor (partial commit, parent index, and stream position must all be present or all absent)",
+        "malformed resumable frontier cursor (partial commit, parent index, stream position, and query index must all be present or all absent)",
         { cursorCommit }
       );
     }
-    if (!/^[0-9a-f]{40}$/.test(partialCommit) || !/^[0-9]+$/.test(parentIndexStr) || !/^[0-9]+$/.test(streamPosStr)) {
+    if (
+      !/^[0-9a-f]{40}$/.test(partialCommit) ||
+      !/^[0-9]+$/.test(parentIndexStr) ||
+      !/^[0-9]+$/.test(streamPosStr) ||
+      !/^[0-9]+$/.test(queryIndexStr)
+    ) {
       fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
     }
     const parentIndex = Number(parentIndexStr);
     const streamPos = Number(streamPosStr);
-    if (!Number.isSafeInteger(parentIndex) || parentIndex < 0 || !Number.isSafeInteger(streamPos) || streamPos < 0) {
+    const queryIndex = Number(queryIndexStr);
+    if (
+      !Number.isSafeInteger(parentIndex) ||
+      parentIndex < 0 ||
+      !Number.isSafeInteger(streamPos) ||
+      streamPos < 0 ||
+      !Number.isSafeInteger(queryIndex) ||
+      queryIndex < 0
+    ) {
       fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor (partial position must be non-negative integers)", {
         cursorCommit,
       });
     }
-    partial = { commit: partialCommit, parentIndex, streamPos };
+    partial = { commit: partialCommit, parentIndex, streamPos, queryIndex };
   }
   return { head, scopeHash, base: base === "" ? null : base, accountedCount, lastAccounted: lastAccounted === "" ? null : lastAccounted, partial };
 }
@@ -328,6 +367,19 @@ function* diffNameStatusIter(repoPath, fromRef, toRef, scopePaths, opts = {}) {
   }
 }
 
+// TBP2-007G: every filename handed to Git as a pathspec MUST be
+// literal. A bare `-- <path>` does NOT make pathspec syntax literal:
+// `commands/[x].md` matches `commands/x.md` (bracket character class),
+// `commands/*.md` matches every .md file, and `commands/?.md` matches
+// any single-character name — so a membership query for one file can
+// "prove" membership from a different file's change. The `:(literal)`
+// magic disables all pathspec syntax for the following pattern, and
+// name-returning operations additionally prove exact returned
+// filename equality below, never nonempty output.
+function literalPath(path) {
+  return `:(literal)${path}`;
+}
+
 // TBP2-007E: exact membership test for cross-parent dedup on resume.
 // When a poll resumes inside a later parent, earlier parents are
 // skipped entirely (their streams are not re-iterated), so a candidate
@@ -341,10 +393,13 @@ function* diffNameStatusIter(repoPath, fromRef, toRef, scopePaths, opts = {}) {
 // form is used so an unusual path can never be misread from quoted
 // output; a path that differs is a duplicate of already-handled work
 // (the earlier parent's occurrence was already collected or skipped
-// in a previous poll), never a new candidate.
+// in a previous poll), never a new candidate. TBP2-007G: the query
+// uses a literal pathspec AND requires the returned name to equal
+// the queried path exactly — a glob/magic match returning a different
+// name is not membership.
 function isInParentDiff(repoPath, parentRef, commit, path, opts = {}) {
-  const out = git(repoPath, ["diff", "--name-only", "-z", "--no-renames", parentRef, commit, "--", path], opts);
-  return out.length > 0;
+  const out = git(repoPath, ["diff", "--name-only", "-z", "--no-renames", parentRef, commit, "--", literalPath(path)], opts);
+  return out.split("\0").some((name) => name === path);
 }
 
 // TBP2-007C bounded producer: the oldest-first capped window of pending
@@ -461,20 +516,36 @@ function listPendingCommits(repoPath, { head, accountedCount, lastAccounted, cur
 }
 
 // TBP2-007C bounded per-commit path collection, TBP2-007E resume
-// retention: the deterministic pathOrder for one commit (union of its
-// parents' in-scope diff paths, in parent order, deduplicated),
-// resuming at a stream position (for a partially processed commit)
-// and collecting at most `budget` paths.
+// retention, TBP2-007F cross-page dedup, TBP2-007H query progress:
+// the deterministic pathOrder for one commit (union of its parents'
+// in-scope diff paths, in parent order, deduplicated), resuming at
+// a stream position (for a partially processed commit) and
+// collecting at most `budget` paths.
 //
-// `resume` is null for a fresh commit, or { parentIndex, streamPos }:
-// iteration starts at that parent's stream, skipping the first
-// streamPos in-scope entries BY COUNTING — skipped entries are
-// never stored, never queried, never added to seen or to any status
-// map. Parents before parentIndex are skipped entirely. A later
-// parent's entry that duplicates one of those skipped parents' paths
-// is detected by a bounded per-path Git membership query
-// (isInParentDiff, charged against the poll-wide queryState), not by
-// retaining the skipped paths.
+// `resume` is null for a fresh commit, or { parentIndex, streamPos,
+// queryIndex }: iteration starts at that parent's stream, skipping
+// the first streamPos in-scope entries BY COUNTING — skipped entries
+// are never stored, never queried, never added to seen or to any
+// status map. Parents before parentIndex are skipped entirely.
+//
+// A candidate is a duplicate of already-handled work if ANY of its
+// dedup checks fires, in this fixed order:
+//   (1) TBP2-007F resume-prefix scan — only for candidates from a
+//       parent AFTER the resume parent: the candidate appears
+//       within the resume parent's first streamPos in-scope entries
+//       (the consumed prefix, deliberately not retained). The scan
+//       re-iterates that parent's diff stream by counting — one
+//       subprocess, charged as one query unit, nothing stored.
+//   (2) one membership query per fully-skipped parent, in order.
+// A candidate from the resume parent itself needs only (2): entries
+// within one parent's diff are unique, so its own prefix cannot
+// duplicate it. A candidate from a later parent that duplicates a
+// path handled from the resume parent's prefix in an earlier poll
+// is caught by (1); a candidate duplicating a fully-skipped parent
+// is caught by (2); a candidate duplicating a path handled earlier
+// in THIS poll is caught by `seen`. Together the three cover every
+// already-handled earlier occurrence, so the emitted stream is
+// exactly-once per (commit, path) regardless of pagination.
 //
 // Storage bound, stated plainly and now true on resume too: stored
 // records are exactly the returned pathOrder (at most `budget`
@@ -490,10 +561,19 @@ function listPendingCommits(repoPath, { head, accountedCount, lastAccounted, cur
 // DISCARDED, not stored — so no record beyond the budget is ever
 // retained. `origins` parallels pathOrder with each entry's
 // (parentIndex, streamIndex), so the caller can resume exactly after
-// any handled prefix. If the dedup query cap is hit, collection
-// stops with queryCapHit and incompleteResume pointing AT the
-// unresolved entry, so the next poll re-examines it with a fresh
-// query budget — progress, not a stall.
+// any handled prefix.
+//
+// TBP2-007H query progress: `queryIndex` on the stored partial is
+// the number of dedup checks already completed for that candidate,
+// in the fixed order above. If the dedup query cap is hit
+// mid-candidate, collection stops with queryCapHit and
+// incompleteResume carrying { parentIndex, streamPos, queryIndex },
+// so the next poll continues the SAME candidate's checks from
+// that position instead of restarting them — the checkpoint
+// advances on every poll (the poll's first check runs against a
+// fresh budget), and the candidate resolves once every check has
+// run. A stored queryIndex that does not belong to the first
+// unchecked entry fails closed (corrupt frontier).
 function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, budget, opts = {}, queryState = null) {
   const statusByParent = parentRefs.map(() => new Map());
   const pathOrder = [];
@@ -511,13 +591,53 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
   // always happens at or past the resume position; only a fully
   // iterated resume parent shorter than streamPos is corrupt.
   let resumeParentTotal = null;
-  const isDupOfSkippedParent = (path) => {
-    for (const skipped of skippedParents) {
-      if (queryState !== null && queryState.count >= MAX_DEDUP_QUERIES_PER_POLL) return "CAP";
-      if (queryState !== null) queryState.count += 1;
-      if (isInParentDiff(repoPath, skipped, commit, path, opts)) return true;
+  // The stored queryIndex belongs to exactly one candidate: the
+  // first entry that reaches the dedup-check stage. It is consumed
+  // there (with a position validation) and never reused for later
+  // candidates, which always start fresh at 0.
+  let firstCheckSeen = false;
+  // TBP2-007F: is `path` among the resume parent's consumed prefix
+  // (its first resume.streamPos in-scope diff entries)? Counted,
+  // never stored. Caller guarantees resume is non-null and
+  // streamPos > 0 when this runs.
+  const isInResumePrefix = (path) => {
+    let counted = 0;
+    for (const [, entryPath] of diffNameStatusIter(repoPath, parentRefs[startParent], commit, scopePaths, opts)) {
+      if (counted >= resume.streamPos) break;
+      if (entryPath === path) return true;
+      counted += 1;
     }
     return false;
+  };
+  // Runs one candidate's dedup checks in fixed order, skipping the
+  // first `startQueryIndex` (already completed in an earlier poll).
+  // Returns { result: true|false } or { result: "CAP", completed }
+  // where `completed` counts checks finished in this call.
+  const checkCandidate = (path, parentIndex, startQueryIndex) => {
+    const checks = [];
+    if (resume && parentIndex > startParent && resume.streamPos > 0) checks.push({ kind: "prefix" });
+    for (const skipped of skippedParents) checks.push({ kind: "parent", ref: skipped });
+    // A stored queryIndex is only ever written on CAP, which happens
+    // DURING a check — so it is always strictly below the check-list
+    // length. At or beyond it, the frontier claims checks completed
+    // that never ran: fail closed instead of silently skipping them.
+    if (startQueryIndex >= checks.length) {
+      fail(CODES.INTAKE_BLOCKED, "resumable frontier query position is at or beyond the candidate's check list (corrupt frontier)", {
+        commit,
+        parentIndex,
+        queryIndex: startQueryIndex,
+        checkCount: checks.length,
+      });
+    }
+    let completed = 0;
+    for (let i = startQueryIndex; i < checks.length; i++) {
+      if (queryState !== null && queryState.count >= MAX_DEDUP_QUERIES_PER_POLL) return { result: "CAP", completed };
+      if (queryState !== null) queryState.count += 1;
+      const dup = checks[i].kind === "prefix" ? isInResumePrefix(path) : isInParentDiff(repoPath, checks[i].ref, commit, path, opts);
+      completed += 1;
+      if (dup) return { result: true, completed };
+    }
+    return { result: false, completed };
   };
   outer: for (let parentIndex = startParent; parentIndex < parentRefs.length; parentIndex++) {
     const parent = parentRefs[parentIndex];
@@ -528,14 +648,30 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
       streamIndex += 1;
       if (thisIndex < skipFirst) continue; // skipped by count: stored nowhere
       if (seen.has(path)) continue; // duplicate within this poll: status never read
-      if (skippedParents.length > 0) {
-        const dup = isDupOfSkippedParent(path);
-        if (dup === "CAP") {
+      const needsChecks =
+        skippedParents.length > 0 || (resume && parentIndex > startParent && resume.streamPos > 0);
+      if (needsChecks) {
+        let startQueryIndex = 0;
+        if (!firstCheckSeen) {
+          firstCheckSeen = true;
+          startQueryIndex = resume?.queryIndex ?? 0;
+          if (startQueryIndex > 0) {
+            if (parentIndex !== resume.parentIndex || thisIndex !== resume.streamPos) {
+              fail(
+                CODES.INTAKE_BLOCKED,
+                "resumable frontier query position does not belong to the first unchecked entry (corrupt frontier)",
+                { commit, parentIndex, streamPos: thisIndex, expectedParentIndex: resume.parentIndex, expectedStreamPos: resume.streamPos }
+              );
+            }
+          }
+        }
+        const { result, completed } = checkCandidate(path, parentIndex, startQueryIndex);
+        if (result === "CAP") {
           queryCapHit = true;
-          incompleteResume = { parentIndex, streamPos: thisIndex };
+          incompleteResume = { parentIndex, streamPos: thisIndex, queryIndex: startQueryIndex + completed };
           break outer;
         }
-        if (dup) continue; // duplicate of a fully-skipped parent: stored nowhere
+        if (result) continue; // duplicate of already-handled work: stored nowhere
       }
       if (pathOrder.length >= budget) {
         hasMore = true;
@@ -571,17 +707,40 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
 // parent would not be null). Bounded at the Git command itself.
 function pathEverInParentHistory(repoPath, parentSha, path, opts = {}) {
   if (!parentSha || parentSha === EMPTY_TREE_SHA) return false;
-  const out = git(repoPath, ["rev-list", "--max-count", "1", parentSha, "--", path], opts).trim();
+  // TBP2-007G audit: literal pathspec here too. rev-list returns
+  // commit SHAs, not filenames, so there is no returned name to
+  // compare against — the literal magic itself is the exactness
+  // mechanism (glob matching is disabled), and the TREESAME
+  // semantics are unchanged from before.
+  const out = git(repoPath, ["rev-list", "--max-count", "1", parentSha, "--", literalPath(path)], opts).trim();
   return out.length > 0;
 }
 
 function blobShaAt(repoPath, commitSha, path, opts = {}) {
-  const out = git(repoPath, ["ls-tree", commitSha, "--", path], opts).trim();
+  // TBP2-007G audit: literal pathspec plus exact returned-filename
+  // equality. The -z form keeps unusual paths raw (no quoting), and a
+  // returned name that is not exactly the queried path fails closed
+  // instead of silently supplying another file's blob.
+  const out = git(repoPath, ["ls-tree", "-z", commitSha, "--", literalPath(path)], opts);
   if (!out) return null; // path doesn't exist at this commit (e.g. it was deleted)
-  // format: "<mode> blob <sha>\t<path>" — only the mode+sha prefix is
-  // parsed, so a quoted or unusual path in the tail cannot confuse it.
-  const match = out.match(/^\d+ blob ([0-9a-f]{40})\t/);
-  return match ? match[1] : null;
+  for (const entry of out.split("\0")) {
+    if (entry === "") continue;
+    const tab = entry.indexOf("\t");
+    if (tab === -1) continue;
+    const meta = entry.slice(0, tab);
+    const file = entry.slice(tab + 1);
+    if (file !== path) {
+      fail(CODES.INTAKE_BLOCKED, "ls-tree returned a non-literal path for a literal query (pathspec handling failure)", {
+        path,
+        returned: file,
+      });
+    }
+    // format: "<mode> blob <sha>" — a non-blob entry (e.g. a tree for
+    // a directory path) means the path has no blob here.
+    const match = meta.match(/^(\d+) blob ([0-9a-f]{40})$/);
+    return match ? match[2] : null;
+  }
+  return null;
 }
 
 // TBP2-007: object size WITHOUT reading content. `git cat-file -s`
@@ -734,11 +893,13 @@ export function scanSince(
       });
     }
   }
-  // TBP2-007E: dedup membership queries are charged poll-wide, so a
+  // TBP2-007E/H: dedup membership queries are charged poll-wide, so a
   // pathological merge cannot turn one poll into an unbounded
   // subprocess run. The counter is shared by every collectCommitPaths
   // call in this poll; hitting the cap truncates with partial
-  // progress (see incompleteResume), never with a block.
+  // progress (see incompleteResume) INCLUDING the query position
+  // itself (see queryIndex), never with a block and never with the
+  // same checkpoint twice.
   const queryState = { count: 0 };
 
   const events = [];
@@ -757,9 +918,10 @@ export function scanSince(
   // partial commit is the first unaccounted commit, so it stays at
   // the head of the next poll's pending window, and its
   // already-consumed stream position is skipped again on resume.
-  // TBP2-007D/E: the partial is a stream position (parentIndex,
-  // streamPos), not a union count or a path list — bounded, and it
-  // never retains skipped paths.
+  // TBP2-007D/E/F/H: the partial is a stream position (parentIndex,
+  // streamPos) plus a dedup query position (queryIndex), not a
+  // union count or a path list — bounded, and it never retains
+  // skipped paths.
   let currentPartial = frontier?.partial ?? null;
 
   outer: for (const commit of commits) {
@@ -1017,7 +1179,7 @@ export function scanSince(
   // commit — because the frontier now carries exact progress: the
   // COUNT of fully processed commits (a lower set, oldest-first)
   // plus the boundary commit and any partial commit with its stream
-  // position. Resuming from it advances past exactly the accounted
+  // position and dedup query position. Resuming from it advances past exactly the accounted
   // work and resumes inside the partial commit, so no truncation
   // mode can stall at the same cursor forever. A frontier is never
   // returned when nothing truncated: then every pending commit was
