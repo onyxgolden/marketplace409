@@ -35,8 +35,12 @@
 //!
 //! Recovery (one bounded recreate, never unbounded):
 //!
-//! - `ACCESS_LOST` / device removed: invalidate, rebuild once, retry the
-//!   whole request; a second loss is a terminal [`DxgiCaptureOutcome::Retryable`].
+//! - `ACCESS_LOST` / device removed: invalidate, rebuild the full
+//!   device/context/duplication set once, retry the whole request; a
+//!   second loss is a terminal [`DxgiCaptureOutcome::Retryable`]. A
+//!   removed device is never a valid recovery foundation, so a
+//!   recreate that only rebuilt duplication on it could not recover
+//!   (DXGI1-004A).
 //! - `WAIT_TIMEOUT`: "no new desktop update yet," not failure. Retried until
 //!   the total request deadline; DXGI-1 keeps no cached frame, so a deadline
 //!   expiry is a terminal retryable, never a stale frame.
@@ -218,17 +222,23 @@ pub fn checked_mapped_bytes(
 /// timeout past it. Pure over [`Duration`] so tests use injected values
 /// instead of wall-clock flakiness.
 ///
-/// The remaining budget is rounded UP to whole milliseconds because
-/// `AcquireNextFrame` takes whole milliseconds: truncating would turn a
-/// sub-millisecond remainder into a 0ms poll. The rounding overshoot is
-/// under 1ms by construction — never another full per-attempt timeout.
+/// The remaining budget is FLOORED to whole milliseconds because
+/// `AcquireNextFrame` takes whole milliseconds: flooring guarantees the
+/// passed timeout never exceeds the remaining budget. When less than
+/// one whole millisecond remains, this returns `None` — a 1ms attempt
+/// would block past the absolute deadline. The caller
+/// ([`capture_single_output`]) grants at most one final nonblocking
+/// 0ms poll per request on that `None`, so an already-ready frame can
+/// still be taken without ever blocking past the deadline (DXGI1-005A).
+/// The hard total bound holds exactly; the cost is at most 1ms of
+/// unclaimed blocking budget.
 pub fn attempt_timeout_ms(limits: &DxgiLimits, elapsed: Duration) -> Option<u32> {
     let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
     let remaining = deadline.checked_sub(elapsed)?;
-    if remaining.is_zero() {
+    let remaining_ms = remaining.as_millis();
+    if remaining_ms == 0 {
         return None;
     }
-    let remaining_ms = remaining.as_nanos().div_ceil(1_000_000);
     let capped = (limits.acquire_timeout_ms as u128).min(remaining_ms);
     Some(capped as u32)
 }
@@ -448,9 +458,13 @@ pub trait DuplicationBackend {
         timeout_ms: u32,
         limits: &DxgiLimits,
     ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError>;
-    /// Invalidate and rebuild the duplication object (and staging state)
-    /// after `ACCESS_LOST` / device removal. Called at most once per
-    /// request by [`capture_single_output`].
+    /// Invalidate and rebuild the FULL device-dependent resource set
+    /// after `ACCESS_LOST` / device removal: a brand-new D3D11 device
+    /// and context plus a fresh duplication object, atomically
+    /// replacing the old state only on success. Called at most once
+    /// per request by [`capture_single_output`]. A recreate that only
+    /// rebuilt duplication on the removed device could never recover
+    /// (DXGI1-004A); the old device is not a valid recovery foundation.
     fn recreate(&mut self) -> Result<(), DxgiAcquireError>;
 }
 
@@ -487,13 +501,28 @@ pub fn capture_single_output<B: DuplicationBackend>(
     }
     let start = Instant::now();
     let mut recreated = false;
+    let mut final_poll_done = false;
     loop {
-        // Hard total bound: an attempt never runs past the deadline, and
-        // a zero remaining budget stops without acquiring again.
-        let Some(timeout_ms) = attempt_timeout_ms(limits, start.elapsed()) else {
-            return DxgiCaptureOutcome::Retryable(
-                "no new desktop frame within the total request deadline".into(),
-            );
+        // Hard total bound: an attempt never blocks past the deadline.
+        // When less than one whole millisecond remains, the pure
+        // timeout function returns None; the loop then grants at most
+        // ONE final nonblocking 0ms poll per request (DXGI1-005A), so
+        // an already-ready frame can still be taken without ever
+        // blocking past the deadline. After that poll, or once the
+        // deadline itself is reached, the loop stops without acquiring.
+        let timeout_ms = match attempt_timeout_ms(limits, start.elapsed()) {
+            Some(t) => t,
+            None => {
+                let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
+                if !final_poll_done && start.elapsed() < deadline {
+                    final_poll_done = true;
+                    0
+                } else {
+                    return DxgiCaptureOutcome::Retryable(
+                        "no new desktop frame within the total request deadline".into(),
+                    );
+                }
+            }
         };
         match backend.acquire(timeout_ms, limits) {
             Ok((guard, pixels)) => {
@@ -642,6 +671,48 @@ mod win_backend {
         }
     }
 
+    /// Create a fresh D3D11 device + immediate context on `adapter`.
+    /// Shared by initial context creation and device-loss recovery, so
+    /// recovery rebuilds the same full device set (DXGI1-004A) instead
+    /// of reusing a removed device. D3D11CreateDevice takes the base
+    /// IDXGIAdapter; the Adapter1 handle stays owned by the caller
+    /// (cast only AddRefs it).
+    fn create_device(
+        adapter: &IDXGIAdapter1,
+    ) -> Result<(ID3D11Device, ID3D11DeviceContext), CaptureError> {
+        let adapter_base: IDXGIAdapter = adapter.cast().map_err(|e| {
+            CaptureError::NativeApi(format!("IDXGIAdapter1::cast to IDXGIAdapter: {e}"))
+        })?;
+        let mut device: Option<ID3D11Device> = None;
+        let mut device_context: Option<ID3D11DeviceContext> = None;
+        unsafe {
+            D3D11CreateDevice(
+                Some(&adapter_base),
+                D3D_DRIVER_TYPE_UNKNOWN,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                Some(&[
+                    D3D_FEATURE_LEVEL_11_1,
+                    D3D_FEATURE_LEVEL_11_0,
+                    D3D_FEATURE_LEVEL_10_1,
+                    D3D_FEATURE_LEVEL_10_0,
+                ]),
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                None,
+                Some(&mut device_context),
+            )
+        }
+        .map_err(|e| CaptureError::NativeApi(format!("D3D11CreateDevice: {e}")))?;
+        let device = device.ok_or_else(|| {
+            CaptureError::NativeApi("D3D11CreateDevice returned no device".into())
+        })?;
+        let device_context = device_context.ok_or_else(|| {
+            CaptureError::NativeApi("D3D11CreateDevice returned no device context".into())
+        })?;
+        Ok((device, device_context))
+    }
+
     /// Worker-local DXGI context, bound to one output (DXGI-1).
     ///
     /// Created lazily by the supervised worker and reused on that worker
@@ -774,38 +845,7 @@ mod win_backend {
             }
             let (adapter, output1, output_info) =
                 found.ok_or_else(|| CaptureError::NativeApi(format!("no DXGI output {index}")))?;
-            let mut device: Option<ID3D11Device> = None;
-            let mut device_context: Option<ID3D11DeviceContext> = None;
-            // D3D11CreateDevice takes the base IDXGIAdapter; the Adapter1
-            // handle stays owned by the context (cast only AddRefs it).
-            let adapter_base: IDXGIAdapter = adapter.cast().map_err(|e| {
-                CaptureError::NativeApi(format!("IDXGIAdapter1::cast to IDXGIAdapter: {e}"))
-            })?;
-            unsafe {
-                D3D11CreateDevice(
-                    Some(&adapter_base),
-                    D3D_DRIVER_TYPE_UNKNOWN,
-                    HMODULE::default(),
-                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                    Some(&[
-                        D3D_FEATURE_LEVEL_11_1,
-                        D3D_FEATURE_LEVEL_11_0,
-                        D3D_FEATURE_LEVEL_10_1,
-                        D3D_FEATURE_LEVEL_10_0,
-                    ]),
-                    D3D11_SDK_VERSION,
-                    Some(&mut device),
-                    None,
-                    Some(&mut device_context),
-                )
-            }
-            .map_err(|e| CaptureError::NativeApi(format!("D3D11CreateDevice: {e}")))?;
-            let device = device.ok_or_else(|| {
-                CaptureError::NativeApi("D3D11CreateDevice returned no device".into())
-            })?;
-            let device_context = device_context.ok_or_else(|| {
-                CaptureError::NativeApi("D3D11CreateDevice returned no device context".into())
-            })?;
+            let (device, device_context) = create_device(&adapter)?;
             let mut ctx = Self {
                 output_info,
                 _adapter: adapter,
@@ -823,6 +863,74 @@ mod win_backend {
 
         pub fn output_info(&self) -> &OutputInfo {
             &self.output_info
+        }
+
+        /// DXGI1-004A: rebuild the FULL adapter-bound resource set after
+        /// device loss — a brand-new D3D11 device and context, then a
+        /// fresh duplication object on the new device. The old state is
+        /// replaced atomically, only on full success: on any failure the
+        /// context keeps its (dead) prior state and the caller treats
+        /// the request as terminal, exactly as before.
+        ///
+        /// A removed device is never a valid recovery foundation, so
+        /// re-running DuplicateOutput on it (the round-1 behavior)
+        /// cannot reliably recover. IDXGIOutput handles survive device
+        /// removal (they hang off the adapter, not the device), so the
+        /// existing output binding is reused; only if DuplicateOutput
+        /// fails on it do we re-enumerate the adapter's outputs and
+        /// retry once against the output with the same device name.
+        fn rebuild_device_and_duplication(&mut self) -> Result<(), CaptureError> {
+            let (new_device, new_context) = create_device(&self._adapter)?;
+            let device_iunknown: IUnknown = new_device.cast().map_err(|e| {
+                CaptureError::NativeApi(format!("ID3D11Device::cast to IUnknown: {e}"))
+            })?;
+            let duplication = match unsafe { self.output1.DuplicateOutput(&device_iunknown) } {
+                Ok(d) => d,
+                Err(_) => {
+                    // Refresh the output binding once, then retry.
+                    let refreshed = self.refresh_output()?;
+                    let d = unsafe { refreshed.DuplicateOutput(&device_iunknown) }
+                        .map_err(|e| CaptureError::NativeApi(format!("DuplicateOutput: {e}")))?;
+                    self.output1 = refreshed;
+                    d
+                }
+            };
+            // Atomic replace: only now do the new resources become live.
+            self.device = new_device;
+            self.device_context = new_context;
+            self.duplication = Some(duplication);
+            self.staging = None;
+            self.staging_size = (0, 0);
+            Ok(())
+        }
+
+        /// Re-enumerate this adapter's outputs and return the one whose
+        /// device name matches the context's output. Used only when a
+        /// fresh device's DuplicateOutput fails on the stored output
+        /// handle, i.e. the output binding itself went stale.
+        fn refresh_output(&self) -> Result<IDXGIOutput1, CaptureError> {
+            let mut output_index = 0u32;
+            loop {
+                let output = match unsafe { self._adapter.EnumOutputs(output_index) } {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Err(CaptureError::NativeApi(format!(
+                            "output refresh: no output matches {}: {e}",
+                            self.output_info.device_name
+                        )))
+                    }
+                };
+                let odesc: DXGI_OUTPUT_DESC = unsafe { output.GetDesc() }
+                    .map_err(|e| CaptureError::NativeApi(format!("IDXGIOutput::GetDesc: {e}")))?;
+                if odesc.AttachedToDesktop.as_bool()
+                    && wide_to_string(&odesc.DeviceName) == self.output_info.device_name
+                {
+                    return output.cast().map_err(|e| {
+                        CaptureError::NativeApi(format!("IDXGIOutput::cast to IDXGIOutput1: {e}"))
+                    });
+                }
+                output_index += 1;
+            }
         }
 
         fn recreate_duplication(&mut self) -> Result<(), CaptureError> {
@@ -1051,10 +1159,10 @@ mod win_backend {
         }
 
         fn recreate(&mut self) -> Result<(), DxgiAcquireError> {
-            self.recreate_duplication().map_err(|e| match e {
-                crate::result::CaptureError::NativeApi(msg) => {
-                    DxgiAcquireError::Other(msg)
-                }
+            // DXGI1-004A: full device/context/duplication rebuild, not
+            // the round-1 duplication-only rebuild on a removed device.
+            self.rebuild_device_and_duplication().map_err(|e| match e {
+                crate::result::CaptureError::NativeApi(msg) => DxgiAcquireError::Other(msg),
                 other => DxgiAcquireError::Other(other.to_string()),
             })
         }
@@ -1168,6 +1276,67 @@ mod tests {
 
         fn recreate(&mut self) -> Result<(), DxgiAcquireError> {
             self.recreates.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    // DXGI1-004A: minimal model of the production resource graph. A
+    // device-removed event invalidates the D3D11 device itself, so a
+    // frame can only be acquired again after the device is REBUILT.
+    // A recreate that only rebuilds duplication/staging (the round-1
+    // behavior) leaves the device dead, so the next acquire still
+    // fails and the request is terminal. `full_rebuild` selects which
+    // behavior the mock models.
+    struct DeviceGraphMock {
+        steps: VecDeque<Step>,
+        device_alive: bool,
+        full_rebuild: bool,
+        generations: usize,
+        recreates: usize,
+    }
+
+    impl DeviceGraphMock {
+        fn new(steps: Vec<Step>, full_rebuild: bool) -> Self {
+            Self {
+                steps: steps.into(),
+                device_alive: true,
+                full_rebuild,
+                generations: 0,
+                recreates: 0,
+            }
+        }
+    }
+
+    impl DuplicationBackend for DeviceGraphMock {
+        fn acquire(
+            &mut self,
+            _timeout_ms: u32,
+            _limits: &DxgiLimits,
+        ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+            match self.steps.pop_front() {
+                Some(Step::Ok(pixels)) if self.device_alive => {
+                    Ok((FrameGuard::new(|| {}), pixels))
+                }
+                Some(Step::Ok(_)) => Err(DxgiAcquireError::DeviceRemoved),
+                Some(Step::Err(DxgiAcquireError::DeviceRemoved)) => {
+                    self.device_alive = false;
+                    Err(DxgiAcquireError::DeviceRemoved)
+                }
+                Some(Step::Err(e)) => Err(e),
+                None => Err(DxgiAcquireError::Other("mock script exhausted".into())),
+            }
+        }
+
+        fn recreate(&mut self) -> Result<(), DxgiAcquireError> {
+            self.recreates += 1;
+            if self.full_rebuild {
+                // Models the round-2 repair: a brand-new D3D11 device
+                // and context replace the removed ones.
+                self.device_alive = true;
+                self.generations += 1;
+            }
+            // Duplication-only rebuild (round-1 behavior) leaves
+            // device_alive false: the removed device stays dead.
             Ok(())
         }
     }
@@ -1578,8 +1747,82 @@ mod tests {
         assert_eq!(attempt_timeout_ms(&zero, Duration::from_millis(0)), None);
     }
 
-    // DXGI1-005: the mock observes the capped timeout actually passed to
-    // the backend, and a zero budget acquires nothing at all.
+    // DXGI1-005A: a sub-millisecond remainder must NEVER become a
+    // positive blocking timeout. The old ceiling rounding turned a
+    // 0.5ms remainder into Some(1), letting AcquireNextFrame(1) block
+    // past the absolute total deadline. The fix floors to whole
+    // milliseconds and stops (None) when less than 1ms remains.
+    #[test]
+    fn attempt_timeout_sub_millisecond_remainder_stops() {
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 100,
+            ..DxgiLimits::default()
+        };
+        // 0.5ms remains: must stop, never Some(1).
+        assert_eq!(
+            attempt_timeout_ms(&limits, Duration::from_micros(99_500)),
+            None
+        );
+        // Exactly 1ms remains: a 1ms attempt fits the budget exactly.
+        assert_eq!(
+            attempt_timeout_ms(&limits, Duration::from_millis(99)),
+            Some(1)
+        );
+        // 1.5ms remains: floored to 1ms, never ceiled to 2ms.
+        assert_eq!(
+            attempt_timeout_ms(&limits, Duration::from_micros(98_500)),
+            Some(1)
+        );
+        // 90.999ms remains: floored to 90ms, never 91ms.
+        assert_eq!(
+            attempt_timeout_ms(&limits, Duration::from_micros(9_001)),
+            Some(90)
+        );
+    }
+
+    // DXGI1-004A: recovery succeeds ONLY with a newly created device.
+    // With a full device rebuild, a device-removed request recovers
+    // and returns a frame; with a duplication-only rebuild (the
+    // round-1 defect), the next acquire still fails and the request
+    // is terminal after exactly one recreate.
+    #[test]
+    fn device_removed_recovers_only_with_full_device_rebuild() {
+        let output = test_output();
+        let mut backend = DeviceGraphMock::new(
+            vec![
+                Step::Err(DxgiAcquireError::DeviceRemoved),
+                Step::Ok(solid_frame(4, 2, [9, 8, 7, 0])),
+            ],
+            true,
+        );
+        let outcome =
+            capture_single_output(&mut backend, &output, output.rect, &DxgiLimits::default());
+        assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        assert_eq!(backend.recreates, 1);
+        assert_eq!(backend.generations, 1);
+    }
+
+    #[test]
+    fn duplication_only_rebuild_cannot_recover_removed_device() {
+        let output = test_output();
+        let mut backend = DeviceGraphMock::new(
+            vec![
+                Step::Err(DxgiAcquireError::DeviceRemoved),
+                Step::Ok(solid_frame(4, 2, [9, 8, 7, 0])),
+            ],
+            false,
+        );
+        let outcome =
+            capture_single_output(&mut backend, &output, output.rect, &DxgiLimits::default());
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        assert_eq!(backend.recreates, 1);
+        assert_eq!(backend.generations, 0);
+    }
+
+    // DXGI1-005A: with a 1ms total deadline the only acquire is the
+    // single final nonblocking poll — never a 1ms attempt issued
+    // against a sub-millisecond remainder (the round-1 ceiling bug).
     #[test]
     fn backend_receives_capped_timeout() {
         let mut backend = MockBackend::new(vec![Step::Err(DxgiAcquireError::WaitTimeout); 8]);
@@ -1591,9 +1834,44 @@ mod tests {
         };
         let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
         assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
-        assert!(!backend.timeouts.is_empty());
-        assert!(backend.timeouts.iter().all(|&t| t <= 1));
-        assert_eq!(backend.timeouts[0], 1);
+        assert_eq!(backend.timeouts, vec![0]);
+        assert_eq!(backend.acquire_calls, 1);
+    }
+
+    // DXGI1-005A: the single final nonblocking poll can still take an
+    // already-ready frame when less than 1ms remains.
+    #[test]
+    fn final_nonblocking_poll_can_take_ready_frame() {
+        let mut backend = MockBackend::new(vec![Step::Ok(solid_frame(4, 2, [1, 2, 3, 0]))]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 1,
+            ..DxgiLimits::default()
+        };
+        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        assert_eq!(backend.timeouts, vec![0]);
+    }
+
+    // DXGI1-005A: at most ONE final poll per request — after it returns
+    // WaitTimeout the loop stops even though a frame step remains.
+    #[test]
+    fn at_most_one_final_nonblocking_poll() {
+        let mut backend = MockBackend::new(vec![
+            Step::Err(DxgiAcquireError::WaitTimeout),
+            Step::Ok(solid_frame(4, 2, [1, 2, 3, 0])),
+        ]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 1,
+            ..DxgiLimits::default()
+        };
+        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        assert_eq!(backend.timeouts, vec![0]);
+        assert_eq!(backend.acquire_calls, 1);
     }
 
     #[test]
