@@ -116,11 +116,37 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
+    // Test hook only (C2P2-005's client-side fix needs a real sidecar
+    // that writes enough to stderr to fill its pipe buffer if nothing
+    // drains it, to prove the client's stderr-draining thread actually
+    // prevents that from blocking the child and masquerading as a
+    // request timeout). Written once at startup, before the main loop.
+    if let Ok(n) = std::env::var("FORGE_SIDECAR_TEST_STDERR_FLOOD_BYTES").map(|s| s.parse::<usize>().unwrap_or(0)) {
+        let line = "x".repeat(4096);
+        let mut written = 0usize;
+        while written < n {
+            eprintln!("{line}");
+            written += line.len() + 1;
+        }
+    }
+
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut lock_in = stdin.lock();
     let mut lock_out = stdout.lock();
     let mut buf = Vec::new();
+
+    // Test hook only (C2P2-001's client-side fix needs a real child that
+    // is alive but never reads, to prove the client's write phase — not
+    // just its read phase — is bounded by the request timeout). Blocks
+    // forever without ever touching stdin, so a client writing a
+    // request larger than the OS pipe buffer genuinely blocks on
+    // `write_all`, exactly the scenario the finding named.
+    if std::env::var("FORGE_SIDECAR_TEST_NEVER_READ").is_ok() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
 
     loop {
         let frame = match read_one_frame(&mut lock_in, &mut buf) {
@@ -134,6 +160,20 @@ fn main() {
 
         if test_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(test_delay_ms));
+        }
+
+        // Test hook only (C2P2-003's client-side fix needs a real
+        // sidecar that deliberately sends back malformed/incorrect-
+        // identity/wrong-version bytes, to prove the client rejects
+        // them and retires the session rather than trusting them). The
+        // override is raw bytes, framed exactly as a normal response
+        // would be, sent once in place of the real stub answer for
+        // *this* request only; never read from untrusted request input.
+        if let Ok(raw) = std::env::var("FORGE_SIDECAR_TEST_RAW_RESPONSE_OVERRIDE") {
+            let framed = encode_framed(raw.as_bytes());
+            let _ = lock_out.write_all(&framed);
+            let _ = lock_out.flush();
+            continue;
         }
 
         let response = match serde_json::from_slice::<IpcRequest>(&frame) {
