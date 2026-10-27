@@ -11,6 +11,7 @@
 
 import { createHash, sign as cryptoSign, verify as cryptoVerify } from "node:crypto";
 import { fail, CODES } from "./errors.mjs";
+import { validateEnvelope, validateBuildFields } from "./envelopeValidator.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -22,10 +23,21 @@ export function canonicalize(value) {
   return JSON.stringify(sortKeysDeep(value));
 }
 
+// TBP2-001 fix: canonicalization must be injective over own keys.
+// A plain `{}` accumulator is not: assigning `sorted["__proto__"]`
+// invokes Object.prototype's __proto__ setter and changes the
+// accumulator's prototype instead of creating an own property, so a
+// payload with an own __proto__ key canonicalized to the same bytes as
+// the payload without it — and an altered payload then verified under
+// the original signature. Using a null-prototype accumulator makes
+// every own key, including "__proto__", "constructor", and
+// "prototype", an ordinary data property that JSON.stringify emits.
+// Policy: those keys are data, never prototype mutation, at every
+// nesting level, for payload/resource/all signed content.
 function sortKeysDeep(value) {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value !== null && typeof value === "object") {
-    const sorted = {};
+    const sorted = Object.create(null);
     for (const key of Object.keys(value).sort()) {
       const v = value[key];
       if (v === undefined) continue; // undefined fields never survive signing
@@ -59,6 +71,9 @@ export function buildEnvelope(fields, privateKey) {
       fail(CODES.MALFORMED_ENVELOPE, `envelope missing required field: ${key}`, { key });
     }
   }
+  // TBP2-002: a malformed envelope must not be signed into existence.
+  // The closed validator runs here, before any signing bytes exist.
+  validateBuildFields(fields);
   const payloadCanonical = canonicalize(fields.payload);
   const unsigned = {
     schema_version: SCHEMA_VERSION,
@@ -90,6 +105,12 @@ export function verifyEnvelopeSignature(envelope, publicKey) {
   if (!envelope || typeof envelope !== "object") {
     fail(CODES.MALFORMED_ENVELOPE, "envelope is not an object");
   }
+  // TBP2-002: the closed validator runs before any canonicalization,
+  // hashing, or signature check, so a correctly signed but malformed or
+  // unbounded envelope is refused here and never reaches a handler.
+  // No handler or replay state is mutated by a refusal (that happens
+  // only in registry.verifyAndAuthorize, after this returns).
+  validateEnvelope(envelope);
   const { signature, ...unsigned } = envelope;
   if (typeof signature !== "string" || signature.length === 0) {
     fail(CODES.MALFORMED_ENVELOPE, "envelope missing signature");

@@ -26,7 +26,7 @@
 // (ledger/repository.mjs, already merged) and P3's (orchestrator/queue)
 // job — handlers are supplied by the caller, not implemented here.
 
-import { verifyAndAuthorize } from "./registry.mjs";
+import { verifyAndAuthorize, recordSeenOperation } from "./registry.mjs";
 import { fail, CODES } from "./errors.mjs";
 
 export const AGENT_OPERATIONS = new Set([
@@ -120,13 +120,22 @@ export function handleEnvelope(api, envelope, expected) {
   // that would compare the envelope to itself and falsely claim head
   // binding. Pass the caller's external expected through unchanged, or
   // nothing when no external pin was supplied.
-  const verifyResult = verifyAndAuthorize(api.registry, envelope, expected);
-
+  //
+  // TBP2-004, ordering: the handler must exist BEFORE verification
+  // runs, and the operation is recorded as seen ONLY after the handler
+  // returns successfully. The old order (verify-and-record, then look
+  // up the handler) marked an operation seen even when no handler
+  // existed or the handler threw, so a retry was refused as a replay
+  // for work that never happened. Verification here runs with
+  // record: false; the record below is the only recording on this path.
   const handler = api.handlers[envelope.operation];
   if (!handler) {
     fail(CODES.UNKNOWN_OPERATION, `no handler registered for operation: ${envelope.operation}`, {
       operation: envelope.operation,
     });
   }
-  return handler(envelope, verifyResult);
+  const verifyResult = verifyAndAuthorize(api.registry, envelope, expected, { record: false });
+  const result = handler(envelope, verifyResult);
+  recordSeenOperation(api.registry, envelope);
+  return result;
 }

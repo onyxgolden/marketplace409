@@ -24,18 +24,43 @@ const MAX_PATH_DEPTH = 32;
 const MAX_RECORDS_PER_BATCH = 1000;
 const MAX_CHANGED_FILES_PER_POLL = 100;
 const MAX_POLL_BYTES = 10 * 1024 * 1024;
+// TBP2-007: every git subprocess is bounded in output and wall time.
+// A subprocess that times out or overflows its buffer is an intake
+// block, not a raw spawn error leaking into the caller — and the cursor
+// is preserved because scanSince throws instead of returning a cursor.
+const GIT_TIMEOUT_MS = 15000;
+const MAX_GIT_TEXT_BYTES = 10 * 1024 * 1024;
 
-function git(repoPath, args, opts = {}) {
-  return execFileSync("git", args, {
-    cwd: repoPath,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...opts,
-  });
+function gitSubprocessError(e, what) {
+  if (e && (e.code === "ETIMEDOUT" || e.code === "ENOBUFS" || /timed out|ENOBUFS/.test(String(e.message ?? e)))) {
+    fail(CODES.INTAKE_BLOCKED, `git subprocess ${what} exceeded its bound (timeout or output cap) — refusing to advance the cursor`, {
+      what,
+      code: e.code ?? null,
+    });
+  }
+  throw e;
 }
 
-function gitBuffer(repoPath, args) {
-  return execFileSync("git", args, { cwd: repoPath, maxBuffer: 64 * 1024 * 1024 });
+function git(repoPath, args, opts = {}) {
+  try {
+    return execFileSync("git", args, {
+      cwd: repoPath,
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: opts.maxBuffer ?? MAX_GIT_TEXT_BYTES,
+      ...opts,
+    });
+  } catch (e) {
+    gitSubprocessError(e, args.join(" "));
+  }
+}
+
+function gitBuffer(repoPath, args, maxBuffer = 1024 * 1024) {
+  try {
+    return execFileSync("git", args, { cwd: repoPath, timeout: GIT_TIMEOUT_MS, maxBuffer });
+  } catch (e) {
+    gitSubprocessError(e, args.join(" "));
+  }
 }
 
 export function headCommit(repoPath, ref = "HEAD") {
@@ -80,20 +105,33 @@ function pathDepth(path) {
 
 // name-status diff between two trees (a parent commit, or the empty tree
 // for a root commit's "first parent") and a commit, restricted to
-// `scopePaths` prefixes if given. Returns [{status, path, newPath?}] where
-// status is one of A (added), M (modified), D (deleted), R (renamed).
+// `scopePaths` prefixes if given. Returns [{status, path}] where status
+// is one of A (added), M (modified), D (deleted).
+//
+// TBP2-005: this uses `-z` (NUL-delimited) output and literal path
+// handling end to end. The old line/tab parsing dropped any path Git
+// quoted — non-ASCII, tab, or newline filenames — because the quoted
+// form's leading quote failed the scope-prefix test and the file
+// vanished while the cursor still advanced. With -z, Git emits raw
+// bytes, no quoting, and a path is either in scope (admitted or
+// quarantined) or out of scope — never silently lost inside scope.
 function diffNameStatus(repoPath, fromRef, toRef, scopePaths) {
-  const args = ["diff", "--name-status", "--no-renames", fromRef, toRef];
+  const args = ["diff", "--name-status", "-z", "--no-renames", fromRef, toRef];
   let out;
   try {
     out = git(repoPath, args);
   } catch (e) {
+    if (e instanceof Error && e.name === "TeamBrainTrustError") throw e;
     fail(CODES.MALFORMED_ENVELOPE, `git diff failed between ${fromRef} and ${toRef}`, { error: String(e) });
   }
-  const lines = out.split("\n").filter(Boolean);
+  // -z records are: status NUL path NUL status NUL path NUL ... (no
+  // trailing newline semantics, no quoting, no tab separator).
+  const parts = out.split("\0");
   const changes = [];
-  for (const line of lines) {
-    const [status, path] = line.split("\t");
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const status = parts[i];
+    const path = parts[i + 1];
+    if (!status || path === undefined || path === "") continue;
     if (scopePaths && scopePaths.length > 0 && !scopePaths.some((p) => path.startsWith(p))) continue;
     changes.push({ status: status[0], path });
   }
@@ -103,13 +141,27 @@ function diffNameStatus(repoPath, fromRef, toRef, scopePaths) {
 function blobShaAt(repoPath, commitSha, path) {
   const out = git(repoPath, ["ls-tree", commitSha, "--", path]).trim();
   if (!out) return null; // path doesn't exist at this commit (e.g. it was deleted)
-  // format: "<mode> blob <sha>\t<path>"
+  // format: "<mode> blob <sha>\t<path>" — only the mode+sha prefix is
+  // parsed, so a quoted or unusual path in the tail cannot confuse it.
   const match = out.match(/^\d+ blob ([0-9a-f]{40})\t/);
   return match ? match[1] : null;
 }
 
-function readBlob(repoPath, blobSha) {
-  return gitBuffer(repoPath, ["cat-file", "-p", blobSha]);
+// TBP2-007: object size WITHOUT reading content. `git cat-file -s`
+// returns the byte count from the object header only, so an oversized
+// blob can be quarantined before a single content byte is buffered.
+function blobSizeAt(repoPath, blobSha) {
+  try {
+    const out = git(repoPath, ["cat-file", "-s", blobSha]).trim();
+    const size = Number.parseInt(out, 10);
+    return Number.isFinite(size) ? size : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBlob(repoPath, blobSha, maxBuffer) {
+  return gitBuffer(repoPath, ["cat-file", "-p", blobSha], maxBuffer);
 }
 
 function sha256OfBuffer(buf) {
@@ -170,7 +222,6 @@ export function scanSince(
 
   const events = [];
   const quarantined = [];
-  const seenPerCommit = new Map(); // commitSha -> Set(path) already emitted for this commit
   let truncated = false;
   let totalBytes = 0;
   let changedFileCount = 0;
@@ -178,60 +229,106 @@ export function scanSince(
   outer: for (const commit of commits) {
     const parents = parentsOf(repoPath, commit);
     const parentRefs = parents.length > 0 ? parents : [EMPTY_TREE_SHA];
-    const seen = seenPerCommit.get(commit) ?? new Set();
-    seenPerCommit.set(commit, seen);
 
+    // Union of per-parent diffs for this commit, in first-appearance
+    // order. A merge's diff against each parent is inspected (that is
+    // what finds side-branch introductions), but the union is decided
+    // once per path below — never once per parent.
+    const candidates = new Map(); // path -> Map(parentRef -> status)
     for (const parent of parentRefs) {
       const changes = diffNameStatus(repoPath, parent, commit, scopePaths);
       for (const { status, path } of changes) {
-        if (seen.has(path)) continue; // already recorded this path for this commit via another parent
-        seen.add(path);
+        if (!candidates.has(path)) candidates.set(path, new Map());
+        candidates.get(path).set(parent, status);
+      }
+    }
 
-        if (events.length >= maxRecordsPerBatch) {
-          truncated = true;
-          break outer;
+    for (const [path, perParent] of candidates) {
+      if (events.length >= maxRecordsPerBatch) {
+        truncated = true;
+        break outer;
+      }
+      changedFileCount += 1;
+      if (changedFileCount > maxChangedFilesPerPoll) {
+        truncated = true;
+        break outer;
+      }
+      if (pathDepth(path) > maxPathDepth) {
+        quarantined.push({ commit, path, reason: "PATH_DEPTH_EXCEEDED" });
+        continue;
+      }
+
+      // TBP2-006: distinguish actual introduction from merge visibility.
+      // For a non-merge commit, the single parent's diff status is the
+      // event kind, as before. For a merge, a path whose resulting blob
+      // already exists in ANY parent is not a new introduction — it was
+      // introduced by the parent-side commit that already emitted it,
+      // and the merge merely made it visible on this branch. Only a
+      // merge result that differs from every parent is a genuine
+      // merge-resolution change (MODIFIED, or ADDED if no parent had
+      // the path at all); a merge result that deletes a path a parent
+      // had is DELETED. No second ADDED candidate is ever minted for
+      // one unchanged request.
+      const parentBlobs = parentRefs.map((parent) => blobShaAt(repoPath, parent, path));
+      const commitBlob = blobShaAt(repoPath, commit, path);
+      let eventKind;
+      if (parentRefs.length <= 1) {
+        const status = perParent.get(parentRefs[0]);
+        eventKind = status === "A" ? "ADDED" : status === "D" ? "DELETED" : "MODIFIED";
+      } else if (commitBlob === null) {
+        if (!parentBlobs.some((b) => b !== null)) continue; // absent everywhere: no change to record
+        eventKind = "DELETED";
+      } else if (parentBlobs.includes(commitBlob)) {
+        continue; // merge visibility only — already introduced elsewhere
+      } else if (parentBlobs.some((b) => b !== null)) {
+        eventKind = "MODIFIED";
+      } else {
+        eventKind = "ADDED";
+      }
+
+      let contentSha256 = null;
+      let byteLength = null;
+      if (eventKind !== "DELETED") {
+        if (commitBlob === null) {
+          // The diff says the file is present, but it cannot be found
+          // at the commit. Silently dropping it would be exactly the
+          // loss this module must not do — block instead.
+          fail(CODES.INTAKE_BLOCKED, "changed path has no blob at its commit; refusing to skip it", { commit, path });
         }
-        changedFileCount += 1;
-        if (changedFileCount > maxChangedFilesPerPoll) {
-          truncated = true;
-          break outer;
+        // TBP2-007: size and mode are validated BEFORE any content
+        // byte is read. An oversized blob is quarantined on its size
+        // alone, and a poll-byte overflow truncates before reading —
+        // neither case ever buffers the blob.
+        const size = blobSizeAt(repoPath, commitBlob);
+        if (size === null) {
+          fail(CODES.INTAKE_BLOCKED, "could not determine blob size before reading; refusing to read unbounded content", {
+            commit,
+            path,
+          });
         }
-        if (pathDepth(path) > maxPathDepth) {
-          quarantined.push({ commit, path, reason: "PATH_DEPTH_EXCEEDED" });
+        if (size > maxFileBytes) {
+          quarantined.push({ commit, path, reason: "FILE_TOO_LARGE", byteLength: size });
           continue;
         }
-
-        const eventKind = status === "A" ? "ADDED" : status === "D" ? "DELETED" : "MODIFIED";
-        let contentSha256 = null;
-        let byteLength = null;
-        if (eventKind !== "DELETED") {
-          const blobSha = blobShaAt(repoPath, commit, path);
-          if (blobSha) {
-            const content = readBlob(repoPath, blobSha);
-            byteLength = content.length;
-            totalBytes += byteLength;
-            if (byteLength > maxFileBytes) {
-              quarantined.push({ commit, path, reason: "FILE_TOO_LARGE", byteLength });
-              continue;
-            }
-            if (totalBytes > maxPollBytes) {
-              truncated = true;
-              break outer;
-            }
-            contentSha256 = sha256OfBuffer(content);
-          }
+        if (totalBytes + size > maxPollBytes) {
+          truncated = true;
+          break outer;
         }
-
-        events.push({
-          introducingCommit: commit,
-          path,
-          eventKind,
-          contentSha256,
-          byteLength,
-          sourceTimestamp: commitTimestamp(repoPath, commit),
-          firstObservedAt: new Date().toISOString(),
-        });
+        const content = readBlob(repoPath, commitBlob, maxFileBytes + 64 * 1024);
+        byteLength = content.length;
+        totalBytes += byteLength;
+        contentSha256 = sha256OfBuffer(content);
       }
+
+      events.push({
+        introducingCommit: commit,
+        path,
+        eventKind,
+        contentSha256,
+        byteLength,
+        sourceTimestamp: commitTimestamp(repoPath, commit),
+        firstObservedAt: new Date().toISOString(),
+      });
     }
   }
 

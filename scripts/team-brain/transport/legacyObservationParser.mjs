@@ -18,6 +18,8 @@
 // paths are recognized and skipped, never re-ingested as a new inbound
 // observation.
 
+import { parseBoundedJson } from "./envelopeValidator.mjs";
+
 const SERVICE_ENVELOPE_PREFIX = "commands/team-brain/";
 const SERVICE_RECEIPT_PREFIX = "results/team-brain/receipts/";
 const SERVICE_QUEUE_PREFIX = "results/team-brain/queue/";
@@ -90,12 +92,18 @@ export function parseLegacyObservation(path, rawText, { introducingCommit, sourc
 // itself (that's registry.verifyAndAuthorize, given the parsed object).
 // Malformed JSON is reported as a parse failure, never silently coerced
 // into a usable envelope shape.
+//
+// TBP2-002, raw-JSON entrypoint: the byte cap is applied BEFORE
+// decoding (parseBoundedJson), so an oversized document is reported as
+// a parse failure and never parsed at all. Full envelope-shape
+// validation still happens later, in verifyEnvelopeSignature — this
+// function deliberately stays a JSON gate, not a second schema validator,
+// so partial candidate objects (operation_id/principal_id only) still
+// parse here and fail honestly at verification time.
 export function parseEnvelopeCandidate(path, rawText) {
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch (e) {
-    return { kind: INTAKE_CLASS.SIGNED_ENVELOPE_CANDIDATE, sourcePath: path, parseError: String(e.message ?? e), envelope: null };
+  const { value: parsed, error } = parseBoundedJson(rawText);
+  if (error) {
+    return { kind: INTAKE_CLASS.SIGNED_ENVELOPE_CANDIDATE, sourcePath: path, parseError: error, envelope: null };
   }
   return { kind: INTAKE_CLASS.SIGNED_ENVELOPE_CANDIDATE, sourcePath: path, parseError: null, envelope: parsed };
 }

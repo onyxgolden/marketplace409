@@ -14,8 +14,9 @@
 // `origin: "jason-admin"` — never derived from an ordinary signed envelope,
 // never satisfiable by a principal registering/granting itself.
 
-import { verifyEnvelopeSignature } from "./envelope.mjs";
+import { verifyEnvelopeSignature, canonicalize } from "./envelope.mjs";
 import { fail, CODES } from "./errors.mjs";
+import { validateResource } from "./envelopeValidator.mjs";
 
 const ADMIN_ORIGIN = "jason-admin";
 
@@ -35,7 +36,12 @@ export function createRegistry() {
     // grantId -> { principalId, resourceRepo, resourceScope, allowedOperations,
     //              registeredBy, grantRevision, revokedAt, revokedReason }
     grants: new Map(),
-    // operationId -> payloadSha256 (first-seen), for replay detection
+    // operationId -> canonical full operation identity (first-seen), for
+    // replay detection. TBP2-004: this is NOT just a payload digest.
+    // Identity covers every signed attribution field, so a changed
+    // actor, action, resource/scope/head/source, version, or nonce with
+    // an unchanged payload is a conflicting replay, never an identical
+    // one. See replayIdentity() below.
     seenOperations: new Map(),
   };
 }
@@ -137,6 +143,51 @@ export function checkAuthorized(registry, principalId, operation, resource) {
   return false;
 }
 
+// Canonical full operation identity: every signed attribution field of
+// the envelope, in canonical JSON form, excluding only the signature
+// itself (which is derived from these fields). Two envelopes are the
+// same operation only when all of these match. TBP2-004: comparing only
+// the payload digest let a different operation, scope, head, actor, or
+// nonce ride in as an "identical" replay.
+export function replayIdentity(envelope) {
+  return canonicalize({
+    schema_version: envelope.schema_version,
+    operation_id: envelope.operation_id,
+    principal_id: envelope.principal_id,
+    key_id: envelope.key_id,
+    issued_at: envelope.issued_at,
+    operation: envelope.operation,
+    resource: envelope.resource,
+    expected_row_version: envelope.expected_row_version,
+    nonce: envelope.nonce,
+    payload_sha256: envelope.payload_sha256,
+  });
+}
+
+// Throws OPERATION_REPLAYED for an exactly identical operation, or
+// CONFLICTING_REPLAY for the same operation_id with any changed binding.
+// Does not record anything — recording is a separate, explicit step.
+export function checkSeenOperation(registry, envelope) {
+  const seen = registry.seenOperations.get(envelope.operation_id);
+  if (seen === undefined) return;
+  if (seen === replayIdentity(envelope)) {
+    fail(CODES.OPERATION_REPLAYED, "operation_id already processed with identical full operation identity", {
+      operationId: envelope.operation_id,
+    });
+  }
+  fail(CODES.CONFLICTING_REPLAY, "operation_id already processed with a DIFFERENT operation identity", {
+    operationId: envelope.operation_id,
+  });
+}
+
+// Records an operation as seen. Callers must call this only after the
+// operation has actually been admitted and, for dispatched operations,
+// successfully handled — recording before handler execution would let a
+// failed or never-handled operation masquerade as completed work.
+export function recordSeenOperation(registry, envelope) {
+  registry.seenOperations.set(envelope.operation_id, replayIdentity(envelope));
+}
+
 // End-to-end: verify signature, verify the signing key's registered
 // principal actually matches the envelope's CLAIMED principal_id
 // (SIGNER_NOT_PRINCIPAL — "shared-helper signer is not the reviewer"),
@@ -145,10 +196,35 @@ export function checkAuthorized(registry, principalId, operation, resource) {
 // Replay semantics (brief §5 "exact replay returns existing result; any
 // changed attribution/binding conflicts atomically" — full handoff replay
 // lives in P4, but the trust boundary's own replay check is in scope here):
-// same operation_id + identical payload_sha256 => OPERATION_REPLAYED (caller
-// decides whether to treat that as a safe no-op resume); same operation_id +
-// a DIFFERENT payload_sha256 => CONFLICTING_REPLAY, always rejected.
-export function verifyAndAuthorize(registry, envelope, expected) {
+// same operation_id + identical full identity => OPERATION_REPLAYED
+// (caller decides whether to treat that as a safe no-op resume); same
+// operation_id + ANY changed attribution/binding => CONFLICTING_REPLAY,
+// always rejected.
+//
+// Recording: by default this function records the operation after all
+// checks pass (direct callers, including the existing tests, rely on
+// that). Pass { record: false } when the caller will record itself only
+// after successful handling — that is what handleEnvelope does, so a
+// handler failure or a missing handler never marks the operation seen.
+export function verifyAndAuthorize(registry, envelope, expected, opts = {}) {
+  // TBP2-003: an external pin is itself validated before anything else.
+  // A malformed or unknown pin field is refused, never silently ignored,
+  // so a caller cannot accidentally believe it pinned something it did
+  // not. A supplied resource pin must name a repo (validateResource,
+  // forPin: true, enforces that).
+  if (expected !== undefined && expected !== null) {
+    if (typeof expected !== "object" || Array.isArray(expected)) {
+      fail(CODES.MALFORMED_ENVELOPE, "expected pin must be an object", { reason: "EXPECTED_NOT_AN_OBJECT" });
+    }
+    if (expected.operation !== undefined) {
+      if (typeof expected.operation !== "string" || expected.operation.length === 0) {
+        fail(CODES.MALFORMED_ENVELOPE, "expected operation must be a nonempty string", { field: "operation" });
+      }
+    }
+    if (expected.resource !== undefined) {
+      validateResource(expected.resource, { forPin: true });
+    }
+  }
   const { operation: expectedOperation, resource: expectedResource } = expected ?? {};
 
   const keyEntry = resolveKey(registry, envelope.key_id); // throws UNKNOWN_KEY / KEY_REVOKED
@@ -180,6 +256,21 @@ export function verifyAndAuthorize(registry, envelope, expected) {
         actual: envelope.resource?.reviewed_head,
       });
     }
+    // TBP2-003: every load-bearing pin binding is compared, not just
+    // repo and head. A pin scope of "*" is an explicit any-scope pin
+    // (same convention as grants) and matches any envelope scope; any
+    // other pin scope, source, or subject must match exactly.
+    for (const field of ["scope", "source", "subject"]) {
+      if (expectedResource[field] === undefined) continue;
+      if (field === "scope" && expectedResource[field] === "*") continue;
+      if (envelope.resource?.[field] !== expectedResource[field]) {
+        fail(CODES.RESOURCE_BINDING_MISMATCH, `envelope resource.${field} does not match the expected resource`, {
+          binding: field,
+          expected: expectedResource[field],
+          actual: envelope.resource?.[field],
+        });
+      }
+    }
   }
 
   if (!checkAuthorized(registry, envelope.principal_id, envelope.operation, envelope.resource)) {
@@ -190,18 +281,10 @@ export function verifyAndAuthorize(registry, envelope, expected) {
     });
   }
 
-  const seen = registry.seenOperations.get(envelope.operation_id);
-  if (seen !== undefined) {
-    if (seen === envelope.payload_sha256) {
-      fail(CODES.OPERATION_REPLAYED, "operation_id already processed with identical payload", {
-        operationId: envelope.operation_id,
-      });
-    }
-    fail(CODES.CONFLICTING_REPLAY, "operation_id already processed with a DIFFERENT payload", {
-      operationId: envelope.operation_id,
-    });
+  checkSeenOperation(registry, envelope);
+  if (opts.record !== false) {
+    recordSeenOperation(registry, envelope);
   }
-  registry.seenOperations.set(envelope.operation_id, envelope.payload_sha256);
 
   return { principalId: envelope.principal_id, operation: envelope.operation };
 }
