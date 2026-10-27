@@ -497,6 +497,7 @@ mod tests {
             origin_virtual: (0, 0),
             size_logical: (1920, 1080),
             scale: 1.0,
+            size_physical: (1920, 1080),
         }
     }
 

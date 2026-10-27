@@ -508,6 +508,7 @@ mod tests {
             origin_virtual: (0, 0),
             size_logical: (800, 600),
             scale: 1.0,
+            size_physical: (800, 600),
         }]
     }
 

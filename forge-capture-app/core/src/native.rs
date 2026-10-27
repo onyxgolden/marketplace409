@@ -621,6 +621,12 @@ mod win {
                         (phys_h / scale).round().max(1.0) as u32,
                     ),
                     scale,
+                    // Authoritative: straight from rcMonitor, never
+                    // re-derived from the (lossy, rounded) logical size
+                    // above. See the field's doc comment in coords.rs for
+                    // why that re-derivation is the root cause of the
+                    // secondary-monitor blank-frame bug.
+                    size_physical: (phys_w as u64, phys_h as u64),
                 }
             })
             .collect())
@@ -1777,6 +1783,11 @@ mod linux {
                     ((h as f64 / scale).round().max(1.0)) as u32,
                 ),
                 scale,
+                // Authoritative: `w`/`h` are the real Xinerama/root-window
+                // physical pixel dimensions already, never re-derived from
+                // the lossy logical size above (same fix as the Windows
+                // path; see coords.rs's field doc for why).
+                size_physical: (w as u64, h as u64),
             })
             .collect())
     }
@@ -2528,6 +2539,7 @@ mod tests {
                     origin_virtual: (0, 0),
                     size_logical: (1, 1),
                     scale: 1.0,
+                    size_physical: (1, 1),
                 },
                 false
             )
