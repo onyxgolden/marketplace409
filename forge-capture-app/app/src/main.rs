@@ -118,6 +118,13 @@ struct AppState {
     /// apart from a newer session's — this token is the actual binding a
     /// stale cleanup must check before it may touch the window at all.
     overlay_window_owner: Mutex<Option<u64>>,
+    /// C639-007C.10: serializes `retry_hide_overlay_or_abandon`'s
+    /// compensate closure's `show()`/`set_focus()` against cancellation's
+    /// `close()` on the exact same overlay window — see
+    /// `OverlayRetireGate`'s own doc comment for the race this closes and
+    /// why `overlay_window_owner` (a point-in-time flag, not a reservation
+    /// held across a native call) cannot close it alone.
+    overlay_retire_gate: OverlayRetireGate,
     /// Bounded capture worker supervisor (C639 Option C). Owns the single
     /// worker slot, the 3 s parent deadline, generation fencing, and the
     /// phase ring log. All potentially blocking native acquisition for the
@@ -2340,6 +2347,102 @@ impl<T: Clone> AbandonableBridge<T> {
     }
 }
 
+/// C639-007C.10: whether a retire (close) is currently allowed to run, or
+/// must wait, relative to an in-flight restore (show + focus) of the SAME
+/// overlay window. `AbandonableBridge` (above) only serializes the waiter
+/// giving up against `action` committing — it says nothing about a SECOND,
+/// independent actor (cancellation, running from its own command thread)
+/// that wants to touch the very same window `compensate` is about to show
+/// back. Without this, `compensate`'s own three-way recheck
+/// (`overlay_request_session_still_current`) is a point-in-time read with
+/// nothing holding the window still afterward: cancellation can clear every
+/// piece of session state and call `close()` in the gap between that read
+/// returning true and `compensate` actually calling `show()`, so the native
+/// show and the native close race each other with no ordering between them
+/// at all — see `retry_hide_overlay_or_abandon`'s own C639-007C.10 doc
+/// comment for the exact interleaving this closes.
+///
+/// Deliberately session-agnostic (unlike `overlay_window_owner` et al.):
+/// `active_pick`'s single-claim invariant already guarantees at most one
+/// session's restore/retire pair is ever in flight against this window at
+/// once, so the gate only needs to answer "is a restore in flight right
+/// now," not "whose." Claiming (`try_claim_restore`/`claim_retire`) and
+/// releasing are deliberately separate steps, with the lock held only for
+/// each instantaneous transition — never across the native `show()`/
+/// `close()` call itself — the same discipline `AbandonableBridge::settle`
+/// uses around `action`, and the same reason: an unbounded native call must
+/// never be made while holding a lock the other side needs to proceed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OverlayWindowClaim {
+    Idle,
+    Restoring,
+    Retiring,
+}
+
+struct OverlayRetireGate {
+    claim: Mutex<OverlayWindowClaim>,
+    cv: Condvar,
+}
+
+impl OverlayRetireGate {
+    fn new() -> Self {
+        Self {
+            claim: Mutex::new(OverlayWindowClaim::Idle),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Claim the right to restore (show + focus) the overlay window. Fails
+    /// — without blocking — if cancellation has already claimed (or is
+    /// still holding) the retire slot: the caller must then skip show/
+    /// focus entirely and touch nothing else, since cancellation's own
+    /// close, ordered by this same gate, already owns the window.
+    fn try_claim_restore(&self) -> bool {
+        let mut claim = self.claim.lock().unwrap();
+        if *claim == OverlayWindowClaim::Idle {
+            *claim = OverlayWindowClaim::Restoring;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Release a previously granted restore claim, returning the gate to
+    /// idle and waking any cancellation parked in `claim_retire` waiting to
+    /// retire the window strictly after this restore.
+    fn release_restore(&self) {
+        let mut claim = self.claim.lock().unwrap();
+        if *claim == OverlayWindowClaim::Restoring {
+            *claim = OverlayWindowClaim::Idle;
+            self.cv.notify_all();
+        }
+    }
+
+    /// Claim the right to retire (close) the overlay window, waiting out
+    /// any restore already in flight first so the claim — and therefore
+    /// the close that follows it — is always ordered strictly after that
+    /// restore, never racing it. Returns once held; the caller must perform
+    /// the close and then call `release_retire`.
+    fn claim_retire(&self) {
+        let claim = self.claim.lock().unwrap();
+        let mut claim = self
+            .cv
+            .wait_while(claim, |c| *c == OverlayWindowClaim::Restoring)
+            .unwrap();
+        *claim = OverlayWindowClaim::Retiring;
+    }
+
+    /// Release a previously granted retire claim, returning the gate to
+    /// idle and waking anyone else parked on it.
+    fn release_retire(&self) {
+        let mut claim = self.claim.lock().unwrap();
+        if *claim == OverlayWindowClaim::Retiring {
+            *claim = OverlayWindowClaim::Idle;
+            self.cv.notify_all();
+        }
+    }
+}
+
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
 /// plus its `.forge.json` sidecar next to it. Purely local file copy.
 #[tauri::command]
@@ -2811,15 +2914,28 @@ fn owns_overlay_window(owner: Option<u64>, session_id: u64) -> bool {
 /// reaching for someone else's window. The owner slot is cleared under the
 /// same lock as the ownership check, before the actual close, so a second
 /// concurrent call for the same session can only ever win the close once.
+///
+/// C639-007C.10: claims `overlay_retire_gate`'s retire slot FIRST, waiting
+/// out any restore (`retry_hide_overlay_or_abandon`'s compensate) already in
+/// flight — so this close is always ordered strictly after that restore's
+/// `show()`/`set_focus()`, never racing it, and so a restore that claims the
+/// gate after this check has already failed can never resurrect a window
+/// this call is about to (or already did) close. The ownership check and
+/// clear happen only after the claim is held, so they see the state exactly
+/// as it stands at the moment this close actually gets to run — not a
+/// stale read taken before waiting.
 fn close_owned_overlay_window(app: &tauri::AppHandle, session_id: u64) -> Result<(), String> {
     let state = app.state::<AppState>();
+    state.overlay_retire_gate.claim_retire();
     let mut owner = state.overlay_window_owner.lock().unwrap();
-    if !owns_overlay_window(*owner, session_id) {
-        return Ok(());
+    let owns = owns_overlay_window(*owner, session_id);
+    if owns {
+        *owner = None;
     }
-    *owner = None;
     drop(owner);
-    close_overlay_window(app)
+    let result = if owns { close_overlay_window(app) } else { Ok(()) };
+    state.overlay_retire_gate.release_retire();
+    result
 }
 
 /// Poll until the overlay window is actually destroyed. `close()` is
@@ -3255,10 +3371,26 @@ fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
 /// newer page's (B) claim and window; a stale cancel now no-ops instead —
 /// touches no state, closes no window — exactly like a stale Retry
 /// (C639-007C.4) and a stale `capture` (C639-007C.3). Reuses the same
-/// bound primitives (`clear_pick_if_current`, `close_owned_overlay_window`)
-/// every other retire site here already funnels through, rather than the
+/// bound primitives (`clear_pick_if_current`, `owns_overlay_window`) every
+/// other retire site here already funnels through, rather than the
 /// unconditional "whatever is labeled overlay" lookup those exist
 /// specifically to replace.
+///
+/// C639-007C.10: unlike the other owner-gated retire sites, this one does
+/// NOT go through `close_owned_overlay_window` — it claims `overlay_retire_
+/// gate`'s retire slot FIRST and clears `active_pick`/`pending_overlay`
+/// only once that claim is held, rather than clearing them up front and
+/// then separately waiting to close. Clearing them first (the shape every
+/// other retire site here uses, and the shape this command itself used
+/// before this fix) would let `open_region_overlay`'s "a pick is already in
+/// progress" check see `pending_overlay` as already empty while A's window
+/// still physically exists — this cancellation stuck waiting out an
+/// in-flight restore — and take its own unconditional, ungated orphan-
+/// reclaim close on the shared "overlay" label, racing this cancellation's
+/// own close exactly the way `retry_hide_overlay_or_abandon`'s compensate
+/// closure used to race it. Holding the live claim across the whole wait
+/// keeps that check honest for as long as this cancellation might be
+/// parked on the gate.
 #[tauri::command]
 #[allow(non_snake_case)]
 fn cancel_region_pick(
@@ -3266,10 +3398,19 @@ fn cancel_region_pick(
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
+    state.overlay_retire_gate.claim_retire();
     clear_pick_if_current(&state.active_pick, &state.pending_overlay, overlaySessionId);
+    let mut owner = state.overlay_window_owner.lock().unwrap();
+    let owns = owns_overlay_window(*owner, overlaySessionId);
+    if owns {
+        *owner = None;
+    }
+    drop(owner);
     // Best-effort close, same as the prior unconditional version: a close
     // failure here must not fail the cancel IPC itself.
-    let _ = close_owned_overlay_window(&app, overlaySessionId);
+    let close_result = if owns { close_overlay_window(&app) } else { Ok(()) };
+    state.overlay_retire_gate.release_retire();
+    let _ = close_result;
     Ok(())
 }
 
@@ -3405,6 +3546,37 @@ async fn retry_region_backdrop(
 /// still_current`, `owns_overlay_window`'s compare-and-clear) the rest of
 /// the module already uses, so a stale A can never resurrect itself over a
 /// live B or erase B's owner claim.
+///
+/// C639-007C.10: the three-way recheck above is a point-in-time read, not a
+/// reservation — nothing about it stops cancellation from running, on its
+/// own command thread, in the narrow gap between that read returning true
+/// and this closure actually calling `window.show()`. The exact failing
+/// interleaving: the recheck passes (A still current); before `show()` is
+/// called, A's cancel command clears `active_pick`/`pending_overlay`,
+/// compare-clears `overlay_window_owner`, and calls `close_owned_overlay_
+/// window`; if that close's native call and this closure's `show()` are not
+/// ordered against each other, the later one — whichever it ends up being,
+/// native show/close are not guaranteed to complete in call order — can
+/// resurrect cancelled A or stomp a newer session's window. `overlay_
+/// retire_gate` closes this: `try_claim_restore` must succeed before this
+/// closure is allowed to call `show()`/`set_focus()` at all; if cancellation
+/// has already claimed (or is still holding) the retire slot, the claim
+/// fails and this closure returns having touched nothing — cancellation's
+/// own close, ordered by the same gate, already owns the window. If this
+/// closure wins the claim instead, the recheck above is re-run WHILE
+/// holding it (so a cancellation that fully completed before the claim was
+/// even attempted is still caught here, not just the in-flight case) before
+/// `show()` runs, and the claim is held across the recheck, `show()`/
+/// `set_focus()` (or the failure cleanup), and only released once this
+/// closure is completely done touching the window — so a concurrent
+/// cancellation blocks in `claim_retire` for the gate's own dedicated lock
+/// (never `active_pick`/`pending_overlay`/`overlay_window_owner`, which stay
+/// un-held across the native calls exactly as before) until this restore has
+/// fully finished, and its own close is then always ordered strictly after
+/// it. Either way the window ends up closed if cancellation ran at all —
+/// immediately if it wins the claim, or after this restore if this closure
+/// wins it — never dependent on OS scheduling between concurrent native
+/// show/close calls.
 fn retry_hide_overlay_or_abandon(
     app: tauri::AppHandle,
     retry_session: u64,
@@ -3440,11 +3612,23 @@ fn retry_hide_overlay_or_abandon(
                 // through, and a newer session (B) had a real window to be
                 // admitted through, while this closure sat blocked behind
                 // A's native `hide()` on the single main-event-loop thread.
+                // C639-007C.10: claim the right to restore BEFORE touching
+                // the window at all. If cancellation has already claimed
+                // (or is still holding) the retire slot, do not show/focus
+                // — do not even close — and return: cancellation's own
+                // close, ordered by this same gate, already owns A's
+                // window from here.
+                if !state.overlay_retire_gate.try_claim_restore() {
+                    return;
+                }
                 // Revalidate the full three-way binding
                 // (`overlay_request_session_still_current`, the same check
-                // every other retire site in this module uses) before
-                // deciding whether to resurrect A's window — resolving a
-                // real handle in `action` is not proof A is still live.
+                // every other retire site in this module uses) WHILE
+                // holding the claim — a cancellation that fully completed
+                // (and released the gate) before this claim was even
+                // attempted leaves no trace on the gate itself, only on
+                // this state, so it must be re-read here, not assumed from
+                // winning the claim alone.
                 if !overlay_request_session_still_current(
                     &state.active_pick,
                     &state.pending_overlay,
@@ -3459,6 +3643,7 @@ fn retry_hide_overlay_or_abandon(
                     // nothing else. B's active_pick, pending_overlay, and
                     // overlay_window_owner were never this closure's to
                     // retire.
+                    state.overlay_retire_gate.release_restore();
                     let _ = window.close();
                     return;
                 }
@@ -3478,10 +3663,16 @@ fn retry_hide_overlay_or_abandon(
                         *owner = None;
                     }
                     drop(owner);
+                    // Release only after every bit of window-touching work
+                    // above has finished, so a cancellation parked in
+                    // `claim_retire` can only ever observe this failure
+                    // cleanup as fully complete, never mid-flight.
+                    state.overlay_retire_gate.release_restore();
                     let _ = window.close();
                     return;
                 }
                 let _ = window.set_focus();
+                state.overlay_retire_gate.release_restore();
             },
         );
     })
@@ -5107,6 +5298,7 @@ fn main() {
             overlay_session: Mutex::new(0),
             active_pick: Mutex::new(None),
             overlay_window_owner: Mutex::new(None),
+            overlay_retire_gate: OverlayRetireGate::new(),
             capture_supervisor: supervisor,
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
@@ -7140,6 +7332,265 @@ mod region_picker_tests {
             *touched.lock().unwrap(),
             vec![("action", "A"), ("show", "A")],
             "compensate must show the exact live A handle back when A is still current"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.10: `OverlayRetireGate` itself — the claim/release
+    // contract compensate's show and cancellation's close now both go
+    // through.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn overlay_retire_gate_restore_claim_is_exclusive_and_releasable() {
+        let gate = OverlayRetireGate::new();
+        assert!(
+            gate.try_claim_restore(),
+            "an idle gate must grant the first restore claim"
+        );
+        assert!(
+            !gate.try_claim_restore(),
+            "a second restore claim must not be granted while one is already held"
+        );
+        gate.release_restore();
+        assert!(
+            gate.try_claim_restore(),
+            "releasing a restore claim must return the gate to idle"
+        );
+        gate.release_restore();
+    }
+
+    #[test]
+    fn overlay_retire_gate_claim_retire_does_not_block_when_idle() {
+        // No restore is in flight, so a retire claim must be granted
+        // immediately — this is the "cancellation wins outright" shape,
+        // not a wait.
+        let gate = OverlayRetireGate::new();
+        gate.claim_retire();
+        gate.release_retire();
+        assert!(
+            gate.try_claim_restore(),
+            "the gate must be idle again after a retire claim is released"
+        );
+        gate.release_restore();
+    }
+
+    #[test]
+    fn overlay_retire_gate_denies_a_late_restore_claim_once_cancellation_has_already_retired_a() {
+        // C639-007C.10: cancellation runs to completion — claim retire,
+        // clear `active_pick`/`pending_overlay`, compare-and-clear the
+        // owner, close — entirely BEFORE compensate ever attempts to
+        // claim the restore slot. The gate itself has no memory of this
+        // by the time compensate asks (it is idle again), so compensate's
+        // OWN post-claim three-way recheck — not the claim alone — is
+        // what must catch it and refuse to show A back.
+        let active_pick = Mutex::new(Some(5u64));
+        let pending_overlay = Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        }));
+        let overlay_window_owner = Mutex::new(Some(5u64));
+        let gate = OverlayRetireGate::new();
+        let touched: Mutex<Vec<(&'static str, &'static str)>> = Mutex::new(Vec::new());
+
+        // Cancel A — the exact order `cancel_region_pick` now uses: claim
+        // retire first, THEN clear the pick, THEN compare-and-clear the
+        // owner, THEN close.
+        gate.claim_retire();
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        {
+            let mut owner = overlay_window_owner.lock().unwrap();
+            if owns_overlay_window(*owner, 5) {
+                *owner = None;
+            }
+        }
+        touched.lock().unwrap().push(("close", "A"));
+        gate.release_retire();
+
+        // B is admitted afterward, installing all three of its own slots.
+        *active_pick.lock().unwrap() = Some(6);
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        *pending_overlay.lock().unwrap() = Some(b_ctx);
+        *overlay_window_owner.lock().unwrap() = Some(6);
+
+        // Compensate's late hide() finally returns. The claim succeeds
+        // (the gate is idle — cancellation already finished and released
+        // it), so the post-claim recheck is the only thing left to catch
+        // the cancellation.
+        assert!(
+            gate.try_claim_restore(),
+            "the gate must be idle for this late claim to succeed"
+        );
+        let still_current = overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            5,
+        );
+        assert!(
+            !still_current,
+            "A must no longer be current once cancellation has already retired it"
+        );
+        gate.release_restore();
+        // Compensate's own fallback closes its captured handle too — a
+        // no-op on an already-closed A, never a fresh shared-label
+        // resolution that could reach for B's window instead.
+        touched.lock().unwrap().push(("close", "A"));
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("close", "A"), ("close", "A")],
+            "A must never be shown once cancellation has already retired it"
+        );
+        assert_eq!(*active_pick.lock().unwrap(), Some(6), "B's active_pick must be untouched");
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6),
+            "B's pending_overlay must be untouched"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            Some(6),
+            "B's overlay_window_owner must be untouched"
+        );
+    }
+
+    #[test]
+    fn overlay_retire_gate_orders_cancellations_close_strictly_after_a_linearized_restore() {
+        // Complementary ordering: compensate claims the restore slot and
+        // linearizes FIRST; cancellation begins only afterward, while the
+        // restore is still in flight. Cancellation must block in
+        // `claim_retire` for the ENTIRE duration of the restore — proven
+        // here by a real inter-thread wait, not a sleep duration picked to
+        // land inside a window — and its close must land strictly after
+        // the show, never racing it. The final state must be closed
+        // either way, never dependent on OS scheduling between concurrent
+        // native show/close calls.
+        let active_pick = Arc::new(Mutex::new(Some(5u64)));
+        let pending_overlay = Arc::new(Mutex::new(Some({
+            let mut ctx = overlay_ctx_with_backdrop(None);
+            ctx.session_id = 5;
+            ctx
+        })));
+        let overlay_window_owner = Arc::new(Mutex::new(Some(5u64)));
+        let gate = Arc::new(OverlayRetireGate::new());
+        let touched = Arc::new(Mutex::new(Vec::<(&'static str, &'static str)>::new()));
+
+        // Test-only freeze: holds compensate between claiming the restore
+        // slot (and revalidating A is current) and actually running the
+        // mocked `show()`, so cancellation has a real window in which to
+        // start and block.
+        let freeze = Arc::new((Mutex::new(false), Condvar::new()));
+        // Signals the main thread the instant cancellation's thread has
+        // made its (blocking) `claim_retire` call, so the main thread
+        // never releases compensate before cancellation has had the
+        // chance to park on the gate.
+        let cancel_blocking = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let gate_for_compensate = gate.clone();
+        let touched_for_compensate = touched.clone();
+        let active_pick_for_compensate = active_pick.clone();
+        let pending_overlay_for_compensate = pending_overlay.clone();
+        let owner_for_compensate = overlay_window_owner.clone();
+        let freeze_for_compensate = freeze.clone();
+
+        let compensate_thread = std::thread::spawn(move || {
+            assert!(
+                gate_for_compensate.try_claim_restore(),
+                "an idle gate must grant compensate's restore claim"
+            );
+            let still_current = overlay_request_session_still_current(
+                &active_pick_for_compensate,
+                &pending_overlay_for_compensate,
+                &owner_for_compensate,
+                5,
+            );
+            assert!(still_current, "A must still be current before cancellation starts");
+            touched_for_compensate.lock().unwrap().push(("claim", "A"));
+            // Frozen here — holding the restore claim — until the test
+            // confirms cancellation is blocked behind it.
+            let (lock, cv) = &*freeze_for_compensate;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = cv.wait(released).unwrap();
+            }
+            touched_for_compensate.lock().unwrap().push(("show", "A"));
+            gate_for_compensate.release_restore();
+        });
+
+        let gate_for_cancel = gate.clone();
+        let touched_for_cancel = touched.clone();
+        let active_pick_for_cancel = active_pick.clone();
+        let pending_overlay_for_cancel = pending_overlay.clone();
+        let owner_for_cancel = overlay_window_owner.clone();
+        let cancel_blocking_for_cancel = cancel_blocking.clone();
+
+        let cancel_thread = std::thread::spawn(move || {
+            {
+                let (lock, cv) = &*cancel_blocking_for_cancel;
+                *lock.lock().unwrap() = true;
+                cv.notify_all();
+            }
+            // Must block here for as long as compensate holds the claim —
+            // the entire point of this test.
+            gate_for_cancel.claim_retire();
+            clear_pick_if_current(&active_pick_for_cancel, &pending_overlay_for_cancel, 5);
+            {
+                let mut owner = owner_for_cancel.lock().unwrap();
+                if owns_overlay_window(*owner, 5) {
+                    *owner = None;
+                }
+            }
+            touched_for_cancel.lock().unwrap().push(("close", "A"));
+            gate_for_cancel.release_retire();
+        });
+
+        // Wait for compensate to have claimed the slot and recorded its
+        // decision before starting cancellation.
+        while touched.lock().unwrap().last().copied() != Some(("claim", "A")) {
+            std::thread::yield_now();
+        }
+
+        // Wait for cancellation's thread to signal it is about to make
+        // its (blocking) claim call, then give the scheduler a moment to
+        // actually park it on the condvar before checking it really did
+        // not proceed.
+        {
+            let (lock, cv) = &*cancel_blocking;
+            let mut signaled = lock.lock().unwrap();
+            while !*signaled {
+                signaled = cv.wait(signaled).unwrap();
+            }
+        }
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("claim", "A")],
+            "cancellation must still be blocked behind the in-flight restore"
+        );
+
+        // Release compensate; its show must run, and only afterward can
+        // cancellation's close proceed.
+        {
+            let (lock, cv) = &*freeze;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        compensate_thread.join().unwrap();
+        cancel_thread.join().unwrap();
+
+        assert_eq!(
+            *touched.lock().unwrap(),
+            vec![("claim", "A"), ("show", "A"), ("close", "A")],
+            "cancellation's close must be ordered strictly after compensate's linearized \
+             restore, never racing it"
+        );
+        assert_eq!(
+            *overlay_window_owner.lock().unwrap(),
+            None,
+            "A must end up closed regardless of which side won the gate"
         );
     }
 
