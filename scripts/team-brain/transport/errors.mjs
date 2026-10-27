@@ -33,6 +33,8 @@ export const CODES = {
   // Registry admin boundary
   SELF_REGISTRATION_FORBIDDEN: "SELF_REGISTRATION_FORBIDDEN",
   NOT_ADMIN_ORIGIN: "NOT_ADMIN_ORIGIN",
+  // Git shadow importer
+  INTAKE_BLOCKED: "INTAKE_BLOCKED",
 };
 
 export function fail(code, message, details) {
