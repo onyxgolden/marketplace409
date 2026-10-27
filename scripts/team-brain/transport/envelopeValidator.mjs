@@ -27,6 +27,14 @@
 //   nonfinite number would let an altered payload verify under the
 //   original signature. Finite numbers and null are the only numeric
 //   domain admitted.
+// - TBP2-002B: payload values must belong to the JSON value domain
+//   exactly — null, booleans, finite numbers, strings, arrays, and
+//   plain records (Object.prototype or null prototype) with enumerable
+//   data properties only. undefined, functions, symbols, bigints,
+//   class/Date/Map/Set/typed-array instances, accessors, symbol keys,
+//   and hidden fields are refused: JSON.stringify drops them while a
+//   handler receiving the raw object could still observe them, which
+//   is the same signature-binding collision as the numeric case.
 // - expected_row_version is null or a non-negative integer.
 // - payload is a plain object, bounded in depth, total bytes, and any
 //   single string length. A payload that violates a limit is refused
@@ -69,7 +77,107 @@ function malformed(reason, details = {}) {
 }
 
 function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  // TBP2-002B: "object" is not a prototype — a class instance, Date,
+  // Map, Set, typed array, or any other exotic object is not a plain
+  // JSON record, even if it happens to carry string-keyed fields. Only
+  // Object.prototype and null-prototype records are admitted.
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+// TBP2-002B: a record's shape is part of its meaning. A symbol-keyed
+// field, an accessor, or a non-enumerable field is dropped by
+// JSON.stringify / canonicalization but remains observable to a handler
+// that receives the raw object — the exact unsigned-field collision
+// this validator must close. Descriptors are inspected BEFORE any
+// value is read, so an accessor getter is never invoked here.
+function checkRecordShape(value, field) {
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    malformed(`${field} must not carry symbol-keyed fields`, { field, reason: "SYMBOL_FIELD" });
+  }
+  for (const key of Object.keys(value)) {
+    const desc = Object.getOwnPropertyDescriptor(value, key);
+    if (!desc || desc.get || desc.set || !desc.enumerable) {
+      malformed(`${field} fields must be enumerable data properties, not accessors or hidden fields`, {
+        field,
+        key,
+        reason: "ACCESSOR_OR_HIDDEN_FIELD",
+      });
+    }
+  }
+}
+
+function checkJsonValue(value, depth, field) {
+  if (depth > MAX_PAYLOAD_DEPTH) {
+    malformed(`payload nesting exceeds ${MAX_PAYLOAD_DEPTH} levels`, { reason: "DEPTH_EXCEEDED" });
+  }
+  if (value === null) return;
+  const t = typeof value;
+  if (t === "string") {
+    if (value.length > MAX_STRING_LENGTH) {
+      malformed(`payload string exceeds ${MAX_STRING_LENGTH} characters`, { reason: "STRING_TOO_LONG" });
+    }
+    return;
+  }
+  if (t === "number") {
+    if (!Number.isFinite(value)) {
+      malformed("payload numbers must be finite", { reason: "NONFINITE_NUMBER" });
+    }
+    return;
+  }
+  if (t === "boolean") return;
+  // TBP2-002B: everything else at a value position is outside the
+  // JSON value domain, even if JSON.stringify would silently drop it
+  // (undefined, functions, symbols) or coerce it (bigint throws in
+  // JSON.stringify, but is not a JSON value either). Dropping is the
+  // collision: a signed {} and an altered {approved: undefined} would
+  // canonicalize to the same bytes while the handler observes a
+  // different object.
+  if (t === "undefined" || t === "function" || t === "symbol" || t === "bigint") {
+    malformed(`payload values must belong to the JSON value domain, not ${t}`, { reason: "NON_JSON_VALUE" });
+  }
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      malformed("payload arrays must have Array.prototype", { reason: "NON_JSON_VALUE" });
+    }
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      malformed("payload arrays must not carry symbol-keyed fields", { reason: "SYMBOL_FIELD" });
+    }
+    // Array elements are exactly indices 0..length-1. Any extra own key
+    // is dropped by JSON.stringify but observable to a handler, so it
+    // is refused here rather than silently ignored.
+    if (Object.keys(value).length !== value.length) {
+      malformed("payload arrays must not carry extra own keys", { reason: "NON_JSON_VALUE" });
+    }
+    for (let i = 0; i < value.length; i += 1) {
+      const desc = Object.getOwnPropertyDescriptor(value, String(i));
+      if (!desc || desc.get || desc.set || !desc.enumerable) {
+        malformed("payload array elements must be enumerable data properties", { reason: "ACCESSOR_OR_HIDDEN_FIELD" });
+      }
+      checkJsonValue(desc.value, depth + 1, field);
+    }
+    return;
+  }
+  if (t === "object") {
+    if (!isPlainObject(value)) {
+      malformed("payload records must be plain JSON records (Object.prototype or null prototype)", {
+        reason: "NON_JSON_VALUE",
+      });
+    }
+    checkRecordShape(value, field);
+    for (const key of Object.keys(value)) {
+      if (key.length > MAX_ID_LENGTH) malformed("payload key exceeds length limit", { reason: "KEY_TOO_LONG" });
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      checkJsonValue(desc.value, depth + 1, field);
+    }
+    return;
+  }
+  malformed(`payload values must belong to the JSON value domain, not ${t}`, { reason: "NON_JSON_VALUE" });
+}
+
+function walkPayload(value, depth) {
+  checkJsonValue(value, depth, "payload");
 }
 
 function checkId(value, field) {
@@ -121,6 +229,10 @@ export function validateResource(resource, { forPin = false } = {}) {
   if (!isPlainObject(resource)) {
     malformed(forPin ? "expected resource pin must be an object" : "resource must be an object");
   }
+  // TBP2-002B: a resource record with a symbol key, accessor, or hidden
+  // field would have that field dropped by canonicalization while a
+  // handler could still observe it. Refuse the shape, not just the value.
+  checkRecordShape(resource, forPin ? "expected resource pin" : "resource");
   const allowed = forPin ? PIN_KEYS : RESOURCE_KEYS;
   for (const key of Object.keys(resource)) {
     if (!allowed.has(key)) {
@@ -148,40 +260,14 @@ export function validateResource(resource, { forPin = false } = {}) {
   return true;
 }
 
-function walkPayload(value, depth) {
-  if (depth > MAX_PAYLOAD_DEPTH) {
-    malformed(`payload nesting exceeds ${MAX_PAYLOAD_DEPTH} levels`, { reason: "DEPTH_EXCEEDED" });
-  }
-  // TBP2-002A: raw JSON overflow (1e400) parses to Infinity, and
-  // JSON.stringify renders Infinity as null — the same bytes the
-  // signed null payload canonicalizes to. Only finite numbers are in
-  // the admitted JSON value domain, checked here before any hashing.
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    malformed("payload numbers must be finite", { reason: "NONFINITE_NUMBER" });
-  }
-  if (typeof value === "string") {
-    if (value.length > MAX_STRING_LENGTH) {
-      malformed(`payload string exceeds ${MAX_STRING_LENGTH} characters`, { reason: "STRING_TOO_LONG" });
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) walkPayload(item, depth + 1);
-    return;
-  }
-  if (isPlainObject(value)) {
-    for (const key of Object.keys(value)) {
-      if (key.length > MAX_ID_LENGTH) malformed("payload key exceeds length limit", { reason: "KEY_TOO_LONG" });
-      walkPayload(value[key], depth + 1);
-    }
-  }
-  // Numbers, booleans, null: bounded by the total-byte check below.
-}
-
 export function validateEnvelope(envelope) {
   if (!isPlainObject(envelope)) {
     malformed("envelope must be an object", { reason: "NOT_AN_OBJECT" });
   }
+  // TBP2-002B: the envelope record itself must be a plain data record
+  // — no symbol keys, accessors, or hidden fields — before any of its
+  // fields are read, so validation never invokes an accessor getter.
+  checkRecordShape(envelope, "envelope");
   for (const key of Object.keys(envelope)) {
     if (!ENVELOPE_KEYS.has(key)) {
       malformed(`unknown envelope field: ${key}`, { field: key, reason: "UNKNOWN_FIELD" });
@@ -267,6 +353,10 @@ export function parseBoundedJson(rawText) {
 // Same limits as the wire shape, translated field by field, so a malformed
 // envelope cannot be signed into existence either.
 export function validateBuildFields(fields) {
+  if (!isPlainObject(fields)) {
+    malformed("envelope fields must be a plain object", { reason: "NOT_AN_OBJECT" });
+  }
+  checkRecordShape(fields, "envelope fields");
   checkId(fields.operationId, "operationId");
   checkId(fields.principalId, "principalId");
   checkId(fields.keyId, "keyId");

@@ -16,6 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { fail, CODES } from "./errors.mjs";
 
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"; // git's well-known empty-tree object
@@ -60,9 +61,55 @@ function gitSubprocessError(e, what) {
 // than GIT_TIMEOUT_MS on its own). A call that starts just before the
 // deadline and runs long is capped here and surfaces as INTAKE_BLOCKED
 // via gitSubprocessError — never as a silent overrun.
+//
+// TBP2-007B: deadlineMs is a MONOTONIC deadline (performance.now() +
+// pollDeadlineMs), not wall-clock time. A backward wall-clock
+// adjustment (Date.now moving backwards, or a mocked clock) must not
+// extend the allowed poll: performance.now() is unaffected by wall
+// clock changes, and wall time is used only for observation timestamps
+// (firstObservedAt), never for deadline arithmetic.
 function timeoutFor(opts) {
   if (opts.deadlineMs === undefined) return GIT_TIMEOUT_MS;
-  return Math.max(1, Math.min(GIT_TIMEOUT_MS, opts.deadlineMs - Date.now()));
+  return Math.max(1, Math.min(GIT_TIMEOUT_MS, Math.ceil(opts.deadlineMs - performance.now())));
+}
+
+// TBP2-007B resumable frontier: a checkpoint string returned when a
+// poll truncates ONLY because the commit cap was hit after fully
+// processing its inspected prefix. Format:
+//   tb-frontier:v1:<pinnedHead>:<scopeHash>:<inspectedSha1,...>
+// The inspected list is the exact set of commits fully processed in
+// order (plus any earlier frontier's list on resume). A frontier is
+// bound to its pinned head and scope: resuming it against a different
+// head or scope is refused with INTAKE_BLOCKED, never silently
+// reinterpreted, because unvisited parallel-parent history would
+// otherwise be unaccounted for. Old callers that keep using newCursor
+// (the preserved original cursor) are safe but do not progress past
+// the cap; new callers must pass resumeFrontier as cursorCommit to
+// resume.
+function scopeHashFor(scopePaths) {
+  return createHash("sha256").update(JSON.stringify(scopePaths ?? []), "utf8").digest("hex");
+}
+
+function makeFrontier(head, scopePaths, inspected) {
+  return `tb-frontier:v1:${head}:${scopeHashFor(scopePaths)}:${inspected.join(",")}`;
+}
+
+function parseFrontier(cursorCommit) {
+  if (typeof cursorCommit !== "string" || !cursorCommit.startsWith("tb-frontier:v1:")) return null;
+  const rest = cursorCommit.slice("tb-frontier:v1:".length);
+  const parts = rest.split(":");
+  if (parts.length !== 3) {
+    fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
+  }
+  const [head, scopeHash, csv] = parts;
+  if (!/^[0-9a-f]{40}$/.test(head) || !/^[0-9a-f]{64}$/.test(scopeHash)) {
+    fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
+  }
+  const inspected = csv ? csv.split(",") : [];
+  if (inspected.some((s) => !/^[0-9a-f]{40}$/.test(s))) {
+    fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
+  }
+  return { head, scopeHash, inspected };
 }
 
 function git(repoPath, args, opts = {}) {
@@ -163,6 +210,21 @@ function diffNameStatus(repoPath, fromRef, toRef, scopePaths, opts = {}) {
   return changes;
 }
 
+// TBP2-006A.1: does a parent commit's history ever contain `path`?
+// A null parent (path absent at that parent) is ambiguous on its own:
+// it may never have had the path (clean introduction visibility —
+// silent), or it may have deleted it (an explicit keep-versus-delete
+// decision — MERGE_SELECTED). The distinguishing evidence is ancestry:
+// rev-list over that parent's history, limited to one commit, lists a
+// commit touching the path only if the path was introduced and then
+// deleted along that parent's line (if it were still present, the
+// parent would not be null). Bounded at the Git command itself.
+function pathEverInParentHistory(repoPath, parentSha, path, opts = {}) {
+  if (!parentSha || parentSha === EMPTY_TREE_SHA) return false;
+  const out = git(repoPath, ["rev-list", "--max-count", "1", parentSha, "--", path], opts).trim();
+  return out.length > 0;
+}
+
 function blobShaAt(repoPath, commitSha, path, opts = {}) {
   const out = git(repoPath, ["ls-tree", commitSha, "--", path], opts).trim();
   if (!out) return null; // path doesn't exist at this commit (e.g. it was deleted)
@@ -215,7 +277,7 @@ function sha256OfBuffer(buf) {
 // from it; it exists so the scanned stream's last content for a path
 // matches the pinned head.
 //
-// Returns { events, newCursor, quarantined, truncated } — never throws for
+// Returns { events, newCursor, quarantined, truncated, resumeFrontier } — never throws for
 // ordinary quarantine-worthy conditions (oversized file, excessive path
 // depth); those files are reported in `quarantined`, not silently included
 // or silently dropped. Throws TeamBrainTrustError(INTAKE_BLOCKED) only for
@@ -243,12 +305,30 @@ export function scanSince(
     pollDeadlineMs = POLL_DEADLINE_MS,
   } = {}
 ) {
-  const deadlineAt = Date.now() + pollDeadlineMs;
+  // TBP2-007B: one monotonic deadline for the whole poll.
+  const deadlineAt = performance.now() + pollDeadlineMs;
   const gitOpts = () => ({ deadlineMs: deadlineAt });
-  const expired = () => Date.now() >= deadlineAt;
+  const expired = () => performance.now() >= deadlineAt;
   const head = headCommit(repoPath, headRef, gitOpts());
 
-  if (cursorCommit) {
+  const frontier = parseFrontier(cursorCommit);
+  if (frontier) {
+    // A frontier is bound to its pinned head and scope. Resuming it
+    // against a moved head or a different scope is refused, not
+    // reinterpreted: the checkpoint's accounting only holds for the
+    // head/scope it was built under.
+    if (frontier.head !== head) {
+      fail(CODES.INTAKE_BLOCKED, "resumable frontier is bound to a different pinned head — refusing to resume it", {
+        frontierHead: frontier.head,
+        head,
+      });
+    }
+    if (frontier.scopeHash !== scopeHashFor(scopePaths)) {
+      fail(CODES.INTAKE_BLOCKED, "resumable frontier is bound to a different scope — refusing to resume it", {
+        scopePaths,
+      });
+    }
+  } else if (cursorCommit) {
     if (!commitExists(repoPath, cursorCommit, gitOpts())) {
       fail(CODES.INTAKE_BLOCKED, "cursor commit does not exist in this repository (history rewrite or wrong repo)", {
         cursorCommit,
@@ -262,28 +342,52 @@ export function scanSince(
     }
   }
 
-  if (cursorCommit === head) {
-    return { events: [], newCursor: head, quarantined: [], truncated: false };
+  if (!frontier && cursorCommit === head) {
+    return { events: [], newCursor: head, quarantined: [], truncated: false, resumeFrontier: null };
   }
 
-  const range = cursorCommit ? `${cursorCommit}..${head}` : head;
-  const commitList = git(repoPath, ["rev-list", "--topo-order", "--reverse", range], gitOpts()).trim();
+  // TBP2-007B: bound history production AT the Git command, not after
+  // materializing it. rev-list is asked for at most
+  // MAX_COMMITS_PER_POLL + 1 commits: if it returns the extra one,
+  // more history exists beyond the cap, and only the first cap
+  // commits are inspected. The full range is never enumerated and
+  // then sliced. On a frontier resume, every already-inspected
+  // commit is excluded at the Git command itself (^<sha> excludes
+  // that commit and its ancestors), so the returned list is exactly
+  // the uninspected remainder, in the same deterministic
+  // topo-reverse order, with no re-emission and no loss.
+  let revListArgs;
+  if (frontier) {
+    revListArgs = [
+      "rev-list",
+      "--topo-order",
+      "--reverse",
+      "--max-count",
+      String(MAX_COMMITS_PER_POLL + 1),
+      head,
+      ...frontier.inspected.map((s) => `^${s}`),
+    ];
+  } else {
+    const range = cursorCommit ? `${cursorCommit}..${head}` : head;
+    revListArgs = ["rev-list", "--topo-order", "--reverse", "--max-count", String(MAX_COMMITS_PER_POLL + 1), range];
+  }
+  const commitList = git(repoPath, revListArgs, gitOpts()).trim();
   let commits = commitList ? commitList.split("\n") : [];
+  const commitCapHit = commits.length > MAX_COMMITS_PER_POLL;
+  if (commitCapHit) {
+    commits = commits.slice(0, MAX_COMMITS_PER_POLL);
+  }
 
   const events = [];
   const quarantined = [];
   let truncated = false;
   let totalBytes = 0;
   let changedFileCount = 0;
-
-  // Early enumeration bound (TBP2-007A): charge-before-inspect. If the
-  // history is longer than one poll may inspect, inspect only the
-  // first MAX_COMMITS_PER_POLL and truncate — the remaining commits
-  // are uninspected, so the cursor must not advance.
-  if (commits.length > MAX_COMMITS_PER_POLL) {
-    commits = commits.slice(0, MAX_COMMITS_PER_POLL);
-    truncated = true;
-  }
+  // Commits fully processed by the loop below, in order. A commit is
+  // only appended here when its iteration completes without breaking
+  // out (deadline, record cap, file cap, or byte cap) — so this list
+  // is exactly the prefix a commit-cap frontier may advance past.
+  const processedCommits = [];
 
   outer: for (const commit of commits) {
     if (expired()) {
@@ -297,24 +401,55 @@ export function scanSince(
     const parents = parentsOf(repoPath, commit, gitOpts());
     const parentRefs = parents.length > 0 ? parents : [EMPTY_TREE_SHA];
 
-    // Union of per-parent diffs for this commit, in first-appearance
-    // order. A merge's diff against each parent is inspected (that is
-    // what finds side-branch introductions), but the union is decided
-    // once per path below — never once per parent.
-    const candidates = new Map(); // path -> Map(parentRef -> status)
+    // Per-parent diffs for this commit. A merge's diff against each
+    // parent is inspected (that is what finds side-branch
+    // introductions), but the union is decided once per path below —
+    // never once per parent.
+    const parentDiffs = [];
     for (const parent of parentRefs) {
       if (expired()) {
         truncated = true;
         break outer;
       }
-      const changes = diffNameStatus(repoPath, parent, commit, scopePaths, gitOpts());
-      for (const { status, path } of changes) {
-        if (!candidates.has(path)) candidates.set(path, new Map());
-        candidates.get(path).set(parent, status);
+      parentDiffs.push(diffNameStatus(repoPath, parent, commit, scopePaths, gitOpts()));
+    }
+
+    // TBP2-007B: charge-before-inspect candidate admission. The path
+    // list for this commit is built only up to the remaining
+    // changed-files budget, and scanning stops at the first path that
+    // would exceed it — that path is never stored, and no later path
+    // is stored either. A path list is an array, never a Map that
+    // accumulates every candidate before the cap is checked. The
+    // per-parent diff arrays above are Git's bounded output (10 MiB
+    // subprocess cap), not candidate storage: candidate storage is
+    // this capped path list, and only documented bounded lookahead
+    // (scanning diff arrays until the budget is reached) happens
+    // before processing. If the budget is exceeded, the paths already
+    // in the list are still processed below, and the poll then
+    // truncates with its cursor preserved — the unprocessed paths
+    // are not lost, they are simply not yet admitted.
+    const remainingFileBudget = maxChangedFilesPerPoll - changedFileCount;
+    const pathOrder = [];
+    let candidateBudgetExceeded = false;
+    candidateScan: for (const changes of parentDiffs) {
+      for (const { path } of changes) {
+        if (pathOrder.includes(path)) continue;
+        if (pathOrder.length >= remainingFileBudget) {
+          truncated = true;
+          candidateBudgetExceeded = true;
+          break candidateScan;
+        }
+        pathOrder.push(path);
       }
     }
 
-    for (const [path, perParent] of candidates) {
+    for (const path of pathOrder) {
+      // Per-parent status for this path, looked up from the diff
+      // arrays by parent index — no candidate Map is built.
+      const statusForParent = (parentIndex) => {
+        const found = parentDiffs[parentIndex].find((c) => c.path === path);
+        return found ? found.status : undefined;
+      };
       if (expired()) {
         truncated = true;
         break outer;
@@ -356,15 +491,37 @@ export function scanSince(
       const commitBlob = blobShaAt(repoPath, commit, path, gitOpts());
       let eventKind;
       if (parentRefs.length <= 1) {
-        const status = perParent.get(parentRefs[0]);
+        const status = statusForParent(0);
         eventKind = status === "A" ? "ADDED" : status === "D" ? "DELETED" : "MODIFIED";
       } else if (commitBlob === null) {
         if (!parentBlobs.some((b) => b !== null)) continue; // absent everywhere: no change to record
         eventKind = "DELETED";
       } else if (parentBlobs.includes(commitBlob)) {
         const distinctParentBlobs = [...new Set(parentBlobs.filter((b) => b !== null))];
-        if (distinctParentBlobs.length < 2) continue; // merge visibility only — already introduced elsewhere
-        eventKind = "MERGE_SELECTED";
+        // TBP2-006A.1: null-versus-present is a divergent parent
+        // state only when the null parent's history actually
+        // contained the path (it deleted it) — parents [blob, null]
+        // resolved to blob is then an explicit keep-versus-delete
+        // decision (the kept file would otherwise be lost behind an
+        // earlier DELETED event), just as parents [blobA, blobB]
+        // resolved to blobA is. A null parent whose history never
+        // contained the path is clean introduction visibility: the
+        // side branch introduced the file, the other parent simply
+        // never had it, and the merge emits nothing for it. Only
+        // parents that all agree (one distinct non-null blob, no
+        // null parent, or a null parent with no path history) are
+        // silent visibility.
+        if (distinctParentBlobs.length >= 2) {
+          eventKind = "MERGE_SELECTED";
+        } else if (
+          parentBlobs.includes(null) &&
+          distinctParentBlobs.length === 1 &&
+          parentRefs.some((parent, i) => parentBlobs[i] === null && pathEverInParentHistory(repoPath, parent, path, gitOpts()))
+        ) {
+          eventKind = "MERGE_SELECTED";
+        } else {
+          continue; // merge visibility only — already introduced elsewhere
+        }
       } else if (parentBlobs.some((b) => b !== null)) {
         eventKind = "MODIFIED";
       } else {
@@ -409,6 +566,24 @@ export function scanSince(
         contentSha256 = sha256OfBuffer(content);
       }
 
+      // TBP2-006A.1 provenance: a MERGE_SELECTED record must carry
+      // explicit selected-parent/blob/original-source fields, not
+      // just the generic introducing-commit fields. selectedParent /
+      // selectedParents are the parent commits whose blob equals the
+      // chosen blob; originalSourceCommit is the parent commit that
+      // supplied the chosen content (the merge-level source binding —
+      // not a claim about which earlier commit first introduced the
+      // content). MERGE_SELECTED remains provenance, never a new
+      // obligation.
+      const mergeProvenance =
+        eventKind === "MERGE_SELECTED"
+          ? {
+              selectedParents: parentRefs.filter((_, i) => parentBlobs[i] === commitBlob),
+              selectedParent: parentRefs.find((_, i) => parentBlobs[i] === commitBlob) ?? null,
+              selectedBlob: commitBlob,
+              originalSourceCommit: parentRefs.find((_, i) => parentBlobs[i] === commitBlob) ?? null,
+            }
+          : {};
       events.push({
         introducingCommit: commit,
         path,
@@ -417,8 +592,17 @@ export function scanSince(
         byteLength,
         sourceTimestamp: commitTimestamp(repoPath, commit, gitOpts()),
         firstObservedAt: new Date().toISOString(),
+        ...mergeProvenance,
       });
     }
+    // If the candidate budget was exceeded for this commit, the paths
+    // already processed above are admitted, and the poll truncates
+    // here — the unprocessed paths are not lost, they are simply not
+    // yet admitted, and the cursor is preserved below.
+    if (candidateBudgetExceeded) {
+      break outer;
+    }
+    processedCommits.push(commit);
   }
 
   // Deletion never closes an obligation — this module only records the
@@ -427,14 +611,34 @@ export function scanSince(
   // ADDED/MODIFIED event because a later DELETED event exists for the same
   // path; both are explicit, both are kept.
 
+  // TBP2-007B: a commit-cap frontier is returned ONLY when the
+  // inspected prefix was fully processed (processedCommits covers
+  // every commit in the capped list). If the loop broke early for
+  // any other reason (deadline, record/file/byte cap), the prefix
+  // was not fully processed, so no frontier is returned and the
+  // caller keeps the preserved cursor — advancing a frontier past
+  // unprocessed commits would lose them.
+  let resumeFrontier = null;
+  if (commitCapHit && processedCommits.length === commits.length) {
+    truncated = true;
+    const allInspected = frontier ? [...frontier.inspected, ...processedCommits] : [...processedCommits];
+    resumeFrontier = makeFrontier(head, scopePaths, allInspected);
+  }
+
   return {
     events,
     // Cursor only advances to HEAD when nothing was truncated — a
-    // truncated batch must be resumed from the SAME cursor on the next
-    // poll (caller re-runs with more budget or narrower scope), never
-    // silently marked caught-up with records missing.
+    // truncated batch must be resumed from the SAME cursor on the
+    // next poll (caller re-runs with more budget or narrower scope),
+    // never silently marked caught-up with records missing. The
+    // exception is a commit-cap truncation with a returned
+    // resumeFrontier: passing that frontier as cursorCommit on the
+    // next poll resumes past the fully processed prefix and
+    // eventually reaches the tail; passing newCursor repeats the
+    // same prefix safely but without progress.
     newCursor: truncated ? cursorCommit ?? null : head,
     quarantined,
     truncated,
+    resumeFrontier,
   };
 }
