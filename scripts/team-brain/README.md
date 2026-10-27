@@ -19,6 +19,9 @@ Binding contract: `onyxgolden/forge-ai-drop` →
 | `ledger/errors.mjs` | Typed `TeamBrainError` + stable guard codes |
 | `ledger/validation.mjs` | Strict UTC-ISO timestamps, source/artifact bindings |
 | `queue/projection.mjs` | **Pure** deterministic queue projection (no I/O, no clock) |
+| `orchestrator/controller.mjs` | **Pure** P3 supervisor: scoped assignment, leased dequeue, closed-schema result validation, bounded retry/escalation (no I/O, no clock, no sends) |
+| `orchestrator/outbox.mjs` | **Pure** P3 coordination outbox: idempotent operation records, lease claims, CAS/divergent-file refusal, lost-reply replay (no send adapter) |
+| `orchestrator/exporters.mjs` | **Pure** P3 status/receipt exporters: counts, oldest, escalations, canonical receipts (payload-free) |
 | `handoffs/stateMachine.mjs` | `OPEN → OUTCOME_WRITTEN → READBACK_VERIFIED → QUEUE_UPDATED → COMPLETE` |
 | `report/buildReport.mjs` | Fixture → ledger → projection → deterministic JSON report |
 | `report/fixtureSchema.mjs` | Synthetic-fixture-only schema validation |
