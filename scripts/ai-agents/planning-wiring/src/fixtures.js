@@ -162,3 +162,55 @@ export function canonicalRequest() {
     snapshot_request_id: "snap-canonical-1",
   };
 }
+
+/**
+ * Synthetic Project Manager fixtures — invented rows, never real
+ * project data (P2b-3). The canonical manager run composes the
+ * canonical Scheduler population (P-1) with the canonical Controls
+ * population (WM-1) under the host-registered project mapping
+ * P-1 ↔ WM-1. Canonical expectations: the scheduler leg carries
+ * the lookahead disagreement (milestone C computed 11-04 vs
+ * declared 10-28) and the overdue incomplete milestone D, so the
+ * composition concludes QUALIFIED (never READY on a canonical run
+ * with unresolved scheduler findings); the controls leg concludes
+ * READY with no findings; completion accounts 0 terminal of 2
+ * admitted packages (both in_progress, cancelled counted
+ * separately at 0); block↔package relationships are
+ * RELATIONSHIP_NOT_ESTABLISHED (no row mapping registered).
+ */
+export const CANONICAL_MANAGER_MAPPING = Object.freeze({
+  scheduling_project_ref: "P-1",
+  work_management_project_ref: "WM-1",
+  mapping_version: "planning-project-mapping@1",
+});
+
+export const CANONICAL_MANAGER_HOST = Object.freeze({
+  mode: "SYNTHETIC_PREVIEW",
+  registered_principal: "principal-1",
+  registered_owner: "owner-1",
+  registered_project_scope: { type: "scheduling-project", id: "P-1" },
+  adapter_kind: "synthetic",
+});
+
+export function canonicalManagerRequest() {
+  return {
+    principal_ref: "principal-1",
+    owner_ref: "owner-1",
+    project_scope_ref: { type: "scheduling-project", id: "P-1" },
+    job_kind: "project-manager-plan-health-review",
+    job_version: 1,
+    as_of: CANONICAL_AS_OF,
+    window: { name: "planning-review-snapshot" },
+    snapshot_request_id: "snap-manager-canonical-1",
+  };
+}
+
+export function canonicalManagerSpec() {
+  return {
+    kind: "synthetic",
+    datasets: { ...CANONICAL_PROJECT, ...CANONICAL_CONTROLS },
+    faults: {},
+    authorized_global_calendar_refs: [],
+    project_mapping: { ...CANONICAL_MANAGER_MAPPING },
+  };
+}

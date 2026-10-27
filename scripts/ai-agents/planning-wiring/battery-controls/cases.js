@@ -680,9 +680,9 @@ const C = [
     expect: { outcome: "REFUSED", code: "UNKNOWN_AGENT" },
   },
   {
-    id: "C11", group: "C", title: "Project Manager kind still refuses JOB_NOT_BUILT_IN_SLICE (its slice has not landed)",
+    id: "C11", group: "C", title: "P2b-3 sequencing-gate move: Project Manager kind now routes to the manager evaluator (JOB_NOT_BUILT_IN_SLICE no longer applies); with controls datasets only and no mapping it refuses PROJECT_MAPPING_REQUIRED",
     build: () => ({ host: hostWith(), request: requestWith({ job_kind: "project-manager-plan-health-review", window: { name: "planning-review-snapshot" } }), spec: canonicalControlsSpec() }),
-    expect: { outcome: "REFUSED", code: "JOB_NOT_BUILT_IN_SLICE" },
+    expect: { outcome: "REFUSED", code: "PROJECT_MAPPING_REQUIRED" },
   },
   {
     id: "C12", group: "C", title: "scheduler job with a WM-project scope refuses SCOPE_TYPE_MISMATCH (the scheduler serves scheduling projects only)",

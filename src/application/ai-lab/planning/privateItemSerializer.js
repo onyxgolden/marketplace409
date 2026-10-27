@@ -2,12 +2,14 @@ import { canonicalDigest, canonicalJson, sha256Hex } from "../rental-ops/canonic
 import { FIELD_MAPPING_VERSION } from "./fieldMappings.js";
 import { EVALUATOR_VERSION } from "./schedulerAssessment.js";
 import { CONTROLS_EVALUATOR_VERSION } from "./controlsEvidenceAssessment.js";
+import { MANAGER_EVALUATOR_VERSION } from "./managerComposition.js";
 import { JobRefusal } from "./jobContracts.js";
 
-/** Per-agent item id prefix, title and evaluator version (P2b-2). */
+/** Per-agent item id prefix, title and evaluator version (P2b-2, P2b-3). */
 export const AGENT_ITEM = Object.freeze({
   scheduler: Object.freeze({ prefix: "sch", title: "Scheduler planning review", evaluator_version: EVALUATOR_VERSION }),
   "project-controls": Object.freeze({ prefix: "ctl", title: "Project controls evidence review", evaluator_version: CONTROLS_EVALUATOR_VERSION }),
+  "project-manager": Object.freeze({ prefix: "pm", title: "Project Manager plan-health review", evaluator_version: MANAGER_EVALUATOR_VERSION }),
 });
 
 export const PRIVATE_ITEM_SCHEMA = "planning-private-item@1";

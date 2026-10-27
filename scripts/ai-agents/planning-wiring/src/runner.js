@@ -83,6 +83,23 @@ export async function runJob({ hostConfig, request, callerAsk = undefined, calle
     if (host.adapter_kind !== "synthetic" || spec?.kind !== "synthetic") {
       throw new JobRefusal("ADAPTER_NOT_INSTALLED", "this release installs only the synthetic adapter");
     }
+    // P2b-3: the Project Manager job's controls leg is scoped by
+    // the host-supplied project mapping, never by the request. The
+    // runner binds it before spawning: the mapping must be present,
+    // closed-shape, and its scheduling side must be exactly the
+    // registered scope. The worker re-validates it in full.
+    if (req.job_kind === "project-manager-plan-health-review") {
+      const mapping = spec?.project_mapping;
+      if (mapping === undefined || mapping === null) {
+        throw new JobRefusal("PROJECT_MAPPING_REQUIRED", "no registered project mapping: the composition cannot bind a scheduling project to a work-management project without one");
+      }
+      if (typeof mapping !== "object" || Array.isArray(mapping)
+        || mapping.scheduling_project_ref !== regScope.id
+        || typeof mapping.work_management_project_ref !== "string" || mapping.work_management_project_ref.length === 0
+        || typeof mapping.mapping_version !== "string" || mapping.mapping_version.length === 0) {
+        throw new JobRefusal("BAD_MAPPING", "project mapping must bind its scheduling side to the registered scope with a non-empty work-management side and mapping version");
+      }
+    }
     const deadline = createInvocationDeadline();
     try {
       const clockIso = clock.nowIso();
