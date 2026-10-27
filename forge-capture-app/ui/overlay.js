@@ -32,6 +32,28 @@ import {
 const LOUPE_PX = 148;
 const INIT_BUDGET_MS = 5000;
 
+// C639-007C.4: this page's session id, synchronously from its own URL
+// (`?session=<id>`, embedded by the backend when it built this window —
+// see main.rs's `open_region_overlay_claimed`). Pure over `win` so it is
+// unit-testable without a real `window.location`; returns null for any
+// shape that is not a usable session id (missing `location`, missing
+// param, non-finite) rather than throwing — a test harness's fake `win`
+// commonly has no `location` at all, and that must degrade to "unknown",
+// not crash page init.
+function initialSessionId(win) {
+  try {
+    if (!win || !win.location || typeof win.location.search !== "string") {
+      return null;
+    }
+    const raw = new URLSearchParams(win.location.search).get("session");
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createOverlayController({
   els,
   invoke,
@@ -54,14 +76,19 @@ export function createOverlayController({
   // Generation: supersedes in-flight inits (e.g. a retry racing a slow
   // first load) so a late arrival can never clobber the current session.
   let gen = 0;
-  // C639-007C.3: this pick's own session id, learned from overlay_context
-  // at init and echoed back on the eventual `capture` call so the backend
-  // can bind that call to the exact generation that opened this page,
-  // never to whichever pick happens to be its own `active_pick` by the
-  // time the request is processed. Capture stays gated on `backdropReady`,
-  // which only ever becomes true after `overlay_context` has already
-  // succeeded, so this is always set by the time `onMouseUp` can commit.
-  let sessionId = null;
+  // C639-007C.3/007C.4: this pick's own session id. Read SYNCHRONOUSLY from
+  // the page's own URL (the backend embeds it when building this exact
+  // window — see main.rs's `open_region_overlay_claimed`) rather than
+  // waiting on `overlay_context`'s async round trip: Esc/right-click/the
+  // sliver-drag cancel are wired (`wireStaticControls`) and can fire BEFORE
+  // that round trip ever resolves, and every one of them now carries this
+  // id on `retry_region_backdrop`/`cancel_region_pick` so the backend can
+  // bind those calls to the exact generation that opened THIS page, never
+  // to whichever pick happens to be its own `active_pick` by the time the
+  // request is processed. `overlay_context`'s own `session_id` (below)
+  // re-confirms the same value once it arrives; it is never the only
+  // source, or the pre-resolution window this fixes would reopen.
+  let sessionId = initialSessionId(win);
 
   function showAimTools() {
     // Crosshairs stay up while dragging (the OS cursor is hidden); the
@@ -314,7 +341,10 @@ export function createOverlayController({
     try {
       const deadline = now() + budgetMs;
       await withDeadline(
-        invoke("retry_region_backdrop"),
+        // C639-007C.4: bind this retry to THIS page's own session, never
+        // to whichever pick the backend's own pending state happens to
+        // name by the time it processes this.
+        invoke("retry_region_backdrop", { overlaySessionId: sessionId }),
         deadline,
         "retry_region_backdrop"
       );
@@ -337,8 +367,9 @@ export function createOverlayController({
     const r = rectOf(start, { x: e.clientX, y: e.clientY });
     start = null;
     if (r.w < 4 || r.h < 4) {
-      // Accidental click: cancel rather than capture a sliver.
-      await invoke("cancel_region_pick");
+      // Accidental click: cancel rather than capture a sliver. C639-007C.4:
+      // bind to THIS page's own session, same as every other cancel below.
+      await invoke("cancel_region_pick", { overlaySessionId: sessionId });
       return;
     }
     if (!backdropReady) {
@@ -376,7 +407,10 @@ export function createOverlayController({
       busy = false;
       els.hint.style.display = "block";
       els.hint.textContent = `Capture failed: ${err.message || err}`;
-      setTimeoutFn(() => invoke("cancel_region_pick"), 2500);
+      setTimeoutFn(
+        () => invoke("cancel_region_pick", { overlaySessionId: sessionId }),
+        2500
+      );
       showAimTools();
     }
   }
@@ -415,13 +449,14 @@ export function createOverlayController({
     doc.addEventListener("mouseup", onMouseUp);
 
     doc.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !busy) invoke("cancel_region_pick");
+      if (e.key === "Escape" && !busy)
+        invoke("cancel_region_pick", { overlaySessionId: sessionId });
     });
 
     // Right-click also cancels (a deliberate, discoverable escape hatch).
     doc.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      if (!busy) invoke("cancel_region_pick");
+      if (!busy) invoke("cancel_region_pick", { overlaySessionId: sessionId });
     });
   }
 

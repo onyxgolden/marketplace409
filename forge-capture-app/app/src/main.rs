@@ -2496,7 +2496,16 @@ fn open_region_overlay_claimed(
         let window = tauri::WebviewWindowBuilder::new(
             &app_for_build,
             "overlay",
-            tauri::WebviewUrl::App("overlay.html".into()),
+            // C639-007C.4: the page's own session id travels in the URL
+            // itself, readable synchronously (`location.search`) the
+            // instant the page's script runs — unlike `overlay_context`'s
+            // own async round trip, this is available before ANY of the
+            // page's IPC calls (including the Esc/right-click cancel
+            // hatches, wired before `overlay_context` ever resolves) can
+            // fire. `Url::join` (what `WebviewUrl::App` resolves through)
+            // parses `?query` per RFC 3986, so the query string survives
+            // intact rather than being percent-escaped into the path.
+            tauri::WebviewUrl::App(format!("overlay.html?session={session_id}").into()),
         )
         .title("Select region")
         .position(origin.x, origin.y)
@@ -3068,22 +3077,30 @@ fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
     }
 }
 
+/// C639-007C.4: the overlay page's own cancel (Esc, right-click, a
+/// sliver-drag's implicit cancel) must bind to THAT page's exact session —
+/// `overlaySessionId`, carried in the URL the page was built with (see
+/// `open_region_overlay_claimed`) — never treat "whatever is currently
+/// active" as this request's own identity. The prior unconditional version
+/// let a stale, delayed cancel from a superseded page (A) tear down a
+/// newer page's (B) claim and window; a stale cancel now no-ops instead —
+/// touches no state, closes no window — exactly like a stale Retry
+/// (C639-007C.4) and a stale `capture` (C639-007C.3). Reuses the same
+/// bound primitives (`clear_pick_if_current`, `close_owned_overlay_window`)
+/// every other retire site here already funnels through, rather than the
+/// unconditional "whatever is labeled overlay" lookup those exist
+/// specifically to replace.
 #[tauri::command]
-fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
-    // C639-007: fence the active-pick token FIRST (same lock order as
-    // `open_region_overlay`'s install: active_pick, then pending_overlay)
-    // so an initial acquisition that is still in flight sees the
-    // supersession the instant it re-checks, and can never win a race
-    // against this clear.
-    *state.active_pick.lock().unwrap() = None;
-    *state.pending_overlay.lock().unwrap() = None;
-    // Unconditional by design, same as the clears above: the user's own
-    // cancel always wins over whatever is currently active, regardless of
-    // which session (if any) the owner token names.
-    *state.overlay_window_owner.lock().unwrap() = None;
-    if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.close();
-    }
+#[allow(non_snake_case)]
+fn cancel_region_pick(
+    overlaySessionId: u64,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    clear_pick_if_current(&state.active_pick, &state.pending_overlay, overlaySessionId);
+    // Best-effort close, same as the prior unconditional version: a close
+    // failure here must not fail the cancel IPC itself.
+    let _ = close_owned_overlay_window(&app, overlaySessionId);
     Ok(())
 }
 
@@ -3140,26 +3157,73 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
 /// be reshown at all, the pick is cancelled outright — an invisible picker
 /// with a live session would be unrecoverable.
 #[tauri::command]
-async fn retry_region_backdrop(app: tauri::AppHandle) -> Result<(), String> {
+#[allow(non_snake_case)]
+async fn retry_region_backdrop(
+    overlaySessionId: u64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     // C639-001: the retry's blocking supervisor round trip (plus its
     // settle sleep) runs off the main thread.
-    tauri::async_runtime::spawn_blocking(move || retry_region_backdrop_blocking(&app))
-        .await
-        .map_err(|e| format!("retry background task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        retry_region_backdrop_blocking(&app, overlaySessionId)
+    })
+    .await
+    .map_err(|e| format!("retry background task failed: {e}"))?
 }
 
-fn retry_region_backdrop_blocking(app: &tauri::AppHandle) -> Result<(), String> {
+/// C639-007C.4: `retry_session` is the session id the PAGE that issued this
+/// command was built with (its own URL — see `open_region_overlay_claimed`),
+/// never inferred from whichever `pending_overlay` happens to be current
+/// when this body actually runs. The prior version read "whichever pending
+/// context is current" as if it were this request's own identity — the
+/// same borrowed-global-claim mistake C639-007C.3 fixed for `capture` —
+/// which let a stale, delayed retry from a superseded page (A) hide, wipe,
+/// or (on a restore failure) tear down a newer page's (B) picker. Every
+/// path here verifies the full three-way binding (`active_pick`,
+/// `pending_overlay`'s own recorded session, `overlay_window_owner` —
+/// `overlay_request_session_still_current`, the same check
+/// `run_capture_inner` uses for `capture`) BEFORE the first hide, capture,
+/// show, or focus — a stale request fails having touched nothing of B's.
+fn retry_region_backdrop_blocking(
+    app: &tauri::AppHandle,
+    retry_session: u64,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let (monitor_id, retry_session) = {
+    let monitor_id = {
+        if !overlay_request_session_still_current(
+            &state.active_pick,
+            &state.pending_overlay,
+            &state.overlay_window_owner,
+            retry_session,
+        ) {
+            return Err(
+                "region pick was cancelled or superseded before retry could run".to_string(),
+            );
+        }
         let guard = state.pending_overlay.lock().unwrap();
-        let ctx = guard
+        guard
             .as_ref()
-            .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?;
-        (ctx.monitor_id.clone(), ctx.session_id)
+            .filter(|ctx| ctx.session_id == retry_session)
+            .map(|ctx| ctx.monitor_id.clone())
+            .ok_or_else(|| {
+                "region pick was cancelled or superseded before retry could run".to_string()
+            })?
     };
     let monitors = current_monitors()?;
     if !monitors.iter().any(|m| m.id == monitor_id) {
         return Err(format!("unknown monitor id: {monitor_id}"));
+    }
+    // Monitor enumeration above is itself an unbounded OS call; re-verify
+    // the same binding again, atomically, right before the first window
+    // mutation — the same discipline `run_capture_inner`/`build_mode` use
+    // around their own unbounded calls.
+    if !overlay_request_session_still_current(
+        &state.active_pick,
+        &state.pending_overlay,
+        &state.overlay_window_owner,
+        retry_session,
+    ) {
+        return Err("region pick was cancelled or superseded before retry could run".to_string());
     }
     let window = app
         .get_webview_window("overlay")
@@ -3172,19 +3236,30 @@ fn retry_region_backdrop_blocking(app: &tauri::AppHandle) -> Result<(), String> 
     std::thread::sleep(Duration::from_millis(250));
     // C639 Option C: the re-acquisition runs in the supervised worker.
     let fresh = capture_region_backdrop(&state, retry_session, &monitor_id);
-    // Commit the retry only if this is still the same session. The lock is
-    // held across the session check AND the window restore: `cancel_region_pick`
-    // must take this same lock to clear the session, so a cancel during the
-    // capture cannot slip between the check and the show — a cancelled retry
-    // never resurrects the picker (no zombie overlay, no show-vs-close flash).
-    // If instead the capture itself failed, the session is still ours: the
-    // window is reshown and the previous frame stays in place, so the user
-    // keeps picking instead of staring at nothing.
+    // Commit only if `retry_session` is STILL the live claim across
+    // active_pick, pending_overlay's own recorded session, AND the overlay
+    // window's owner together (C639-007C.4) — not pending_overlay's own
+    // recorded session alone as before, which let a stale request's
+    // cleanup act on a binding it no longer actually held. Lock order
+    // matches `overlay_request_session_still_current` (active_pick, then
+    // pending_overlay); the pending_overlay lock is then held continuously
+    // through the window restore below — `cancel_region_pick` takes that
+    // same lock to clear the session, so a cancel landing between the
+    // check and the restore can never slip through and resurrect a dead
+    // picker.
+    let active = state.active_pick.lock().unwrap();
+    if *active != Some(retry_session) {
+        return Err("region pick was cancelled during retry".to_string());
+    }
     let mut guard = state.pending_overlay.lock().unwrap();
+    drop(active);
     let ctx = match guard.as_mut() {
         Some(ctx) if ctx.session_id == retry_session => ctx,
         _ => return Err("region pick was cancelled during retry".to_string()),
     };
+    if *state.overlay_window_owner.lock().unwrap() != Some(retry_session) {
+        return Err("region pick was cancelled during retry".to_string());
+    }
     // The picker was hidden for the capture. If it cannot be reshown, the
     // pick is dead: tear the session down exactly like cancel_region_pick
     // instead of stranding the user on an invisible picker with a live
@@ -3197,6 +3272,9 @@ fn retry_region_backdrop_blocking(app: &tauri::AppHandle) -> Result<(), String> 
         // current` every other retire site uses), not just the pending
         // context, or the strict reservation strands a session that can
         // never be reused once the picker itself is already unrecoverable.
+        // `retry_session` is this call's own verified id (C639-007C.4), so
+        // this can only ever be retiring this exact session's claim, never
+        // a newer session's — `clear_pick_if_current` no-ops otherwise.
         drop(guard);
         clear_pick_if_current(&state.active_pick, &state.pending_overlay, retry_session);
         *state.overlay_window_owner.lock().unwrap() = None;
@@ -5952,6 +6030,97 @@ mod region_picker_tests {
             &overlay_window_owner,
             5
         ));
+    }
+
+    // -----------------------------------------------------------------
+    // C639-007C.4: `retry_region_backdrop_blocking` and `cancel_region_
+    // pick` must bind to the session the ORIGINATING PAGE carries (its own
+    // URL — see `open_region_overlay_claimed`), never to whichever claim
+    // happens to be `active_pick`/`pending_overlay`/`overlay_window_owner`
+    // right now. Both commands require a live `tauri::AppHandle` and so are
+    // themselves untestable here (same as `run_capture_inner`, `build_mode`,
+    // `open_region_overlay` above) — these tests exercise the exact bound
+    // primitives their bodies are built from, in the same sequence those
+    // bodies use them: `overlay_request_session_still_current` for the
+    // pre-mutation guard both commands check before touching anything,
+    // `clear_pick_if_current` for the state retire cancel (and the retry
+    // restore-failure branch) perform, and `owns_overlay_window` for the
+    // window-owner-gated close `close_owned_overlay_window` (cancel's close,
+    // the retry restore-failure branch's close) is built from.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn retry_and_cancel_bound_primitives_reject_a_stale_session_displaced_by_a_newer_one() {
+        // Freeze: overlay A (session 5) queued Retry and, separately,
+        // Cancel; neither command body has acquired state yet. A is
+        // retired; B (session 6) is admitted and installs its own
+        // active_pick/pending_overlay/overlay_window_owner. A's delayed
+        // command bodies now begin.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut b_ctx = overlay_ctx_with_backdrop(None);
+        b_ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(b_ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+
+        // Retry's (and cancel's) pre-mutation guard: A's stale id (5) must
+        // fail the same three-way check `run_capture_inner` uses for
+        // `capture` — before any hide/capture/show/focus/close of B's
+        // window.
+        assert!(
+            !overlay_request_session_still_current(
+                &active_pick,
+                &pending_overlay,
+                &overlay_window_owner,
+                5
+            ),
+            "A's stale retry/cancel must not read B's live claim as its own"
+        );
+
+        // Cancel's (and the retry restore-failure branch's) state retire:
+        // A's stale id must not clear B's claim.
+        clear_pick_if_current(&active_pick, &pending_overlay, 5);
+        assert_eq!(*active_pick.lock().unwrap(), Some(6));
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            Some(6)
+        );
+
+        // Cancel's (and the retry restore-failure branch's) window-owner-
+        // gated close: A's stale id is never recognized as the window's
+        // owner, so no close (and, in the live commands, no hide/show/
+        // focus) can ever be dispatched against B's window on A's behalf.
+        assert!(!owns_overlay_window(
+            *overlay_window_owner.lock().unwrap(),
+            5
+        ));
+        assert_eq!(*overlay_window_owner.lock().unwrap(), Some(6));
+    }
+
+    #[test]
+    fn retry_and_cancel_bound_primitives_accept_the_session_that_still_owns_the_claim() {
+        // The matching, non-stale case: the fix binds retry/cancel to the
+        // caller's own session — it must not disable the ordinary path for
+        // a session that is still genuinely current.
+        let active_pick = Mutex::new(Some(6u64));
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.session_id = 6;
+        let pending_overlay = Mutex::new(Some(ctx));
+        let overlay_window_owner = Mutex::new(Some(6u64));
+
+        assert!(overlay_request_session_still_current(
+            &active_pick,
+            &pending_overlay,
+            &overlay_window_owner,
+            6
+        ));
+        assert!(owns_overlay_window(*overlay_window_owner.lock().unwrap(), 6));
+
+        clear_pick_if_current(&active_pick, &pending_overlay, 6);
+        assert_eq!(*active_pick.lock().unwrap(), None);
+        assert_eq!(
+            pending_overlay.lock().unwrap().as_ref().map(|c| c.session_id),
+            None
+        );
     }
 
     #[test]

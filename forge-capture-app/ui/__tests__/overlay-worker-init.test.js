@@ -124,6 +124,11 @@ function makeHarness({
   now,
   setTimeoutFn,
   clearTimeoutFn,
+  // C639-007C.4: lets a test give this page a URL-borne session id (the
+  // backend embeds `?session=<id>` in the real window) without disturbing
+  // every other test's harness, which has no `location` at all and must
+  // keep degrading to "unknown until overlay_context resolves".
+  locationSearch,
 } = {}) {
   const order = [];
   const calls = [];
@@ -142,7 +147,14 @@ function makeHarness({
     lctx: makeLctx(),
   };
   const doc = makeDoc();
-  const win = { devicePixelRatio: 2, innerWidth: 1920, innerHeight: 1080 };
+  const win = {
+    devicePixelRatio: 2,
+    innerWidth: 1920,
+    innerHeight: 1080,
+    ...(typeof locationSearch === "string"
+      ? { location: { search: locationSearch } }
+      : {}),
+  };
   const baseInvoke =
     invokeImpl ||
     ((cmd) => {
@@ -569,6 +581,100 @@ describe("retry (C639)", () => {
     h.els.backdrop.naturalWidth = 1920;
     if (h.els.backdrop._onload) h.els.backdrop._onload();
     await retryP;
+  });
+});
+
+describe("retry/cancel bind to this page's own session, not whichever pick is current (C639-007C.4)", () => {
+  it("retry_region_backdrop carries the URL-borne session id when invoked before overlay_context has ever resolved", async () => {
+    const h = makeHarness({
+      budgetMs: 2000,
+      locationSearch: "?session=99",
+      invokeImpl: (cmd) =>
+        cmd === "retry_region_backdrop"
+          ? Promise.resolve({})
+          : new Promise(() => {}), // overlay_context (and everything else) stalls
+    });
+    h.controller.wireStaticControls();
+    const retryP = h.controller.onRetry();
+    await Promise.resolve();
+    await Promise.resolve();
+    const retries = h.calls.filter((c) => c.cmd === "retry_region_backdrop");
+    expect(retries).toHaveLength(1);
+    expect(retries[0].args.overlaySessionId).toBe(99);
+    // onRetry's own success path re-runs init(), which stalls forever on
+    // overlay_context in this harness — deliberately not awaited here, the
+    // dispatch above is what this test exercises.
+    void retryP;
+  });
+
+  it("cancel_region_pick carries the URL-borne session id for Esc fired before overlay_context resolves", async () => {
+    const h = makeHarness({
+      budgetMs: 400,
+      locationSearch: "?session=77",
+      invokeImpl: () => new Promise(() => {}), // overlay_context never settles
+    });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    await Promise.resolve();
+    h.doc.fire("keydown", { key: "Escape" });
+    await Promise.resolve();
+    const cancels = h.calls.filter((c) => c.cmd === "cancel_region_pick");
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0].args.overlaySessionId).toBe(77);
+    await p;
+  });
+
+  it("cancel_region_pick carries the URL-borne session id for right-click fired before overlay_context resolves", async () => {
+    const h = makeHarness({
+      budgetMs: 400,
+      locationSearch: "?session=78",
+      invokeImpl: () => new Promise(() => {}),
+    });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    await Promise.resolve();
+    h.doc.fire("contextmenu", { preventDefault: () => {} });
+    await Promise.resolve();
+    const cancels = h.calls.filter((c) => c.cmd === "cancel_region_pick");
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0].args.overlaySessionId).toBe(78);
+    await p;
+  });
+
+  it("a sliver-drag cancel carries this page's own session id, confirmed by overlay_context once it resolves", async () => {
+    // The URL supplies 55 synchronously, but overlay_context's own reply
+    // (session_id: 42, from this harness's default invokeImpl) arrives
+    // before the drag and is the confirmed value by then — same
+    // confirm/override behavior exercised below for retry.
+    const h = makeHarness({ budgetMs: 2000, locationSearch: "?session=55" });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p;
+    h.calls.length = 0;
+    await drag(h.controller, h.doc, 10, 10, 11, 11);
+    const cancels = h.calls.filter((c) => c.cmd === "cancel_region_pick");
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0].args.overlaySessionId).toBe(42);
+  });
+
+  it("overlay_context's own session_id still confirms/overrides the id once it resolves", async () => {
+    // No URL at all in this harness (matches every other test above it) —
+    // the page must still learn its session from overlay_context's own
+    // reply, same as before this round.
+    const h = makeHarness({ budgetMs: 2000 });
+    h.controller.wireStaticControls();
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p;
+    h.calls.length = 0;
+    await h.controller.onRetry();
+    const retries = h.calls.filter((c) => c.cmd === "retry_region_backdrop");
+    expect(retries[0].args.overlaySessionId).toBe(42);
   });
 });
 
