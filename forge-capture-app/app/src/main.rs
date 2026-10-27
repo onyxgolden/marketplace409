@@ -43,6 +43,7 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 mod session_store;
+mod sop_workspace;
 /// Bounded capture worker (ChatGPT design verdict 2026-10-23, Option C):
 /// parent-side supervisor, wire protocol, phase ring log. See the module
 /// docs for the contract.

@@ -88,5 +88,7 @@ pub mod process_capture;
 pub mod process_session;
 pub mod result;
 pub mod scroll;
+pub mod sop_ipc;
+pub mod sop_session;
 pub mod stitch;
 pub mod timestamp;
