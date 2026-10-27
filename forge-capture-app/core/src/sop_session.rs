@@ -304,10 +304,26 @@ pub enum SessionError {
     EmptySourceTokenIds { frame_id: String, candidate_id: String },
     UnresolvedCandidateOnVerifiedFrame { frame_id: String, candidate_id: String },
     DanglingDispositionEvent { frame_id: String, candidate_id: String, event_id: String },
+    /// C2P1-RR-002: a non-pending disposition on a `Verified` frame with
+    /// no `disposition_event_id` at all — i.e. the disposition could have
+    /// been pre-populated directly in the document rather than set by an
+    /// actual user-authenticated `RedactionChange` event. A candidate
+    /// must never be treated as resolved on hearsay.
+    MissingDispositionEvidence { frame_id: String, candidate_id: String },
+    /// C2P1-RR-002: at least one candidate on this `Verified` frame has
+    /// `disposition == Redact`, but the frame has no (confined,
+    /// well-formed) redacted derivative path+digest recorded — there is
+    /// no proof the redaction was ever actually rendered into pixels.
+    MissingRedactedDerivativeOnVerifiedFrame { frame_id: String },
     EmptyCaptionSourceFrameIds { step_id: String },
     UnknownCaptionSourceFrame { step_id: String, frame_id: String },
     CaptionSuggestionDigestMismatch { step_id: String },
     SessionVerifiedWithUnverifiedFrame { frame_id: String },
+    /// C2P1-RR-002: `review_state == Verified` with no `review_receipt` —
+    /// previously only checked when `export_eligible` was also true,
+    /// which let a session claim `VERIFIED` with zero receipt evidence as
+    /// long as it didn't also claim exportability.
+    VerifiedWithoutReviewReceipt,
     ExportEligibleWithoutVerifiedReview,
     ExportEligibleWithoutReviewReceipt,
     VerifiedWithInvalidatedCaption { step_id: String },
@@ -346,6 +362,32 @@ pub enum EditChainError {
     UnknownRedactionChangeFrame { event_id: String, frame_id: String },
     UnknownRedactionChangeCandidate { event_id: String, candidate_id: String },
     UnknownRevertTarget { event_id: String, step_id: String },
+    /// C2P1-RR-003: a non-empty chain whose first event's
+    /// `session_revision_before` isn't `0` — nothing anchors the chain to
+    /// a real genesis state, so e.g. a one-event log from revision 99 to
+    /// 100 used to pass with no history behind it at all.
+    ChainDoesNotStartAtGenesisRevision { found: u64 },
+    /// C2P1-RR-003: an empty edit-event log whose session `revision`
+    /// isn't `0` — an empty log can only mean "nothing has ever been
+    /// edited," which is revision 0 by definition; any other claimed
+    /// revision with zero supporting events is unaccounted for.
+    NonZeroRevisionWithEmptyChain { session_revision: u64 },
+    /// C2P1-RR-003: an event is missing `before_digest` or `after_digest`
+    /// — both are now required on every event (previously optional,
+    /// which let digest continuity be silently skipped whenever either
+    /// side was absent).
+    MissingDigestLink { event_id: String },
+    /// C2P1-RR-003: the first event's `before_digest` doesn't match the
+    /// genesis digest (the hash of the session's captions with zero
+    /// edits applied) — the chain doesn't actually start from the real
+    /// pre-edit state.
+    ChainDoesNotStartAtGenesisDigest { event_id: String },
+    /// C2P1-RR-003: an event's `after_digest` doesn't match the real
+    /// digest of the state you get by replaying the chain up to and
+    /// including that event — the strongest form of "digest-bound":
+    /// not just neighbor-to-neighbor agreement (which a forged chain
+    /// could fake), but agreement with the actual content.
+    AfterDigestDoesNotMatchReplayedState { event_id: String },
 }
 
 /// Parses and validates a session document from JSON bytes. Schema
@@ -458,6 +500,7 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
 
     for frame in &session.source_frames {
         if frame.verification == FrameVerification::Verified {
+            let mut any_redact = false;
             for candidate in &frame.redaction_candidates {
                 if candidate.disposition == Disposition::Pending {
                     return Err(SessionError::UnresolvedCandidateOnVerifiedFrame {
@@ -465,6 +508,32 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
                         candidate_id: candidate.candidate_id.clone(),
                     });
                 }
+                // C2P1-RR-002: a resolved disposition with no
+                // `disposition_event_id` at all could have been
+                // pre-populated directly in the document rather than set
+                // by an actual user-authenticated RedactionChange event —
+                // `validate_edit_chain` already proves a PRESENT
+                // disposition_event_id is correctly bound to a matching
+                // event; this proves one is present in the first place.
+                if candidate.disposition_event_id.is_none() {
+                    return Err(SessionError::MissingDispositionEvidence {
+                        frame_id: frame.frame_id.clone(),
+                        candidate_id: candidate.candidate_id.clone(),
+                    });
+                }
+                if candidate.disposition == Disposition::Redact {
+                    any_redact = true;
+                }
+            }
+            // C2P1-RR-002: at least one candidate was actually redacted —
+            // require proof it was rendered: a confined derivative path
+            // and its digest (both already shape-validated by
+            // `validate_frame` if present; here we require them to be
+            // present at all on a Verified frame).
+            if any_redact
+                && (frame.redacted_derivative_relative_path.is_none() || frame.redacted_derivative_sha256.is_none())
+            {
+                return Err(SessionError::MissingRedactedDerivativeOnVerifiedFrame { frame_id: frame.frame_id.clone() });
             }
         }
     }
@@ -479,15 +548,17 @@ pub fn validate_session(session: &SopSessionV1) -> Result<(), SessionError> {
         if let Some(step_id) = session.captions.iter().map(|c| c.step_id.clone()).find(|id| invalidated.contains(id)) {
             return Err(SessionError::VerifiedWithInvalidatedCaption { step_id });
         }
+        // C2P1-RR-002: a receipt is required for VERIFIED itself, not
+        // only when also claiming export_eligible — previously a session
+        // could claim review_state == Verified with zero receipt
+        // evidence as long as it didn't also claim exportability.
+        if session.review_receipt.as_deref().unwrap_or("").is_empty() {
+            return Err(SessionError::VerifiedWithoutReviewReceipt);
+        }
     }
 
-    if session.export_eligible {
-        if session.review_state != ReviewState::Verified {
-            return Err(SessionError::ExportEligibleWithoutVerifiedReview);
-        }
-        if session.review_receipt.as_deref().unwrap_or("").is_empty() {
-            return Err(SessionError::ExportEligibleWithoutReviewReceipt);
-        }
+    if session.export_eligible && session.review_state != ReviewState::Verified {
+        return Err(SessionError::ExportEligibleWithoutVerifiedReview);
     }
 
     Ok(())
@@ -610,6 +681,16 @@ fn box_contains(expanded: (i64, i64, u64, u64), original: (i64, i64, u64, u64)) 
 /// separate, deliberately permissive read-time replay for logs that
 /// already passed this gate (see its doc comment for why the two must
 /// not be merged into one function).
+/// Digest of a projected step sequence — the "content" half of the
+/// edit-chain's digest binding. A plain JSON array of `[stepId, text]`
+/// pairs in display order; the array's own order already carries the
+/// sequence, so nothing beyond `serde_json`'s default encoding is needed
+/// for this to be a stable, deterministic representation.
+fn canonical_state_digest(steps: &[(String, String)]) -> String {
+    let json = serde_json::to_string(steps).unwrap_or_default();
+    sha256_hex(json.as_bytes())
+}
+
 pub fn validate_edit_chain(session: &SopSessionV1) -> Result<(), EditChainError> {
     let events = &session.edit_events;
 
@@ -627,40 +708,91 @@ pub fn validate_edit_chain(session: &SopSessionV1) -> Result<(), EditChainError>
     let mut sorted: Vec<&EditEvent> = events.iter().collect();
     sorted.sort_by_key(|e| e.sequence);
 
-    for (i, event) in sorted.iter().enumerate() {
-        if event.sequence != i as u64 {
-            return Err(EditChainError::NonContiguousSequence { expected: i as u64, found: event.sequence });
+    // C2P1-RR-003: an empty log can only ever mean genesis - revision 0.
+    // Previously an empty log with a nonzero `session.revision` passed
+    // silently. This does NOT early-return — a session can still carry a
+    // dangling `disposition_event_id` with zero actual events, which the
+    // cross-reference check after this block must still catch; only the
+    // chain-walk itself (meaningless with no events) is skipped.
+    if sorted.is_empty() && session.revision != 0 {
+        return Err(EditChainError::NonZeroRevisionWithEmptyChain { session_revision: session.revision });
+    }
+
+    if !sorted.is_empty() {
+        // C2P1-RR-003: the chain must start from the real genesis state -
+        // by revision (must be exactly 0; previously unchecked, so e.g. a
+        // one-event log from revision 99 to 100 passed) and by digest
+        // (the actual hash of the captions' own model_suggestion text
+        // with zero edits applied yet).
+        if sorted[0].session_revision_before != 0 {
+            return Err(EditChainError::ChainDoesNotStartAtGenesisRevision { found: sorted[0].session_revision_before });
         }
-        if event.session_revision_after != event.session_revision_before + 1 {
-            return Err(EditChainError::RevisionNotIncrementing {
-                event_id: event.event_id.clone(),
-                before: event.session_revision_before,
-                after: event.session_revision_after,
-            });
-        }
-        if i > 0 {
-            let prev = sorted[i - 1];
-            if event.session_revision_before != prev.session_revision_after {
-                return Err(EditChainError::RevisionChainBroken {
+        let genesis_digest = canonical_state_digest(&project_steps(&session.captions, &[]));
+
+        let mut applied: Vec<EditEvent> = Vec::with_capacity(sorted.len());
+        for (i, event) in sorted.iter().enumerate() {
+            if event.sequence != i as u64 {
+                return Err(EditChainError::NonContiguousSequence { expected: i as u64, found: event.sequence });
+            }
+            if event.session_revision_after != event.session_revision_before + 1 {
+                return Err(EditChainError::RevisionNotIncrementing {
                     event_id: event.event_id.clone(),
-                    expected_before: prev.session_revision_after,
-                    found_before: event.session_revision_before,
+                    before: event.session_revision_before,
+                    after: event.session_revision_after,
                 });
             }
-            if let (Some(prev_after), Some(this_before)) = (&prev.after_digest, &event.before_digest) {
-                if prev_after != this_before {
+            if i > 0 {
+                let prev = sorted[i - 1];
+                if event.session_revision_before != prev.session_revision_after {
+                    return Err(EditChainError::RevisionChainBroken {
+                        event_id: event.event_id.clone(),
+                        expected_before: prev.session_revision_after,
+                        found_before: event.session_revision_before,
+                    });
+                }
+            }
+
+            // C2P1-RR-003: both digests are now REQUIRED on every event
+            // (previously optional, so digest continuity was silently
+            // skipped whenever either neighboring field was absent).
+            let (Some(before_digest), Some(after_digest)) = (&event.before_digest, &event.after_digest) else {
+                return Err(EditChainError::MissingDigestLink { event_id: event.event_id.clone() });
+            };
+
+            if i == 0 {
+                if before_digest != &genesis_digest {
+                    return Err(EditChainError::ChainDoesNotStartAtGenesisDigest { event_id: event.event_id.clone() });
+                }
+            } else {
+                let prev_after = sorted[i - 1]
+                    .after_digest
+                    .as_ref()
+                    .expect("the previous iteration already required this to be Some");
+                if before_digest != prev_after {
                     return Err(EditChainError::DigestChainBroken { event_id: event.event_id.clone() });
                 }
             }
-        }
-    }
 
-    if let Some(last) = sorted.last() {
-        if last.session_revision_after != session.revision {
-            return Err(EditChainError::FinalRevisionMismatch {
-                chain_end: last.session_revision_after,
-                session_revision: session.revision,
-            });
+            // The strongest form of "digest-bound": `after_digest` must
+            // match the REAL content produced by actually replaying the
+            // chain up to and including this event — not just "whatever
+            // the previous event claimed," which a forged-but-internally-
+            // consistent chain of matching neighbor digests could
+            // otherwise fake.
+            applied.push((*event).clone());
+            let actual_after = canonical_state_digest(&project_steps(&session.captions, &applied));
+            if after_digest != &actual_after {
+                return Err(EditChainError::AfterDigestDoesNotMatchReplayedState { event_id: event.event_id.clone() });
+            }
+        }
+
+        if let Some(last) = sorted.last() {
+            if last.session_revision_after != session.revision {
+                return Err(EditChainError::FinalRevisionMismatch {
+                    chain_end: last.session_revision_after,
+                    session_revision: session.revision,
+                });
+            }
         }
     }
 
@@ -1457,9 +1589,55 @@ mod tests {
     fn accepts_a_verified_frame_whose_candidates_are_all_resolved() {
         let mut s = base_session();
         let mut f = verified_frame("f1");
-        f.redaction_candidates.push(candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact));
+        let mut c = candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact);
+        // C2P1-RR-002: a resolved disposition on a Verified frame now
+        // requires proof - an actual user-authenticated RedactionChange
+        // event (disposition_event_id) and, since this candidate is
+        // Redact, a recorded derivative.
+        c.disposition_event_id = Some("ev-0".to_string());
+        f.redaction_candidates.push(c);
+        f.redacted_derivative_relative_path = Some("derivatives/f1.png".to_string());
+        f.redacted_derivative_sha256 = Some("c".repeat(64));
         s.source_frames.push(f);
-        assert!(validate_session(&s).is_ok());
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
+        s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
+        s.revision = 1;
+        assert!(validate_session(&s).is_ok(), "{:?}", validate_session(&s));
+    }
+
+    #[test]
+    fn rejects_a_verified_frame_whose_resolved_candidate_has_no_disposition_evidence() {
+        // Pre-populated disposition (Redact) with NO disposition_event_id
+        // at all - exactly the C2P1-RR-002 hole: could have been set
+        // directly in the document rather than by a real user action.
+        let mut s = base_session();
+        let mut f = verified_frame("f1");
+        f.redaction_candidates.push(candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact));
+        f.redacted_derivative_relative_path = Some("derivatives/f1.png".to_string());
+        f.redacted_derivative_sha256 = Some("c".repeat(64));
+        s.source_frames.push(f);
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::MissingDispositionEvidence { frame_id: "f1".to_string(), candidate_id: "c1".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_a_verified_frame_with_a_redacted_candidate_but_no_recorded_derivative() {
+        let mut s = base_session();
+        let mut f = verified_frame("f1");
+        let mut c = candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact);
+        c.disposition_event_id = Some("ev-0".to_string());
+        f.redaction_candidates.push(c);
+        // Deliberately no redacted_derivative_relative_path/sha256.
+        s.source_frames.push(f);
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
+        s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
+        s.revision = 1;
+        assert_eq!(
+            validate_session(&s).unwrap_err(),
+            SessionError::MissingRedactedDerivativeOnVerifiedFrame { frame_id: "f1".to_string() }
+        );
     }
 
     #[test]
@@ -1484,29 +1662,38 @@ mod tests {
     #[test]
     fn rejects_a_session_claiming_export_eligible_without_a_review_receipt() {
         let mut s = base_session();
-        s.source_frames.push(verified_frame("f1"));
+        s.source_frames.push(verified_frame("f1")); // no candidates, so no disposition/derivative check fires
         s.review_state = ReviewState::Verified;
         s.export_eligible = true;
         s.review_receipt = None;
-        assert_eq!(validate_session(&s).unwrap_err(), SessionError::ExportEligibleWithoutReviewReceipt);
+        // C2P1-RR-002: a receipt is now required for VERIFIED itself
+        // (checked before export_eligible is even reached), not only when
+        // also claiming export_eligible.
+        assert_eq!(validate_session(&s).unwrap_err(), SessionError::VerifiedWithoutReviewReceipt);
     }
 
     #[test]
     fn rejects_a_session_claiming_verified_with_a_caption_invalidated_by_a_later_redaction_change() {
         let mut s = base_session();
         let mut f = verified_frame("f1");
-        f.redaction_candidates.push(candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact));
+        let mut c = candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact);
+        c.disposition_event_id = Some("ev-0".to_string());
+        f.redaction_candidates.push(c);
+        f.redacted_derivative_relative_path = Some("derivatives/f1.png".to_string());
+        f.redacted_derivative_sha256 = Some("c".repeat(64));
         s.source_frames.push(f);
         s.captions.push(valid_caption_for("s1", "f1", "Click Save"));
         // The redaction mask changed (sequence 0) after the caption was
         // generated, and nothing re-affirmed the caption's text since.
-        s.edit_events.push(event(0, EditOperation::RedactionChange {
+        let redaction_event = event(0, EditOperation::RedactionChange {
             frame_id: "f1".to_string(),
             candidate_id: "c1".to_string(),
             disposition: Disposition::Redact,
-        }));
+        });
+        s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
         s.review_state = ReviewState::Verified;
+        s.review_receipt = Some("receipt-1".to_string());
         assert_eq!(validate_session(&s).unwrap_err(), SessionError::VerifiedWithInvalidatedCaption { step_id: "s1".to_string() });
     }
 
@@ -1514,9 +1701,21 @@ mod tests {
     fn accepts_a_fully_valid_verified_exportable_session_end_to_end() {
         let mut s = base_session();
         let mut f = verified_frame("f1");
-        f.redaction_candidates.push(candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact));
+        let mut c = candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Redact);
+        c.disposition_event_id = Some("ev-0".to_string());
+        f.redaction_candidates.push(c);
+        f.redacted_derivative_relative_path = Some("derivatives/f1.png".to_string());
+        f.redacted_derivative_sha256 = Some("c".repeat(64));
         s.source_frames.push(f);
         s.captions.push(valid_caption_for("s1", "f1", "Click Save"));
+        // A rewrite AFTER the redaction change re-affirms the caption, so
+        // it is no longer treated as invalidated.
+        let events = vec![
+            event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact }),
+            event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "Click Save (reviewed)".to_string() }),
+        ];
+        s.edit_events = with_correct_digests(&s.captions, events);
+        s.revision = 2;
         s.review_state = ReviewState::Verified;
         s.review_receipt = Some("receipt-digest-bound-to-derivatives".to_string());
         s.export_eligible = true;
@@ -1556,9 +1755,10 @@ mod tests {
     #[test]
     fn edit_chain_accepts_a_single_well_formed_event() {
         let mut s = session_with_captions(&["s1"]);
-        s.edit_events.push(event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() }));
+        let events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() })];
+        s.edit_events = with_correct_digests(&s.captions, events);
         s.revision = 1;
-        assert!(validate_edit_chain(&s).is_ok());
+        assert!(validate_edit_chain(&s).is_ok(), "{:?}", validate_edit_chain(&s));
     }
 
     #[test]
@@ -1590,11 +1790,15 @@ mod tests {
     #[test]
     fn edit_chain_rejects_a_gap_in_sequence() {
         let mut s = session_with_captions(&["s1"]);
-        s.edit_events.push(event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }));
-        let mut e2 = event(2, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() });
-        e2.session_revision_before = 1;
-        e2.session_revision_after = 2;
-        s.edit_events.push(e2);
+        let events = vec![
+            event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }),
+            event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() }),
+        ];
+        let mut events = with_correct_digests(&s.captions, events);
+        events[1].sequence = 2; // gap: should be 1
+        events[1].session_revision_before = 1;
+        events[1].session_revision_after = 2;
+        s.edit_events = events;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::NonContiguousSequence { expected: 1, found: 2 });
     }
 
@@ -1614,12 +1818,15 @@ mod tests {
     #[test]
     fn edit_chain_rejects_a_broken_revision_chain_between_events() {
         let mut s = session_with_captions(&["s1"]);
-        s.edit_events.push(event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }));
-        let mut e1 = event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() });
-        e1.session_revision_before = 9; // should be 1 (event 0's after)
-        e1.session_revision_after = 10;
-        let event_id = e1.event_id.clone();
-        s.edit_events.push(e1);
+        let events = vec![
+            event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }),
+            event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() }),
+        ];
+        let mut events = with_correct_digests(&s.captions, events);
+        events[1].session_revision_before = 9; // should be 1 (event 0's after)
+        events[1].session_revision_after = 10;
+        let event_id = events[1].event_id.clone();
+        s.edit_events = events;
         assert_eq!(
             validate_edit_chain(&s).unwrap_err(),
             EditChainError::RevisionChainBroken { event_id, expected_before: 1, found_before: 9 }
@@ -1628,21 +1835,78 @@ mod tests {
 
     #[test]
     fn edit_chain_rejects_a_broken_digest_chain_between_events() {
+        // Both events individually correct (genesis-anchored, content-
+        // authentic) via with_correct_digests - then deliberately break
+        // ONLY the neighbor link (e1's before_digest no longer matches
+        // e0's real after_digest), isolating DigestChainBroken from the
+        // separate AfterDigestDoesNotMatchReplayedState check.
         let mut s = session_with_captions(&["s1"]);
-        let mut e0 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() });
-        e0.after_digest = Some("digest-a".to_string());
-        let mut e1 = event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() });
-        e1.before_digest = Some("digest-b-mismatch".to_string());
-        let event_id = e1.event_id.clone();
-        s.edit_events.push(e0);
-        s.edit_events.push(e1);
+        let events = vec![
+            event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }),
+            event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "b".to_string() }),
+        ];
+        let mut events = with_correct_digests(&s.captions, events);
+        events[1].before_digest = Some("deliberately-wrong-but-present-digest".to_string());
+        let event_id = events[1].event_id.clone();
+        s.edit_events = events;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::DigestChainBroken { event_id });
+    }
+
+    #[test]
+    fn edit_chain_rejects_an_after_digest_that_does_not_match_the_actual_replayed_content() {
+        // The event's before_digest correctly chains, but its claimed
+        // after_digest is a forgery that doesn't match what replaying the
+        // chain actually produces - must be caught distinctly from a
+        // neighbor-link break.
+        let mut s = session_with_captions(&["s1"]);
+        let events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() })];
+        let mut events = with_correct_digests(&s.captions, events);
+        events[0].after_digest = Some("forged-digest-not-matching-real-content".to_string());
+        let event_id = events[0].event_id.clone();
+        s.edit_events = events;
+        assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::AfterDigestDoesNotMatchReplayedState { event_id });
+    }
+
+    #[test]
+    fn edit_chain_rejects_a_chain_not_starting_at_genesis_revision() {
+        let mut s = session_with_captions(&["s1"]);
+        let events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() })];
+        let mut events = with_correct_digests(&s.captions, events);
+        events[0].session_revision_before = 99;
+        events[0].session_revision_after = 100;
+        s.edit_events = events;
+        s.revision = 100;
+        assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::ChainDoesNotStartAtGenesisRevision { found: 99 });
+    }
+
+    #[test]
+    fn edit_chain_rejects_an_empty_log_with_a_nonzero_session_revision() {
+        let mut s = session_with_captions(&["s1"]);
+        s.revision = 5;
+        assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::NonZeroRevisionWithEmptyChain { session_revision: 5 });
+    }
+
+    #[test]
+    fn edit_chain_accepts_an_empty_log_with_revision_zero() {
+        let s = session_with_captions(&["s1"]);
+        assert!(validate_edit_chain(&s).is_ok());
+    }
+
+    #[test]
+    fn edit_chain_rejects_a_missing_digest_on_an_event() {
+        let mut s = session_with_captions(&["s1"]);
+        let e0 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }); // digests still None
+        let event_id = e0.event_id.clone();
+        s.edit_events.push(e0);
+        s.revision = 1;
+        assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::MissingDigestLink { event_id });
     }
 
     #[test]
     fn edit_chain_rejects_a_final_revision_that_does_not_match_the_session_revision() {
         let mut s = session_with_captions(&["s1"]);
-        s.edit_events.push(event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() }));
+        let events = vec![event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "a".to_string() })];
+        s.edit_events = with_correct_digests(&s.captions, events);
         s.revision = 99;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::FinalRevisionMismatch { chain_end: 1, session_revision: 99 });
     }
@@ -1652,7 +1916,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::Rewrite { step_id: "ghost".to_string(), new_text: "a".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownRewriteTarget { event_id, step_id: "ghost".to_string() });
     }
@@ -1662,7 +1926,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::Insert { after_step_id: Some("ghost".to_string()), new_step_id: "s2".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(
             validate_edit_chain(&s).unwrap_err(),
@@ -1675,7 +1939,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::Insert { after_step_id: None, new_step_id: "s1".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::DuplicateInsertStepId { event_id, step_id: "s1".to_string() });
     }
@@ -1685,7 +1949,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2"]);
         let e0 = event(0, EditOperation::Reorder { new_order: vec!["s1".to_string(), "s1".to_string()] });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::InvalidReorderPermutation { event_id });
     }
@@ -1695,7 +1959,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::Split { step_id: "ghost".to_string(), into: vec![("a".to_string(), "x".to_string())] });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownSplitTarget { event_id, step_id: "ghost".to_string() });
     }
@@ -1705,7 +1969,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2"]);
         let e0 = event(0, EditOperation::Split { step_id: "s1".to_string(), into: vec![("s2".to_string(), "x".to_string())] });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::SplitIdCollision { event_id, step_id: "s2".to_string() });
     }
@@ -1718,7 +1982,7 @@ mod tests {
             into: vec![("a".to_string(), "x".to_string()), ("a".to_string(), "y".to_string())],
         });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::DuplicateSplitIds { event_id });
     }
@@ -1728,7 +1992,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2"]);
         let e0 = event(0, EditOperation::Merge { step_ids: vec!["s1".to_string(), "ghost".to_string()], into_step_id: "s1-2".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownMergeSource { event_id, step_id: "ghost".to_string() });
     }
@@ -1738,7 +2002,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2"]);
         let e0 = event(0, EditOperation::Merge { step_ids: vec!["s1".to_string(), "s1".to_string()], into_step_id: "s1-2".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::DuplicateMergeSource { event_id, step_id: "s1".to_string() });
     }
@@ -1748,7 +2012,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2", "s3"]);
         let e0 = event(0, EditOperation::Merge { step_ids: vec!["s1".to_string(), "s3".to_string()], into_step_id: "s1-3".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::NonConsecutiveMergeSources { event_id });
     }
@@ -1758,7 +2022,7 @@ mod tests {
         let mut s = session_with_captions(&["s1", "s2", "s3"]);
         let e0 = event(0, EditOperation::Merge { step_ids: vec!["s1".to_string(), "s2".to_string()], into_step_id: "s3".to_string(), text: "x".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::MergeDestinationCollision { event_id, step_id: "s3".to_string() });
     }
@@ -1768,7 +2032,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::RedactionChange { frame_id: "ghost".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownRedactionChangeFrame { event_id, frame_id: "ghost".to_string() });
     }
@@ -1779,7 +2043,7 @@ mod tests {
         s.source_frames.push(frame("f1", SourceStorage::SessionEncrypted));
         let e0 = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "ghost".to_string(), disposition: Disposition::Redact });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownRedactionChangeCandidate { event_id, candidate_id: "ghost".to_string() });
     }
@@ -1789,7 +2053,7 @@ mod tests {
         let mut s = session_with_captions(&["s1"]);
         let e0 = event(0, EditOperation::Revert { step_id: "ghost".to_string() });
         let event_id = e0.event_id.clone();
-        s.edit_events.push(e0);
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s).unwrap_err(), EditChainError::UnknownRevertTarget { event_id, step_id: "ghost".to_string() });
     }
@@ -1816,9 +2080,10 @@ mod tests {
         c.disposition_event_id = Some("ev-0".to_string());
         f.redaction_candidates.push(c);
         s.source_frames.push(f);
-        s.edit_events.push(event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact }));
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
+        s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
-        assert!(validate_edit_chain(&s).is_ok());
+        assert!(validate_edit_chain(&s).is_ok(), "{:?}", validate_edit_chain(&s));
     }
 
     #[test]
@@ -1836,7 +2101,8 @@ mod tests {
     #[test]
     fn validating_the_same_valid_chain_twice_yields_the_same_result() {
         let mut s = session_with_captions(&["s1"]);
-        s.edit_events.push(event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() }));
+        let e0 = event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "x".to_string() });
+        s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
         assert_eq!(validate_edit_chain(&s), validate_edit_chain(&s));
         assert!(validate_edit_chain(&s).is_ok());
@@ -2022,6 +2288,30 @@ mod tests {
             after_digest: None,
             local_timestamp: "2026-10-26T12:00:00Z".to_string(),
         }
+    }
+
+    /// C2P1-RR-003 fix-round helper: fills in real, correctly-chained
+    /// `before_digest`/`after_digest` values for a sequence of events
+    /// (sorted by `sequence`), by actually replaying them against
+    /// `captions` the same way `validate_edit_chain` itself does. Lets
+    /// edit-chain tests built around `event()` (which leaves digests
+    /// `None`) keep testing exactly the ONE structural defect each is
+    /// about, without each test having to hand-compute real digests.
+    /// Tests that are specifically ABOUT digest correctness build their
+    /// fixture through this helper too, then deliberately corrupt one
+    /// digest field afterward.
+    fn with_correct_digests(captions: &[CaptionDraft], mut events: Vec<EditEvent>) -> Vec<EditEvent> {
+        events.sort_by_key(|e| e.sequence);
+        let mut applied: Vec<EditEvent> = Vec::new();
+        let mut running = canonical_state_digest(&project_steps(captions, &[]));
+        for event in &mut events {
+            event.before_digest = Some(running.clone());
+            applied.push(event.clone());
+            running = canonical_state_digest(&project_steps(captions, &applied));
+            event.after_digest = Some(running.clone());
+            applied.last_mut().unwrap().after_digest = Some(running.clone());
+        }
+        events
     }
 
     #[test]

@@ -250,6 +250,78 @@ pub fn validate_request(req: &IpcRequest) -> Result<(), RequestValidationError> 
     Ok(())
 }
 
+/// Upper bounds on response-side fields (C2P1-RR-001): a response is just
+/// as untrusted as a request — it comes from an external sidecar process,
+/// not from code this crate controls — so it needs the same fail-closed
+/// treatment, not just `deny_unknown_fields` on the struct shape.
+pub const MAX_ERROR_CODE_LEN: usize = 128;
+pub const MAX_ERROR_MESSAGE_LEN: usize = 2000;
+/// Generous enough for any legitimate `Ok` payload this protocol carries
+/// in C2-P1 (no OCR/NER/caption payloads exist yet — this slice has no
+/// operation implementations), small enough to refuse an oversized/
+/// runaway response before it's used for anything.
+pub const MAX_RESULT_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResponseValidationError {
+    UnsupportedSchemaVersion { found: u32, expected: u32 },
+    /// The response's own `request_id` doesn't match the request it's
+    /// supposedly answering — brief §2.1: "Responses echo the request and
+    /// input identities." A mismatch here means either a misrouted
+    /// response or a confused/hostile sidecar; either way it must never
+    /// be silently accepted as this request's answer.
+    RequestIdMismatch,
+    /// `echoed_input_digests_sha256` doesn't match the request's own
+    /// `input_digests_sha256` exactly (same set, same order) — the other
+    /// half of "echo the... input identities."
+    EchoedDigestsMismatch,
+    ErrorCodeEmpty,
+    ErrorCodeTooLong { found: usize, max: usize },
+    ErrorMessageTooLong { found: usize, max: usize },
+    ResultPayloadTooLarge { found_bytes: usize, max_bytes: usize },
+}
+
+/// Validates a sidecar response against the exact request it's answering:
+/// exact protocol version, request-id/digest correlation, and bounded
+/// result-specific fields (error code/message length, `Ok` payload byte
+/// size). A caller must run this on every response **before** doing
+/// anything with `result` — never trust `deny_unknown_fields` alone to
+/// make an externally-produced response safe to consume.
+pub fn validate_response(resp: &IpcResponse, req: &IpcRequest) -> Result<(), ResponseValidationError> {
+    if resp.schema_version != SIDECAR_PROTOCOL_VERSION {
+        return Err(ResponseValidationError::UnsupportedSchemaVersion {
+            found: resp.schema_version,
+            expected: SIDECAR_PROTOCOL_VERSION,
+        });
+    }
+    if resp.request_id != req.request_id {
+        return Err(ResponseValidationError::RequestIdMismatch);
+    }
+    if resp.echoed_input_digests_sha256 != req.input_digests_sha256 {
+        return Err(ResponseValidationError::EchoedDigestsMismatch);
+    }
+    match &resp.result {
+        IpcResult::Ok { payload } => {
+            let size = serde_json::to_vec(payload).map(|v| v.len()).unwrap_or(usize::MAX);
+            if size > MAX_RESULT_PAYLOAD_BYTES {
+                return Err(ResponseValidationError::ResultPayloadTooLarge { found_bytes: size, max_bytes: MAX_RESULT_PAYLOAD_BYTES });
+            }
+        }
+        IpcResult::Err { code, message } => {
+            if code.is_empty() {
+                return Err(ResponseValidationError::ErrorCodeEmpty);
+            }
+            if code.len() > MAX_ERROR_CODE_LEN {
+                return Err(ResponseValidationError::ErrorCodeTooLong { found: code.len(), max: MAX_ERROR_CODE_LEN });
+            }
+            if message.len() > MAX_ERROR_MESSAGE_LEN {
+                return Err(ResponseValidationError::ErrorMessageTooLong { found: message.len(), max: MAX_ERROR_MESSAGE_LEN });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Encodes one message with a 4-byte big-endian length prefix, matching
 /// brief §2.1's "length-prefixed JSON over inherited stdin/stdout."
 pub fn encode_framed(payload: &[u8]) -> Vec<u8> {
@@ -544,6 +616,100 @@ mod tests {
         assert!(!is_valid_sha256_hex(&"a".repeat(65)));
         assert!(!is_valid_sha256_hex(&"A".repeat(64)));
         assert!(!is_valid_sha256_hex(&"g".repeat(64)));
+    }
+
+    // --- C2P1-RR-001: response validation ---
+
+    fn ok_response_for(req: &IpcRequest) -> IpcResponse {
+        IpcResponse {
+            request_id: req.request_id.clone(),
+            schema_version: SIDECAR_PROTOCOL_VERSION,
+            echoed_input_digests_sha256: req.input_digests_sha256.clone(),
+            result: IpcResult::Ok { payload: serde_json::json!({}) },
+        }
+    }
+
+    #[test]
+    fn validate_response_accepts_a_well_formed_correlated_response() {
+        let req = valid_request();
+        assert!(validate_response(&ok_response_for(&req), &req).is_ok());
+    }
+
+    #[test]
+    fn validate_response_rejects_an_unsupported_schema_version() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.schema_version = SIDECAR_PROTOCOL_VERSION + 1;
+        assert_eq!(
+            validate_response(&resp, &req),
+            Err(ResponseValidationError::UnsupportedSchemaVersion { found: SIDECAR_PROTOCOL_VERSION + 1, expected: SIDECAR_PROTOCOL_VERSION })
+        );
+    }
+
+    #[test]
+    fn validate_response_rejects_schema_version_zero() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.schema_version = 0;
+        assert_eq!(
+            validate_response(&resp, &req),
+            Err(ResponseValidationError::UnsupportedSchemaVersion { found: 0, expected: SIDECAR_PROTOCOL_VERSION })
+        );
+    }
+
+    #[test]
+    fn validate_response_rejects_a_request_id_that_does_not_match_the_originating_request() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.request_id = "some-other-request".to_string();
+        assert_eq!(validate_response(&resp, &req), Err(ResponseValidationError::RequestIdMismatch));
+    }
+
+    #[test]
+    fn validate_response_rejects_echoed_digests_that_do_not_match_the_request() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.echoed_input_digests_sha256 = vec!["c".repeat(64)]; // differs from req's "a"*64
+        assert_eq!(validate_response(&resp, &req), Err(ResponseValidationError::EchoedDigestsMismatch));
+    }
+
+    #[test]
+    fn validate_response_rejects_an_empty_error_code() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.result = IpcResult::Err { code: String::new(), message: "x".to_string() };
+        assert_eq!(validate_response(&resp, &req), Err(ResponseValidationError::ErrorCodeEmpty));
+    }
+
+    #[test]
+    fn validate_response_rejects_an_oversized_error_code() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.result = IpcResult::Err { code: "x".repeat(MAX_ERROR_CODE_LEN + 1), message: "x".to_string() };
+        assert_eq!(
+            validate_response(&resp, &req),
+            Err(ResponseValidationError::ErrorCodeTooLong { found: MAX_ERROR_CODE_LEN + 1, max: MAX_ERROR_CODE_LEN })
+        );
+    }
+
+    #[test]
+    fn validate_response_rejects_an_oversized_error_message() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        resp.result = IpcResult::Err { code: "TIMEOUT".to_string(), message: "x".repeat(MAX_ERROR_MESSAGE_LEN + 1) };
+        assert_eq!(
+            validate_response(&resp, &req),
+            Err(ResponseValidationError::ErrorMessageTooLong { found: MAX_ERROR_MESSAGE_LEN + 1, max: MAX_ERROR_MESSAGE_LEN })
+        );
+    }
+
+    #[test]
+    fn validate_response_rejects_an_oversized_ok_payload() {
+        let req = valid_request();
+        let mut resp = ok_response_for(&req);
+        let huge = "x".repeat(MAX_RESULT_PAYLOAD_BYTES + 1);
+        resp.result = IpcResult::Ok { payload: serde_json::json!({ "data": huge }) };
+        assert!(matches!(validate_response(&resp, &req), Err(ResponseValidationError::ResultPayloadTooLarge { .. })));
     }
 
     // --- framing ---
