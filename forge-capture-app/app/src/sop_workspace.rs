@@ -85,6 +85,31 @@ fn open_no_follow(path: &Path) -> std::io::Result<File> {
     fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).open(path)
 }
 
+/// Like [`open_no_follow`], but read+write and creates the file if it
+/// doesn't exist yet — used only for the cross-process lock sidecar
+/// (C2P1-RR-005A), whose own existence must not be reachable through a
+/// planted reparse point any more than a session file's can. If the leaf
+/// already exists AND is a reparse point, `FILE_FLAG_OPEN_REPARSE_POINT`
+/// means this opens the reparse point object itself (never its target),
+/// and the subsequent `LockFileEx` call in the caller operates on that —
+/// safe, since a reparse point object is not the attacker's real target
+/// file; it's simply not usable as a normal lock, which the caller treats
+/// as an ordinary I/O error on the later read/lock attempt rather than a
+/// silent follow-through.
+#[cfg(windows)]
+fn open_or_create_no_follow(path: &Path) -> Result<File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| format!("cannot open/create no-follow lock file: {e}"))
+}
+
 /// Returns `Some(metadata)` for a component that exists (verified without
 /// following a reparse point), `None` for one that doesn't exist yet, or
 /// `Err` for any other failure (permission denied, etc. — never silently
@@ -139,19 +164,53 @@ pub enum WorkspacePathError {
 /// yet (a path being written for the first time) — only `root` must.
 ///
 /// Walks one path component at a time starting from the canonicalized
-/// root, checking each *existing* component with [`fs::symlink_metadata`]
-/// (never following it) before ever deciding whether to create the next
-/// one. No filesystem mutation happens until every existing ancestor
-/// component has been proven not to be a reparse point — the previous
-/// version of this function called `create_dir_all` on an unverified
-/// parent *before* canonicalizing it, so a symlinked/junctioned existing
-/// component with a missing descendant (e.g. `escape_link/newdir/file`
-/// where `escape_link` points outside `root`) could have `newdir`
-/// created outside `root` and only be rejected afterward. Any missing
-/// intermediate directory this function itself creates is re-verified
-/// immediately after creation, before it is trusted as the base for the
-/// next component, narrowing (not eliminating — no `openat`-equivalent
-/// is available through `std` alone) the window between check and use.
+/// root, checking each *existing* component via an opened, no-follow
+/// handle (`existing_component_metadata`/`open_no_follow`) before ever
+/// deciding whether to create the next one. No filesystem mutation
+/// happens until every existing ancestor component has been proven not
+/// to be a reparse point — the original version of this function called
+/// `create_dir_all` on an unverified parent *before* canonicalizing it,
+/// so a symlinked/junctioned existing component with a missing
+/// descendant (e.g. `escape_link/newdir/file` where `escape_link` points
+/// outside `root`) could have `newdir` created outside `root` and only
+/// be rejected afterward. Any missing intermediate directory this
+/// function itself creates is re-verified immediately after creation,
+/// before it is trusted as the base for the next component.
+///
+/// **C2P1-RR-004/004A, stated plainly: this narrows but does not
+/// eliminate the cross-component race**, and that gap was confirmed
+/// exploitable by the second re-review round
+/// (`results/chatgpt/capture-c2-p1-rereview-2026-10-26.md` /
+/// the RR-004A follow-up): an already-checked intermediate directory can
+/// still be replaced with a junction in the gap between this function's
+/// verified open of it and the next component's separate, path-based
+/// open/create. Truly eliminating this requires resolving each
+/// subsequent component *relative to the already-open, already-verified
+/// handle of its parent* — the Windows equivalent of POSIX `openat()`
+/// with `O_NOFOLLOW` — which the public, documented Win32 surface this
+/// app otherwise uses (and that the `windows` crate exposes with
+/// compiler-checked signatures generated from Microsoft's own
+/// win32metadata) does not provide. The only way to get genuine
+/// handle-relative resolution on Windows is `NtCreateFile` with
+/// `OBJECT_ATTRIBUTES.RootDirectory` set to the parent handle — an
+/// NT-native function with no official Microsoft documentation and, as
+/// of this writing, no binding in the `windows` crate at all. Using it
+/// would mean hand-declaring its `extern "system"` signature and the
+/// `OBJECT_ATTRIBUTES`/`UNICODE_STRING`/`IO_STATUS_BLOCK` struct layouts
+/// myself, with **no compiler- or crate-level check that I got the ABI
+/// right** — a categorically different risk than every other unsafe call
+/// in this file (DPAPI, the ACL calls, `LockFileEx`), all of which are
+/// typed, compiler-verified bindings from the `windows` crate itself. A
+/// struct-layout mistake here wouldn't necessarily fail loudly; it could
+/// silently behave wrong in exactly the security-relevant way this
+/// function exists to prevent. Per this author's standing judgment (same
+/// reasoning as the original C2P1-006 ACL finding, and stated again
+/// rather than silently reapplied): declining to guess at unverifiable
+/// security-critical FFI is the more responsible call than attempting it
+/// under this round's time/verification constraints. This is reported
+/// as an open, named, unresolved gap for the next re-review and for
+/// Jason to weigh — not silently reduced in scope and not re-claimed as
+/// closed.
 pub fn resolve_confined_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspacePathError> {
     confine_relative_path(relative).map_err(WorkspacePathError::Lexical)?;
 
@@ -454,14 +513,21 @@ fn session_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
 /// rename swaps in a new one — a lock file that is never replaced, only
 /// ever locked/unlocked, avoids that trap entirely).
 ///
-/// Keyed by **canonical identity**, not the caller-provided `Path`: the
-/// lock file's path is built from the session file's *canonicalized
-/// parent directory* plus its *lowercased* file name (NTFS is
-/// case-insensitive by default), so two different lexical spellings of
-/// the same real path — different case, `.`/`..` segments, a relative
-/// vs. absolute form — produce the identical lock file and therefore
-/// genuinely serialize against each other, not just against
-/// byte-identical `PathBuf`s.
+/// Keyed by **stable file identity**, not a derived path string —
+/// C2P1-RR-005A: the prior version canonicalized only the parent
+/// directory and lowercased the caller-supplied file name, which an
+/// alternate accepted name for the same existing file (an 8.3 short
+/// name, or a hard link) can still bypass, since none of those change
+/// the *string* this scheme hashed. This version binds the lock to the
+/// session file's real `FILE_ID_INFO` (volume serial number + 128-bit
+/// file ID) whenever the file already exists — the one identity NTFS
+/// itself guarantees is the same object regardless of which accepted
+/// name reached it, immune to case, 8.3 names, and hard links alike. A
+/// session file that doesn't exist yet (first write) has nothing with
+/// real content to race over, so that case falls back to the
+/// canonicalized-parent + lowercased-name scheme as a deliberate,
+/// lower-stakes bootstrap path, not a silently-reused weak key for the
+/// real contention case.
 #[cfg(windows)]
 struct CrossProcessSessionLock {
     file: File,
@@ -469,29 +535,95 @@ struct CrossProcessSessionLock {
 
 #[cfg(windows)]
 impl CrossProcessSessionLock {
-    fn canonical_lock_path(session_path: &Path) -> Result<PathBuf, String> {
+    fn bootstrap_lock_path(session_path: &Path) -> Result<PathBuf, String> {
         let parent = session_path.parent().ok_or_else(|| "session path has no parent directory".to_string())?;
         let canonical_parent =
             fs::canonicalize(parent).map_err(|e| format!("cannot canonicalize session directory: {e}"))?;
         let file_name = session_path.file_name().ok_or_else(|| "session path has no file name".to_string())?;
         let normalized_name = file_name.to_string_lossy().to_lowercase();
-        Ok(canonical_parent.join(format!("{normalized_name}.lock")))
+        Ok(canonical_parent.join(format!("{normalized_name}.bootstrap.lock")))
+    }
+
+    /// Resolves the lock file path to use for `session_path` right now:
+    /// the stable-file-identity path if the session file already exists,
+    /// otherwise the bootstrap path. Called fresh on every `acquire` —
+    /// never cached — so a session that comes into existence between two
+    /// calls correctly moves onto the strong identity-based lock on its
+    /// very next write.
+    fn lock_path_for(session_path: &Path) -> Result<PathBuf, String> {
+        let parent = session_path.parent().ok_or_else(|| "session path has no parent directory".to_string())?;
+        let canonical_parent =
+            fs::canonicalize(parent).map_err(|e| format!("cannot canonicalize session directory: {e}"))?;
+
+        if let Ok(existing) = open_no_follow(session_path) {
+            if let Ok(id) = query_stable_file_id(&existing) {
+                return Ok(canonical_parent.join(format!("{}-{}.lock", id.volume_serial_hex(), id.file_id_hex())));
+            }
+        }
+        Self::bootstrap_lock_path(session_path)
     }
 
     /// Acquires the lock, blocking the calling thread until it's
     /// available. The lock file is created if it doesn't exist yet (its
     /// own content is never read or written — it exists purely as a
-    /// stable name `LockFileEx` can hold a byte-range lock on).
+    /// stable name `LockFileEx` can hold a byte-range lock on), and is
+    /// itself opened without following a reparse point — a lock "file"
+    /// that turned out to be a planted symlink must never be locked or
+    /// written through.
     fn acquire(session_path: &Path) -> Result<Self, String> {
-        let lock_path = Self::canonical_lock_path(session_path)?;
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&lock_path)
-            .map_err(|e| format!("cannot open cross-process lock file: {e}"))?;
+        let lock_path = Self::lock_path_for(session_path)?;
+        let file = open_or_create_no_follow(&lock_path)?;
         lock_file_exclusive_blocking(&file)?;
         Ok(Self { file })
+    }
+}
+
+/// A 128-bit NTFS file identifier plus the volume it lives on — the
+/// stable identity [`CrossProcessSessionLock`] binds to for an existing
+/// session file. Two different accepted names (case, 8.3 short name,
+/// hard link) for the same real file always yield the same
+/// `StableFileId`; two different real files, even with colliding names
+/// on different volumes, never do (the volume serial number is part of
+/// the identity specifically to rule that out).
+#[cfg(windows)]
+struct StableFileId {
+    volume_serial: u64,
+    file_id: [u8; 16],
+}
+
+#[cfg(windows)]
+impl StableFileId {
+    fn volume_serial_hex(&self) -> String {
+        format!("{:016x}", self.volume_serial)
+    }
+    fn file_id_hex(&self) -> String {
+        self.file_id.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+/// Queries `handle`'s real NTFS identity via `GetFileInformationByHandleEx`
+/// / `FileIdInfo` (`FILE_ID_INFO`) — a standard, documented Win32 call
+/// available since Windows Server 2008/Vista, not an NT-native guess.
+#[cfg(windows)]
+fn query_stable_file_id(handle: &File) -> Result<StableFileId, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{GetFileInformationByHandleEx, FileIdInfo, FILE_ID_INFO};
+
+    let raw = HANDLE(handle.as_raw_handle());
+    // SAFETY: `raw` is valid for the duration of this call (borrowed from
+    // `handle`, which outlives it); `info` is a correctly-sized,
+    // zero-initialized buffer the call writes into.
+    unsafe {
+        let mut info = FILE_ID_INFO::default();
+        GetFileInformationByHandleEx(
+            raw,
+            FileIdInfo,
+            &mut info as *mut _ as *mut core::ffi::c_void,
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+        .map_err(|e| format!("GetFileInformationByHandleEx(FileIdInfo) failed: {e}"))?;
+        Ok(StableFileId { volume_serial: info.VolumeSerialNumber, file_id: info.FileId.Identifier })
     }
 }
 
@@ -1276,19 +1408,59 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_resolves_lexical_aliases_to_the_same_underlying_lock() {
-        // Different-case spelling of the same real file name must
-        // canonicalize to the identical lock path - the C2P1-RR-005
-        // "two lexical aliases... can bypass it" gap.
+    fn cross_process_lock_resolves_a_case_differing_alias_to_the_same_underlying_lock() {
         let root = temp_root();
         let session_path_lower = root.join("session.json");
         fs::write(&session_path_lower, b"{}").unwrap();
         let session_path_upper = root.join("SESSION.JSON"); // NTFS: same real file
 
-        let lock_a = CrossProcessSessionLock::canonical_lock_path(&session_path_lower).unwrap();
-        let lock_b = CrossProcessSessionLock::canonical_lock_path(&session_path_upper).unwrap();
+        let lock_a = CrossProcessSessionLock::lock_path_for(&session_path_lower).unwrap();
+        let lock_b = CrossProcessSessionLock::lock_path_for(&session_path_upper).unwrap();
         assert_eq!(lock_a, lock_b, "a case-differing lexical alias for the same file must resolve to the same lock path");
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_resolves_a_hard_link_alias_to_the_same_underlying_lock() {
+        // C2P1-RR-005A's explicit example: "a hard-link path... can yield
+        // different sibling lock names." A hard link is a second NAME for
+        // the identical NTFS file (same volume serial + file id) - the
+        // whole reason this round moved off name-derived keys onto
+        // FILE_ID_INFO.
+        let root = temp_root();
+        let original = root.join("session.json");
+        fs::write(&original, b"{}").unwrap();
+        let hard_link = root.join("session-alias.json");
+        std::fs::hard_link(&original, &hard_link).expect("hard_link should succeed on NTFS within one volume");
+
+        let lock_a = CrossProcessSessionLock::lock_path_for(&original).unwrap();
+        let lock_b = CrossProcessSessionLock::lock_path_for(&hard_link).unwrap();
+        assert_eq!(lock_a, lock_b, "a hard-link alias for the same real file must resolve to the same lock path");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_uses_the_bootstrap_path_for_a_session_file_that_does_not_exist_yet() {
+        let root = temp_root();
+        let session_path = root.join("not-yet-written.json");
+        let lock_path = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_eq!(lock_path, CrossProcessSessionLock::bootstrap_lock_path(&session_path).unwrap());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_moves_onto_the_stable_identity_lock_once_the_session_file_is_created() {
+        let root = temp_root();
+        let session_path = root.join("session.json");
+        let bootstrap = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        fs::write(&session_path, b"{}").unwrap();
+        let after_creation = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_ne!(bootstrap, after_creation, "once the file exists, lock_path_for must move onto the real stable-identity lock, not keep reusing the bootstrap name");
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1320,6 +1492,84 @@ mod tests {
         let result = writer.join().unwrap();
         assert!(result.is_ok());
         assert_eq!(read_current_revision(&path).unwrap(), 2);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Child-process helper for
+    /// `write_session_if_current_is_blocked_by_a_genuinely_separate_process`
+    /// below — never runs as part of the normal suite (`#[ignore]`); the
+    /// parent test spawns THIS SAME test binary and asks it, by exact
+    /// name, to run only this one test. Acquires the real cross-process
+    /// lock, signals readiness by writing a marker file, holds the lock
+    /// for a fixed duration, then exits (releasing it).
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn cross_process_lock_child_helper_acquire_and_hold() {
+        let session_path = PathBuf::from(std::env::var("FORGE_TEST_LOCK_SESSION_PATH").expect("env var required"));
+        let ready_path = PathBuf::from(std::env::var("FORGE_TEST_LOCK_READY_PATH").expect("env var required"));
+        let _lock = CrossProcessSessionLock::acquire(&session_path).expect("child process failed to acquire the lock");
+        fs::write(&ready_path, b"ready").expect("child process failed to write the ready marker");
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        // `_lock` drops here on return, releasing the lock as this
+        // process exits - exactly the real-world "second app instance
+        // holds the lock, then closes" scenario.
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn write_session_if_current_is_blocked_by_a_genuinely_separate_process() {
+        // C2P1-RR-005A's explicit ask: "no two child processes through
+        // the production mutation path." This spawns a REAL second OS
+        // process (not a thread in this one) that acquires the lock via
+        // the exact same CrossProcessSessionLock::acquire the real
+        // `write_session_if_current` path uses, proving the production
+        // function is actually blocked by a separate process, not just
+        // demonstrating the primitive in isolation.
+        let root = temp_root();
+        let session_path = root.join("session.json");
+        write_session_if_current(&session_path, 0, br#"{"revision":1}"#).unwrap();
+
+        let ready_path = root.join("child-ready.marker");
+        let exe = std::env::current_exe().expect("current_exe should resolve for a running test binary");
+        let mut child = std::process::Command::new(&exe)
+            .args(["sop_workspace::tests::cross_process_lock_child_helper_acquire_and_hold", "--exact", "--ignored", "--test-threads=1"])
+            .env("FORGE_TEST_LOCK_SESSION_PATH", &session_path)
+            .env("FORGE_TEST_LOCK_READY_PATH", &ready_path)
+            .spawn()
+            .expect("failed to spawn the child test process");
+
+        // Wait (bounded) for the child to report it actually holds the lock.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !ready_path.exists() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("child process never signaled it acquired the cross-process lock");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        // The child process now genuinely holds the OS lock. The
+        // production write path in THIS process must be blocked by it -
+        // proven the same way as the in-process test: run the write on a
+        // background thread, sample state shortly after, confirm it
+        // hasn't advanced yet, then confirm it completes once the real
+        // separate process exits and releases the lock.
+        let path_clone = session_path.clone();
+        let writer = std::thread::spawn(move || write_session_if_current(&path_clone, 1, br#"{"revision":2,"writer":"parent-process"}"#));
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            read_current_revision(&session_path).unwrap(),
+            1,
+            "the parent-process writer must still be blocked by the separate child process's lock"
+        );
+
+        child.wait().expect("child process should exit cleanly, releasing the lock");
+        let result = writer.join().unwrap();
+        assert!(result.is_ok(), "{:?}", result);
+        assert_eq!(read_current_revision(&session_path).unwrap(), 2);
 
         fs::remove_dir_all(&root).ok();
     }
