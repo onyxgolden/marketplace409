@@ -1887,16 +1887,24 @@ mod tests {
                 _ => break,
             }
         }
-        // C639-002A verification gap (flagged in the fix-round cross-check):
-        // availability alone cannot tell "released after confirming the
-        // kill" apart from "released without ever confirming" — require
-        // the actual confirmation event (`poll_until_exit`'s
-        // `worker_terminated` log, written only once an exit status was
-        // truly observed) to have landed in the ring.
+        // C639-002B (fix-round-2 re-review): a generic, unscoped
+        // `worker_terminated` check is not discriminating enough — once
+        // this zombie is reaped, the probe capture above admits a NEW
+        // generation (2) that retires normally through `poll_until_exit`
+        // and logs its OWN `worker_terminated` entry, which would satisfy
+        // an unscoped assertion even if generation 1 (the original hung
+        // worker) had never actually been confirmed. Require the
+        // reaper's own `zombie_reaped` event, scoped to generation 1
+        // specifically (the first admission on this fresh supervisor) —
+        // that event can only be written once `child.wait()` on THAT
+        // exact generation's process actually observed its exit.
         let ring = sup.ring().tail(64);
         assert!(
-            ring.iter().any(|line| line.contains("worker_terminated")),
-            "no confirmed-exit event ever landed in the ring: {ring:?}"
+            ring.iter()
+                .any(|line| line.contains("zombie_reaped") && line.contains("gen=1:")),
+            "no generation-1-scoped confirmed-exit event landed in the ring \
+             (an unscoped check could be satisfied by the probe capture's own \
+             unrelated retirement instead): {ring:?}"
         );
     }
 
