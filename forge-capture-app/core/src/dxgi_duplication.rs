@@ -82,6 +82,31 @@ impl Default for DxgiLimits {
     }
 }
 
+/// Per-frame metadata from `DXGI_OUTDUPL_FRAME_INFO`, carried through
+/// the capture outcome so hardware harnesses can log it per acquire.
+///
+/// DXGI1 fix round 3: the mask misfire (first capture Frame, later
+/// captures ProtectedOrSecure while a raw probe reads mask 0) cannot be
+/// root-caused from outcomes alone — the discriminating evidence is
+/// these fields, per acquire, through the wrapper itself. They are
+/// diagnostic only: they never change the fail-closed mask rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DxgiFrameMetadata {
+    /// Raw `ProtectedContentMaskedOut` value (0 = unmasked).
+    pub protected_content_masked_out: i32,
+    /// Raw `AccumulatedFrames` count.
+    pub accumulated_frames: u32,
+    /// Raw `RectsCoalesced` value (0/1).
+    pub rects_coalesced: i32,
+    /// Raw `LastPresentTime` (QueryPerformanceCounter ticks; 0 = no
+    /// present since the last acquire).
+    pub last_present_time: i64,
+    /// Raw `TotalMetadataBufferSize`.
+    pub total_metadata_size: u32,
+    /// Raw `PointerShapeBufferSize`.
+    pub pointer_shape_size: u32,
+}
+
 /// One captured frame: RGBA bytes (row-major, no pitch padding).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DxgiFrame {
@@ -89,6 +114,8 @@ pub struct DxgiFrame {
     pub height: u32,
     /// Exactly `width * height * 4` bytes.
     pub rgba: Vec<u8>,
+    /// Frame metadata from the acquire that produced this frame.
+    pub frame_info: DxgiFrameMetadata,
 }
 
 /// DXGI rotation, as reported by the output descriptor.
@@ -388,6 +415,7 @@ fn crop_frame(frame: &DxgiFrame, x: u32, y: u32, w: u32, h: u32) -> Option<DxgiF
         width: w,
         height: h,
         rgba,
+        frame_info: frame.frame_info,
     })
 }
 
@@ -436,6 +464,8 @@ pub struct AcquiredPixels {
     pub height: u32,
     pub row_pitch: usize,
     pub bgra: Vec<u8>,
+    /// Frame metadata from the acquire that produced these pixels.
+    pub frame_info: DxgiFrameMetadata,
 }
 
 /// The duplication session behind [`capture_single_output`].
@@ -475,11 +505,35 @@ pub trait DuplicationBackend {
 /// naming DXGI-2, never a partial or shifted image. Non-identity rotation
 /// is likewise unavailable in DXGI-1. No frame is ever cached: a
 /// `WAIT_TIMEOUT` past the total deadline is terminal, not a stale frame.
+/// Real-clock entry point: elapsed time comes from `Instant::now()`.
 pub fn capture_single_output<B: DuplicationBackend>(
     backend: &mut B,
     output: &OutputInfo,
     rect: RectI,
     limits: &DxgiLimits,
+) -> DxgiCaptureOutcome {
+    let start = Instant::now();
+    capture_single_output_with_clock(backend, output, rect, limits, move || start.elapsed())
+}
+
+/// Deadline loop with an injected elapsed-time source.
+///
+/// DXGI1 fix round 3: the round-2 deadline tests read wall-clock time
+/// and failed on Windows, where the first iteration can measure
+/// elapsed == 0 (timer granularity) and issue a 1ms attempt before the
+/// 0ms final poll — while Linux measured elapsed > 0 and passed. The
+/// loop's deadline behavior must not depend on timer granularity, so
+/// tests script elapsed deterministically through this function and
+/// production passes the real clock. The loop reads elapsed ONCE per
+/// iteration and uses that single value for both the timeout computation
+/// and the final-poll/deadline decision, so the boundary is exact
+/// rather than sampled twice.
+pub fn capture_single_output_with_clock<B: DuplicationBackend, F: FnMut() -> Duration>(
+    backend: &mut B,
+    output: &OutputInfo,
+    rect: RectI,
+    limits: &DxgiLimits,
+    mut elapsed: F,
 ) -> DxgiCaptureOutcome {
     if output.rotation != DxgiRotation::Identity {
         return DxgiCaptureOutcome::Unavailable(format!(
@@ -499,7 +553,6 @@ pub fn capture_single_output<B: DuplicationBackend>(
             "capture rect spans outputs or lies outside this output (DXGI-2)".into(),
         );
     }
-    let start = Instant::now();
     let mut recreated = false;
     let mut final_poll_done = false;
     loop {
@@ -510,11 +563,17 @@ pub fn capture_single_output<B: DuplicationBackend>(
         // an already-ready frame can still be taken without ever
         // blocking past the deadline. After that poll, or once the
         // deadline itself is reached, the loop stops without acquiring.
-        let timeout_ms = match attempt_timeout_ms(limits, start.elapsed()) {
+        // Elapsed is read ONCE per iteration and reused for both the
+        // timeout computation and the deadline decision, so the
+        // boundary is exact (fix round 3: the old double read let a
+        // Windows first iteration at elapsed == 0 issue a 1ms attempt
+        // before the 0ms final poll).
+        let e = elapsed();
+        let timeout_ms = match attempt_timeout_ms(limits, e) {
             Some(t) => t,
             None => {
                 let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
-                if !final_poll_done && start.elapsed() < deadline {
+                if !final_poll_done && e < deadline {
                     final_poll_done = true;
                     0
                 } else {
@@ -549,6 +608,7 @@ pub fn capture_single_output<B: DuplicationBackend>(
                     width: pixels.width,
                     height: pixels.height,
                     rgba,
+                    frame_info: pixels.frame_info,
                 };
                 let ox = (rect.x - output.rect.x) as u32;
                 let oy = (rect.y - output.rect.y) as u32;
@@ -611,8 +671,8 @@ pub use win_backend::DxgiCaptureContext;
 mod win_backend {
     use super::{
         checked_mapped_bytes, classify_hresult, classify_stage_error, protected_from_frame_info,
-        validate_limits, AcquiredPixels, DxgiAcquireError, DxgiCaptureOutcome, DxgiLimits,
-        DxgiRotation, FrameGuard, OutputInfo,
+        validate_limits, AcquiredPixels, DxgiAcquireError, DxgiCaptureOutcome, DxgiFrameMetadata,
+        DxgiLimits, DxgiRotation, FrameGuard, OutputInfo,
     };
     use crate::coords::RectI;
     use crate::result::CaptureError;
@@ -637,6 +697,9 @@ mod win_backend {
         IDXGIOutputDuplication, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTPUT_DESC,
     };
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
 
     const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106 as i32
 
@@ -645,6 +708,24 @@ mod win_backend {
         OsString::from_wide(&buf[..end])
             .to_string_lossy()
             .into_owned()
+    }
+
+    /// Best-effort per-monitor DPI awareness, set before enumerating.
+    ///
+    /// DXGI1 fix round 3: for a DPI-unaware process, `DXGI_OUTPUT_DESC`
+    /// coordinates are virtualized, so enumerated rects disagreed with
+    /// physical texture pixels across runs (1707x960 vs 2560x1440 at the
+    /// same 2560x1440@59 mode) and a second-output bounds check failed
+    /// on rects from two enumerations. Per-monitor awareness makes
+    /// enumeration return physical pixels consistently. Failure (e.g.
+    /// awareness already set by the host) is not an error: enumeration
+    /// still proceeds, and any residual mismatch surfaces as the
+    /// existing explicit `Unavailable` bounds refusal, never a silent
+    /// wrong-region crop.
+    fn ensure_dpi_awareness() {
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
     }
 
     fn rotation_from(desc_rotation: DXGI_MODE_ROTATION) -> DxgiRotation {
@@ -739,6 +820,7 @@ mod win_backend {
         /// initialized (process-lifetime, idempotent); contexts created
         /// afterwards do not uninitialize another caller's COM state.
         pub fn enumerate_outputs() -> Result<Vec<OutputInfo>, CaptureError> {
+            ensure_dpi_awareness();
             let _ = ensure_com()?;
             let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }
                 .map_err(|e| CaptureError::NativeApi(format!("CreateDXGIFactory1: {e}")))?;
@@ -789,6 +871,7 @@ mod win_backend {
 
         /// Create a context for the enumerated output at `index`.
         pub fn for_output(index: usize) -> Result<Self, CaptureError> {
+            ensure_dpi_awareness();
             let com_initialized = ensure_com()?;
             let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }
                 .map_err(|e| CaptureError::NativeApi(format!("CreateDXGIFactory1: {e}")))?;
@@ -1147,6 +1230,20 @@ mod win_backend {
                 }
             }
             drop(unmap_guard);
+            // DXGI1 fix round 3: carry the raw frame metadata through
+            // so hardware harnesses can log it per acquire (mask,
+            // accumulated frames, coalescing, present time) and the
+            // mask misfire can be discriminated from outcomes alone
+            // no longer. Diagnostic only; the fail-closed mask rule
+            // above is unchanged.
+            let metadata = DxgiFrameMetadata {
+                protected_content_masked_out: frame_info.ProtectedContentMaskedOut.0,
+                accumulated_frames: frame_info.AccumulatedFrames,
+                rects_coalesced: frame_info.RectsCoalesced.0,
+                last_present_time: frame_info.LastPresentTime,
+                total_metadata_size: frame_info.TotalMetadataBufferSize,
+                pointer_shape_size: frame_info.PointerShapeBufferSize,
+            };
             Ok((
                 guard,
                 AcquiredPixels {
@@ -1154,6 +1251,7 @@ mod win_backend {
                     height,
                     row_pitch,
                     bgra,
+                    frame_info: metadata,
                 },
             ))
         }
@@ -1222,7 +1320,22 @@ mod tests {
             height,
             row_pitch: width as usize * 4,
             bgra: bytes,
+            frame_info: DxgiFrameMetadata::default(),
         }
+    }
+
+    /// Variant of `solid_frame` carrying explicit frame metadata, for
+    /// passthrough tests (fix round 3: metadata must survive the
+    /// acquire → convert → crop path unchanged).
+    fn solid_frame_with_info(
+        width: u32,
+        height: u32,
+        bgra: [u8; 4],
+        frame_info: DxgiFrameMetadata,
+    ) -> AcquiredPixels {
+        let mut pixels = solid_frame(width, height, bgra);
+        pixels.frame_info = frame_info;
+        pixels
     }
 
     #[derive(Clone)]
@@ -1610,6 +1723,7 @@ mod tests {
             height: 2,
             row_pitch: 80_000,
             bgra: vec![0u8; 160_000],
+            frame_info: DxgiFrameMetadata::default(),
         })]);
         let output = test_output();
         let outcome = capture_single_output(
@@ -1823,6 +1937,13 @@ mod tests {
     // DXGI1-005A: with a 1ms total deadline the only acquire is the
     // single final nonblocking poll — never a 1ms attempt issued
     // against a sub-millisecond remainder (the round-1 ceiling bug).
+    // DXGI1 fix round 3: deadline tests use a SCRIPTED clock, never wall
+    // time. Round 2 read `Instant::now()` and failed on Windows, where
+    // the first iteration can measure elapsed == 0 (timer granularity)
+    // and issue a 1ms attempt before the 0ms final poll — while Linux
+    // measured elapsed > 0 and passed. With elapsed pinned at 500us of
+    // a 1ms deadline, less than one whole millisecond remains, so the
+    // only legal attempt is the 0ms final poll on every platform.
     #[test]
     fn backend_receives_capped_timeout() {
         let mut backend = MockBackend::new(vec![Step::Err(DxgiAcquireError::WaitTimeout); 8]);
@@ -1832,7 +1953,10 @@ mod tests {
             total_deadline_ms: 1,
             ..DxgiLimits::default()
         };
-        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        let outcome =
+            capture_single_output_with_clock(&mut backend, &output, output.rect, &limits, || {
+                Duration::from_micros(500)
+            });
         assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
         assert_eq!(backend.timeouts, vec![0]);
         assert_eq!(backend.acquire_calls, 1);
@@ -1849,7 +1973,10 @@ mod tests {
             total_deadline_ms: 1,
             ..DxgiLimits::default()
         };
-        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        let outcome =
+            capture_single_output_with_clock(&mut backend, &output, output.rect, &limits, || {
+                Duration::from_micros(500)
+            });
         assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
         assert_eq!(backend.timeouts, vec![0]);
     }
@@ -1868,10 +1995,123 @@ mod tests {
             total_deadline_ms: 1,
             ..DxgiLimits::default()
         };
-        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        let outcome =
+            capture_single_output_with_clock(&mut backend, &output, output.rect, &limits, || {
+                Duration::from_micros(500)
+            });
         assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
         assert_eq!(backend.timeouts, vec![0]);
         assert_eq!(backend.acquire_calls, 1);
+    }
+
+    // DXGI1 fix round 3: the clock injection must NOT weaken the rule —
+    // with a full millisecond (or more) of budget remaining, the loop
+    // still issues a positive capped timeout, not a 0ms poll.
+    #[test]
+    fn full_millisecond_budget_still_issues_positive_timeout() {
+        let mut backend = MockBackend::new(vec![Step::Ok(solid_frame(4, 2, [1, 2, 3, 0]))]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 2,
+            ..DxgiLimits::default()
+        };
+        let outcome =
+            capture_single_output_with_clock(&mut backend, &output, output.rect, &limits, || {
+                Duration::ZERO
+            });
+        assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        assert_eq!(backend.timeouts, vec![2]);
+    }
+
+    // DXGI1 fix round 3: once elapsed passes the deadline, the loop
+    // stops without acquiring again — even with steps remaining.
+    #[test]
+    fn deadline_reached_stops_without_acquiring() {
+        let mut backend = MockBackend::new(vec![
+            Step::Err(DxgiAcquireError::WaitTimeout),
+            Step::Ok(solid_frame(4, 2, [1, 2, 3, 0])),
+        ]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 1,
+            ..DxgiLimits::default()
+        };
+        let mut times = VecDeque::from([Duration::ZERO, Duration::from_millis(2)]);
+        let outcome = capture_single_output_with_clock(
+            &mut backend,
+            &output,
+            output.rect,
+            &limits,
+            move || times.pop_front().unwrap_or(Duration::MAX),
+        );
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        // First iteration issued the 1ms attempt; the second saw the
+        // deadline passed and stopped without a second acquire.
+        assert_eq!(backend.timeouts, vec![1]);
+        assert_eq!(backend.acquire_calls, 1);
+    }
+
+    // DXGI1 fix round 3: frame metadata survives acquire → convert →
+    // crop unchanged, so hardware harnesses can log it per capture.
+    #[test]
+    fn frame_metadata_survives_acquire_and_crop() {
+        let info = DxgiFrameMetadata {
+            protected_content_masked_out: 0,
+            accumulated_frames: 7,
+            rects_coalesced: 1,
+            last_present_time: 123_456_789,
+            total_metadata_size: 64,
+            pointer_shape_size: 0,
+        };
+        let mut backend = MockBackend::new(vec![Step::Ok(solid_frame_with_info(
+            4,
+            2,
+            [9, 8, 7, 255],
+            info,
+        ))]);
+        let output = test_output();
+        // Crop to a sub-rect: metadata must survive cropping too.
+        let rect = RectI {
+            x: 1,
+            y: 0,
+            w: 2,
+            h: 1,
+        };
+        let outcome =
+            capture_single_output(&mut backend, &output, rect, &DxgiLimits::default());
+        match outcome {
+            DxgiCaptureOutcome::Frame(f) => {
+                assert_eq!((f.width, f.height), (2, 1));
+                assert_eq!(f.frame_info, info);
+            }
+            other => panic!("expected Frame, got {other:?}"),
+        }
+    }
+
+    // DXGI1 fix round 3: repeated capture calls on one backend show no
+    // cross-call state leakage at the pure-loop level (per-call
+    // `final_poll_done` / `recreated` reset every call). This is the
+    // Linux-testable half of the "stale state after the first capture"
+    // hypothesis class; the COM half is hardware-gated.
+    #[test]
+    fn repeated_calls_have_no_cross_call_state() {
+        let steps: Vec<Step> = (0..120)
+            .map(|_| Step::Ok(solid_frame(4, 2, [1, 2, 3, 0])))
+            .collect();
+        let mut backend = MockBackend::new(steps);
+        let output = test_output();
+        for _ in 0..120 {
+            let outcome = capture_single_output(
+                &mut backend,
+                &output,
+                output.rect,
+                &DxgiLimits::default(),
+            );
+            assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        }
+        assert_eq!(backend.acquire_calls, 120);
     }
 
     #[test]
@@ -1909,6 +2149,7 @@ mod tests {
             height: 2,
             row_pitch: 4,
             bgra: vec![0u8; 32],
+            frame_info: DxgiFrameMetadata::default(),
         })]);
         let output = test_output();
         let outcome = capture_single_output(
