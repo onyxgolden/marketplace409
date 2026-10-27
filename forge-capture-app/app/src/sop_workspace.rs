@@ -513,21 +513,31 @@ fn session_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
 /// rename swaps in a new one — a lock file that is never replaced, only
 /// ever locked/unlocked, avoids that trap entirely).
 ///
-/// Keyed by **stable file identity**, not a derived path string —
-/// C2P1-RR-005A: the prior version canonicalized only the parent
-/// directory and lowercased the caller-supplied file name, which an
-/// alternate accepted name for the same existing file (an 8.3 short
-/// name, or a hard link) can still bypass, since none of those change
-/// the *string* this scheme hashed. This version binds the lock to the
-/// session file's real `FILE_ID_INFO` (volume serial number + 128-bit
-/// file ID) whenever the file already exists — the one identity NTFS
-/// itself guarantees is the same object regardless of which accepted
-/// name reached it, immune to case, 8.3 names, and hard links alike. A
-/// session file that doesn't exist yet (first write) has nothing with
-/// real content to race over, so that case falls back to the
-/// canonicalized-parent + lowercased-name scheme as a deliberate,
-/// lower-stakes bootstrap path, not a silently-reused weak key for the
-/// real contention case.
+/// Keyed by the **session's parent directory's stable identity**, not by
+/// the session file itself and not by a derived path string. Two prior
+/// schemes were tried and both broke:
+///
+/// - C2P1-RR-005A: canonicalizing only the parent directory and
+///   lowercasing the caller-supplied file name let an alternate accepted
+///   name for the same existing file (an 8.3 short name, or a hard link)
+///   bypass the lock, since none of those change the *string* that
+///   scheme hashed.
+/// - C2P1-RR-005B: binding to the session file's own `FILE_ID_INFO`
+///   fixed that, but broke differently — this module's own
+///   `atomic_write_with_fsync` replaces that file's inode on every
+///   successful write by design, so the "stable" identity changed out
+///   from under a lock a writer was still holding, letting a late
+///   caller compute a different, uncontended key.
+///
+/// Binding to the *parent directory's* `FILE_ID_INFO` instead (see
+/// [`CrossProcessSessionLock::lock_path_for`] for the full rationale)
+/// fixes both at once: the directory's identity never changes due to
+/// this module's own writes, so there is exactly one lock namespace for
+/// a given session's location, before it's ever created, during every
+/// write, and after every rename — immune to case, 8.3 names, and hard
+/// links (all of which share the one parent directory) without any
+/// name-based logic, and with no separate "doesn't exist yet" bootstrap
+/// scheme left to diverge from it.
 #[cfg(windows)]
 struct CrossProcessSessionLock {
     file: File,
@@ -535,32 +545,64 @@ struct CrossProcessSessionLock {
 
 #[cfg(windows)]
 impl CrossProcessSessionLock {
-    fn bootstrap_lock_path(session_path: &Path) -> Result<PathBuf, String> {
-        let parent = session_path.parent().ok_or_else(|| "session path has no parent directory".to_string())?;
-        let canonical_parent =
-            fs::canonicalize(parent).map_err(|e| format!("cannot canonicalize session directory: {e}"))?;
-        let file_name = session_path.file_name().ok_or_else(|| "session path has no file name".to_string())?;
-        let normalized_name = file_name.to_string_lossy().to_lowercase();
-        Ok(canonical_parent.join(format!("{normalized_name}.bootstrap.lock")))
-    }
-
-    /// Resolves the lock file path to use for `session_path` right now:
-    /// the stable-file-identity path if the session file already exists,
-    /// otherwise the bootstrap path. Called fresh on every `acquire` —
-    /// never cached — so a session that comes into existence between two
-    /// calls correctly moves onto the strong identity-based lock on its
-    /// very next write.
+    /// The lock path for `session_path` is derived **only** from its
+    /// *parent directory's* stable NTFS identity — never from the
+    /// session file's own identity, and with no separate "bootstrap"
+    /// scheme for a not-yet-created file.
+    ///
+    /// C2P1-RR-005B: the prior version keyed the lock to the session
+    /// file's own `FILE_ID_INFO`, and this module's own
+    /// `atomic_write_with_fsync` *guarantees* that identity changes on
+    /// every successful write (temp-file-then-rename always produces a
+    /// new inode). A second caller whose `lock_path_for` call landed
+    /// after a writer's rename but before that writer dropped its guard
+    /// computed a *different* lock name and entered the critical section
+    /// concurrently with it — not a theoretical gap, but a direct
+    /// violation of this module's own documented "every overlapping
+    /// caller is strictly serialized" guarantee. There was a second,
+    /// related divergence: a waiter that resolved the bootstrap path
+    /// before the file existed could remain parked on it after another
+    /// writer created the file and moved a third caller onto the
+    /// identity path, splitting the two into separate lock namespaces.
+    ///
+    /// Binding to the **parent directory's** identity instead sidesteps
+    /// both by construction. This module never replaces, renames, or
+    /// recreates the directory a session file lives in, so that identity
+    /// is invariant across every write of the file inside it, before the
+    /// file is ever created, during a write, and after every rename —
+    /// there is only ever one lock namespace, never two that can drift
+    /// apart, so the bootstrap/identity fork this used to need is simply
+    /// removed rather than patched. A query failure on the parent
+    /// directory itself (missing, inaccessible, or a reparse point) fails
+    /// this call outright — there is no weaker fallback namespace left to
+    /// silently degrade into.
+    ///
+    /// Hard-link and case/8.3-name aliases for the same session file
+    /// still converge for free: they are, by definition, different names
+    /// *in the same directory*, so they already resolve to the same
+    /// parent and therefore the same lock, with no name-based logic
+    /// needed at all.
+    ///
+    /// Trade-off, stated plainly: this makes the lock per-directory, not
+    /// per-file. Two genuinely different session files that happened to
+    /// share one directory would now serialize against each other
+    /// unnecessarily. Every build slice so far describes one workspace
+    /// directory holding one session; if a later slice puts multiple
+    /// independent sessions in one directory, this granularity should be
+    /// revisited explicitly rather than silently assumed to still be
+    /// fine.
     fn lock_path_for(session_path: &Path) -> Result<PathBuf, String> {
         let parent = session_path.parent().ok_or_else(|| "session path has no parent directory".to_string())?;
         let canonical_parent =
             fs::canonicalize(parent).map_err(|e| format!("cannot canonicalize session directory: {e}"))?;
-
-        if let Ok(existing) = open_no_follow(session_path) {
-            if let Ok(id) = query_stable_file_id(&existing) {
-                return Ok(canonical_parent.join(format!("{}-{}.lock", id.volume_serial_hex(), id.file_id_hex())));
-            }
+        let handle = open_no_follow(parent).map_err(|e| format!("cannot open session directory: {e}"))?;
+        let meta = handle.metadata().map_err(|e| format!("cannot stat session directory: {e}"))?;
+        if is_reparse_point(&meta) {
+            return Err("session directory is a reparse point; refusing to lock through it".to_string());
         }
-        Self::bootstrap_lock_path(session_path)
+        let id = query_stable_file_id(&handle)
+            .map_err(|e| format!("cannot query session directory identity: {e}"))?;
+        Ok(canonical_parent.join(format!("{}-{}.session.lock", id.volume_serial_hex(), id.file_id_hex())))
     }
 
     /// Acquires the lock, blocking the calling thread until it's
@@ -1442,25 +1484,137 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    // --- C2P1-RR-005B: lock identity must survive the session file's own
+    // rename, and must never fork into a separate "doesn't exist yet"
+    // namespace that a concurrent caller could diverge onto. ---
+
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_uses_the_bootstrap_path_for_a_session_file_that_does_not_exist_yet() {
+    fn cross_process_lock_path_is_identical_before_and_after_the_session_file_is_created() {
         let root = temp_root();
-        let session_path = root.join("not-yet-written.json");
-        let lock_path = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_eq!(lock_path, CrossProcessSessionLock::bootstrap_lock_path(&session_path).unwrap());
+        let session_path = root.join("session.json");
+        let before = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        fs::write(&session_path, b"{}").unwrap();
+        let after = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_eq!(
+            before, after,
+            "the lock path must never change across the session file's own lifecycle - only the parent directory's identity, which creating the file does not alter, may ever determine it"
+        );
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_moves_onto_the_stable_identity_lock_once_the_session_file_is_created() {
+    fn cross_process_lock_path_is_identical_across_every_rewrite_of_the_session_file() {
         let root = temp_root();
         let session_path = root.join("session.json");
-        let bootstrap = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        let before_any_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        write_session_if_current(&session_path, 0, br#"{"revision":1}"#).unwrap();
+        let after_first_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        write_session_if_current(&session_path, 1, br#"{"revision":2}"#).unwrap();
+        let after_second_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_eq!(before_any_write, after_first_write, "creating the file via a real write must not change the lock key");
+        assert_eq!(after_first_write, after_second_write, "a second write, which replaces the inode again via rename, must not change the lock key either");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_path_for_a_not_yet_created_file_matches_a_concurrent_waiters_key() {
+        // There is now exactly one lock namespace regardless of whether
+        // the session file exists yet - this directly closes the second
+        // C2P1-RR-005B variant (a bootstrap-path waiter stranded in a
+        // different namespace than a writer that saw the file already
+        // created), since that second namespace no longer exists to
+        // diverge into.
+        let root = temp_root();
+        let session_path = root.join("session.json");
+        let key_before_creation_attempt_1 = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        let key_before_creation_attempt_2 = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_eq!(
+            key_before_creation_attempt_1, key_before_creation_attempt_2,
+            "two callers checking before the file exists must agree on the same lock, with no separate bootstrap namespace to diverge into"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_still_blocks_a_late_acquirer_that_only_sees_the_post_rename_file() {
+        // C2P1-RR-005B's exact named scenario: writer A holds the lock,
+        // performs the atomic rename, and stays paused BEFORE releasing
+        // the guard; writer B's own `lock_path_for` call happens
+        // strictly AFTER that rename - under the prior file-identity-keyed
+        // scheme, B would have computed a *different*, uncontended lock
+        // name right here. B must still block until A actually releases.
+        let root = temp_root();
+        let session_path = root.join("session.json");
         fs::write(&session_path, b"{}").unwrap();
-        let after_creation = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_ne!(bootstrap, after_creation, "once the file exists, lock_path_for must move onto the real stable-identity lock, not keep reusing the bootstrap name");
+
+        let lock_a = CrossProcessSessionLock::acquire(&session_path).unwrap();
+        let key_a_is_holding = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+
+        // Simulate "A performed its atomic rename while still holding the
+        // lock" - exactly what `write_session_if_current` does mid-critical
+        // section, before this guard is dropped.
+        atomic_write_with_fsync(&session_path, br#"{"revision":1}"#).unwrap();
+
+        let key_after_rename = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
+        assert_eq!(key_a_is_holding, key_after_rename, "the key computed after the rename must be the exact key A is holding");
+
+        let b_acquired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let b_acquired_clone = b_acquired.clone();
+        let session_path_clone = session_path.clone();
+        let handle = std::thread::spawn(move || {
+            let _b = CrossProcessSessionLock::acquire(&session_path_clone).unwrap();
+            b_acquired_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            !b_acquired.load(std::sync::atomic::Ordering::SeqCst),
+            "B must still be blocked by A's lock even though A already performed its rename"
+        );
+
+        drop(lock_a);
+        handle.join().unwrap();
+        assert!(b_acquired.load(std::sync::atomic::Ordering::SeqCst), "B must complete once A actually releases");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cross_process_lock_fails_closed_when_the_session_directory_cannot_be_queried() {
+        // No fallback namespace exists to silently degrade into anymore -
+        // a parent directory that can't be opened/queried must refuse
+        // outright, not quietly pick a weaker scheme.
+        let session_path = PathBuf::from(r"Z:\definitely-does-not-exist-anywhere-on-this-machine\session.json");
+        let err = CrossProcessSessionLock::lock_path_for(&session_path).unwrap_err();
+        assert!(!err.is_empty());
+        fs::remove_dir_all("Z:\\definitely-does-not-exist-anywhere-on-this-machine").ok();
+    }
+
+    #[test]
+    fn write_session_if_current_resolves_concurrent_first_ever_creation_to_exactly_one_winner() {
+        let root = temp_root();
+        let path = root.join("session.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let make_writer = |text: &'static [u8]| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                write_session_if_current(&path, 0, text)
+            })
+        };
+        let t1 = make_writer(br#"{"revision":1,"writer":"a"}"#);
+        let t2 = make_writer(br#"{"revision":1,"writer":"b"}"#);
+        let r1 = t1.join().unwrap();
+        let r2 = t2.join().unwrap();
+        let successes = [&r1, &r2].into_iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one of two concurrent first-ever-creation writers must win, not zero or both");
+        assert_eq!(read_current_revision(&path).unwrap(), 1);
         fs::remove_dir_all(&root).ok();
     }
 
