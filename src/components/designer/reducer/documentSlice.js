@@ -111,6 +111,8 @@ import {
 } from "@/domains/roomDesigner/designerHandles";
 import {
   categoryVisibleInMode,
+  DESIGNER_MODE_HOME,
+  designModeOf,
   modeConfig,
   normalizeDesignMode,
   setDesignMode,
@@ -157,6 +159,13 @@ import {
 import {
   validateTemaConfig,
 } from "@/domains/roomDesigner/temaTypes";
+// H0 (home parity): the optional per-level homeOverlays block. The whole
+// block is replaced in one validated, undoable step; granular add/update/
+// remove actions for individual devices/runs land with the trade slices
+// (H6–H8) on top of this same validated set path.
+import {
+  setHomeOverlays,
+} from "@/domains/roomDesigner/homeOverlays";
 
 import {
   withPipeDefaults,
@@ -320,6 +329,23 @@ export function documentSlice(state, action) {
 
     case "SET_CAMERA_VIEWS":
       return touch(state, { ...state.design, cameraViews: action.views });
+
+    // H0 (home parity): replace the current level design's optional
+    // homeOverlays block (validated + normalized) or clear it with null.
+    // Home-mode gated: an industrial design ignores the action, so the
+    // legacy industrial path is untouched. Malformed payloads fail soft
+    // (state unchanged) — an inspector control can never corrupt the
+    // document with a bad value. Layer-mask toggles are view preference,
+    // not document state, so they deliberately have no action here: they
+    // never dirty the document and never enter undo history.
+    case "SET_HOME_OVERLAYS": {
+      if (designModeOf(state.design) !== DESIGNER_MODE_HOME) return state;
+      try {
+        return touch(state, setHomeOverlays(state.design, action.overlays ?? null));
+      } catch {
+        return state;
+      }
+    }
 
     case "ADD_DECK": {
       const design = addDeck(state.design, action.a, action.b);
