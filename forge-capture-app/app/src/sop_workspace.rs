@@ -299,16 +299,42 @@ impl WorkspaceRoot {
 /// arguments actually agreed with each other. [`write_session_if_current`]
 /// now takes only a `&ConfinedPath` — there is no second root argument
 /// left to be "unrelated", because there is no second argument.
+///
+/// **C2P1-RR-004D / RR-005D fix:** also borrows the originating
+/// [`WorkspaceRoot`] itself (`'a`), not merely a path or id copied out of
+/// it. Before this, nothing here kept that `WorkspaceRoot` (and the
+/// delete-excluding handle on the root directory it holds) alive for
+/// this value's own lifetime — a caller could write
+/// `resolve_confined_path(&WorkspaceRoot::open(&root)?, "x")`, let the
+/// temporary `WorkspaceRoot` drop at the end of that statement, and only
+/// then perform the production mutation with the root's own handle
+/// already closed and nothing left to stop the root directory itself
+/// from being renamed or replaced — sharpest in the direct-leaf case,
+/// where `_ancestor_guards` is empty and there was no held handle
+/// anywhere in the capability. Holding `&'a WorkspaceRoot` fixes this
+/// doubly: Rust's borrow checker now refuses to compile that exact
+/// pattern (the temporary does not live long enough to satisfy `'a`),
+/// and whenever it does compile, the caller's own live `WorkspaceRoot`
+/// — share-mode handle included — is provably still open for as long as
+/// this `ConfinedPath` is, which is what actually stops the rename.
 #[derive(Debug)]
-pub struct ConfinedPath {
+pub struct ConfinedPath<'a> {
+    root: &'a WorkspaceRoot,
     path: PathBuf,
     lock_path: PathBuf,
     _ancestor_guards: Vec<File>,
 }
 
-impl ConfinedPath {
+impl<'a> ConfinedPath<'a> {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The live [`WorkspaceRoot`] this path was resolved against —
+    /// the same object `'a` is borrowed from, never a copy of its
+    /// canonical path or stable id.
+    pub fn workspace_root(&self) -> &WorkspaceRoot {
+        self.root
     }
 
     fn lock_path(&self) -> &Path {
@@ -361,7 +387,7 @@ impl ConfinedPath {
 /// as it stays open — empirically confirmed, not assumed — which is a
 /// capability strong enough to protect the whole span from verification
 /// through mutation, with no relative-open primitive needed at all.
-pub fn resolve_confined_path(workspace_root: &WorkspaceRoot, relative: &str) -> Result<ConfinedPath, WorkspacePathError> {
+pub fn resolve_confined_path<'a>(workspace_root: &'a WorkspaceRoot, relative: &str) -> Result<ConfinedPath<'a>, WorkspacePathError> {
     confine_relative_path(relative).map_err(WorkspacePathError::Lexical)?;
 
     let canonical_root = workspace_root.canonical_path().to_path_buf();
@@ -435,7 +461,7 @@ pub fn resolve_confined_path(workspace_root: &WorkspaceRoot, relative: &str) -> 
     }
 
     let lock_path = CrossProcessSessionLock::lock_path_for(workspace_root);
-    Ok(ConfinedPath { path: current, lock_path, _ancestor_guards: guards })
+    Ok(ConfinedPath { root: workspace_root, path: current, lock_path, _ancestor_guards: guards })
 }
 
 /// Creates (idempotently) exactly one fixed subdirectory directly under
@@ -941,6 +967,15 @@ impl CrossProcessSessionLock {
 /// [`CrossProcessSessionLock::lock_path_for`]), so this function has
 /// nothing left to trust blindly.
 ///
+/// **C2P1-RR-004D / RR-005D fix:** `confined`'s `'a` borrow of its
+/// originating [`WorkspaceRoot`] (see [`ConfinedPath`]'s own doc comment)
+/// means a caller cannot reach this function at all with the root's own
+/// handle already closed — the borrow checker requires the `WorkspaceRoot`
+/// this `ConfinedPath` came from to still be alive at this call site, so
+/// the root directory can never have been renamed or replaced out from
+/// under either the lock path or the mutation target between resolution
+/// and this write.
+///
 /// Holds [`session_lock`] (in-process) AND [`CrossProcessSessionLock`]
 /// (OS-enforced, cross-process, workspace-root-identity-keyed — the
 /// C2P1-RR-005C fix) across the entire read-current-revision / check /
@@ -959,7 +994,7 @@ impl CrossProcessSessionLock {
 /// no already-verified ancestor directory can be swapped out from under
 /// any of it while `confined` is alive.
 pub fn write_session_if_current(
-    confined: &ConfinedPath,
+    confined: &ConfinedPath<'_>,
     expected_revision: u64,
     bytes: &[u8],
 ) -> Result<(), SessionWriteError> {
@@ -1731,7 +1766,7 @@ mod tests {
     /// `root` (no intermediate component) — the common case most of
     /// these tests exercise. See `confine_session_under` below for the
     /// cross-directory/intermediate-ancestor cases.
-    fn confine_session(ws: &WorkspaceRoot, leaf_name: &str) -> ConfinedPath {
+    fn confine_session<'a>(ws: &'a WorkspaceRoot, leaf_name: &str) -> ConfinedPath<'a> {
         resolve_confined_path(ws, leaf_name).unwrap()
     }
 
@@ -1740,7 +1775,7 @@ mod tests {
     /// and RR-005C tests that specifically need a real intermediate
     /// ancestor to exercise the ancestor-guard/cross-directory-alias
     /// mechanics `confine_session` (no intermediate) can't reach.
-    fn confine_session_under(ws: &WorkspaceRoot, subdir: &str, leaf_name: &str) -> ConfinedPath {
+    fn confine_session_under<'a>(ws: &'a WorkspaceRoot, subdir: &str, leaf_name: &str) -> ConfinedPath<'a> {
         resolve_confined_path(ws, &format!("{subdir}/{leaf_name}")).unwrap()
     }
 
@@ -2141,6 +2176,184 @@ mod tests {
         // exclusive access to the canonical file, which this proves.
         assert!(hard_link_path.exists());
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- C2P1-RR-004D / RR-005D: ConfinedPath borrows the WorkspaceRoot
+    // it was resolved against, so the root (and the delete-excluding
+    // handle it holds) cannot be dropped before the confined mutation
+    // completes - neither at compile time (the exact named pattern must
+    // not compile) nor, for the direct-leaf case that previously had no
+    // ancestor guard at all, at runtime. ---
+
+    /// Compiles `source` as a standalone binary via a direct `rustc`
+    /// invocation (no cargo project, no external crates) and returns
+    /// whether it succeeded plus the compiler's stderr. Used by the two
+    /// tests below to prove a genuine compile-time property of a
+    /// lifetime-bounded borrow, not merely assert a doc comment's claim.
+    ///
+    /// This does not compile the real `sop_workspace.rs` itself: this
+    /// crate is `[[bin]]`-only (no `[lib]` target), so there is nothing
+    /// for a `///` `compile_fail` rustdoc test to run against, and
+    /// linking a throwaway crate against this one's real dependencies
+    /// (`windows`, `sha2`, `forge-capture-core`) from a bare `rustc`
+    /// call would require fragile, toolchain-specific `--extern` wiring.
+    /// Instead this isolates the *exact* lifetime shape
+    /// [`ConfinedPath`]/[`resolve_confined_path`]/[`write_session_if_current`]
+    /// rely on: a struct holding `&'a Root`, built by a function generic
+    /// over `'a`, used by a caller after the constructing statement ends,
+    /// with no `std::fs`/Windows/crate-specific code at all, so the only
+    /// thing on trial is the borrow-checker property itself.
+    fn rustc_compiles(source: &str) -> (bool, String) {
+        let dir = std::env::temp_dir().join(format!("sop-ws-compile-fail-{}-{}", std::process::id(), rand_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let src_path = dir.join("probe.rs");
+        let out_path = dir.join("probe.exe");
+        fs::write(&src_path, source).unwrap();
+        let output = std::process::Command::new("rustc")
+            .args(["--edition", "2021", "--crate-type", "bin", "-o"])
+            .arg(&out_path)
+            .arg(&src_path)
+            .output()
+            .expect("rustc must be on PATH to run this probe - it is the same toolchain `cargo test` itself uses");
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        fs::remove_dir_all(&dir).ok();
+        (output.status.success(), stderr)
+    }
+
+    /// The `ConfinedPath`-shaped borrow pattern: a `Confined<'a>` holding
+    /// `&'a Root`, where the root outlives the value borrowing it (the
+    /// caller binds `root` to a local before calling `make`, the same
+    /// shape as `let ws = WorkspaceRoot::open(&path)?; let confined =
+    /// resolve_confined_path(&ws, "x")?;`). This is the control case -
+    /// it must compile, proving the probe harness itself is sound and
+    /// the borrow isn't rejected unconditionally.
+    ///
+    /// `Root` carries an explicit (empty) `Drop` impl specifically to
+    /// mirror `WorkspaceRoot`'s own real Drop glue (closing its `File`
+    /// handle) - without it, rustc's dropck has no destructor-timing
+    /// pressure to enforce here, and a temporary `Root` would be free to
+    /// silently keep compiling past its nominal "end of statement" scope
+    /// (empirically confirmed while writing this probe: the identical
+    /// shape below compiles fine without a `Drop` impl on `Root`, which
+    /// would make this proof worthless for a type that, like the real
+    /// `WorkspaceRoot`, actually does have one).
+    const CONFINED_BORROW_SHAPE_SOUND: &str = r#"
+        struct Root { x: i32 }
+        impl Drop for Root { fn drop(&mut self) {} }
+        struct Confined<'a> { root: &'a Root }
+        fn make<'a>(root: &'a Root) -> Confined<'a> { Confined { root } }
+        fn use_it(c: &Confined) -> i32 { c.root.x }
+        fn main() {
+            let root = Root { x: 1 };
+            let confined = make(&root);
+            let _ = use_it(&confined);
+        }
+    "#;
+
+    /// The exact RR-004D counterexample's shape: `root` is a temporary
+    /// constructed inline as `make`'s argument, dropped at the end of
+    /// the `let confined = ...;` statement that binds it, strictly
+    /// before `confined` is used on the next line - the same shape as
+    /// the verdict's `let confined = resolve_confined_path(&WorkspaceRoot::open(&root)?, "session.json")?; write_session_if_current(&confined, ...)?;`.
+    /// See [`CONFINED_BORROW_SHAPE_SOUND`]'s doc comment for why `Root`
+    /// needs its `Drop` impl for this probe to mean anything.
+    const CONFINED_BORROW_SHAPE_WITH_TEMPORARY_ROOT: &str = r#"
+        struct Root { x: i32 }
+        impl Drop for Root { fn drop(&mut self) {} }
+        struct Confined<'a> { root: &'a Root }
+        fn make<'a>(root: &'a Root) -> Confined<'a> { Confined { root } }
+        fn use_it(c: &Confined) -> i32 { c.root.x }
+        fn main() {
+            let confined = make(&Root { x: 1 });
+            let _ = use_it(&confined);
+        }
+    "#;
+
+    #[test]
+    fn confined_borrow_shape_compiles_when_the_root_is_a_named_local_that_outlives_it() {
+        let (ok, stderr) = rustc_compiles(CONFINED_BORROW_SHAPE_SOUND);
+        assert!(ok, "the control case (root bound to a local before use) must compile cleanly:\n{stderr}");
+    }
+
+    #[test]
+    fn confined_borrow_shape_rejects_the_rr004d_temporary_root_pattern_at_compile_time() {
+        // This is the actual C2P1-RR-004D proof: the exact "resolve
+        // against a temporary, use the result afterward" shape the
+        // verdict named must fail to compile, not merely be discouraged
+        // by a doc comment - which is precisely what `ConfinedPath<'a>`
+        // borrowing `&'a WorkspaceRoot` (rather than a copied path or
+        // id) now guarantees for the real production types.
+        let (ok, stderr) = rustc_compiles(CONFINED_BORROW_SHAPE_WITH_TEMPORARY_ROOT);
+        assert!(!ok, "a Confined<'a> built from a temporary Root, used after that Root is dropped, must be rejected by the borrow checker");
+        assert!(
+            stderr.contains("does not live long enough") || stderr.contains("temporary value dropped while borrowed"),
+            "expected a lifetime/temporary-value diagnostic, got:\n{stderr}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn write_session_if_current_survives_an_attempted_root_rename_for_a_direct_leaf_with_no_ancestor_guards() {
+        // C2P1-RR-004D's named sharpest case: a direct-leaf confined
+        // path (no intermediate component at all, so `_ancestor_guards`
+        // is empty - there is no held ancestor handle anywhere in the
+        // capability). Before this fix, nothing here stopped the
+        // *root itself* from being deleted or replaced once the
+        // temporary WorkspaceRoot that produced `confined` had dropped.
+        // Now `confined` holds `ws` alive by borrow for its own full
+        // lifetime, so `ws`'s own delete-excluding root handle (opened
+        // in `WorkspaceRoot::open`) is provably still open here.
+        let root = temp_root();
+        let outside = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+
+        // Attempt the exact attack, but against the ROOT itself rather
+        // than an intermediate ancestor: remove it, then try to replace
+        // it with a junction to an outside directory - the same two
+        // operations the existing ancestor-swap tests already prove
+        // `open_no_follow`'s share mode defeats.
+        let remove_result = fs::remove_dir(&root);
+        assert!(remove_result.is_err(), "the workspace root itself must not be removable while its own WorkspaceRoot (kept alive by ConfinedPath's borrow) is still open");
+
+        let junction_status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &root.to_string_lossy(), &outside.to_string_lossy()])
+            .status();
+        if let Ok(status) = junction_status {
+            assert!(!status.success(), "replacing the root's own name with a junction must fail outright while its held-open handle is live");
+        }
+
+        // Resume the real production write - through write_session_if_current,
+        // with no intermediate ancestor guard protecting it, only the
+        // borrowed WorkspaceRoot's own handle.
+        let result = write_session_if_current(&confined, 0, br#"{"revision":1}"#);
+        assert!(result.is_ok(), "{:?}", result);
+        assert_eq!(fs::read(root.join("session.json")).unwrap(), br#"{"revision":1}"#);
+        assert!(fs::read_dir(&outside).unwrap().next().is_none(), "nothing must ever have been written outside the vault");
+
+        drop(confined);
+        drop(ws);
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn confined_path_workspace_root_accessor_returns_the_exact_root_it_was_resolved_against() {
+        // C2P1-RR-004D/RR-005D's "attached to the verified root object"
+        // requirement, proven at the object-identity level (not merely
+        // equal-by-value): `confined.workspace_root()` must be the same
+        // `WorkspaceRoot` instance `ws` is - the one whose handle
+        // protects the root directory and whose stable id the lock path
+        // (see `CrossProcessSessionLock::lock_path_for`) was derived
+        // from - never a copy, a re-open, or a different instance.
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        assert!(
+            std::ptr::eq(confined.workspace_root(), &ws),
+            "ConfinedPath must carry a borrow of the exact WorkspaceRoot it was resolved against, not a copy or a separately-opened instance"
+        );
         fs::remove_dir_all(&root).ok();
     }
 
