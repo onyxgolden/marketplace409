@@ -1135,6 +1135,59 @@ fn run_capture_via_worker(
     include_cursor: bool,
     delay_ms: u64,
 ) -> Result<ArtifactRefDto, String> {
+    let result = run_capture_via_worker_inner(
+        app,
+        state,
+        id,
+        session_id,
+        is_overlay_request,
+        rect,
+        include_cursor,
+        delay_ms,
+    );
+    // C639-007C: the strict reservation `open_region_overlay` installs in
+    // `active_pick` (C639-007A) has no other release point once
+    // `build_mode` has already taken `pending_overlay` — this is it.
+    // Terminal success AND terminal failure both retire this session's
+    // claim here, unconditionally and regardless of which early-return
+    // inside `run_capture_via_worker_inner` produced `result` — otherwise
+    // the next `open_region_overlay` is refused forever by this already-
+    // finished session's own leftover token. `clear_pick_if_current` only
+    // ever clears an EXACT match on `session_id` (C639-007A again), so a
+    // direct (non-overlay) request that never claimed `active_pick`, or an
+    // overlay request a cancel/newer pick already superseded, both no-op
+    // here rather than clearing something that was never (or no longer)
+    // this call's to clear.
+    if is_overlay_request {
+        clear_pick_if_current(&state.active_pick, &state.pending_overlay, session_id);
+    }
+    result
+}
+
+/// `run_capture_via_worker`'s body: the supervised worker round trip plus
+/// publication. Split out purely so the caller above can wrap EVERY exit
+/// path — including the early `?` returns below — in one unconditional
+/// claim-retire (C639-007C), without each exit having to remember it
+/// itself.
+///
+/// Final live region capture through the supervised worker (C639 Option C).
+/// Rebuilds the `CaptureArtifact` from the worker's validated reply,
+/// preserving the engine's provenance: cursor state, solid-color warnings,
+/// acquisition timestamp, and DPI scale. The worker ran the SAME
+/// `NativeRasterEngine` acquisition — including the per-piece blank
+/// hard-fail (`validate_raw_blit`) — so the hard-fail blank policy is
+/// unchanged; only the execution boundary moved.
+#[allow(clippy::too_many_arguments)]
+fn run_capture_via_worker_inner(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    id: &str,
+    session_id: u64,
+    is_overlay_request: bool,
+    rect: &Rect,
+    include_cursor: bool,
+    delay_ms: u64,
+) -> Result<ArtifactRefDto, String> {
     // Physical pixels in virtual-desktop coords. Negative origins are
     // legitimate (secondary monitor left/above the primary); the worker
     // re-validates the bounds.
@@ -1153,61 +1206,96 @@ fn run_capture_via_worker(
             is_overlay_request && !pick_still_active(*state.active_pick.lock().unwrap(), session_id)
         })
         .map_err(|e| format!("capture worker: {e}"))?;
-    // C639-007B: fence the actual PUBLICATION COMMIT — check, store and the
-    // focus decision all happen under ONE held `active_pick` lock, not a
-    // check followed by a separate store (a prior version checked, then
-    // called `store_artifact` afterward with the lock released in between;
-    // a cancel landing in that gap could still slip through and get
-    // persisted+announced). `cancel_region_pick`'s own lock use is brief
-    // (just clears the value), so a cancel that races this commit blocks
-    // for at most the duration of the disk write below — milliseconds,
-    // nothing like the old 5s cross-thread class of hazard. Once this
-    // section decides to commit, cancel arriving after is simply too late,
-    // same as it would be for any other already-persisted result.
-    let (saved, should_focus) = {
+    // C639-007B / C639-007D: authorize the publication commit under a
+    // momentary hold of `active_pick` — just long enough to check-then-
+    // decide "yes, this capture may be stored", atomically with the focus
+    // decision — but the guard is dropped at the end of THIS block,
+    // deliberately before `store_artifact` below, never held across it.
+    // `store_artifact` performs unbounded filesystem I/O (directory
+    // resolution, on-disk collision checks, a PNG write, a sidecar write);
+    // `cancel_region_pick` takes this same lock first, so holding it across
+    // that I/O would make cancellation — on whatever thread calls it,
+    // potentially the main thread — block for as long as a slow or
+    // disconnected filesystem does. Once `authorize_publication` returns
+    // `Some`, a cancel arriving after is simply too late to stop
+    // publication (same as it already is for any other already-persisted
+    // result), but it still returns immediately, because by the time the
+    // slow part runs, this lock is already free — the borrow checker
+    // guarantees it: `active` does not outlive this block, and nothing
+    // below borrows it.
+    let should_focus = {
         let active = state.active_pick.lock().unwrap();
-        if is_overlay_request && !pick_still_active(*active, session_id) {
-            return Err(
-                "region pick was cancelled or superseded before the capture could be saved"
-                    .to_string(),
-            );
+        match authorize_publication(is_overlay_request, *active, session_id) {
+            Some(should_focus) => should_focus,
+            None => {
+                return Err(
+                    "region pick was cancelled or superseded before the capture could be saved"
+                        .to_string(),
+                );
+            }
         }
-        let mut artifact = CaptureArtifact::new(
-            id.to_string(),
-            CaptureKind::Region,
-            reply.png_bytes,
-            RasterMime::Png,
-            reply.width,
-            reply.height,
-            None,
-            None,
-            reply.meta.scale,
-            CursorState {
-                captured: reply.meta.cursor_captured,
-                position_physical: reply.meta.cursor_pos,
-            },
-            reply.meta.captured_at,
-            if delay_ms > 0 { Some(delay_ms) } else { None },
-        )
-        .map_err(|e| format!("worker artifact rejected: {e}"))?;
-        artifact.warnings = reply.meta.warnings;
-        let saved = store_artifact(state, id.to_string(), artifact)?;
-        // A direct (non-overlay) capture always may bring the main window
-        // forward. An overlay-originated capture only steals focus while
-        // its own session is still the active pick — already guaranteed
-        // true here, since the check above would have returned early
-        // otherwise, but computed via the same pure predicate for clarity.
-        let should_focus = capture_focus_still_current(is_overlay_request, *active, session_id);
-        (saved, should_focus)
     };
+    let mut artifact = CaptureArtifact::new(
+        id.to_string(),
+        CaptureKind::Region,
+        reply.png_bytes,
+        RasterMime::Png,
+        reply.width,
+        reply.height,
+        None,
+        None,
+        reply.meta.scale,
+        CursorState {
+            captured: reply.meta.cursor_captured,
+            position_physical: reply.meta.cursor_pos,
+        },
+        reply.meta.captured_at,
+        if delay_ms > 0 { Some(delay_ms) } else { None },
+    )
+    .map_err(|e| format!("worker artifact rejected: {e}"))?;
+    artifact.warnings = reply.meta.warnings;
+    let saved = store_artifact(state, id.to_string(), artifact)?;
     // Notify the main window (region captures originate from the overlay
-    // window, which closed itself before acquisition). Outside the lock:
-    // purely informational once the commit above has already happened.
+    // window, which closed itself before acquisition). Outside the lock,
+    // which is long gone by now: purely informational, decided above while
+    // the commit was still authorized.
     if should_focus {
         focus_capture_window(app);
     }
     let _ = app.emit("capture-saved", saved.clone());
     Ok(saved)
+}
+
+/// C639-007B/D: the publication-authorization decision, pulled out of
+/// `run_capture_via_worker_inner` so it is unit-testable without a live
+/// supervisor reply or `AppHandle` — mirrors `capture_focus_still_current`'s
+/// shape. Takes the ALREADY-READ `active_pick` value, not the lock itself,
+/// so nothing about this function's own signature can tempt a caller into
+/// holding the lock across anything slower than the one comparison it
+/// represents (the real hazard, C639-007D, was holding it across the disk
+/// write that follows in the real caller).
+///
+/// Returns `None` when an overlay-originated capture was cancelled or
+/// superseded and must not be published. Returns `Some(should_focus)` when
+/// publication is authorized, carrying whether the result may also steal
+/// focus back to the main window — a direct (non-overlay) capture always
+/// may; an overlay-originated one only while this is still the call that
+/// was just authorized (so always true here, but computed via the same
+/// pure predicate as `capture_focus_still_current` for one source of
+/// truth).
+fn authorize_publication(
+    is_overlay_request: bool,
+    active_pick: Option<u64>,
+    session_id: u64,
+) -> Option<bool> {
+    if is_overlay_request && !pick_still_active(active_pick, session_id) {
+        return None;
+    }
+    Some(capture_focus_still_current(
+        is_overlay_request,
+        active_pick,
+        session_id,
+    ))
 }
 
 #[tauri::command]
@@ -2167,7 +2255,19 @@ fn open_region_overlay(
         // us pre-resolution, since claiming above refuses rather than
         // overwrites), so clearing unconditionally here is always exactly
         // our own claim — never someone else's.
-        clear_pick_if_current(&state, session_id);
+        clear_pick_if_current(&state.active_pick, &state.pending_overlay, session_id);
+        // C639-001C: `result` being an error does not prove the
+        // main-thread closure dispatched above never finished building
+        // (and focusing) the window — a timeout in `run_on_main_thread_sync`
+        // means the CALLER gave up after 5s, not that the closure, already
+        // queued on the main thread, stopped running. If it finishes just
+        // after this point, its own post-focus check (inside the closure)
+        // can lose a narrow race against this exact cleanup. Closing
+        // whatever "overlay" window exists right now is always safe: the
+        // strict reservation (C639-007A) means nothing but THIS session
+        // could have built one, and if the closure's own check already
+        // closed it (or no window was ever built), this is a no-op.
+        let _ = close_overlay_window(app);
     }
     result
 }
@@ -2282,6 +2382,24 @@ fn open_region_overlay_claimed(
         // Esc / right-click cancel lives in the overlay page, so the
         // window must own keyboard focus for the escape hatches to work.
         let _ = window.set_focus();
+        // C639-001C: a third check, after focusing. The caller's own wait
+        // for this closure is bounded (`run_on_main_thread_sync`'s 5s
+        // `recv_timeout`), but this closure is not — once dispatched, it
+        // runs to completion on the main thread regardless of whether the
+        // caller already gave up. If `.build()` finished just before the
+        // caller's timeout, the check above passed, and then `set_focus()`
+        // (or just the time already spent) crosses that timeout, the
+        // caller returns an error and clears the token — leaving this
+        // closure the only thing that still knows a window exists. Catch
+        // that here: close the window THIS closure just built instead of
+        // leaving it orphaned with no backing state.
+        if !pick_still_active(*state.active_pick.lock().unwrap(), session_id) {
+            let _ = window.close();
+            return Err(
+                "region pick was cancelled or superseded while the window was focusing"
+                    .to_string(),
+            );
+        }
         Ok(())
     })??;
     spawn_overlay_watchdog(app.clone(), session_id);
@@ -2290,19 +2408,32 @@ fn open_region_overlay_claimed(
 
 /// Clear `session_id`'s claim on `active_pick`/`pending_overlay` — but only
 /// if it is still exactly this session's claim (a no-op if a cancel already
-/// cleared it first). Used on every failure path of a claimed pick attempt
-/// (backdrop error, cancelled/superseded mid-flight, main-thread dispatch
-/// timeout, window-build failure). Safe to call unconditionally on failure
-/// because claiming (above) refuses rather than overwrites (C639-007A): a
-/// failed attempt can only ever be clearing its OWN claim, never one it
-/// displaced from someone else.
-fn clear_pick_if_current(state: &State<AppState>, session_id: u64) {
-    let mut active = state.active_pick.lock().unwrap();
+/// cleared it first, or if a newer session now owns the slot). Used on
+/// every exit path of a claimed pick attempt: the failure paths inside
+/// `open_region_overlay` (backdrop error, cancelled/superseded mid-flight,
+/// main-thread dispatch timeout, window-build failure), AND — C639-007C —
+/// both the success and failure paths of `run_capture_via_worker`, which is
+/// the strict reservation's (C639-007A) only release point once
+/// `build_mode` has already taken `pending_overlay`. Safe to call
+/// unconditionally in all of these because claiming only ever refuses
+/// rather than overwrites: a call here can only ever be clearing its OWN
+/// claim, never one it displaced from someone else.
+///
+/// Takes the raw mutexes rather than `&State<AppState>` so this — the exact
+/// production retire logic, not a reimplementation of it — stays
+/// unit-testable without a live Tauri app (same reasoning as
+/// `pick_still_active` et al. above).
+fn clear_pick_if_current(
+    active_pick: &Mutex<Option<u64>>,
+    pending_overlay: &Mutex<Option<OverlayContext>>,
+    session_id: u64,
+) {
+    let mut active = active_pick.lock().unwrap();
     if *active == Some(session_id) {
         *active = None;
     }
     drop(active);
-    let mut pending = state.pending_overlay.lock().unwrap();
+    let mut pending = pending_overlay.lock().unwrap();
     if pending.as_ref().map(|c| c.session_id) == Some(session_id) {
         *pending = None;
     }
@@ -4936,6 +5067,86 @@ mod region_picker_tests {
             !capture_focus_still_current(true, Some(6), 5),
             "a newer pick must not have its focus stolen by an older capture's result"
         );
+    }
+
+    #[test]
+    fn authorize_publication_rejects_a_cancelled_or_superseded_overlay_pick() {
+        // C639-007D: this is the ONE check-then-decide point allowed to
+        // read `active_pick` before publication; everything after it
+        // (the artifact build, the disk write) must run with no lock held.
+        assert_eq!(
+            authorize_publication(true, None, 5),
+            None,
+            "a cancel must block publication, not just the focus-steal"
+        );
+        assert_eq!(
+            authorize_publication(true, Some(6), 5),
+            None,
+            "a newer pick's claim must block an older capture's publication too"
+        );
+    }
+
+    #[test]
+    fn authorize_publication_allows_a_still_active_overlay_pick_and_focuses() {
+        assert_eq!(authorize_publication(true, Some(5), 5), Some(true));
+    }
+
+    #[test]
+    fn authorize_publication_always_allows_direct_requests() {
+        // C639-004/007: a direct (non-overlay) request never claimed
+        // `active_pick`, so whatever it currently holds (even an unrelated
+        // live overlay pick's session) must never block or focus-gate it.
+        assert_eq!(authorize_publication(false, None, 5), Some(true));
+        assert_eq!(authorize_publication(false, Some(999), 5), Some(true));
+    }
+
+    #[test]
+    fn successful_pick_retires_its_claim_so_the_next_open_is_admitted() {
+        // C639-007C: `open_region_overlay`'s strict reservation (C639-007A)
+        // refuses a second open outright whenever `active_pick.is_some()`.
+        // `run_capture_via_worker`'s terminal-success cleanup must retire
+        // its own claim through the exact same `clear_pick_if_current` the
+        // failure paths already used, or the next open is refused forever
+        // by this already-finished session's own leftover token.
+        let active_pick = Mutex::new(Some(42u64));
+        let pending_overlay = Mutex::new(None::<OverlayContext>); // build_mode already took it
+        clear_pick_if_current(&active_pick, &pending_overlay, 42);
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            None,
+            "a completed pick must release its claim so the next open_region_overlay is admitted"
+        );
+    }
+
+    #[test]
+    fn retiring_a_finished_pick_never_clears_a_newer_claim() {
+        // The same safety property `pick_still_active` enforces elsewhere:
+        // a stale retire (e.g. a slow worker's cleanup finally running
+        // after a newer pick has already started) must never clear
+        // something it didn't claim.
+        let active_pick = Mutex::new(Some(2u64)); // session 2 is the current, newer claim
+        let pending_overlay = Mutex::new(None::<OverlayContext>);
+        clear_pick_if_current(&active_pick, &pending_overlay, 1); // a late retire from session 1
+        assert_eq!(
+            *active_pick.lock().unwrap(),
+            Some(2),
+            "retiring an old session's claim must not clear a newer session's claim"
+        );
+    }
+
+    #[test]
+    fn retiring_a_pick_also_clears_a_still_pending_overlay_context() {
+        // Covers the failure-path shape (unlike the success path, where
+        // `build_mode` already took `pending_overlay` before this ever
+        // runs): a backdrop/dispatch/build failure must retire BOTH the
+        // `active_pick` token and any `pending_overlay` context still
+        // carrying the same session id.
+        let active_pick = Mutex::new(Some(9u64));
+        let pending_overlay = Mutex::new(Some(overlay_ctx_with_backdrop(None)));
+        pending_overlay.lock().unwrap().as_mut().unwrap().session_id = 9;
+        clear_pick_if_current(&active_pick, &pending_overlay, 9);
+        assert_eq!(*active_pick.lock().unwrap(), None);
+        assert!(pending_overlay.lock().unwrap().is_none());
     }
 
     #[test]
