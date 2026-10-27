@@ -12,9 +12,11 @@
 //   operationId (idempotency key), targetRepo, targetPath (allowlisted,
 //   canonical, repo-relative), expectedPriorBlob, payload (detached
 //   snapshot owned by the entry, never the caller's object), payloadHash
-//   (SHA-256 of the canonical payload), sourceTaskId (optional binding
-//   to the controller task this intent serves, for stale-intent
-//   cancellation), state, lease, attempts, deliveryReceipt, createdAt.
+//   (SHA-256 of the canonical payload), sourceTaskId (binding to the
+//   controller task this intent serves, when task-derived),
+//   sourceTaskRevision (the task's applicability token at bind time,
+//   required for task-derived intents), state, lease, attempts,
+//   deliveryReceipt, createdAt.
 // States: PENDING, CLAIMED, DELIVERED, CANCELLED. There is no FAILED
 // state: a refused delivery stays CLAIMED with lastError set, so nothing
 // is ever silently dropped or retried blindly. CANCELLED marks an unsent
@@ -27,6 +29,13 @@
 // schema; destinations come from a host-injected allowlist with canonical
 // paths; intents bound to answered tasks are cancelled while unsent and
 // gated at claim/delivery while in flight.
+//
+// Fix round 2 (TBP3-006A): the task binding is complete and enforced, not
+// optional. A task-derived intent must carry source task identity PLUS a
+// revision/applicability token, both are part of replay identity, and
+// claim/delivery require current applicability against the authoritative
+// task collection with no nullable bypass. cancelOutboxForTask remains a
+// convenience for eager cancellation; correctness never depends on it.
 
 import { createHash } from "node:crypto";
 import { CODES, fail, P3_CODES } from "./errors.mjs";
@@ -37,6 +46,22 @@ export const OUTBOX_LEASE_MS = 15 * 60 * 1000;
 export const DEFAULT_ALLOWED_PATH_PREFIXES = ["results/", "commands/"];
 export const DEFAULT_ALLOWED_REPOS = ["onyxgolden/forge-ai-drop"];
 const GIT_RESPONSE_KEYS = ["repo", "priorBlob", "newBlob", "head", "path"];
+const TERMINAL_TASK_STATUSES = new Set(["DONE", "ESCALATED"]);
+
+// The applicability token bound to a task-derived intent: the task's
+// monotonic fencing epoch plus its controller snapshot revision (fix
+// round 2, TBP3-006A). Both are controller-produced revision counters:
+// reassignment bumps the epoch, a snapshot advance bumps the revision,
+// and terminal status is checked separately. Goal/scope are never
+// mutated by controller transitions, so these two counters cover every
+// meaning change the controller can produce. Callers bind with this
+// helper at enqueue time; claim/delivery recompute it from the
+// authoritative task record and require equality.
+export function taskApplicabilityToken(task) {
+  const epoch = Number.isInteger(task?.assignmentEpoch) ? task.assignmentEpoch : 0;
+  const snapshot = Number.isInteger(task?.snapshotRevision) ? task.snapshotRevision : 0;
+  return `${epoch}:${snapshot}`;
+}
 
 export function canonicalPayloadHash(payload) {
   return createHash("sha256").update(stableStringify(payload), "utf8").digest("hex");
@@ -86,17 +111,48 @@ export function enqueueOutbox(
   }
   const payloadSnapshot = clonePayload(payload);
   const payloadHash = canonicalPayloadHash(payloadSnapshot);
+  // The task binding is computed BEFORE the replay check, so it is part
+  // of replay identity (fix round 2, TBP3-006A): a replay may not
+  // rebind an operation ID to a different source task or revision.
+  // An explicit sourceTaskId wins; otherwise a taskId carried by the
+  // payload is inferred, as in fix round 1.
+  const sourceTaskId =
+    typeof entry.sourceTaskId === "string" && entry.sourceTaskId.length > 0
+      ? entry.sourceTaskId
+      : payloadSnapshot !== null && typeof payloadSnapshot === "object" && !Array.isArray(payloadSnapshot) && typeof payloadSnapshot.taskId === "string"
+        ? payloadSnapshot.taskId
+        : null;
+  const sourceTaskRevision =
+    typeof entry.sourceTaskRevision === "string" && entry.sourceTaskRevision.length > 0
+      ? entry.sourceTaskRevision
+      : Number.isInteger(entry.sourceTaskRevision)
+        ? String(entry.sourceTaskRevision)
+        : null;
+  // A task-derived intent with an incomplete binding is refused at
+  // admission, never admitted with a null binding that later claims
+  // could skip past. Non-task-derived intents (no source task at all)
+  // need no revision.
+  if (sourceTaskId && sourceTaskRevision === null) {
+    fail(
+      P3_CODES.INVALID_OUTBOX_ENTRY,
+      `Outbox entry ${operationId} is task-derived (source task ${sourceTaskId}) and requires sourceTaskRevision`,
+      { operationId, sourceTaskId },
+    );
+  }
   const existing = (entries || []).find((e) => e.operationId === operationId);
   if (existing) {
-    // Replay binds the ENTIRE immutable write intent (TBP3-002): a
-    // changed destination, prior-state expectation, or payload is a
-    // conflicting replay, never a silent receipt for a different intent.
-    // Only an exact replay returns the existing entry.
+    // Replay binds the ENTIRE immutable write intent (TBP3-002) plus
+    // the task binding (TBP3-006A): a changed destination, prior-state
+    // expectation, payload, source task, or revision is a conflicting
+    // replay, never a silent receipt for a different intent. Only an
+    // exact replay returns the existing entry.
     const diffs = [];
     if (existing.targetRepo !== targetRepo) diffs.push("targetRepo");
     if (existing.targetPath !== targetPath) diffs.push("targetPath");
     if (existing.expectedPriorBlob !== expectedPriorBlob) diffs.push("expectedPriorBlob");
     if (existing.payloadHash !== payloadHash) diffs.push("payload");
+    if (existing.sourceTaskId !== sourceTaskId) diffs.push("sourceTaskId");
+    if ((existing.sourceTaskRevision ?? null) !== sourceTaskRevision) diffs.push("sourceTaskRevision");
     if (diffs.length > 0) {
       fail(
         CODES.CONFLICTING_REPLAY,
@@ -106,12 +162,6 @@ export function enqueueOutbox(
     }
     return { entries, entry: existing, deduped: true };
   }
-  const sourceTaskId =
-    typeof entry.sourceTaskId === "string" && entry.sourceTaskId.length > 0
-      ? entry.sourceTaskId
-      : payloadSnapshot !== null && typeof payloadSnapshot === "object" && !Array.isArray(payloadSnapshot) && typeof payloadSnapshot.taskId === "string"
-        ? payloadSnapshot.taskId
-        : null;
   const next = {
     operationId,
     targetRepo,
@@ -120,6 +170,7 @@ export function enqueueOutbox(
     payload: payloadSnapshot,
     payloadHash,
     sourceTaskId,
+    sourceTaskRevision,
     state: "PENDING",
     lease: null,
     attempts: 0,
@@ -153,26 +204,52 @@ function checkPayloadConsistency(entry) {
   }
 }
 
-// An intent bound to a terminal (answered) task is stale: it must never
-// be leased for delivery on applicability grounds (TBP3-006). Callers
-// that know task state pass `tasks`; callers that don't use
-// cancelOutboxForTask after answering instead.
+// A task-derived intent must prove current applicability at claim and
+// delivery (fix round 2, TBP3-006A). There is NO nullable bypass: a
+// task-derived entry claimed or delivered without the authoritative
+// task collection is refused, a source task missing from that
+// collection is refused, a terminal source task is stale, and a
+// revision-token mismatch (reassignment or snapshot advance since
+// binding) is stale. Non-task-derived intents (no source task) have
+// nothing to check. cancelOutboxForTask remains a convenience for eager
+// cancellation; correctness never depends on a caller invoking it.
 function checkIntentApplicability(entry, tasks) {
-  if (!tasks || !entry.sourceTaskId) return;
+  if (!entry.sourceTaskId) return;
+  if (!tasks) {
+    fail(
+      P3_CODES.APPLICABILITY_REQUIRED,
+      `Outbox operation ${entry.operationId} is task-derived (source task ${entry.sourceTaskId}) and requires the current task collection at claim/delivery`,
+      { operationId: entry.operationId, sourceTaskId: entry.sourceTaskId },
+    );
+  }
   const task = tasks.find((t) => t.id === entry.sourceTaskId);
-  if (task && (task.status === "DONE" || task.status === "ESCALATED")) {
+  if (!task) {
+    fail(
+      P3_CODES.UNKNOWN_TASK,
+      `Outbox operation ${entry.operationId} source task ${entry.sourceTaskId} is not in the supplied task collection`,
+      { operationId: entry.operationId, sourceTaskId: entry.sourceTaskId },
+    );
+  }
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
     fail(P3_CODES.STALE_INTENT, `Outbox operation ${entry.operationId} is stale: source task ${entry.sourceTaskId} is ${task.status}`, {
       operationId: entry.operationId,
       sourceTaskId: entry.sourceTaskId,
     });
   }
+  if (entry.sourceTaskRevision == null || taskApplicabilityToken(task) !== entry.sourceTaskRevision) {
+    fail(
+      P3_CODES.STALE_INTENT,
+      `Outbox operation ${entry.operationId} is stale: source task ${entry.sourceTaskId} revision mismatch (bound ${entry.sourceTaskRevision ?? "none"}, current ${taskApplicabilityToken(task)})`,
+      { operationId: entry.operationId, sourceTaskId: entry.sourceTaskId },
+    );
+  }
 }
 
-// Cancel every still-unsent (PENDING) intent bound to a task — the
-// answer-before-claim boundary (TBP3-006). In-flight (CLAIMED) intents
-// are left alone; delivery gating (recordDelivery with tasks) refuses
-// them on stale applicability instead. DELIVERED and already-CANCELLED
-// entries are untouched.
+// Cancel every still-unsent (PENDING) intent bound to a task — an eager
+// convenience, not a safety boundary (fix round 2, TBP3-006A).
+// In-flight (CLAIMED) intents are left alone; claim/delivery gating
+// refuses them on stale applicability instead. DELIVERED and
+// already-CANCELLED entries are untouched.
 export function cancelOutboxForTask(entries, taskId, now) {
   utcIsoToMs(now, "now");
   const cancelled = [];
@@ -200,8 +277,10 @@ export function claimOutbox({ entries, operationId, owner, now, tasks = null }) 
   if (entry.state === "DELIVERED") {
     return { entries, entry, receipt: entry.deliveryReceipt, alreadyDelivered: true };
   }
-  checkPayloadConsistency(entry);
+  // Applicability is checked before lease handling: a stale intent must
+  // never advance, regardless of lease state (fix round 2, TBP3-006A).
   checkIntentApplicability(entry, tasks);
+  checkPayloadConsistency(entry);
   const nowMs = utcIsoToMs(now, "now");
   assertNonEmptyString(owner, "outbox.claim owner");
   if (entry.lease && nowMs < utcIsoToMs(entry.lease.expiresAt, `outbox lease for ${operationId}`)) {
@@ -244,6 +323,9 @@ export function recordDelivery({ entries, operationId, owner, generation, gitRes
   if (entry.state === "DELIVERED") {
     return { entries, entry, receipt: entry.deliveryReceipt, alreadyDelivered: true };
   }
+  // Applicability precedes lease handling: a stale intent is refused as
+  // stale even when the lease is also wrong (fix round 2, TBP3-006A).
+  checkIntentApplicability(entry, tasks);
   if (entry.state !== "CLAIMED" || !entry.lease || entry.lease.owner !== owner || entry.lease.generation !== generation) {
     fail(P3_CODES.STALE_LEASE, `Outbox claim for ${operationId} does not match owner/generation`, {
       operationId,
@@ -256,7 +338,6 @@ export function recordDelivery({ entries, operationId, owner, generation, gitRes
     fail(P3_CODES.LEASE_EXPIRED, `Outbox lease for ${operationId} expired`, { operationId });
   }
   checkPayloadConsistency(entry);
-  checkIntentApplicability(entry, tasks);
   const response = gitResponse || {};
   for (const key of Object.keys(response)) {
     if (!GIT_RESPONSE_KEYS.includes(key)) {

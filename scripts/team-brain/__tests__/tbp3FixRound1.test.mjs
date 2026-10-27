@@ -28,6 +28,7 @@ import {
   claimOutbox,
   enqueueOutbox,
   recordDelivery,
+  taskApplicabilityToken,
 } from "../orchestrator/outbox.mjs";
 import { exportReceipt, exportStatus } from "../orchestrator/exporters.mjs";
 
@@ -291,9 +292,15 @@ describe("TBP3-005: conflicting page rows conflict, never first-win", () => {
 });
 
 describe("TBP3-006: answering cancels unsent intents, gates in-flight ones", () => {
+  // Fix round 2 (TBP3-006A): task-derived intents bind the current
+  // applicability token at admission; the tests below bind it from the
+  // assigned task record, as production callers must.
   it("answer-before-claim: cancelled intent cannot be claimed", () => {
     const a = assign([task("t", { filedAt: "2026-10-27T06:00:00Z" })]);
-    const pending = enqueueOutbox([], outboxEntry({ payload: { taskId: "t", kind: "REPING_DUE" } }));
+    const pending = enqueueOutbox([], outboxEntry({
+      payload: { taskId: "t", kind: "REPING_DUE" },
+      sourceTaskRevision: taskApplicabilityToken(a.tasks[0]),
+    }));
     const answered = submitResult({
       tasks: a.tasks, taskId: "t", agentId: "a", generation: 1, now: NOW,
       result: doneResult(),
@@ -308,7 +315,11 @@ describe("TBP3-006: answering cancels unsent intents, gates in-flight ones", () 
 
   it("answer-during-claim: delivery is gated on current applicability", () => {
     const a = assign([task("t")]);
-    const c = claimedEntry({ payload: { taskId: "t", kind: "REPING_DUE" } });
+    const pending = enqueueOutbox([], outboxEntry({
+      payload: { taskId: "t", kind: "REPING_DUE" },
+      sourceTaskRevision: taskApplicabilityToken(a.tasks[0]),
+    }));
+    const c = claimOutbox({ entries: pending.entries, operationId: "op", owner: "a", now: NOW, tasks: a.tasks });
     const answered = submitResult({
       tasks: a.tasks, taskId: "t", agentId: "a", generation: 1, now: NOW,
       result: doneResult(),
@@ -327,7 +338,10 @@ describe("TBP3-006: answering cancels unsent intents, gates in-flight ones", () 
 
   it("claim with live task state still works", () => {
     const a = assign([task("t")]);
-    const pending = enqueueOutbox([], outboxEntry({ payload: { taskId: "t", kind: "REPING_DUE" } }));
+    const pending = enqueueOutbox([], outboxEntry({
+      payload: { taskId: "t", kind: "REPING_DUE" },
+      sourceTaskRevision: taskApplicabilityToken(a.tasks[0]),
+    }));
     const claim = claimOutbox({ entries: pending.entries, operationId: "op", owner: "sender", now: NOW, tasks: a.tasks });
     expect(claim.entry.state).toBe("CLAIMED");
   });

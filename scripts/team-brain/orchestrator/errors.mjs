@@ -35,6 +35,9 @@ export const P3_CODES = {
   PAYLOAD_DRIFT: "PAYLOAD_DRIFT",
   INTENT_CANCELLED: "INTENT_CANCELLED",
   STALE_INTENT: "STALE_INTENT",
+  // Fix round 2 (TBP3-006A): a task-derived intent claimed or delivered
+  // without the authoritative task collection.
+  APPLICABILITY_REQUIRED: "APPLICABILITY_REQUIRED",
   // Fix round 1 (TBP3-004/010)
   TIMEOUT_LIMIT: "TIMEOUT_LIMIT",
   NOT_WAITING: "NOT_WAITING",
