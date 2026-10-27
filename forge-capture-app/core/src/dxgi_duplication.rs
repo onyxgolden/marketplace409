@@ -982,7 +982,7 @@ mod win_backend {
         diagnostic_for_acquire_error, protected_from_frame_info, validate_limits, AcquiredPixels,
         DxgiAcquireClassification, DxgiAcquireDiagnostic, DxgiAcquireProvenance,
         DxgiAcquireStage, DxgiAcquireError, DxgiCaptureOutcome, DxgiDiagnosticLog, DxgiFrameMetadata,
-        DxgiLimits, DxgiRotation, FrameGuard, OutputInfo,
+        DxgiLimits, DxgiRotation, E_INVALIDARG, FrameGuard, OutputInfo,
     };
     use crate::coords::RectI;
     use crate::result::CaptureError;
