@@ -50,4 +50,12 @@ features = [
 x11rb = { version = "0.13", features = ["xfixes", "xinerama"] }
 arboard = "3"
 
+[features]
+# DXGI fault-injection seam (fix round 4, verdict DXGI1-006B). OFF by
+# default: the injection entrypoint does not exist in normal release
+# artifacts. Harnesses enable it explicitly to prove the internal
+# recovery path with labeled injected evidence. Never enable this in a
+# shipped configuration.
+dxgi-fault-injection = []
+
 [dev-dependencies]

@@ -43,7 +43,9 @@
 //!   (DXGI1-004A). Genuine hardware device-removal recovery evidence is
 //!   still unproven (a mode-switch ACCESS_LOST is not DEVICE_REMOVED);
 //!   the production-shaped fault-injection seam
-//!   ([`DxgiCaptureContext::inject_acquire_error`], Windows only) proves
+//!   ([`DxgiCaptureContext::inject_acquire_error`], Windows only,
+//!   confined per verdict DXGI1-006B: `dxgi-fault-injection` feature,
+//!   off by default, bounded queue, fixed injectable variants) proves
 //!   the internal recovery path with labeled injected evidence instead
 //!   of destabilizing the GPU.
 //! - `WAIT_TIMEOUT`: "no new desktop update yet," not failure. Retried until
@@ -342,6 +344,30 @@ impl DxgiDiagnosticLog {
 
     pub fn len(&self) -> usize {
         self.records.len()
+    }
+}
+
+/// Fixed set of injectable acquisition faults (fix round 4, verdict
+/// DXGI1-006B). Only these variants can be injected — no string-bearing
+/// or arbitrary errors — and only when the `dxgi-fault-injection`
+/// Cargo feature is enabled (off by default, absent from release
+/// artifacts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "dxgi-fault-injection")]
+pub enum DxgiInjectableFault {
+    DeviceRemoved,
+    AccessLost,
+    Protected,
+}
+
+#[cfg(feature = "dxgi-fault-injection")]
+impl DxgiInjectableFault {
+    pub(crate) fn as_error(self) -> DxgiAcquireError {
+        match self {
+            DxgiInjectableFault::DeviceRemoved => DxgiAcquireError::DeviceRemoved,
+            DxgiInjectableFault::AccessLost => DxgiAcquireError::AccessLost,
+            DxgiInjectableFault::Protected => DxgiAcquireError::Protected,
+        }
     }
 }
 
@@ -1084,6 +1110,10 @@ mod win_backend {
     /// long sustained run cannot grow memory without bound.
     const MAX_DIAGNOSTICS: usize = 1024;
 
+    /// Cap for the fault-injection queue (verdict DXGI1-006B): bounded,
+    /// oldest drops when full, so no unbounded synthetic-error backlog.
+    const MAX_INJECT_QUEUE: usize = 16;
+
     /// Worker-local DXGI context, bound to one output (DXGI-1).
     ///
     /// Created lazily by the supervised worker and reused on that worker
@@ -1113,8 +1143,9 @@ mod win_backend {
         session_generation: u64,
         /// This context's id from [`NEXT_CONTEXT_ID`].
         context_id: u64,
-        /// Fault-injection queue (harness only, see
+        /// Fault-injection queue (feature-gated, see
         /// [`DxgiCaptureContext::inject_acquire_error`]).
+        #[cfg(feature = "dxgi-fault-injection")]
         inject_queue: std::collections::VecDeque<DxgiAcquireError>,
     }
 
@@ -1253,6 +1284,7 @@ mod win_backend {
                 session_generation: 0,
                 context_id: NEXT_CONTEXT_ID
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                #[cfg(feature = "dxgi-fault-injection")]
                 inject_queue: std::collections::VecDeque::new(),
             };
             ctx.recreate_duplication()?;
@@ -1284,21 +1316,28 @@ mod win_backend {
             self.lock_log().take()
         }
 
-        /// Fault-injection seam (fix round 4, 004A evidence).
+        /// Fault-injection seam (fix round 4, 004A evidence; confined
+        /// per verdict DXGI1-006B).
         ///
-        /// Queues one synthetic acquisition error for the next
-        /// `acquire_frame_raw` call, recorded with
-        /// [`DxgiAcquireProvenance::Injected`]. Harness use only: it is
-        /// never enabled by default, never activated by environment or
-        /// configuration, and every record it produces must be labeled
-        /// "injected" in reports — injected evidence never proves real
-        /// hardware device removal. A queued DeviceRemoved error drives
-        /// the production recovery path (one recreate, then a terminal
-        /// second failure when queued twice), which is exactly the
-        /// evidence the round-3 verdict asks for, without deliberately
-        /// destabilizing the GPU.
-        pub fn inject_acquire_error(&mut self, err: DxgiAcquireError) {
-            self.inject_queue.push_back(err);
+        /// Only available with the `dxgi-fault-injection` Cargo feature,
+        /// which is OFF by default — this entrypoint does not exist in
+        /// normal release artifacts. The queue is bounded (16, oldest
+        /// drops when full) and the injectable set is fixed
+        /// ([`DxgiInjectableFault`]: no string-bearing or arbitrary
+        /// errors). Harness use only: it is never activated by
+        /// environment or configuration, and every record it produces
+        /// must be labeled "injected" in reports — injected evidence
+        /// never proves real hardware device removal. A queued
+        /// DeviceRemoved error drives the production recovery path (one
+        /// recreate, then a terminal second failure when queued twice),
+        /// which is exactly the evidence the round-3 verdict asks for,
+        /// without deliberately destabilizing the GPU.
+        #[cfg(feature = "dxgi-fault-injection")]
+        pub fn inject_acquire_error(&mut self, fault: super::DxgiInjectableFault) {
+            if self.inject_queue.len() >= MAX_INJECT_QUEUE {
+                self.inject_queue.pop_front();
+            }
+            self.inject_queue.push_back(fault.as_error());
         }
 
         /// DXGI1-004A: rebuild the FULL adapter-bound resource set after
@@ -1500,8 +1539,10 @@ mod win_backend {
                 release_hresult: None,
                 released: false,
             };
-            // Fault-injection seam: a queued synthetic error short-circuits
-            // the real AcquireNextFrame and is recorded as Injected.
+            // Fault-injection seam (feature-gated, verdict DXGI1-006B):
+            // a queued synthetic error short-circuits the real
+            // AcquireNextFrame and is recorded as Injected.
+            #[cfg(feature = "dxgi-fault-injection")]
             if let Some(err) = self.inject_queue.pop_front() {
                 let (stage, classification, hr) = diagnostic_for_acquire_error(&err);
                 self.push_diagnostic(DxgiAcquireDiagnostic {
@@ -3094,6 +3135,16 @@ mod tests {
             diagnostic_for_acquire_error(&DxgiAcquireError::Other("x".into())),
             (S::AcquireFailed, C::AcquireError, None)
         );
+    }
+
+    // DXGI1 fix round 4, verdict DXGI1-006B: the injection entrypoint
+    // must not exist in the default (release) configuration. This test
+    // trips if the suite is ever run with the feature enabled: it
+    // proves the default configuration lacks the seam. Harnesses
+    // enable the feature explicitly and separately.
+    #[test]
+    fn injection_feature_off_by_default() {
+        assert!(!cfg!(feature = "dxgi-fault-injection"));
     }
 
     // DXGI1 fix round 4: stage order is strictly monotonic, so a
