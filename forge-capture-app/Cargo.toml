@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "app", "ai-sidecar"]
+members = ["core", "app"]
 resolver = "2"
 
 [workspace.package]

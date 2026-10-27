@@ -44,10 +44,6 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 mod session_store;
 mod sop_workspace;
-/// C2-P2 scaffolding (brief §2.1 runtime boundary): spawns and talks to
-/// the real `forge-capture-ai-sidecar` process over length-prefixed
-/// JSON. No OCR/NER/caption dispatch wiring yet — see the module docs.
-mod ai_sidecar_client;
 /// Bounded capture worker (ChatGPT design verdict 2026-10-23, Option C):
 /// parent-side supervisor, wire protocol, phase ring log. See the module
 /// docs for the contract.
