@@ -155,62 +155,78 @@ pub enum WorkspacePathError {
     /// readable) — refused rather than silently falling back to a
     /// non-canonical comparison, which a symlink could defeat.
     RootNotResolvable,
+    /// C2P1-RR-004A: an intermediate directory component of `relative`
+    /// does not exist yet, and [`resolve_confined_path`] will not create
+    /// one on an untrusted caller's behalf — see that function's doc
+    /// comment. Establish the fixed, trusted subdirectory first via
+    /// [`ensure_workspace_subdirectory`].
+    IntermediateDirectoryMissing,
+    /// [`ensure_workspace_subdirectory`]'s `name` argument was not
+    /// exactly one path component (contained `/` or `\`) — that function
+    /// creates exactly one hardcoded subdirectory directly under the
+    /// root, never a nested path.
+    NotASingleComponent,
 }
 
 /// Resolves `relative` against `root`, refusing anything that would
 /// escape `root` either lexically (per
 /// [`forge_capture_core::sop_ipc::confine_relative_path`]) or physically
-/// (via a symlink/junction on disk). `relative` does not need to exist
-/// yet (a path being written for the first time) — only `root` must.
+/// (via a symlink/junction on disk). `relative`'s leaf does not need to
+/// exist yet (a path being written for the first time) — but, as of the
+/// C2P1-RR-004A fix below, every component *before* the leaf **must**
+/// already exist: this function never creates an intermediate directory
+/// on an untrusted caller's behalf. See [`ensure_workspace_subdirectory`]
+/// for the one, trusted-only way to establish a fixed subdirectory (e.g.
+/// `"frames"`) before calling this function for a leaf inside it.
 ///
 /// Walks one path component at a time starting from the canonicalized
-/// root, checking each *existing* component via an opened, no-follow
-/// handle (`existing_component_metadata`/`open_no_follow`) before ever
-/// deciding whether to create the next one. No filesystem mutation
-/// happens until every existing ancestor component has been proven not
-/// to be a reparse point — the original version of this function called
-/// `create_dir_all` on an unverified parent *before* canonicalizing it,
-/// so a symlinked/junctioned existing component with a missing
-/// descendant (e.g. `escape_link/newdir/file` where `escape_link` points
-/// outside `root`) could have `newdir` created outside `root` and only
-/// be rejected afterward. Any missing intermediate directory this
-/// function itself creates is re-verified immediately after creation,
-/// before it is trusted as the base for the next component.
+/// root, checking each existing component via an opened, no-follow
+/// handle (`existing_component_metadata`/`open_no_follow`) — this never
+/// mutates the filesystem itself, only reads and verifies.
 ///
-/// **C2P1-RR-004/004A, stated plainly: this narrows but does not
-/// eliminate the cross-component race**, and that gap was confirmed
-/// exploitable by the second re-review round
-/// (`results/chatgpt/capture-c2-p1-rereview-2026-10-26.md` /
-/// the RR-004A follow-up): an already-checked intermediate directory can
-/// still be replaced with a junction in the gap between this function's
-/// verified open of it and the next component's separate, path-based
-/// open/create. Truly eliminating this requires resolving each
-/// subsequent component *relative to the already-open, already-verified
-/// handle of its parent* — the Windows equivalent of POSIX `openat()`
-/// with `O_NOFOLLOW` — which the public, documented Win32 surface this
-/// app otherwise uses (and that the `windows` crate exposes with
-/// compiler-checked signatures generated from Microsoft's own
-/// win32metadata) does not provide. The only way to get genuine
-/// handle-relative resolution on Windows is `NtCreateFile` with
-/// `OBJECT_ATTRIBUTES.RootDirectory` set to the parent handle — an
-/// NT-native function with no official Microsoft documentation and, as
-/// of this writing, no binding in the `windows` crate at all. Using it
-/// would mean hand-declaring its `extern "system"` signature and the
-/// `OBJECT_ATTRIBUTES`/`UNICODE_STRING`/`IO_STATUS_BLOCK` struct layouts
-/// myself, with **no compiler- or crate-level check that I got the ABI
-/// right** — a categorically different risk than every other unsafe call
-/// in this file (DPAPI, the ACL calls, `LockFileEx`), all of which are
-/// typed, compiler-verified bindings from the `windows` crate itself. A
-/// struct-layout mistake here wouldn't necessarily fail loudly; it could
-/// silently behave wrong in exactly the security-relevant way this
-/// function exists to prevent. Per this author's standing judgment (same
-/// reasoning as the original C2P1-006 ACL finding, and stated again
-/// rather than silently reapplied): declining to guess at unverifiable
-/// security-critical FFI is the more responsible call than attempting it
-/// under this round's time/verification constraints. This is reported
-/// as an open, named, unresolved gap for the next re-review and for
-/// Jason to weigh — not silently reduced in scope and not re-claimed as
-/// closed.
+/// **C2P1-RR-004A fix, stated plainly:** the prior version of this
+/// function, on finding a *missing* intermediate component, created it
+/// itself (`fs::create_dir`) before the next component's check could
+/// run. That meant an already-checked intermediate directory, replaced
+/// with a junction in the gap between this function's verified open of
+/// it and the next component's separate, path-based creation, could
+/// have a brand-new directory actually created *outside* `root` — a
+/// real mutation, landed before the final canonical check ever ran.
+/// Removing the create entirely (this version) removes that specific
+/// harm: this function can no longer mutate anything outside `root`,
+/// because it can no longer mutate anything at all. A missing
+/// intermediate is simply refused
+/// ([`WorkspacePathError::IntermediateDirectoryMissing`]).
+///
+/// This does not, by itself, achieve perfect handle-relative resolution
+/// — Windows has no `openat()`/`O_NOFOLLOW` equivalent in the documented
+/// Win32 surface this app uses (the only way to get genuine
+/// handle-relative resolution is the undocumented, NT-native
+/// `NtCreateFile` with `OBJECT_ATTRIBUTES.RootDirectory`, which has no
+/// binding in the `windows` crate and no official Microsoft
+/// documentation; hand-declaring its `extern "system"` signature and
+/// struct layouts myself would carry **no compiler- or crate-level check
+/// that the ABI is right**, a categorically different risk than every
+/// other unsafe call in this file, all of which are typed,
+/// compiler-verified `windows` crate bindings — see the C2P1-006 ACL
+/// finding's own note on not implementing unverified Win32 surface
+/// blind, the same judgment call repeated here). So a read-only
+/// component check earlier in this walk could in principle still observe
+/// a directory that is later swapped before this function's own final
+/// canonical re-check runs. What C2P1-RR-004A's fix changes is the
+/// *consequence* of that: previously, the race could make this function
+/// itself write a new directory outside `root`. Now it cannot — the
+/// worst a stale read can do is make this call return a wrong result,
+/// which the existing final canonical check below already exists to
+/// catch, and which carries no side effect if it doesn't. The caller's
+/// own subsequent leaf write is a separate, already-reviewed concern
+/// (an exclusive, no-follow create at the leaf — C2P1-RR-004's original
+/// scope); the once-only, trusted, single-hop creation in
+/// [`ensure_workspace_subdirectory`] is the only remaining place in this
+/// module that creates a directory from a name at all, and it is never
+/// driven by untrusted per-call input. This is reported as the real
+/// scope of what remains open — not silently reduced, not re-claimed as
+/// fully eliminated.
 pub fn resolve_confined_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspacePathError> {
     confine_relative_path(relative).map_err(WorkspacePathError::Lexical)?;
 
@@ -246,20 +262,10 @@ pub fn resolve_confined_path(root: &Path, relative: &str) -> Result<PathBuf, Wor
                 current = candidate;
             }
             None => {
-                // A missing intermediate directory in a workspace this
-                // process owns — create exactly this one component (not
-                // `create_dir_all`, which would blindly create every
-                // remaining component past an attacker-controlled
-                // ancestor we haven't checked yet) and immediately
-                // re-verify it (same no-follow-handle check as an
-                // existing component) before trusting it as the next
-                // `current`.
-                fs::create_dir(&candidate).map_err(|_| WorkspacePathError::EscapesRoot)?;
-                let meta = existing_component_metadata(&candidate)?.ok_or(WorkspacePathError::EscapesRoot)?;
-                if is_reparse_point(&meta) || !meta.is_dir() {
-                    return Err(WorkspacePathError::EscapesRoot);
-                }
-                current = candidate;
+                // C2P1-RR-004A: a missing *intermediate* directory is
+                // refused, never created, regardless of which process
+                // owns the workspace — see this function's doc comment.
+                return Err(WorkspacePathError::IntermediateDirectoryMissing);
             }
         }
     }
@@ -278,6 +284,54 @@ pub fn resolve_confined_path(root: &Path, relative: &str) -> Result<PathBuf, Wor
     }
 
     Ok(current)
+}
+
+/// Creates (idempotently) exactly one fixed subdirectory directly under
+/// `root`, verifying it the same way [`resolve_confined_path`] verifies
+/// every component it walks. This is the **only** place in this module
+/// that creates a directory from a name — specifically so creation never
+/// has to happen in response to untrusted, per-call `relative` input
+/// (the C2P1-RR-004A fix to [`resolve_confined_path`] above). Callers
+/// must pass a single, hardcoded, non-attacker-controlled component
+/// (e.g. `"frames"`) at workspace setup time — never anything built from
+/// caption text, a filename a user chose, or any other untrusted source.
+///
+/// `name` must be exactly one path component — this function is not a
+/// nested-path creator, and accepting `/`/`\` in `name` would reopen
+/// the same multi-hop surface [`resolve_confined_path`] just closed.
+///
+/// Canonicalizes `root` fresh on every call rather than accepting a
+/// pre-canonicalized root, so the only window between "root is proven
+/// real" and "the one child this call creates is proven real" is this
+/// function's own few syscalls — there is no earlier, separately-timed
+/// verification of an intermediate for an attacker to race against,
+/// because there is no intermediate: `name` is always a direct child of
+/// a just-canonicalized `root`.
+pub fn ensure_workspace_subdirectory(root: &Path, name: &str) -> Result<PathBuf, WorkspacePathError> {
+    confine_relative_path(name).map_err(WorkspacePathError::Lexical)?;
+    if name.contains('/') || name.contains('\\') {
+        return Err(WorkspacePathError::NotASingleComponent);
+    }
+
+    let canonical_root = fs::canonicalize(root).map_err(|_| WorkspacePathError::RootNotResolvable)?;
+    let candidate = canonical_root.join(name);
+
+    match existing_component_metadata(&candidate)? {
+        Some(meta) => {
+            if is_reparse_point(&meta) || !meta.is_dir() {
+                return Err(WorkspacePathError::EscapesRoot);
+            }
+        }
+        None => {
+            fs::create_dir(&candidate).map_err(|_| WorkspacePathError::EscapesRoot)?;
+            let meta = existing_component_metadata(&candidate)?.ok_or(WorkspacePathError::EscapesRoot)?;
+            if is_reparse_point(&meta) || !meta.is_dir() {
+                return Err(WorkspacePathError::EscapesRoot);
+            }
+        }
+    }
+
+    Ok(candidate)
 }
 
 /// Marker infix every temporary file this module creates carries, so a
@@ -1148,11 +1202,64 @@ mod tests {
     // --- path escape / symlink refusal ---
 
     #[test]
-    fn resolve_confined_path_accepts_an_ordinary_relative_path() {
+    fn resolve_confined_path_accepts_an_ordinary_relative_path_once_its_directory_is_established() {
         let root = temp_root();
+        ensure_workspace_subdirectory(&root, "frames").unwrap();
         let resolved = resolve_confined_path(&root, "frames/f1.png").unwrap();
         assert!(resolved.starts_with(fs::canonicalize(&root).unwrap()));
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn resolve_confined_path_refuses_a_missing_intermediate_directory_rather_than_creating_it() {
+        // C2P1-RR-004A: this function must never create a directory on
+        // an untrusted caller's behalf - the missing `frames` directory
+        // is refused, not auto-created.
+        let root = temp_root();
+        let err = resolve_confined_path(&root, "frames/f1.png").unwrap_err();
+        assert_eq!(err, WorkspacePathError::IntermediateDirectoryMissing);
+        assert!(!root.join("frames").exists(), "a missing intermediate must never be created as a side effect of resolving a path");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_subdirectory_creates_and_reuses_a_fixed_subdirectory() {
+        let root = temp_root();
+        let first = ensure_workspace_subdirectory(&root, "frames").unwrap();
+        assert!(first.is_dir());
+        // Idempotent: calling again for the same already-existing,
+        // non-reparse-point directory succeeds and returns the same path.
+        let second = ensure_workspace_subdirectory(&root, "frames").unwrap();
+        assert_eq!(first, second);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_subdirectory_rejects_a_multi_component_name() {
+        let root = temp_root();
+        let err = ensure_workspace_subdirectory(&root, "frames/nested").unwrap_err();
+        assert_eq!(err, WorkspacePathError::NotASingleComponent);
+        assert!(!root.join("frames").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn ensure_workspace_subdirectory_refuses_an_existing_reparse_point_with_the_same_name() {
+        let root = temp_root();
+        let outside = temp_root();
+        let link = root.join("frames");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &link.to_string_lossy(), &outside.to_string_lossy()])
+            .status();
+        if let Ok(status) = status {
+            if status.success() {
+                let err = ensure_workspace_subdirectory(&root, "frames").unwrap_err();
+                assert_eq!(err, WorkspacePathError::EscapesRoot);
+            }
+        }
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 
     #[test]
