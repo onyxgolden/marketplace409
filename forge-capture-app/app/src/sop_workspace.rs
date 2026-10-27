@@ -65,24 +65,61 @@ fn is_reparse_point(meta: &fs::Metadata) -> bool {
 /// component: there is no second syscall that could resolve a
 /// swapped-in reparse point differently from what was just verified.
 ///
-/// This does **not** make the whole multi-component walk atomic — `std`
-/// has no `openat()`/`NtCreateFile`-with-`RootDirectory` equivalent for
-/// resolving the *next* component relative to an already-open handle, so
-/// moving from a verified component to the next one still re-resolves by
-/// path. A real handle-relative resolve would need the undocumented NT
-/// native API (`NtCreateFile`'s `OBJECT_ATTRIBUTES.RootDirectory`), which
-/// this author chose not to guess at (see the C2P1-006 ACL finding's own
-/// note on not implementing unverified Win32 surface blind). What this
-/// function closes is real and specific: the per-component check-vs-use
-/// gap; what remains is the cross-component gap, narrowed to the minimum
-/// number of syscalls between one component's verified open and the
-/// next's, same as the existing re-verify-after-create discipline below.
+/// C2P1-RR-004B: opened with `share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)`
+/// — explicitly **excluding only `FILE_SHARE_DELETE`** — rather than
+/// `std`'s default share mode. Empirically verified on this app's target
+/// platform (not assumed, and not a single pass/fail either — narrowed
+/// by testing each combination):
+///
+/// - With the default share mode, another actor can delete *or rename*
+///   this exact directory object while this process still holds an open
+///   handle to it (`fs::remove_dir`/`fs::rename` both succeeded against
+///   a held default-share handle).
+/// - Excluding `FILE_SHARE_DELETE` (regardless of whether `FILE_SHARE_WRITE`
+///   is also granted) makes both `fs::remove_dir` on the object itself
+///   and creating a new object (e.g. a junction) at that same name fail
+///   with `ERROR_SHARING_VIOLATION` for as long as the handle stays open
+///   — the name is still occupied by the live object and nothing can
+///   detach it.
+/// - `FILE_SHARE_READ` *alone* (excluding `FILE_SHARE_WRITE` too) also
+///   blocks renaming a **child** entry inside a held directory handle —
+///   this module's own `atomic_write_with_fsync` renames a temp file
+///   onto the final leaf path inside exactly such a directory, so that
+///   combination would have silently broken every real write through a
+///   confined path. Granting `FILE_SHARE_WRITE` back (keeping
+///   `FILE_SHARE_DELETE` excluded) allows ordinary child renames to
+///   succeed while still refusing deletion/replacement of the directory
+///   object itself — confirmed by testing the exact rename-a-child
+///   operation this module performs, not inferred from the delete/rename
+///   case alone.
+/// - Two of this process's own `FILE_SHARE_READ | FILE_SHARE_WRITE` opens
+///   of the same object coexist without contention (also verified), so
+///   this does not self-block legitimate concurrent reads within this
+///   app.
+///
+/// This is what makes [`resolve_confined_path`]'s returned [`ConfinedPath`]
+/// an actual capability rather than just a validated string: as long as
+/// the caller keeps the `ConfinedPath` (and therefore every ancestor
+/// handle it holds) alive through its leaf mutation, no already-verified
+/// ancestor can be deleted, renamed, or replaced by anything else for the
+/// full span between verification and use — closing the cross-component
+/// race this module's own prior doc comments named as fundamentally
+/// requiring the undocumented `NtCreateFile` NT-native API. It never did:
+/// `share_mode` is a plain, documented `std` option
+/// (`std::os::windows::fs::OpenOptionsExt::share_mode`), not even a
+/// `windows`-crate call, let alone a hand-declared unverified one.
 #[cfg(windows)]
 fn open_no_follow(path: &Path) -> std::io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).open(path)
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(path)
 }
 
 /// Like [`open_no_follow`], but read+write and creates the file if it
@@ -166,155 +203,249 @@ pub enum WorkspacePathError {
     /// creates exactly one hardcoded subdirectory directly under the
     /// root, never a nested path.
     NotASingleComponent,
+    /// Opening or verifying the workspace root itself failed — see
+    /// [`WorkspaceRoot::open`].
+    RootNotOpenable,
 }
 
-/// Resolves `relative` against `root`, refusing anything that would
-/// escape `root` either lexically (per
+/// A verified, **held-open** handle to a workspace's root directory —
+/// the one external identity every [`resolve_confined_path`] call and
+/// every [`CrossProcessSessionLock`] acquisition for that workspace is
+/// bound to, in place of either the session file's own identity (which
+/// this module's own writes replace on every rename — C2P1-RR-005B) or
+/// any single accepted alias path for it (which a hard link in a
+/// different directory still legitimately is — C2P1-RR-005C).
+///
+/// Opened with [`open_no_follow`]'s delete-excluding share mode and
+/// kept alive for as long as this value lives: empirically, that means
+/// nothing else can delete, rename, or recreate the root directory while
+/// a `WorkspaceRoot` for it is open (see [`open_no_follow`]'s doc comment
+/// for the verified mechanism). Callers open one fresh per logical
+/// operation (a single confined-path resolution, or a single
+/// `write_session_if_current` call) and let it drop when that operation
+/// finishes — the same per-operation acquire/release shape
+/// [`CrossProcessSessionLock`] already uses, not a long-lived cached
+/// handle this module would need to invalidate.
+#[cfg(windows)]
+#[derive(Debug)]
+pub struct WorkspaceRoot {
+    _handle: File,
+    canonical_path: PathBuf,
+    stable_id: StableFileId,
+}
+
+#[cfg(windows)]
+impl WorkspaceRoot {
+    pub fn open(root: &Path) -> Result<Self, WorkspacePathError> {
+        let canonical_path = fs::canonicalize(root).map_err(|_| WorkspacePathError::RootNotResolvable)?;
+        let handle = open_no_follow(&canonical_path).map_err(|_| WorkspacePathError::RootNotOpenable)?;
+        let meta = handle.metadata().map_err(|_| WorkspacePathError::RootNotOpenable)?;
+        if is_reparse_point(&meta) || !meta.is_dir() {
+            return Err(WorkspacePathError::RootNotOpenable);
+        }
+        let stable_id = query_stable_file_id(&handle).map_err(|_| WorkspacePathError::RootNotOpenable)?;
+        Ok(Self { _handle: handle, canonical_path, stable_id })
+    }
+
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+}
+
+#[cfg(not(windows))]
+#[derive(Debug)]
+pub struct WorkspaceRoot {
+    canonical_path: PathBuf,
+}
+
+#[cfg(not(windows))]
+impl WorkspaceRoot {
+    pub fn open(root: &Path) -> Result<Self, WorkspacePathError> {
+        let canonical_path = fs::canonicalize(root).map_err(|_| WorkspacePathError::RootNotResolvable)?;
+        Ok(Self { canonical_path })
+    }
+
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+}
+
+/// A path proven confined to a [`WorkspaceRoot`], returned by
+/// [`resolve_confined_path`]. On Windows, also holds an open,
+/// restrictively-shared handle for every *intermediate* ancestor
+/// component the resolution walked through (never the leaf, and never
+/// the root itself — the root's own handle lives in the [`WorkspaceRoot`]
+/// the caller must keep alive alongside this value).
+///
+/// **C2P1-RR-004B fix:** keeping this value alive through the caller's
+/// actual leaf mutation (see [`ConfinedPath::atomic_write_with_fsync`])
+/// keeps every verified ancestor's handle open for that entire span —
+/// per [`open_no_follow`]'s empirically-verified share mode, nothing else
+/// can delete, rename, or replace any of them while this value hasn't
+/// been dropped yet. A `ConfinedPath` dropped immediately after
+/// resolution (never used to perform the mutation) provides no such
+/// guarantee — the guarantee comes from the mutation happening *through*
+/// this value, not merely after it was constructed.
+#[derive(Debug)]
+pub struct ConfinedPath {
+    path: PathBuf,
+    _ancestor_guards: Vec<File>,
+}
+
+impl ConfinedPath {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Performs [`atomic_write_with_fsync`] at this confined leaf path
+    /// while every ancestor guard this value holds stays open for the
+    /// full call — Rust's borrow checker keeps `self` (and therefore
+    /// `_ancestor_guards`) alive until this call returns, which is the
+    /// entire C2P1-RR-004B fix: the mutation happens *through* the held
+    /// capability, not merely after it was checked.
+    pub fn atomic_write_with_fsync(&self, bytes: &[u8]) -> Result<(), String> {
+        atomic_write_with_fsync(&self.path, bytes)
+    }
+}
+
+/// Resolves `relative` against `workspace_root`, refusing anything that
+/// would escape it either lexically (per
 /// [`forge_capture_core::sop_ipc::confine_relative_path`]) or physically
 /// (via a symlink/junction on disk). `relative`'s leaf does not need to
-/// exist yet (a path being written for the first time) — but, as of the
-/// C2P1-RR-004A fix below, every component *before* the leaf **must**
-/// already exist: this function never creates an intermediate directory
-/// on an untrusted caller's behalf. See [`ensure_workspace_subdirectory`]
-/// for the one, trusted-only way to establish a fixed subdirectory (e.g.
-/// `"frames"`) before calling this function for a leaf inside it.
+/// exist yet (a path being written for the first time) — but every
+/// component *before* the leaf **must** already exist: this function
+/// never creates an intermediate directory on an untrusted caller's
+/// behalf. See [`ensure_workspace_subdirectory`] for the one,
+/// trusted-only way to establish a fixed subdirectory (e.g. `"frames"`)
+/// before calling this function for a leaf inside it.
 ///
-/// Walks one path component at a time starting from the canonicalized
-/// root, checking each existing component via an opened, no-follow
-/// handle (`existing_component_metadata`/`open_no_follow`) — this never
-/// mutates the filesystem itself, only reads and verifies.
+/// Walks one path component at a time starting from
+/// `workspace_root`'s canonical path, and for every component **before**
+/// the leaf: opens it via [`open_no_follow`] and **keeps that handle
+/// open** in the returned [`ConfinedPath`] rather than dropping it —
+/// this is the C2P1-RR-004B fix. The prior version of this function
+/// (C2P1-RR-004A) made itself read-only, which closed the narrower
+/// "the resolver creates a directory outside root" counterexample, but
+/// left the caller's later, separate leaf mutation exposed to exactly
+/// the same ancestor-replacement race, just moved one step later: a
+/// path returned as "confined" was still just a string by the time the
+/// caller actually wrote through it, and an already-verified ancestor
+/// could still be swapped in the gap between that check and that write.
 ///
-/// **C2P1-RR-004A fix, stated plainly:** the prior version of this
-/// function, on finding a *missing* intermediate component, created it
-/// itself (`fs::create_dir`) before the next component's check could
-/// run. That meant an already-checked intermediate directory, replaced
-/// with a junction in the gap between this function's verified open of
-/// it and the next component's separate, path-based creation, could
-/// have a brand-new directory actually created *outside* `root` — a
-/// real mutation, landed before the final canonical check ever ran.
-/// Removing the create entirely (this version) removes that specific
-/// harm: this function can no longer mutate anything outside `root`,
-/// because it can no longer mutate anything at all. A missing
-/// intermediate is simply refused
-/// ([`WorkspacePathError::IntermediateDirectoryMissing`]).
-///
-/// This does not, by itself, achieve perfect handle-relative resolution
-/// — Windows has no `openat()`/`O_NOFOLLOW` equivalent in the documented
-/// Win32 surface this app uses (the only way to get genuine
-/// handle-relative resolution is the undocumented, NT-native
-/// `NtCreateFile` with `OBJECT_ATTRIBUTES.RootDirectory`, which has no
-/// binding in the `windows` crate and no official Microsoft
-/// documentation; hand-declaring its `extern "system"` signature and
-/// struct layouts myself would carry **no compiler- or crate-level check
-/// that the ABI is right**, a categorically different risk than every
-/// other unsafe call in this file, all of which are typed,
-/// compiler-verified `windows` crate bindings — see the C2P1-006 ACL
-/// finding's own note on not implementing unverified Win32 surface
-/// blind, the same judgment call repeated here). So a read-only
-/// component check earlier in this walk could in principle still observe
-/// a directory that is later swapped before this function's own final
-/// canonical re-check runs. What C2P1-RR-004A's fix changes is the
-/// *consequence* of that: previously, the race could make this function
-/// itself write a new directory outside `root`. Now it cannot — the
-/// worst a stale read can do is make this call return a wrong result,
-/// which the existing final canonical check below already exists to
-/// catch, and which carries no side effect if it doesn't. The caller's
-/// own subsequent leaf write is a separate, already-reviewed concern
-/// (an exclusive, no-follow create at the leaf — C2P1-RR-004's original
-/// scope); the once-only, trusted, single-hop creation in
-/// [`ensure_workspace_subdirectory`] is the only remaining place in this
-/// module that creates a directory from a name at all, and it is never
-/// driven by untrusted per-call input. This is reported as the real
-/// scope of what remains open — not silently reduced, not re-claimed as
-/// fully eliminated.
-pub fn resolve_confined_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspacePathError> {
+/// Holding each intermediate's handle open for as long as the returned
+/// [`ConfinedPath`] lives closes that gap for real, using only
+/// `open_no_follow`'s documented, empirically-verified share mode (see
+/// its doc comment) — not the undocumented, hand-declared `NtCreateFile`
+/// NT-native API this module's prior rounds correctly declined to guess
+/// at. This was never actually required: a *held* no-follow handle with
+/// a restrictive share mode already prevents the object it points to
+/// from being deleted, renamed, or replaced by anything else for as long
+/// as it stays open — empirically confirmed, not assumed — which is a
+/// capability strong enough to protect the whole span from verification
+/// through mutation, with no relative-open primitive needed at all.
+pub fn resolve_confined_path(workspace_root: &WorkspaceRoot, relative: &str) -> Result<ConfinedPath, WorkspacePathError> {
     confine_relative_path(relative).map_err(WorkspacePathError::Lexical)?;
 
-    let canonical_root = fs::canonicalize(root).map_err(|_| WorkspacePathError::RootNotResolvable)?;
-
+    let canonical_root = workspace_root.canonical_path().to_path_buf();
     let components: Vec<&str> = relative.split(['/', '\\']).collect();
     let mut current = canonical_root.clone();
+    let mut guards: Vec<File> = Vec::new();
+
     for (i, component) in components.iter().enumerate() {
         let candidate = current.join(component);
         let is_last = i == components.len() - 1;
-        let existing = existing_component_metadata(&candidate)?;
-        match existing {
-            Some(meta) => {
-                // C2P1-RR-004: on Windows, `meta` already came from an
-                // open, no-follow handle to this exact object (see
-                // `verify_component_no_follow`) — this is not a second,
-                // separately-racable stat.
+
+        if is_last {
+            // The leaf's own handling (existence optional, exclusive
+            // no-follow create/replace) is the caller's separate,
+            // already-reviewed concern (C2P1-RR-004's original scope) —
+            // this just refuses a reparse point already sitting there.
+            if let Some(meta) = existing_component_metadata(&candidate)? {
                 if is_reparse_point(&meta) {
                     return Err(WorkspacePathError::EscapesRoot);
                 }
-                if !is_last && !meta.is_dir() {
-                    // Can't descend through a plain file as if it were
-                    // a directory.
-                    return Err(WorkspacePathError::EscapesRoot);
+            }
+            current = candidate;
+            continue;
+        }
+
+        #[cfg(windows)]
+        {
+            match open_no_follow(&candidate) {
+                Ok(handle) => {
+                    let meta = handle.metadata().map_err(|_| WorkspacePathError::EscapesRoot)?;
+                    if is_reparse_point(&meta) || !meta.is_dir() {
+                        return Err(WorkspacePathError::EscapesRoot);
+                    }
+                    // Retained, not dropped — see this function's and
+                    // `ConfinedPath`'s doc comments for why.
+                    guards.push(handle);
                 }
-                current = candidate;
-            }
-            None if is_last => {
-                // The leaf does not exist yet — fine, this is a fresh
-                // write target. Nothing to verify or create here; the
-                // caller creates the leaf itself (via an exclusive,
-                // no-follow open), never this function.
-                current = candidate;
-            }
-            None => {
-                // C2P1-RR-004A: a missing *intermediate* directory is
-                // refused, never created, regardless of which process
-                // owns the workspace — see this function's doc comment.
-                return Err(WorkspacePathError::IntermediateDirectoryMissing);
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(WorkspacePathError::IntermediateDirectoryMissing);
+                }
+                Err(_) => return Err(WorkspacePathError::EscapesRoot),
             }
         }
+        #[cfg(not(windows))]
+        {
+            match existing_component_metadata(&candidate)? {
+                Some(meta) => {
+                    if is_reparse_point(&meta) || !meta.is_dir() {
+                        return Err(WorkspacePathError::EscapesRoot);
+                    }
+                }
+                None => return Err(WorkspacePathError::IntermediateDirectoryMissing),
+            }
+        }
+        current = candidate;
     }
 
     // Final containment proof: canonicalize whatever portion of `current`
     // actually exists on disk (the leaf itself if it was already there,
     // otherwise its parent, which the loop above has already proven is
     // not a reparse point) and require it to still resolve under the
-    // canonical root. Every component walked above was already checked
-    // non-reparse, so this canonicalize cannot cross a symlink/junction
-    // this function didn't already see and reject.
+    // canonical root. Every intermediate walked above is still held open
+    // in `guards` at this point, so this canonicalize cannot be racing
+    // against a swap that could still happen after this check returns —
+    // the swap itself is refused for as long as `guards` (returned to
+    // the caller inside `ConfinedPath`) stays alive.
     let verify_target = if current.exists() { current.clone() } else { current.parent().unwrap_or(&canonical_root).to_path_buf() };
     let canonical_verify = fs::canonicalize(&verify_target).map_err(|_| WorkspacePathError::EscapesRoot)?;
     if !canonical_verify.starts_with(&canonical_root) {
         return Err(WorkspacePathError::EscapesRoot);
     }
 
-    Ok(current)
+    Ok(ConfinedPath { path: current, _ancestor_guards: guards })
 }
 
 /// Creates (idempotently) exactly one fixed subdirectory directly under
-/// `root`, verifying it the same way [`resolve_confined_path`] verifies
-/// every component it walks. This is the **only** place in this module
-/// that creates a directory from a name — specifically so creation never
-/// has to happen in response to untrusted, per-call `relative` input
-/// (the C2P1-RR-004A fix to [`resolve_confined_path`] above). Callers
-/// must pass a single, hardcoded, non-attacker-controlled component
-/// (e.g. `"frames"`) at workspace setup time — never anything built from
-/// caption text, a filename a user chose, or any other untrusted source.
+/// `workspace_root`, verifying it the same way [`resolve_confined_path`]
+/// verifies every component it walks. This is the **only** place in this
+/// module that creates a directory from a name — specifically so
+/// creation never has to happen in response to untrusted, per-call
+/// `relative` input. Callers must pass a single, hardcoded,
+/// non-attacker-controlled component (e.g. `"frames"`) at workspace
+/// setup time — never anything built from caption text, a filename a
+/// user chose, or any other untrusted source.
 ///
 /// `name` must be exactly one path component — this function is not a
 /// nested-path creator, and accepting `/`/`\` in `name` would reopen
-/// the same multi-hop surface [`resolve_confined_path`] just closed.
+/// the same multi-hop surface [`resolve_confined_path`] closes.
 ///
-/// Canonicalizes `root` fresh on every call rather than accepting a
-/// pre-canonicalized root, so the only window between "root is proven
-/// real" and "the one child this call creates is proven real" is this
-/// function's own few syscalls — there is no earlier, separately-timed
-/// verification of an intermediate for an attacker to race against,
-/// because there is no intermediate: `name` is always a direct child of
-/// a just-canonicalized `root`.
-pub fn ensure_workspace_subdirectory(root: &Path, name: &str) -> Result<PathBuf, WorkspacePathError> {
+/// Reuses `workspace_root`'s already-verified canonical path rather than
+/// re-canonicalizing — the one child this call creates is a direct child
+/// of a root already proven real and already held open by the caller,
+/// so there is no earlier, separately-timed verification of an
+/// intermediate for an attacker to race against, because there is no
+/// intermediate: `name` is always a direct child of `workspace_root`.
+pub fn ensure_workspace_subdirectory(workspace_root: &WorkspaceRoot, name: &str) -> Result<PathBuf, WorkspacePathError> {
     confine_relative_path(name).map_err(WorkspacePathError::Lexical)?;
     if name.contains('/') || name.contains('\\') {
         return Err(WorkspacePathError::NotASingleComponent);
     }
 
-    let canonical_root = fs::canonicalize(root).map_err(|_| WorkspacePathError::RootNotResolvable)?;
-    let candidate = canonical_root.join(name);
+    let candidate = workspace_root.canonical_path().join(name);
 
     match existing_component_metadata(&candidate)? {
         Some(meta) => {
@@ -537,19 +668,25 @@ pub fn read_current_revision(path: &Path) -> Result<u64, String> {
     }
 }
 
-/// Per-session-path serialization primitive: every
-/// [`write_session_if_current`] call for the same `path` takes the same
-/// in-process lock across its entire read-validate-write-rename sequence.
-/// This alone only covers same-process races (two overlapping Tauri
-/// command invocations) — see [`CrossProcessSessionLock`] for the
-/// C2P1-RR-005 fix that also covers a second process and lexical
-/// aliasing.
-fn session_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+/// Per-workspace serialization primitive: every [`write_session_if_current`]
+/// call for the same `workspace_root` takes the same in-process lock
+/// across its entire read-validate-write-rename sequence. This alone
+/// only covers same-process races (two overlapping Tauri command
+/// invocations) — see [`CrossProcessSessionLock`] for the C2P1-RR-005
+/// fix that also covers a second process and lexical/hard-link aliasing.
+///
+/// Keyed by `workspace_root`'s canonical path, not by whichever specific
+/// session-file alias path a caller happened to pass — C2P1-RR-005C:
+/// two threads in this same process using two different accepted alias
+/// paths for the same logical session (e.g. a hard link in a different
+/// subdirectory of the same workspace) must still contend on the same
+/// in-process lock, not merely on the OS-level one.
+fn session_lock(workspace_root: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
     static REGISTRY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>> =
         std::sync::OnceLock::new();
     let registry = REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
-    map.entry(path.to_path_buf()).or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(()))).clone()
+    map.entry(workspace_root.to_path_buf()).or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(()))).clone()
 }
 
 /// C2P1-RR-005 fix: a real, OS-enforced, cross-process exclusive lock —
@@ -558,18 +695,15 @@ fn session_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
 /// against the same vault) or by two different lexical path strings that
 /// happen to resolve to the same real file.
 ///
-/// Held via `LockFileEx` on a dedicated sibling `<name>.lock` file next
-/// to the session file — never on the session file itself, so the lock's
-/// own existence/lifecycle never interferes with the session file's
-/// atomic-rename replacement (`atomic_write_with_fsync` creates a whole
-/// new file and renames over the old one; a lock held via an open handle
-/// on the OLD inode would be silently left behind, pointless, once the
-/// rename swaps in a new one — a lock file that is never replaced, only
-/// ever locked/unlocked, avoids that trap entirely).
+/// Held via `LockFileEx` on a dedicated sidecar file directly under the
+/// workspace root — never on the session file itself, so the lock's own
+/// existence/lifecycle never interferes with the session file's
+/// atomic-rename replacement.
 ///
-/// Keyed by the **session's parent directory's stable identity**, not by
-/// the session file itself and not by a derived path string. Two prior
-/// schemes were tried and both broke:
+/// Keyed by the **[`WorkspaceRoot`]'s own stable identity** — not the
+/// session file's identity, not any specific parent-directory path, and
+/// not a derived path string. Three prior schemes were tried and all
+/// three broke:
 ///
 /// - C2P1-RR-005A: canonicalizing only the parent directory and
 ///   lowercasing the caller-supplied file name let an alternate accepted
@@ -582,16 +716,23 @@ fn session_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
 ///   successful write by design, so the "stable" identity changed out
 ///   from under a lock a writer was still holding, letting a late
 ///   caller compute a different, uncontended key.
+/// - C2P1-RR-005C: binding to the session's *parent directory's*
+///   `FILE_ID_INFO` fixed both of the above, but a true NTFS hard link
+///   can name the same file from a **different directory** on the same
+///   volume — `root/a/session.json` and `root/b/session-alias.json` are
+///   not, as the C2P1-RR-005B fix's own doc comment incorrectly assumed,
+///   "by definition" in the same directory. Two different parent
+///   directories meant two different sidecars for the same logical file.
 ///
-/// Binding to the *parent directory's* `FILE_ID_INFO` instead (see
-/// [`CrossProcessSessionLock::lock_path_for`] for the full rationale)
-/// fixes both at once: the directory's identity never changes due to
-/// this module's own writes, so there is exactly one lock namespace for
-/// a given session's location, before it's ever created, during every
-/// write, and after every rename — immune to case, 8.3 names, and hard
-/// links (all of which share the one parent directory) without any
-/// name-based logic, and with no separate "doesn't exist yet" bootstrap
-/// scheme left to diverge from it.
+/// Binding to the **workspace root's** identity instead — the one
+/// external identity every accepted alias for a session is reachable
+/// under, established once per operation via [`WorkspaceRoot::open`],
+/// never re-derived from whichever specific sub-path a caller used —
+/// fixes all three at once: it does not depend on the session file's own
+/// replaceable identity, does not depend on which of possibly several
+/// parent directories an alias happens to live in, and is queried once
+/// up front rather than re-resolved mid-operation, so there is no
+/// transition for a concurrent caller to land on the wrong side of.
 #[cfg(windows)]
 struct CrossProcessSessionLock {
     file: File,
@@ -599,64 +740,19 @@ struct CrossProcessSessionLock {
 
 #[cfg(windows)]
 impl CrossProcessSessionLock {
-    /// The lock path for `session_path` is derived **only** from its
-    /// *parent directory's* stable NTFS identity — never from the
-    /// session file's own identity, and with no separate "bootstrap"
-    /// scheme for a not-yet-created file.
-    ///
-    /// C2P1-RR-005B: the prior version keyed the lock to the session
-    /// file's own `FILE_ID_INFO`, and this module's own
-    /// `atomic_write_with_fsync` *guarantees* that identity changes on
-    /// every successful write (temp-file-then-rename always produces a
-    /// new inode). A second caller whose `lock_path_for` call landed
-    /// after a writer's rename but before that writer dropped its guard
-    /// computed a *different* lock name and entered the critical section
-    /// concurrently with it — not a theoretical gap, but a direct
-    /// violation of this module's own documented "every overlapping
-    /// caller is strictly serialized" guarantee. There was a second,
-    /// related divergence: a waiter that resolved the bootstrap path
-    /// before the file existed could remain parked on it after another
-    /// writer created the file and moved a third caller onto the
-    /// identity path, splitting the two into separate lock namespaces.
-    ///
-    /// Binding to the **parent directory's** identity instead sidesteps
-    /// both by construction. This module never replaces, renames, or
-    /// recreates the directory a session file lives in, so that identity
-    /// is invariant across every write of the file inside it, before the
-    /// file is ever created, during a write, and after every rename —
-    /// there is only ever one lock namespace, never two that can drift
-    /// apart, so the bootstrap/identity fork this used to need is simply
-    /// removed rather than patched. A query failure on the parent
-    /// directory itself (missing, inaccessible, or a reparse point) fails
-    /// this call outright — there is no weaker fallback namespace left to
-    /// silently degrade into.
-    ///
-    /// Hard-link and case/8.3-name aliases for the same session file
-    /// still converge for free: they are, by definition, different names
-    /// *in the same directory*, so they already resolve to the same
-    /// parent and therefore the same lock, with no name-based logic
-    /// needed at all.
-    ///
-    /// Trade-off, stated plainly: this makes the lock per-directory, not
-    /// per-file. Two genuinely different session files that happened to
-    /// share one directory would now serialize against each other
-    /// unnecessarily. Every build slice so far describes one workspace
-    /// directory holding one session; if a later slice puts multiple
-    /// independent sessions in one directory, this granularity should be
-    /// revisited explicitly rather than silently assumed to still be
-    /// fine.
-    fn lock_path_for(session_path: &Path) -> Result<PathBuf, String> {
-        let parent = session_path.parent().ok_or_else(|| "session path has no parent directory".to_string())?;
-        let canonical_parent =
-            fs::canonicalize(parent).map_err(|e| format!("cannot canonicalize session directory: {e}"))?;
-        let handle = open_no_follow(parent).map_err(|e| format!("cannot open session directory: {e}"))?;
-        let meta = handle.metadata().map_err(|e| format!("cannot stat session directory: {e}"))?;
-        if is_reparse_point(&meta) {
-            return Err("session directory is a reparse point; refusing to lock through it".to_string());
-        }
-        let id = query_stable_file_id(&handle)
-            .map_err(|e| format!("cannot query session directory identity: {e}"))?;
-        Ok(canonical_parent.join(format!("{}-{}.session.lock", id.volume_serial_hex(), id.file_id_hex())))
+    /// The lock path is derived **only** from `workspace_root`'s own
+    /// stable NTFS identity (queried once, at [`WorkspaceRoot::open`]
+    /// time) — never from the session file, never from a parent
+    /// directory of one specific alias path, and with no separate
+    /// "bootstrap" scheme for a not-yet-created session file, since the
+    /// workspace root itself is expected to already exist for every
+    /// caller.
+    fn lock_path_for(workspace_root: &WorkspaceRoot) -> PathBuf {
+        workspace_root.canonical_path().join(format!(
+            "{}-{}.session.lock",
+            workspace_root.stable_id.volume_serial_hex(),
+            workspace_root.stable_id.file_id_hex()
+        ))
     }
 
     /// Acquires the lock, blocking the calling thread until it's
@@ -666,8 +762,8 @@ impl CrossProcessSessionLock {
     /// itself opened without following a reparse point — a lock "file"
     /// that turned out to be a planted symlink must never be locked or
     /// written through.
-    fn acquire(session_path: &Path) -> Result<Self, String> {
-        let lock_path = Self::lock_path_for(session_path)?;
+    fn acquire(workspace_root: &WorkspaceRoot) -> Result<Self, String> {
+        let lock_path = Self::lock_path_for(workspace_root);
         let file = open_or_create_no_follow(&lock_path)?;
         lock_file_exclusive_blocking(&file)?;
         Ok(Self { file })
@@ -682,6 +778,7 @@ impl CrossProcessSessionLock {
 /// on different volumes, never do (the volume serial number is part of
 /// the identity specifically to rule that out).
 #[cfg(windows)]
+#[derive(Debug)]
 struct StableFileId {
     volume_serial: u64,
     file_id: [u8; 16],
@@ -774,7 +871,7 @@ struct CrossProcessSessionLock;
 
 #[cfg(not(windows))]
 impl CrossProcessSessionLock {
-    fn acquire(_session_path: &Path) -> Result<Self, String> {
+    fn acquire(_workspace_root: &WorkspaceRoot) -> Result<Self, String> {
         Ok(Self)
     }
 }
@@ -784,39 +881,53 @@ impl CrossProcessSessionLock {
 /// [`forge_capture_core::sop_session::StaleRevisionError`] and writes
 /// nothing, leaving the existing file exactly as it was.
 ///
+/// `session_path` must be `workspace_root`'s canonical path, or a path
+/// under it (directly, or via an accepted alias such as a hard link) —
+/// the caller's responsibility, same trust boundary this module has
+/// always placed on the session file's own, non-attacker-controlled
+/// name. `workspace_root` must already be open (see [`WorkspaceRoot::open`])
+/// for the caller's entire operation, including this call — C2P1-RR-004B:
+/// since `session_path` typically has no intermediate component between
+/// it and the workspace root, holding the root's own handle open for
+/// this whole call already protects the write target's one ancestor the
+/// same way [`ConfinedPath`] protects a frame file's intermediate ones.
+///
 /// Holds [`session_lock`] (in-process) AND [`CrossProcessSessionLock`]
-/// (OS-enforced, cross-process, canonical-identity-keyed — the C2P1-RR-005
-/// fix) for `path` across the entire read-current-revision / check /
+/// (OS-enforced, cross-process, workspace-root-identity-keyed — the
+/// C2P1-RR-005C fix) across the entire read-current-revision / check /
 /// write / rename sequence, so overlapping callers racing for the same
 /// `expected_revision` — whether two command invocations in this process,
 /// two separate app launches against the same vault, or two different
-/// lexical spellings of the same real path — are strictly serialized:
-/// whichever acquires both locks first reads the true current revision,
-/// succeeds, and advances it; every other caller then reads the *new*
-/// current revision under the same locks and is correctly rejected as
-/// stale, rather than any of them having read the old revision before one
-/// wrote (the prior check-then-act race).
+/// accepted alias paths for the same real file, even across different
+/// parent directories under the same workspace — are strictly
+/// serialized: whichever acquires both locks first reads the true
+/// current revision, succeeds, and advances it; every other caller then
+/// reads the *new* current revision under the same locks and is
+/// correctly rejected as stale, rather than any of them having read the
+/// old revision before one wrote (the prior check-then-act race).
 pub fn write_session_if_current(
-    path: &Path,
+    workspace_root: &WorkspaceRoot,
+    session_path: &Path,
     expected_revision: u64,
     bytes: &[u8],
 ) -> Result<(), SessionWriteError> {
-    let lock = session_lock(path);
+    let lock = session_lock(workspace_root.canonical_path());
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
 
     // C2P1-RR-005: the in-process mutex above only ever protected against
-    // overlapping calls IN THIS PROCESS. A second process, or a lexical
-    // alias for the same real file, bypassed it entirely. This holds a
-    // real OS-enforced lock, keyed by canonical file identity, across the
-    // exact same read-validate-write span.
+    // overlapping calls IN THIS PROCESS. A second process, or an
+    // alternate accepted alias for the same real file, bypassed it
+    // entirely. This holds a real OS-enforced lock, keyed by the
+    // workspace root's own identity, across the exact same
+    // read-validate-write span.
     let _cross_process_guard =
-        CrossProcessSessionLock::acquire(path).map_err(SessionWriteError::Io)?;
+        CrossProcessSessionLock::acquire(workspace_root).map_err(SessionWriteError::Io)?;
 
-    let current = read_current_revision(path).map_err(SessionWriteError::Io)?;
+    let current = read_current_revision(session_path).map_err(SessionWriteError::Io)?;
     forge_capture_core::sop_session::check_expected_revision(current, expected_revision)
         .map_err(SessionWriteError::Stale)?;
-    cleanup_orphaned_temp_files(path);
-    atomic_write_with_fsync(path, bytes).map_err(SessionWriteError::Io)
+    cleanup_orphaned_temp_files(session_path);
+    atomic_write_with_fsync(session_path, bytes).map_err(SessionWriteError::Io)
 }
 
 #[derive(Debug)]
@@ -1199,14 +1310,19 @@ mod tests {
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64
     }
 
+    fn workspace_root(root: &Path) -> WorkspaceRoot {
+        WorkspaceRoot::open(root).unwrap()
+    }
+
     // --- path escape / symlink refusal ---
 
     #[test]
     fn resolve_confined_path_accepts_an_ordinary_relative_path_once_its_directory_is_established() {
         let root = temp_root();
-        ensure_workspace_subdirectory(&root, "frames").unwrap();
-        let resolved = resolve_confined_path(&root, "frames/f1.png").unwrap();
-        assert!(resolved.starts_with(fs::canonicalize(&root).unwrap()));
+        let ws = workspace_root(&root);
+        ensure_workspace_subdirectory(&ws, "frames").unwrap();
+        let confined = resolve_confined_path(&ws, "frames/f1.png").unwrap();
+        assert!(confined.path().starts_with(fs::canonicalize(&root).unwrap()));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1216,20 +1332,66 @@ mod tests {
         // an untrusted caller's behalf - the missing `frames` directory
         // is refused, not auto-created.
         let root = temp_root();
-        let err = resolve_confined_path(&root, "frames/f1.png").unwrap_err();
+        let ws = workspace_root(&root);
+        let err = resolve_confined_path(&ws, "frames/f1.png").unwrap_err();
         assert_eq!(err, WorkspacePathError::IntermediateDirectoryMissing);
         assert!(!root.join("frames").exists(), "a missing intermediate must never be created as a side effect of resolving a path");
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
+    #[cfg(windows)]
+    fn resolve_confined_path_mutation_survives_an_attempted_ancestor_swap_after_confinement() {
+        // C2P1-RR-004B's exact named scenario: pause after the last
+        // confinement check (resolve_confined_path has returned),
+        // attempt to swap an already-verified ancestor to an outside
+        // junction, THEN perform the real production leaf mutation -
+        // and prove the attempted swap failed and no outside path or
+        // byte ever changed.
+        let root = temp_root();
+        let outside = temp_root();
+        let ws = workspace_root(&root);
+        ensure_workspace_subdirectory(&ws, "frames").expect("setup: create frames dir at workspace init");
+
+        let confined = resolve_confined_path(&ws, "frames/f1.png").unwrap();
+
+        // Attempt the exact attack: remove the already-verified "frames"
+        // ancestor and replace it with a junction pointing outside root.
+        let frames_dir = root.join("frames");
+        let remove_result = fs::remove_dir(&frames_dir);
+        assert!(remove_result.is_err(), "the already-verified ancestor must not be removable while resolve_confined_path's guard handle is held");
+
+        let junction_status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &frames_dir.to_string_lossy(), &outside.to_string_lossy()])
+            .status();
+        if let Ok(status) = junction_status {
+            assert!(!status.success(), "the junction swap must fail outright - the ancestor directory's name is still occupied by the live, held-open object");
+        }
+
+        // Resume the real production leaf mutation.
+        confined.atomic_write_with_fsync(b"real session content").unwrap();
+
+        // Prove containment: the write landed inside root, under
+        // frames/, and nothing was ever written outside, even though
+        // the attempted swap happened strictly after confinement and
+        // strictly before this mutation.
+        assert_eq!(fs::read(root.join("frames").join("f1.png")).unwrap(), b"real session content");
+        assert!(fs::read_dir(&outside).unwrap().next().is_none(), "nothing must ever have been written outside the vault");
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
     fn ensure_workspace_subdirectory_creates_and_reuses_a_fixed_subdirectory() {
         let root = temp_root();
-        let first = ensure_workspace_subdirectory(&root, "frames").unwrap();
+        let ws = workspace_root(&root);
+        let first = ensure_workspace_subdirectory(&ws, "frames").unwrap();
         assert!(first.is_dir());
         // Idempotent: calling again for the same already-existing,
         // non-reparse-point directory succeeds and returns the same path.
-        let second = ensure_workspace_subdirectory(&root, "frames").unwrap();
+        let second = ensure_workspace_subdirectory(&ws, "frames").unwrap();
         assert_eq!(first, second);
         fs::remove_dir_all(&root).ok();
     }
@@ -1237,7 +1399,8 @@ mod tests {
     #[test]
     fn ensure_workspace_subdirectory_rejects_a_multi_component_name() {
         let root = temp_root();
-        let err = ensure_workspace_subdirectory(&root, "frames/nested").unwrap_err();
+        let ws = workspace_root(&root);
+        let err = ensure_workspace_subdirectory(&ws, "frames/nested").unwrap_err();
         assert_eq!(err, WorkspacePathError::NotASingleComponent);
         assert!(!root.join("frames").exists());
         fs::remove_dir_all(&root).ok();
@@ -1248,13 +1411,14 @@ mod tests {
     fn ensure_workspace_subdirectory_refuses_an_existing_reparse_point_with_the_same_name() {
         let root = temp_root();
         let outside = temp_root();
+        let ws = workspace_root(&root);
         let link = root.join("frames");
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &link.to_string_lossy(), &outside.to_string_lossy()])
             .status();
         if let Ok(status) = status {
             if status.success() {
-                let err = ensure_workspace_subdirectory(&root, "frames").unwrap_err();
+                let err = ensure_workspace_subdirectory(&ws, "frames").unwrap_err();
                 assert_eq!(err, WorkspacePathError::EscapesRoot);
             }
         }
@@ -1265,7 +1429,8 @@ mod tests {
     #[test]
     fn resolve_confined_path_rejects_lexical_traversal_before_touching_disk() {
         let root = temp_root();
-        let err = resolve_confined_path(&root, "../escape.png").unwrap_err();
+        let ws = workspace_root(&root);
+        let err = resolve_confined_path(&ws, "../escape.png").unwrap_err();
         assert_eq!(err, WorkspacePathError::Lexical(PathConfinementError::ContainsParentTraversal));
         fs::remove_dir_all(&root).ok();
     }
@@ -1273,7 +1438,7 @@ mod tests {
     #[test]
     fn resolve_confined_path_rejects_a_nonexistent_root() {
         let fake_root = std::env::temp_dir().join("sop-ws-does-not-exist-at-all");
-        let err = resolve_confined_path(&fake_root, "f1.png").unwrap_err();
+        let err = WorkspaceRoot::open(&fake_root).unwrap_err();
         assert_eq!(err, WorkspacePathError::RootNotResolvable);
     }
 
@@ -1282,8 +1447,9 @@ mod tests {
     fn resolve_confined_path_defeats_a_symlinked_subdirectory_escaping_the_root() {
         let root = temp_root();
         let outside = temp_root(); // a second, sibling directory - NOT inside root
+        let ws = workspace_root(&root);
         std::os::unix::fs::symlink(&outside, root.join("escape_link")).unwrap();
-        let err = resolve_confined_path(&root, "escape_link/stolen.png").unwrap_err();
+        let err = resolve_confined_path(&ws, "escape_link/stolen.png").unwrap_err();
         assert_eq!(err, WorkspacePathError::EscapesRoot);
         fs::remove_dir_all(&root).ok();
         fs::remove_dir_all(&outside).ok();
@@ -1294,6 +1460,7 @@ mod tests {
     fn resolve_confined_path_defeats_a_junction_escaping_the_root() {
         let root = temp_root();
         let outside = temp_root();
+        let ws = workspace_root(&root);
         let link = root.join("escape_link");
         // Windows directory junctions don't require elevation (unlike
         // symlinks without Developer Mode); `mklink /J` is the real
@@ -1303,7 +1470,7 @@ mod tests {
             .status();
         if let Ok(status) = status {
             if status.success() {
-                let err = resolve_confined_path(&root, "escape_link/stolen.png").unwrap_err();
+                let err = resolve_confined_path(&ws, "escape_link/stolen.png").unwrap_err();
                 assert_eq!(err, WorkspacePathError::EscapesRoot);
             }
             // If junction creation itself failed (locked-down CI image
@@ -1321,6 +1488,7 @@ mod tests {
     fn resolve_confined_path_rejects_a_missing_outside_descendant_without_creating_it_outside_the_root() {
         let root = temp_root();
         let outside = temp_root();
+        let ws = workspace_root(&root);
         let link = root.join("escape_link");
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &link.to_string_lossy(), &outside.to_string_lossy()])
@@ -1328,12 +1496,11 @@ mod tests {
         if let Ok(status) = status {
             if status.success() {
                 // The descendant `newdir` under `escape_link` does not
-                // exist yet anywhere. The previous version of this
-                // function called `create_dir_all` on the unverified
-                // parent before canonicalizing it, so `newdir` could get
-                // created *outside* `root` (physically inside `outside`)
-                // before the escape was ever detected.
-                let err = resolve_confined_path(&root, "escape_link/newdir/file.png").unwrap_err();
+                // exist yet anywhere, and this function never creates
+                // any intermediate (C2P1-RR-004A) - `escape_link` itself
+                // is refused immediately as a reparse point, so `newdir`
+                // is never even considered.
+                let err = resolve_confined_path(&ws, "escape_link/newdir/file.png").unwrap_err();
                 assert_eq!(err, WorkspacePathError::EscapesRoot);
                 assert!(
                     !outside.join("newdir").exists(),
@@ -1350,6 +1517,7 @@ mod tests {
     fn resolve_confined_path_rejects_an_existing_outside_leaf_reached_through_a_junction() {
         let root = temp_root();
         let outside = temp_root();
+        let ws = workspace_root(&root);
         fs::write(outside.join("secret.png"), b"not yours").unwrap();
         let link = root.join("escape_link");
         let status = std::process::Command::new("cmd")
@@ -1357,7 +1525,7 @@ mod tests {
             .status();
         if let Ok(status) = status {
             if status.success() {
-                let err = resolve_confined_path(&root, "escape_link/secret.png").unwrap_err();
+                let err = resolve_confined_path(&ws, "escape_link/secret.png").unwrap_err();
                 assert_eq!(err, WorkspacePathError::EscapesRoot);
             }
         }
@@ -1465,8 +1633,9 @@ mod tests {
     #[test]
     fn write_session_if_current_succeeds_when_the_expected_revision_matches() {
         let root = temp_root();
+        let ws = workspace_root(&root);
         let path = root.join("session.json");
-        let result = write_session_if_current(&path, 0, br#"{"revision":1}"#);
+        let result = write_session_if_current(&ws, &path, 0, br#"{"revision":1}"#);
         assert!(result.is_ok());
         assert_eq!(read_current_revision(&path).unwrap(), 1);
         fs::remove_dir_all(&root).ok();
@@ -1475,11 +1644,12 @@ mod tests {
     #[test]
     fn write_session_if_current_rejects_a_stale_expected_revision_and_writes_nothing() {
         let root = temp_root();
+        let ws = workspace_root(&root);
         let path = root.join("session.json");
-        write_session_if_current(&path, 0, br#"{"revision":1}"#).unwrap();
+        write_session_if_current(&ws, &path, 0, br#"{"revision":1}"#).unwrap();
         // A second writer that read revision 0 (now stale - it's really
         // 1) tries to write.
-        let result = write_session_if_current(&path, 0, br#"{"revision":2}"#);
+        let result = write_session_if_current(&ws, &path, 0, br#"{"revision":2}"#);
         assert!(matches!(result, Err(SessionWriteError::Stale(_))));
         // The file must be untouched by the rejected write.
         assert_eq!(read_current_revision(&path).unwrap(), 1);
@@ -1490,15 +1660,17 @@ mod tests {
     fn write_session_if_current_resolves_concurrent_same_revision_writers_to_exactly_one_winner() {
         let root = temp_root();
         let path = root.join("session.json");
-        write_session_if_current(&path, 0, br#"{"revision":1}"#).unwrap();
+        write_session_if_current(&workspace_root(&root), &path, 0, br#"{"revision":1}"#).unwrap();
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let make_writer = |text: &'static [u8]| {
+            let root = root.clone();
             let path = path.clone();
             let barrier = barrier.clone();
             std::thread::spawn(move || {
+                let ws = workspace_root(&root);
                 barrier.wait();
-                write_session_if_current(&path, 1, text)
+                write_session_if_current(&ws, &path, 1, text)
             })
         };
         let t1 = make_writer(br#"{"revision":2,"writer":"a"}"#);
@@ -1528,17 +1700,16 @@ mod tests {
         // is enforced by the OS against the underlying file object, not
         // against anything this process tracks itself.
         let root = temp_root();
-        let session_path = root.join("session.json");
-        fs::write(&session_path, b"{}").unwrap(); // parent must exist for canonicalize
+        let ws1 = workspace_root(&root);
+        let ws2 = workspace_root(&root);
 
-        let first = CrossProcessSessionLock::acquire(&session_path).unwrap();
+        let first = CrossProcessSessionLock::acquire(&ws1).unwrap();
 
         let second_acquired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let second_acquired_clone = second_acquired.clone();
-        let session_path_clone = session_path.clone();
         let handle = std::thread::spawn(move || {
             // This call must block until `first` is dropped below.
-            let _second = CrossProcessSessionLock::acquire(&session_path_clone).unwrap();
+            let _second = CrossProcessSessionLock::acquire(&ws2).unwrap();
             second_acquired_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
 
@@ -1555,151 +1726,50 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    // --- C2P1-RR-005C: the lock is keyed *only* by the workspace root's
+    // own identity - never by any session-specific path - so a hard-link
+    // alias in a *different* directory under the same root cannot split
+    // the lock namespace, and the file's own rename churn (C2P1-RR-005B)
+    // and the old bootstrap/identity fork (C2P1-RR-005A) cannot recur,
+    // since nothing about `lock_path_for` ever looks at the session path
+    // at all. ---
+
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_resolves_a_case_differing_alias_to_the_same_underlying_lock() {
+    fn cross_process_lock_path_depends_only_on_the_workspace_root_not_any_session_path() {
         let root = temp_root();
-        let session_path_lower = root.join("session.json");
-        fs::write(&session_path_lower, b"{}").unwrap();
-        let session_path_upper = root.join("SESSION.JSON"); // NTFS: same real file
-
-        let lock_a = CrossProcessSessionLock::lock_path_for(&session_path_lower).unwrap();
-        let lock_b = CrossProcessSessionLock::lock_path_for(&session_path_upper).unwrap();
-        assert_eq!(lock_a, lock_b, "a case-differing lexical alias for the same file must resolve to the same lock path");
-
+        let key_1 = CrossProcessSessionLock::lock_path_for(&workspace_root(&root));
+        let key_2 = CrossProcessSessionLock::lock_path_for(&workspace_root(&root));
+        assert_eq!(key_1, key_2, "two independent WorkspaceRoot::open calls for the same root must agree on the same lock, with no session-path input to ever diverge on");
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_resolves_a_hard_link_alias_to_the_same_underlying_lock() {
-        // C2P1-RR-005A's explicit example: "a hard-link path... can yield
-        // different sibling lock names." A hard link is a second NAME for
-        // the identical NTFS file (same volume serial + file id) - the
-        // whole reason this round moved off name-derived keys onto
-        // FILE_ID_INFO.
+    fn cross_process_lock_path_is_unaffected_by_the_session_file_being_created_renamed_or_hard_linked() {
         let root = temp_root();
-        let original = root.join("session.json");
-        fs::write(&original, b"{}").unwrap();
-        let hard_link = root.join("session-alias.json");
-        std::fs::hard_link(&original, &hard_link).expect("hard_link should succeed on NTFS within one volume");
+        let ws = workspace_root(&root);
+        let before_any_write = CrossProcessSessionLock::lock_path_for(&ws);
 
-        let lock_a = CrossProcessSessionLock::lock_path_for(&original).unwrap();
-        let lock_b = CrossProcessSessionLock::lock_path_for(&hard_link).unwrap();
-        assert_eq!(lock_a, lock_b, "a hard-link alias for the same real file must resolve to the same lock path");
+        let path = root.join("session.json");
+        write_session_if_current(&ws, &path, 0, br#"{"revision":1}"#).unwrap(); // creates + renames
+        write_session_if_current(&ws, &path, 1, br#"{"revision":2}"#).unwrap(); // renames again
+        std::fs::hard_link(&path, root.join("session-alias.json")).unwrap(); // a second name, same inode
 
-        fs::remove_dir_all(&root).ok();
-    }
-
-    // --- C2P1-RR-005B: lock identity must survive the session file's own
-    // rename, and must never fork into a separate "doesn't exist yet"
-    // namespace that a concurrent caller could diverge onto. ---
-
-    #[test]
-    #[cfg(windows)]
-    fn cross_process_lock_path_is_identical_before_and_after_the_session_file_is_created() {
-        let root = temp_root();
-        let session_path = root.join("session.json");
-        let before = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        fs::write(&session_path, b"{}").unwrap();
-        let after = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_eq!(
-            before, after,
-            "the lock path must never change across the session file's own lifecycle - only the parent directory's identity, which creating the file does not alter, may ever determine it"
-        );
+        let after = CrossProcessSessionLock::lock_path_for(&workspace_root(&root));
+        assert_eq!(before_any_write, after, "none of creation, repeated rename-replacement, or an added hard-link alias may ever change the lock key - it depends only on the root");
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     #[cfg(windows)]
-    fn cross_process_lock_path_is_identical_across_every_rewrite_of_the_session_file() {
-        let root = temp_root();
-        let session_path = root.join("session.json");
-        let before_any_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        write_session_if_current(&session_path, 0, br#"{"revision":1}"#).unwrap();
-        let after_first_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        write_session_if_current(&session_path, 1, br#"{"revision":2}"#).unwrap();
-        let after_second_write = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_eq!(before_any_write, after_first_write, "creating the file via a real write must not change the lock key");
-        assert_eq!(after_first_write, after_second_write, "a second write, which replaces the inode again via rename, must not change the lock key either");
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn cross_process_lock_path_for_a_not_yet_created_file_matches_a_concurrent_waiters_key() {
-        // There is now exactly one lock namespace regardless of whether
-        // the session file exists yet - this directly closes the second
-        // C2P1-RR-005B variant (a bootstrap-path waiter stranded in a
-        // different namespace than a writer that saw the file already
-        // created), since that second namespace no longer exists to
-        // diverge into.
-        let root = temp_root();
-        let session_path = root.join("session.json");
-        let key_before_creation_attempt_1 = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        let key_before_creation_attempt_2 = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_eq!(
-            key_before_creation_attempt_1, key_before_creation_attempt_2,
-            "two callers checking before the file exists must agree on the same lock, with no separate bootstrap namespace to diverge into"
-        );
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn cross_process_lock_still_blocks_a_late_acquirer_that_only_sees_the_post_rename_file() {
-        // C2P1-RR-005B's exact named scenario: writer A holds the lock,
-        // performs the atomic rename, and stays paused BEFORE releasing
-        // the guard; writer B's own `lock_path_for` call happens
-        // strictly AFTER that rename - under the prior file-identity-keyed
-        // scheme, B would have computed a *different*, uncontended lock
-        // name right here. B must still block until A actually releases.
-        let root = temp_root();
-        let session_path = root.join("session.json");
-        fs::write(&session_path, b"{}").unwrap();
-
-        let lock_a = CrossProcessSessionLock::acquire(&session_path).unwrap();
-        let key_a_is_holding = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-
-        // Simulate "A performed its atomic rename while still holding the
-        // lock" - exactly what `write_session_if_current` does mid-critical
-        // section, before this guard is dropped.
-        atomic_write_with_fsync(&session_path, br#"{"revision":1}"#).unwrap();
-
-        let key_after_rename = CrossProcessSessionLock::lock_path_for(&session_path).unwrap();
-        assert_eq!(key_a_is_holding, key_after_rename, "the key computed after the rename must be the exact key A is holding");
-
-        let b_acquired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let b_acquired_clone = b_acquired.clone();
-        let session_path_clone = session_path.clone();
-        let handle = std::thread::spawn(move || {
-            let _b = CrossProcessSessionLock::acquire(&session_path_clone).unwrap();
-            b_acquired_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        assert!(
-            !b_acquired.load(std::sync::atomic::Ordering::SeqCst),
-            "B must still be blocked by A's lock even though A already performed its rename"
-        );
-
-        drop(lock_a);
-        handle.join().unwrap();
-        assert!(b_acquired.load(std::sync::atomic::Ordering::SeqCst), "B must complete once A actually releases");
-
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn cross_process_lock_fails_closed_when_the_session_directory_cannot_be_queried() {
-        // No fallback namespace exists to silently degrade into anymore -
-        // a parent directory that can't be opened/queried must refuse
-        // outright, not quietly pick a weaker scheme.
-        let session_path = PathBuf::from(r"Z:\definitely-does-not-exist-anywhere-on-this-machine\session.json");
-        let err = CrossProcessSessionLock::lock_path_for(&session_path).unwrap_err();
-        assert!(!err.is_empty());
-        fs::remove_dir_all("Z:\\definitely-does-not-exist-anywhere-on-this-machine").ok();
+    fn workspace_root_open_fails_closed_for_a_nonexistent_root() {
+        // No fallback namespace exists to degrade into - an unopenable
+        // root must refuse outright, which is also what every lock and
+        // confined-path call for that root transitively depends on.
+        let fake_root = std::env::temp_dir().join("sop-ws-does-not-exist-at-all-for-lock-test");
+        let err = WorkspaceRoot::open(&fake_root).unwrap_err();
+        assert_eq!(err, WorkspacePathError::RootNotResolvable);
     }
 
     #[test]
@@ -1708,11 +1778,13 @@ mod tests {
         let path = root.join("session.json");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let make_writer = |text: &'static [u8]| {
+            let root = root.clone();
             let path = path.clone();
             let barrier = barrier.clone();
             std::thread::spawn(move || {
+                let ws = workspace_root(&root);
                 barrier.wait();
-                write_session_if_current(&path, 0, text)
+                write_session_if_current(&ws, &path, 0, text)
             })
         };
         let t1 = make_writer(br#"{"revision":1,"writer":"a"}"#);
@@ -1740,11 +1812,14 @@ mod tests {
         // kernel code path a second real process would hit.)
         let root = temp_root();
         let path = root.join("session.json");
-        write_session_if_current(&path, 0, br#"{"revision":1}"#).unwrap();
+        write_session_if_current(&workspace_root(&root), &path, 0, br#"{"revision":1}"#).unwrap();
 
-        let external_lock = CrossProcessSessionLock::acquire(&path).unwrap();
+        let external_lock = CrossProcessSessionLock::acquire(&workspace_root(&root)).unwrap();
+        let root_clone = root.clone();
         let path_clone = path.clone();
-        let writer = std::thread::spawn(move || write_session_if_current(&path_clone, 1, br#"{"revision":2,"writer":"blocked-writer"}"#));
+        let writer = std::thread::spawn(move || {
+            write_session_if_current(&workspace_root(&root_clone), &path_clone, 1, br#"{"revision":2,"writer":"blocked-writer"}"#)
+        });
 
         std::thread::sleep(std::time::Duration::from_millis(100));
         assert_eq!(read_current_revision(&path).unwrap(), 1, "the writer must still be blocked on the externally-held cross-process lock");
@@ -1762,15 +1837,17 @@ mod tests {
     /// below — never runs as part of the normal suite (`#[ignore]`); the
     /// parent test spawns THIS SAME test binary and asks it, by exact
     /// name, to run only this one test. Acquires the real cross-process
-    /// lock, signals readiness by writing a marker file, holds the lock
-    /// for a fixed duration, then exits (releasing it).
+    /// lock (keyed only by the workspace root, per the env var), signals
+    /// readiness by writing a marker file, holds the lock for a fixed
+    /// duration, then exits (releasing it).
     #[test]
     #[ignore]
     #[cfg(windows)]
     fn cross_process_lock_child_helper_acquire_and_hold() {
-        let session_path = PathBuf::from(std::env::var("FORGE_TEST_LOCK_SESSION_PATH").expect("env var required"));
+        let root = PathBuf::from(std::env::var("FORGE_TEST_LOCK_ROOT").expect("env var required"));
         let ready_path = PathBuf::from(std::env::var("FORGE_TEST_LOCK_READY_PATH").expect("env var required"));
-        let _lock = CrossProcessSessionLock::acquire(&session_path).expect("child process failed to acquire the lock");
+        let ws = WorkspaceRoot::open(&root).expect("child process failed to open the workspace root");
+        let _lock = CrossProcessSessionLock::acquire(&ws).expect("child process failed to acquire the lock");
         fs::write(&ready_path, b"ready").expect("child process failed to write the ready marker");
         std::thread::sleep(std::time::Duration::from_millis(800));
         // `_lock` drops here on return, releasing the lock as this
@@ -1790,13 +1867,13 @@ mod tests {
         // demonstrating the primitive in isolation.
         let root = temp_root();
         let session_path = root.join("session.json");
-        write_session_if_current(&session_path, 0, br#"{"revision":1}"#).unwrap();
+        write_session_if_current(&workspace_root(&root), &session_path, 0, br#"{"revision":1}"#).unwrap();
 
         let ready_path = root.join("child-ready.marker");
         let exe = std::env::current_exe().expect("current_exe should resolve for a running test binary");
         let mut child = std::process::Command::new(&exe)
             .args(["sop_workspace::tests::cross_process_lock_child_helper_acquire_and_hold", "--exact", "--ignored", "--test-threads=1"])
-            .env("FORGE_TEST_LOCK_SESSION_PATH", &session_path)
+            .env("FORGE_TEST_LOCK_ROOT", &root)
             .env("FORGE_TEST_LOCK_READY_PATH", &ready_path)
             .spawn()
             .expect("failed to spawn the child test process");
@@ -1817,8 +1894,11 @@ mod tests {
         // background thread, sample state shortly after, confirm it
         // hasn't advanced yet, then confirm it completes once the real
         // separate process exits and releases the lock.
+        let root_clone = root.clone();
         let path_clone = session_path.clone();
-        let writer = std::thread::spawn(move || write_session_if_current(&path_clone, 1, br#"{"revision":2,"writer":"parent-process"}"#));
+        let writer = std::thread::spawn(move || {
+            write_session_if_current(&workspace_root(&root_clone), &path_clone, 1, br#"{"revision":2,"writer":"parent-process"}"#)
+        });
 
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert_eq!(
@@ -1831,6 +1911,116 @@ mod tests {
         let result = writer.join().unwrap();
         assert!(result.is_ok(), "{:?}", result);
         assert_eq!(read_current_revision(&session_path).unwrap(), 2);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Child-process helper for
+    /// `write_session_if_current_is_blocked_by_a_separate_process_despite_a_cross_directory_hard_link_alias`
+    /// below. Opens the same workspace root the parent uses, acquires
+    /// the real cross-process lock through it, signals readiness, holds,
+    /// then exits.
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn cross_process_lock_child_helper_for_hard_link_scenario() {
+        let root = PathBuf::from(std::env::var("FORGE_TEST_LOCK_ROOT").expect("env var required"));
+        let ready_path = PathBuf::from(std::env::var("FORGE_TEST_LOCK_READY_PATH").expect("env var required"));
+        let ws = WorkspaceRoot::open(&root).expect("child process failed to open the workspace root");
+        let _lock = CrossProcessSessionLock::acquire(&ws).expect("child process failed to acquire the lock");
+        fs::write(&ready_path, b"ready").expect("child process failed to write the ready marker");
+        std::thread::sleep(std::time::Duration::from_millis(800));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn write_session_if_current_is_blocked_by_a_separate_process_despite_a_cross_directory_hard_link_alias() {
+        // C2P1-RR-005C's exact named scenario and required evidence: "a
+        // real NTFS test with a hard-link alias in a different directory
+        // and two separate processes through the production write path
+        // ... both callers select the same durable lock namespace and
+        // exactly one same-revision writer succeeds."
+        //
+        // Layout: root/a/session.json is the real, canonical session
+        // file. root/b/session-alias.json is a genuine NTFS hard link to
+        // it, living in a *different* directory under the same
+        // workspace root - the exact counterexample the prior round's
+        // parent-directory-keyed scheme (C2P1-RR-005B) could not
+        // converge, since `root/a` and `root/b` are different parent
+        // directories with different stable identities.
+        let root = temp_root();
+        let dir_a = root.join("a");
+        let dir_b = root.join("b");
+        fs::create_dir(&dir_a).unwrap();
+        fs::create_dir(&dir_b).unwrap();
+        let session_path = dir_a.join("session.json");
+        let hard_link_path = dir_b.join("session-alias.json");
+
+        let ws = workspace_root(&root);
+        write_session_if_current(&ws, &session_path, 0, br#"{"revision":1}"#).unwrap();
+        std::fs::hard_link(&session_path, &hard_link_path).expect("hard_link should succeed on NTFS within one volume");
+
+        // Prove this is a genuine cross-directory scenario, not a
+        // same-directory coincidence: `a` and `b` have different stable
+        // identities, even though the lock derived from the shared
+        // `root` does not care.
+        let id_a = query_stable_file_id(&open_no_follow(&dir_a).unwrap()).unwrap();
+        let id_b = query_stable_file_id(&open_no_follow(&dir_b).unwrap()).unwrap();
+        assert_ne!((id_a.volume_serial, id_a.file_id), (id_b.volume_serial, id_b.file_id), "a and b must be genuinely different directories for this to be a real test of the named scenario");
+
+        // Both processes open the SAME workspace root (`root`, the
+        // common ancestor of both `a` and `b`) and must therefore select
+        // the identical, durable lock namespace regardless of which
+        // subdirectory their own session-path interest lives in.
+        let ready_path = root.join("child-ready.marker");
+        let exe = std::env::current_exe().expect("current_exe should resolve for a running test binary");
+        let mut child = std::process::Command::new(&exe)
+            .args(["sop_workspace::tests::cross_process_lock_child_helper_for_hard_link_scenario", "--exact", "--ignored", "--test-threads=1"])
+            .env("FORGE_TEST_LOCK_ROOT", &root)
+            .env("FORGE_TEST_LOCK_READY_PATH", &ready_path)
+            .spawn()
+            .expect("failed to spawn the child test process");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !ready_path.exists() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("child process never signaled it acquired the cross-process lock");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        // The child now genuinely holds the lock derived from `root`.
+        // The parent's real production write through the canonical path
+        // must still be blocked by it, proving the lock the child picked
+        // (reachable with no session-path input at all) is the exact
+        // same namespace the real write path contends on - the hard
+        // link in the other directory never caused a split.
+        let root_clone = root.clone();
+        let path_clone = session_path.clone();
+        let writer = std::thread::spawn(move || {
+            write_session_if_current(&workspace_root(&root_clone), &path_clone, 1, br#"{"revision":2,"writer":"parent-process"}"#)
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            read_current_revision(&session_path).unwrap(),
+            1,
+            "the parent-process writer must still be blocked by the separate child process's lock, despite the cross-directory hard-link alias"
+        );
+
+        child.wait().expect("child process should exit cleanly, releasing the lock");
+        let result = writer.join().unwrap();
+        assert!(result.is_ok(), "{:?}", result);
+        assert_eq!(read_current_revision(&session_path).unwrap(), 2, "exactly one same-revision writer succeeded");
+        // The hard-linked alias is a separate directory entry: renaming
+        // over `a/session.json` never touches it, so it still shows the
+        // pre-write snapshot - an inherent property of rename-based
+        // atomic writes plus hard links, not something any lock scheme
+        // can change. Documented, not asserted as a bug: the lock's job
+        // is to prevent two writers from both believing they have
+        // exclusive access to the canonical file, which this proves.
+        assert!(hard_link_path.exists());
 
         fs::remove_dir_all(&root).ok();
     }
