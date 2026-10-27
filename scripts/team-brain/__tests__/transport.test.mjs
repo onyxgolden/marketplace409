@@ -35,7 +35,15 @@ function envelopeFor({ principalId, keyId, privateKey, operation, resource, payl
       keyId,
       issuedAt: T0,
       operation: operation ?? "submit_verdict",
-      resource: resource ?? { repo: "onyxgolden/marketplace409", scope: "pr-639", reviewed_head: "abc123" },
+      // TBP2-002A fixture update (explicit, not a silent preserve):
+      // the old default head "abc123" was not a canonical head
+      // identity. Verdict envelopes also carry their result source.
+      resource: resource ?? {
+        repo: "onyxgolden/marketplace409",
+        scope: "pr-639",
+        source: "synthetic-reviewer",
+        reviewed_head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
       nonce: nonce ?? "nonce-1",
       payload: payload ?? { verdict: "GO" },
     },
@@ -237,7 +245,20 @@ describe("unregistered principal", () => {
 describe("resource/head binding", () => {
   it("rejects an envelope bound to the wrong resource repo", () => {
     const { registry, privateKey, keyId, principalId } = setup();
-    const env = envelopeFor({ principalId, keyId, privateKey, resource: { repo: "onyxgolden/other-repo" } });
+    const env = envelopeFor({
+      principalId,
+      keyId,
+      privateKey,
+      // TBP2-002A: this submit_verdict envelope must itself be valid
+      // (scope/source/head) so the test actually exercises the repo
+      // binding mismatch, not a malformed-envelope refusal.
+      resource: {
+        repo: "onyxgolden/other-repo",
+        scope: "pr-639",
+        source: "synthetic-reviewer",
+        reviewed_head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+    });
     try {
       verifyAndAuthorize(registry, env, { resource: { repo: "onyxgolden/marketplace409" } });
       throw new Error("expected RESOURCE_BINDING_MISMATCH");
@@ -252,11 +273,19 @@ describe("resource/head binding", () => {
       principalId,
       keyId,
       privateKey,
-      resource: { repo: "onyxgolden/marketplace409", scope: "pr-639", reviewed_head: "stale-head" },
+      // TBP2-002A fixture update (explicit): old "stale-head" /
+      // "current-head" were not canonical head identities, and this
+      // submit_verdict envelope now also carries its result source.
+      resource: {
+        repo: "onyxgolden/marketplace409",
+        scope: "pr-639",
+        source: "synthetic-reviewer",
+        reviewed_head: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      },
     });
     try {
       verifyAndAuthorize(registry, env, {
-        resource: { repo: "onyxgolden/marketplace409", reviewed_head: "current-head" },
+        resource: { repo: "onyxgolden/marketplace409", reviewed_head: "cccccccccccccccccccccccccccccccccccccccc" },
       });
       throw new Error("expected HEAD_BINDING_MISMATCH");
     } catch (e) {

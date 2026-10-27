@@ -26,7 +26,7 @@
 // (ledger/repository.mjs, already merged) and P3's (orchestrator/queue)
 // job — handlers are supplied by the caller, not implemented here.
 
-import { verifyAndAuthorize, recordSeenOperation } from "./registry.mjs";
+import { verifyAndAuthorize, recordSeenOperation, reserveSeenOperation, releaseSeenOperation } from "./registry.mjs";
 import { fail, CODES } from "./errors.mjs";
 
 export const AGENT_OPERATIONS = new Set([
@@ -135,7 +135,35 @@ export function handleEnvelope(api, envelope, expected) {
     });
   }
   const verifyResult = verifyAndAuthorize(api.registry, envelope, expected, { record: false });
-  const result = handler(envelope, verifyResult);
+  // TBP2-004A, async settlement: verification runs with record: false,
+  // and the operation is reserved as pending BEFORE the handler runs
+  // (atomic in-flight exclusion — a second attempt while this one is
+  // pending is refused as OPERATION_PENDING, not admitted twice).
+  // It is recorded as completed ONLY after the handler settles
+  // successfully: a sync throw or an async rejection releases the
+  // reservation, so a retry is possible and a rejected Promise is
+  // never reported as processed work. Sync handlers keep sync
+  // behaviour (a plain return value, not a Promise).
+  reserveSeenOperation(api.registry, envelope);
+  let result;
+  try {
+    result = handler(envelope, verifyResult);
+  } catch (e) {
+    releaseSeenOperation(api.registry, envelope);
+    throw e;
+  }
+  if (result && typeof result.then === "function") {
+    return result.then(
+      (value) => {
+        recordSeenOperation(api.registry, envelope);
+        return value;
+      },
+      (e) => {
+        releaseSeenOperation(api.registry, envelope);
+        throw e;
+      }
+    );
+  }
   recordSeenOperation(api.registry, envelope);
   return result;
 }

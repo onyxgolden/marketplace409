@@ -30,6 +30,20 @@ const MAX_POLL_BYTES = 10 * 1024 * 1024;
 // is preserved because scanSince throws instead of returning a cursor.
 const GIT_TIMEOUT_MS = 15000;
 const MAX_GIT_TEXT_BYTES = 10 * 1024 * 1024;
+// TBP2-007A: a per-Git-command timeout is not a per-poll deadline —
+// a poll can run many 15-second commands sequentially and still claim
+// to have finished inside the brief's 15-second processing bound.
+// scanSince therefore enforces ONE monotonic deadline for the whole
+// poll (see POLL_DEADLINE_MS below): every subprocess inside a poll
+// is also bounded by the time remaining under that deadline, and the
+// poll truncates with its cursor preserved instead of claiming a
+// complete advance when the deadline is hit.
+export const POLL_DEADLINE_MS = 15000;
+// Early enumeration bound: a poll never inspects more commits than
+// this in one pass. Beyond it, the scan truncates (cursor preserved)
+// instead of materializing an unbounded history before applying its
+// record/file counters.
+const MAX_COMMITS_PER_POLL = 1000;
 
 function gitSubprocessError(e, what) {
   if (e && (e.code === "ETIMEDOUT" || e.code === "ENOBUFS" || /timed out|ENOBUFS/.test(String(e.message ?? e)))) {
@@ -41,47 +55,58 @@ function gitSubprocessError(e, what) {
   throw e;
 }
 
+// Remaining-time subprocess bound: a call inside a poll may never run
+// longer than the time left under the poll deadline (and never longer
+// than GIT_TIMEOUT_MS on its own). A call that starts just before the
+// deadline and runs long is capped here and surfaces as INTAKE_BLOCKED
+// via gitSubprocessError — never as a silent overrun.
+function timeoutFor(opts) {
+  if (opts.deadlineMs === undefined) return GIT_TIMEOUT_MS;
+  return Math.max(1, Math.min(GIT_TIMEOUT_MS, opts.deadlineMs - Date.now()));
+}
+
 function git(repoPath, args, opts = {}) {
+  const { deadlineMs, ...rest } = opts;
   try {
     return execFileSync("git", args, {
       cwd: repoPath,
       encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
+      timeout: timeoutFor(opts),
       maxBuffer: opts.maxBuffer ?? MAX_GIT_TEXT_BYTES,
-      ...opts,
+      ...rest,
     });
   } catch (e) {
     gitSubprocessError(e, args.join(" "));
   }
 }
 
-function gitBuffer(repoPath, args, maxBuffer = 1024 * 1024) {
+function gitBuffer(repoPath, args, maxBuffer = 1024 * 1024, opts = {}) {
   try {
-    return execFileSync("git", args, { cwd: repoPath, timeout: GIT_TIMEOUT_MS, maxBuffer });
+    return execFileSync("git", args, { cwd: repoPath, timeout: timeoutFor(opts), maxBuffer });
   } catch (e) {
     gitSubprocessError(e, args.join(" "));
   }
 }
 
-export function headCommit(repoPath, ref = "HEAD") {
-  return git(repoPath, ["rev-parse", ref]).trim();
+export function headCommit(repoPath, ref = "HEAD", opts = {}) {
+  return git(repoPath, ["rev-parse", ref], opts).trim();
 }
 
-export function commitExists(repoPath, sha) {
+export function commitExists(repoPath, sha, opts = {}) {
   try {
     // stdio: a failed existence check is an expected, handled outcome here
     // (not a real error) — stderr is suppressed so it doesn't read as a
     // broken call when it's doing exactly what it's for.
-    git(repoPath, ["cat-file", "-e", `${sha}^{commit}`], { stdio: ["ignore", "ignore", "ignore"] });
+    git(repoPath, ["cat-file", "-e", `${sha}^{commit}`], { stdio: ["ignore", "ignore", "ignore"], ...opts });
     return true;
   } catch {
     return false;
   }
 }
 
-function isAncestor(repoPath, ancestor, descendant) {
+function isAncestor(repoPath, ancestor, descendant, opts = {}) {
   try {
-    git(repoPath, ["merge-base", "--is-ancestor", ancestor, descendant], { stdio: ["ignore", "ignore", "ignore"] });
+    git(repoPath, ["merge-base", "--is-ancestor", ancestor, descendant], { stdio: ["ignore", "ignore", "ignore"], ...opts });
     return true;
   } catch (e) {
     if (e.status === 1) return false;
@@ -89,14 +114,14 @@ function isAncestor(repoPath, ancestor, descendant) {
   }
 }
 
-function parentsOf(repoPath, sha) {
-  const out = git(repoPath, ["rev-list", "--parents", "-n", "1", sha]).trim();
+function parentsOf(repoPath, sha, opts = {}) {
+  const out = git(repoPath, ["rev-list", "--parents", "-n", "1", sha], opts).trim();
   const parts = out.split(/\s+/);
   return parts.slice(1); // parts[0] is the commit itself
 }
 
-function commitTimestamp(repoPath, sha) {
-  return git(repoPath, ["show", "-s", "--format=%cI", sha]).trim(); // committer date, ISO 8601
+function commitTimestamp(repoPath, sha, opts = {}) {
+  return git(repoPath, ["show", "-s", "--format=%cI", sha], opts).trim(); // committer date, ISO 8601
 }
 
 function pathDepth(path) {
@@ -115,11 +140,11 @@ function pathDepth(path) {
 // vanished while the cursor still advanced. With -z, Git emits raw
 // bytes, no quoting, and a path is either in scope (admitted or
 // quarantined) or out of scope — never silently lost inside scope.
-function diffNameStatus(repoPath, fromRef, toRef, scopePaths) {
+function diffNameStatus(repoPath, fromRef, toRef, scopePaths, opts = {}) {
   const args = ["diff", "--name-status", "-z", "--no-renames", fromRef, toRef];
   let out;
   try {
-    out = git(repoPath, args);
+    out = git(repoPath, args, opts);
   } catch (e) {
     if (e instanceof Error && e.name === "TeamBrainTrustError") throw e;
     fail(CODES.MALFORMED_ENVELOPE, `git diff failed between ${fromRef} and ${toRef}`, { error: String(e) });
@@ -138,8 +163,8 @@ function diffNameStatus(repoPath, fromRef, toRef, scopePaths) {
   return changes;
 }
 
-function blobShaAt(repoPath, commitSha, path) {
-  const out = git(repoPath, ["ls-tree", commitSha, "--", path]).trim();
+function blobShaAt(repoPath, commitSha, path, opts = {}) {
+  const out = git(repoPath, ["ls-tree", commitSha, "--", path], opts).trim();
   if (!out) return null; // path doesn't exist at this commit (e.g. it was deleted)
   // format: "<mode> blob <sha>\t<path>" — only the mode+sha prefix is
   // parsed, so a quoted or unusual path in the tail cannot confuse it.
@@ -150,18 +175,25 @@ function blobShaAt(repoPath, commitSha, path) {
 // TBP2-007: object size WITHOUT reading content. `git cat-file -s`
 // returns the byte count from the object header only, so an oversized
 // blob can be quarantined before a single content byte is buffered.
-function blobSizeAt(repoPath, blobSha) {
+function blobSizeAt(repoPath, blobSha, opts = {}) {
   try {
-    const out = git(repoPath, ["cat-file", "-s", blobSha]).trim();
+    const out = git(repoPath, ["cat-file", "-s", blobSha], opts).trim();
     const size = Number.parseInt(out, 10);
     return Number.isFinite(size) ? size : null;
-  } catch {
+  } catch (e) {
+    // A bounded subprocess failure (timeout / output cap) is an
+    // explicit INTAKE_BLOCKED, not a silent null — swallowing it here
+    // would turn a deadline overrun into a misleading "could not
+    // determine size" error downstream. Non-Trust errors (a genuinely
+    // missing object) still return null so the caller can block with
+    // its own precise message.
+    if (e && e.name === "TeamBrainTrustError") throw e;
     return null;
   }
 }
 
-function readBlob(repoPath, blobSha, maxBuffer) {
-  return gitBuffer(repoPath, ["cat-file", "-p", blobSha], maxBuffer);
+function readBlob(repoPath, blobSha, maxBuffer, opts = {}) {
+  return gitBuffer(repoPath, ["cat-file", "-p", blobSha], maxBuffer, opts);
 }
 
 function sha256OfBuffer(buf) {
@@ -176,6 +208,13 @@ function sha256OfBuffer(buf) {
 // commit, with every parent actually inspected, not just unioned blindly
 // without dedup noise.
 //
+// Event kinds: ADDED / MODIFIED / DELETED as before, plus
+// MERGE_SELECTED (TBP2-006A): a merge that resolves divergent parent
+// content to one parent's blob. MERGE_SELECTED is provenance, not a new
+// obligation — a consumer must never mint a duplicate ADDED obligation
+// from it; it exists so the scanned stream's last content for a path
+// matches the pinned head.
+//
 // Returns { events, newCursor, quarantined, truncated } — never throws for
 // ordinary quarantine-worthy conditions (oversized file, excessive path
 // depth); those files are reported in `quarantined`, not silently included
@@ -183,6 +222,13 @@ function sha256OfBuffer(buf) {
 // conditions where silent progress would be actively wrong: the cursor
 // commit no longer exists/isn't an ancestor of HEAD (history rewrite), or
 // HEAD doesn't exist.
+//
+// TBP2-007A deadline: the whole poll is bounded by ONE deadline
+// (pollDeadlineMs, default POLL_DEADLINE_MS). Every subprocess inside
+// the poll is bounded by the remaining time, and every loop step checks
+// the deadline before doing more work. Hitting the deadline sets
+// truncated: true and preserves the cursor — it never claims a
+// complete advance for a partially scanned history.
 export function scanSince(
   repoPath,
   {
@@ -194,17 +240,21 @@ export function scanSince(
     maxRecordsPerBatch = MAX_RECORDS_PER_BATCH,
     maxChangedFilesPerPoll = MAX_CHANGED_FILES_PER_POLL,
     maxPollBytes = MAX_POLL_BYTES,
+    pollDeadlineMs = POLL_DEADLINE_MS,
   } = {}
 ) {
-  const head = headCommit(repoPath, headRef);
+  const deadlineAt = Date.now() + pollDeadlineMs;
+  const gitOpts = () => ({ deadlineMs: deadlineAt });
+  const expired = () => Date.now() >= deadlineAt;
+  const head = headCommit(repoPath, headRef, gitOpts());
 
   if (cursorCommit) {
-    if (!commitExists(repoPath, cursorCommit)) {
+    if (!commitExists(repoPath, cursorCommit, gitOpts())) {
       fail(CODES.INTAKE_BLOCKED, "cursor commit does not exist in this repository (history rewrite or wrong repo)", {
         cursorCommit,
       });
     }
-    if (!isAncestor(repoPath, cursorCommit, head)) {
+    if (!isAncestor(repoPath, cursorCommit, head, gitOpts())) {
       fail(CODES.INTAKE_BLOCKED, "cursor commit is no longer an ancestor of HEAD (history rewrite) — refusing to skip-to-tip", {
         cursorCommit,
         head,
@@ -217,8 +267,8 @@ export function scanSince(
   }
 
   const range = cursorCommit ? `${cursorCommit}..${head}` : head;
-  const commitList = git(repoPath, ["rev-list", "--topo-order", "--reverse", range]).trim();
-  const commits = commitList ? commitList.split("\n") : [];
+  const commitList = git(repoPath, ["rev-list", "--topo-order", "--reverse", range], gitOpts()).trim();
+  let commits = commitList ? commitList.split("\n") : [];
 
   const events = [];
   const quarantined = [];
@@ -226,8 +276,25 @@ export function scanSince(
   let totalBytes = 0;
   let changedFileCount = 0;
 
+  // Early enumeration bound (TBP2-007A): charge-before-inspect. If the
+  // history is longer than one poll may inspect, inspect only the
+  // first MAX_COMMITS_PER_POLL and truncate — the remaining commits
+  // are uninspected, so the cursor must not advance.
+  if (commits.length > MAX_COMMITS_PER_POLL) {
+    commits = commits.slice(0, MAX_COMMITS_PER_POLL);
+    truncated = true;
+  }
+
   outer: for (const commit of commits) {
-    const parents = parentsOf(repoPath, commit);
+    if (expired()) {
+      truncated = true;
+      break outer;
+    }
+    if (events.length >= maxRecordsPerBatch || changedFileCount >= maxChangedFilesPerPoll) {
+      truncated = true;
+      break outer;
+    }
+    const parents = parentsOf(repoPath, commit, gitOpts());
     const parentRefs = parents.length > 0 ? parents : [EMPTY_TREE_SHA];
 
     // Union of per-parent diffs for this commit, in first-appearance
@@ -236,7 +303,11 @@ export function scanSince(
     // once per path below — never once per parent.
     const candidates = new Map(); // path -> Map(parentRef -> status)
     for (const parent of parentRefs) {
-      const changes = diffNameStatus(repoPath, parent, commit, scopePaths);
+      if (expired()) {
+        truncated = true;
+        break outer;
+      }
+      const changes = diffNameStatus(repoPath, parent, commit, scopePaths, gitOpts());
       for (const { status, path } of changes) {
         if (!candidates.has(path)) candidates.set(path, new Map());
         candidates.get(path).set(parent, status);
@@ -244,6 +315,10 @@ export function scanSince(
     }
 
     for (const [path, perParent] of candidates) {
+      if (expired()) {
+        truncated = true;
+        break outer;
+      }
       if (events.length >= maxRecordsPerBatch) {
         truncated = true;
         break outer;
@@ -258,19 +333,27 @@ export function scanSince(
         continue;
       }
 
-      // TBP2-006: distinguish actual introduction from merge visibility.
-      // For a non-merge commit, the single parent's diff status is the
-      // event kind, as before. For a merge, a path whose resulting blob
-      // already exists in ANY parent is not a new introduction — it was
-      // introduced by the parent-side commit that already emitted it,
-      // and the merge merely made it visible on this branch. Only a
-      // merge result that differs from every parent is a genuine
-      // merge-resolution change (MODIFIED, or ADDED if no parent had
-      // the path at all); a merge result that deletes a path a parent
-      // had is DELETED. No second ADDED candidate is ever minted for
-      // one unchanged request.
-      const parentBlobs = parentRefs.map((parent) => blobShaAt(repoPath, parent, path));
-      const commitBlob = blobShaAt(repoPath, commit, path);
+      // TBP2-006 / TBP2-006A: distinguish actual introduction from
+      // merge visibility and from merge selection. For a non-merge
+      // commit, the single parent's diff status is the event kind, as
+      // before. For a merge, a path whose resulting blob already
+      // exists in a parent is not a new introduction — it was
+      // introduced by the parent-side commit that already emitted it.
+      // But when the parents hold DIVERGENT content (two distinct
+      // non-null blobs) and the merge resolves to one parent's blob,
+      // that choice is evidence: emit MERGE_SELECTED with the chosen
+      // blob, so the stream's last content for the path matches the
+      // pinned head instead of silently implying the other branch's
+      // observation is current. A single-parent-content merge (clean
+      // introduction visibility, one parent lacking the path) stays
+      // silent, as before. Only a merge result that differs from
+      // every parent is a genuine merge-resolution change (MODIFIED,
+      // or ADDED if no parent had the path at all); a merge result
+      // that deletes a path a parent had is DELETED. No second ADDED
+      // candidate is ever minted for one unchanged request, and
+      // MERGE_SELECTED never mints a new obligation.
+      const parentBlobs = parentRefs.map((parent) => blobShaAt(repoPath, parent, path, gitOpts()));
+      const commitBlob = blobShaAt(repoPath, commit, path, gitOpts());
       let eventKind;
       if (parentRefs.length <= 1) {
         const status = perParent.get(parentRefs[0]);
@@ -279,7 +362,9 @@ export function scanSince(
         if (!parentBlobs.some((b) => b !== null)) continue; // absent everywhere: no change to record
         eventKind = "DELETED";
       } else if (parentBlobs.includes(commitBlob)) {
-        continue; // merge visibility only — already introduced elsewhere
+        const distinctParentBlobs = [...new Set(parentBlobs.filter((b) => b !== null))];
+        if (distinctParentBlobs.length < 2) continue; // merge visibility only — already introduced elsewhere
+        eventKind = "MERGE_SELECTED";
       } else if (parentBlobs.some((b) => b !== null)) {
         eventKind = "MODIFIED";
       } else {
@@ -299,7 +384,11 @@ export function scanSince(
         // byte is read. An oversized blob is quarantined on its size
         // alone, and a poll-byte overflow truncates before reading —
         // neither case ever buffers the blob.
-        const size = blobSizeAt(repoPath, commitBlob);
+        if (expired()) {
+          truncated = true;
+          break outer;
+        }
+        const size = blobSizeAt(repoPath, commitBlob, gitOpts());
         if (size === null) {
           fail(CODES.INTAKE_BLOCKED, "could not determine blob size before reading; refusing to read unbounded content", {
             commit,
@@ -314,7 +403,7 @@ export function scanSince(
           truncated = true;
           break outer;
         }
-        const content = readBlob(repoPath, commitBlob, maxFileBytes + 64 * 1024);
+        const content = readBlob(repoPath, commitBlob, maxFileBytes + 64 * 1024, gitOpts());
         byteLength = content.length;
         totalBytes += byteLength;
         contentSha256 = sha256OfBuffer(content);
@@ -326,7 +415,7 @@ export function scanSince(
         eventKind,
         contentSha256,
         byteLength,
-        sourceTimestamp: commitTimestamp(repoPath, commit),
+        sourceTimestamp: commitTimestamp(repoPath, commit, gitOpts()),
         firstObservedAt: new Date().toISOString(),
       });
     }

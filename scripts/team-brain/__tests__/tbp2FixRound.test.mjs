@@ -382,7 +382,8 @@ describe("TBP2-004 replay identity is the full operation, not the digest", () =>
       operation: "submit_verdict",
       operationId: "op-replay-1",
       nonce: "n2",
-      resource: { repo: "onyxgolden/forge-ai-drop", scope: "lane-b", reviewed_head: "b".repeat(40) },
+      // TBP2-002A: submit_verdict envelopes carry their result source.
+      resource: { repo: "onyxgolden/forge-ai-drop", scope: "lane-b", source: "synthetic-reviewer", reviewed_head: "b".repeat(40) },
       payload: { note: "same" },
     });
     expectCode(() => verifyAndAuthorize(setup.registry, second, {}), CODES.CONFLICTING_REPLAY);

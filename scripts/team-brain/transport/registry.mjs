@@ -164,13 +164,32 @@ export function replayIdentity(envelope) {
   });
 }
 
-// Throws OPERATION_REPLAYED for an exactly identical operation, or
-// CONFLICTING_REPLAY for the same operation_id with any changed binding.
-// Does not record anything — recording is a separate, explicit step.
+// Seen-state shape (TBP2-004A): an entry is { identity, status } with
+// status "pending" (reserved, not yet settled) or "completed" (handler
+// settled successfully). A pending entry is in-flight exclusion, not a
+// processed operation: admitting a second attempt while the first is
+// pending would double-execute, and reporting it as a replay would lie
+// about work that has not completed. Legacy string entries (pre-round-2
+// in-memory registries) are treated as completed identities.
+function seenEntry(entry) {
+  if (entry === undefined) return undefined;
+  if (typeof entry === "string") return { identity: entry, status: "completed" };
+  return entry;
+}
+
+// Throws OPERATION_PENDING for an in-flight operation, OPERATION_REPLAYED
+// for an exactly identical completed operation, or CONFLICTING_REPLAY
+// for the same operation_id with any changed binding. Does not record
+// anything — recording is a separate, explicit step.
 export function checkSeenOperation(registry, envelope) {
-  const seen = registry.seenOperations.get(envelope.operation_id);
+  const seen = seenEntry(registry.seenOperations.get(envelope.operation_id));
   if (seen === undefined) return;
-  if (seen === replayIdentity(envelope)) {
+  if (seen.status === "pending") {
+    fail(CODES.OPERATION_PENDING, "operation_id is already in flight and has not settled", {
+      operationId: envelope.operation_id,
+    });
+  }
+  if (seen.identity === replayIdentity(envelope)) {
     fail(CODES.OPERATION_REPLAYED, "operation_id already processed with identical full operation identity", {
       operationId: envelope.operation_id,
     });
@@ -180,12 +199,33 @@ export function checkSeenOperation(registry, envelope) {
   });
 }
 
-// Records an operation as seen. Callers must call this only after the
-// operation has actually been admitted and, for dispatched operations,
-// successfully handled — recording before handler execution would let a
-// failed or never-handled operation masquerade as completed work.
+// Reserves an operation as pending. Callers must call this only after
+// verification has passed and only once — checkSeenOperation above
+// guarantees no entry exists at reservation time in the dispatcher
+// path, so a reservation can never silently overwrite a completed
+// record.
+export function reserveSeenOperation(registry, envelope) {
+  checkSeenOperation(registry, envelope);
+  registry.seenOperations.set(envelope.operation_id, { identity: replayIdentity(envelope), status: "pending" });
+}
+
+// Releases a pending reservation without recording it as processed.
+// Only a pending entry is cleared — a completed record is never
+// deleted by a later failure, so a failed retry cannot erase history.
+export function releaseSeenOperation(registry, envelope) {
+  const seen = seenEntry(registry.seenOperations.get(envelope.operation_id));
+  if (seen && seen.status === "pending") {
+    registry.seenOperations.delete(envelope.operation_id);
+  }
+}
+
+// Records an operation as seen and completed. Callers must call this
+// only after the operation has actually been admitted and, for
+// dispatched operations, successfully handled — recording before
+// handler execution would let a failed or never-handled operation
+// masquerade as completed work.
 export function recordSeenOperation(registry, envelope) {
-  registry.seenOperations.set(envelope.operation_id, replayIdentity(envelope));
+  registry.seenOperations.set(envelope.operation_id, { identity: replayIdentity(envelope), status: "completed" });
 }
 
 // End-to-end: verify signature, verify the signing key's registered
@@ -215,6 +255,15 @@ export function verifyAndAuthorize(registry, envelope, expected, opts = {}) {
   if (expected !== undefined && expected !== null) {
     if (typeof expected !== "object" || Array.isArray(expected)) {
       fail(CODES.MALFORMED_ENVELOPE, "expected pin must be an object", { reason: "EXPECTED_NOT_AN_OBJECT" });
+    }
+    // TBP2-003A: the outer expected schema is closed to its documented
+    // fields (operation/resource), not just the nested resource. A
+    // misplaced reviewed_head at the outer level previously passed
+    // silently while the caller believed a pin was requested.
+    for (const key of Object.keys(expected)) {
+      if (key !== "operation" && key !== "resource") {
+        fail(CODES.MALFORMED_ENVELOPE, `unknown expected pin field: ${key}`, { field: key });
+      }
     }
     if (expected.operation !== undefined) {
       if (typeof expected.operation !== "string" || expected.operation.length === 0) {

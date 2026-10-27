@@ -12,10 +12,21 @@
 // - schema_version is exactly 1. No other version is admitted.
 // - All envelope fields are present, exactly the allowed set, no extras.
 // - IDs/nonce are nonempty bounded strings without control characters.
-// - issued_at is a real calendar date-time, not just a parseable one
-//   ("2026-02-30" is not a date and is refused).
+// - issued_at is a real calendar date-time with a real, finite offset
+//   ("2026-02-30" is not a date and is refused; "+99:99" is not an
+//   offset and is refused).
 // - resource.repo is owner/repo; resource scope/head/source/subject, when
-//   present, are nonempty bounded strings without whitespace.
+//   present, are nonempty bounded strings without whitespace. When a
+//   reviewed_head is present it must be a canonical 40-hex git commit
+//   identity — a nonempty arbitrary string does not prove a head.
+// - A submit_verdict envelope is verdict evidence under the brief, so
+//   it must carry scope, source, and reviewed_head. Generic reads and
+//   tasks need not fabricate a head and may omit it.
+// - Payload numbers must be finite: raw JSON "1e400" parses to Infinity
+//   and JSON.stringify renders Infinity as null, so an unchecked
+//   nonfinite number would let an altered payload verify under the
+//   original signature. Finite numbers and null are the only numeric
+//   domain admitted.
 // - expected_row_version is null or a non-negative integer.
 // - payload is a plain object, bounded in depth, total bytes, and any
 //   single string length. A payload that violates a limit is refused
@@ -94,7 +105,16 @@ export function isRealIsoDateTime(value) {
   if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
   const daysInMonth = [31, year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
   if (day < 1 || day > daysInMonth) return false;
-  return true;
+  // TBP2-002A: component ranges alone do not prove a real instant —
+  // "+99:99" passes the regex shape but is not an offset. Require a
+  // bounded offset and a finite materialized instant.
+  const zone = match[8];
+  if (zone !== "Z") {
+    const offsetHour = Number(zone.slice(1, 3));
+    const offsetMinute = Number(zone.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+  return Number.isFinite(Date.parse(value));
 }
 
 export function validateResource(resource, { forPin = false } = {}) {
@@ -118,12 +138,26 @@ export function validateResource(resource, { forPin = false } = {}) {
   for (const field of ["scope", "reviewed_head", "source", "subject"]) {
     if (resource[field] !== undefined) checkNoWhitespace(resource[field], `resource.${field}`);
   }
+  // TBP2-002A: a present reviewed_head must be a canonical 40-hex git
+  // commit identity. "not-a-hash" and short fixture strings are not
+  // heads, and accepting them would let a caller claim head binding
+  // over nothing.
+  if (resource.reviewed_head !== undefined && !/^[0-9a-f]{40}$/.test(resource.reviewed_head)) {
+    malformed("resource.reviewed_head must be a 40-hex git commit identity", { field: "reviewed_head" });
+  }
   return true;
 }
 
 function walkPayload(value, depth) {
   if (depth > MAX_PAYLOAD_DEPTH) {
     malformed(`payload nesting exceeds ${MAX_PAYLOAD_DEPTH} levels`, { reason: "DEPTH_EXCEEDED" });
+  }
+  // TBP2-002A: raw JSON overflow (1e400) parses to Infinity, and
+  // JSON.stringify renders Infinity as null — the same bytes the
+  // signed null payload canonicalizes to. Only finite numbers are in
+  // the admitted JSON value domain, checked here before any hashing.
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    malformed("payload numbers must be finite", { reason: "NONFINITE_NUMBER" });
   }
   if (typeof value === "string") {
     if (value.length > MAX_STRING_LENGTH) {
@@ -172,6 +206,18 @@ export function validateEnvelope(envelope) {
     malformed("issued_at must be a real ISO 8601 date-time", { field: "issued_at" });
   }
   validateResource(envelope.resource);
+  // TBP2-002A: submit_verdict is the brief's verdict-evidence
+  // operation (exact repo/resource/scope/head + result source), so a
+  // verdict envelope missing any of scope, source, or reviewed_head
+  // is not verdict evidence at all and is refused here, not admitted
+  // as a generic signed object.
+  if (envelope.operation === "submit_verdict") {
+    for (const field of ["scope", "source", "reviewed_head"]) {
+      if (envelope.resource[field] === undefined) {
+        malformed(`submit_verdict resource must carry ${field}`, { field });
+      }
+    }
+  }
   if (envelope.expected_row_version !== null) {
     if (!Number.isInteger(envelope.expected_row_version) || envelope.expected_row_version < 0) {
       malformed("expected_row_version must be null or a non-negative integer", { field: "expected_row_version" });
@@ -232,6 +278,13 @@ export function validateBuildFields(fields) {
     malformed("issuedAt must be a real ISO 8601 date-time", { field: "issuedAt" });
   }
   validateResource(fields.resource);
+  if (fields.operation === "submit_verdict") {
+    for (const field of ["scope", "source", "reviewed_head"]) {
+      if (fields.resource[field] === undefined) {
+        malformed(`submit_verdict resource must carry ${field}`, { field });
+      }
+    }
+  }
   if (fields.expectedRowVersion !== undefined && fields.expectedRowVersion !== null) {
     if (!Number.isInteger(fields.expectedRowVersion) || fields.expectedRowVersion < 0) {
       malformed("expectedRowVersion must be null or a non-negative integer", { field: "expectedRowVersion" });
