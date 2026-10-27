@@ -26,6 +26,9 @@
 //!   raster-observation) built on [`scroll::run_scroll`].
 //! - [`native`] — thin OS boundary: real GDI capture on Windows, an explicit
 //!   error elsewhere.
+//! - [`dxgi_duplication`] — DXGI Desktop Duplication backend, slice DXGI-1:
+//!   wrapper, lifecycle, and single-output acquisition. Not yet dispatched:
+//!   [`native`] still owns capture dispatch until DXGI-3 wires it.
 //! - [`hotkey`] — Print Screen takeover contract: the accelerator string,
 //!   the launch-not-shutter action, and the graceful-degradation status
 //!   mapping. Pure logic; the Tauri shell performs the OS registration.
@@ -78,6 +81,7 @@ pub mod annotations;
 pub mod artifact;
 pub mod capture_meta;
 pub mod coords;
+pub mod dxgi_duplication;
 pub mod engines;
 pub mod hotkey;
 pub mod library_index;
