@@ -66,14 +66,14 @@ test("replay is idempotent; changed bytes conflict", async () => {
   await assert.rejects(() => publisher.publish(tampered), /REPUBLISH_CONFLICT/);
 });
 
-test("P2b-2 sequencing-gate move: Project Manager kind still refuses JOB_NOT_BUILT_IN_SLICE; Controls kind is built", async () => {
+test("P2b-3 sequencing-gate move: Project Manager kind now routes to the manager evaluator (JOB_NOT_BUILT_IN_SLICE no longer applies); with scheduler datasets only and no mapping it refuses PROJECT_MAPPING_REQUIRED", async () => {
   const result = await runJob({
     hostConfig: CANONICAL_HOST,
     request: { ...canonicalRequest(), job_kind: "project-manager-plan-health-review", window: { name: "planning-review-snapshot" } },
     adapterSpec: canonicalSpec(), publisher: createMemoryPublisher(), clock,
   });
   assert.equal(result.outcome, "REFUSED");
-  assert.equal(result.code, "JOB_NOT_BUILT_IN_SLICE");
+  assert.equal(result.code, "PROJECT_MAPPING_REQUIRED");
 });
 
 test("typed scope binding: a package id equal to the project id is not the registered scope", async () => {

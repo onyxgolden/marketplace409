@@ -11,11 +11,10 @@
  *
  * Slice order (P2b brief §1): P2b-1 Scheduler → P2b-2 Project Controls
  * → P2b-3 Project Manager, one PR per slice. P2b-1 built the
- * Scheduler job; this slice builds the Project Controls job (the
- * Project Manager descriptor still ships as data with readiness
- * NOT_BUILT_P2B3; the execution worker refuses that kind with
- * JOB_NOT_BUILT_IN_SLICE until its slice lands — the same
- * sequencing-gate pattern P2a-1 left for P2a-2).
+ * Scheduler job, P2b-2 built the Project Controls job, and this
+ * slice builds the Project Manager job (the sequencing-gate pattern
+ * P2a-1 left for P2a-2, and P2b-1 left for P2b-2, now closes: all
+ * three P2b descriptors read WIRED_INERT).
  *
  * Identity model (brief §4): a scheduling project ID, a
  * work-management project ID, a package ID and a generic project_id
@@ -90,7 +89,7 @@ export const JOB_DESCRIPTORS = Object.freeze([
     proposed_trigger: "Monday 08:30 America/Chicago (documentation only — not registered anywhere)",
     reporting_window: "planning review snapshot",
     window_name: "planning-review-snapshot",
-    readiness: "NOT_BUILT_P2B3",
+    readiness: "WIRED_INERT",
   }),
 ]);
 
@@ -228,6 +227,26 @@ export function requireControlsScope(request) {
     throw new JobRefusal(
       "SCOPE_TYPE_MISMATCH",
       `project-controls-evidence-review requires a work-management-project scope, not '${String(request.project_scope_ref?.type)}'; cross-domain association requires an explicit host-registered mapping`,
+    );
+  }
+}
+
+/**
+ * The Project Manager job serves scheduling-project scopes only:
+ * its request scope is the scheduling side of the registered
+ * project mapping, and the worker derives the controls leg's
+ * work-management-project scope from the host-supplied mapping —
+ * never from the request, never from a coincidentally equal string.
+ * Any other scope type refuses SCOPE_TYPE_MISMATCH before any
+ * adapter is opened. (A work-management-project scope does NOT
+ * serve this job either: the job's unit is the mapped pair, entered
+ * through the scheduling side.)
+ */
+export function requireManagerScope(request) {
+  if (request.project_scope_ref?.type !== "scheduling-project") {
+    throw new JobRefusal(
+      "SCOPE_TYPE_MISMATCH",
+      `project-manager-plan-health-review requires a scheduling-project scope, not '${String(request.project_scope_ref?.type)}'; the controls leg's scope comes from the host-registered project mapping, never from the request`,
     );
   }
 }

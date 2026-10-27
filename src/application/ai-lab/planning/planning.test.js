@@ -10,15 +10,19 @@
  */
 import { describe, expect, it } from "vitest";
 import { Budget } from "../rental-ops/budgets.js";
+import { canonicalDigest } from "../rental-ops/canonical.js";
 import { PLANNING_BUDGET_LIMITS } from "../../../../scripts/ai-agents/planning-wiring/src/planningBudget.js";
-import { CONTROLS_DATASETS, PLANNING_DATASETS, projectRow } from "./fieldMappings.js";
+import { CONTROLS_DATASETS, FIELD_MAPPING_VERSION, PLANNING_DATASETS, projectRow } from "./fieldMappings.js";
 import {
-  JOB_KINDS, JobRefusal, descriptorFor, requireControlsScope, requireSchedulerScope, resolveMode, validateJobRequest,
+  JOB_KINDS, JobRefusal, descriptorFor, requireControlsScope, requireManagerScope, requireSchedulerScope, resolveMode, validateJobRequest,
 } from "./jobContracts.js";
 import { buildSnapshot } from "./snapshotBuilder.js";
 import { buildNetwork } from "./sourceMappings.js";
 import { evaluateSchedulerSnapshot } from "./schedulerAssessment.js";
 import { evaluateControlsSnapshot } from "./controlsEvidenceAssessment.js";
+import {
+  MANAGER_EVALUATOR_VERSION, evaluateManagerComposition, validateProjectMapping,
+} from "./managerComposition.js";
 import { reportRowIds, serializePrivateItem } from "./privateItemSerializer.js";
 import { validateDecision } from "./decisionValidator.js";
 
@@ -121,10 +125,10 @@ describe("jobContracts", () => {
     expect(() => resolveMode("LIVE")).toThrow(JobRefusal);
     expect(() => resolveMode("PRODUCTION")).toThrow(JobRefusal);
   });
-  it("descriptors: Scheduler + Controls WIRED_INERT (P2b-2 gate move), Manager NOT_BUILT", () => {
+  it("descriptors: Scheduler + Controls + Manager all WIRED_INERT (P2b-3 gate move)", () => {
     expect(descriptorFor(JOB_KINDS.SCHEDULER_PLANNING_REVIEW).readiness).toBe("WIRED_INERT");
     expect(descriptorFor(JOB_KINDS.CONTROLS_EVIDENCE_REVIEW).readiness).toBe("WIRED_INERT");
-    expect(descriptorFor(JOB_KINDS.PM_PLAN_HEALTH_REVIEW).readiness).toBe("NOT_BUILT_P2B3");
+    expect(descriptorFor(JOB_KINDS.PM_PLAN_HEALTH_REVIEW).readiness).toBe("WIRED_INERT");
     expect(descriptorFor("nope")).toBeNull();
   });
   it("requireSchedulerScope refuses non-scheduling scopes", () => {
@@ -658,5 +662,467 @@ describe("controlsEvidenceAssessment (P2b-2)", () => {
     expect([...CONTROLS_DATASETS]).toEqual([
       "forge_work_packages", "forge_work_package_baselines", "forge_work_progress_snapshots",
     ]);
+  });
+});
+
+describe("managerComposition (P2b-3)", () => {
+  const SCHED_SCOPE = { type: "scheduling-project", id: "P-1" };
+  const CTL_SCOPE = { type: "work-management-project", id: "WM-1" };
+  const MAPPING = {
+    scheduling_project_ref: "P-1",
+    work_management_project_ref: "WM-1",
+    mapping_version: "planning-project-mapping@1",
+  };
+  function managerRequest() {
+    return {
+      principal_ref: "principal-1", owner_ref: "owner-1",
+      project_scope_ref: { ...SCHED_SCOPE },
+      job_kind: JOB_KINDS.PM_PLAN_HEALTH_REVIEW, job_version: 1,
+      as_of: AS_OF, window: { name: "planning-review-snapshot" },
+      snapshot_request_id: "snap-mgr-unit-1",
+    };
+  }
+  // A snapshot whose digest recomputes exactly as the composition
+  // verifies it: canonicalDigest over {envelope, records}.
+  function legSnapshot(scope, { consistency = "CONSISTENT", evidence = {}, datasets = {}, conflicts = [] } = {}) {
+    const envelope = {
+      schema_version: "planning-snapshot@1",
+      snapshot_request_id: "snap-leg-unit-1", owner_ref: "owner-1",
+      project_scope_ref: { ...scope },
+      source_system: "synthetic-repository", source_revision: "rev-1",
+      collection: { started_at: AS_OF, finished_at: AS_OF },
+      as_of: AS_OF, review_date: "2026-10-26", as_of_timezone: "UTC",
+      mapping_version: FIELD_MAPPING_VERSION, datasets,
+      consistency, coverage_gaps: [], stale: false, conflicts,
+      collection_errors: [],
+    };
+    const records = {};
+    return { ...envelope, digest: canonicalDigest({ envelope, records }), records, evidence };
+  }
+  function legReport(agent, jobKind, schema, scope, snapshotDigest, sections, diagnostics = []) {
+    return {
+      schema_version: schema, agent, job_kind: jobKind, job_version: 1,
+      owner_ref: "owner-1", project_scope_ref: { ...scope }, as_of: AS_OF,
+      snapshot_digest: snapshotDigest, sections, diagnostics,
+    };
+  }
+  function schedulerSections(overrides = {}) {
+    return {
+      inventory: { blocks_total: 0, components: 0, ...overrides.inventory },
+      components: { rows: [] },
+      lookahead: { rows: [] },
+      integrity: { rows: [] },
+      review_list: { rows: [] },
+      ...overrides.sections,
+    };
+  }
+  function controlsSections(overrides = {}) {
+    return {
+      inventory: { packages_total: 0, baselines_total: 0, snapshots_total: 0 },
+      packages: { rows: [] },
+      integrity: { rows: [] },
+      checklist: { rows: [] },
+      questions: { rows: [] },
+      ...overrides.sections,
+    };
+  }
+  function boundPair({ schedulerSections: sSections, controlsSections: cSections,
+    schedulerEvidence = {}, controlsEvidence = {}, controlsDatasets, controlsConflicts } = {}) {
+    const sSnap = legSnapshot(SCHED_SCOPE, { evidence: schedulerEvidence });
+    // P678-003: the controls leg snapshot must attest its package
+    // population exactly — snapshotBuilder always emits datasets
+    // facts in production-shaped inputs, and the population gate
+    // withholds (WITHHELD) when the fact is absent, because an
+    // unattested population has no authoritative denominator. The
+    // old {} shorthand modeled no such attestation. Default: the
+    // fact matching the fixture's package rows, complete and
+    // usable; callers may override controlsDatasets to model
+    // unattested/conflict populations.
+    const pkgRows = cSections?.sections?.packages?.rows ?? [];
+    const cDatasets = controlsDatasets ?? {
+      forge_work_packages: {
+        expected: pkgRows.length, received: pkgRows.length,
+        complete: true, pages_complete: true, usable: true, revision: "rev-1",
+      },
+    };
+    const cSnap = legSnapshot(CTL_SCOPE, { evidence: controlsEvidence, datasets: cDatasets, conflicts: controlsConflicts ?? [] });
+    const sRep = legReport("scheduler", JOB_KINDS.SCHEDULER_PLANNING_REVIEW,
+      "planning-scheduler-report@1", SCHED_SCOPE, sSnap.digest, schedulerSections(sSections));
+    const cRep = legReport("project-controls", JOB_KINDS.CONTROLS_EVIDENCE_REVIEW,
+      "planning-controls-report@1", CTL_SCOPE, cSnap.digest, controlsSections(cSections));
+    return { sSnap, cSnap, sRep, cRep };
+  }
+  function compose(pair, overrides = {}) {
+    return evaluateManagerComposition({
+      schedulerReport: pair.sRep, controlsReport: pair.cRep,
+      schedulerSnapshot: pair.sSnap, controlsSnapshot: pair.cSnap,
+      mapping: { ...MAPPING }, request: managerRequest(),
+      composition_snapshot_digest: "pin-digest-unit",
+      ...overrides,
+    });
+  }
+  function allRowIds(report) {
+    const ids = [];
+    for (const section of Object.values(report.sections ?? {})) {
+      for (const row of section.rows ?? []) ids.push(row.row_id);
+    }
+    return ids;
+  }
+
+  it("requireManagerScope admits scheduling-project and refuses every other scope type", () => {
+    expect(() => requireManagerScope({ project_scope_ref: { type: "scheduling-project", id: "P-1" } })).not.toThrow();
+    for (const type of ["work-management-project", "package", "generic-project"]) {
+      expect(() => requireManagerScope({ project_scope_ref: { type, id: "P-1" } })).toThrowError(JobRefusal);
+      try {
+        requireManagerScope({ project_scope_ref: { type, id: "P-1" } });
+      } catch (err) {
+        expect(err.code).toBe("SCOPE_TYPE_MISMATCH");
+      }
+    }
+  });
+
+  it("validateProjectMapping refuses missing, malformed and mismatched mappings distinctly", () => {
+    expect(() => validateProjectMapping(null, "P-1")).toThrowError(JobRefusal);
+    try { validateProjectMapping(null, "P-1"); } catch (err) { expect(err.code).toBe("PROJECT_MAPPING_REQUIRED"); }
+    for (const bad of [
+      { ...MAPPING, package_block_map: { "PKG-A": ["A"] } },
+      { ...MAPPING, scheduling_project_ref: "P-9" },
+      { ...MAPPING, work_management_project_ref: "" },
+      { ...MAPPING, mapping_version: "" },
+    ]) {
+      try { validateProjectMapping(bad, "P-1"); expect.unreachable(); } catch (err) { expect(err.code).toBe("BAD_MAPPING"); }
+    }
+    expect(validateProjectMapping({ ...MAPPING }, "P-1")).toEqual(MAPPING);
+  });
+
+  it("READY when both legs bind, snapshots are consistent, and no finding exists", () => {
+    const report = compose(boundPair());
+    expect(report.status).toBe("DRAFT");
+    expect(report.conclusion).toBe("READY");
+    expect(report.execution_authorized).toBe(false);
+    expect(report.sections.completion).toMatchObject({ admitted_packages: 0, terminal_count: 0, cancelled_count: 0 });
+    expect(report.sections.relationships.state).toBe("RELATIONSHIP_NOT_ESTABLISHED");
+    expect(report.sections.predecessor_evidence.rows.map((r) => r.status)).toEqual(["BOUND", "BOUND", "BOUND"]);
+    expect(report.versions.manager_evaluator_version).toBe(MANAGER_EVALUATOR_VERSION);
+  });
+
+  it("QUALIFIED when a scheduler review row carries; the agenda assigns the role label, never a person", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { review_list: { rows: [{
+        row_id: "sch-review-1", kind: "REVIEW_DISCREPANCY", record_ref: "C",
+        dataset: "schedule_blocks", action: "review-discrepancy",
+        detail: "declared start differs from computed advisory start", evidence: [],
+      }] } } },
+    });
+    const report = compose(pair);
+    expect(report.conclusion).toBe("QUALIFIED");
+    expect(report.sections.findings_scheduler.rows).toHaveLength(1);
+    const agenda = report.sections.agenda.rows;
+    expect(agenda).toHaveLength(1);
+    expect(agenda[0].responsible_role).toBe("project reviewer");
+    expect(agenda[0]).not.toHaveProperty("assigned_to");
+    expect(agenda[0]).not.toHaveProperty("assignee");
+    expect(agenda[0]).not.toHaveProperty("patch");
+    expect(agenda[0]).not.toHaveProperty("task");
+    expect(agenda[0]).not.toHaveProperty("approval");
+  });
+
+  it("WITHHELD on a stale scheduler envelope: the gap is listed and scheduler findings do not carry", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { review_list: { rows: [{
+        row_id: "sch-review-1", kind: "REVIEW_DISCREPANCY", record_ref: "C",
+        dataset: "schedule_blocks", action: "review-discrepancy", detail: "x", evidence: [],
+      }] } } },
+    });
+    pair.sRep.as_of = "2026-10-25T12:00:00.000Z";
+    const report = compose(pair);
+    expect(report.conclusion).toBe("WITHHELD");
+    expect(report.sections.findings_scheduler.rows).toHaveLength(0);
+    const schedRow = report.sections.predecessor_evidence.rows.find((r) => r.agent === "scheduler");
+    expect(schedRow.status).toBe("WITHHELD");
+    expect(schedRow.gaps).toContain("PREDECESSOR_STALE");
+    expect(report.sections.agenda.rows.some((r) => r.kind === "PREDECESSOR_STALE")).toBe(true);
+  });
+
+  it("WITHHELD on a controls digest mismatch: the envelope cannot be trusted, so nothing carries", () => {
+    const pair = boundPair();
+    pair.cSnap.digest = "tampered-digest";
+    const report = compose(pair);
+    expect(report.conclusion).toBe("WITHHELD");
+    const ctlRow = report.sections.predecessor_evidence.rows.find((r) => r.agent === "project-controls");
+    expect(ctlRow.status).toBe("WITHHELD");
+    expect(ctlRow.gaps).toContain("PREDECESSOR_DIGEST_MISMATCH");
+  });
+
+  it("missing, malformed and mismatched versions are named distinctly", () => {
+    const missing = boundPair();
+    delete missing.cRep.schema_version;
+    expect(compose(missing).sections.predecessor_evidence.rows
+      .find((r) => r.agent === "project-controls").gaps).toContain("PREDECESSOR_VERSION_MISSING");
+    const malformed = boundPair();
+    malformed.cRep.job_version = 0;
+    expect(compose(malformed).sections.predecessor_evidence.rows
+      .find((r) => r.agent === "project-controls").gaps).toContain("PREDECESSOR_VERSION_MALFORMED");
+    const mismatch = boundPair();
+    mismatch.cRep.schema_version = "planning-controls-report@99";
+    expect(compose(mismatch).sections.predecessor_evidence.rows
+      .find((r) => r.agent === "project-controls").gaps).toContain("PREDECESSOR_VERSION_MISMATCH");
+    for (const pair of [missing, malformed, mismatch]) {
+      expect(compose(pair).conclusion).toBe("WITHHELD");
+    }
+  });
+
+  it("WITHHELD on a controls scope mismatch: an equal id string in another scope type never binds", () => {
+    const pair = boundPair();
+    pair.cRep.project_scope_ref = { type: "work-management-project", id: "P-1" };
+    pair.cSnap.project_scope_ref = { type: "work-management-project", id: "P-1" };
+    const report = compose(pair);
+    expect(report.conclusion).toBe("WITHHELD");
+    expect(report.sections.predecessor_evidence.rows
+      .find((r) => r.agent === "project-controls").gaps).toContain("PREDECESSOR_SCOPE_MISMATCH");
+  });
+
+  it("evidence with a bare record key (P677-007A class) withholds the row and names the gap", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { integrity: { rows: [{
+        row_id: "sch-int-1", kind: "MISSING_CALENDAR", record_ref: "A",
+        dataset: "schedule_blocks", detail: "missing calendar",
+        evidence: [{ dataset: "schedule_blocks", record: "A" }],
+      }] } } },
+    });
+    const report = compose(pair);
+    expect(report.sections.findings_scheduler.rows).toHaveLength(0);
+    expect(report.diagnostics.some((d) => d.code === "EVIDENCE_KEY_MISMATCH")).toBe(true);
+  });
+
+  it("evidence citing an unadmitted span carries with PARTIAL + unresolved_evidence (cycle-row rule)", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { review_list: { rows: [{
+        row_id: "sch-review-cycle", kind: "INSPECT_CYCLE", record_ref: "comp-A",
+        dataset: "schedule_dependencies", action: "inspect-cycle",
+        detail: "Inspect the cycle", evidence: [{ dataset: "schedule_dependencies", record_ref: "comp-A" }],
+      }] } } },
+    });
+    const report = compose(pair);
+    expect(report.sections.findings_scheduler.rows).toHaveLength(1);
+    expect(report.sections.findings_scheduler.rows[0].evidence_state).toBe("PARTIAL");
+    expect(report.sections.findings_scheduler.rows[0].unresolved_evidence).toEqual(["schedule_dependencies:comp-A"]);
+  });
+
+  it("empty evidence carries with UNAVAILABLE, never dropped silently", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { integrity: { rows: [{
+        row_id: "sch-int-1", kind: "PROJECT_MISSING", record_ref: "P-1",
+        dataset: "schedule_projects", detail: "no project row", evidence: [],
+      }] } } },
+    });
+    const report = compose(pair);
+    expect(report.sections.findings_scheduler.rows).toHaveLength(1);
+    expect(report.sections.findings_scheduler.rows[0].evidence_state).toBe("UNAVAILABLE");
+  });
+
+  it("terminal-status claim without any 100% figure mints the completion question; a 100% claim carries it", () => {
+    const minted = boundPair({
+      controlsSections: { sections: { packages: { rows: [{
+        row_id: "ctl-pkg-c", package_ref: "PKG-C", status: "complete",
+        percent_complete_claim: 55, snapshots: [{ snapshot_ref: "S-C1" }],
+      }] } } },
+    });
+    const mintedReport = compose(minted);
+    expect(mintedReport.sections.completion.terminal_count).toBe(1);
+    expect(mintedReport.sections.agenda.rows.some(
+      (r) => r.kind === "COMPLETION_QUESTION" && r.record_ref === "PKG-C")).toBe(true);
+    const carried = boundPair({
+      controlsSections: { sections: {
+        packages: { rows: [{
+          row_id: "ctl-pkg-c", package_ref: "PKG-C", status: "complete",
+          percent_complete_claim: 100, snapshots: [{ snapshot_ref: "S-C1" }],
+        }] },
+        questions: { rows: [{
+          row_id: "ctl-q-1", kind: "OPEN_QUESTION", record_ref: "PKG-C",
+          dataset: "forge_work_packages",
+          question: "Is the 100% progress claim supported by observed physical completion evidence?",
+          detail: "package percent_complete is 100",
+          evidence: [{ dataset: "forge_work_packages", record_ref: "PKG-C" }],
+        }] },
+      } },
+      controlsEvidence: { forge_work_packages: { "PKG-C": { dataset: "forge_work_packages", record_ref: "PKG-C" } } },
+    });
+    const carriedReport = compose(carried);
+    expect(carriedReport.sections.agenda.rows.some(
+      (r) => r.kind === "COMPLETION_QUESTION")).toBe(false);
+    expect(carriedReport.sections.agenda.rows.some(
+      (r) => r.kind === "OPEN_QUESTION" && r.record_ref === "PKG-C")).toBe(true);
+  });
+
+  it("completion counts terminal statuses only: cancelled never counts, unknown statuses qualify", () => {
+    const pair = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "in_progress", percent_complete_claim: 55, snapshots: [] },
+        { row_id: "ctl-2", package_ref: "PKG-B", status: "cancelled", percent_complete_claim: 0, snapshots: [] },
+        { row_id: "ctl-3", package_ref: "PKG-C", status: "verified_closed", percent_complete_claim: 100, snapshots: [] },
+        { row_id: "ctl-4", package_ref: "PKG-X", status: "flying", percent_complete_claim: 0, snapshots: [] },
+      ] } } },
+    });
+    const report = compose(pair);
+    expect(report.sections.completion).toMatchObject({
+      state: "QUALIFIED", admitted_packages: 4, terminal_count: 1, cancelled_count: 1,
+    });
+    expect(report.sections.completion.counts_by_status).toEqual({
+      in_progress: 1, cancelled: 1, verified_closed: 1,
+    });
+    expect(report.sections.completion.unknown_statuses).toEqual(["PKG-X"]);
+    expect(report.sections.completion.progress_label).toBe("unverified-physical-progress");
+  });
+
+  it("P678-003: an unattested package population withholds the denominator instead of accounting it", () => {
+    const pair = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "in_progress", percent_complete_claim: 55, snapshots: [] },
+      ] } } },
+      controlsDatasets: {
+        forge_work_packages: {
+          expected: null, received: 1,
+          complete: false, pages_complete: true, usable: false, revision: "rev-1",
+        },
+      },
+    });
+    const report = compose(pair);
+    expect(report.sections.completion.state).toBe("WITHHELD");
+    expect(report.sections.completion.admitted_packages).toBe(null);
+    expect(report.sections.completion.terminal_count).toBe(null);
+    expect(report.sections.completion.cancelled_count).toBe(null);
+    expect(report.sections.completion.observed_packages).toBe(1);
+    expect(report.sections.completion.population.authoritative).toBe(false);
+  });
+
+  it("P678-003A: contradictory duplicate package rows withhold completion instead of publishing ACCOUNTED first-wins", () => {
+    const dup = { dataset: "forge_work_packages", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" };
+    const rows = (first, second) => [
+      { row_id: "ctl-1", package_ref: "PKG-A", status: first, percent_complete_claim: 55, snapshots: [] },
+      { row_id: "ctl-2", package_ref: "PKG-A", status: second, percent_complete_claim: 100, snapshots: [] },
+    ];
+    // Order 1: in_progress first, complete second — verdict probe published ACCOUNTED 0 terminal.
+    const pair1 = boundPair({
+      controlsSections: { sections: { packages: { rows: rows("in_progress", "complete") } } },
+      controlsConflicts: [dup],
+    });
+    const report1 = compose(pair1);
+    expect(report1.sections.completion.state).toBe("WITHHELD");
+    expect(report1.sections.completion.population.authoritative).toBe(false);
+    expect(report1.sections.completion.population.conflict).toBe(true);
+    expect(report1.sections.completion.admitted_packages).toBe(null);
+    expect(report1.sections.completion.terminal_count).toBe(null);
+    expect(report1.sections.completion.observed_packages).toBe(2);
+    expect(report1.sections.completion.observed_terminal_count).toBe(1);
+    // Order 2: complete first, in_progress second — verdict probe published ACCOUNTED 1 of 2.
+    const pair2 = boundPair({
+      controlsSections: { sections: { packages: { rows: rows("complete", "in_progress") } } },
+      controlsConflicts: [dup],
+    });
+    const report2 = compose(pair2);
+    expect(report2.sections.completion.state).toBe("WITHHELD");
+    expect(report2.sections.completion.population.authoritative).toBe(false);
+    expect(report2.sections.completion.population.conflict).toBe(true);
+    expect(report2.sections.completion.observed_packages).toBe(2);
+  });
+
+  it("P678-003A: a conflicting package plus a clean package still withholds; identical duplicates and unrelated conflicts stay ACCOUNTED", () => {
+    const dup = { dataset: "forge_work_packages", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" };
+    const mixed = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "in_progress", percent_complete_claim: 55, snapshots: [] },
+        { row_id: "ctl-2", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+        { row_id: "ctl-3", package_ref: "PKG-B", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+      controlsConflicts: [dup],
+    });
+    const mixedReport = compose(mixed);
+    expect(mixedReport.sections.completion.state).toBe("WITHHELD");
+    expect(mixedReport.sections.completion.population.conflict).toBe(true);
+    expect(mixedReport.sections.completion.observed_packages).toBe(3);
+    // Identical duplicate: no DUPLICATE_CONFLICT recorded — population stays authoritative.
+    const identical = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+        { row_id: "ctl-2", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+    });
+    const identicalReport = compose(identical);
+    expect(identicalReport.sections.completion.state).toBe("ACCOUNTED");
+    expect(identicalReport.sections.completion.population.conflict).toBe(false);
+    // Unrelated baseline conflict: does not invalidate the package population.
+    const unrelated = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+      controlsConflicts: [{ dataset: "forge_work_package_baselines", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" }],
+    });
+    const unrelatedReport = compose(unrelated);
+    expect(unrelatedReport.sections.completion.state).toBe("ACCOUNTED");
+    expect(unrelatedReport.sections.completion.population.conflict).toBe(false);
+  });
+
+  it("milestone rows cite the Scheduler's computed values verbatim, never recomputed", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: { lookahead: { rows: [{
+        row_id: "sch-look-1", kind: "lookahead-milestone", block_ref: "C",
+        dataset: "schedule_blocks", declared_start: "2026-10-28",
+        declared_state: "INCOMPLETE", declared_percent_complete: 0,
+        computed_start: "2026-11-04", computed_component: "comp-A",
+        computed_conclusion: "READY", bucket: "LOOKAHEAD",
+        disagreement: "declared start differs from computed advisory start",
+        evidence: [{ dataset: "schedule_blocks", record_ref: "C" }],
+      }] } } },
+      schedulerEvidence: { schedule_blocks: { C: { dataset: "schedule_blocks", record_ref: "C" } } },
+    });
+    const report = compose(pair);
+    const milestone = report.sections.milestones.rows[0];
+    expect(milestone.computed_start).toBe("2026-11-04");
+    expect(milestone.declared_start).toBe("2026-10-28");
+    expect(milestone.disagreement).toContain("declared start differs");
+    expect(report.sections.milestones.note).not.toContain("×24");
+    expect(report.sections.milestones.note).toContain("never converted");
+  });
+
+  it("row ids are pm- digests and unique across every section", () => {
+    const pair = boundPair({
+      schedulerSections: { sections: {
+        integrity: { rows: [{
+          row_id: "sch-int-1", kind: "HAMMOCK_EXCLUDED", record_ref: "H",
+          dataset: "schedule_blocks", detail: "hammock", evidence: [],
+        }] },
+        review_list: { rows: [{
+          row_id: "sch-rev-1", kind: "REVIEW_DISCREPANCY", record_ref: "C",
+          dataset: "schedule_blocks", action: "review-discrepancy", detail: "x", evidence: [],
+        }] },
+      } },
+      controlsSections: { sections: { questions: { rows: [{
+        row_id: "ctl-q-1", kind: "OPEN_QUESTION", record_ref: "PKG-A",
+        dataset: "forge_work_packages", question: "What resolves this?", detail: "x", evidence: [],
+      }] } } },
+    });
+    const report = compose(pair);
+    const ids = allRowIds(report);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toMatch(/^pm-[0-9a-f]{64}$/);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("the PM report serializes to a pm- private item with the manager evaluator pinned", () => {
+    const pair = boundPair();
+    const report = compose(pair);
+    const pinSnapshot = {
+      ...legSnapshot(SCHED_SCOPE),
+      snapshot_request_id: "snap-mgr-unit-1",
+      source_system: "synthetic-repository",
+      evidence: {},
+    };
+    const item = serializePrivateItem({ report, snapshot: pinSnapshot, publishedAt: AS_OF });
+    expect(item.item_id).toMatch(/^pm-[0-9a-f]{24}$/);
+    expect(item.agent).toBe("project-manager");
+    expect(item.pinned.evaluator_version).toBe(MANAGER_EVALUATOR_VERSION);
+    expect(item.execution_authorized).toBe(false);
+    expect(reportRowIds(report)).toContain("report");
   });
 });

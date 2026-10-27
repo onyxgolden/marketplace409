@@ -647,9 +647,9 @@ const C = [
     expect: { outcome: "COMPLETED", published_count: 1, report_status: "DRAFT", snapshot_consistency: "CONSISTENT" },
   },
   {
-    id: "C12", group: "C", title: "Project Manager kind in P2b-1 refuses JOB_NOT_BUILT_IN_SLICE",
+    id: "C12", group: "C", title: "P2b-3 sequencing-gate move: Project Manager kind now routes to the manager evaluator (JOB_NOT_BUILT_IN_SLICE no longer applies); with scheduler datasets only and no mapping it refuses PROJECT_MAPPING_REQUIRED",
     build: () => ({ host: hostWith(), request: requestWith({ job_kind: "project-manager-plan-health-review", window: { name: "planning-review-snapshot" } }), spec: canonicalSpec() }),
-    expect: { outcome: "REFUSED", code: "JOB_NOT_BUILT_IN_SLICE" },
+    expect: { outcome: "REFUSED", code: "PROJECT_MAPPING_REQUIRED" },
   },
   {
     id: "C13", group: "C", title: "cross-owner rows (leaky adapter) refuse SCOPE_VIOLATION in the builder's defense-in-depth",
