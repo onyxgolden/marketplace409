@@ -236,6 +236,14 @@ export function projectQueue({ obligations, now, trustedAuthorizations = [] }) {
     blocked: blocked.map((e) => ({ id: e.id, blockedBy: e.blockedBy, reason: e.reason })),
     oldest,
     oldestAgeMs,
+    // Effective (inherited-age) filed time per open item, for consumers
+    // that must age an item by its oldest blocked descendant rather than
+    // its own filedAt (fix round 1, TBP3-007). Additive: no existing
+    // field changes shape. Keys are id-sorted so the projection stays
+    // byte-deterministic under shuffled input (AC-07/AC-09).
+    effectiveFiledAtMs: Object.fromEntries(
+      [...open].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((i) => [i.id, effectiveFiledMs(i)]),
+    ),
     escalations,
     overrides: overridden.map((e) => ({
       id: e.id,
