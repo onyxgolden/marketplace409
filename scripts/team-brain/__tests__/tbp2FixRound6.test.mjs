@@ -373,7 +373,7 @@ describe("TBP2-007H the query cap must advance a candidate instead of returning 
     expect(page2.resumeFrontier).not.toBe(page1.resumeFrontier);
     const parts = page2.resumeFrontier.split(":");
     expect(parts[0]).toBe("tb-frontier");
-    expect(parts[1]).toBe("v4");
+    expect(parts[1]).toBe("v5");
     expect(parts[10]).toBe("1000");
     expect(page2.resumeFrontier.length).toBeLessThanOrEqual(512);
     // Page 3 finishes the checks (parent 1000) and admits x exactly
@@ -388,15 +388,19 @@ describe("TBP2-007H the query cap must advance a candidate instead of returning 
     const allPaths = [page1.events[0].path, ...page3.events.map((e) => e.path)];
     expect(new Set(allPaths).size).toBe(2);
     // Corrupt query positions fail closed, not silently reinterpreted.
-    const badFormat = page2.resumeFrontier.replace(/:1000$/, ":abc");
+    // (Field 10 is the query index in both v4 and v5; v5 appends
+    // the query-context fields after it, so the end-anchor replace
+    // no longer targets it — rewrite the field, not the suffix.)
+    const withField10 = (value) => [...parts.slice(0, 10), value, ...parts.slice(11)].join(":");
+    const badFormat = withField10("abc");
     expectCode(() => scanSince(repo, { cursorCommit: badFormat, ...opts }), CODES.INTAKE_BLOCKED);
-    const beyondList = page2.resumeFrontier.replace(/:1000$/, ":5000");
+    const beyondList = withField10("5000");
     expectCode(() => scanSince(repo, { cursorCommit: beyondList, ...opts }), CODES.INTAKE_BLOCKED);
   }, 240000);
 });
 
 // ------------------------------------------------------------ frontier v4 --
-describe("TBP2-007H frontier v4 replaces v3 with the same size bound", () => {
+describe("TBP2-007H frontier v5 replaces v4 with the same size bound", () => {
   it("a legacy v3 frontier is refused, not reinterpreted", () => {
     const repo = initRepo();
     writeFile(repo, "commands/seed.md", "seed\n");
@@ -412,7 +416,7 @@ describe("TBP2-007H frontier v4 replaces v3 with the same size bound", () => {
     expectCode(() => scanSince(repo, { cursorCommit: legacy, scopePaths: ["commands/"] }), CODES.INTAKE_BLOCKED);
   });
 
-  it("new frontiers carry the v4 prefix inside the 512-byte bound", () => {
+  it("new frontiers carry the v5 prefix inside the 512-byte bound", () => {
     const repo = initRepo();
     writeFile(repo, "commands/seed.md", "seed\n");
     stageAll(repo);
@@ -430,7 +434,7 @@ describe("TBP2-007H frontier v4 replaces v3 with the same size bound", () => {
       maxRecordsPerBatch: 10000,
     });
     expect(first.truncated).toBe(true);
-    expect(first.resumeFrontier.startsWith("tb-frontier:v4:")).toBe(true);
+    expect(first.resumeFrontier.startsWith("tb-frontier:v5:")).toBe(true);
     expect(first.resumeFrontier.length).toBeLessThanOrEqual(512);
   });
 });

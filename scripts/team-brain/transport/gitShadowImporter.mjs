@@ -75,7 +75,7 @@ function timeoutFor(opts) {
 
 // TBP2-007D bounded frontier: a checkpoint string whose size does NOT
 // grow with the processed history. Format:
-//   tb-frontier:v4:<head>:<scopeHash>:<base>:<accountedCount>:<lastAccounted>:<partialParentIndex>:<partialStreamPos>:<partialCommit>:<partialQueryIndex>
+//   tb-frontier:v5:<head>:<scopeHash>:<base>:<accountedCount>:<lastAccounted>:<partialParentIndex>:<partialStreamPos>:<partialCommit>:<partialQueryIndex>:<queryParent>:<queryStreamPos>
 // - `base` is the original plain cursor (empty when the scan started
 //   from the beginning). It MUST be carried: without it, resuming a
 //   scan-from-beginning frontier would re-list history before the
@@ -120,6 +120,27 @@ function timeoutFor(opts) {
 //   budget), and the candidate resolves once every check has run.
 //   A stored queryIndex that does not match the first unchecked
 //   entry's position fails closed (INTAKE_BLOCKED).
+// - TBP2-007H.1: a bare queryIndex is MEANINGLESS without the check
+//   list it counted into, and that list is context-dependent: it is
+//   built from the invocation's resume (resume parent + consumed
+//   prefix) and skipped parents. When a query-capped partial moves
+//   the resume parent to the candidate's parent, the next poll
+//   rebuilds a DIFFERENT list (the old resume parent becomes a
+//   plain membership check, the old prefix check vanishes), so the
+//   same ordinal skips a check that never ran and admits a duplicate
+//   (a three-parent merge emitted its MERGE_SELECTED twice). The
+//   fix stores the check list's identity with the position:
+//   `queryParent`/`queryStreamPos` are the resume parent index and
+//   consumed-prefix length of the invocation that wrote the CAP
+//   partial — i.e. the context that DEFINED the list queryIndex
+//   counts into. On resume, the partial candidate's checks are
+//   rebuilt from that stored context, not from the new resume
+//   context, and a re-CAP on the same candidate carries the SAME
+//   context forward with an advanced queryIndex. The context is two
+//   small integers, so the 512-byte bound is unchanged. A query
+//   position without its context, a context whose parent is past
+//   the candidate's parent, or a queryIndex at/beyond the
+//   reconstructed list all fail closed (INTAKE_BLOCKED).
 // - Size invariant, enforced here, not just documented:
 //   makeFrontier refuses to emit a frontier longer than
 //   MAX_FRONTIER_BYTES (512). The format has eight fixed fields, so
@@ -127,13 +148,16 @@ function timeoutFor(opts) {
 //   commit backlog needs ~250 bytes here, where the old v2
 //   comma-separated list needed ~2,050,000 bytes and would
 //   eventually exceed cursor/storage or OS argument limits.
-// - v1, v2, and v3 frontiers are REJECTED, not reinterpreted: v1's
+// - v1, v2, v3, and v4 frontiers are REJECTED, not reinterpreted: v1's
 //   "inspected" list was a newest capped window (an upper set), v2's
 //   accounted list cannot be converted to a count-plus-position
-//   without re-deriving the partial iteration, and v3's partial
-//   carries no query position, so a query-capped v3 candidate cannot
-//   be resumed without re-running its checks (which is exactly the
-//   TBP2-007H nonprogress). No production frontier of any version
+//   without re-deriving the partial iteration, v3's partial carries
+//   no query position, so a query-capped v3 candidate cannot be
+//   resumed without re-running its checks (which is exactly the
+//   TBP2-007H nonprogress), and v4's query position carries no
+//   check-list identity, so a query-capped v4 candidate resumed
+//   after its resume parent moves would skip an unrun check (the
+//   TBP2-007H.1 duplicate). No production frontier of any version
 //   exists (P2 is unmerged), so rejecting with a
 //   restart-from-original-cursor message loses nothing real.
 export const MAX_FRONTIER_BYTES = 512;
@@ -151,8 +175,12 @@ function scopeHashFor(scopePaths) {
 }
 
 function makeFrontier(head, scopePaths, accountedCount, lastAccounted, partial = null, base = null) {
+  // TBP2-007H.1: a query-capped partial carries its check-list
+  // identity (queryParent/queryStreamPos) alongside the position;
+  // a non-query partial (file-cap lookahead, mid-commit break)
+  // carries no query progress, so those fields stay empty.
   const s = [
-    "tb-frontier:v4",
+    "tb-frontier:v5",
     head,
     scopeHashFor(scopePaths),
     base ?? "",
@@ -162,6 +190,8 @@ function makeFrontier(head, scopePaths, accountedCount, lastAccounted, partial =
     partial ? String(partial.streamPos) : "",
     partial ? partial.commit : "",
     partial ? String(partial.queryIndex ?? 0) : "",
+    partial?.queryContext ? String(partial.queryContext.parent) : "",
+    partial?.queryContext ? String(partial.queryContext.streamPos) : "",
   ].join(":");
   if (s.length > MAX_FRONTIER_BYTES) {
     fail(CODES.INTAKE_BLOCKED, "resumable frontier exceeds its explicit size bound", {
@@ -177,20 +207,21 @@ function parseFrontier(cursorCommit) {
   if (
     cursorCommit.startsWith("tb-frontier:v1:") ||
     cursorCommit.startsWith("tb-frontier:v2:") ||
-    cursorCommit.startsWith("tb-frontier:v3:")
+    cursorCommit.startsWith("tb-frontier:v3:") ||
+    cursorCommit.startsWith("tb-frontier:v4:")
   ) {
     fail(
       CODES.INTAKE_BLOCKED,
-      "legacy frontier v1/v2/v3 is not resumable under the bounded count-plus-position-plus-query accounting — restart from the original cursor",
+      "legacy frontier v1/v2/v3/v4 is not resumable under the bounded count-plus-position-plus-query-context accounting — restart from the original cursor",
       { cursorCommit }
     );
   }
-  if (!cursorCommit.startsWith("tb-frontier:v4:")) return null;
+  if (!cursorCommit.startsWith("tb-frontier:v5:")) return null;
   const parts = cursorCommit.split(":");
-  if (parts.length !== 11 || parts[0] !== "tb-frontier" || parts[1] !== "v4") {
+  if (parts.length !== 13 || parts[0] !== "tb-frontier" || parts[1] !== "v5") {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
-  const [, , head, scopeHash, base, countStr, lastAccounted, parentIndexStr, streamPosStr, partialCommit, queryIndexStr] = parts;
+  const [, , head, scopeHash, base, countStr, lastAccounted, parentIndexStr, streamPosStr, partialCommit, queryIndexStr, queryParentStr, queryStreamPosStr] = parts;
   if (!/^[0-9a-f]{40}$/.test(head) || !/^[0-9a-f]{64}$/.test(scopeHash)) {
     fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
   }
@@ -218,7 +249,8 @@ function parseFrontier(cursorCommit) {
       { cursorCommit }
     );
   }
-  const partialPresent = partialCommit !== "" || parentIndexStr !== "" || streamPosStr !== "" || queryIndexStr !== "";
+  const partialPresent =
+    partialCommit !== "" || parentIndexStr !== "" || streamPosStr !== "" || queryIndexStr !== "" || queryParentStr !== "" || queryStreamPosStr !== "";
   let partial = null;
   if (partialPresent) {
     if (partialCommit === "" || parentIndexStr === "" || streamPosStr === "" || queryIndexStr === "") {
@@ -228,30 +260,58 @@ function parseFrontier(cursorCommit) {
         { cursorCommit }
       );
     }
+    // TBP2-007H.1: the query-context fields are a pair (both
+    // present or both absent), and a nonzero query position without
+    // them is corrupt — a bare ordinal into an unknown list.
+    if ((queryParentStr === "") !== (queryStreamPosStr === "")) {
+      fail(
+        CODES.INTAKE_BLOCKED,
+        "malformed resumable frontier cursor (query parent and query stream position must both be present or both absent)",
+        { cursorCommit }
+      );
+    }
     if (
       !/^[0-9a-f]{40}$/.test(partialCommit) ||
       !/^[0-9]+$/.test(parentIndexStr) ||
       !/^[0-9]+$/.test(streamPosStr) ||
-      !/^[0-9]+$/.test(queryIndexStr)
+      !/^[0-9]+$/.test(queryIndexStr) ||
+      (queryParentStr !== "" && (!/^[0-9]+$/.test(queryParentStr) || !/^[0-9]+$/.test(queryStreamPosStr)))
     ) {
       fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor", { cursorCommit });
     }
     const parentIndex = Number(parentIndexStr);
     const streamPos = Number(streamPosStr);
     const queryIndex = Number(queryIndexStr);
+    const queryParent = queryParentStr === "" ? null : Number(queryParentStr);
+    const queryStreamPos = queryStreamPosStr === "" ? null : Number(queryStreamPosStr);
     if (
       !Number.isSafeInteger(parentIndex) ||
       parentIndex < 0 ||
       !Number.isSafeInteger(streamPos) ||
       streamPos < 0 ||
       !Number.isSafeInteger(queryIndex) ||
-      queryIndex < 0
+      queryIndex < 0 ||
+      (queryParent !== null && (!Number.isSafeInteger(queryParent) || queryParent < 0)) ||
+      (queryStreamPos !== null && (!Number.isSafeInteger(queryStreamPos) || queryStreamPos < 0))
     ) {
       fail(CODES.INTAKE_BLOCKED, "malformed resumable frontier cursor (partial position must be non-negative integers)", {
         cursorCommit,
       });
     }
-    partial = { commit: partialCommit, parentIndex, streamPos, queryIndex };
+    if (queryIndex > 0 && queryParent === null) {
+      fail(
+        CODES.INTAKE_BLOCKED,
+        "malformed resumable frontier cursor (a nonzero query position without its check-list context is corrupt)",
+        { cursorCommit }
+      );
+    }
+    partial = {
+      commit: partialCommit,
+      parentIndex,
+      streamPos,
+      queryIndex,
+      queryContext: queryParent === null ? null : { parent: queryParent, streamPos: queryStreamPos },
+    };
   }
   return { head, scopeHash, base: base === "" ? null : base, accountedCount, lastAccounted: lastAccounted === "" ? null : lastAccounted, partial };
 }
@@ -574,6 +634,25 @@ function listPendingCommits(repoPath, { head, accountedCount, lastAccounted, cur
 // fresh budget), and the candidate resolves once every check has
 // run. A stored queryIndex that does not belong to the first
 // unchecked entry fails closed (corrupt frontier).
+//
+// TBP2-007H.1: that "same candidate's checks" claim only holds if
+// the check LIST is the same list. It is not, under the old code:
+// the list is built from the current invocation's resume, and a
+// query-capped partial moves the resume parent to the candidate's
+// parent, so the next poll's list drops the old prefix check and
+// gains a membership check for the old resume parent — same length,
+// different entries, same ordinal. The fix carries the list's
+// identity in the partial: `queryContext` = { parent, streamPos }
+// is the resume context that DEFINED the list queryIndex counts
+// into. The partial candidate's checks are rebuilt from that
+// stored context (never from the new resume context), and a
+// re-CAP on the same candidate carries the SAME context forward
+// with an advanced queryIndex. Later candidates in the same poll
+// use the current invocation's context, as before — their lists
+// are defined by it, and a CAP on one of them stores that context
+// in turn. The invariant: a partial's queryIndex always counts
+// into the list built from its own queryContext, never into a
+// list rebuilt from a moved resume parent.
 function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, budget, opts = {}, queryState = null) {
   const statusByParent = parentRefs.map(() => new Map());
   const pathOrder = [];
@@ -581,6 +660,14 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
   const seen = new Set();
   const startParent = resume ? resume.parentIndex : 0;
   const skippedParents = parentRefs.slice(0, startParent);
+  // The check-list context for THIS invocation: the resume parent
+  // and consumed prefix that define its dedup check lists (see
+  // TBP2-007H.1). A carried queryContext, if present, overrides
+  // this context for the first checked candidate only — it is the
+  // context that defined the list the stored queryIndex counts
+  // into — and is then consumed, never reused.
+  const invocationContext = { parent: startParent, streamPos: resume?.streamPos ?? 0 };
+  let pendingQueryContext = resume?.queryContext ?? null;
   let hasMore = false;
   let incompleteResume = null;
   let queryCapHit = false;
@@ -596,31 +683,47 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
   // there (with a position validation) and never reused for later
   // candidates, which always start fresh at 0.
   let firstCheckSeen = false;
-  // TBP2-007F: is `path` among the resume parent's consumed prefix
-  // (its first resume.streamPos in-scope diff entries)? Counted,
-  // never stored. Caller guarantees resume is non-null and
-  // streamPos > 0 when this runs.
-  const isInResumePrefix = (path) => {
+  // TBP2-007F: is `path` among a given parent's consumed prefix
+  // (its first `ctxStreamPos` in-scope diff entries)? Counted,
+  // never stored. Caller guarantees ctxStreamPos > 0 when this
+  // runs (the prefix check is only built then).
+  const isInResumePrefix = (path, ctxParent, ctxStreamPos) => {
     let counted = 0;
-    for (const [, entryPath] of diffNameStatusIter(repoPath, parentRefs[startParent], commit, scopePaths, opts)) {
-      if (counted >= resume.streamPos) break;
+    for (const [, entryPath] of diffNameStatusIter(repoPath, parentRefs[ctxParent], commit, scopePaths, opts)) {
+      if (counted >= ctxStreamPos) break;
       if (entryPath === path) return true;
       counted += 1;
     }
     return false;
   };
+  // Builds one candidate's dedup check list from an explicit
+  // context { parent, streamPos }: the resume parent and consumed
+  // prefix that define it. For an ordinary candidate this is the
+  // invocation's context; for a carried query partial's candidate
+  // it is the stored queryContext — never the new resume context
+  // (TBP2-007H.1). The list is: the resume-prefix scan, only when
+  // the candidate sits past the context parent with a nonzero
+  // consumed prefix; then one membership query per parent before
+  // the context parent, in order.
+  const buildChecks = (parentIndex, ctx) => {
+    const checks = [];
+    if (parentIndex > ctx.parent && ctx.streamPos > 0) checks.push({ kind: "prefix", parent: ctx.parent, streamPos: ctx.streamPos });
+    for (let j = 0; j < ctx.parent; j++) checks.push({ kind: "parent", ref: parentRefs[j] });
+    return checks;
+  };
   // Runs one candidate's dedup checks in fixed order, skipping the
   // first `startQueryIndex` (already completed in an earlier poll).
   // Returns { result: true|false } or { result: "CAP", completed }
   // where `completed` counts checks finished in this call.
-  const checkCandidate = (path, parentIndex, startQueryIndex) => {
-    const checks = [];
-    if (resume && parentIndex > startParent && resume.streamPos > 0) checks.push({ kind: "prefix" });
-    for (const skipped of skippedParents) checks.push({ kind: "parent", ref: skipped });
+  const checkCandidate = (path, parentIndex, startQueryIndex, checkCtx) => {
+    const checks = buildChecks(parentIndex, checkCtx);
     // A stored queryIndex is only ever written on CAP, which happens
     // DURING a check — so it is always strictly below the check-list
     // length. At or beyond it, the frontier claims checks completed
     // that never ran: fail closed instead of silently skipping them.
+    // The list here is built from the caller's explicit context, so
+    // this also validates a carried queryContext against the list
+    // it actually defined.
     if (startQueryIndex >= checks.length) {
       fail(CODES.INTAKE_BLOCKED, "resumable frontier query position is at or beyond the candidate's check list (corrupt frontier)", {
         commit,
@@ -633,7 +736,10 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
     for (let i = startQueryIndex; i < checks.length; i++) {
       if (queryState !== null && queryState.count >= MAX_DEDUP_QUERIES_PER_POLL) return { result: "CAP", completed };
       if (queryState !== null) queryState.count += 1;
-      const dup = checks[i].kind === "prefix" ? isInResumePrefix(path) : isInParentDiff(repoPath, checks[i].ref, commit, path, opts);
+      const dup =
+        checks[i].kind === "prefix"
+          ? isInResumePrefix(path, checks[i].parent, checks[i].streamPos)
+          : isInParentDiff(repoPath, checks[i].ref, commit, path, opts);
       completed += 1;
       if (dup) return { result: true, completed };
     }
@@ -649,26 +755,62 @@ function collectCommitPaths(repoPath, parentRefs, commit, scopePaths, resume, bu
       if (thisIndex < skipFirst) continue; // skipped by count: stored nowhere
       if (seen.has(path)) continue; // duplicate within this poll: status never read
       const needsChecks =
-        skippedParents.length > 0 || (resume && parentIndex > startParent && resume.streamPos > 0);
+        skippedParents.length > 0 ||
+        (resume && parentIndex > startParent && resume.streamPos > 0) ||
+        (pendingQueryContext !== null && !firstCheckSeen);
       if (needsChecks) {
         let startQueryIndex = 0;
+        let checkCtx = invocationContext;
         if (!firstCheckSeen) {
           firstCheckSeen = true;
-          startQueryIndex = resume?.queryIndex ?? 0;
-          if (startQueryIndex > 0) {
-            if (parentIndex !== resume.parentIndex || thisIndex !== resume.streamPos) {
+          if (pendingQueryContext) {
+            // TBP2-007H.1: this candidate's checks were counted
+            // into the STORED context's list, not the new resume
+            // context's list. Rebuild that list, and validate the
+            // context itself: its parent must exist and must not
+            // sit past the candidate's parent (checks only cover
+            // earlier parents and the context parent's prefix).
+            checkCtx = pendingQueryContext;
+            startQueryIndex = resume?.queryIndex ?? 0;
+            pendingQueryContext = null;
+            if (
+              checkCtx.parent >= parentRefs.length ||
+              checkCtx.parent > parentIndex ||
+              checkCtx.streamPos < 0 ||
+              parentIndex !== resume.parentIndex ||
+              thisIndex !== resume.streamPos
+            ) {
               fail(
                 CODES.INTAKE_BLOCKED,
                 "resumable frontier query position does not belong to the first unchecked entry (corrupt frontier)",
                 { commit, parentIndex, streamPos: thisIndex, expectedParentIndex: resume.parentIndex, expectedStreamPos: resume.streamPos }
               );
             }
+          } else {
+            startQueryIndex = resume?.queryIndex ?? 0;
+            if (startQueryIndex > 0) {
+              if (parentIndex !== resume.parentIndex || thisIndex !== resume.streamPos) {
+                fail(
+                  CODES.INTAKE_BLOCKED,
+                  "resumable frontier query position does not belong to the first unchecked entry (corrupt frontier)",
+                  { commit, parentIndex, streamPos: thisIndex, expectedParentIndex: resume.parentIndex, expectedStreamPos: resume.streamPos }
+                );
+              }
+            }
           }
         }
-        const { result, completed } = checkCandidate(path, parentIndex, startQueryIndex);
+        const { result, completed } = checkCandidate(path, parentIndex, startQueryIndex, checkCtx);
         if (result === "CAP") {
           queryCapHit = true;
-          incompleteResume = { parentIndex, streamPos: thisIndex, queryIndex: startQueryIndex + completed };
+          // TBP2-007H.1: the new partial carries the SAME context
+          // that defined this candidate's check list, with the
+          // advanced position — never the new resume context.
+          incompleteResume = {
+            parentIndex,
+            streamPos: thisIndex,
+            queryIndex: startQueryIndex + completed,
+            queryContext: checkCtx,
+          };
           break outer;
         }
         if (result) continue; // duplicate of already-handled work: stored nowhere
