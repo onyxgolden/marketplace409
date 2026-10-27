@@ -490,6 +490,10 @@ const DXGI_ERROR_ACCESS_LOST: u32 = 0x887A_0026;
 const DXGI_ERROR_WAIT_TIMEOUT: u32 = 0x887A_0027;
 const DXGI_ERROR_SESSION_DISCONNECTED: u32 = 0x887A_0028;
 const DXGI_ERROR_NOT_CURRENTLY_AVAILABLE: u32 = 0x887A_0022;
+/// Win32 E_INVALIDARG (0x80070057), compared as u32 against an
+/// HRESULT's bits — the code DuplicateOutput returns when a still-valid
+/// duplication object already exists for the output.
+const E_INVALIDARG: u32 = 0x8007_0057;
 
 /// Classify a staging/copy/map-stage HRESULT, preserving device-loss
 /// classification across stages.
@@ -1354,12 +1358,35 @@ mod win_backend {
         /// existing output binding is reused; only if DuplicateOutput
         /// fails on it do we re-enumerate the adapter's outputs and
         /// retry once against the output with the same device name.
+        ///
+        /// Fix round 4 (J1 evidence): only ONE live duplication object
+        /// may exist per output. Recovery can trigger while the old
+        /// object is still valid (an injected fault, or a stage failure
+        /// on a live session), and then the first DuplicateOutput fails
+        /// with E_INVALIDARG — not because the new device is bad, but
+        /// because the old object blocks it. On exactly that error the
+        /// rebuild drops the old object and retries once; any other
+        /// failure keeps the atomic-replace behavior above. A failed
+        /// rebuild after the drop leaves no duplication, and the caller
+        /// still treats the request as terminal.
         fn rebuild_device_and_duplication(&mut self) -> Result<(), CaptureError> {
             let (new_device, new_context) = create_device(&self._adapter)?;
             let device_iunknown: IUnknown = new_device.cast().map_err(|e| {
                 CaptureError::NativeApi(format!("ID3D11Device::cast to IUnknown: {e}"))
             })?;
-            let duplication = match unsafe { self.output1.DuplicateOutput(&device_iunknown) } {
+            let mut duplication = unsafe { self.output1.DuplicateOutput(&device_iunknown) };
+            if let Err(e) = &duplication {
+                if e.code().0 as u32 == E_INVALIDARG {
+                    // A still-valid old duplication blocks the new one.
+                    // Drop it and retry once; the atomic replace below
+                    // still only installs the new set on full success.
+                    self.duplication = None;
+                    self.staging = None;
+                    self.staging_size = (0, 0);
+                    duplication = unsafe { self.output1.DuplicateOutput(&device_iunknown) };
+                }
+            }
+            let duplication = match duplication {
                 Ok(d) => d,
                 Err(_) => {
                     // Refresh the output binding once, then retry.
