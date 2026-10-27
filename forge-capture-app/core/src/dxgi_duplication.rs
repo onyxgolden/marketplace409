@@ -40,12 +40,40 @@
 //!   second loss is a terminal [`DxgiCaptureOutcome::Retryable`]. A
 //!   removed device is never a valid recovery foundation, so a
 //!   recreate that only rebuilt duplication on it could not recover
-//!   (DXGI1-004A).
+//!   (DXGI1-004A). Genuine hardware device-removal recovery evidence is
+//!   still unproven (a mode-switch ACCESS_LOST is not DEVICE_REMOVED);
+//!   the production-shaped fault-injection seam
+//!   ([`DxgiCaptureContext::inject_acquire_error`], Windows only) proves
+//!   the internal recovery path with labeled injected evidence instead
+//!   of destabilizing the GPU.
 //! - `WAIT_TIMEOUT`: "no new desktop update yet," not failure. Retried until
 //!   the total request deadline; DXGI-1 keeps no cached frame, so a deadline
 //!   expiry is a terminal retryable, never a stale frame.
 //! - Protected/secure content: explicit [`DxgiCaptureOutcome::ProtectedOrSecure`],
 //!   never a bypass attempt, never black pixels labeled success.
+//!
+//! Fix round 4 diagnostics (round-3 verdict: instrument the failing
+//! outcome before changing behavior):
+//!
+//! - Every acquisition attempt records a [`DxgiAcquireDiagnostic`]
+//!   immediately after AcquireNextFrame and before the mask branch —
+//!   including Protected outcomes, which round-3 metadata could not
+//!   observe. The record carries raw mask, accumulated frames, present
+//!   time, metadata sizes, release HRESULT, session generation, attempt
+//!   number, adapter LUID, and output identity. Metadata only: never
+//!   pixels or desktop content.
+//! - [`DxgiCaptureContext::acquire_staged`] (Windows only) runs one
+//!   pipeline prefix per attempt (acquire-only, resource-inspect,
+//!   staging-copy, map-copy) with no retry and no recreate, so the
+//!   first failing stage is observed, not inferred. The complete
+//!   wrapper loop is stage 5 ([`DxgiCaptureContext::capture_rect`]).
+//! - Deadline scope (DXGI1-005A): the per-attempt/total-deadline rules
+//!   bound AcquireNextFrame waits only. They are NOT an end-to-end hard
+//!   execution deadline: the successful path does not recheck elapsed
+//!   after copy/map/conversion, and native work/recreation can outlast
+//!   the remaining budget. Do not advertise otherwise.
+//! - GPU-telemetry scope: flat handles/working set do not establish flat
+//!   dedicated GPU allocation; that limitation is preserved.
 //!
 //! Limits (brief: no parallel limit model): at most 16,384 pixels per side
 //! and 128 MiB decoded raster, enforced with checked arithmetic before any
@@ -90,6 +118,11 @@ impl Default for DxgiLimits {
 /// root-caused from outcomes alone — the discriminating evidence is
 /// these fields, per acquire, through the wrapper itself. They are
 /// diagnostic only: they never change the fail-closed mask rule.
+///
+/// DXGI1 fix round 4: this struct only exists on successful copy/map
+/// outcomes, so it cannot observe Protected outcomes at all (the mask
+/// branch returns before construction). [`DxgiAcquireDiagnostic`] is the
+/// pre-branch record that covers every attempt, including Protected ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DxgiFrameMetadata {
     /// Raw `ProtectedContentMaskedOut` value (0 = unmasked).
@@ -105,6 +138,251 @@ pub struct DxgiFrameMetadata {
     pub total_metadata_size: u32,
     /// Raw `PointerShapeBufferSize`.
     pub pointer_shape_size: u32,
+}
+
+/// Furthest pipeline stage reached by one acquisition attempt (fix
+/// round 4). A diagnostic record's stage only ever moves forward.
+/// Order: AcquireFailed < Acquired < MaskChecked < ResourceInspected <
+/// StagingCopied < Mapped; [`DxgiAcquireStage::order`] gives that order
+/// so tests and harnesses can assert monotonic progression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DxgiAcquireStage {
+    /// AcquireNextFrame returned an HRESULT, or no frame was acquired.
+    AcquireFailed,
+    /// AcquireNextFrame succeeded; the diagnostic was taken here, before
+    /// the mask branch.
+    Acquired,
+    /// The mask branch evaluated (Protected classification or pass).
+    MaskChecked,
+    /// Resource cast + texture descriptor read succeeded.
+    ResourceInspected,
+    /// Staging texture allocated (or reused) and CopyResource enqueued.
+    StagingCopied,
+    /// Map/Unmap + host copy completed.
+    Mapped,
+}
+
+impl DxgiAcquireStage {
+    pub fn order(self) -> u8 {
+        match self {
+            DxgiAcquireStage::AcquireFailed => 0,
+            DxgiAcquireStage::Acquired => 1,
+            DxgiAcquireStage::MaskChecked => 2,
+            DxgiAcquireStage::ResourceInspected => 3,
+            DxgiAcquireStage::StagingCopied => 4,
+            DxgiAcquireStage::Mapped => 5,
+        }
+    }
+}
+
+/// Provenance of one diagnostic record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DxgiAcquireProvenance {
+    /// Real hardware acquisition.
+    Real,
+    /// Fault-injection seam: a harness call, never production behavior.
+    /// Records with this provenance must be labeled "injected" in every
+    /// report; they never prove real hardware device removal.
+    Injected,
+}
+
+/// Classification an acquisition attempt produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DxgiAcquireClassification {
+    /// Recorded pre-branch; the mask branch has not evaluated yet.
+    Pending,
+    /// Passed the mask branch (mask == 0); the pipeline continued.
+    Pass,
+    /// Mask branch classified Protected (mask != 0).
+    Protected,
+    /// AcquireNextFrame (or an injected error) failed; see
+    /// [`DxgiAcquireDiagnostic::acquire_hresult`].
+    AcquireError,
+    /// A stage past acquisition failed (cast, limits, staging, map).
+    StageError,
+}
+
+/// Bounded diagnostic record for ONE acquisition attempt (fix round 4).
+///
+/// Recorded immediately after AcquireNextFrame returns, BEFORE the mask
+/// branch — including Protected outcomes, which the round-3 metadata
+/// passthrough could not observe. One record per attempt: the release
+/// update fills the release fields on the same record, never a second
+/// one. Metadata only: no pixels, no desktop content, ever. Diagnostic
+/// only: these records never change the fail-closed mask rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DxgiAcquireDiagnostic {
+    /// Monotonic attempt number on this context (0-based; the staged
+    /// API and the full loop share one counter).
+    pub attempt: u64,
+    /// Process-wide id of the context that made this attempt, so
+    /// separate duplication sessions are distinguishable in one log.
+    pub context_id: u64,
+    /// Device generation at this attempt (0 = initial device; +1 per
+    /// full device rebuild).
+    pub session_generation: u64,
+    /// Adapter LUID of the bound output.
+    pub adapter_luid: (u32, i32),
+    /// OS device name of the bound output.
+    pub output_device_name: String,
+    /// Furthest stage reached (forward-only).
+    pub stage_reached: DxgiAcquireStage,
+    pub provenance: DxgiAcquireProvenance,
+    /// AcquireNextFrame HRESULT on failure; None on success.
+    pub acquire_hresult: Option<i32>,
+    /// Raw frame-info fields; None when AcquireNextFrame failed.
+    pub protected_content_masked_out: Option<i32>,
+    pub accumulated_frames: Option<u32>,
+    pub rects_coalesced: Option<i32>,
+    pub last_present_time: Option<i64>,
+    pub total_metadata_size: Option<u32>,
+    pub pointer_shape_size: Option<u32>,
+    pub classification: DxgiAcquireClassification,
+    /// ReleaseFrame HRESULT once released; None until then.
+    pub release_hresult: Option<i32>,
+    /// True once ReleaseFrame has run for this attempt.
+    pub released: bool,
+}
+
+/// Bounded store for acquisition diagnostics (fix round 4).
+///
+/// Pure and platform-neutral so the cap/update rules are unit-testable on
+/// any host; the Windows backend holds one behind a mutex. Oldest
+/// records drop when the cap is exceeded — the store is diagnostic
+/// evidence, never a correctness input, so losing old records is safe.
+#[derive(Debug, Clone)]
+pub struct DxgiDiagnosticLog {
+    records: std::collections::VecDeque<DxgiAcquireDiagnostic>,
+    cap: usize,
+}
+
+impl DxgiDiagnosticLog {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            records: std::collections::VecDeque::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    pub fn push(&mut self, record: DxgiAcquireDiagnostic) {
+        self.records.push_back(record);
+        while self.records.len() > self.cap {
+            self.records.pop_front();
+        }
+    }
+
+    fn newest_for_attempt_mut(
+        &mut self,
+        attempt: u64,
+    ) -> Option<&mut DxgiAcquireDiagnostic> {
+        self.records.iter_mut().rev().find(|r| r.attempt == attempt)
+    }
+
+    /// Advance a record's stage/classification. The stage only moves
+    /// forward; a backward update is ignored so a late path cannot
+    /// rewrite the furthest point an attempt reached.
+    pub fn update(
+        &mut self,
+        attempt: u64,
+        stage: DxgiAcquireStage,
+        classification: DxgiAcquireClassification,
+    ) {
+        if let Some(record) = self.newest_for_attempt_mut(attempt) {
+            if stage.order() >= record.stage_reached.order() {
+                record.stage_reached = stage;
+                record.classification = classification;
+            }
+        }
+    }
+
+    /// Mark a record failed at its current stage without moving the
+    /// stage. Never overwrites a Protected classification: a frame the
+    /// mask branch already classified stays Protected.
+    pub fn mark_failed(
+        &mut self,
+        attempt: u64,
+        classification: DxgiAcquireClassification,
+    ) {
+        if let Some(record) = self.newest_for_attempt_mut(attempt) {
+            if record.classification != DxgiAcquireClassification::Protected {
+                record.classification = classification;
+            }
+        }
+    }
+
+    /// Fill the release fields on the newest unreleased record for this
+    /// attempt. A second call is a no-op: release happens exactly once.
+    pub fn mark_released(&mut self, attempt: u64, release_hresult: i32) {
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .rev()
+            .find(|r| r.attempt == attempt && !r.released)
+        {
+            record.released = true;
+            record.release_hresult = Some(release_hresult);
+        }
+    }
+
+    pub fn get(&self, attempt: u64) -> Option<DxgiAcquireDiagnostic> {
+        self.records
+            .iter()
+            .rev()
+            .find(|r| r.attempt == attempt)
+            .cloned()
+    }
+
+    pub fn snapshot(&self) -> Vec<DxgiAcquireDiagnostic> {
+        self.records.iter().cloned().collect()
+    }
+
+    pub fn take(&mut self) -> Vec<DxgiAcquireDiagnostic> {
+        self.records.drain(..).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+}
+
+/// Map an acquisition error to the diagnostic fields it produces, so the
+/// real and injected paths record identical provenance shapes (tested on
+/// any host). Returns (stage, classification, canonical HRESULT if any).
+///
+/// A real Protected outcome never comes from an HRESULT — it comes from
+/// the mask branch. The Protected arm here exists only for the
+/// fault-injection seam, which can queue a Protected error directly.
+pub fn diagnostic_for_acquire_error(
+    err: &DxgiAcquireError,
+) -> (DxgiAcquireStage, DxgiAcquireClassification, Option<i32>) {
+    use DxgiAcquireClassification as C;
+    use DxgiAcquireStage as S;
+    match err {
+        DxgiAcquireError::AccessLost => (
+            S::AcquireFailed,
+            C::AcquireError,
+            Some(DXGI_ERROR_ACCESS_LOST as i32),
+        ),
+        DxgiAcquireError::WaitTimeout => (
+            S::AcquireFailed,
+            C::AcquireError,
+            Some(DXGI_ERROR_WAIT_TIMEOUT as i32),
+        ),
+        DxgiAcquireError::SessionDisconnected => (
+            S::AcquireFailed,
+            C::AcquireError,
+            Some(DXGI_ERROR_SESSION_DISCONNECTED as i32),
+        ),
+        DxgiAcquireError::DeviceRemoved => (
+            S::AcquireFailed,
+            C::AcquireError,
+            Some(DXGI_ERROR_DEVICE_REMOVED as i32),
+        ),
+        DxgiAcquireError::Protected => (S::MaskChecked, C::Protected, None),
+        DxgiAcquireError::StageFailed(_) => (S::AcquireFailed, C::StageError, None),
+        DxgiAcquireError::Unavailable(_) => (S::AcquireFailed, C::AcquireError, None),
+        DxgiAcquireError::Other(_) => (S::AcquireFailed, C::AcquireError, None),
+    }
 }
 
 /// One captured frame: RGBA bytes (row-major, no pitch padding).
@@ -665,13 +943,15 @@ pub fn capture_single_output_with_clock<B: DuplicationBackend, F: FnMut() -> Dur
 // caveat as `native.rs`'s Windows path).
 // ---------------------------------------------------------------------------
 #[cfg(windows)]
-pub use win_backend::DxgiCaptureContext;
+pub use win_backend::{DxgiCaptureContext, DxgiStagedResult, DxgiStagedVariant};
 
 #[cfg(windows)]
 mod win_backend {
     use super::{
-        checked_mapped_bytes, classify_hresult, classify_stage_error, protected_from_frame_info,
-        validate_limits, AcquiredPixels, DxgiAcquireError, DxgiCaptureOutcome, DxgiFrameMetadata,
+        checked_mapped_bytes, classify_hresult, classify_stage_error,
+        diagnostic_for_acquire_error, protected_from_frame_info, validate_limits, AcquiredPixels,
+        DxgiAcquireClassification, DxgiAcquireDiagnostic, DxgiAcquireProvenance,
+        DxgiAcquireStage, DxgiAcquireError, DxgiCaptureOutcome, DxgiDiagnosticLog, DxgiFrameMetadata,
         DxgiLimits, DxgiRotation, FrameGuard, OutputInfo,
     };
     use crate::coords::RectI;
@@ -687,14 +967,14 @@ mod win_backend {
     use windows::Win32::Graphics::Direct3D11::{
         D3D11CreateDevice, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
         D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
-        D3D11_USAGE_STAGING, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
+        D3D11_USAGE_STAGING, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
     };
     use windows::Win32::Graphics::Dxgi::Common::{
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_MODE_ROTATION, DXGI_SAMPLE_DESC,
     };
     use windows::Win32::Graphics::Dxgi::{
         CreateDXGIFactory1, IDXGIAdapter, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput1,
-        IDXGIOutputDuplication, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTPUT_DESC,
+        IDXGIOutputDuplication, IDXGIResource, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTPUT_DESC,
     };
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
     use windows::Win32::UI::HiDpi::{
@@ -794,6 +1074,16 @@ mod win_backend {
         Ok((device, device_context))
     }
 
+    /// Process-wide context counter, so diagnostic records carry a
+    /// separate-context identity even across fresh sessions in one
+    /// harness process (fix round 4).
+    static NEXT_CONTEXT_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    /// Cap for the per-context diagnostic store: old records drop, so a
+    /// long sustained run cannot grow memory without bound.
+    const MAX_DIAGNOSTICS: usize = 1024;
+
     /// Worker-local DXGI context, bound to one output (DXGI-1).
     ///
     /// Created lazily by the supervised worker and reused on that worker
@@ -810,6 +1100,22 @@ mod win_backend {
         staging: Option<ID3D11Texture2D>,
         staging_size: (u32, u32),
         com_initialized: bool,
+        /// Fix round 4: pre-branch diagnostic store, shared with the
+        /// release closures so one record covers acquire through release.
+        diagnostics: std::sync::Arc<std::sync::Mutex<DxgiDiagnosticLog>>,
+        /// Monotonic attempt counter; the staged API and the full loop
+        /// share it so attempt numbers are unique per context.
+        next_attempt: u64,
+        /// Attempt number of the most recent acquire_frame_raw call, so
+        /// staged results can find the record even on error paths.
+        last_attempt: u64,
+        /// Device generation: 0 = initial device, +1 per full rebuild.
+        session_generation: u64,
+        /// This context's id from [`NEXT_CONTEXT_ID`].
+        context_id: u64,
+        /// Fault-injection queue (harness only, see
+        /// [`DxgiCaptureContext::inject_acquire_error`]).
+        inject_queue: std::collections::VecDeque<DxgiAcquireError>,
     }
 
     impl DxgiCaptureContext {
@@ -939,6 +1245,15 @@ mod win_backend {
                 staging: None,
                 staging_size: (0, 0),
                 com_initialized,
+                diagnostics: std::sync::Arc::new(std::sync::Mutex::new(
+                    DxgiDiagnosticLog::new(MAX_DIAGNOSTICS),
+                )),
+                next_attempt: 0,
+                last_attempt: 0,
+                session_generation: 0,
+                context_id: NEXT_CONTEXT_ID
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                inject_queue: std::collections::VecDeque::new(),
             };
             ctx.recreate_duplication()?;
             Ok(ctx)
@@ -946,6 +1261,44 @@ mod win_backend {
 
         pub fn output_info(&self) -> &OutputInfo {
             &self.output_info
+        }
+
+        /// This context's process-wide id (fix round 4 diagnostics).
+        pub fn context_id(&self) -> u64 {
+            self.context_id
+        }
+
+        /// Current device generation (fix round 4 diagnostics): 0 for the
+        /// initial device, +1 per full device rebuild.
+        pub fn session_generation(&self) -> u64 {
+            self.session_generation
+        }
+
+        /// Snapshot of this context's diagnostic records so far.
+        pub fn diagnostics_snapshot(&self) -> Vec<DxgiAcquireDiagnostic> {
+            self.lock_log().snapshot()
+        }
+
+        /// Drain this context's diagnostic records.
+        pub fn take_diagnostics(&mut self) -> Vec<DxgiAcquireDiagnostic> {
+            self.lock_log().take()
+        }
+
+        /// Fault-injection seam (fix round 4, 004A evidence).
+        ///
+        /// Queues one synthetic acquisition error for the next
+        /// `acquire_frame_raw` call, recorded with
+        /// [`DxgiAcquireProvenance::Injected`]. Harness use only: it is
+        /// never enabled by default, never activated by environment or
+        /// configuration, and every record it produces must be labeled
+        /// "injected" in reports — injected evidence never proves real
+        /// hardware device removal. A queued DeviceRemoved error drives
+        /// the production recovery path (one recreate, then a terminal
+        /// second failure when queued twice), which is exactly the
+        /// evidence the round-3 verdict asks for, without deliberately
+        /// destabilizing the GPU.
+        pub fn inject_acquire_error(&mut self, err: DxgiAcquireError) {
+            self.inject_queue.push_back(err);
         }
 
         /// DXGI1-004A: rebuild the FULL adapter-bound resource set after
@@ -984,6 +1337,9 @@ mod win_backend {
             self.duplication = Some(duplication);
             self.staging = None;
             self.staging_size = (0, 0);
+            // Fix round 4: a successful full rebuild is a new device
+            // generation; diagnostics after this point carry it.
+            self.session_generation += 1;
             Ok(())
         }
 
@@ -1038,90 +1394,243 @@ mod win_backend {
             let output = self.output_info.clone();
             super::capture_single_output(self, &output, rect, limits)
         }
-    }
 
-    impl Drop for DxgiCaptureContext {
-        fn drop(&mut self) {
-            self.duplication = None;
-            self.staging = None;
-            if self.com_initialized {
-                unsafe { CoUninitialize() };
-            }
+        // ---------------------------------------------------------------
+        // Fix round 4: pre-branch diagnostics + staged acquisition.
+        //
+        // The round-3 verdict's core demand: record EVERY acquired frame
+        // immediately after AcquireNextFrame and BEFORE the mask branch,
+        // including Protected outcomes. The round-3 metadata passthrough
+        // could not do that (it was built only after copy/map). The
+        // staged API runs one pipeline prefix per attempt — never two
+        // outstanding acquisitions on one duplication object, never a
+        // recreate, never a mask bypass — so the first failing stage is
+        // observable instead of inferred.
+        // ---------------------------------------------------------------
+
+        fn lock_log(&self) -> std::sync::MutexGuard<'_, DxgiDiagnosticLog> {
+            self.diagnostics.lock().unwrap_or_else(|e| e.into_inner())
         }
-    }
 
-    impl super::DuplicationBackend for DxgiCaptureContext {
-        fn acquire(
+        fn push_diagnostic(&self, record: DxgiAcquireDiagnostic) {
+            self.lock_log().push(record);
+        }
+
+        fn update_diagnostic(
+            &self,
+            attempt: u64,
+            stage: DxgiAcquireStage,
+            classification: DxgiAcquireClassification,
+        ) {
+            self.lock_log().update(attempt, stage, classification);
+        }
+
+        fn mark_diagnostic_failed(
+            &self,
+            attempt: u64,
+            classification: DxgiAcquireClassification,
+        ) {
+            self.lock_log().mark_failed(attempt, classification);
+        }
+
+        fn diagnostic_for_attempt(&self, attempt: u64) -> Option<DxgiAcquireDiagnostic> {
+            self.lock_log().get(attempt)
+        }
+
+        /// Release closure that records the ReleaseFrame HRESULT on the
+        /// attempt's diagnostic record. Release still happens exactly
+        /// once (FrameGuard semantics); the record update is diagnostic
+        /// only and never fails the release path.
+        fn release_closure(
+            &self,
+            duplication: IDXGIOutputDuplication,
+            attempt: u64,
+        ) -> FrameGuard {
+            let diagnostics = std::sync::Arc::clone(&self.diagnostics);
+            FrameGuard::new(move || {
+                let hr = match unsafe { duplication.ReleaseFrame() } {
+                    Ok(()) => 0,
+                    Err(e) => e.code().0,
+                };
+                let mut log = diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+                log.mark_released(attempt, hr);
+            })
+        }
+
+        /// One raw acquisition: AcquireNextFrame + guard + pre-branch
+        /// diagnostic record, and nothing else. Shared by the full loop
+        /// (`acquire`) and the staged API, so both paths observe the
+        /// same pre-branch values.
+        ///
+        /// Returns (attempt, guard, frame info, resource). On error the
+        /// attempt's diagnostic is already recorded; callers read it via
+        /// [`DxgiCaptureContext::diagnostic_for_attempt`] using
+        /// `last_attempt`.
+        fn acquire_frame_raw(
             &mut self,
             timeout_ms: u32,
-            limits: &DxgiLimits,
-        ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+        ) -> Result<
+            (
+                u64,
+                FrameGuard,
+                DXGI_OUTDUPL_FRAME_INFO,
+                Option<IDXGIResource>,
+            ),
+            DxgiAcquireError,
+        > {
+            let attempt = self.next_attempt;
+            self.next_attempt += 1;
+            self.last_attempt = attempt;
+            let base = DxgiAcquireDiagnostic {
+                attempt,
+                context_id: self.context_id,
+                session_generation: self.session_generation,
+                adapter_luid: self.output_info.adapter_luid,
+                output_device_name: self.output_info.device_name.clone(),
+                stage_reached: DxgiAcquireStage::AcquireFailed,
+                provenance: DxgiAcquireProvenance::Real,
+                acquire_hresult: None,
+                protected_content_masked_out: None,
+                accumulated_frames: None,
+                rects_coalesced: None,
+                last_present_time: None,
+                total_metadata_size: None,
+                pointer_shape_size: None,
+                classification: DxgiAcquireClassification::AcquireError,
+                release_hresult: None,
+                released: false,
+            };
+            // Fault-injection seam: a queued synthetic error short-circuits
+            // the real AcquireNextFrame and is recorded as Injected.
+            if let Some(err) = self.inject_queue.pop_front() {
+                let (stage, classification, hr) = diagnostic_for_acquire_error(&err);
+                self.push_diagnostic(DxgiAcquireDiagnostic {
+                    stage_reached: stage,
+                    provenance: DxgiAcquireProvenance::Injected,
+                    acquire_hresult: hr,
+                    classification,
+                    ..base
+                });
+                return Err(err);
+            }
             let duplication = match &self.duplication {
                 Some(d) => d.clone(),
                 None => {
+                    self.push_diagnostic(base);
                     return Err(DxgiAcquireError::Unavailable(
                         "duplication object not initialized".into(),
-                    ))
+                    ));
                 }
             };
-            // Nothing is held until AcquireNextFrame succeeds.
             let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
-            let mut resource = None;
+            let mut resource: Option<IDXGIResource> = None;
             let acquire_result =
                 unsafe { duplication.AcquireNextFrame(timeout_ms, &mut frame_info, &mut resource) };
             if let Err(e) = acquire_result {
-                return Err(classify_hresult(e.code().0));
+                let hr = e.code().0;
+                let (stage, classification, _) =
+                    diagnostic_for_acquire_error(&classify_hresult(hr));
+                self.push_diagnostic(DxgiAcquireDiagnostic {
+                    stage_reached: stage,
+                    acquire_hresult: Some(hr),
+                    classification,
+                    ..base
+                });
+                return Err(classify_hresult(hr));
             }
-            // DXGI1-001: the release guard is created IMMEDIATELY after a
-            // successful AcquireNextFrame, before any fallible inspection
-            // or cast. Every error return below drops it (exactly one
-            // ReleaseFrame), so a missing resource or failed cast can
-            // never leave the frame acquired and wedge the duplication
-            // object into invalid-call behavior on the next acquire.
-            let guard = FrameGuard::new({
-                let d = duplication.clone();
-                move || {
-                    let _ = unsafe { d.ReleaseFrame() };
-                }
+            // Guard FIRST (DXGI1-001), then the pre-branch record: every
+            // path below releases exactly once, and the record exists
+            // before the mask branch evaluates.
+            let guard = self.release_closure(duplication, attempt);
+            self.push_diagnostic(DxgiAcquireDiagnostic {
+                stage_reached: DxgiAcquireStage::Acquired,
+                protected_content_masked_out: Some(frame_info.ProtectedContentMaskedOut.0),
+                accumulated_frames: Some(frame_info.AccumulatedFrames),
+                rects_coalesced: Some(frame_info.RectsCoalesced.0),
+                last_present_time: Some(frame_info.LastPresentTime),
+                total_metadata_size: Some(frame_info.TotalMetadataBufferSize),
+                pointer_shape_size: Some(frame_info.PointerShapeBufferSize),
+                classification: DxgiAcquireClassification::Pending,
+                ..base
             });
-            // DXGI1-003: fail-closed protected-content rule, checked
-            // before any pixel handling. Any nonzero mask means the frame
-            // carries masked protected pixels and must never be returned
-            // as an ordinary frame; the guard releases on this return.
-            if let Some(err) =
-                protected_from_frame_info(frame_info.ProtectedContentMaskedOut.as_bool())
-            {
-                drop(guard);
-                return Err(err);
+            Ok((attempt, guard, frame_info, resource))
+        }
+
+        /// Evaluate the fail-closed mask branch for one raw frame,
+        /// updating the attempt's diagnostic. The caller drops the guard
+        /// on the Protected return; the record keeps stage MaskChecked.
+        fn evaluate_mask(
+            &self,
+            attempt: u64,
+            frame_info: &DXGI_OUTDUPL_FRAME_INFO,
+        ) -> Result<(), DxgiAcquireError> {
+            match protected_from_frame_info(frame_info.ProtectedContentMaskedOut.as_bool()) {
+                Some(err) => {
+                    self.update_diagnostic(
+                        attempt,
+                        DxgiAcquireStage::MaskChecked,
+                        DxgiAcquireClassification::Protected,
+                    );
+                    Err(err)
+                }
+                None => {
+                    self.update_diagnostic(
+                        attempt,
+                        DxgiAcquireStage::MaskChecked,
+                        DxgiAcquireClassification::Pass,
+                    );
+                    Ok(())
+                }
             }
+        }
+
+        /// Cast the acquired resource and read its texture descriptor.
+        /// Pure prefix step shared by the full loop and the staged API.
+        fn inspect_resource(
+            &self,
+            attempt: u64,
+            resource: Option<IDXGIResource>,
+        ) -> Result<(ID3D11Texture2D, u32, u32), DxgiAcquireError> {
             let resource = match resource {
                 Some(r) => r,
                 None => {
-                    drop(guard);
                     return Err(DxgiAcquireError::Other(
                         "AcquireNextFrame succeeded with no resource".into(),
-                    ));
+                    ))
                 }
             };
             let texture: ID3D11Texture2D = match resource.cast() {
                 Ok(t) => t,
                 Err(e) => {
-                    drop(guard);
                     return Err(DxgiAcquireError::Other(format!(
                         "acquired resource is not a texture: {e}"
-                    )));
+                    )))
                 }
             };
             let mut tex_desc = D3D11_TEXTURE2D_DESC::default();
             unsafe { texture.GetDesc(&mut tex_desc) };
-            let (width, height) = (tex_desc.Width, tex_desc.Height);
-            // DXGI1-002: limits are enforced HERE, before any staging
-            // texture is created or any host buffer is allocated from
-            // these untrusted dimensions. The caller re-validates the
-            // returned pixels as defense in depth, but no allocation
-            // sized from the frame happens before this check.
+            self.update_diagnostic(
+                attempt,
+                DxgiAcquireStage::ResourceInspected,
+                DxgiAcquireClassification::Pass,
+            );
+            Ok((texture, tex_desc.Width, tex_desc.Height))
+        }
+
+        /// Enforce limits, allocate (or reuse) the staging texture, and
+        /// enqueue CopyResource. The caller releases the frame guard
+        /// after this step, before any mapping (brief order).
+        fn copy_to_staging(
+            &mut self,
+            attempt: u64,
+            texture: &ID3D11Texture2D,
+            width: u32,
+            height: u32,
+            limits: &DxgiLimits,
+        ) -> Result<ID3D11Texture2D, DxgiAcquireError> {
+            // DXGI1-002: limits before any staging texture or host
+            // allocation sized from the frame.
             if let Err(e) = validate_limits(width, height, limits) {
-                drop(guard);
                 return Err(DxgiAcquireError::Unavailable(format!(
                     "acquired frame violates limits: {e}"
                 )));
@@ -1148,9 +1657,7 @@ mod win_backend {
                 };
                 if let Err(e) = created {
                     // DXGI1-004: device-loss classification survives the
-                    // staging stage; other failures become StageFailed so
-                    // the caller still gets its one bounded recreate.
-                    drop(guard);
+                    // staging stage; other failures become StageFailed.
                     return Err(classify_stage_error(e.code().0));
                 }
                 self.staging = staging;
@@ -1159,28 +1666,42 @@ mod win_backend {
             let staging = match &self.staging {
                 Some(s) => s.clone(),
                 None => {
-                    drop(guard);
                     return Err(DxgiAcquireError::Other(
                         "staging texture missing after create".into(),
-                    ));
+                    ))
                 }
             };
             // Full-output copy; the requested rect is cropped on the CPU
             // (DXGI-1 simplicity — DXGI-2 may copy sub-boxes instead).
             unsafe {
                 self.device_context
-                    .CopyResource(&staging, &texture);
+                    .CopyResource(&staging, texture);
             }
-            // Brief order: ReleaseFrame before CPU mapping/conversion.
-            let mut guard = guard;
-            guard.release();
-            let staging_resource: windows::Win32::Graphics::Direct3D11::ID3D11Resource =
-                match staging.cast() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return Err(classify_stage_error(e.code().0));
-                    }
-                };
+            self.update_diagnostic(
+                attempt,
+                DxgiAcquireStage::StagingCopied,
+                DxgiAcquireClassification::Pass,
+            );
+            Ok(staging)
+        }
+
+        /// Map the staging texture, copy its bytes to the host, unmap.
+        /// The unmap guard is established immediately after a successful
+        /// Map, so the mapped state releases on every path, including
+        /// unwind — never a manual Map/Unmap pair.
+        fn map_and_copy(
+            &mut self,
+            attempt: u64,
+            staging: &ID3D11Texture2D,
+            height: u32,
+            limits: &DxgiLimits,
+        ) -> Result<(usize, Vec<u8>), DxgiAcquireError> {
+            let staging_resource: ID3D11Resource = match staging.cast() {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(classify_stage_error(e.code().0));
+                }
+            };
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             if let Err(e) = unsafe {
                 self.device_context.Map(
@@ -1193,10 +1714,6 @@ mod win_backend {
             } {
                 return Err(classify_stage_error(e.code().0));
             }
-            // DXGI1-004: the unmap guard is established immediately after
-            // a successful Map, so the mapped state is released on every
-            // path through the host allocation/copy work below, including
-            // unwind — never a manual Map/Unmap pair.
             let unmap_guard = FrameGuard::new({
                 let dc = self.device_context.clone();
                 let res = staging_resource.clone();
@@ -1206,9 +1723,7 @@ mod win_backend {
             });
             let row_pitch = mapped.RowPitch as usize;
             // DXGI1-002: checked pitch arithmetic and the raster budget
-            // are enforced BEFORE allocating the host buffer — never a
-            // saturating wrap into a maximum-size request. The unmap
-            // guard releases on these error returns.
+            // are enforced BEFORE allocating the host buffer.
             let byte_len = match checked_mapped_bytes(row_pitch, height, limits.max_raster_bytes)
             {
                 Ok(n) => n,
@@ -1230,12 +1745,286 @@ mod win_backend {
                 }
             }
             drop(unmap_guard);
+            self.update_diagnostic(
+                attempt,
+                DxgiAcquireStage::Mapped,
+                DxgiAcquireClassification::Pass,
+            );
+            Ok((row_pitch, bgra))
+        }
+
+        /// Run ONE staged pipeline prefix (fix round 4 experiment API).
+        ///
+        /// Single attempt, no retry loop, no recreate: a loss or failure
+        /// ends the attempt and is reported, never retried. The frame is
+        /// released exactly once on every path. The returned diagnostic
+        /// snapshot is the attempt's record after the variant completes,
+        /// so the harness compares pre-branch metadata against the
+        /// resulting classification from the same record.
+        pub fn acquire_staged(
+            &mut self,
+            variant: DxgiStagedVariant,
+            timeout_ms: u32,
+            limits: &DxgiLimits,
+        ) -> DxgiStagedResult {
+            let (attempt, mut guard, frame_info, resource) =
+                match self.acquire_frame_raw(timeout_ms) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        // The attempt's diagnostic is already recorded.
+                        let diagnostic = self
+                            .diagnostic_for_attempt(self.last_attempt)
+                            .expect("acquire_frame_raw always records a diagnostic");
+                        let classification = diagnostic.classification;
+                        return DxgiStagedResult {
+                            attempt: self.last_attempt,
+                            diagnostic,
+                            classification,
+                            stage_error: None,
+                            width: None,
+                            height: None,
+                            row_pitch: None,
+                            host_bytes: None,
+                        };
+                    }
+                };
+            // Mask branch first, whatever the variant: a Protected frame
+            // never proceeds to any later stage.
+            if let Err(e) = self.evaluate_mask(attempt, &frame_info) {
+                drop(guard);
+                let diagnostic = self
+                    .diagnostic_for_attempt(attempt)
+                    .expect("staged attempt record exists");
+                return DxgiStagedResult {
+                    attempt,
+                    diagnostic,
+                    classification: DxgiAcquireClassification::Protected,
+                    stage_error: Some(format!("{e:?}")),
+                    width: None,
+                    height: None,
+                    row_pitch: None,
+                    host_bytes: None,
+                };
+            }
+            if variant == DxgiStagedVariant::AcquireOnly {
+                drop(guard);
+                let diagnostic = self
+                    .diagnostic_for_attempt(attempt)
+                    .expect("staged attempt record exists");
+                return DxgiStagedResult {
+                    attempt,
+                    diagnostic,
+                    classification: DxgiAcquireClassification::Pass,
+                    stage_error: None,
+                    width: None,
+                    height: None,
+                    row_pitch: None,
+                    host_bytes: None,
+                };
+            }
+            let (texture, width, height) = match self.inspect_resource(attempt, resource) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    drop(guard);
+                    let diagnostic = self
+                        .diagnostic_for_attempt(attempt)
+                        .expect("staged attempt record exists");
+                    return DxgiStagedResult {
+                        attempt,
+                        diagnostic,
+                        classification: DxgiAcquireClassification::StageError,
+                        stage_error: Some(format!("{e:?}")),
+                        width: None,
+                        height: None,
+                        row_pitch: None,
+                        host_bytes: None,
+                    };
+                }
+            };
+            if variant == DxgiStagedVariant::ResourceInspected {
+                drop(guard);
+                let diagnostic = self
+                    .diagnostic_for_attempt(attempt)
+                    .expect("staged attempt record exists");
+                return DxgiStagedResult {
+                    attempt,
+                    diagnostic,
+                    classification: DxgiAcquireClassification::Pass,
+                    stage_error: None,
+                    width: Some(width),
+                    height: Some(height),
+                    row_pitch: None,
+                    host_bytes: None,
+                };
+            }
+            let staging = match self.copy_to_staging(attempt, &texture, width, height, limits) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    drop(guard);
+                    let diagnostic = self
+                        .diagnostic_for_attempt(attempt)
+                        .expect("staged attempt record exists");
+                    return DxgiStagedResult {
+                        attempt,
+                        diagnostic,
+                        classification: DxgiAcquireClassification::StageError,
+                        stage_error: Some(format!("{e:?}")),
+                        width: Some(width),
+                        height: Some(height),
+                        row_pitch: None,
+                        host_bytes: None,
+                    };
+                }
+            };
+            // Brief order: release before CPU mapping/conversion.
+            guard.release();
+            if variant == DxgiStagedVariant::StagingCopied {
+                let diagnostic = self
+                    .diagnostic_for_attempt(attempt)
+                    .expect("staged attempt record exists");
+                return DxgiStagedResult {
+                    attempt,
+                    diagnostic,
+                    classification: DxgiAcquireClassification::Pass,
+                    stage_error: None,
+                    width: Some(width),
+                    height: Some(height),
+                    row_pitch: None,
+                    host_bytes: None,
+                };
+            }
+            match self.map_and_copy(attempt, &staging, height, limits) {
+                Ok((row_pitch, bgra)) => {
+                    let host_bytes = bgra.len();
+                    let diagnostic = self
+                        .diagnostic_for_attempt(attempt)
+                        .expect("staged attempt record exists");
+                    DxgiStagedResult {
+                        attempt,
+                        diagnostic,
+                        classification: DxgiAcquireClassification::Pass,
+                        stage_error: None,
+                        width: Some(width),
+                        height: Some(height),
+                        row_pitch: Some(row_pitch),
+                        host_bytes: Some(host_bytes),
+                    }
+                }
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    let diagnostic = self
+                        .diagnostic_for_attempt(attempt)
+                        .expect("staged attempt record exists");
+                    DxgiStagedResult {
+                        attempt,
+                        diagnostic,
+                        classification: DxgiAcquireClassification::StageError,
+                        stage_error: Some(format!("{e:?}")),
+                        width: Some(width),
+                        height: Some(height),
+                        row_pitch: None,
+                        host_bytes: None,
+                    }
+                }
+            }
+        }
+    }
+
+    /// One staged pipeline prefix (fix round 4 experiment API).
+    ///
+    /// Stage 5, the complete wrapper loop, is [`DxgiCaptureContext::capture_rect`]
+    /// itself; these four variants are the prefixes it is compared against.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum DxgiStagedVariant {
+        /// Acquire + pre-branch diagnostic + ReleaseFrame only.
+        AcquireOnly,
+        /// + resource cast + texture descriptor inspection.
+        ResourceInspected,
+        /// + staging allocation + CopyResource, then release (before map).
+        StagingCopied,
+        /// + Map/Unmap + host copy.
+        MapCopied,
+    }
+
+    /// Result of one staged acquisition attempt. Dimensions and byte
+    /// counts only — never pixel values.
+    #[derive(Debug, Clone)]
+    pub struct DxgiStagedResult {
+        pub attempt: u64,
+        pub diagnostic: DxgiAcquireDiagnostic,
+        pub classification: DxgiAcquireClassification,
+        pub stage_error: Option<String>,
+        pub width: Option<u32>,
+        pub height: Option<u32>,
+        pub row_pitch: Option<usize>,
+        pub host_bytes: Option<usize>,
+    }
+
+    impl Drop for DxgiCaptureContext {
+        fn drop(&mut self) {
+            self.duplication = None;
+            self.staging = None;
+            if self.com_initialized {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    impl super::DuplicationBackend for DxgiCaptureContext {
+        fn acquire(
+            &mut self,
+            timeout_ms: u32,
+            limits: &DxgiLimits,
+        ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+            // Fix round 4: the full loop is the same staged chain the
+            // experiment API runs, so stage-5 evidence is comparable
+            // with stages 1-4 instead of a parallel implementation.
+            let (attempt, mut guard, frame_info, resource) =
+                self.acquire_frame_raw(timeout_ms)?;
+            // DXGI1-003: fail-closed protected-content rule, checked
+            // before any pixel handling. Any nonzero mask means the
+            // frame carries masked protected pixels and must never be
+            // returned as an ordinary frame; the guard releases on
+            // this return.
+            if let Err(e) = self.evaluate_mask(attempt, &frame_info) {
+                drop(guard);
+                return Err(e);
+            }
+            let (texture, width, height) = match self.inspect_resource(attempt, resource) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    drop(guard);
+                    return Err(e);
+                }
+            };
+            let staging = match self.copy_to_staging(attempt, &texture, width, height, limits) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    drop(guard);
+                    return Err(e);
+                }
+            };
+            // Brief order: ReleaseFrame before CPU mapping/conversion.
+            // The guard still protected the acquire→copy window, and
+            // its Drop covers unwind inside the steps above.
+            guard.release();
+            let (row_pitch, bgra) = match self.map_and_copy(attempt, &staging, height, limits) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.mark_diagnostic_failed(attempt, DxgiAcquireClassification::StageError);
+                    return Err(e);
+                }
+            };
             // DXGI1 fix round 3: carry the raw frame metadata through
-            // so hardware harnesses can log it per acquire (mask,
-            // accumulated frames, coalescing, present time) and the
-            // mask misfire can be discriminated from outcomes alone
-            // no longer. Diagnostic only; the fail-closed mask rule
-            // above is unchanged.
+            // so hardware harnesses can log it per acquire. Diagnostic
+            // only; the fail-closed mask rule above is unchanged. (The
+            // round-4 pre-branch record in DxgiAcquireDiagnostic covers
+            // Protected outcomes too; this passthrough covers Frame
+            // outcomes through the public capture API.)
             let metadata = DxgiFrameMetadata {
                 protected_content_masked_out: frame_info.ProtectedContentMaskedOut.0,
                 accumulated_frames: frame_info.AccumulatedFrames,
@@ -2160,5 +2949,171 @@ mod tests {
         );
         assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
         assert_eq!(backend.releases.load(Ordering::SeqCst), 1);
+    }
+
+    // DXGI1 fix round 4: the diagnostic log drops the OLDEST records
+    // past its cap, so a long sustained run cannot grow memory without
+    // bound — and the newest records (the ones a harness reads) survive.
+    fn test_diagnostic(attempt: u64) -> DxgiAcquireDiagnostic {
+        DxgiAcquireDiagnostic {
+            attempt,
+            context_id: 0,
+            session_generation: 0,
+            adapter_luid: (0, 0),
+            output_device_name: "\\\\.\\DISPLAY1".to_string(),
+            stage_reached: DxgiAcquireStage::Acquired,
+            provenance: DxgiAcquireProvenance::Real,
+            acquire_hresult: None,
+            protected_content_masked_out: Some(0),
+            accumulated_frames: Some(1),
+            rects_coalesced: Some(0),
+            last_present_time: Some(0),
+            total_metadata_size: Some(0),
+            pointer_shape_size: Some(0),
+            classification: DxgiAcquireClassification::Pending,
+            release_hresult: None,
+            released: false,
+        }
+    }
+
+    #[test]
+    fn diagnostic_log_cap_drops_oldest_records() {
+        let mut log = DxgiDiagnosticLog::new(3);
+        for attempt in 0..5 {
+            log.push(test_diagnostic(attempt));
+        }
+        assert_eq!(log.len(), 3);
+        let attempts: Vec<u64> = log.snapshot().iter().map(|r| r.attempt).collect();
+        assert_eq!(attempts, vec![2, 3, 4]);
+    }
+
+    // DXGI1 fix round 4: stage updates only move forward, a Protected
+    // classification is never overwritten by a later stage failure, and
+    // release is recorded exactly once on the same record.
+    #[test]
+    fn diagnostic_log_update_rules() {
+        let mut log = DxgiDiagnosticLog::new(16);
+        log.push(test_diagnostic(0));
+        // Backward stage move is ignored.
+        log.update(
+            0,
+            DxgiAcquireStage::AcquireFailed,
+            DxgiAcquireClassification::AcquireError,
+        );
+        let record = log.get(0).unwrap();
+        assert_eq!(record.stage_reached, DxgiAcquireStage::Acquired);
+        assert_eq!(record.classification, DxgiAcquireClassification::Pending);
+        // Forward move applies.
+        log.update(
+            0,
+            DxgiAcquireStage::MaskChecked,
+            DxgiAcquireClassification::Protected,
+        );
+        let record = log.get(0).unwrap();
+        assert_eq!(record.stage_reached, DxgiAcquireStage::MaskChecked);
+        assert_eq!(record.classification, DxgiAcquireClassification::Protected);
+        // A later stage failure must NOT overwrite Protected.
+        log.mark_failed(0, DxgiAcquireClassification::StageError);
+        assert_eq!(
+            log.get(0).unwrap().classification,
+            DxgiAcquireClassification::Protected
+        );
+        // Release records once.
+        log.mark_released(0, 0);
+        let record = log.get(0).unwrap();
+        assert!(record.released);
+        assert_eq!(record.release_hresult, Some(0));
+        log.mark_released(0, -1);
+        assert_eq!(log.get(0).unwrap().release_hresult, Some(0));
+    }
+
+    // DXGI1 fix round 4: a failed record keeps its Protected status
+    // open to a release update but closed to a failure overwrite, and a
+    // non-Protected record accepts the failure classification.
+    #[test]
+    fn diagnostic_log_mark_failed_on_pass_record() {
+        let mut log = DxgiDiagnosticLog::new(16);
+        log.push(test_diagnostic(1));
+        log.update(
+            1,
+            DxgiAcquireStage::MaskChecked,
+            DxgiAcquireClassification::Pass,
+        );
+        log.mark_failed(1, DxgiAcquireClassification::StageError);
+        assert_eq!(
+            log.get(1).unwrap().classification,
+            DxgiAcquireClassification::StageError
+        );
+        // Stage is untouched by mark_failed.
+        assert_eq!(
+            log.get(1).unwrap().stage_reached,
+            DxgiAcquireStage::MaskChecked
+        );
+    }
+
+    // DXGI1 fix round 4: error → diagnostic mapping is identical for
+    // the real and injected paths, so provenance is the only difference
+    // between a hardware failure record and an injected one.
+    #[test]
+    fn diagnostic_error_mapping_covers_all_variants() {
+        use DxgiAcquireClassification as C;
+        use DxgiAcquireStage as S;
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::AccessLost),
+            (S::AcquireFailed, C::AcquireError, Some(DXGI_ERROR_ACCESS_LOST as i32))
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::WaitTimeout),
+            (S::AcquireFailed, C::AcquireError, Some(DXGI_ERROR_WAIT_TIMEOUT as i32))
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::SessionDisconnected),
+            (
+                S::AcquireFailed,
+                C::AcquireError,
+                Some(DXGI_ERROR_SESSION_DISCONNECTED as i32)
+            )
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::DeviceRemoved),
+            (S::AcquireFailed, C::AcquireError, Some(DXGI_ERROR_DEVICE_REMOVED as i32))
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::Protected),
+            (S::MaskChecked, C::Protected, None)
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::StageFailed("x".into())),
+            (S::AcquireFailed, C::StageError, None)
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::Unavailable("x".into())),
+            (S::AcquireFailed, C::AcquireError, None)
+        );
+        assert_eq!(
+            diagnostic_for_acquire_error(&DxgiAcquireError::Other("x".into())),
+            (S::AcquireFailed, C::AcquireError, None)
+        );
+    }
+
+    // DXGI1 fix round 4: stage order is strictly monotonic, so a
+    // harness can assert "first failing stage" from record order.
+    #[test]
+    fn diagnostic_stage_order_is_monotonic() {
+        use DxgiAcquireStage as S;
+        let stages = [
+            S::AcquireFailed,
+            S::Acquired,
+            S::MaskChecked,
+            S::ResourceInspected,
+            S::StagingCopied,
+            S::Mapped,
+        ];
+        let orders: Vec<u8> = stages.iter().map(|s| s.order()).collect();
+        let mut sorted = orders.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(orders, sorted);
+        assert_eq!(orders.len(), 6);
     }
 }
