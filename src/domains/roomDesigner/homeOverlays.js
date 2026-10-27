@@ -89,6 +89,9 @@ const ANNOTATION_FIELDS = Object.freeze(["id", "targetRef", "text", "position"])
 const COLLECTION_FIELDS = Object.freeze(["devices", "runs", "nodes", "annotations"]);
 const REF_FIELDS = Object.freeze(["levelId", "trade", "entityKind", "entityId", "portId"]);
 const BASE_REF_FIELDS = Object.freeze(["kind", "id"]);
+/** A point is exactly { x, y } — no nested extras. Unknown nested fields
+ * are validation problems, never silently dropped by normalization. */
+const POINT_FIELDS = Object.freeze(["x", "y"]);
 
 /** Attribute keys that could carry a URL, script, or resource reference.
  * Exact (case-insensitive) matches, plus onXxx event-handler shapes. */
@@ -107,12 +110,18 @@ function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isValidPoint(point) {
-  return (
-    isPlainObject(point) &&
-    isFiniteNumber(point.x) &&
-    isFiniteNumber(point.y)
-  );
+/** A point is exactly { x, y } with finite coordinates. Unknown nested
+ * fields are problems (H679-001): validation runs before normalization,
+ * so a bad point is refused rather than silently repaired. */
+function checkPoint(point, where, problems) {
+  if (!isPlainObject(point)) {
+    problems.push(`${where} must be a point object.`);
+    return;
+  }
+  checkUnknownFields(point, POINT_FIELDS, where, problems);
+  if (!isFiniteNumber(point.x) || !isFiniteNumber(point.y)) {
+    problems.push(`${where} must have finite x/y.`);
+  }
 }
 
 function checkUnknownFields(object, allowed, where, problems) {
@@ -229,9 +238,7 @@ function checkRunPoints(points, where, problems) {
     problems.push(`${where} must have at least two points.`);
     return;
   }
-  for (const point of points) {
-    if (!isValidPoint(point)) problems.push(`${where} has a non-finite point.`);
-  }
+  points.forEach((point, index) => checkPoint(point, `${where} point ${index + 1}`, problems));
 }
 
 function validateTradeCollection(collection, trade, where) {
@@ -344,9 +351,7 @@ function validateTradeCollection(collection, trade, where) {
     if (typeof annotation.text !== "string") {
       problems.push(`${at} must have string text.`);
     }
-    if (!isValidPoint(annotation.position)) {
-      problems.push(`${at} must have a finite position point.`);
-    }
+    checkPoint(annotation.position, `${at} position`, problems);
     if (annotation.targetRef !== undefined) {
       problems.push(...validateEndpointRef(annotation.targetRef, trade, `${at} targetRef`));
     }
@@ -583,12 +588,25 @@ export function tradeOfService(service) {
  * Remap endpoint references for copy/paste and level operations. Pure:
  * the input block is never mutated.
  *
- *   mapping.levelId — when given, every ref's levelId is rewritten to it
- *     (level duplication / move).
- *   mapping.ids — { [trade]: { [entityKind]: { [oldId]: newId } } }; refs
- *     whose entity has a mapping entry are rewritten to the new id.
- *   dropUnmappedRefs — when true, a ref whose entity has NO mapping entry
- *     is dropped (set to undefined) and reported in `dropped`, so a paste
+ *   mapping.sourceLevelId — the level the moved/copied content comes
+ *     from. REQUIRED whenever mapping.levelId is given: without proven
+ *     source-level belonging, no level rewrite happens at all (a bare
+ *     levelId rewrite throws instead of rebinding foreign refs).
+ *   mapping.levelId — when given (with sourceLevelId), refs proven to
+ *     belong to the source level are rewritten to it (level duplication
+ *     / move). Foreign refs (levelId !== sourceLevelId) are NEVER
+ *     rebound: in default mode they are kept exactly as-is (still
+ *     dangling, never falsely connected); in dropUnmappedRefs mode they
+ *     are dropped and reported in `dropped`.
+ *   mapping.ids — { [trade]: { [entityKind]: { [oldId]: newId } } }.
+ *     When ids is ABSENT, a source-level ref keeps its entity id: the
+ *     whole level moved, so every source ref follows it. When ids is
+ *     PRESENT, a source-level ref is rewritten only with an explicit
+ *     entry; without one it is kept as-is (default) or dropped and
+ *     reported (dropUnmappedRefs) — never rebound to a same-id entity
+ *     in the target level. No automatic cross-level network joining.
+ *   dropUnmappedRefs — when true, a ref with NO intended mapping is
+ *     dropped (set to undefined) and reported in `dropped`, so a paste
  *     never falsely connects to the original's entities. When false (the
  *     default), unmapped refs are kept as-is — level switches and saves
  *     preserve references.
@@ -600,19 +618,49 @@ export function remapOverlayReferences(block, mapping = {}) {
   const problems = validateHomeOverlays(block);
   if (problems.length > 0) throw new Error(`Cannot remap invalid homeOverlays: ${problems[0]}`);
   const levelId = mapping.levelId;
-  const ids = mapping.ids || {};
+  const sourceLevelId = mapping.sourceLevelId;
+  if (levelId !== undefined && sourceLevelId === undefined) {
+    throw new Error(
+      "remapOverlayReferences requires sourceLevelId when levelId is given: refusing blanket level replacement.",
+    );
+  }
+  const ids = mapping.ids;
   const dropUnmapped = mapping.dropUnmappedRefs === true;
   const dropped = [];
   const remapRef = (ref, where) => {
     if (ref === undefined) return undefined;
+    // Foreign refs are never rebound, in either mode.
+    if (sourceLevelId !== undefined && ref.levelId !== sourceLevelId) {
+      if (dropUnmapped) {
+        dropped.push({ where, ref: { ...ref } });
+        return undefined;
+      }
+      return { ...ref };
+    }
     let next = { ...ref };
-    if (levelId !== undefined) next.levelId = levelId;
-    const tradeMap = ids[ref.trade]?.[ref.entityKind];
-    if (tradeMap && tradeMap[ref.entityId] !== undefined) {
-      next.entityId = tradeMap[ref.entityId];
-    } else if (dropUnmapped) {
-      dropped.push({ where, ref: { ...ref } });
-      return undefined;
+    if (levelId !== undefined) {
+      // Level rewrite: source-level refs only, with whole-level move
+      // (no ids map) or an explicit entity entry. Without an entry the
+      // ref is not rebound to a same-id entity in the target level.
+      const tradeMap = ids?.[ref.trade]?.[ref.entityKind];
+      if (ids === undefined) {
+        next.levelId = levelId;
+      } else if (tradeMap && tradeMap[ref.entityId] !== undefined) {
+        next.levelId = levelId;
+        next.entityId = tradeMap[ref.entityId];
+      } else if (dropUnmapped) {
+        dropped.push({ where, ref: { ...ref } });
+        return undefined;
+      } else {
+        return { ...ref };
+      }
+    } else {
+      // No level rewrite: id mapping only (a level mismatch still
+      // dangles, so id mapping alone can never resurrect a foreign ref).
+      const tradeMap = ids?.[ref.trade]?.[ref.entityKind];
+      if (tradeMap && tradeMap[ref.entityId] !== undefined) {
+        next.entityId = tradeMap[ref.entityId];
+      }
     }
     return next;
   };

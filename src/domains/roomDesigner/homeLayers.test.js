@@ -159,3 +159,63 @@ describe("homeLayers — print masks", () => {
     expect(later.electrical).toBe(false);
   });
 });
+
+describe("H679-003 — boolean-only masks (fix round)", () => {
+  it("rejects non-boolean mask values instead of coercing them", () => {
+    // Verdict probe: "false" must not resolve to visible, nor be accepted.
+    expect(() => createHomeLayerMask({ electrical: "false" })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: "true" })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: 1 })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: 0 })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: {} })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: [] })).toThrow();
+    expect(() => createHomeLayerMask({ electrical: null })).toThrow();
+    // Valid booleans still pass, and every accepted value is boolean-only.
+    const mask = createHomeLayerMask({ electrical: true, plumbing: false });
+    expect(mask.electrical).toBe(true);
+    expect(mask.plumbing).toBe(false);
+    expect(Object.values(mask).every((v) => typeof v === "boolean")).toBe(true);
+  });
+
+  it("treats undefined as absent (default applies) but rejects null", () => {
+    expect(createHomeLayerMask({ electrical: undefined }).electrical).toBe(false);
+    expect(createHomeLayerMask({ base: undefined }).base).toBe(true);
+    expect(() => createHomeLayerMask({ base: null })).toThrow();
+  });
+
+  it("setHomeLayer rejects non-boolean visibility", () => {
+    const mask = defaultHomeLayerMask();
+    expect(() => setHomeLayer(mask, "electrical", "yes")).toThrow();
+    expect(() => setHomeLayer(mask, "electrical", 1)).toThrow();
+    expect(() => setHomeLayer(mask, "electrical", {})).toThrow();
+    expect(() => setHomeLayer(mask, "electrical", null)).toThrow();
+    expect(setHomeLayer(mask, "electrical", true).electrical).toBe(true);
+    expect(setHomeLayer(mask, "electrical", false).electrical).toBe(false);
+    expect(mask.electrical).toBe(false); // input never mutated
+  });
+
+  it("freeze rejects invalid masks and stays detached from its source", () => {
+    // A hand-built mask carrying an object must not survive freezing.
+    expect(() =>
+      freezeHomePrintMask({
+        base: true,
+        underlay: true,
+        furniture: true,
+        electrical: { nested: true },
+        plumbing: false,
+        hvac: false,
+      }),
+    ).toThrow();
+    const mask = createHomeLayerMask({ electrical: true });
+    const frozen = freezeHomePrintMask(mask);
+    expect(frozen.mask).not.toBe(mask); // detached object identity
+    expect(Object.isFrozen(frozen.mask)).toBe(true);
+    expect(frozen.mask.electrical).toBe(true);
+    expect(frozen.title).toBe("Base + Electrical");
+    // Mutating the source partial after creation never alters the mask.
+    const partial = { electrical: true };
+    const built = createHomeLayerMask(partial);
+    partial.electrical = false;
+    expect(built.electrical).toBe(true);
+  });
+});

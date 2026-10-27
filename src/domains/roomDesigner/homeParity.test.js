@@ -273,3 +273,80 @@ describe("homeParity — reducer action", () => {
     expect(state.past).toHaveLength(0);
   });
 });
+
+describe("homeParity — H679-001 validator and reducer paths (fix round)", () => {
+  /** A block whose run point carries an unknown nested field (verdict probe). */
+  function badPointBlock() {
+    return {
+      version: 1,
+      electrical: {
+        devices: [
+          {
+            id: "panel-1",
+            catalogId: "load-center",
+            x: 10,
+            y: 20,
+            ports: [{ id: "main", service: "circuit" }],
+          },
+        ],
+        runs: [
+          {
+            id: "circuit-1",
+            service: "circuit",
+            points: [
+              { x: 10, y: 20 },
+              { x: 60, y: 20, script: "inert-probe" },
+            ],
+          },
+        ],
+        nodes: [],
+        annotations: [],
+      },
+    };
+  }
+
+  it("refuses a bad nested point at the design and project boundaries", () => {
+    const bad = { ...legacyHomeDesign(), homeOverlays: badPointBlock() };
+    const designProblems = validateDesign(bad);
+    expect(designProblems.length).toBeGreaterThan(0);
+    expect(designProblems.join(" ")).toMatch("homeOverlays");
+    const project = projectFromDesign(legacyHomeDesign(), "P");
+    const badProject = {
+      ...project,
+      levels: [{ ...project.levels[0], design: bad }],
+    };
+    expect(validateHomeProject(badProject).length).toBeGreaterThan(0);
+  });
+
+  it("SET_HOME_OVERLAYS refuses a bad nested point atomically", () => {
+    const good = {
+      version: 1,
+      electrical: {
+        devices: [
+          {
+            id: "panel-1",
+            catalogId: "load-center",
+            x: 10,
+            y: 20,
+            ports: [{ id: "main", service: "circuit" }],
+          },
+        ],
+        runs: [],
+        nodes: [],
+        annotations: [],
+      },
+    };
+    let state = createInitialState(createEmptyDesign("H0"));
+    state = designerReducer(state, { type: "SET_HOME_OVERLAYS", overlays: good });
+    const pastLength = state.past.length;
+    const before = JSON.stringify(state.design.homeOverlays);
+    const refused = designerReducer(state, {
+      type: "SET_HOME_OVERLAYS",
+      overlays: badPointBlock(),
+    });
+    // Previous design and history preserved exactly; no partial set.
+    expect(JSON.stringify(refused.design.homeOverlays)).toBe(before);
+    expect(refused.past).toHaveLength(pastLength);
+    expect(refused.design).toBe(state.design);
+  });
+});

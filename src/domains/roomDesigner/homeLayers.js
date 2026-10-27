@@ -45,7 +45,13 @@ const TRADE_LABELS = Object.freeze({
 
 /** Default mask: base visible, trades hidden. New home designs begin with
  * the base visible and trade collections empty; authoring a trade shows
- * that trade without toggling unrelated trades (a later slice's job). */
+ * that trade without toggling unrelated trades (a later slice's job).
+ *
+ * Boolean-only contract (H679-003): a supplied value must be a primitive
+ * boolean — strings, numbers, objects, and null are rejected, never
+ * coerced with Boolean() or ??. Defaults apply on absence only, where a
+ * key missing or explicitly undefined counts as absent. Every mask a
+ * caller can hold is therefore boolean-only, detached, and frozen. */
 export function createHomeLayerMask(partial = {}) {
   if (!partial || typeof partial !== "object" || Array.isArray(partial)) {
     throw new Error("Layer mask overrides must be an object.");
@@ -53,6 +59,10 @@ export function createHomeLayerMask(partial = {}) {
   for (const key of Object.keys(partial)) {
     if (!HOME_LAYER_KEYS.includes(key)) {
       throw new Error(`Unknown home layer "${key}".`);
+    }
+    const value = partial[key];
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new Error(`Home layer "${key}" must be a boolean.`);
     }
   }
   return Object.freeze({
@@ -70,12 +80,16 @@ export function defaultHomeLayerMask() {
   return createHomeLayerMask();
 }
 
-/** Set one layer's visibility; returns a new frozen mask. */
+/** Set one layer's visibility; returns a new frozen mask. The visibility
+ * must be a primitive boolean — no truthiness coercion (H679-003). */
 export function setHomeLayer(mask, layer, visible) {
   if (!HOME_LAYER_KEYS.includes(layer)) {
     throw new Error(`Unknown home layer "${layer}".`);
   }
-  return createHomeLayerMask({ ...mask, [layer]: Boolean(visible) });
+  if (typeof visible !== "boolean") {
+    throw new Error(`Home layer "${layer}" visibility must be a boolean.`);
+  }
+  return createHomeLayerMask({ ...mask, [layer]: visible });
 }
 
 /** Flip one layer's visibility; returns a new frozen mask. */
@@ -154,7 +168,10 @@ export function printMaskTitle(mask) {
  * Freeze a mask for print: a snapshot detached from later screen toggles,
  * carrying its sheet title. Screen toggles after opening the preview
  * cannot silently alter the frozen mask (later set/toggle calls build new
- * mask objects; this snapshot keeps the old values).
+ * mask objects; this snapshot keeps the old values). The snapshot is
+ * rebuilt through createHomeLayerMask, so a non-boolean mask is refused
+ * here too — a frozen snapshot can never carry a coerced object value
+ * that later mutation could change (H679-003).
  */
 export function freezeHomePrintMask(mask) {
   const snapshot = createHomeLayerMask({ ...mask });
