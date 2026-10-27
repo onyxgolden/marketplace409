@@ -484,10 +484,23 @@ export function evaluateManagerComposition({
     const facts = snapshot?.datasets?.forge_work_packages ?? null;
     const conflict = (snapshot?.coverage_gaps ?? [])
       .some((g) => g.dataset === "forge_work_packages" && g.code === "EXPECTED_COUNT_CONFLICT");
-    const authoritative = facts !== null && facts.complete === true && facts.usable === true && !conflict;
+    // P678-003A: contradictory duplicate package rows are recorded
+    // by the snapshot builder in snapshot.conflicts (code
+    // DUPLICATE_CONFLICT, only when the duplicate bytes differ —
+    // identical duplicates record no conflict). Such a population
+    // must not publish ACCOUNTED first-wins totals: the conflict
+    // withholds authoritative accounting, while observed subset
+    // counts stay honestly labeled. Unrelated-dataset conflicts do
+    // not gate this population.
+    const dupConflicts = (snapshot?.conflicts ?? [])
+      .filter((c) => c.dataset === "forge_work_packages" && c.code === "DUPLICATE_CONFLICT");
+    const identityConflict = dupConflicts.length > 0;
+    const conflictRecordRefs = [...new Set(dupConflicts.map((c) => c.record_ref))];
+    const authoritative = facts !== null && facts.complete === true && facts.usable === true && !conflict && !identityConflict;
     let reason;
     if (facts === null) reason = "no package coverage facts in the controls snapshot";
     else if (conflict) reason = "package expected count conflict across pages";
+    else if (identityConflict) reason = `package identity conflict: duplicate package records with contradictory status (${conflictRecordRefs.join(", ")})`;
     else if (facts.complete !== true) reason = "package coverage incomplete (expected count unattested or unmet)";
     else if (facts.usable !== true) reason = "package coverage complete but unusable (invalid projected fields)";
     else reason = "package population complete and usable";
@@ -497,7 +510,9 @@ export function evaluateManagerComposition({
       received: facts?.received ?? null,
       complete: facts?.complete ?? false,
       usable: facts?.usable ?? false,
-      conflict,
+      conflict: conflict || identityConflict,
+      identity_conflict: identityConflict,
+      conflict_record_refs: conflictRecordRefs,
       reason,
     };
   };

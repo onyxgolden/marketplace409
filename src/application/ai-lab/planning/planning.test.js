@@ -684,7 +684,7 @@ describe("managerComposition (P2b-3)", () => {
   }
   // A snapshot whose digest recomputes exactly as the composition
   // verifies it: canonicalDigest over {envelope, records}.
-  function legSnapshot(scope, { consistency = "CONSISTENT", evidence = {}, datasets = {} } = {}) {
+  function legSnapshot(scope, { consistency = "CONSISTENT", evidence = {}, datasets = {}, conflicts = [] } = {}) {
     const envelope = {
       schema_version: "planning-snapshot@1",
       snapshot_request_id: "snap-leg-unit-1", owner_ref: "owner-1",
@@ -693,7 +693,7 @@ describe("managerComposition (P2b-3)", () => {
       collection: { started_at: AS_OF, finished_at: AS_OF },
       as_of: AS_OF, review_date: "2026-10-26", as_of_timezone: "UTC",
       mapping_version: FIELD_MAPPING_VERSION, datasets,
-      consistency, coverage_gaps: [], stale: false, conflicts: [],
+      consistency, coverage_gaps: [], stale: false, conflicts,
       collection_errors: [],
     };
     const records = {};
@@ -727,7 +727,7 @@ describe("managerComposition (P2b-3)", () => {
     };
   }
   function boundPair({ schedulerSections: sSections, controlsSections: cSections,
-    schedulerEvidence = {}, controlsEvidence = {}, controlsDatasets } = {}) {
+    schedulerEvidence = {}, controlsEvidence = {}, controlsDatasets, controlsConflicts } = {}) {
     const sSnap = legSnapshot(SCHED_SCOPE, { evidence: schedulerEvidence });
     // P678-003: the controls leg snapshot must attest its package
     // population exactly — snapshotBuilder always emits datasets
@@ -745,7 +745,7 @@ describe("managerComposition (P2b-3)", () => {
         complete: true, pages_complete: true, usable: true, revision: "rev-1",
       },
     };
-    const cSnap = legSnapshot(CTL_SCOPE, { evidence: controlsEvidence, datasets: cDatasets });
+    const cSnap = legSnapshot(CTL_SCOPE, { evidence: controlsEvidence, datasets: cDatasets, conflicts: controlsConflicts ?? [] });
     const sRep = legReport("scheduler", JOB_KINDS.SCHEDULER_PLANNING_REVIEW,
       "planning-scheduler-report@1", SCHED_SCOPE, sSnap.digest, schedulerSections(sSections));
     const cRep = legReport("project-controls", JOB_KINDS.CONTROLS_EVIDENCE_REVIEW,
@@ -994,6 +994,73 @@ describe("managerComposition (P2b-3)", () => {
     expect(report.sections.completion.cancelled_count).toBe(null);
     expect(report.sections.completion.observed_packages).toBe(1);
     expect(report.sections.completion.population.authoritative).toBe(false);
+  });
+
+  it("P678-003A: contradictory duplicate package rows withhold completion instead of publishing ACCOUNTED first-wins", () => {
+    const dup = { dataset: "forge_work_packages", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" };
+    const rows = (first, second) => [
+      { row_id: "ctl-1", package_ref: "PKG-A", status: first, percent_complete_claim: 55, snapshots: [] },
+      { row_id: "ctl-2", package_ref: "PKG-A", status: second, percent_complete_claim: 100, snapshots: [] },
+    ];
+    // Order 1: in_progress first, complete second — verdict probe published ACCOUNTED 0 terminal.
+    const pair1 = boundPair({
+      controlsSections: { sections: { packages: { rows: rows("in_progress", "complete") } } },
+      controlsConflicts: [dup],
+    });
+    const report1 = compose(pair1);
+    expect(report1.sections.completion.state).toBe("WITHHELD");
+    expect(report1.sections.completion.population.authoritative).toBe(false);
+    expect(report1.sections.completion.population.conflict).toBe(true);
+    expect(report1.sections.completion.admitted_packages).toBe(null);
+    expect(report1.sections.completion.terminal_count).toBe(null);
+    expect(report1.sections.completion.observed_packages).toBe(2);
+    expect(report1.sections.completion.observed_terminal_count).toBe(1);
+    // Order 2: complete first, in_progress second — verdict probe published ACCOUNTED 1 of 2.
+    const pair2 = boundPair({
+      controlsSections: { sections: { packages: { rows: rows("complete", "in_progress") } } },
+      controlsConflicts: [dup],
+    });
+    const report2 = compose(pair2);
+    expect(report2.sections.completion.state).toBe("WITHHELD");
+    expect(report2.sections.completion.population.authoritative).toBe(false);
+    expect(report2.sections.completion.population.conflict).toBe(true);
+    expect(report2.sections.completion.observed_packages).toBe(2);
+  });
+
+  it("P678-003A: a conflicting package plus a clean package still withholds; identical duplicates and unrelated conflicts stay ACCOUNTED", () => {
+    const dup = { dataset: "forge_work_packages", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" };
+    const mixed = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "in_progress", percent_complete_claim: 55, snapshots: [] },
+        { row_id: "ctl-2", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+        { row_id: "ctl-3", package_ref: "PKG-B", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+      controlsConflicts: [dup],
+    });
+    const mixedReport = compose(mixed);
+    expect(mixedReport.sections.completion.state).toBe("WITHHELD");
+    expect(mixedReport.sections.completion.population.conflict).toBe(true);
+    expect(mixedReport.sections.completion.observed_packages).toBe(3);
+    // Identical duplicate: no DUPLICATE_CONFLICT recorded — population stays authoritative.
+    const identical = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+        { row_id: "ctl-2", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+    });
+    const identicalReport = compose(identical);
+    expect(identicalReport.sections.completion.state).toBe("ACCOUNTED");
+    expect(identicalReport.sections.completion.population.conflict).toBe(false);
+    // Unrelated baseline conflict: does not invalidate the package population.
+    const unrelated = boundPair({
+      controlsSections: { sections: { packages: { rows: [
+        { row_id: "ctl-1", package_ref: "PKG-A", status: "complete", percent_complete_claim: 100, snapshots: [] },
+      ] } } },
+      controlsConflicts: [{ dataset: "forge_work_package_baselines", record_ref: "PKG-A", code: "DUPLICATE_CONFLICT" }],
+    });
+    const unrelatedReport = compose(unrelated);
+    expect(unrelatedReport.sections.completion.state).toBe("ACCOUNTED");
+    expect(unrelatedReport.sections.completion.population.conflict).toBe(false);
   });
 
   it("milestone rows cite the Scheduler's computed values verbatim, never recomputed", () => {

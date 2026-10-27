@@ -14,7 +14,7 @@
     "../../../src/application/ai-lab/planning/sourceMappings.js": "14e8791d967a8533bb0e078ad3fe635ce3297b5a9fcb49ab3bacb30b90d1c1bf",
     "../../../src/application/ai-lab/planning/schedulerAssessment.js": "14cc6738bf98bea78cf22e18e0a9c13c791a5c771c0a1a9b4d1b4892c45850e7",
     "../../../src/application/ai-lab/planning/controlsEvidenceAssessment.js": "91035f7c700b805740ef0a6b5b97e4be8f6a921efe300ca567cace1a0bde99e6",
-    "../../../src/application/ai-lab/planning/managerComposition.js": "803c0fd9f43df3870715ea3bcfa737d2f9f0dc14579a79e4c2b038f4063bce99",
+    "../../../src/application/ai-lab/planning/managerComposition.js": "d9aeaf0abcb1d3ac28dd23499b163c4785eb3967fcd4c312d2ec8bee2cdb35e1",
     "../../../src/application/ai-lab/planning/privateItemSerializer.js": "250ff66a3971b328cc4ee88d27e4277d9ae8941801759f245f119943a4743e9a",
     "../../../src/application/ai-lab/planning/decisionValidator.js": "5015f7552b1c60218d92e37314e21c9ba6fa771e1dec4491b8d070d3e6ca059b",
     "../../../src/application/ai-lab/rental-ops/canonical.js": "b1078994609d5718ce0214aa042f76b20fc195bd2509aaa9960b837efd67f5c1",
