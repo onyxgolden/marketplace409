@@ -86,6 +86,11 @@ import {
   dedupeConsecutivePoints,
   PIPE_LAYERS,
 } from "./pipingGeometry";
+// H0 (home parity): the optional per-level homeOverlays block is validated
+// here so every load boundary that runs validateDesign refuses malformed
+// overlay metadata. The block itself lives in homeOverlays.js (no imports
+// back into this module, so no cycle).
+import { validateHomeOverlays } from "./homeOverlays";
 
 // Re-exported for the catalog UI; the canonical definition lives in
 // furnitureCatalog.js, where the "rooms" symbol set is registered.
@@ -1533,6 +1538,17 @@ export function validateDesign(design) {
       errors.push(`Saved camera view "${view.name}" has a duplicate camera view id (${view.id}).`);
     }
     if (view?.id) viewIds.add(view.id);
+  }
+  // H0 (home parity): the optional homeOverlays block is validated only
+  // when present — absence means "no overlays authored" and is always
+  // valid, so every legacy home/industrial document still validates clean.
+  // Validation is mode-independent and fail-closed: malformed overlay
+  // metadata is refused even on an industrial document, while well-formed
+  // data on one stays inert (canvas/print selectors gate on home mode).
+  if (design.homeOverlays !== undefined) {
+    for (const problem of validateHomeOverlays(design.homeOverlays)) {
+      errors.push(`homeOverlays: ${problem}`);
+    }
   }
   return errors;
 }
