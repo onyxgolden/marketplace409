@@ -47,17 +47,25 @@ const TRADE_LABELS = Object.freeze({
  * the base visible and trade collections empty; authoring a trade shows
  * that trade without toggling unrelated trades (a later slice's job).
  *
- * Boolean-only contract (H679-003, tightened H679-003A): a supplied value
- * must be a primitive boolean — strings, numbers, objects, and null are
- * rejected, never coerced with Boolean() or ??. Defaults apply on absence
- * only, where a key missing or explicitly undefined counts as absent.
- * Validation reads the exact values construction consumes, through
- * ordinary lookup — so an INHERITED string/object/null is refused exactly
- * like an own one, while an inherited boolean is consumed as a boolean
- * and an inherited undefined counts as absent. Unknown-key rejection
- * stays own-keys-only: an inherited key construction never reads is
- * treated as absent. Every mask a caller can hold is therefore
- * boolean-only, detached, and frozen. */
+ * Boolean-only contract (H679-003, tightened H679-003A, H679-003B): a
+ * supplied value must be a primitive boolean — strings, numbers,
+ * objects, and null are rejected, never coerced with Boolean() or ??.
+ * Defaults apply on absence only, where a key missing or explicitly
+ * undefined counts as absent. Validation reads the exact values
+ * construction consumes, through ordinary lookup — so an INHERITED
+ * string/object/null is refused exactly like an own one, while an
+ * inherited boolean is consumed as a boolean and an inherited undefined
+ * counts as absent. Unknown-key rejection stays own-keys-only: an
+ * inherited key construction never reads is treated as absent.
+ *
+ * Single-read capture (H679-003B): each accepted key is read EXACTLY
+ * ONCE into a detached local; validation and construction both use the
+ * captured value, never a second read. A changing getter therefore
+ * cannot make construction consume a different value than the one
+ * validated — the mask holds only the originally validated booleans
+ * (or defaults for absence). Captured values are primitives, so the
+ * frozen mask can hold no mutable alias. Every mask a caller can hold
+ * is therefore boolean-only, detached, and frozen. */
 export function createHomeLayerMask(partial = {}) {
   if (!partial || typeof partial !== "object" || Array.isArray(partial)) {
     throw new Error("Layer mask overrides must be an object.");
@@ -67,19 +75,21 @@ export function createHomeLayerMask(partial = {}) {
       throw new Error(`Unknown home layer "${key}".`);
     }
   }
+  const captured = {};
   for (const key of HOME_LAYER_KEYS) {
     const value = partial[key];
     if (value !== undefined && typeof value !== "boolean") {
       throw new Error(`Home layer "${key}" must be a boolean.`);
     }
+    captured[key] = value;
   }
   return Object.freeze({
-    base: partial.base ?? true,
-    underlay: partial.underlay ?? true,
-    furniture: partial.furniture ?? true,
-    electrical: partial.electrical ?? false,
-    plumbing: partial.plumbing ?? false,
-    hvac: partial.hvac ?? false,
+    base: captured.base ?? true,
+    underlay: captured.underlay ?? true,
+    furniture: captured.furniture ?? true,
+    electrical: captured.electrical ?? false,
+    plumbing: captured.plumbing ?? false,
+    hvac: captured.hvac ?? false,
   });
 }
 
