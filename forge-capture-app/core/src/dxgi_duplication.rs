@@ -135,6 +135,14 @@ pub enum DxgiAcquireError {
     SessionDisconnected,
     DeviceRemoved,
     Unavailable(String),
+    /// A staging/copy/map stage failed after acquisition. The caller must
+    /// invalidate device-dependent state and attempt at most one
+    /// whole-request recreate — the same bounded budget as
+    /// [`DxgiAcquireError::AccessLost`] / `DeviceRemoved`. A second
+    /// stage failure is terminal. This keeps device-loss classification
+    /// alive across create/copy/map stages instead of collapsing it to a
+    /// bare `Other` that skips recovery.
+    StageFailed(String),
     Other(String),
 }
 
@@ -147,6 +155,83 @@ const DXGI_ERROR_ACCESS_LOST: u32 = 0x887A_0026;
 const DXGI_ERROR_WAIT_TIMEOUT: u32 = 0x887A_0027;
 const DXGI_ERROR_SESSION_DISCONNECTED: u32 = 0x887A_0028;
 const DXGI_ERROR_NOT_CURRENTLY_AVAILABLE: u32 = 0x887A_0022;
+
+/// Classify a staging/copy/map-stage HRESULT, preserving device-loss
+/// classification across stages.
+///
+/// Device-loss, session, protected, and unavailable classifications pass
+/// through unchanged so the caller can recreate (or classify) correctly.
+/// Any other HRESULT becomes [`DxgiAcquireError::StageFailed`] — never a
+/// bare `Other` that would skip the one bounded recreate.
+pub fn classify_stage_error(code: i32) -> DxgiAcquireError {
+    match classify_hresult(code) {
+        DxgiAcquireError::Other(msg) => DxgiAcquireError::StageFailed(msg),
+        classified => classified,
+    }
+}
+
+/// Fail-closed protected-content rule for a real acquired frame.
+///
+/// `DXGI_OUTDUPL_FRAME_INFO::ProtectedContentMaskedOut` is a BOOL: any
+/// nonzero value means masked protected pixels are present, and the frame
+/// must be classified [`DxgiAcquireError::Protected`] — never converted
+/// and returned as an ordinary `Frame`. There is no bypass fallback:
+/// the caller maps `Protected` to
+/// [`DxgiCaptureOutcome::ProtectedOrSecure`].
+pub fn protected_from_frame_info(masked_out: bool) -> Option<DxgiAcquireError> {
+    if masked_out {
+        Some(DxgiAcquireError::Protected)
+    } else {
+        None
+    }
+}
+
+/// Checked byte count of a mapped staging buffer, before allocating it.
+///
+/// `row_pitch * height` with checked arithmetic (overflow is a typed
+/// refusal, never a saturating wrap into a maximum-size request), and the
+/// result must fit the raster budget so the host allocation is bounded
+/// before it happens. The caller refuses on `Err` without allocating.
+pub fn checked_mapped_bytes(
+    row_pitch: usize,
+    height: u32,
+    max_raster_bytes: u64,
+) -> Result<usize, DxgiLimitError> {
+    let bytes = row_pitch
+        .checked_mul(height as usize)
+        .ok_or(DxgiLimitError::Overflow)?;
+    if bytes as u64 > max_raster_bytes {
+        return Err(DxgiLimitError::RasterTooLarge {
+            bytes: bytes as u64,
+            max: max_raster_bytes,
+        });
+    }
+    Ok(bytes)
+}
+
+/// Per-attempt `AcquireNextFrame` timeout under the total request deadline.
+///
+/// Returns `None` when no budget remains (the caller must stop without
+/// acquiring again). Otherwise returns
+/// `min(acquire_timeout_ms, remaining_ms)`, so an attempt starting just
+/// before the deadline can never block for another full per-attempt
+/// timeout past it. Pure over [`Duration`] so tests use injected values
+/// instead of wall-clock flakiness.
+///
+/// The remaining budget is rounded UP to whole milliseconds because
+/// `AcquireNextFrame` takes whole milliseconds: truncating would turn a
+/// sub-millisecond remainder into a 0ms poll. The rounding overshoot is
+/// under 1ms by construction — never another full per-attempt timeout.
+pub fn attempt_timeout_ms(limits: &DxgiLimits, elapsed: Duration) -> Option<u32> {
+    let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
+    let remaining = deadline.checked_sub(elapsed)?;
+    if remaining.is_zero() {
+        return None;
+    }
+    let remaining_ms = remaining.as_nanos().div_ceil(1_000_000);
+    let capped = (limits.acquire_timeout_ms as u128).min(remaining_ms);
+    Some(capped as u32)
+}
 
 /// Classify a raw HRESULT from `AcquireNextFrame` (or a neighboring call).
 pub fn classify_hresult(code: i32) -> DxgiAcquireError {
@@ -350,9 +435,18 @@ pub struct AcquiredPixels {
 /// caller drops it immediately after the GPU copy, before conversion —
 /// the brief's release-before-mapping order.
 pub trait DuplicationBackend {
+    /// Acquire one frame with a per-attempt timeout already capped by the
+    /// caller's total deadline (see [`attempt_timeout_ms`]).
+    ///
+    /// `limits` is passed into the acquisition boundary so the backend
+    /// validates dimensions against them BEFORE creating a staging
+    /// texture or allocating a host buffer sized from the frame — never
+    /// after. A limit refusal must still release the acquired frame
+    /// exactly once.
     fn acquire(
         &mut self,
         timeout_ms: u32,
+        limits: &DxgiLimits,
     ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError>;
     /// Invalidate and rebuild the duplication object (and staging state)
     /// after `ACCESS_LOST` / device removal. Called at most once per
@@ -392,10 +486,16 @@ pub fn capture_single_output<B: DuplicationBackend>(
         );
     }
     let start = Instant::now();
-    let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
     let mut recreated = false;
     loop {
-        match backend.acquire(limits.acquire_timeout_ms) {
+        // Hard total bound: an attempt never runs past the deadline, and
+        // a zero remaining budget stops without acquiring again.
+        let Some(timeout_ms) = attempt_timeout_ms(limits, start.elapsed()) else {
+            return DxgiCaptureOutcome::Retryable(
+                "no new desktop frame within the total request deadline".into(),
+            );
+        };
+        match backend.acquire(timeout_ms, limits) {
             Ok((guard, pixels)) => {
                 // Release before any CPU conversion work (brief order).
                 // The guard still protected the acquire→copy window, and
@@ -431,14 +531,12 @@ pub fn capture_single_output<B: DuplicationBackend>(
                 };
             }
             Err(DxgiAcquireError::WaitTimeout) => {
-                if start.elapsed() >= deadline {
-                    return DxgiCaptureOutcome::Retryable(
-                        "no new desktop frame within the total request deadline".into(),
-                    );
-                }
-                // Stable unchanged desktop: not a failure. Retry.
+                // Stable unchanged desktop: not a failure. Retry until
+                // the loop-top deadline check stops us.
             }
-            Err(DxgiAcquireError::AccessLost) | Err(DxgiAcquireError::DeviceRemoved) => {
+            Err(DxgiAcquireError::AccessLost)
+            | Err(DxgiAcquireError::DeviceRemoved)
+            | Err(DxgiAcquireError::StageFailed(_)) => {
                 if recreated {
                     return DxgiCaptureOutcome::Retryable(
                         "duplication lost again after one recreate".into(),
@@ -483,7 +581,8 @@ pub use win_backend::DxgiCaptureContext;
 #[cfg(windows)]
 mod win_backend {
     use super::{
-        classify_hresult, AcquiredPixels, DxgiAcquireError, DxgiCaptureOutcome, DxgiLimits,
+        checked_mapped_bytes, classify_hresult, classify_stage_error, protected_from_frame_info,
+        validate_limits, AcquiredPixels, DxgiAcquireError, DxgiCaptureOutcome, DxgiLimits,
         DxgiRotation, FrameGuard, OutputInfo,
     };
     use crate::coords::RectI;
@@ -764,6 +863,7 @@ mod win_backend {
         fn acquire(
             &mut self,
             timeout_ms: u32,
+            limits: &DxgiLimits,
         ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
             let duplication = match &self.duplication {
                 Some(d) => d.clone(),
@@ -773,7 +873,7 @@ mod win_backend {
                     ))
                 }
             };
-            // No guard yet: nothing is held until AcquireNextFrame succeeds.
+            // Nothing is held until AcquireNextFrame succeeds.
             let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut resource = None;
             let acquire_result =
@@ -781,9 +881,32 @@ mod win_backend {
             if let Err(e) = acquire_result {
                 return Err(classify_hresult(e.code().0));
             }
+            // DXGI1-001: the release guard is created IMMEDIATELY after a
+            // successful AcquireNextFrame, before any fallible inspection
+            // or cast. Every error return below drops it (exactly one
+            // ReleaseFrame), so a missing resource or failed cast can
+            // never leave the frame acquired and wedge the duplication
+            // object into invalid-call behavior on the next acquire.
+            let guard = FrameGuard::new({
+                let d = duplication.clone();
+                move || {
+                    let _ = unsafe { d.ReleaseFrame() };
+                }
+            });
+            // DXGI1-003: fail-closed protected-content rule, checked
+            // before any pixel handling. Any nonzero mask means the frame
+            // carries masked protected pixels and must never be returned
+            // as an ordinary frame; the guard releases on this return.
+            if let Some(err) =
+                protected_from_frame_info(frame_info.ProtectedContentMaskedOut.as_bool())
+            {
+                drop(guard);
+                return Err(err);
+            }
             let resource = match resource {
                 Some(r) => r,
                 None => {
+                    drop(guard);
                     return Err(DxgiAcquireError::Other(
                         "AcquireNextFrame succeeded with no resource".into(),
                     ));
@@ -792,22 +915,26 @@ mod win_backend {
             let texture: ID3D11Texture2D = match resource.cast() {
                 Ok(t) => t,
                 Err(e) => {
+                    drop(guard);
                     return Err(DxgiAcquireError::Other(format!(
                         "acquired resource is not a texture: {e}"
                     )));
                 }
             };
-            // RAII guard: ReleaseFrame on every path through the GPU copy,
-            // including unwind. Released explicitly below, before mapping.
-            let guard = FrameGuard::new({
-                let d = duplication.clone();
-                move || {
-                    let _ = unsafe { d.ReleaseFrame() };
-                }
-            });
             let mut tex_desc = D3D11_TEXTURE2D_DESC::default();
             unsafe { texture.GetDesc(&mut tex_desc) };
             let (width, height) = (tex_desc.Width, tex_desc.Height);
+            // DXGI1-002: limits are enforced HERE, before any staging
+            // texture is created or any host buffer is allocated from
+            // these untrusted dimensions. The caller re-validates the
+            // returned pixels as defense in depth, but no allocation
+            // sized from the frame happens before this check.
+            if let Err(e) = validate_limits(width, height, limits) {
+                drop(guard);
+                return Err(DxgiAcquireError::Unavailable(format!(
+                    "acquired frame violates limits: {e}"
+                )));
+            }
             if self.staging.is_none() || self.staging_size != (width, height) {
                 let staging_desc = D3D11_TEXTURE2D_DESC {
                     Width: width,
@@ -829,9 +956,11 @@ mod win_backend {
                         .CreateTexture2D(&staging_desc, None, Some(&mut staging))
                 };
                 if let Err(e) = created {
-                    return Err(DxgiAcquireError::Other(format!(
-                        "CreateTexture2D (staging): {e}"
-                    )));
+                    // DXGI1-004: device-loss classification survives the
+                    // staging stage; other failures become StageFailed so
+                    // the caller still gets its one bounded recreate.
+                    drop(guard);
+                    return Err(classify_stage_error(e.code().0));
                 }
                 self.staging = staging;
                 self.staging_size = (width, height);
@@ -839,6 +968,7 @@ mod win_backend {
             let staging = match &self.staging {
                 Some(s) => s.clone(),
                 None => {
+                    drop(guard);
                     return Err(DxgiAcquireError::Other(
                         "staging texture missing after create".into(),
                     ));
@@ -857,9 +987,7 @@ mod win_backend {
                 match staging.cast() {
                     Ok(r) => r,
                     Err(e) => {
-                        return Err(DxgiAcquireError::Other(format!(
-                            "staging texture cast to resource: {e}"
-                        )))
+                        return Err(classify_stage_error(e.code().0));
                     }
                 };
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -872,12 +1000,34 @@ mod win_backend {
                     Some(&mut mapped as *mut D3D11_MAPPED_SUBRESOURCE),
                 )
             } {
-                return Err(DxgiAcquireError::Other(format!(
-                    "Map staging texture: {e}"
-                )));
+                return Err(classify_stage_error(e.code().0));
             }
+            // DXGI1-004: the unmap guard is established immediately after
+            // a successful Map, so the mapped state is released on every
+            // path through the host allocation/copy work below, including
+            // unwind — never a manual Map/Unmap pair.
+            let unmap_guard = FrameGuard::new({
+                let dc = self.device_context.clone();
+                let res = staging_resource.clone();
+                move || {
+                    unsafe { dc.Unmap(&res, 0) };
+                }
+            });
             let row_pitch = mapped.RowPitch as usize;
-            let byte_len = row_pitch.saturating_mul(height as usize);
+            // DXGI1-002: checked pitch arithmetic and the raster budget
+            // are enforced BEFORE allocating the host buffer — never a
+            // saturating wrap into a maximum-size request. The unmap
+            // guard releases on these error returns.
+            let byte_len = match checked_mapped_bytes(row_pitch, height, limits.max_raster_bytes)
+            {
+                Ok(n) => n,
+                Err(e) => {
+                    drop(unmap_guard);
+                    return Err(DxgiAcquireError::Unavailable(format!(
+                        "staging buffer violates limits: {e}"
+                    )));
+                }
+            };
             let mut bgra = vec![0u8; byte_len];
             if !mapped.pData.is_null() && byte_len > 0 {
                 unsafe {
@@ -888,9 +1038,7 @@ mod win_backend {
                     );
                 }
             }
-            unsafe {
-                self.device_context.Unmap(&staging_resource, 0);
-            }
+            drop(unmap_guard);
             Ok((
                 guard,
                 AcquiredPixels {
@@ -979,6 +1127,8 @@ mod tests {
         steps: VecDeque<Step>,
         releases: Arc<AtomicUsize>,
         recreates: Arc<AtomicUsize>,
+        timeouts: Vec<u32>,
+        acquire_calls: usize,
     }
 
     impl MockBackend {
@@ -987,6 +1137,8 @@ mod tests {
                 steps: steps.into(),
                 releases: Arc::new(AtomicUsize::new(0)),
                 recreates: Arc::new(AtomicUsize::new(0)),
+                timeouts: Vec::new(),
+                acquire_calls: 0,
             }
         }
     }
@@ -994,8 +1146,11 @@ mod tests {
     impl DuplicationBackend for MockBackend {
         fn acquire(
             &mut self,
-            _timeout_ms: u32,
+            timeout_ms: u32,
+            _limits: &DxgiLimits,
         ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+            self.timeouts.push(timeout_ms);
+            self.acquire_calls += 1;
             match self.steps.pop_front() {
                 Some(Step::Ok(pixels)) => {
                     let releases = Arc::clone(&self.releases);
@@ -1274,6 +1429,198 @@ mod tests {
             &DxgiLimits::default(),
         );
         assert!(matches!(outcome, DxgiCaptureOutcome::Unavailable(_)));
+    }
+
+    // DXGI1-001 / DXGI1-002: a post-acquire refusal (limit validation
+    // after acquisition) must still release the frame exactly once.
+    #[test]
+    fn limit_refusal_releases_frame_exactly_once() {
+        // Oversize width: the caller-side limit check refuses.
+        let mut backend = MockBackend::new(vec![Step::Ok(AcquiredPixels {
+            width: 20_000,
+            height: 2,
+            row_pitch: 80_000,
+            bgra: vec![0u8; 160_000],
+        })]);
+        let output = test_output();
+        let outcome = capture_single_output(
+            &mut backend,
+            &output,
+            output.rect,
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiCaptureOutcome::Unavailable(_)));
+        assert_eq!(backend.releases.load(Ordering::SeqCst), 1);
+    }
+
+    // DXGI1-003: the fail-closed protected rule is a pure function so it
+    // is testable on any host; the Windows backend wires it to the real
+    // frame metadata before any pixel handling.
+    #[test]
+    fn protected_mask_rule_is_fail_closed() {
+        assert_eq!(
+            protected_from_frame_info(true),
+            Some(DxgiAcquireError::Protected)
+        );
+        assert_eq!(protected_from_frame_info(false), None);
+    }
+
+    // DXGI1-004: stage errors preserve device-loss classification, and
+    // anything else becomes StageFailed (never a bare Other that would
+    // skip the one bounded recreate).
+    #[test]
+    fn stage_error_classification_preserves_device_loss() {
+        assert_eq!(
+            classify_stage_error(DXGI_ERROR_DEVICE_REMOVED as i32),
+            DxgiAcquireError::DeviceRemoved
+        );
+        assert_eq!(
+            classify_stage_error(DXGI_ERROR_ACCESS_LOST as i32),
+            DxgiAcquireError::AccessLost
+        );
+        assert!(matches!(
+            classify_stage_error(-1),
+            DxgiAcquireError::StageFailed(_)
+        ));
+        assert!(matches!(
+            classify_stage_error(DXGI_ERROR_UNSUPPORTED as i32),
+            DxgiAcquireError::Unavailable(_)
+        ));
+    }
+
+    // DXGI1-004: a stage failure recreates once, then succeeds; a second
+    // stage failure is terminal, exactly like AccessLost.
+    #[test]
+    fn stage_failure_recreates_once_then_succeeds() {
+        let mut backend = MockBackend::new(vec![
+            Step::Err(DxgiAcquireError::StageFailed("Map failed".into())),
+            Step::Ok(solid_frame(4, 2, [9, 8, 7, 0])),
+        ]);
+        let output = test_output();
+        let outcome = capture_single_output(
+            &mut backend,
+            &output,
+            output.rect,
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        assert_eq!(backend.recreates.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn second_stage_failure_is_terminal_retryable() {
+        let mut backend = MockBackend::new(vec![
+            Step::Err(DxgiAcquireError::StageFailed("Map failed".into())),
+            Step::Err(DxgiAcquireError::StageFailed("Map failed again".into())),
+        ]);
+        let output = test_output();
+        let outcome = capture_single_output(
+            &mut backend,
+            &output,
+            output.rect,
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        assert_eq!(backend.recreates.load(Ordering::SeqCst), 1);
+    }
+
+    // DXGI1-002: mapped-byte accounting is checked before allocation.
+    #[test]
+    fn checked_mapped_bytes_refuses_overflow_and_over_limit() {
+        assert_eq!(checked_mapped_bytes(16, 2, 128 * 1024 * 1024), Ok(32));
+        assert_eq!(
+            checked_mapped_bytes(usize::MAX, 2, u64::MAX),
+            Err(DxgiLimitError::Overflow)
+        );
+        assert!(matches!(
+            checked_mapped_bytes(100, 2, 150),
+            Err(DxgiLimitError::RasterTooLarge { .. })
+        ));
+    }
+
+    // DXGI1-005: the per-attempt timeout is capped by the remaining total
+    // budget, computed from injected durations (no wall-clock flakiness).
+    #[test]
+    fn attempt_timeout_is_capped_by_remaining_budget() {
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 2_000,
+            ..DxgiLimits::default()
+        };
+        assert_eq!(
+            attempt_timeout_ms(&limits, Duration::from_millis(0)),
+            Some(250)
+        );
+        let tight = DxgiLimits {
+            total_deadline_ms: 100,
+            ..limits
+        };
+        assert_eq!(
+            attempt_timeout_ms(&tight, Duration::from_millis(0)),
+            Some(100)
+        );
+        assert_eq!(
+            attempt_timeout_ms(&tight, Duration::from_millis(90)),
+            Some(10)
+        );
+        assert_eq!(
+            attempt_timeout_ms(&tight, Duration::from_millis(100)),
+            None
+        );
+        assert_eq!(
+            attempt_timeout_ms(&tight, Duration::from_millis(101)),
+            None
+        );
+        let zero = DxgiLimits {
+            total_deadline_ms: 0,
+            ..limits
+        };
+        assert_eq!(attempt_timeout_ms(&zero, Duration::from_millis(0)), None);
+    }
+
+    // DXGI1-005: the mock observes the capped timeout actually passed to
+    // the backend, and a zero budget acquires nothing at all.
+    #[test]
+    fn backend_receives_capped_timeout() {
+        let mut backend = MockBackend::new(vec![Step::Err(DxgiAcquireError::WaitTimeout); 8]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            acquire_timeout_ms: 250,
+            total_deadline_ms: 1,
+            ..DxgiLimits::default()
+        };
+        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        assert!(!backend.timeouts.is_empty());
+        assert!(backend.timeouts.iter().all(|&t| t <= 1));
+        assert_eq!(backend.timeouts[0], 1);
+    }
+
+    #[test]
+    fn full_acquire_timeout_used_within_budget() {
+        let mut backend = MockBackend::new(vec![Step::Ok(solid_frame(4, 2, [1, 2, 3, 0]))]);
+        let output = test_output();
+        let outcome = capture_single_output(
+            &mut backend,
+            &output,
+            output.rect,
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiCaptureOutcome::Frame(_)));
+        assert_eq!(backend.timeouts, vec![250]);
+    }
+
+    #[test]
+    fn zero_total_deadline_acquires_nothing() {
+        let mut backend = MockBackend::new(vec![Step::Ok(solid_frame(4, 2, [1, 2, 3, 0]))]);
+        let output = test_output();
+        let limits = DxgiLimits {
+            total_deadline_ms: 0,
+            ..DxgiLimits::default()
+        };
+        let outcome = capture_single_output(&mut backend, &output, output.rect, &limits);
+        assert!(matches!(outcome, DxgiCaptureOutcome::Retryable(_)));
+        assert_eq!(backend.acquire_calls, 0);
     }
 
     #[test]
