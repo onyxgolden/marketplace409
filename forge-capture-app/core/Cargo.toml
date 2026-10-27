@@ -24,6 +24,10 @@ sha2 = "0.10"
 version = "0.62"
 features = [
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Storage_Xps",
     "Win32_System_Com",
@@ -45,5 +49,13 @@ features = [
 # xinerama = multi-monitor geometries.
 x11rb = { version = "0.13", features = ["xfixes", "xinerama"] }
 arboard = "3"
+
+[features]
+# DXGI fault-injection seam (fix round 4, verdict DXGI1-006B). OFF by
+# default: the injection entrypoint does not exist in normal release
+# artifacts. Harnesses enable it explicitly to prove the internal
+# recovery path with labeled injected evidence. Never enable this in a
+# shipped configuration.
+dxgi-fault-injection = []
 
 [dev-dependencies]
