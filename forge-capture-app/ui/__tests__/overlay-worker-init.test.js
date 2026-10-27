@@ -336,8 +336,12 @@ describe("preview-unavailable honesty (C639)", () => {
   it("C639-007C.3: echoes overlay_context's own session id back on capture", async () => {
     // The backend binds this capture to the EXACT generation that opened
     // this page via this field — it must be the session id this page
-    // itself learned at init, not omitted/guessed.
-    const h = makeHarness({ budgetMs: 2000 });
+    // itself learned at init, not omitted/guessed. C639-007C.5: that id
+    // comes from the page's own URL, never adopted from overlay_context's
+    // reply — so the URL and the harness's default context reply are set
+    // to the same value here deliberately, not because the reply confirms
+    // or overrides it.
+    const h = makeHarness({ budgetMs: 2000, locationSearch: "?session=42" });
     h.controller.wireStaticControls();
     const p = h.controller.init();
     h.els.backdrop.complete = true;
@@ -584,6 +588,25 @@ describe("retry (C639)", () => {
   });
 });
 
+describe("overlay_context/region_pick_backdrop bind to this page's own session (C639-007C.5)", () => {
+  it("overlay_context and region_pick_backdrop are both invoked with this page's URL-borne session id", async () => {
+    const h = makeHarness({ budgetMs: 2000, locationSearch: "?session=33" });
+    const p = h.controller.init();
+    h.els.backdrop.complete = true;
+    h.els.backdrop.naturalWidth = 1920;
+    if (h.els.backdrop._onload) h.els.backdrop._onload();
+    await p;
+    const ctxCalls = h.calls.filter((c) => c.cmd === "overlay_context");
+    const backdropCalls = h.calls.filter(
+      (c) => c.cmd === "region_pick_backdrop"
+    );
+    expect(ctxCalls).toHaveLength(1);
+    expect(ctxCalls[0].args.overlaySessionId).toBe(33);
+    expect(backdropCalls).toHaveLength(1);
+    expect(backdropCalls[0].args.overlaySessionId).toBe(33);
+  });
+});
+
 describe("retry/cancel bind to this page's own session, not whichever pick is current (C639-007C.4)", () => {
   it("retry_region_backdrop carries the URL-borne session id when invoked before overlay_context has ever resolved", async () => {
     const h = makeHarness({
@@ -641,11 +664,12 @@ describe("retry/cancel bind to this page's own session, not whichever pick is cu
     await p;
   });
 
-  it("a sliver-drag cancel carries this page's own session id, confirmed by overlay_context once it resolves", async () => {
-    // The URL supplies 55 synchronously, but overlay_context's own reply
-    // (session_id: 42, from this harness's default invokeImpl) arrives
-    // before the drag and is the confirmed value by then — same
-    // confirm/override behavior exercised below for retry.
+  it("C639-007C.5: a sliver-drag cancel keeps the URL-borne session id even when overlay_context replies with a different one", async () => {
+    // The URL supplies 55; this harness's default invokeImpl replies to
+    // overlay_context with session_id: 42 (simulating a stale page that
+    // momentarily received a NEWER page's global context). The URL-borne
+    // id is this page's immutable authority — the reply must never
+    // overwrite it.
     const h = makeHarness({ budgetMs: 2000, locationSearch: "?session=55" });
     h.controller.wireStaticControls();
     const p = h.controller.init();
@@ -657,13 +681,15 @@ describe("retry/cancel bind to this page's own session, not whichever pick is cu
     await drag(h.controller, h.doc, 10, 10, 11, 11);
     const cancels = h.calls.filter((c) => c.cmd === "cancel_region_pick");
     expect(cancels).toHaveLength(1);
-    expect(cancels[0].args.overlaySessionId).toBe(42);
+    expect(cancels[0].args.overlaySessionId).toBe(55);
   });
 
-  it("overlay_context's own session_id still confirms/overrides the id once it resolves", async () => {
-    // No URL at all in this harness (matches every other test above it) —
-    // the page must still learn its session from overlay_context's own
-    // reply, same as before this round.
+  it("C639-007C.5: overlay_context's own session_id is never adopted as this page's identity, even with no URL-borne session", async () => {
+    // No URL at all in this harness — the OLD behavior let the page learn
+    // (adopt) its session from overlay_context's own reply in exactly
+    // this case; that adoption is the mechanism C639-007C.5 closes. The
+    // page's session now simply stays whatever initialSessionId(win)
+    // produced (null here), never overwritten by the reply's session_id.
     const h = makeHarness({ budgetMs: 2000 });
     h.controller.wireStaticControls();
     const p = h.controller.init();
@@ -674,7 +700,7 @@ describe("retry/cancel bind to this page's own session, not whichever pick is cu
     h.calls.length = 0;
     await h.controller.onRetry();
     const retries = h.calls.filter((c) => c.cmd === "retry_region_backdrop");
-    expect(retries[0].args.overlaySessionId).toBe(42);
+    expect(retries[0].args.overlaySessionId).toBe(null);
   });
 });
 
