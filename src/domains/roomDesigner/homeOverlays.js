@@ -595,21 +595,29 @@ export function tradeOfService(service) {
  *   mapping.levelId — when given (with sourceLevelId), refs proven to
  *     belong to the source level are rewritten to it (level duplication
  *     / move). Foreign refs (levelId !== sourceLevelId) are NEVER
- *     rebound: in default mode they are kept exactly as-is (still
- *     dangling, never falsely connected); in dropUnmappedRefs mode they
- *     are dropped and reported in `dropped`.
+ *     rebound: in default mode a non-colliding foreign ref is kept
+ *     exactly as-is (still dangling, never falsely connected); in
+ *     dropUnmappedRefs mode it is dropped and reported in `dropped`.
+ *     EXCEPTION (H679-002A): a foreign ref whose levelId EQUALS the
+ *     destination level is dropped with a report in EVERY mode — kept
+ *     bytes would resolve accidentally against the moved block's own
+ *     same-id entities, silently turning a dangling link into a valid
+ *     one. Preserved unresolvedness, not preserved bytes, is the rule.
  *   mapping.ids — { [trade]: { [entityKind]: { [oldId]: newId } } }.
  *     When ids is ABSENT, a source-level ref keeps its entity id: the
  *     whole level moved, so every source ref follows it. When ids is
- *     PRESENT, a source-level ref is rewritten only with an explicit
- *     entry; without one it is kept as-is (default) or dropped and
- *     reported (dropUnmappedRefs) — never rebound to a same-id entity
- *     in the target level. No automatic cross-level network joining.
+ *     PRESENT, a ref is rewritten only with an explicit entry; without
+ *     one it is kept as-is (default) or dropped and reported
+ *     (dropUnmappedRefs) — never rebound to a same-id entity in the
+ *     target level. No automatic cross-level network joining. The
+ *     drop-on-unmapped rule applies to level-changing AND id-only
+ *     remaps alike (H679-002A), including annotation targets.
  *   dropUnmappedRefs — when true, a ref with NO intended mapping is
  *     dropped (set to undefined) and reported in `dropped`, so a paste
  *     never falsely connects to the original's entities. When false (the
  *     default), unmapped refs are kept as-is — level switches and saves
- *     preserve references.
+ *     preserve references — except colliding foreign refs, which drop
+ *     in every mode (see above).
  *
  * Returns { block, dropped: [{ where, ref }] }. The returned block is
  * re-validated; a mapping that would produce an invalid block throws.
@@ -629,8 +637,16 @@ export function remapOverlayReferences(block, mapping = {}) {
   const dropped = [];
   const remapRef = (ref, where) => {
     if (ref === undefined) return undefined;
-    // Foreign refs are never rebound, in either mode.
+    // Foreign refs are never rebound, in either mode. A foreign ref
+    // whose level IS the destination is dropped with a report in every
+    // mode: kept bytes would resolve accidentally against the moved
+    // block's own same-id entities (H679-002A). Non-colliding foreign
+    // refs stay as-is (still dangling) in default mode.
     if (sourceLevelId !== undefined && ref.levelId !== sourceLevelId) {
+      if (levelId !== undefined && ref.levelId === levelId) {
+        dropped.push({ where, ref: { ...ref } });
+        return undefined;
+      }
       if (dropUnmapped) {
         dropped.push({ where, ref: { ...ref } });
         return undefined;
@@ -657,9 +673,16 @@ export function remapOverlayReferences(block, mapping = {}) {
     } else {
       // No level rewrite: id mapping only (a level mismatch still
       // dangles, so id mapping alone can never resurrect a foreign ref).
+      // When an id map is PRESENT, a ref without an explicit entry is
+      // unmapped: kept as-is in default mode, dropped with a report in
+      // dropUnmappedRefs mode (H679-002A — the id-only branch previously
+      // never applied the drop). No map at all means no-op preservation.
       const tradeMap = ids?.[ref.trade]?.[ref.entityKind];
       if (tradeMap && tradeMap[ref.entityId] !== undefined) {
         next.entityId = tradeMap[ref.entityId];
+      } else if (ids !== undefined && dropUnmapped) {
+        dropped.push({ where, ref: { ...ref } });
+        return undefined;
       }
     }
     return next;
