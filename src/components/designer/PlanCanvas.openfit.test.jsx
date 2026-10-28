@@ -195,4 +195,87 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     expect(first.x1).toBeCloseTo(24, 6);
     expect(first.x2).toBeCloseTo(366, 6);
   });
+
+  // P689-001: settlement belongs to the current activation of an identity,
+  // not a remembered matching string. A → B(pending) → A must fit again on
+  // the return, on desktop and phone, whatever made B pending.
+  it("fits A again after an empty B on desktop", () => {
+    mockSize = { w: 1200, h: 800 };
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+    renderCanvas(createEmptyDesign(), { autoFitKey: "B" });
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+  });
+
+  it("fits A again after an empty B on phone", () => {
+    mockSize = { w: 390, h: 700 };
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(24, 6);
+    renderCanvas(createEmptyDesign(), { autoFitKey: "B" });
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    const first = coords(wallLine(container));
+    expect(first.x1).toBeCloseTo(24, 6);
+    expect(first.x2).toBeCloseTo(366, 6);
+  });
+
+  it("fits A again after a cancelled B on desktop", () => {
+    mockSize = { w: 1200, h: 800 };
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+    // Drive the canvas unmeasured, then let B arrive and be cancelled by
+    // a user interaction before any fit can land for it.
+    mockSize = { w: 0, h: 0 };
+    triggerResize();
+    renderCanvas(largeDesign(), { autoFitKey: "B" });
+    const svg = container.querySelector("svg");
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        }),
+      );
+    });
+    mockSize = { w: 1200, h: 800 };
+    triggerResize();
+    // B stays on the default view (cancelled), not fitted.
+    expect(coords(wallLine(container)).x1).toBeCloseTo(60, 6);
+    // Returning to A is a fresh activation: it fits again, and B's
+    // cancellation does not poison it.
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+  });
+
+  it("fits A again after an unmeasured B on desktop", () => {
+    mockSize = { w: 1200, h: 800 };
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+    // B arrives while the canvas is unmeasured, so no fit can land for
+    // it; A returns while still unmeasured, and only then is the canvas
+    // measured — the pending return-to-A fit must land on measurement.
+    mockSize = { w: 0, h: 0 };
+    triggerResize();
+    renderCanvas(largeDesign(), { autoFitKey: "B" });
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    mockSize = { w: 1200, h: 800 };
+    triggerResize();
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+  });
+
+  it("a refit after returning to A settles the new activation: later edits do not refit", () => {
+    mockSize = { w: 1200, h: 800 };
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    renderCanvas(createEmptyDesign(), { autoFitKey: "B" });
+    renderCanvas(largeDesign(), { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+    // Growing the drawing under the returned activation must not refit:
+    // a refit would move x1 to 150 (scale 704/6000 on the taller content).
+    let design = largeDesign();
+    design = addWall(design, { x: 0, y: 6000 }, { x: 7680, y: 6000 });
+    renderCanvas(design, { autoFitKey: "A" });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
+  });
 });

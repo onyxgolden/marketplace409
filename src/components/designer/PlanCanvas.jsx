@@ -361,6 +361,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // the view. Null when no fit is in effect / after a fit at or above
   // MIN_SCALE, where the floor is exactly MIN_SCALE as before.
   const [fitFloor, setFitFloor] = useState(null);
+  // Settlement belongs to the current activation of an identity, not to a
+  // remembered matching string: returning to an earlier identity after a
+  // pending one (empty, unmeasured, or cancelled) must fit again, even
+  // though that identity settled once before. The marker is invalidated
+  // on every identity transition below, alongside the view/floor/
+  // navigation reset.
+  const [fitSettledIdentity, setFitSettledIdentity] = useState(null);
   const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
   if (prevAutoFitIdentity !== autoFitIdentity) {
     setPrevAutoFitIdentity(autoFitIdentity);
@@ -370,11 +377,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // not this one. The view returns to the default on every identity
     // change, so a following identity with no fit of its own — empty
     // content, or a fit cancelled before the canvas was measured —
-    // cannot inherit the previous fitted view.
+    // cannot inherit the previous fitted view. Settlement is invalidated
+    // with it: a later return to this identity is a fresh activation and
+    // fits again, instead of being skipped as "already settled".
+    setFitSettledIdentity(null);
     setFitFloor(null);
     setView({ ...DEFAULT_VIEW });
   }
-  const [fitSettledIdentity, setFitSettledIdentity] = useState(null);
   if (
     fitSettledIdentity !== autoFitIdentity &&
     prevAutoFitIdentity === autoFitIdentity &&
