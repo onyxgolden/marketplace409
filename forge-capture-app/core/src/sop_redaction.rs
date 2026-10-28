@@ -1189,6 +1189,91 @@ pub fn bind_matches_to_candidates(
 }
 
 // ---------------------------------------------------------------------
+// Structural/UI evidence pass, UIA half (brief §3.3, round 4 of this
+// slice): "For live process-training evidence, a UI Automation element
+// with password/protected status is a hard positive and its
+// source-mapped bounds are redacted." The image-only input-rectangle
+// heuristic (the other half of §3.3) is real image-pixel processing —
+// contour/edge detection over an RGBA buffer — a genuinely different
+// kind of code than everything else in this module, and stays a
+// separate follow-up round rather than being rushed in alongside this
+// one.
+// ---------------------------------------------------------------------
+
+/// One piece of UI Automation evidence for a single detected element,
+/// gathered only during live process-training capture. Brief §3.3: "The
+/// app must not pretend UIA evidence exists for imported screenshots" —
+/// this pure function has no way to verify that on its own (it only
+/// sees whatever `Vec<UiaFieldEvidence>` a caller passes), so that
+/// guarantee is the caller's contract: construct this type, and call
+/// [`structural_candidates_from_uia`] at all, only from the real live
+/// process-training capture path, never for an image-only/imported
+/// frame. Documented here as a disclosed boundary, not solved by this
+/// function alone — the same kind of boundary C2P3-005's
+/// `UnevidencedOverride` disclosed for `disposition_event_id`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiaFieldEvidence {
+    pub element_id: String,
+    pub is_password_protected: bool,
+    pub box_: (i64, i64, u64, u64),
+}
+
+/// [`structural_candidates_from_uia`]'s result: candidates for every
+/// password-protected element whose box bound cleanly, plus every
+/// password-protected element whose box could not be trusted (same
+/// "never silently drop a real detection" discipline [`BindingResult`]
+/// established for C2P3-001 — an invalid box is not evidence of safety,
+/// it is an integrity problem the caller must account for).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiaBindingResult {
+    pub candidates: Vec<RedactionCandidate>,
+    pub invalid_evidence: Vec<UiaFieldEvidence>,
+}
+
+/// Rule families brief §3.5 names as categorically unredactable
+/// ([`is_unredactable_hard_positive`]) are a text-pattern-shaped
+/// "credential/private-key/payment-card" list; a UIA password-field
+/// signal is a UI-evidence category, not literally one of those three
+/// named shapes, so — matching the same reasoning already applied to
+/// SSN/email — it is deliberately *not* added to that categorical set
+/// here. Flagging this explicitly as a judgment call for review, same
+/// as round 1's SSN/email line-drawing: a password field is about as
+/// close to "credential" as a UI signal gets, so this reading should be
+/// confirmed, not assumed correct by default.
+pub fn structural_candidates_from_uia(
+    evidence: &[UiaFieldEvidence],
+    frame_width: u32,
+    frame_height: u32,
+    candidate_id_prefix: &str,
+) -> UiaBindingResult {
+    let mut candidates = Vec::new();
+    let mut invalid_evidence = Vec::new();
+    for (i, e) in evidence.iter().enumerate() {
+        if !e.is_password_protected {
+            continue;
+        }
+        if !token_box_is_valid_and_in_frame(e.box_, frame_width, frame_height) {
+            invalid_evidence.push(e.clone());
+            continue;
+        }
+        let expand = MIN_EXPAND_PX + estimate_glyph_stroke_px(e.box_.3);
+        let expanded_box = clip_box_to_frame(expand_box(e.box_, expand), frame_width, frame_height);
+        candidates.push(RedactionCandidate {
+            candidate_id: format!("{candidate_id_prefix}-uia-{i}"),
+            detector_id: "det.uia_password_field".to_string(),
+            reason_code: "UIA_PASSWORD_FIELD".to_string(),
+            source_token_ids: vec![],
+            original_box: e.box_,
+            expanded_box,
+            score: None,
+            disposition: Disposition::Redact,
+            disposition_event_id: None,
+        });
+    }
+    UiaBindingResult { candidates, invalid_evidence }
+}
+
+// ---------------------------------------------------------------------
 // Destructive redaction operation (brief §3.4): merge overlapping/
 // adjacent accepted-candidate boxes into the final paint-region list and
 // apply the existing solid-fill primitive. Reuses
@@ -2272,6 +2357,59 @@ mod tests {
         let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-xyz").unwrap();
         let ids: Vec<&str> = result.candidates.iter().map(|c| c.candidate_id.as_str()).collect();
         assert_eq!(ids, vec!["frame-xyz-0", "frame-xyz-1"]);
+    }
+
+    // ---- structural/UI evidence: UIA password fields ----
+
+    fn uia(id: &str, is_password_protected: bool, box_: (i64, i64, u64, u64)) -> UiaFieldEvidence {
+        UiaFieldEvidence { element_id: id.to_string(), is_password_protected, box_ }
+    }
+
+    #[test]
+    fn a_password_protected_uia_element_becomes_a_redact_candidate() {
+        let evidence = vec![uia("e1", true, (10, 10, 100, 20))];
+        let result = structural_candidates_from_uia(&evidence, 1000, 1000, "frame-1");
+        assert!(result.invalid_evidence.is_empty());
+        assert_eq!(result.candidates.len(), 1);
+        let c = &result.candidates[0];
+        assert_eq!(c.candidate_id, "frame-1-uia-0");
+        assert_eq!(c.detector_id, "det.uia_password_field");
+        assert_eq!(c.original_box, (10, 10, 100, 20));
+        assert_eq!(c.disposition, Disposition::Redact);
+        assert!(c.source_token_ids.is_empty());
+    }
+
+    #[test]
+    fn a_non_password_protected_uia_element_produces_no_candidate() {
+        let evidence = vec![uia("e1", false, (10, 10, 100, 20))];
+        let result = structural_candidates_from_uia(&evidence, 1000, 1000, "frame-1");
+        assert!(result.candidates.is_empty());
+        assert!(result.invalid_evidence.is_empty());
+    }
+
+    #[test]
+    fn a_password_protected_element_with_an_invalid_box_is_reported_not_silently_dropped() {
+        let evidence = vec![uia("e1", true, (-5, 0, 10, 10))]; // negative x: invalid
+        let result = structural_candidates_from_uia(&evidence, 1000, 1000, "frame-1");
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.invalid_evidence, vec![uia("e1", true, (-5, 0, 10, 10))]);
+    }
+
+    #[test]
+    fn multiple_password_fields_each_get_their_own_candidate_and_expansion() {
+        let evidence = vec![uia("e1", true, (0, 0, 100, 20)), uia("e2", true, (0, 50, 100, 20))];
+        let result = structural_candidates_from_uia(&evidence, 1000, 1000, "frame-1");
+        assert_eq!(result.candidates.len(), 2);
+        assert_eq!(result.candidates[0].candidate_id, "frame-1-uia-0");
+        assert_eq!(result.candidates[1].candidate_id, "frame-1-uia-1");
+    }
+
+    #[test]
+    fn uia_candidate_expansion_clips_to_the_frame_raster() {
+        let evidence = vec![uia("e1", true, (0, 0, 100, 20))];
+        let result = structural_candidates_from_uia(&evidence, 100, 20, "frame-1");
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].expanded_box, (0, 0, 100, 20));
     }
 
     // ---- merge + destructive redaction operation ----
