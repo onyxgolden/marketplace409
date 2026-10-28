@@ -1999,6 +1999,42 @@ mod tests {
         assert_eq!(result, RemovalProofResult::Clean);
     }
 
+    #[test]
+    fn removal_proof_catches_a_full_width_residual_fragment_of_an_ascii_value() {
+        // C2P3-003: an ASCII source value's tail re-OCR'd as full-width
+        // digits must still collide under normalization - a raw
+        // `str::contains` would never match "9999" against "９９９９".
+        let result = verify_removal_proof("account ending in \u{FF19}\u{FF19}\u{FF19}\u{FF19} remains", &["219-09-9999".to_string()]);
+        assert!(matches!(result, RemovalProofResult::Residual { .. }));
+    }
+
+    #[test]
+    fn removal_proof_catches_a_residual_fragment_with_a_zero_width_character_spliced_in() {
+        // C2P3-003: a zero-width character spliced into the middle of an
+        // otherwise-matching residual run must not defeat the fragment
+        // check - normalize() drops it on both sides before comparing.
+        let result = verify_removal_proof("account ending in 99\u{200B}99 remains", &["219-09-9999".to_string()]);
+        assert!(matches!(result, RemovalProofResult::Residual { .. }));
+    }
+
+    #[test]
+    fn removal_proof_catches_a_residual_fragment_through_a_folded_unicode_dash_separator() {
+        // C2P3-003: a value containing a Unicode dash variant must still
+        // collide with rerun text using a plain ASCII hyphen (or vice
+        // versa) once both sides are folded to the same separator.
+        let result = verify_removal_proof("ssn 219-09 leaked", &["219\u{2010}09\u{2010}9999".to_string()]);
+        assert!(matches!(result, RemovalProofResult::Residual { .. }));
+    }
+
+    #[test]
+    fn removal_proof_is_clean_when_a_full_width_rerun_value_does_not_actually_overlap() {
+        // Positive control: normalization must not make the check
+        // over-eager - an unrelated full-width run that shares no 4+
+        // char window with the flagged value stays Clean.
+        let result = verify_removal_proof("unrelated \u{FF11}\u{FF12}\u{FF13}\u{FF14} here", &["219-09-9999".to_string()]);
+        assert_eq!(result, RemovalProofResult::Clean);
+    }
+
     // ---- verification: coverage proof ----
 
     #[test]
