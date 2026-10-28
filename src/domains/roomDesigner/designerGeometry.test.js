@@ -28,6 +28,7 @@ import {
   nearestPointOnSegment,
   offsetAlongWall,
   parseDimensionInput,
+  fitViewToBounds,
   phoneAutoFitView,
   pointInPolygon,
   polygonArea,
@@ -680,6 +681,34 @@ describe("phoneAutoFitView", () => {
     expect(bottom).toBeLessThanOrEqual(700 - 24 + 1e-6);
     expect(left).toBeCloseTo(24, 6);
     expect(right).toBeCloseTo(366, 6);
+  });
+});
+
+describe("fitViewToBounds", () => {
+  it("fits on a desktop-sized viewport (the phone wrapper's width gate does not apply)", () => {
+    const bounds = { x: 0, y: 0, widthIn: 7680, heightIn: 5280 };
+    const view = fitViewToBounds(bounds, { w: 1200, h: 800 }, { paddingPx: 48 });
+    // avail = (1200 - 96) x (800 - 96) = 1104 x 704; height is the limit.
+    expect(view.scale).toBeCloseTo(704 / 5280, 10);
+    expect(view.ox + bounds.x * view.scale).toBeGreaterThanOrEqual(48 - 1e-6);
+    expect(view.ox + (bounds.x + bounds.widthIn) * view.scale).toBeLessThanOrEqual(1200 - 48 + 1e-6);
+    expect(view.oy + bounds.y * view.scale).toBeGreaterThanOrEqual(48 - 1e-6);
+    expect(view.oy + (bounds.y + bounds.heightIn) * view.scale).toBeLessThanOrEqual(800 - 48 + 1e-6);
+  });
+
+  it("matches phoneAutoFitView on a phone-sized viewport", () => {
+    const bounds = { x: 10, y: 20, widthIn: 100, heightIn: 400 };
+    const phone = { w: 390, h: 700 };
+    expect(fitViewToBounds(bounds, phone)).toEqual(phoneAutoFitView(bounds, phone));
+  });
+
+  it("returns null for missing, invalid, point-sized, or unmeasured inputs", () => {
+    const phone = { w: 390, h: 700 };
+    expect(fitViewToBounds(null, phone)).toBeNull();
+    expect(fitViewToBounds({ x: 0, y: 0, widthIn: -5, heightIn: 10 }, phone)).toBeNull();
+    expect(fitViewToBounds({ x: 5, y: 5, widthIn: 0, heightIn: 0 }, phone)).toBeNull();
+    expect(fitViewToBounds({ x: 0, y: 0, widthIn: 100, heightIn: 100 }, { w: 0, h: 700 })).toBeNull();
+    expect(fitViewToBounds({ x: 0, y: 0, widthIn: 100, heightIn: 100 }, null)).toBeNull();
   });
 });
 
