@@ -195,13 +195,24 @@ describe("validateRouteEndpoints", () => {
     let design = createEmptyDesign("Plan");
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 0 }], { id: "a", elevationIn: 30 });
     design = addPipeRun(design, [{ x: 100.5, y: 0 }, { x: 100.5, y: 50 }], { id: "b", elevationIn: 30 });
+    // Verdict-driven contract change (D687-001): endpoint proximity
+    // alone no longer connects — a recorded junction is required. Run
+    // a's end taps run b's start (a coupled joint, 0.5 in apart).
+    design = {
+      ...design,
+      pipes: design.pipes.map((p) => (p.id === "a" ? { ...p, junctions: { end: { runId: "b" } } } : p)),
+    };
     const a = design.pipes[0];
     expect(validateRouteEndpoints(design, a).filter((f) => f.code === "ROUTE_UNCONNECTED_END")).toHaveLength(1);
-    // Only the start end is unconnected; the end touches run b exactly
+    // Only the start end is unconnected; the end taps run b exactly
     // at the tolerance.
     let design2 = createEmptyDesign("Plan");
     design2 = addPipeRun(design2, [{ x: 0, y: 0 }, { x: 100, y: 0 }], { id: "a", elevationIn: 30 });
     design2 = addPipeRun(design2, [{ x: 100.6, y: 0 }, { x: 100.6, y: 50 }], { id: "b", elevationIn: 30 });
+    design2 = {
+      ...design2,
+      pipes: design2.pipes.map((p) => (p.id === "a" ? { ...p, junctions: { end: { runId: "b" } } } : p)),
+    };
     const a2 = design2.pipes[0];
     expect(validateRouteEndpoints(design2, a2).filter((f) => f.code === "ROUTE_UNCONNECTED_END")).toHaveLength(2);
   });
@@ -226,22 +237,26 @@ describe("validateBranchTakeoff", () => {
     expect(codes(result.findings)).toEqual(["BRANCH_PHASE_UNVERIFIED"]);
   });
 
-  it("passes liquid-bottom and vapor/steam-top, mismatches the rest", () => {
-    expect(
-      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "liquid", takeoff: "bottom" }).state,
-    ).toBe("PASS");
-    expect(
-      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "vapor", takeoff: "top" }).state,
-    ).toBe("PASS");
-    expect(
-      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "steam", takeoff: "top" }).state,
-    ).toBe("PASS");
+  it("checks authored labels first, but never passes without physical evidence", () => {
+    // Mismatch is still decided at the authored layer.
     expect(
       validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "liquid", takeoff: "top" }).state,
     ).toBe("BRANCH_TAKEOFF_MISMATCH");
     expect(
       validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "vapor", takeoff: "bottom" }).state,
     ).toBe("BRANCH_TAKEOFF_MISMATCH");
+    // Verdict-driven contract change (D687-003): consistent labels
+    // with no design or route evidence are UNVERIFIED, never PASS.
+    // Verified PASS cases live in pipeRoutingRules.fixround.test.js.
+    expect(
+      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "liquid", takeoff: "bottom" }).state,
+    ).toBe("BRANCH_TAKEOFF_UNVERIFIED");
+    expect(
+      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "vapor", takeoff: "top" }).state,
+    ).toBe("BRANCH_TAKEOFF_UNVERIFIED");
+    expect(
+      validateBranchTakeoff({ id: "p1", branchRole: "header-takeoff", phase: "steam", takeoff: "top" }).state,
+    ).toBe("BRANCH_TAKEOFF_UNVERIFIED");
   });
 
   it("flags a known phase with no scheduled take-off direction", () => {
@@ -258,12 +273,14 @@ describe("validateBranchTakeoff", () => {
     });
     expect(run.phase).toBe("liquid");
     expect(run.takeoff).toBe("bottom");
-    expect(validateBranchTakeoff(run).state).toBe("PASS");
+    // A lone run carries no design, so no physical PASS is possible
+    // (D687-003); storage itself is what this test pins.
+    expect(validateBranchTakeoff(run).state).toBe("BRANCH_TAKEOFF_UNVERIFIED");
   });
 });
 
 describe("routeReferenceChecks", () => {
-  it("flexibility: missing provision, unverified, pass, non-orthogonal loop", () => {
+  it("flexibility: missing provision, unverified, pass, U shape, non-orthogonal loop", () => {
     expect(routeReferenceChecks({ id: "p1", flexibility: { required: true } }).flexibility.state).toBe(
       "FLEXIBILITY_PROVISION_MISSING",
     );
@@ -279,10 +296,27 @@ describe("routeReferenceChecks", () => {
             { x: 0, y: 0, zIn: 30 },
             { x: 0, y: 20, zIn: 30 },
             { x: 20, y: 20, zIn: 30 },
+            { x: 20, y: 0, zIn: 30 },
           ],
         },
       }).flexibility.state,
     ).toBe("PASS");
+    // Verdict-driven contract change (D687-004): an L-path is not a
+    // U — a loop provision needs an offset AND a return.
+    expect(
+      routeReferenceChecks({
+        id: "p1",
+        flexibility: {
+          required: true,
+          provision: "loop",
+          loopPoints: [
+            { x: 0, y: 0, zIn: 30 },
+            { x: 0, y: 20, zIn: 30 },
+            { x: 20, y: 20, zIn: 30 },
+          ],
+        },
+      }).flexibility.state,
+    ).toBe("FLEXIBILITY_LOOP_SHAPE");
     expect(
       routeReferenceChecks({
         id: "p1",
@@ -303,15 +337,17 @@ describe("routeReferenceChecks", () => {
       "METER_SCHEDULE_NOT_VERIFIED",
     );
     expect(routeReferenceChecks({ id: "p1", diameterIn: 4 }).meter.state).toBe("NOT_APPLICABLE");
-    const pass = routeReferenceChecks({
-      id: "p1",
+    // Verdict-driven contract change (D687-004): authored lengths
+    // alone never pass — the route itself must evidence straight
+    // intervals (here one 100-in run covering 40 + 20).
+    const { design: passDesign, run: passRun } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
       diameterIn: 4,
       isMeterRun: true,
       meterSchedule: { upstreamDiameters: 10, downstreamDiameters: 5 },
       meterStraightUpstreamIn: 40,
       meterStraightDownstreamIn: 20,
     });
-    expect(pass.meter.state).toBe("PASS");
+    expect(routeReferenceChecks(passDesign, passRun).meter.state).toBe("PASS");
     const short = routeReferenceChecks({
       id: "p1",
       diameterIn: 4,
@@ -356,6 +392,14 @@ describe("routeCheckStates", () => {
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 0 }], { id: "a", elevationIn: 30, flexibility: { required: false } });
     design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 100, y: 50 }], { id: "b", elevationIn: 30 });
     design = addPipeRun(design, [{ x: 100, y: 50 }, { x: 0, y: 0 }], { id: "c", elevationIn: 30 });
+    // Verdict-driven contract change (D687-001): the triangle's ends
+    // verify only through recorded junctions, not proximity.
+    design = {
+      ...design,
+      pipes: design.pipes.map((p) =>
+        p.id === "a" ? { ...p, junctions: { start: { runId: "c" }, end: { runId: "b" } } } : p,
+      ),
+    };
     const a = design.pipes[0];
     const states = routeCheckStates(design, a);
     expect(states.checks.endpoints).toBe("PASS");
@@ -464,12 +508,26 @@ describe("repairLegacyRoute", () => {
     expect(result).toEqual({ route: null, repaired: false, findings: [] });
   });
 
-  it("leaves an oblique-face route unresolved with old geometry standing", () => {
+  it("ignores the obliqueFace flag: feasibility is derived, not caller-supplied", () => {
     const { design, run } = flat([
       { x: 0, y: 0 },
       { x: 100, y: 50 },
     ]);
     const result = repairLegacyRoute(design, run, { obliqueFace: true });
+    expect(result.repaired).toBe(true);
+    expect(result.route).not.toBeNull();
+  });
+
+  it("leaves a route unresolved when no candidate meets its owned endpoints", () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 50 }], { id: "a", elevationIn: 30 });
+    design = addPipeRun(design, [{ x: 200, y: 0 }, { x: 200, y: 50 }], { id: "b", elevationIn: 30 });
+    design = {
+      ...design,
+      pipes: design.pipes.map((p) => (p.id === "a" ? { ...p, junctions: { end: { runId: "b" } } } : p)),
+    };
+    const a = design.pipes[0];
+    const result = repairLegacyRoute(design, a);
     expect(result.route).toBeNull();
     expect(result.repaired).toBe(false);
     expect(codes(result.findings)).toEqual(["ROUTE_UNRESOLVED"]);

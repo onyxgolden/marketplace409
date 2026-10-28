@@ -54,6 +54,7 @@ import {
   pipeCrossingErrors,
   crossServiceErrors,
   CONNECTION_FACE_TOLERANCE_IN,
+  vertexElevationsForDesign,
 } from "./pipeCrossings";
 import { vesselAccessErrors, accessEnvelopeErrors } from "./vesselAccess";
 import { downcomerPropsErrors, downcomerGeometryErrors } from "./downcomers";
@@ -65,6 +66,7 @@ import {
 } from "./utilityPiping";
 import { firewaterErrors, FIREWATER_MAIN_DIAMETER_IN } from "./firewater";
 import { reducerErrors } from "./pipeReducerModel";
+import { ROUTE_AXIS_EPSILON_IN } from "./pipeRoutingRules";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
@@ -728,6 +730,23 @@ export function findPipeRun(design, pipeId) {
 }
 
 /**
+ * Deep-detach caller-supplied routing metadata (D10-01 admission rule):
+ * the stored run must never alias a caller object. structuredClone when
+ * available, JSON round-trip as fallback (plain metadata only; a value
+ * that survives neither is stored as-is rather than throwing, since
+ * admission must not invent validation the validators own).
+ */
+function deepDetachMetadata(value) {
+  if (value === null || typeof value !== "object") return value;
+  try {
+    if (typeof structuredClone === "function") return structuredClone(value);
+  } catch {
+    // Fall through to the JSON copy below.
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+/**
  * Add a pipe run. Consecutive near-duplicate points are collapsed (so the
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
@@ -768,18 +787,29 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
   const cleanService = cleanText(service);
   if (cleanService) run.service = cleanService;
   // D10-01 routing metadata: scheduled, authored fields validated by
-  // pipeRoutingRules. Phase/take-off are never inferred from service;
-  // flexibility, meter and valve data are stored as authored (or absent
-  // — absence yields a named NOT_VERIFIED state, never a default).
+  // pipeRoutingRules. Phase/take-off are never inferred from service.
+  // flexibility, meter and valve data are admitted as authored (or
+  // absent — absence yields a named NOT_VERIFIED state, never a
+  // default), but always DEEP-DETACHED: the stored run must never
+  // alias a caller object, so mutating the caller's flexibility after
+  // addPipeRun cannot change the saved design. Unknown provision shapes
+  // are stored as-is (detached) so the validators classify them
+  // NOT_VERIFIED rather than the admission layer inventing a rule.
+  // isMeterRun is strictly boolean: a non-boolean value is rejected,
+  // never coerced — Boolean("false") is true, and truthiness coercion
+  // would silently flip an authored "false" into a meter run.
   const cleanBranchRole = cleanText(branchRole);
   if (cleanBranchRole) run.branchRole = cleanBranchRole;
   const cleanPhase = cleanText(phase);
   if (cleanPhase) run.phase = cleanPhase;
   const cleanTakeoff = cleanText(takeoff);
   if (cleanTakeoff) run.takeoff = cleanTakeoff;
-  if (flexibility !== undefined && flexibility !== null) run.flexibility = flexibility;
-  if (isMeterRun !== undefined && isMeterRun !== null) run.isMeterRun = Boolean(isMeterRun);
-  if (meterSchedule !== undefined && meterSchedule !== null) run.meterSchedule = meterSchedule;
+  if (flexibility !== undefined && flexibility !== null) run.flexibility = deepDetachMetadata(flexibility);
+  if (isMeterRun !== undefined && isMeterRun !== null) {
+    if (typeof isMeterRun !== "boolean") throw new Error("Pipe meter flag must be a boolean.");
+    run.isMeterRun = isMeterRun;
+  }
+  if (meterSchedule !== undefined && meterSchedule !== null) run.meterSchedule = deepDetachMetadata(meterSchedule);
   if (meterStraightUpstreamIn !== undefined && meterStraightUpstreamIn !== null) {
     if (!Number.isFinite(meterStraightUpstreamIn)) throw new Error("Meter straight length must be a number.");
     run.meterStraightUpstreamIn = meterStraightUpstreamIn;
@@ -788,7 +818,7 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     if (!Number.isFinite(meterStraightDownstreamIn)) throw new Error("Meter straight length must be a number.");
     run.meterStraightDownstreamIn = meterStraightDownstreamIn;
   }
-  if (valveStations !== undefined && valveStations !== null) run.valveStations = valveStations;
+  if (valveStations !== undefined && valveStations !== null) run.valveStations = deepDetachMetadata(valveStations);
   return { ...design, pipes: [...(design.pipes || []), run] };
 }
 
@@ -1148,13 +1178,87 @@ export function movePipeVertex(design, pipeId, index, point) {
 }
 
 /**
- * Replace a pipe run's whole route (points + per-vertex elevations) in
- * one call — the domain half of the D10-01 preview Apply. Diameter,
- * service, attachments, junctions and all other run fields are untouched;
- * the reducer re-derives attachments, junctions and crossing jogs after
- * the replace, exactly like MOVE_PIPE_VERTEX. elevIn, when given, must
- * run parallel to points; null entries fall back to the run's stored or
- * derived elevation, matching pipeCrossings' read rule.
+ * Derive the elevation profile for a replacement route when the caller
+ * omits elevIn (D10-01 elevation admission rule). The replacement must
+ * keep the old route's endpoints (within the numerical axis epsilon);
+ * interior vertices must either coincide with an old vertex (taking its
+ * elevation) or lie strictly on an old plan segment (interpolated along
+ * that segment's elevation profile). Any other case — a moved endpoint,
+ * an interior vertex on a riser plan point (multiple elevations, so the
+ * elevation is ambiguous), or an interior vertex off the old route —
+ * throws: the old index-based elevation array is never retained across
+ * a vertex-count change, and stale elevations are never rendered.
+ */
+function deriveElevationsForReplacement(design, run, points) {
+  const oldPts = run.points || [];
+  const oldElevs = vertexElevationsForDesign(design, run);
+  if (oldPts.length < 2 || oldElevs.length !== oldPts.length) {
+    throw new Error("Pipe route elevations cannot be derived: the existing route has no usable profile.");
+  }
+  const planEq = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) <= ROUTE_AXIS_EPSILON_IN;
+  const out = [];
+  for (let k = 0; k < points.length; k += 1) {
+    const p = points[k];
+    if (k === 0) {
+      if (!planEq(p, oldPts[0])) {
+        throw new Error("Pipe route elevations cannot be derived: the replacement moves the start end.");
+      }
+      out.push(oldElevs[0]);
+      continue;
+    }
+    if (k === points.length - 1) {
+      if (!planEq(p, oldPts[oldPts.length - 1])) {
+        throw new Error("Pipe route elevations cannot be derived: the replacement moves the end end.");
+      }
+      out.push(oldElevs[oldElevs.length - 1]);
+      continue;
+    }
+    // Interior vertex: coincide with an old vertex (unique elevation),
+    // else interpolate along an old plan segment.
+    const matches = [];
+    for (let i = 0; i < oldPts.length; i += 1) {
+      if (planEq(p, oldPts[i])) matches.push(oldElevs[i]);
+    }
+    if (matches.length > 0) {
+      if (matches.some((z) => Math.abs(z - matches[0]) > ROUTE_AXIS_EPSILON_IN)) {
+        throw new Error("Pipe route elevations cannot be derived: an interior vertex sits on a riser (ambiguous elevation).");
+      }
+      out.push(matches[0]);
+      continue;
+    }
+    let interpolated = null;
+    for (let i = 0; i + 1 < oldPts.length && interpolated === null; i += 1) {
+      const a = oldPts[i];
+      const b = oldPts[i + 1];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen <= ROUTE_AXIS_EPSILON_IN) continue;
+      const t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / (segLen * segLen);
+      if (t <= 0 || t >= 1) continue;
+      const projX = a.x + t * (b.x - a.x);
+      const projY = a.y + t * (b.y - a.y);
+      if (Math.hypot(p.x - projX, p.y - projY) > ROUTE_AXIS_EPSILON_IN) continue;
+      interpolated = oldElevs[i] + t * (oldElevs[i + 1] - oldElevs[i]);
+    }
+    if (interpolated === null) {
+      throw new Error("Pipe route elevations cannot be derived: an interior vertex leaves the existing route.");
+    }
+    out.push(interpolated);
+  }
+  return out;
+}
+
+/**
+ * Replace a pipe run's route (REPLACE_PIPE_ROUTE domain path) — the
+ * domain half of the D10-01 preview Apply. Diameter, service,
+ * attachments, junctions and all other run fields are untouched; the
+ * reducer re-derives attachments, junctions and crossing jogs after the
+ * replace, exactly like MOVE_PIPE_VERTEX. elevIn, when given, must run
+ * parallel to points; null entries fall back to stored/derived elevation
+ * at read time. When elevIn is OMITTED, the profile is derived from the
+ * existing route by deriveElevationsForReplacement — or the call throws.
+ * The old elevation array is never retained across a vertex-count
+ * change: a 2-vertex [30,100] route replaced by 3 plan points used to
+ * render [30,100,30].
  */
 export function replacePipeRoute(design, pipeId, points, elevIn = undefined) {
   assertDesign(design);
@@ -1166,7 +1270,12 @@ export function replacePipeRoute(design, pipeId, points, elevIn = undefined) {
   if (!Array.isArray(points) || points.length < 2 || !points.every(isValidPoint)) {
     throw new Error("Pipe route needs at least two valid points.");
   }
-  if (elevIn !== undefined) {
+  const target = (design.pipes || []).find((r) => r.id === pipeId);
+  if (!target) throw new Error(`Unknown pipe run: ${pipeId}`);
+  let resolvedElevIn = elevIn;
+  if (elevIn === undefined) {
+    resolvedElevIn = deriveElevationsForReplacement(design, target, points);
+  } else {
     if (!Array.isArray(elevIn) || elevIn.length !== points.length) {
       throw new Error("Pipe route elevations must run parallel to its points.");
     }
@@ -1176,15 +1285,12 @@ export function replacePipeRoute(design, pipeId, points, elevIn = undefined) {
       }
     }
   }
-  let changed = false;
   const pipes = (design.pipes || []).map((run) => {
     if (run.id !== pipeId) return run;
-    changed = true;
     const next = { ...run, points: points.map((p) => ({ x: p.x, y: p.y })) };
-    if (elevIn !== undefined) next.elevIn = [...elevIn];
+    next.elevIn = [...resolvedElevIn];
     return next;
   });
-  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
   return { ...design, pipes };
 }
 
