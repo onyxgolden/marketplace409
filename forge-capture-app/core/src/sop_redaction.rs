@@ -1,23 +1,33 @@
-//! FORGE Capture Phase 2 — deterministic hard-positive detection and
-//! candidate box binding (build slice C2-P3, rounds 1-2 of this slice).
+//! FORGE Capture Phase 2 — deterministic hard-positive detection,
+//! candidate box binding, redaction, and verification (build slice
+//! C2-P3, rounds 1-3 of this slice).
 //!
 //! Plan: `results/chatgpt/capture-ai-caption-pipeline-implementation-brief-2026-10-26.md`
-//! §3.1–3.2. Round 1 covers the **context-free** rule families: ones a
-//! matcher can confirm from the matched text alone, with no nearby label
-//! or UI evidence required (email, SSN/ITIN, Luhn-valid payment card, JWT,
-//! PEM private-key blocks, AWS access-key IDs, GitHub token families).
-//! Round 2 ([`join_tokens`], [`bind_matches_to_candidates`]) maps those
-//! byte-offset matches onto real [`crate::sop_session::OcrToken`] boxes,
-//! producing brief §4's actual [`crate::sop_session::RedactionCandidate`]
-//! shape: token-box union, expansion, and clipping to the frame raster
-//! (brief §3.1). Context-dependent rule families (bearer/auth headers,
-//! sensitive query params, key/value sensitive-label forms, masked-
-//! credential runs, OTP/PIN, ABA routing number, account number, phone/
-//! address), the structural/UI evidence pass (§3.3), merging overlapping/
-//! adjacent *painted* regions across candidates, the destructive
-//! redaction operation (§3.4), and the three verification proofs (§3.5)
-//! are separate follow-up rounds of this same slice — see the C2-P3
-//! build-started filing in `forge-ai-drop/results/claude/`.
+//! §3. Round 1 ([`detect_context_free`]) covers the **context-free** rule
+//! families: ones a matcher can confirm from the matched text alone,
+//! with no nearby label or UI evidence required (email, SSN/ITIN,
+//! Luhn-valid payment card, JWT, PEM private-key blocks, AWS access-key
+//! IDs, GitHub token families). Round 2 ([`join_tokens`],
+//! [`bind_matches_to_candidates`], [`apply_candidate_redactions`],
+//! [`verify_pixel_proof`]/[`verify_removal_proof`]/[`verify_coverage_proof`],
+//! [`compute_frame_verification`]) maps those byte-offset matches onto
+//! real [`crate::sop_session::OcrToken`] boxes, performs the destructive
+//! solid-fill redaction, and verifies it. Round 3
+//! ([`detect_context_dependent`]) adds the rule families that need a
+//! nearby label: bearer/basic auth headers, Cookie/Set-Cookie header
+//! values, sensitive key/value forms (which also covers URI query/
+//! fragment values — same shape), OTP/PIN, ABA routing number, and
+//! account number. Still outstanding, separate follow-up rounds of this
+//! same slice: phone/address (review-candidate-only, needs the
+//! review-candidate disposition machinery and NER agreement this slice
+//! doesn't have yet), the structural/UI evidence pass (§3.3, including
+//! masked-credential runs — those need real geometry this text-only
+//! layer doesn't have), and merging overlapping/adjacent *painted*
+//! regions that span both the context-free and context-dependent
+//! detector lists together (today's [`redaction_regions_for_frame`]
+//! takes whichever candidate list a caller gives it, so this already
+//! works once a caller combines both lists — nothing left to build
+//! there). See the C2-P3 filings in `forge-ai-drop/results/claude/`.
 //!
 //! **Bounded, linear-time, no caller-provided regex** (brief §3.2's lead
 //! sentence): every matcher here is a single hand-rolled forward scan
@@ -627,6 +637,336 @@ fn detect_github_token(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch
         }
         i += 1;
     }
+}
+
+// ---------------------------------------------------------------------
+// Context-dependent hard positives (brief §3.2, round 3 of this slice):
+// rules that need a nearby label/key before a value counts as sensitive.
+// Every rule here is still listed directly under §3.2's "Hard positives"
+// heading (unlike phone/address, which the brief explicitly calls out as
+// review-candidate-only until escalated by label/NER agreement — that
+// pair needs the review-candidate disposition machinery this slice
+// doesn't have yet, so it stays a separate follow-up round, not this
+// one). Masked-credential runs need real geometry (an input-like
+// rectangle) to mean anything and are part of the structural/UI evidence
+// pass (§3.3), not this text-only layer.
+// ---------------------------------------------------------------------
+
+fn normalized_starts_with_ci(norm: &[NormalizedChar], idx: usize, needle_lower: &str) -> bool {
+    let chars: Vec<char> = needle_lower.chars().collect();
+    if idx + chars.len() > norm.len() {
+        return false;
+    }
+    norm[idx..idx + chars.len()].iter().map(|c| c.ch.to_ascii_lowercase()).eq(chars)
+}
+
+/// True if the 40-char window immediately before `value_start`, cut
+/// short at the nearest preceding newline (never crossing into a
+/// different line), contains any of `labels` as a whole word
+/// (case-insensitive, bounded by non-alphanumeric characters or the
+/// window's own edges). Brief: "in the same field or within the
+/// configured spatial neighborhood" — this pure text layer has no real
+/// field/geometry concept, so a same-line character window is its
+/// stand-in; the structural/UI evidence pass (§3.3) is where real
+/// spatial neighborhood checks belong.
+fn context_label_within(norm: &[NormalizedChar], value_start: usize, labels: &[&str], window: usize) -> bool {
+    let search_start = value_start.saturating_sub(window);
+    let mut effective_start = search_start;
+    for (offset, c) in norm[search_start..value_start].iter().enumerate() {
+        if c.ch == '\n' {
+            effective_start = search_start + offset + 1;
+        }
+    }
+    let slice: String = norm[effective_start..value_start].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
+    labels.iter().any(|label| word_boundary_contains(&slice, label))
+}
+
+fn word_boundary_contains(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
+        return false;
+    }
+    for start in 0..=(bytes.len() - needle_bytes.len()) {
+        if &bytes[start..start + needle_bytes.len()] == needle_bytes {
+            let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+            let end = start + needle_bytes.len();
+            let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '/' | '=')
+}
+
+// ---- bearer/basic authorization values ----
+
+const BEARER_BASIC_VALUE_MIN: usize = 8;
+const BEARER_BASIC_VALUE_MAX: usize = 4096;
+
+fn detect_bearer_basic_auth(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        let mut matched: Option<(usize, &'static str)> = None;
+        for (prefix, rule_id) in [("bearer ", "det.bearer_auth"), ("basic ", "det.basic_auth")] {
+            if normalized_starts_with_ci(norm, i, prefix) && (i == 0 || !is_identifier_char(norm[i - 1].ch)) {
+                matched = Some((prefix.chars().count(), rule_id));
+                break;
+            }
+        }
+        if let Some((prefix_len, rule_id)) = matched {
+            let value_start = i + prefix_len;
+            let mut j = value_start;
+            while j < n && is_token_char(norm[j].ch) {
+                j += 1;
+            }
+            let value_len = j - value_start;
+            if (BEARER_BASIC_VALUE_MIN..=BEARER_BASIC_VALUE_MAX).contains(&value_len) {
+                let (start_byte, end_byte) = bytes_of(norm, i, j);
+                out.push(DeterministicMatch { start_byte, end_byte, rule_id, reason_code: "BEARER_BASIC_AUTH_VALUE", score: None });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+// ---- Cookie / Set-Cookie header values ----
+
+const COOKIE_HEADER_VALUE_MAX: usize = 2048;
+
+fn detect_cookie_header_value(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        let mut prefix_len = None;
+        for prefix in ["set-cookie:", "cookie:"] {
+            if normalized_starts_with_ci(norm, i, prefix) && (i == 0 || !is_identifier_char(norm[i - 1].ch)) {
+                prefix_len = Some(prefix.chars().count());
+                break;
+            }
+        }
+        if let Some(prefix_len) = prefix_len {
+            let mut k = i + prefix_len;
+            while k < n && norm[k].ch == ' ' {
+                k += 1;
+            }
+            let value_start = k;
+            let mut j = value_start;
+            while j < n && norm[j].ch != '\n' {
+                j += 1;
+            }
+            let value_len = j - value_start;
+            if (1..=COOKIE_HEADER_VALUE_MAX).contains(&value_len) {
+                let (start_byte, end_byte) = bytes_of(norm, i, j);
+                out.push(DeterministicMatch { start_byte, end_byte, rule_id: "det.cookie_header", reason_code: "COOKIE_HEADER_VALUE", score: None });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+// ---- Sensitive key/value forms (also covers URI query/fragment values:
+// "?token=..."/"&key=..." has the identical "token=..." shape this
+// matcher already finds regardless of what precedes the key) ----
+
+const SENSITIVE_KV_LABELS: &[&str] =
+    &["token", "key", "secret", "password", "passwd", "pwd", "otp", "pin", "code", "session", "auth"];
+const SENSITIVE_KV_VALUE_MAX: usize = 512;
+
+fn detect_sensitive_key_value(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if is_identifier_char(norm[i].ch) && (i == 0 || !is_identifier_char(norm[i - 1].ch)) {
+            let key_start = i;
+            let mut j = i;
+            while j < n && is_identifier_char(norm[j].ch) {
+                j += 1;
+            }
+            let key: String = norm[key_start..j].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
+            if SENSITIVE_KV_LABELS.contains(&key.as_str()) {
+                let mut k = j;
+                // A JSON-style quoted key ("secret":) has a closing
+                // quote directly after the key, before the separator.
+                if k < n && (norm[k].ch == '"' || norm[k].ch == '\'') {
+                    k += 1;
+                }
+                while k < n && (norm[k].ch == ' ' || norm[k].ch == '\t') {
+                    k += 1;
+                }
+                if k < n && (norm[k].ch == ':' || norm[k].ch == '=') {
+                    k += 1;
+                    while k < n && (norm[k].ch == ' ' || norm[k].ch == '\t') {
+                        k += 1;
+                    }
+                    let quote = if k < n && (norm[k].ch == '"' || norm[k].ch == '\'') { Some(norm[k].ch) } else { None };
+                    if quote.is_some() {
+                        k += 1;
+                    }
+                    let value_start = k;
+                    let mut end = k;
+                    while end < n {
+                        let c = norm[end].ch;
+                        let stop = match quote {
+                            Some(q) => c == q,
+                            None => matches!(c, ' ' | '\n' | '\t' | ',' | ';' | '&'),
+                        };
+                        if stop {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    let value_len = end - value_start;
+                    if (1..=SENSITIVE_KV_VALUE_MAX).contains(&value_len) {
+                        let match_end = if quote.is_some() && end < n { end + 1 } else { end };
+                        let (start_byte, end_byte) = bytes_of(norm, key_start, match_end);
+                        out.push(DeterministicMatch {
+                            start_byte,
+                            end_byte,
+                            rule_id: "det.sensitive_key_value",
+                            reason_code: "SENSITIVE_KEY_VALUE",
+                            score: None,
+                        });
+                        i = match_end;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+// ---- OTP / PIN: 4-10 digits with a nearby label ----
+
+const OTP_PIN_LABELS: &[&str] = &["otp", "pin", "verification", "passcode"];
+const OTP_PIN_CONTEXT_WINDOW: usize = 40;
+
+fn detect_otp_pin(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if is_ascii_digit(norm[i].ch) && (i == 0 || !is_ascii_digit(norm[i - 1].ch)) {
+            let mut j = i;
+            while j < n && is_ascii_digit(norm[j].ch) {
+                j += 1;
+            }
+            let len = j - i;
+            if (4..=10).contains(&len) && context_label_within(norm, i, OTP_PIN_LABELS, OTP_PIN_CONTEXT_WINDOW) {
+                let (start_byte, end_byte) = bytes_of(norm, i, j);
+                out.push(DeterministicMatch { start_byte, end_byte, rule_id: "det.otp_pin", reason_code: "OTP_PIN_WITH_LABEL", score: None });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+// ---- US ABA routing number: exactly 9 digits, valid checksum, nearby
+// routing/bank context ----
+
+const ABA_CONTEXT_LABELS: &[&str] = &["routing", "bank"];
+const ABA_CONTEXT_WINDOW: usize = 40;
+
+fn aba_checksum_is_valid(digits: &[u32]) -> bool {
+    if digits.len() != 9 {
+        return false;
+    }
+    let sum = 3 * (digits[0] + digits[3] + digits[6]) + 7 * (digits[1] + digits[4] + digits[7]) + (digits[2] + digits[5] + digits[8]);
+    sum.is_multiple_of(10)
+}
+
+fn detect_aba_routing_number(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if is_ascii_digit(norm[i].ch) && (i == 0 || !is_ascii_digit(norm[i - 1].ch)) {
+            let mut j = i;
+            while j < n && is_ascii_digit(norm[j].ch) {
+                j += 1;
+            }
+            let digits: Vec<u32> = norm[i..j].iter().map(|c| c.ch.to_digit(10).unwrap()).collect();
+            if digits.len() == 9 && aba_checksum_is_valid(&digits) && context_label_within(norm, i, ABA_CONTEXT_LABELS, ABA_CONTEXT_WINDOW)
+            {
+                let (start_byte, end_byte) = bytes_of(norm, i, j);
+                out.push(DeterministicMatch {
+                    start_byte,
+                    end_byte,
+                    rule_id: "det.aba_routing_number",
+                    reason_code: "ABA_ROUTING_NUMBER_WITH_CONTEXT",
+                    score: None,
+                });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+// ---- Account numbers: 6-20 alphanumeric characters (with at least one
+// digit), nearby account/IBAN/bank/member context ----
+
+const ACCOUNT_CONTEXT_LABELS: &[&str] = &["account", "iban", "bank", "member"];
+const ACCOUNT_CONTEXT_WINDOW: usize = 40;
+
+fn detect_account_number(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if norm[i].ch.is_ascii_alphanumeric() && (i == 0 || !norm[i - 1].ch.is_ascii_alphanumeric()) {
+            let mut j = i;
+            while j < n && norm[j].ch.is_ascii_alphanumeric() {
+                j += 1;
+            }
+            let len = j - i;
+            let has_digit = norm[i..j].iter().any(|c| c.ch.is_ascii_digit());
+            if (6..=20).contains(&len) && has_digit && context_label_within(norm, i, ACCOUNT_CONTEXT_LABELS, ACCOUNT_CONTEXT_WINDOW) {
+                let (start_byte, end_byte) = bytes_of(norm, i, j);
+                out.push(DeterministicMatch {
+                    start_byte,
+                    end_byte,
+                    rule_id: "det.account_number",
+                    reason_code: "ACCOUNT_NUMBER_WITH_CONTEXT",
+                    score: None,
+                });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Runs every context-*dependent* rule in this module over `text` and
+/// returns every hit, in source-byte order — the round-3 counterpart to
+/// [`detect_context_free`]. Kept as a separate entry point rather than
+/// folded into `detect_context_free` because that name and its existing
+/// callers/tests specifically mean "needs no nearby label or UI
+/// evidence"; a later consolidation round can offer one combined
+/// function once both halves (and the structural pass) all exist.
+pub fn detect_context_dependent(text: &str) -> Vec<DeterministicMatch> {
+    let norm = normalize(text);
+    let mut out = Vec::new();
+    detect_bearer_basic_auth(&norm, &mut out);
+    detect_cookie_header_value(&norm, &mut out);
+    detect_sensitive_key_value(&norm, &mut out);
+    detect_otp_pin(&norm, &mut out);
+    detect_aba_routing_number(&norm, &mut out);
+    detect_account_number(&norm, &mut out);
+    out.sort_by_key(|m| m.start_byte);
+    out
 }
 
 // ---------------------------------------------------------------------
@@ -1543,6 +1883,158 @@ mod tests {
     fn github_token_embedded_in_longer_identifier_is_not_matched() {
         let text = format!("xghp_{}", "a".repeat(36));
         assert!(matches_for(&text).iter().all(|m| !m.rule_id.starts_with("det.github_token")));
+    }
+
+    // ---- context-dependent rules (round 3) ----
+
+    fn dep_matches_for(text: &str) -> Vec<DeterministicMatch> {
+        detect_context_dependent(text)
+    }
+
+    #[test]
+    fn bearer_token_is_matched() {
+        let text = "Authorization: Bearer abc123XYZ.def456";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.bearer_auth").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.bearer_auth").unwrap();
+        assert_eq!(&text[m.start_byte..m.end_byte], "Bearer abc123XYZ.def456");
+    }
+
+    #[test]
+    fn basic_auth_value_is_matched() {
+        let text = "Authorization: Basic dXNlcjpwYXNz";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.basic_auth").count(), 1);
+    }
+
+    #[test]
+    fn bearer_with_too_short_a_value_is_not_matched() {
+        let text = "Bearer abc";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.bearer_auth"));
+    }
+
+    #[test]
+    fn cookie_header_value_is_matched() {
+        let text = "Cookie: sessionid=abc123; other=xyz";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.cookie_header").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.cookie_header").unwrap();
+        // Matches the whole header line, consistent with how
+        // bearer/basic also include their own label in the match.
+        assert_eq!(&text[m.start_byte..m.end_byte], "Cookie: sessionid=abc123; other=xyz");
+    }
+
+    #[test]
+    fn set_cookie_header_value_is_matched() {
+        let text = "Set-Cookie: token=xyz789";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.cookie_header").count(), 1);
+    }
+
+    #[test]
+    fn sensitive_key_value_password_form_is_matched() {
+        let text = "password: s3cr3tValue";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.sensitive_key_value").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.sensitive_key_value").unwrap();
+        assert_eq!(&text[m.start_byte..m.end_byte], "password: s3cr3tValue");
+    }
+
+    #[test]
+    fn sensitive_key_value_url_query_param_form_is_matched() {
+        // Brief's "URI query/fragment values" shape is the same
+        // key=value this matcher already finds, regardless of the
+        // leading '?'/'&'.
+        let text = "https://example.com/reset?token=abcDEF123&other=1";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.sensitive_key_value").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.sensitive_key_value").unwrap();
+        assert_eq!(&text[m.start_byte..m.end_byte], "token=abcDEF123");
+    }
+
+    #[test]
+    fn sensitive_key_value_quoted_json_form_is_matched() {
+        let text = r#"{"secret": "abc123"}"#;
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.sensitive_key_value").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.sensitive_key_value").unwrap();
+        assert_eq!(&text[m.start_byte..m.end_byte], r#"secret": "abc123""#);
+    }
+
+    #[test]
+    fn a_compound_identifier_containing_a_sensitive_word_is_not_matched() {
+        // Brief: "a normalized key IS one of the above sensitive
+        // labels" - an exact match, not a substring of a longer
+        // identifier like "session_token".
+        let text = "session_token: abc123";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.sensitive_key_value"));
+    }
+
+    #[test]
+    fn a_non_sensitive_key_value_form_is_not_matched() {
+        let text = "username: bob";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.sensitive_key_value"));
+    }
+
+    #[test]
+    fn otp_with_nearby_label_is_matched() {
+        let text = "Your OTP is 482913, do not share it";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.otp_pin").count(), 1);
+    }
+
+    #[test]
+    fn a_bare_six_digit_number_with_no_label_is_not_matched_as_otp() {
+        let text = "order number 482913 shipped today";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.otp_pin"));
+    }
+
+    #[test]
+    fn otp_label_on_a_different_line_does_not_count_as_context() {
+        let text = "OTP sent separately\n482913 is unrelated";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.otp_pin"));
+    }
+
+    #[test]
+    fn aba_routing_number_with_context_is_matched() {
+        // 021000021 is a real, valid ABA checksum (Chase's published
+        // routing number), used here purely as a checksum fixture.
+        let text = "routing number 021000021 on file";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.aba_routing_number").count(), 1);
+    }
+
+    #[test]
+    fn nine_digits_with_valid_checksum_but_no_context_is_not_matched_as_routing() {
+        let text = "021000021";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.aba_routing_number"));
+    }
+
+    #[test]
+    fn nine_digits_with_context_but_invalid_checksum_is_not_matched_as_routing() {
+        let text = "routing number 021000029 on file"; // bad checksum
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.aba_routing_number"));
+    }
+
+    #[test]
+    fn account_number_with_context_is_matched() {
+        let text = "account number AB123456 on the statement";
+        let hits = dep_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.account_number").count(), 1);
+    }
+
+    #[test]
+    fn account_number_shape_with_no_context_is_not_matched() {
+        let text = "AB123456 appears on the page";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.account_number"));
+    }
+
+    #[test]
+    fn a_pure_alpha_run_with_account_context_is_not_matched() {
+        // Must contain at least one digit - "arbitrary long number"
+        // guard equivalent for alphanumeric account shapes.
+        let text = "account holder JOHNDOESMITH on file";
+        assert!(dep_matches_for(text).iter().all(|m| m.rule_id != "det.account_number"));
     }
 
     // ---- cross-cutting / bounded-adversarial-input ----
