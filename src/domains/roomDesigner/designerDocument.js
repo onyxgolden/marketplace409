@@ -732,7 +732,7 @@ export function findPipeRun(design, pipeId) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations } = {}) {
   assertDesign(design);
   const clean = dedupeConsecutivePoints(points);
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
@@ -767,6 +767,28 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
   if (cleanMaterial) run.material = cleanMaterial;
   const cleanService = cleanText(service);
   if (cleanService) run.service = cleanService;
+  // D10-01 routing metadata: scheduled, authored fields validated by
+  // pipeRoutingRules. Phase/take-off are never inferred from service;
+  // flexibility, meter and valve data are stored as authored (or absent
+  // — absence yields a named NOT_VERIFIED state, never a default).
+  const cleanBranchRole = cleanText(branchRole);
+  if (cleanBranchRole) run.branchRole = cleanBranchRole;
+  const cleanPhase = cleanText(phase);
+  if (cleanPhase) run.phase = cleanPhase;
+  const cleanTakeoff = cleanText(takeoff);
+  if (cleanTakeoff) run.takeoff = cleanTakeoff;
+  if (flexibility !== undefined && flexibility !== null) run.flexibility = flexibility;
+  if (isMeterRun !== undefined && isMeterRun !== null) run.isMeterRun = Boolean(isMeterRun);
+  if (meterSchedule !== undefined && meterSchedule !== null) run.meterSchedule = meterSchedule;
+  if (meterStraightUpstreamIn !== undefined && meterStraightUpstreamIn !== null) {
+    if (!Number.isFinite(meterStraightUpstreamIn)) throw new Error("Meter straight length must be a number.");
+    run.meterStraightUpstreamIn = meterStraightUpstreamIn;
+  }
+  if (meterStraightDownstreamIn !== undefined && meterStraightDownstreamIn !== null) {
+    if (!Number.isFinite(meterStraightDownstreamIn)) throw new Error("Meter straight length must be a number.");
+    run.meterStraightDownstreamIn = meterStraightDownstreamIn;
+  }
+  if (valveStations !== undefined && valveStations !== null) run.valveStations = valveStations;
   return { ...design, pipes: [...(design.pipes || []), run] };
 }
 
@@ -1120,6 +1142,47 @@ export function movePipeVertex(design, pipeId, index, point) {
       ...run,
       points: run.points.map((p, i) => (i === index ? { x: point.x, y: point.y } : p)),
     };
+  });
+  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
+  return { ...design, pipes };
+}
+
+/**
+ * Replace a pipe run's whole route (points + per-vertex elevations) in
+ * one call — the domain half of the D10-01 preview Apply. Diameter,
+ * service, attachments, junctions and all other run fields are untouched;
+ * the reducer re-derives attachments, junctions and crossing jogs after
+ * the replace, exactly like MOVE_PIPE_VERTEX. elevIn, when given, must
+ * run parallel to points; null entries fall back to the run's stored or
+ * derived elevation, matching pipeCrossings' read rule.
+ */
+export function replacePipeRoute(design, pipeId, points, elevIn = undefined) {
+  assertDesign(design);
+  // No plan-distance dedupe here: a vertical riser is duplicate plan
+  // points with different elevations, and dedupeConsecutivePoints would
+  // collapse it. Points are stored as given (the preview already drops
+  // exact plan+elevation duplicates); a degenerate duplicate is caught
+  // by the orthogonality validator, not silently erased.
+  if (!Array.isArray(points) || points.length < 2 || !points.every(isValidPoint)) {
+    throw new Error("Pipe route needs at least two valid points.");
+  }
+  if (elevIn !== undefined) {
+    if (!Array.isArray(elevIn) || elevIn.length !== points.length) {
+      throw new Error("Pipe route elevations must run parallel to its points.");
+    }
+    for (const z of elevIn) {
+      if (z !== null && z !== undefined && !Number.isFinite(z)) {
+        throw new Error("Pipe route elevation must be a number or null.");
+      }
+    }
+  }
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== pipeId) return run;
+    changed = true;
+    const next = { ...run, points: points.map((p) => ({ x: p.x, y: p.y })) };
+    if (elevIn !== undefined) next.elevIn = [...elevIn];
+    return next;
   });
   if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
   return { ...design, pipes };

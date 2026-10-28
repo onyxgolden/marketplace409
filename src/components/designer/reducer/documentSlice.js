@@ -68,6 +68,7 @@ import {
   removePerson,
   removeUnderlay,
   renameDesign,
+  replacePipeRoute,
   renameOrgChart,
   renameRoom,
   resetFurnitureSize,
@@ -722,6 +723,23 @@ export function documentSlice(state, action) {
           return design;
         })(),
         action.coalesce,
+      );
+
+    case "REPLACE_PIPE_ROUTE":
+      // D10-01 preview Apply: replace the whole route (points + per-vertex
+      // elevations) in one undoable transaction. Attachments, junctions
+      // and crossing jogs are re-derived exactly like MOVE_PIPE_VERTEX,
+      // so an applied preview can never leave stale connections behind.
+      if (!findPipeRun(state.design, action.pipeId)) return state;
+      return touch(
+        state,
+        (() => {
+          let design = replacePipeRoute(state.design, action.pipeId, action.points, action.elevIn);
+          design = detectRunAttachments(design, action.pipeId);
+          design = detectRunJunctions(design, action.pipeId);
+          design = applyCrossingJogs(design, action.pipeId);
+          return design;
+        })(),
       );
 
     case "PLACE_SYMBOL": {
