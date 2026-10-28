@@ -405,13 +405,25 @@ fn base64url_decode(segment: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A JWT has exactly 3 segments; once a scan has already found this many
+/// it can never become a valid JWT, so [`detect_jwt`] stops consuming
+/// further segments immediately rather than scanning the rest of a long
+/// dot-chain (C2P3-006: a prior version kept consuming unboundedly, and
+/// since every base64url run's start position independently re-triggers
+/// this scan — each one re-reading the *same* remaining dot-chain the
+/// previous start position already read — that made the whole function
+/// quadratic in the number of segments on an adversarial input like many
+/// repeated `"aaaa."` runs).
+const JWT_MAX_SEGMENTS_BEFORE_BAILOUT: usize = 3;
+
 fn detect_jwt(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
     let n = norm.len();
     let mut i = 0;
     while i < n {
         if is_base64url_char(norm[i].ch) && (i == 0 || !is_base64url_char(norm[i - 1].ch)) {
             let mut j = i;
-            let mut dot_positions = Vec::new();
+            let mut dot_positions: Vec<(usize, usize)> = Vec::with_capacity(JWT_MAX_SEGMENTS_BEFORE_BAILOUT);
+            let mut too_many_segments = false;
             loop {
                 let seg_start = j;
                 while j < n && is_base64url_char(norm[j].ch) {
@@ -420,15 +432,23 @@ fn detect_jwt(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
                 if j == seg_start {
                     break;
                 }
-                if j < n && norm[j].ch == '.' {
-                    dot_positions.push((seg_start, j));
+                if dot_positions.len() == JWT_MAX_SEGMENTS_BEFORE_BAILOUT {
+                    // A 4th segment exists: this starting position
+                    // cannot be a 3-segment JWT. Stop scanning now
+                    // rather than consuming the rest of a potentially
+                    // very long dot-chain.
+                    too_many_segments = true;
+                    break;
+                }
+                let has_more = j < n && norm[j].ch == '.';
+                dot_positions.push((seg_start, j));
+                if has_more {
                     j += 1;
                 } else {
-                    dot_positions.push((seg_start, j));
                     break;
                 }
             }
-            if dot_positions.len() == 3 {
+            if !too_many_segments && dot_positions.len() == JWT_MAX_SEGMENTS_BEFORE_BAILOUT {
                 let header: String = norm[dot_positions[0].0..dot_positions[0].1].iter().map(|c| c.ch).collect();
                 let payload: String = norm[dot_positions[1].0..dot_positions[1].1].iter().map(|c| c.ch).collect();
                 let signature_len = dot_positions[2].1 - dot_positions[2].0;
@@ -685,16 +705,71 @@ fn clip_box_to_frame(b: (i64, i64, u64, u64), frame_width: u32, frame_height: u3
     (clipped_x, clipped_y, clipped_w, clipped_h)
 }
 
+/// A box with nonzero area whose entirety falls within `[0, frame_width)
+/// x [0, frame_height)` — C2P3-002's binding-side half: a token box this
+/// function rejects must never be fed into [`clip_box_to_frame`], which
+/// would otherwise silently clip an already-invalid box down to an
+/// apparently-safe (possibly zero-area) one, letting painting and
+/// verification quietly "agree" on redacting nothing.
+fn token_box_is_valid_and_in_frame(b: (i64, i64, u64, u64), frame_width: u32, frame_height: u32) -> bool {
+    let (x, y, w, h) = b;
+    if w == 0 || h == 0 || x < 0 || y < 0 {
+        return false;
+    }
+    let Some(right) = x.checked_add_unsigned(w) else { return false };
+    let Some(bottom) = y.checked_add_unsigned(h) else { return false };
+    right <= frame_width as i64 && bottom <= frame_height as i64
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BindMatchesError {
+    /// `tokens` and `token_spans` must describe the same tokens, so they
+    /// must have the same length — a mismatch here previously risked
+    /// indexing `tokens[idx]` out of bounds and panicking.
+    SpanTableLengthMismatch { tokens_len: usize, spans_len: usize },
+    /// `token_spans` is not a well-formed, non-decreasing table of
+    /// in-bounds `(start, end)` ranges over the joined text.
+    InvalidSpanTable,
+    /// A match's own byte range is malformed or falls outside the joined
+    /// text it's claimed to be a match within.
+    MatchOutOfBounds { start_byte: usize, end_byte: usize },
+}
+
+/// [`bind_matches_to_candidates`]'s result: candidates built from matches
+/// that bound cleanly, *and* every match that could not be turned into
+/// one — C2P3-001: a lost hard-positive detection must be represented as
+/// data the caller can act on, never silently dropped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingResult {
+    pub candidates: Vec<RedactionCandidate>,
+    /// Matches that overlapped no token, or whose covered tokens
+    /// included an invalid (zero-area or out-of-frame) box — a real
+    /// detection that could not be safely bound to a region. The caller
+    /// must treat a nonempty list here as blocking (see
+    /// [`compute_frame_verification`]'s `unbound_match_count`), never as
+    /// an absent detection.
+    pub unbound_matches: Vec<DeterministicMatch>,
+}
+
 /// Binds every match to the tokens its byte range overlaps (via
 /// `token_spans`, as returned by [`join_tokens`]) and builds the brief
 /// §4 [`RedactionCandidate`] list: original box is the union of covered
 /// token boxes, expanded box adds [`MIN_EXPAND_PX`] plus an estimated
-/// glyph stroke and clips to the frame raster. A match covering no token
-/// (should not happen for matches produced from the same joined text, but
-/// not assumed) is skipped rather than producing a malformed candidate.
-/// `candidate_id_prefix` scopes generated IDs (e.g. the frame ID) so
-/// candidates from different frames never collide; IDs are otherwise a
-/// deterministic `{prefix}-{index}`.
+/// glyph stroke and clips to the frame raster. `candidate_id_prefix`
+/// scopes generated IDs (e.g. the frame ID) so candidates from different
+/// frames never collide; IDs are otherwise a deterministic
+/// `{prefix}-{index}` over `matches`' own indices (stable regardless of
+/// how many matches end up unbound).
+///
+/// Validates the complete input before indexing anything (C2P3-001):
+/// `tokens`/`token_spans` must have equal length and `token_spans` must
+/// be a well-formed, non-decreasing, in-bounds table, or this returns
+/// `Err` rather than risking an out-of-bounds index into `tokens`. A
+/// match whose own byte range doesn't fit `joined_text_len` likewise
+/// returns `Err`. A match that genuinely overlaps no token, or whose
+/// covered tokens include an invalid box (C2P3-002), is never silently
+/// dropped — it is collected into [`BindingResult::unbound_matches`]
+/// instead, so a lost detection is always visible to the caller.
 ///
 /// Every rule in [`detect_context_free`] is listed under brief §3.2's
 /// "Hard positives" heading, so the disposition this function assigns is
@@ -710,27 +785,55 @@ pub fn bind_matches_to_candidates(
     matches: &[DeterministicMatch],
     tokens: &[OcrToken],
     token_spans: &[(usize, usize)],
+    joined_text_len: usize,
     frame_width: u32,
     frame_height: u32,
     candidate_id_prefix: &str,
-) -> Vec<RedactionCandidate> {
-    let mut out = Vec::with_capacity(matches.len());
+) -> Result<BindingResult, BindMatchesError> {
+    if tokens.len() != token_spans.len() {
+        return Err(BindMatchesError::SpanTableLengthMismatch { tokens_len: tokens.len(), spans_len: token_spans.len() });
+    }
+    let mut prev_end = 0usize;
+    for &(s, e) in token_spans {
+        if s > e || e > joined_text_len || s < prev_end {
+            return Err(BindMatchesError::InvalidSpanTable);
+        }
+        prev_end = e;
+    }
+
+    let mut candidates = Vec::with_capacity(matches.len());
+    let mut unbound_matches = Vec::new();
     for (i, m) in matches.iter().enumerate() {
+        if m.start_byte > m.end_byte || m.end_byte > joined_text_len {
+            return Err(BindMatchesError::MatchOutOfBounds { start_byte: m.start_byte, end_byte: m.end_byte });
+        }
+
         let covered: Vec<usize> =
             token_spans.iter().enumerate().filter(|(_, &(s, e))| s < m.end_byte && e > m.start_byte).map(|(idx, _)| idx).collect();
-        let Some(original_box) = covered.iter().fold(None, |acc: Option<(i64, i64, u64, u64)>, &idx| {
-            let b = (tokens[idx].box_x, tokens[idx].box_y, tokens[idx].box_w, tokens[idx].box_h);
-            Some(match acc {
-                None => b,
-                Some(existing) => box_union(existing, b),
-            })
-        }) else {
+
+        if covered.is_empty() {
+            unbound_matches.push(m.clone());
             continue;
-        };
+        }
+
+        let covered_boxes_valid = covered.iter().all(|&idx| {
+            let b = (tokens[idx].box_x, tokens[idx].box_y, tokens[idx].box_w, tokens[idx].box_h);
+            token_box_is_valid_and_in_frame(b, frame_width, frame_height)
+        });
+        if !covered_boxes_valid {
+            unbound_matches.push(m.clone());
+            continue;
+        }
+
+        let first = (tokens[covered[0]].box_x, tokens[covered[0]].box_y, tokens[covered[0]].box_w, tokens[covered[0]].box_h);
+        let original_box = covered.iter().skip(1).fold(first, |acc, &idx| {
+            let b = (tokens[idx].box_x, tokens[idx].box_y, tokens[idx].box_w, tokens[idx].box_h);
+            box_union(acc, b)
+        });
         let expand = MIN_EXPAND_PX + estimate_glyph_stroke_px(original_box.3);
         let expanded_box = clip_box_to_frame(expand_box(original_box, expand), frame_width, frame_height);
         let source_token_ids = covered.iter().map(|&idx| tokens[idx].token_id.clone()).collect();
-        out.push(RedactionCandidate {
+        candidates.push(RedactionCandidate {
             candidate_id: format!("{candidate_id_prefix}-{i}"),
             detector_id: m.rule_id.to_string(),
             reason_code: m.reason_code.to_string(),
@@ -742,7 +845,7 @@ pub fn bind_matches_to_candidates(
             disposition_event_id: None,
         });
     }
-    out
+    Ok(BindingResult { candidates, unbound_matches })
 }
 
 // ---------------------------------------------------------------------
@@ -829,26 +932,61 @@ use crate::sop_session::FrameVerification;
 /// pixel." Checks `regions` (as produced by [`redaction_regions_for_frame`])
 /// against the actual derivative buffer — never trusts that painting
 /// happened just because it was requested.
-pub fn verify_pixel_proof(rgba: &[u8], width: u32, height: u32, regions: &[(i64, i64, u64, u64)]) -> bool {
-    for &(x, y, w, h) in regions {
-        let x0 = x.clamp(0, width as i64) as u32;
-        let y0 = y.clamp(0, height as i64) as u32;
-        let x1 = (x + w as i64).clamp(0, width as i64) as u32;
-        let y1 = (y + h as i64).clamp(0, height as i64) as u32;
-        for yy in y0..y1 {
-            for xx in x0..x1 {
+#[derive(Debug, Clone, PartialEq)]
+pub enum PixelProofFailure {
+    /// `rgba` is not exactly `width * height * 4` bytes — C2P3-002: a
+    /// shorter-than-declared buffer must never be treated as "no pixels
+    /// to check," which a naive clipped loop over it would do silently.
+    InvalidRasterBufferLength { expected: usize, actual: usize },
+    /// A declared region has zero width or height.
+    ZeroAreaRegion { region: (i64, i64, u64, u64) },
+    /// A declared region is not *entirely* within `[0, width) x [0,
+    /// height)` — C2P3-002: silently clipping an out-of-bounds region
+    /// down to whatever fits (or to nothing at all) lets a region that
+    /// was never actually painted vacuously "pass" by having no pixels
+    /// left to inspect.
+    RegionOutsideRaster { region: (i64, i64, u64, u64) },
+    /// A pixel inside a declared region is not the fixed redaction
+    /// pixel.
+    UnpaintedPixel { region: (i64, i64, u64, u64) },
+}
+
+/// Brief §3.5 check 1: "every declared redaction rectangle in the
+/// decoded derivative consists entirely of the fixed opaque redaction
+/// pixel." Every region must be admitted as-is — nonzero area, fully
+/// within the raster — never silently clipped into apparent safety; a
+/// region or buffer this function cannot trust is a failure, not a
+/// vacuous pass over zero remaining pixels (C2P3-002).
+pub fn verify_pixel_proof(rgba: &[u8], width: u32, height: u32, regions: &[(i64, i64, u64, u64)]) -> Result<(), PixelProofFailure> {
+    let expected_len = width as usize * height as usize * 4;
+    if rgba.len() != expected_len {
+        return Err(PixelProofFailure::InvalidRasterBufferLength { expected: expected_len, actual: rgba.len() });
+    }
+    for &region in regions {
+        let (x, y, w, h) = region;
+        if w == 0 || h == 0 {
+            return Err(PixelProofFailure::ZeroAreaRegion { region });
+        }
+        if x < 0 || y < 0 {
+            return Err(PixelProofFailure::RegionOutsideRaster { region });
+        }
+        let (Some(right), Some(bottom)) = (x.checked_add_unsigned(w), y.checked_add_unsigned(h)) else {
+            return Err(PixelProofFailure::RegionOutsideRaster { region });
+        };
+        if right > width as i64 || bottom > height as i64 {
+            return Err(PixelProofFailure::RegionOutsideRaster { region });
+        }
+        for yy in (y as u32)..(bottom as u32) {
+            for xx in (x as u32)..(right as u32) {
                 let idx = (yy as u64 * width as u64 + xx as u64) as usize * 4;
-                if idx + 3 >= rgba.len() {
-                    return false;
-                }
                 let pixel = (rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]);
                 if pixel != crate::annotations::REDACTION_PIXEL {
-                    return false;
+                    return Err(PixelProofFailure::UnpaintedPixel { region });
                 }
             }
         }
     }
-    true
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -867,15 +1005,24 @@ pub enum RemovalProofResult {
 /// proof is a later round, once those detectors exist.
 pub fn verify_removal_proof(rerun_text: &str, flagged_source_values: &[String]) -> RemovalProofResult {
     let residual_hard_positives = detect_context_free(rerun_text);
+
+    // C2P3-003: the fragment check must apply the *same* offset-
+    // preserving normalization the detectors themselves use to both
+    // sides of the comparison - otherwise a flagged ASCII value and a
+    // derivative that only re-OCR'd it as full-width digits (or with a
+    // zero-width character spliced in) would never collide under a raw
+    // `str::contains`, letting a genuinely residual-readable span pass
+    // as "Clean."
+    let normalized_rerun: String = normalize(rerun_text).into_iter().map(|c| c.ch).collect();
     let mut residual_fragments = Vec::new();
     for value in flagged_source_values {
-        let chars: Vec<char> = value.chars().collect();
-        if chars.len() < 4 {
+        let normalized_value: Vec<char> = normalize(value).into_iter().map(|c| c.ch).collect();
+        if normalized_value.len() < 4 {
             continue;
         }
-        for window_start in 0..=(chars.len() - 4) {
-            let fragment: String = chars[window_start..window_start + 4].iter().collect();
-            if rerun_text.contains(&fragment) {
+        for window_start in 0..=(normalized_value.len() - 4) {
+            let fragment: String = normalized_value[window_start..window_start + 4].iter().collect();
+            if normalized_rerun.contains(&fragment) {
                 residual_fragments.push(fragment);
                 break;
             }
@@ -898,6 +1045,14 @@ pub enum CoverageProofFailure {
     /// marked non-sensitive (or otherwise left non-`Redact`) despite
     /// being in that categorically-unredactable set.
     UnredactableHardPositiveNotRedacted { candidate_id: String, detector_id: String },
+    /// C2P3-005: a `MarkNonSensitive` disposition with no recorded
+    /// `disposition_event_id` — the enum alone is never permission for
+    /// an override; brief §3.5 requires "a reason and explicit
+    /// confirmation," which only a real recorded edit event can carry.
+    /// This function cannot see that event's reason/confirmation (that
+    /// is `sop_session::validate_edit_chain`'s territory), but it can and
+    /// does refuse to accept an override that isn't even backed by one.
+    UnevidencedOverride { candidate_id: String },
 }
 
 /// The rule families brief §3.5 names as categorically unredactable in
@@ -923,8 +1078,10 @@ pub fn is_unredactable_hard_positive(rule_id: &str) -> bool {
 }
 
 /// Brief §3.5 check 3 in full: every candidate must have reached a real
-/// disposition, and every categorically-unredactable hard positive must
-/// specifically be `Redact`. Returns every failure found, not just the
+/// disposition, every categorically-unredactable hard positive must
+/// specifically be `Redact`, and any `MarkNonSensitive` override must be
+/// backed by a recorded disposition event — never accepted on the enum
+/// value alone (C2P3-005). Returns every failure found, not just the
 /// first — the caller needs the complete list to show a reviewer.
 pub fn verify_coverage_proof(candidates: &[RedactionCandidate]) -> Vec<CoverageProofFailure> {
     let mut failures = Vec::new();
@@ -938,31 +1095,84 @@ pub fn verify_coverage_proof(candidates: &[RedactionCandidate]) -> Vec<CoverageP
                 detector_id: c.detector_id.clone(),
             });
         }
+        if c.disposition == Disposition::MarkNonSensitive && c.disposition_event_id.is_none() {
+            failures.push(CoverageProofFailure::UnevidencedOverride { candidate_id: c.candidate_id.clone() });
+        }
     }
     failures
 }
 
-/// Folds all three proofs into the brief §3.5 state machine. A judgment
-/// call, flagged for review: any coverage failure means a human decision
-/// is still needed or was overridden incorrectly, so it maps to
-/// `ReviewRequired`; a pixel or removal failure with full coverage
-/// already satisfied means the redaction pass itself did not hold even
-/// though every candidate was already dispositioned correctly — re-review
-/// alone cannot fix that, it needs a new redaction pass, so it maps to
-/// `Blocked`. Brief §3.5: "transitions the step to REVIEW_REQUIRED or
-/// BLOCKED, never VERIFIED" either way.
-pub fn compute_frame_verification(
-    pixel_proof_passed: bool,
-    removal_proof: &RemovalProofResult,
-    coverage_failures: &[CoverageProofFailure],
-) -> FrameVerification {
-    if pixel_proof_passed && matches!(removal_proof, RemovalProofResult::Clean) && coverage_failures.is_empty() {
-        FrameVerification::Verified
-    } else if !coverage_failures.is_empty() {
-        FrameVerification::ReviewRequired
-    } else {
-        FrameVerification::Blocked
+/// Everything [`compute_frame_verification`] needs before it can even
+/// consider `Verified` — C2P3-004: a partial detector module (this round
+/// has no context-dependent rules, structural pass, or NER yet) must
+/// never let its result quietly stand in for full coverage just because
+/// the checks it *can* run all happened to pass on vacuous/empty input.
+/// Every field here must be explicitly supplied by the caller; there is
+/// no default that favors `Verified`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameVerificationEvidence {
+    /// From [`verify_pixel_proof`]`.is_ok()`.
+    pub pixel_proof_passed: bool,
+    pub removal_proof: RemovalProofResult,
+    /// From [`verify_coverage_proof`].
+    pub coverage_failures: Vec<CoverageProofFailure>,
+    /// OCR actually ran and produced tokens for this frame — not merely
+    /// "never attempted" being indistinguishable from "ran and found
+    /// nothing." An OCR failure must never be encoded as a successful
+    /// empty result.
+    pub ocr_succeeded: bool,
+    /// From [`bind_matches_to_candidates`]'s `BindingResult::unbound_matches.len()`
+    /// — a nonzero count means at least one detection could not be
+    /// safely turned into a candidate at all, which no later proof over
+    /// the surviving candidates can see or compensate for.
+    pub unbound_match_count: usize,
+    /// True only once every rule family this release requires has
+    /// actually run on this frame — today that means every
+    /// context-free *and* context-dependent deterministic rule plus the
+    /// structural/UI evidence pass (brief §3.2/§3.3). NER (C2-P4) is
+    /// explicitly not required here. No caller in this codebase can
+    /// honestly pass `true` yet: the context-dependent rules and
+    /// structural pass are still outstanding follow-up rounds of this
+    /// same slice, so `Verified` stays genuinely unreachable until they
+    /// land — that is this field's entire purpose.
+    pub required_detectors_complete: bool,
+    /// Source/derivative/policy/model-manifest digest bindings were
+    /// checked and matched (`sop_session::check_source_binding` and
+    /// this frame's own recorded `policy_version`/`model_manifest_sha256`
+    /// — this function doesn't duplicate that check, only gates on its
+    /// result).
+    pub identities_verified: bool,
+}
+
+/// Folds all evidence into the brief §3.5 state machine. `Verified`
+/// requires every field in `evidence` to affirmatively hold — an
+/// incomplete detector pass, a failed identity check, or any unbound
+/// match blocks it exactly like a failed proof would, never falling back
+/// to treating missing evidence as passing evidence (C2P3-004).
+///
+/// Judgment call, flagged for review: any coverage failure means a human
+/// decision is still needed or was overridden incorrectly, so it maps to
+/// `ReviewRequired`; every other kind of incompleteness or failure here
+/// — OCR failure, an unbound match, an incomplete detector pass, a
+/// failed identity check, or a failed pixel/removal proof — means the
+/// detection/redaction process itself did not hold or complete, which
+/// re-review alone cannot fix, so it maps to `Blocked`. Brief §3.5:
+/// "transitions the step to REVIEW_REQUIRED or BLOCKED, never VERIFIED"
+/// either way.
+pub fn compute_frame_verification(evidence: &FrameVerificationEvidence) -> FrameVerification {
+    if !evidence.ocr_succeeded
+        || evidence.unbound_match_count > 0
+        || !evidence.required_detectors_complete
+        || !evidence.identities_verified
+        || !evidence.pixel_proof_passed
+        || !matches!(evidence.removal_proof, RemovalProofResult::Clean)
+    {
+        return FrameVerification::Blocked;
     }
+    if !evidence.coverage_failures.is_empty() {
+        return FrameVerification::ReviewRequired;
+    }
+    FrameVerification::Verified
 }
 
 #[cfg(test)]
@@ -1171,6 +1381,29 @@ mod tests {
         assert!(matches_for(&text).iter().all(|m| m.rule_id != "det.jwt"));
     }
 
+    #[test]
+    fn jwt_with_a_fourth_segment_is_not_matched_and_does_not_rescan_the_rest() {
+        let header = base64url_encode_for_test(br#"{"alg":"none"}"#);
+        let text = format!("{header}.payload.signature.fourthsegment");
+        assert!(matches_for(&text).iter().all(|m| m.rule_id != "det.jwt"));
+    }
+
+    #[test]
+    fn a_long_repeated_dot_chain_does_not_scan_quadratically() {
+        // C2P3-006: a prior version re-scanned the entire remaining
+        // dot-chain from *every* segment's own start position, making
+        // this O(segments^2). 20,000 short dot-separated segments is
+        // cheap if the scan is properly bounded (each start position
+        // gives up after at most 4 segments) and would be unworkably
+        // slow if it regressed back to quadratic.
+        let text = "aaaa.".repeat(20_000);
+        let started = std::time::Instant::now();
+        let hits = matches_for(&text);
+        let elapsed = started.elapsed();
+        assert!(hits.iter().all(|m| m.rule_id != "det.jwt"));
+        assert!(elapsed < std::time::Duration::from_secs(2), "took {elapsed:?} - detect_jwt must stay bounded, not quadratic");
+    }
+
     fn base64url_encode_for_test(bytes: &[u8]) -> String {
         const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
         let mut out = String::new();
@@ -1375,9 +1608,10 @@ mod tests {
         let (text, spans) = join_tokens(&tokens);
         let hits = detect_context_free(&text);
         assert_eq!(hits.len(), 1);
-        let candidates = bind_matches_to_candidates(&hits, &tokens, &spans, 1000, 1000, "frame-1");
-        assert_eq!(candidates.len(), 1);
-        let c = &candidates[0];
+        let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.unbound_matches.is_empty());
+        assert_eq!(result.candidates.len(), 1);
+        let c = &result.candidates[0];
         assert_eq!(c.candidate_id, "frame-1-0");
         assert_eq!(c.detector_id, "det.ssn");
         assert_eq!(c.source_token_ids, vec!["t1".to_string()]);
@@ -1409,11 +1643,12 @@ mod tests {
         // bound to one candidate, using a match that deliberately spans
         // both tokens' byte ranges regardless of rule outcome.
         let synthetic_match = DeterministicMatch { start_byte: 0, end_byte: text.len(), rule_id: "det.test", reason_code: "TEST", score: None };
-        let candidates = bind_matches_to_candidates(&[synthetic_match], &tokens, &spans, 1000, 1000, "frame-1");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].source_token_ids, vec!["t1".to_string(), "t2".to_string()]);
+        let result = bind_matches_to_candidates(&[synthetic_match], &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.unbound_matches.is_empty());
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].source_token_ids, vec!["t1".to_string(), "t2".to_string()]);
         // Union of (10,10,50,20) and (65,10,20,20): right edges 60 and 85 -> union width 75.
-        assert_eq!(candidates[0].original_box, (10, 10, 75, 20));
+        assert_eq!(result.candidates[0].original_box, (10, 10, 75, 20));
         let _ = hits;
     }
 
@@ -1422,20 +1657,73 @@ mod tests {
         let tokens = vec![token("t1", "219-09-9999", "l1", (0, 0, 100, 20))];
         let (text, spans) = join_tokens(&tokens);
         let hits = detect_context_free(&text);
-        let candidates = bind_matches_to_candidates(&hits, &tokens, &spans, 100, 20, "frame-1");
-        assert_eq!(candidates.len(), 1);
+        let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 100, 20, "frame-1").unwrap();
+        assert_eq!(result.candidates.len(), 1);
         // Expansion would go to x=-5,y=-5,right=105,bottom=25; clipped to
         // the 100x20 frame.
-        assert_eq!(candidates[0].expanded_box, (0, 0, 100, 20));
+        assert_eq!(result.candidates[0].expanded_box, (0, 0, 100, 20));
     }
 
     #[test]
-    fn a_match_covering_no_token_produces_no_candidate() {
-        let synthetic_match = DeterministicMatch { start_byte: 1000, end_byte: 1010, rule_id: "det.test", reason_code: "TEST", score: None };
+    fn a_match_covering_no_token_is_reported_as_unbound_not_silently_dropped() {
+        // C2P3-001: a lost hard-positive detection must be visible data,
+        // never an absent one.
+        // "ab cd": token spans are (0,2) and (3,5); byte range 2..3 is the
+        // separating space itself, overlapping neither token's span.
+        let tokens = vec![token("t1", "ab", "l1", (0, 0, 10, 10)), token("t2", "cd", "l1", (20, 0, 10, 10))];
+        let (text, spans) = join_tokens(&tokens);
+        assert_eq!(text, "ab cd");
+        let synthetic_match = DeterministicMatch { start_byte: 2, end_byte: 3, rule_id: "det.test", reason_code: "TEST", score: None };
+        let result = bind_matches_to_candidates(&[synthetic_match.clone()], &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.unbound_matches, vec![synthetic_match]);
+    }
+
+    #[test]
+    fn a_covered_token_with_an_invalid_box_is_reported_as_unbound() {
+        // C2P3-002's binding-side half: an out-of-frame token box must
+        // never be silently clipped into an apparently-safe candidate -
+        // it has to surface as an unbound match instead.
+        let tokens = vec![token("t1", "219-09-9999", "l1", (-5, 0, 10, 10))]; // negative x: invalid
+        let (text, spans) = join_tokens(&tokens);
+        let hits = detect_context_free(&text);
+        assert_eq!(hits.len(), 1);
+        let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.unbound_matches.len(), 1);
+    }
+
+    #[test]
+    fn mismatched_tokens_and_spans_length_is_rejected_not_indexed() {
         let tokens = vec![token("t1", "hello", "l1", (0, 0, 10, 10))];
-        let (_, spans) = join_tokens(&tokens);
-        let candidates = bind_matches_to_candidates(&[synthetic_match], &tokens, &spans, 1000, 1000, "frame-1");
-        assert!(candidates.is_empty());
+        let spans: Vec<(usize, usize)> = vec![]; // deliberately mismatched length
+        let err = bind_matches_to_candidates(&[], &tokens, &spans, 5, 1000, 1000, "frame-1").unwrap_err();
+        assert_eq!(err, BindMatchesError::SpanTableLengthMismatch { tokens_len: 1, spans_len: 0 });
+    }
+
+    #[test]
+    fn a_span_table_entry_out_of_order_is_rejected() {
+        let tokens = vec![token("t1", "a", "l1", (0, 0, 10, 10)), token("t2", "b", "l1", (0, 0, 10, 10))];
+        let spans = vec![(5, 6), (0, 1)]; // decreasing, not a real join_tokens output
+        let err = bind_matches_to_candidates(&[], &tokens, &spans, 10, 1000, 1000, "frame-1").unwrap_err();
+        assert_eq!(err, BindMatchesError::InvalidSpanTable);
+    }
+
+    #[test]
+    fn a_span_table_entry_past_the_joined_text_length_is_rejected() {
+        let tokens = vec![token("t1", "a", "l1", (0, 0, 10, 10))];
+        let spans = vec![(0, 100)]; // past the real joined-text length
+        let err = bind_matches_to_candidates(&[], &tokens, &spans, 5, 1000, 1000, "frame-1").unwrap_err();
+        assert_eq!(err, BindMatchesError::InvalidSpanTable);
+    }
+
+    #[test]
+    fn a_match_past_the_joined_text_length_is_rejected() {
+        let tokens = vec![token("t1", "hello", "l1", (0, 0, 10, 10))];
+        let (text, spans) = join_tokens(&tokens);
+        let bad_match = DeterministicMatch { start_byte: 0, end_byte: text.len() + 50, rule_id: "det.test", reason_code: "TEST", score: None };
+        let err = bind_matches_to_candidates(&[bad_match], &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap_err();
+        assert!(matches!(err, BindMatchesError::MatchOutOfBounds { .. }));
     }
 
     #[test]
@@ -1454,9 +1742,10 @@ mod tests {
         let (text, spans) = join_tokens(&tokens);
         let hits = detect_context_free(&text);
         assert!(hits.len() >= 4, "expected at least 4 hard-positive hits, got {hits:?}");
-        let candidates = bind_matches_to_candidates(&hits, &tokens, &spans, 1000, 1000, "frame-1");
-        assert!(!candidates.is_empty());
-        for c in &candidates {
+        let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.unbound_matches.is_empty());
+        assert!(!result.candidates.is_empty());
+        for c in &result.candidates {
             assert_eq!(c.disposition, Disposition::Redact, "{c:?} must default to Redact");
         }
     }
@@ -1467,8 +1756,8 @@ mod tests {
         let (text, spans) = join_tokens(&tokens);
         let hits = detect_context_free(&text);
         assert_eq!(hits.len(), 2);
-        let candidates = bind_matches_to_candidates(&hits, &tokens, &spans, 1000, 1000, "frame-xyz");
-        let ids: Vec<&str> = candidates.iter().map(|c| c.candidate_id.as_str()).collect();
+        let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-xyz").unwrap();
+        let ids: Vec<&str> = result.candidates.iter().map(|c| c.candidate_id.as_str()).collect();
         assert_eq!(ids, vec!["frame-xyz-0", "frame-xyz-1"]);
     }
 
@@ -1588,7 +1877,7 @@ mod tests {
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact)];
         apply_candidate_redactions(&mut rgba, width, height, &candidates);
         let regions = redaction_regions_for_frame(&candidates);
-        assert!(verify_pixel_proof(&rgba, width, height, &regions));
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Ok(()));
     }
 
     #[test]
@@ -1597,7 +1886,7 @@ mod tests {
         let height = 10u32;
         let rgba = vec![255u8; (width as usize) * (height as usize) * 4]; // never actually painted
         let regions = vec![(0, 0, 5, 5)];
-        assert!(!verify_pixel_proof(&rgba, width, height, &regions));
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Err(PixelProofFailure::UnpaintedPixel { region: (0, 0, 5, 5) }));
     }
 
     #[test]
@@ -1609,7 +1898,71 @@ mod tests {
         let mut rgba = vec![255u8; (width as usize) * (height as usize) * 4];
         crate::annotations::paint_redaction_rect(&mut rgba, width, height, crate::coords::RectI { x: 0, y: 0, w: 5, h: 2 });
         let regions = vec![(0, 0, 5, 5)]; // declared taller than what was actually painted
-        assert!(!verify_pixel_proof(&rgba, width, height, &regions));
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Err(PixelProofFailure::UnpaintedPixel { region: (0, 0, 5, 5) }));
+    }
+
+    #[test]
+    fn pixel_proof_rejects_a_buffer_shorter_than_the_declared_raster() {
+        // C2P3-002: a truncated/invalid buffer must be a hard failure,
+        // never silently treated as "no pixels to check."
+        let width = 10u32;
+        let height = 10u32;
+        let rgba = vec![255u8; 4]; // far shorter than width*height*4
+        let regions: Vec<(i64, i64, u64, u64)> = vec![];
+        assert_eq!(
+            verify_pixel_proof(&rgba, width, height, &regions),
+            Err(PixelProofFailure::InvalidRasterBufferLength { expected: 400, actual: 4 })
+        );
+    }
+
+    #[test]
+    fn pixel_proof_rejects_a_zero_area_declared_region() {
+        let width = 10u32;
+        let height = 10u32;
+        let rgba = vec![255u8; (width as usize) * (height as usize) * 4];
+        let regions = vec![(0, 0, 0, 5)];
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Err(PixelProofFailure::ZeroAreaRegion { region: (0, 0, 0, 5) }));
+    }
+
+    #[test]
+    fn pixel_proof_rejects_a_region_wholly_outside_the_raster_instead_of_vacuously_passing() {
+        // C2P3-002's exact named defect: clipping a wholly-outside region
+        // down to nothing previously made this vacuously return success.
+        let width = 10u32;
+        let height = 10u32;
+        let rgba = vec![255u8; (width as usize) * (height as usize) * 4];
+        let regions = vec![(20, 20, 1, 1)];
+        assert_eq!(
+            verify_pixel_proof(&rgba, width, height, &regions),
+            Err(PixelProofFailure::RegionOutsideRaster { region: (20, 20, 1, 1) })
+        );
+    }
+
+    #[test]
+    fn pixel_proof_rejects_a_region_partially_outside_the_raster() {
+        let width = 10u32;
+        let height = 10u32;
+        let mut rgba = vec![255u8; (width as usize) * (height as usize) * 4];
+        crate::annotations::paint_redaction_rect(&mut rgba, width, height, crate::coords::RectI { x: 5, y: 5, w: 5, h: 5 });
+        let regions = vec![(5, 5, 10, 10)]; // extends 5px past both edges
+        assert_eq!(
+            verify_pixel_proof(&rgba, width, height, &regions),
+            Err(PixelProofFailure::RegionOutsideRaster { region: (5, 5, 10, 10) })
+        );
+    }
+
+    #[test]
+    fn pixel_proof_accepts_a_region_exactly_clipped_to_the_frame_edge() {
+        // The valid counterpart to the rejection cases above: a region
+        // that is already *exactly* within bounds (post-expansion
+        // clipping already happened upstream in bind_matches_to_candidates)
+        // must still pass normally.
+        let width = 10u32;
+        let height = 10u32;
+        let mut rgba = vec![255u8; (width as usize) * (height as usize) * 4];
+        crate::annotations::paint_redaction_rect(&mut rgba, width, height, crate::coords::RectI { x: 0, y: 0, w: 10, h: 10 });
+        let regions = vec![(0, 0, 10, 10)];
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Ok(()));
     }
 
     // ---- verification: removal proof ----
@@ -1649,8 +2002,10 @@ mod tests {
     // ---- verification: coverage proof ----
 
     #[test]
-    fn coverage_proof_passes_when_every_candidate_has_a_real_disposition() {
-        let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact), candidate("c2", (10, 10, 5, 5), Disposition::MarkNonSensitive)];
+    fn coverage_proof_passes_when_every_candidate_has_a_real_evidenced_disposition() {
+        let mut c2 = candidate("c2", (10, 10, 5, 5), Disposition::MarkNonSensitive);
+        c2.disposition_event_id = Some("evt-1".to_string());
+        let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact), c2];
         assert!(verify_coverage_proof(&candidates).is_empty());
     }
 
@@ -1662,9 +2017,13 @@ mod tests {
     }
 
     #[test]
-    fn coverage_proof_flags_a_payment_card_marked_non_sensitive() {
+    fn coverage_proof_flags_a_payment_card_marked_non_sensitive_even_with_an_event_id() {
+        // Evidenced or not, credential/private-key/payment-card hard
+        // positives are categorically unredactable in Phase 2 - an event
+        // id does not grant an exception this policy refuses outright.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.payment_card".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
         let failures = verify_coverage_proof(&[c]);
         assert_eq!(
             failures,
@@ -1676,12 +2035,26 @@ mod tests {
     }
 
     #[test]
-    fn coverage_proof_allows_an_ssn_marked_non_sensitive() {
-        // SSN is a hard positive that defaults to Redact, but is not in
-        // the categorically-unredactable "credential/private-key/
-        // payment-card" set, so a human override is allowed.
+    fn coverage_proof_flags_an_enum_only_override_with_no_event_id() {
+        // C2P3-005: the disposition enum alone is never permission for
+        // an override, even for a rule family that isn't categorically
+        // unredactable - here an SSN candidate was flipped to
+        // MarkNonSensitive with no recorded disposition event at all.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
+        let failures = verify_coverage_proof(&[c]);
+        assert_eq!(failures, vec![CoverageProofFailure::UnevidencedOverride { candidate_id: "c1".to_string() }]);
+    }
+
+    #[test]
+    fn coverage_proof_allows_an_evidenced_ssn_override() {
+        // SSN is a hard positive that defaults to Redact, but is not in
+        // the categorically-unredactable "credential/private-key/
+        // payment-card" set, so a human override backed by a real
+        // disposition event is allowed.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
         assert!(verify_coverage_proof(&[c]).is_empty());
     }
 
@@ -1701,40 +2074,107 @@ mod tests {
 
     // ---- verification: frame state machine ----
 
-    #[test]
-    fn frame_verification_is_verified_when_all_three_proofs_pass() {
-        let v = compute_frame_verification(true, &RemovalProofResult::Clean, &[]);
-        assert_eq!(v, FrameVerification::Verified);
+    /// The baseline "everything that can pass has passed" evidence - the
+    /// only starting point from which [`compute_frame_verification`]
+    /// returns `Verified`. Every other test below flips exactly one
+    /// field off this baseline, per C2P3-004's exact concern: no single
+    /// missing piece of evidence may be compensated for by the rest.
+    fn complete_evidence() -> FrameVerificationEvidence {
+        FrameVerificationEvidence {
+            pixel_proof_passed: true,
+            removal_proof: RemovalProofResult::Clean,
+            coverage_failures: vec![],
+            ocr_succeeded: true,
+            unbound_match_count: 0,
+            required_detectors_complete: true,
+            identities_verified: true,
+        }
     }
 
     #[test]
-    fn frame_verification_is_review_required_on_a_coverage_failure() {
-        let failures = vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }];
-        let v = compute_frame_verification(true, &RemovalProofResult::Clean, &failures);
-        assert_eq!(v, FrameVerification::ReviewRequired);
+    fn frame_verification_is_verified_when_all_evidence_is_complete() {
+        assert_eq!(compute_frame_verification(&complete_evidence()), FrameVerification::Verified);
+    }
+
+    #[test]
+    fn frame_verification_is_review_required_on_a_coverage_failure_alone() {
+        let mut evidence = complete_evidence();
+        evidence.coverage_failures = vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }];
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::ReviewRequired);
     }
 
     #[test]
     fn frame_verification_is_blocked_on_a_pixel_proof_failure_with_full_coverage() {
-        let v = compute_frame_verification(false, &RemovalProofResult::Clean, &[]);
-        assert_eq!(v, FrameVerification::Blocked);
+        let mut evidence = complete_evidence();
+        evidence.pixel_proof_passed = false;
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
     }
 
     #[test]
     fn frame_verification_is_blocked_on_a_removal_proof_failure_with_full_coverage() {
-        let residual = RemovalProofResult::Residual { hard_positives: vec![], fragments: vec!["9999".to_string()] };
-        let v = compute_frame_verification(true, &residual, &[]);
-        assert_eq!(v, FrameVerification::Blocked);
+        let mut evidence = complete_evidence();
+        evidence.removal_proof = RemovalProofResult::Residual { hard_positives: vec![], fragments: vec!["9999".to_string()] };
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
     }
 
     #[test]
-    fn frame_verification_is_never_verified_when_any_proof_fails() {
-        // Exhaustive-ish sweep: verified requires all three; any single
-        // failure must move off Verified.
-        let coverage_failure = vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }];
-        let residual = RemovalProofResult::Residual { hard_positives: vec![], fragments: vec!["9999".to_string()] };
-        assert_ne!(compute_frame_verification(false, &RemovalProofResult::Clean, &[]), FrameVerification::Verified);
-        assert_ne!(compute_frame_verification(true, &residual, &[]), FrameVerification::Verified);
-        assert_ne!(compute_frame_verification(true, &RemovalProofResult::Clean, &coverage_failure), FrameVerification::Verified);
+    fn frame_verification_is_blocked_when_ocr_did_not_succeed_even_with_every_proof_otherwise_passing() {
+        // C2P3-004's exact named defect: an OCR failure (or "never
+        // attempted") must never be indistinguishable from "ran and
+        // found nothing," which would otherwise vacuously satisfy every
+        // other proof on empty input.
+        let mut evidence = complete_evidence();
+        evidence.ocr_succeeded = false;
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
+    }
+
+    #[test]
+    fn frame_verification_is_blocked_when_any_match_is_unbound_even_with_every_proof_otherwise_passing() {
+        let mut evidence = complete_evidence();
+        evidence.unbound_match_count = 1;
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
+    }
+
+    #[test]
+    fn frame_verification_is_blocked_when_required_detectors_have_not_all_run_even_with_every_proof_otherwise_passing() {
+        // This is the field that keeps Verified genuinely unreachable
+        // today: round 1 has no context-dependent rules or structural
+        // pass yet, so no honest caller in this codebase can pass `true`
+        // here - a partial detector module must not mint the final
+        // safety state.
+        let mut evidence = complete_evidence();
+        evidence.required_detectors_complete = false;
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
+    }
+
+    #[test]
+    fn frame_verification_is_blocked_when_identities_are_not_verified_even_with_every_proof_otherwise_passing() {
+        let mut evidence = complete_evidence();
+        evidence.identities_verified = false;
+        assert_eq!(compute_frame_verification(&evidence), FrameVerification::Blocked);
+    }
+
+    #[test]
+    fn frame_verification_is_never_verified_when_any_single_piece_of_evidence_is_missing() {
+        // Exhaustive sweep over every field: flipping exactly one away
+        // from `complete_evidence()` must always move off `Verified`.
+        let variants: Vec<FrameVerificationEvidence> = vec![
+            FrameVerificationEvidence { pixel_proof_passed: false, ..complete_evidence() },
+            FrameVerificationEvidence {
+                removal_proof: RemovalProofResult::Residual { hard_positives: vec![], fragments: vec!["9999".to_string()] },
+                ..complete_evidence()
+            },
+            FrameVerificationEvidence {
+                coverage_failures: vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }],
+                ..complete_evidence()
+            },
+            FrameVerificationEvidence { ocr_succeeded: false, ..complete_evidence() },
+            FrameVerificationEvidence { unbound_match_count: 1, ..complete_evidence() },
+            FrameVerificationEvidence { required_detectors_complete: false, ..complete_evidence() },
+            FrameVerificationEvidence { identities_verified: false, ..complete_evidence() },
+        ];
+        for evidence in variants {
+            assert_ne!(compute_frame_verification(&evidence), FrameVerification::Verified, "{evidence:?}");
+        }
     }
 }
