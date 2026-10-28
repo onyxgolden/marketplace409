@@ -65,23 +65,39 @@
 //! in for "cleanup fully confirmed" when it hadn't been. Fixed by
 //! polling [`std::thread::JoinHandle::is_finished`] (bounded, no second
 //! wrapper thread needed) and, only if the worker genuinely hasn't
-//! finished within the bound, retaining it in
-//! [`SidecarSession::pending_workers`] rather than detaching it —
+//! finished within the bound, retaining it (see the C2P2-004B note just
+//! below for where) rather than detaching it —
 //! [`SidecarSession::request`] opportunistically reaps any now-finished
-//! entries from that list at the start of every call (and
-//! [`SidecarSession::pending_worker_count`] does the same on demand), so
-//! a worker that was merely *slow* to unblock still gets reaped once it
+//! entries at the start of every call (and [`pending_worker_count`] does
+//! the same on demand), so a worker that was merely *slow* to unblock still gets reaped once it
 //! actually does, rather than being forgotten the moment the bound
 //! elapsed. A worker-join timeout now also surfaces its own
 //! [`SidecarClientError::WorkerCleanupFailed`] rather than ever being
 //! hidden behind a request error that already returned `Ok`-shaped
 //! retirement.
+//!
+//! **C2P2-004B fix**: C2P2-004A's `pending_workers` lived on
+//! `SidecarSession` itself, owned only by that one `Arc`. That looked
+//! like a durable reaping owner, but it wasn't one: the ordinary caller
+//! pattern after a failed request is to drop the retired session and
+//! spawn a new one, and [`std::thread::JoinHandle`]'s own contract is
+//! that dropping a handle detaches its thread and permanently removes
+//! the ability to join it — so dropping the session dropped its
+//! `pending_workers` vector, detached every handle inside it, and threw
+//! away the one thing [`Self::pending_worker_count`] needed to ever
+//! observe completion again. Fixed by moving ownership out of
+//! `SidecarSession` entirely, into [`pending_worker_reaper`] — a
+//! process-wide registry that outlives every individual session by
+//! construction, so no session's `Drop` can ever discard a handle still
+//! inside it. [`pending_worker_count`] is now a free function for the
+//! same reason: there is no meaningful "this session's" pending count
+//! once ownership is process-wide, only the true count.
 
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStderr, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use forge_capture_core::sop_ipc::{
@@ -159,6 +175,28 @@ fn kill_and_wait_bounded(child: &Arc<Mutex<Child>>) -> Result<(), SidecarClientE
     }
 }
 
+/// Process-wide registry for request workers that couldn't be confirmed
+/// finished within [`RETIREMENT_TIMEOUT`] (C2P2-004B). This is
+/// deliberately *not* a field on [`SidecarSession`]: a session is
+/// routinely dropped right after the failure that leaves a worker
+/// pending, and [`std::thread::JoinHandle`]'s own contract says dropping
+/// a handle detaches its thread — so any owner that doesn't outlive
+/// every session can silently lose the ability to ever observe or join
+/// one again. A `static` is the simplest owner that is guaranteed to
+/// outlive every session by construction.
+///
+/// Tests in this module share this registry (there is only one process),
+/// so every test that reads [`pending_worker_count`] does so as a
+/// *relative* delta against a baseline captured before it runs, never an
+/// absolute zero — a different test's own not-yet-reaped entry is not
+/// this test's business. This is unaffected by `--test-threads`: even
+/// run in parallel, each test's own entries still resolve independently
+/// once that test's own child is actually killed.
+fn pending_worker_reaper() -> &'static Mutex<Vec<std::thread::JoinHandle<()>>> {
+    static REAPER: OnceLock<Mutex<Vec<std::thread::JoinHandle<()>>>> = OnceLock::new();
+    REAPER.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 /// Polls `worker` (via [`std::thread::JoinHandle::is_finished`], which
 /// never blocks) until it finishes or [`RETIREMENT_TIMEOUT`] elapses —
 /// bounded without needing a second wrapper thread. On success, joins
@@ -166,15 +204,12 @@ fn kill_and_wait_bounded(child: &Arc<Mutex<Child>>) -> Result<(), SidecarClientE
 /// has already finished). On timeout, the worker has *not* been shown
 /// to be done: rather than detach and forget it (C2P2-004A — a prior
 /// version did exactly that, converting a bounded-caller fix into an
-/// untracked, unreapable leak), it is pushed onto `pending_workers` so
-/// a later opportunistic pass (see [`reap_finished_pending_workers`])
+/// untracked, unreapable leak), it is pushed onto [`pending_worker_reaper`]
+/// so a later opportunistic pass (see [`reap_finished_pending_workers`])
 /// can still reap it once it actually finishes, and `WorkerCleanupFailed`
 /// is returned so the caller never mistakes a merely-slow worker for a
 /// confirmed one.
-fn join_worker_bounded(
-    worker: std::thread::JoinHandle<()>,
-    pending_workers: &Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
-) -> Result<(), SidecarClientError> {
+fn join_worker_bounded(worker: std::thread::JoinHandle<()>) -> Result<(), SidecarClientError> {
     let deadline = Instant::now() + RETIREMENT_TIMEOUT;
     loop {
         if worker.is_finished() {
@@ -182,7 +217,7 @@ fn join_worker_bounded(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            pending_workers.lock().unwrap_or_else(|e| e.into_inner()).push(worker);
+            pending_worker_reaper().lock().unwrap_or_else(|e| e.into_inner()).push(worker);
             return Err(SidecarClientError::WorkerCleanupFailed(
                 "request worker did not finish within the bounded cleanup period; retained for later reaping".to_string(),
             ));
@@ -191,13 +226,13 @@ fn join_worker_bounded(
     }
 }
 
-/// Removes and joins every entry in `pending_workers` that has since
-/// finished, leaving genuinely-still-running ones in place for a future
-/// pass. Never blocks on anything that hasn't already finished —
+/// Removes and joins every entry in [`pending_worker_reaper`] that has
+/// since finished, leaving genuinely-still-running ones in place for a
+/// future pass. Never blocks on anything that hasn't already finished —
 /// `is_finished()` is non-blocking, and joining an already-finished
 /// handle returns immediately.
-fn reap_finished_pending_workers(pending_workers: &Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
-    let mut pending = pending_workers.lock().unwrap_or_else(|e| e.into_inner());
+fn reap_finished_pending_workers() {
+    let mut pending = pending_worker_reaper().lock().unwrap_or_else(|e| e.into_inner());
     let mut i = 0;
     while i < pending.len() {
         if pending[i].is_finished() {
@@ -207,6 +242,20 @@ fn reap_finished_pending_workers(pending_workers: &Arc<Mutex<Vec<std::thread::Jo
             i += 1;
         }
     }
+}
+
+/// The number of request workers, across every session this process has
+/// ever created, that have not yet been confirmed finished (C2P2-004A/B)
+/// — reaps any that have since finished before counting, so this
+/// reflects only genuinely still-pending ones. A free function, not a
+/// method on [`SidecarSession`]: ownership is process-wide (see
+/// [`pending_worker_reaper`]), so there is no meaningful "this session's"
+/// count, only the true one. Zero in ordinary operation; only ever
+/// nonzero after a [`SidecarClientError::WorkerCleanupFailed`], and only
+/// until that worker actually finishes.
+pub fn pending_worker_count() -> usize {
+    reap_finished_pending_workers();
+    pending_worker_reaper().lock().unwrap_or_else(|e| e.into_inner()).len()
 }
 
 /// Reads and discards from `stderr` until the child exits and closes
@@ -234,10 +283,6 @@ fn drain_stderr(mut stderr: ChildStderr) {
 pub struct SidecarSession {
     child: Arc<Mutex<Child>>,
     retired: Arc<AtomicBool>,
-    /// Request workers that didn't finish within the bound when
-    /// [`join_worker_bounded`] last tried — retained (not detached) so
-    /// they can still be reaped once they actually finish (C2P2-004A).
-    pending_workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
 
 /// A cheaply-cloneable handle that can kill a [`SidecarSession`]'s child
@@ -294,11 +339,7 @@ impl SidecarSession {
             std::thread::spawn(move || drain_stderr(stderr));
         }
 
-        Ok(Self {
-            child: Arc::new(Mutex::new(child)),
-            retired: Arc::new(AtomicBool::new(false)),
-            pending_workers: Arc::new(Mutex::new(Vec::new())),
-        })
+        Ok(Self { child: Arc::new(Mutex::new(child)), retired: Arc::new(AtomicBool::new(false)) })
     }
 
     /// A cancel handle for this session, independently killable from
@@ -317,18 +358,6 @@ impl SidecarSession {
         self.cancel_handle().has_exited()
     }
 
-    /// The number of request workers from past calls that have not yet
-    /// been confirmed finished (C2P2-004A) — reaps any that have since
-    /// finished before counting, so this reflects only genuinely
-    /// still-pending ones, never ones that were merely slow and have
-    /// since completed. Zero in ordinary operation; only ever nonzero
-    /// after a [`SidecarClientError::WorkerCleanupFailed`], and only
-    /// until that worker actually finishes.
-    pub fn pending_worker_count(&self) -> usize {
-        reap_finished_pending_workers(&self.pending_workers);
-        self.pending_workers.lock().unwrap_or_else(|e| e.into_inner()).len()
-    }
-
     /// Sends `req` and blocks until a validated, correlated response
     /// arrives, `req.timeout_ms` elapses, or the session is cancelled
     /// from another thread — whichever is first. The deadline covers
@@ -337,10 +366,10 @@ impl SidecarSession {
     /// response.
     pub fn request(&mut self, req: &IpcRequest) -> Result<IpcResponse, SidecarClientError> {
         // C2P2-004A: opportunistically reap any previously-unconfirmed
-        // workers that have since finished, so a session that once hit
-        // a worker-join timeout doesn't carry that handle forever once
-        // it's actually done.
-        reap_finished_pending_workers(&self.pending_workers);
+        // workers that have since finished, so the process-wide registry
+        // (C2P2-004B) doesn't carry a handle forever once it's actually
+        // done.
+        reap_finished_pending_workers();
 
         if self.retired.load(Ordering::SeqCst) {
             return Err(SidecarClientError::SessionRetired);
@@ -437,15 +466,15 @@ impl SidecarSession {
         // confirmed. The bounded join itself (never a bare `.join()`)
         // means neither path risks hanging on a worker that might still
         // be blocked against a still-live child/pipe; on timeout the
-        // worker is retained in `pending_workers` for later reaping
-        // rather than detached and forgotten.
+        // worker is retained in the process-wide registry (C2P2-004B)
+        // for later reaping rather than detached and forgotten.
         match self.retire_now() {
-            Ok(()) => match join_worker_bounded(worker, &self.pending_workers) {
+            Ok(()) => match join_worker_bounded(worker) {
                 Ok(()) => outcome_result,
                 Err(worker_err) => Err(worker_err),
             },
             Err(retirement_err) => {
-                let _ = join_worker_bounded(worker, &self.pending_workers);
+                let _ = join_worker_bounded(worker);
                 Err(retirement_err)
             }
         }
@@ -702,14 +731,21 @@ mod tests {
     fn repeated_retirement_failures_eventually_reap_their_pending_workers_without_accumulating() {
         // C2P2-004A's exact required test: "a repeated retirement-failure
         // resource test that proves thread/handle counts do not
-        // accumulate after cleanup eventually becomes possible." Reuses
-        // the lock-contention timing from
+        // accumulate after cleanup eventually becomes possible." This
+        // one specifically keeps each session alive past the failure
+        // (returns it from the worker thread) - the companion test
+        // `dropping_a_session_with_a_pending_worker_does_not_lose_the_reaping_owner`
+        // covers the lifecycle gap C2P2-004B found (the session dropped
+        // *before* its pending worker could be confirmed), which this
+        // one does not exercise.
+        //
+        // Reuses the lock-contention timing from
         // `retirement_lock_contention_during_a_blocked_request_surfaces_a_bounded_retirement_failed`,
         // but holds the lock for three full `RETIREMENT_TIMEOUT`s - long
         // enough that *both* `retire_now`'s own bound and the subsequent
         // `join_worker_bounded`'s own bound each expire before the lock
-        // is released, so the worker is genuinely retained in
-        // `pending_workers` rather than confirmed finished by
+        // is released, so the worker is genuinely retained in the
+        // process-wide registry rather than confirmed finished by
         // coincidental timing. Once the blocker releases, the long-stuck
         // retirement thread (still blocked on the same lock, inside
         // `retire_now`) finally runs its real `kill()`/`wait()`, the
@@ -717,7 +753,13 @@ mod tests {
         // the retained worker must then be reaped rather than
         // accumulate forever. Run across two independent sessions to
         // show the property holds more than once, not as a one-off.
+        //
+        // `pending_worker_count()` is process-wide (C2P2-004B), shared
+        // with every other test in this file, so every check here is a
+        // *relative* delta against a baseline captured just before this
+        // iteration's own failure - never an absolute zero.
         for iteration in 0..2 {
+            let baseline = pending_worker_count();
             let mut session =
                 SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_TEST_NEVER_READ", "1")]).unwrap();
             let child = Arc::clone(&session.child);
@@ -746,7 +788,7 @@ mod tests {
             // worker must be retained for later reaping, not silently
             // detached and forgotten.
             assert!(
-                session.pending_worker_count() > 0,
+                pending_worker_count() > baseline,
                 "iteration {iteration}: an unconfirmed worker must be retained for later reaping"
             );
 
@@ -755,10 +797,11 @@ mod tests {
             // The lock is free now, so the stuck retirement thread can
             // finally kill the child, which unblocks the worker's read.
             // Poll briefly for that to actually happen, then require the
-            // pending count to drain to zero rather than stay stuck.
+            // pending count to drain back to this iteration's own
+            // baseline rather than stay stuck above it.
             let reap_deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                if session.pending_worker_count() == 0 {
+                if pending_worker_count() <= baseline {
                     break;
                 }
                 assert!(
@@ -768,6 +811,77 @@ mod tests {
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
+            drop(session);
+        }
+    }
+
+    #[test]
+    fn dropping_a_session_with_a_pending_worker_does_not_lose_the_reaping_owner() {
+        // C2P2-004B's exact required test: force genuine pending cleanup,
+        // drop the session *before* releasing the blocker, then release
+        // it and prove a surviving owner - never the destroyed session -
+        // still joins/drains the worker. `session` is moved into and
+        // used by the spawned thread, then dropped on a *further*
+        // throwaway thread (see the comment at that `drop` call for why
+        // it can't just be dropped inline) - so by the time this test
+        // observes anything, the session that owned the original
+        // (pre-fix) `pending_workers` field no longer exists at all -
+        // exactly the "ordinary caller path of dropping/replacing that
+        // retired session" the finding named.
+        let baseline = pending_worker_count();
+        let hold_for = RETIREMENT_TIMEOUT * 3;
+
+        let session = SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_TEST_NEVER_READ", "1")]).unwrap();
+        let child = Arc::clone(&session.child);
+
+        let request_thread = std::thread::spawn(move || {
+            let mut session = session;
+            let result = session.request(&sample_request(300));
+            // Drop the session on its own throwaway thread rather than
+            // inline here: `SidecarSession::drop` itself calls the
+            // bounded (but still synchronous, still contended-on-this-
+            // same-lock) `retire_now`, so dropping inline would block
+            // *this* thread - and therefore `request_thread.join()`
+            // below - until that second retirement attempt resolves,
+            // which (once the blocker eventually releases) quietly
+            // kills the child and reaps the worker all on its own,
+            // defeating the point of this test: observing the worker
+            // still pending *before* anything resolves, with the
+            // session already gone.
+            std::thread::spawn(move || drop(session));
+            result
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        let blocker = std::thread::spawn(move || {
+            let _guard = child.lock().unwrap_or_else(|e| e.into_inner());
+            std::thread::sleep(hold_for);
+        });
+
+        let result = request_thread.join().unwrap();
+        assert!(matches!(result, Err(SidecarClientError::RetirementFailed(_))), "{:?}", result);
+
+        // The session is already dropped (inside the thread above) at
+        // this point, yet the worker it spawned must still be tracked by
+        // a surviving owner.
+        assert!(pending_worker_count() > baseline, "the pending worker must survive its owning session's drop");
+
+        blocker.join().expect("blocker thread must not panic");
+
+        // Only once the blocker releases can the real kill/wait finally
+        // happen and the worker's blocked read unblock. Nothing in this
+        // test calls anything on the dropped session - the drain must
+        // come from the process-wide registry alone.
+        let reap_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if pending_worker_count() <= baseline {
+                break;
+            }
+            assert!(
+                Instant::now() < reap_deadline,
+                "a worker orphaned by its owning session's drop must still eventually be reaped"
+            );
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
