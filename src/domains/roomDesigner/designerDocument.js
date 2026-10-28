@@ -733,8 +733,9 @@ export function findPipeRun(design, pipeId) {
  * Deep-detach caller-supplied routing metadata (D10-01 admission rule):
  * the stored run must never alias a caller object. structuredClone when
  * available, JSON round-trip as fallback (plain metadata only; a value
- * that survives neither is stored as-is rather than throwing, since
- * admission must not invent validation the validators own).
+ * that survives neither throws from the JSON fallback — admission does
+ * not invent validation the validators own, but it also does not
+ * silently store an uncloned value).
  */
 function deepDetachMetadata(value) {
   if (value === null || typeof value !== "object") return value;

@@ -546,7 +546,7 @@ export function validateBranchTakeoff(designOrRun, maybeRun) {
  *   run.meterStraightUpstreamIn / run.meterStraightDownstreamIn.
  *   Diameters come only from the explicit schedule, and the authored
  *   lengths must also be evidenced by straight single-axis intervals
- *   in the route itself (two distinct intervals meeting the two
+ *   in the route itself (two adjacent intervals meeting the two
  *   requirements, or one interval meeting their sum).
  * - valves: run.valveStations [{ parallelTo: "rack"|"vessel-centerline",
  *   operatorSide: boolean }]. parallelTo "other" is a mismatch;
@@ -743,7 +743,7 @@ export function routeReferenceChecks(designOrRun, maybeRun) {
         // Geometric interval evidence: the authored lengths must also be
         // present as straight single-axis intervals in the route itself.
         // Maximal straight runs (consecutive collinear forward legs
-        // merged) qualify when two distinct intervals meet the upstream
+        // merged) qualify when two adjacent intervals meet the upstream
         // and downstream requirements, or one interval meets their sum
         // (the existential placement: the meter sits somewhere on a
         // straight run long enough for both sides). Without a design or
@@ -773,10 +773,19 @@ export function routeReferenceChecks(designOrRun, maybeRun) {
             }
           }
         }
+        // The paired intervals must be ADJACENT — the two sides of
+        // the one junction where the meter sits. Any two intervals
+        // anywhere in the route would let a satisfying run, an
+        // irrelevant zigzag, then another satisfying run pass even
+        // though no single point has adequate straight length on both
+        // sides at once.
         const distinct =
           intervals !== null &&
           intervals.some(
-            (r1, i) => r1.length >= upReq && intervals.some((r2, j) => j !== i && r2.length >= downReq),
+            (r1, i) =>
+              r1.length >= upReq &&
+              ((i > 0 && intervals[i - 1].length >= downReq) ||
+                (i + 1 < intervals.length && intervals[i + 1].length >= downReq)),
           );
         if (intervals !== null && (intervals.some((r) => r.length >= upReq + downReq) || distinct)) {
           out.meter = { state: "PASS", findings: [] };
@@ -793,7 +802,7 @@ export function routeReferenceChecks(designOrRun, maybeRun) {
                       `straight intervals (no design or route to judge).`
                   : `Pipe run ${runId} meter route lacks straight fitting-free ` +
                       `intervals of ${upReq} in upstream and ${downReq} in downstream ` +
-                      `(two distinct intervals, or one of ${upReq + downReq} in).`,
+                      `(two adjacent intervals, or one of ${upReq + downReq} in).`,
               ),
             ],
           };

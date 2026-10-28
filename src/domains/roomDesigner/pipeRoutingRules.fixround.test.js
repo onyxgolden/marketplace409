@@ -454,6 +454,36 @@ describe("D687-004 reference checks: closed schedules", () => {
     expect(routeReferenceChecks(design, run).meter.state).toBe("PASS");
   });
 
+  it("meter: non-adjacent satisfying intervals do not pass (D687-004 round 2)", () => {
+    // Claude's round-1 probe, replicated: a satisfying 50 in run, an
+    // irrelevant zigzag, then a satisfying 25 in run much later
+    // (upReq=40, downReq=20). No single junction has adequate upstream
+    // AND downstream straight length at once, so the paired
+    // requirement must NOT pass — only adjacent intervals (the two
+    // sides of one meter junction) or one interval covering the sum
+    // qualify.
+    const { design, run } = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 50, y: 5 },
+        { x: 55, y: 5 },
+        { x: 55, y: 10 },
+        { x: 60, y: 10 },
+        { x: 60, y: 35 },
+      ],
+      "p1",
+      {
+        diameterIn: 4,
+        isMeterRun: true,
+        meterSchedule: { upstreamDiameters: 10, downstreamDiameters: 5 },
+        meterStraightUpstreamIn: 40,
+        meterStraightDownstreamIn: 20,
+      },
+    );
+    expect(routeReferenceChecks(design, run).meter.state).toBe("METER_SCHEDULE_NOT_VERIFIED");
+  });
+
   it("meter: intervals too short for the requirements are unverified", () => {
     const { design, run } = flat([{ x: 0, y: 0 }, { x: 30, y: 0 }], "p1", {
       diameterIn: 4,
