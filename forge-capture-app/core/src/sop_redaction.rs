@@ -949,6 +949,13 @@ pub enum PixelProofFailure {
     /// A pixel inside a declared region is not the fixed redaction
     /// pixel.
     UnpaintedPixel { region: (i64, i64, u64, u64) },
+    /// `width * height * 4` itself overflows `usize` — panel fix round
+    /// 2's finding: a prior version computed this with plain (unchecked)
+    /// multiplication, so absurd dimensions could wrap the expected
+    /// length down to something small enough to pass the buffer-length
+    /// check against an empty/tiny buffer, after which indexing into it
+    /// panicked instead of failing closed.
+    RasterDimensionsOverflow { width: u32, height: u32 },
 }
 
 /// Brief §3.5 check 1: "every declared redaction rectangle in the
@@ -958,7 +965,10 @@ pub enum PixelProofFailure {
 /// region or buffer this function cannot trust is a failure, not a
 /// vacuous pass over zero remaining pixels (C2P3-002).
 pub fn verify_pixel_proof(rgba: &[u8], width: u32, height: u32, regions: &[(i64, i64, u64, u64)]) -> Result<(), PixelProofFailure> {
-    let expected_len = width as usize * height as usize * 4;
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|area| area.checked_mul(4))
+        .ok_or(PixelProofFailure::RasterDimensionsOverflow { width, height })?;
     if rgba.len() != expected_len {
         return Err(PixelProofFailure::InvalidRasterBufferLength { expected: expected_len, actual: rgba.len() });
     }
@@ -979,6 +989,17 @@ pub fn verify_pixel_proof(rgba: &[u8], width: u32, height: u32, regions: &[(i64,
         for yy in (y as u32)..(bottom as u32) {
             for xx in (x as u32)..(right as u32) {
                 let idx = (yy as u64 * width as u64 + xx as u64) as usize * 4;
+                // Defense in depth (panel fix round 2): the checks above
+                // already guarantee this never trips given a correctly
+                // checked `expected_len`, but a safety-critical proof
+                // never relies on exactly one guard holding - verify the
+                // index actually fits the real buffer before touching it.
+                let Some(last_byte) = idx.checked_add(3) else {
+                    return Err(PixelProofFailure::RegionOutsideRaster { region });
+                };
+                if last_byte >= rgba.len() {
+                    return Err(PixelProofFailure::RegionOutsideRaster { region });
+                }
                 let pixel = (rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]);
                 if pixel != crate::annotations::REDACTION_PIXEL {
                     return Err(PixelProofFailure::UnpaintedPixel { region });
@@ -1963,6 +1984,35 @@ mod tests {
         crate::annotations::paint_redaction_rect(&mut rgba, width, height, crate::coords::RectI { x: 0, y: 0, w: 10, h: 10 });
         let regions = vec![(0, 0, 10, 10)];
         assert_eq!(verify_pixel_proof(&rgba, width, height, &regions), Ok(()));
+    }
+
+    #[test]
+    fn pixel_proof_rejects_overflowing_dimensions_instead_of_panicking() {
+        // Panel fix round 2's exact demonstrable panic: width*height*4
+        // computed with plain multiplication wraps to a small number for
+        // absurd dimensions, letting an empty buffer pass the length
+        // check and then panic on the first indexed pixel. Must fail
+        // closed with a typed error instead - this is the fail-before
+        // case (it panicked before this fix, in release mode where
+        // overflow checks are off).
+        let huge = 1u32 << 31;
+        let rgba: Vec<u8> = vec![];
+        assert_eq!(
+            verify_pixel_proof(&rgba, huge, huge, &[(0, 0, 1, 1)]),
+            Err(PixelProofFailure::RasterDimensionsOverflow { width: huge, height: huge })
+        );
+    }
+
+    #[test]
+    fn pixel_proof_accepts_the_maximal_in_bounds_region_on_a_small_frame() {
+        // Positive control alongside the overflow-rejection case above:
+        // ordinary dimensions with a region exactly filling the frame
+        // (right == width, bottom == height) must still be accepted.
+        let width = 10u32;
+        let height = 10u32;
+        let mut rgba = vec![255u8; (width as usize) * (height as usize) * 4];
+        crate::annotations::paint_redaction_rect(&mut rgba, width, height, crate::coords::RectI { x: 0, y: 0, w: 10, h: 10 });
+        assert_eq!(verify_pixel_proof(&rgba, width, height, &[(0, 0, 10, 10)]), Ok(()));
     }
 
     // ---- verification: removal proof ----
