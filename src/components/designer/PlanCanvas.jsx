@@ -23,7 +23,7 @@ import {
   snapPoint,
   snapScalar,
   PHONE_AUTO_FIT_BREAKPOINT_PX,
-  phoneAutoFitView,
+  fitViewToBounds,
   underlayContainsPoint,
   wallLength,
   zoomToFitRect,
@@ -326,9 +326,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   }
 
-  // Phone auto-fit: when a design opens (or the open design/level switches)
-  // on a phone-sized canvas, fit the whole drawing in view once instead of
-  // opening at the desktop default view cropped to a corner. The canvas
+  // Open-time auto-fit: when a design opens (or the open design/level
+  // switches), fit the whole drawing in view once instead of opening at
+  // the default view cropped to a corner. This applies on ALL viewport
+  // sizes — phone and desktop alike (desktop previously never fit, so a
+  // large drawing opened showing only its top-left corner). The canvas
   // itself is never remounted on a level switch (its pan/zoom state is
   // deliberately kept alive), so the trigger is the autoFitKey identity
   // threaded down from the screen — it changes on open/switch and is
@@ -336,56 +338,76 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // once on mount. Same "adjust state during render" pattern as the
   // zoom-to-sheet block above; waits until the canvas has been measured,
   // and a user interaction before it applies cancels it for this identity.
-  // Desktop-sized canvases never fit, so desktop behavior is unchanged.
+  //
+  // Settling rule: an identity settles ONLY when a fit actually lands on
+  // non-empty content. An attempt against empty bounds (the design loads
+  // asynchronously after mount, so the first measured render usually has
+  // nothing to fit) establishes the default view but leaves the identity
+  // pending, so content arriving later under the same identity — the
+  // async load landing, not an edit — still fits once. Once settled,
+  // edits never refit: the view is the user's from then on. A user
+  // interaction (pointer/wheel) before the fit lands cancels it for this
+  // identity, so a late fit can never yank the view away from work
+  // already in progress.
   const autoFitIdentity = autoFitKey ?? "__mount__";
-  // Set by the first wheel / pointer interaction on the canvas. A phone
-  // auto-fit that has not applied yet is cancelled by it, so a late fit
-  // can never yank the view away from work already in progress. Reset
+  // Set by the first wheel / pointer interaction on the canvas. An
+  // open-time fit that has not applied yet is cancelled by it, so a late
+  // fit can never yank the view away from work already in progress. Reset
   // when the auto-fit identity changes (a new design/level opened).
   const [userNav, setUserNav] = useState(false);
-  // Interactive zoom floor while a phone fit is in effect: a fitted scale
-  // can sit far below MIN_SCALE (a very large drawing on a small canvas),
-  // and flooring the first wheel zoom at MIN_SCALE would snap the view.
-  // Null on desktop / after a fit at or above MIN_SCALE, where the floor
-  // is exactly MIN_SCALE as before.
+  // Interactive zoom floor while an open-time fit is in effect: a fitted
+  // scale can sit far below MIN_SCALE (a very large drawing on a small
+  // canvas), and flooring the first wheel zoom at MIN_SCALE would snap
+  // the view. Null when no fit is in effect / after a fit at or above
+  // MIN_SCALE, where the floor is exactly MIN_SCALE as before.
   const [fitFloor, setFitFloor] = useState(null);
+  // Settlement belongs to the current activation of an identity, not to a
+  // remembered matching string: returning to an earlier identity after a
+  // pending one (empty, unmeasured, or cancelled) must fit again, even
+  // though that identity settled once before. The marker is invalidated
+  // on every identity transition below, alongside the view/floor/
+  // navigation reset.
+  const [fitSettledIdentity, setFitSettledIdentity] = useState(null);
   const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
   if (prevAutoFitIdentity !== autoFitIdentity) {
     setPrevAutoFitIdentity(autoFitIdentity);
     setUserNav(false);
     // Identity-scoped fit state never leaks into the next design/level:
     // the previous identity's fitted zoom floor belongs to its drawing,
-    // not this one. On a phone-sized (or not-yet-measured) canvas the
-    // view also returns to the default, so a following identity with no
-    // fit of its own — empty content, or a fit cancelled before the
-    // canvas was measured — cannot inherit the previous fitted view.
-    // A measured desktop canvas keeps its pan/zoom across switches, as
-    // before (desktop never auto-fits).
+    // not this one. The view returns to the default on every identity
+    // change, so a following identity with no fit of its own — empty
+    // content, or a fit cancelled before the canvas was measured —
+    // cannot inherit the previous fitted view. Settlement is invalidated
+    // with it: a later return to this identity is a fresh activation and
+    // fits again, instead of being skipped as "already settled".
+    setFitSettledIdentity(null);
     setFitFloor(null);
-    if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
-      setView({ ...DEFAULT_VIEW });
-    }
+    setView({ ...DEFAULT_VIEW });
   }
-  const [appliedAutoFitIdentity, setAppliedAutoFitIdentity] = useState(null);
   if (
-    appliedAutoFitIdentity !== autoFitIdentity &&
+    fitSettledIdentity !== autoFitIdentity &&
     prevAutoFitIdentity === autoFitIdentity &&
     canvasSize.w > 0 &&
     canvasSize.h > 0 &&
     !userNav
   ) {
-    setAppliedAutoFitIdentity(autoFitIdentity);
-    const fitted = phoneAutoFitView(designContentBounds(design), canvasSize, {
+    const fitted = fitViewToBounds(designContentBounds(design), canvasSize, {
+      paddingPx: canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX ? 24 : 48,
       maxScale: MAX_SCALE,
     });
     if (fitted) {
+      setFitSettledIdentity(autoFitIdentity);
       setView(fitted);
       setFitFloor(fitted.scale < MIN_SCALE ? fitted.scale : null);
-    } else if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
-      // Phone-sized canvas with nothing to fit (e.g. an empty level):
-      // explicitly establish the default view and the normal interactive
-      // floor instead of leaving a previous identity's fitted view and
-      // below-minimum floor in place.
+    } else if (
+      view.scale !== DEFAULT_VIEW.scale ||
+      view.ox !== DEFAULT_VIEW.ox ||
+      view.oy !== DEFAULT_VIEW.oy
+    ) {
+      // Nothing to fit yet (e.g. an empty level, or the design still
+      // loading): establish the default view WITHOUT settling, so content
+      // arriving later under this identity still fits once. The guard
+      // keeps this from re-setting state on every render while pending.
       setView({ ...DEFAULT_VIEW });
       setFitFloor(null);
     }
@@ -1572,7 +1594,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
     // The only interactive scale clamp in this component (there are no
     // pinch handlers or zoom buttons). Its floor drops to the fitted scale
-    // while a below-MIN_SCALE phone fit is in effect (see fitFloor above);
+    // while a below-MIN_SCALE open-time fit is in effect (see fitFloor above);
     // otherwise it is exactly MIN_SCALE, as before.
     const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
     setView((v) => {

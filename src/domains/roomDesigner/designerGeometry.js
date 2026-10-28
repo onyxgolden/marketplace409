@@ -263,14 +263,15 @@ export const PHONE_AUTO_FIT_PADDING_PX = 24;
 export const PHONE_AUTO_FIT_DEGENERATE_IN = 12;
 
 /**
- * View that fits a design's content bounds on a phone-sized canvas, or
- * null when no fit should happen: no/invalid bounds, a non-positive or
- * desktop-sized viewport, or bounds with no extent on either axis. Pure —
- * the caller owns when (and whether) to apply the result. A bounds
- * dimension of exactly 0 is padded to PHONE_AUTO_FIT_DEGENERATE_IN,
- * centered, so a single straight wall still fits.
+ * View that fits a design's content bounds on a canvas of ANY size, or
+ * null when no fit should happen: no/invalid bounds, a non-positive
+ * viewport, or bounds with no extent on either axis. Pure — the caller
+ * owns when (and whether) to apply the result. A bounds dimension of
+ * exactly 0 is padded to PHONE_AUTO_FIT_DEGENERATE_IN, centered, so a
+ * single straight wall still fits. The content-derived floor (see below)
+ * guarantees the fitted scale never clips the drawing, however large.
  */
-export function phoneAutoFitView(
+export function fitViewToBounds(
   bounds,
   viewport,
   { paddingPx = PHONE_AUTO_FIT_PADDING_PX, maxScale = 12 } = {},
@@ -286,12 +287,7 @@ export function phoneAutoFitView(
   ) {
     return null;
   }
-  if (
-    !viewport ||
-    !(viewport.w > 0) ||
-    !(viewport.h > 0) ||
-    viewport.w >= PHONE_AUTO_FIT_BREAKPOINT_PX
-  ) {
+  if (!viewport || !(viewport.w > 0) || !(viewport.h > 0)) {
     return null;
   }
   if (bounds.widthIn === 0 && bounds.heightIn === 0) return null;
@@ -325,6 +321,27 @@ export function phoneAutoFitView(
     viewport,
     { paddingPx, minScale, maxScale },
   );
+}
+
+/**
+ * View that fits a design's content bounds on a phone-sized canvas, or
+ * null when no fit should happen: no/invalid bounds, a non-positive or
+ * desktop-sized viewport, or bounds with no extent on either axis. Pure —
+ * the caller owns when (and whether) to apply the result. A bounds
+ * dimension of exactly 0 is padded to PHONE_AUTO_FIT_DEGENERATE_IN,
+ * centered, so a single straight wall still fits. Phone-only wrapper
+ * around fitViewToBounds; the open-time fit in PlanCanvas uses
+ * fitViewToBounds directly so desktop canvases fit too.
+ */
+export function phoneAutoFitView(
+  bounds,
+  viewport,
+  { paddingPx = PHONE_AUTO_FIT_PADDING_PX, maxScale = 12 } = {},
+) {
+  if (!viewport || viewport.w >= PHONE_AUTO_FIT_BREAKPOINT_PX) {
+    return null;
+  }
+  return fitViewToBounds(bounds, viewport, { paddingPx, maxScale });
 }
 
 /** Short label for a grid spacing: 6 -> `6″`, 12 -> `1′`. */

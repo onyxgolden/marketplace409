@@ -134,12 +134,13 @@ describe("PlanCanvas phone auto-fit", () => {
     }
   });
 
-  it("leaves the default view untouched on a desktop canvas", () => {
+  it("fits the whole drawing on a desktop canvas too (open-time fit is all sizes)", () => {
     mockSize = { w: 1200, h: 800 };
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 200, y: 100 });
     renderCanvas(design, { autoFitKey: "p1:level1" });
-    // Default view { scale: 1.6, ox: 60, oy: 60 }, exactly as before.
-    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 380, y2: 220 });
+    // Desktop padding is 48px: scale = min(1104 / 200, 704 / 100) = 5.52,
+    // ox = (1200 - 200 * 5.52) / 2 = 48, oy = (800 - 100 * 5.52) / 2 = 124.
+    expect(coords(wallLine(container))).toEqual({ x1: 48, y1: 124, x2: 1152, y2: 676 });
   });
 
   it("keeps the default view for an empty design on a phone canvas", () => {
@@ -222,11 +223,14 @@ describe("PlanCanvas phone auto-fit", () => {
     renderCanvas(createEmptyDesign(), { autoFitKey: "p1:level2" });
     expect(container.textContent).toContain("Start your floor plan");
 
-    // Content appearing under the same (already-applied) identity does
-    // not refit — its position proves the view is the default again.
+    // Content arriving later under the same (still pending) identity DOES
+    // fit once — the empty attempt never settled it, so the async load
+    // landing is not stranded at the default view. This is the
+    // late-content rule: only a landed fit settles an identity.
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
     renderCanvas(design, { autoFitKey: "p1:level2" });
-    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(24, 6);
+    expect(coords(wallLine(container)).y1).toBeCloseTo(264.5, 6);
 
     // And the interactive floor is MIN_SCALE again, not the previous
     // design's ≈0.0445 floor: zooming out repeatedly clamps at 0.35.
@@ -272,15 +276,18 @@ describe("PlanCanvas phone auto-fit", () => {
     });
 
     // Another identity change, to an empty design, still unmeasured;
-    // only now is the canvas measured. No fit is produced for it, so it
-    // must open at the default view with the normal floor — the first
-    // design's fitted view/floor must not leak through the cancelled one.
+    // only now is the canvas measured. Cancellation is per-identity, so
+    // level3 — never cancelled itself — gets its OWN fresh fit when its
+    // content arrives, not level1's leaked fitted view/floor and not the
+    // cancelled level2's default: scale = 342 / 240 = 1.425, which sits
+    // above MIN_SCALE, so the interactive floor is the normal 0.35.
     renderCanvas(createEmptyDesign(), { autoFitKey: "p1:level3" });
     mockSize = { w: 390, h: 700 };
     triggerResize();
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
     renderCanvas(design, { autoFitKey: "p1:level3" });
-    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+    expect(coords(wallLine(container)).x1).toBeCloseTo(24, 6);
+    expect(coords(wallLine(container)).y1).toBeCloseTo(264.5, 6);
     const svg2 = container.querySelector("svg");
     for (let i = 0; i < 30; i += 1) {
       act(() => {
