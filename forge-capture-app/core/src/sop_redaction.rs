@@ -1305,6 +1305,14 @@ pub enum ImageRectError {
     /// as a distinct, review-requiring outcome rather than a silent
     /// `Ok(vec![])`.
     AnalysisExhausted { h_segments: usize, v_segments: usize },
+    /// C691-003A: dimensions and buffer length can both check out exactly
+    /// while still naming a decoded RGBA raster larger than the
+    /// documented, shared 128 MiB decoded-bytes cap
+    /// ([`crate::artifact::MAX_ARTIFACT_BYTES`]) — a segment cap bounds
+    /// segment *count*, not the pixel work of scanning a uniform image of
+    /// that size, so this must be refused before either scan runs, not
+    /// discovered only after one hangs or runs long.
+    DecodedSizeTooLarge { width: u32, height: u32, bytes: u64 },
 }
 
 fn luma_at(rgba: &[u8], width: u32, x: u32, y: u32) -> u8 {
@@ -1476,6 +1484,16 @@ fn find_rectangles(h_segs: &[HSegment], v_segs: &[VSegment]) -> Vec<(i64, i64, u
 /// Returns `Err` only for malformed input (zero dimension, or a buffer
 /// whose length doesn't match `frame_width * frame_height * 4`) — never
 /// for "no rectangles found," which is a legitimate `Ok(vec![])`.
+/// C691-003A: separated from the function body so the exact-cap and
+/// one-byte-over-cap boundary can be tested directly, without allocating
+/// an actual 128 MiB (or larger) buffer.
+fn check_decoded_size_admissible(width: u32, height: u32, decoded_bytes: u64) -> Result<(), ImageRectError> {
+    if decoded_bytes > crate::artifact::MAX_ARTIFACT_BYTES as u64 {
+        return Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes });
+    }
+    Ok(())
+}
+
 pub fn structural_candidates_from_image_rects(
     rgba: &[u8],
     frame_width: u32,
@@ -1489,6 +1507,7 @@ pub fn structural_candidates_from_image_rects(
         .checked_mul(frame_height as usize)
         .and_then(|area| area.checked_mul(4))
         .ok_or(ImageRectError::DimensionsOverflow { width: frame_width, height: frame_height })?;
+    check_decoded_size_admissible(frame_width, frame_height, expected as u64)?;
     if rgba.len() != expected {
         return Err(ImageRectError::BufferLengthMismatch { expected, found: rgba.len() });
     }
@@ -2732,6 +2751,51 @@ mod tests {
         assert_eq!(
             structural_candidates_from_image_rects(&buf, huge, huge, "frame-1"),
             Err(ImageRectError::DimensionsOverflow { width: huge, height: huge })
+        );
+    }
+
+    #[test]
+    fn decoded_size_exactly_at_the_128_mib_cap_is_admissible() {
+        // C691-003A: 8192 x 4096 x 4 == 128 MiB exactly - the shared
+        // artifact::MAX_ARTIFACT_BYTES cap. Tested against the
+        // extracted admission helper, not the full entrypoint, so this
+        // doesn't need to allocate a 128 MiB buffer.
+        let (width, height): (u32, u32) = (8192, 4096);
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(decoded_bytes, crate::artifact::MAX_ARTIFACT_BYTES as u64);
+        assert_eq!(check_decoded_size_admissible(width, height, decoded_bytes), Ok(()));
+    }
+
+    #[test]
+    fn decoded_size_one_block_over_the_128_mib_cap_is_rejected() {
+        // C691-003A exact counterexample: dimensions and buffer length
+        // can both check out while still naming a decoded raster larger
+        // than the documented 128 MiB decoded-RGBA cap - 8193 x 4096 x 4
+        // is exactly 128 MiB + 16 KiB. Before this fix, no admission
+        // check existed at all, so this buffer size would have reached
+        // both pixel scans.
+        let (width, height): (u32, u32) = (8193, 4096);
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(decoded_bytes, crate::artifact::MAX_ARTIFACT_BYTES as u64 + 16 * 1024);
+        assert_eq!(
+            check_decoded_size_admissible(width, height, decoded_bytes),
+            Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes })
+        );
+    }
+
+    #[test]
+    fn an_oversized_frame_is_refused_by_the_public_entrypoint_before_either_scan() {
+        // Same oversized partner as above, exercised through the public
+        // function this time, with a short/empty buffer standing in for
+        // the (never allocated) 128 MiB+ raster - the size check must
+        // run, and fail, before the buffer-length check that would
+        // otherwise also reject this input for a different reason.
+        let (width, height): (u32, u32) = (8193, 4096);
+        let buf: Vec<u8> = vec![];
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(
+            structural_candidates_from_image_rects(&buf, width, height, "frame-1"),
+            Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes })
         );
     }
 
