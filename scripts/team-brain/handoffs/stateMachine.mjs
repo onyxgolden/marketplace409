@@ -343,7 +343,19 @@ export function createHandoffMachine(db) {
 
     // Step 4: allowed only when the three prior states exist in order and all
     // artifact bindings still agree. Never inferred from caller claims.
-    async completeHandoff(id, { actor, recordedAt, reason }) {
+    //
+    // TBP4-001A: `fenceCheck`, when given, is invoked synchronously as the
+    // very last step before the COMPLETE write below, with no `await`
+    // between that check and the write it guards. Every step above it in
+    // this transition (`requireHandoff`, the replay-event select, this
+    // step's own event-chain select) crosses an `await`, any one of which
+    // a concurrent rebind could land in; a caller-side preflight check run
+    // before calling this function cannot see a rebind that happens during
+    // those awaits. Re-validating here, synchronously adjacent to the
+    // actual state-mutating statement, closes that window completely:
+    // nothing can run between this check and the dispatch of the write it
+    // guards, since JS only yields at an `await`.
+    async completeHandoff(id, { actor, recordedAt, reason, fenceCheck }) {
       return transition(id, "COMPLETE", {
         actor,
         recordedAt,
@@ -378,6 +390,9 @@ export function createHandoffMachine(db) {
               chain,
             });
           }
+          // TBP4-001A: last synchronous check before the write it guards -
+          // see the comment on completeHandoff above.
+          if (typeof fenceCheck === "function") fenceCheck();
           await t.query("update team_brain_handoffs set state = 'COMPLETE', updated_at = $2 where handoff_id = $1", [
             id,
             recordedAt,

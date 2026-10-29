@@ -760,6 +760,35 @@ export function createVerifiedHandoffDriver({
       ) {
         return { handoff, queueReceipt: existingReceipt, replayed: true };
       }
+      // TBP4-003A: deliverThroughOutbox's own replay gate below only
+      // compares *content* identity (export bytes, destination,
+      // expectedPriorBlob, task binding) - it has no idea this call also
+      // claims an audit identity (actor/recordedAt/reason). If content
+      // still matches a previously delivered receipt exactly but the
+      // audit identity is the only thing that changed (the full-identity
+      // check above didn't return, so something differs), falling
+      // through would let deliverThroughOutbox "resume" the already-
+      // delivered entry and a new receipt get written carrying the
+      // changed audit identity - silently accepting an audit-only replay
+      // mismatch instead of refusing it. Catch that case explicitly,
+      // before the fall-through, rather than widening
+      // deliverThroughOutbox's shared conflict gate (other callers rely
+      // on its current, narrower content-only comparison).
+      if (
+        existingReceipt &&
+        handoff.state === "QUEUE_UPDATED" &&
+        preEntry &&
+        preEntry.state === "DELIVERED" &&
+        preEntry.payload.exportBytes === queueExportBytes &&
+        existingReceipt.queue.repo === targetRepo &&
+        existingReceipt.queue.path === targetPath &&
+        existingReceipt.expectedPriorBlob === expectedPriorBlob
+      ) {
+        fail(CODES.CONFLICTING_REPLAY, `Queue answer for ${queueOperationId} already recorded with a different actor/time/reason`, {
+          handoffId,
+          queueOperationId,
+        });
+      }
       // Identity didn't fully match (or there's no existing receipt
       // yet): fall through to the normal path below, same as before -
       // deliverThroughOutbox/enqueueOutbox is the actual conflict gate
@@ -1057,22 +1086,28 @@ export function createVerifiedHandoffDriver({
           });
         }
       }
-      // TBP4-001: re-check fencing immediately before the commit, not
-      // just at entry. Every check above this point ran across awaited
-      // I/O (git reads/head checks); a higher-generation worker can
-      // rebind the same `binding` object (checkFencing mutates it in
-      // place) while this call is suspended on one of those awaits.
-      // Re-checking here — right before the one remaining await, with
-      // no further awaited step before it — closes the gap the original
-      // single entry-point check left open: a stale worker that was
-      // valid when it started is caught before it ever appends COMPLETE
-      // or closes the queue item, rather than completing anyway.
+      // TBP4-001 / TBP4-001A: re-check fencing immediately before the
+      // commit, not just at entry — this call alone is not enough, since
+      // `completeHandoff` itself crosses several more awaits (its own
+      // handoff/event-chain reads) before it reaches the actual COMPLETE
+      // write. A higher-generation worker can rebind the same `binding`
+      // object (checkFencing mutates it in place) during any of those
+      // awaits, not just the ones before this line. This preflight check
+      // fails fast for the common case without paying for a DB round
+      // trip; `fenceCheck` below is the check that actually closes the
+      // window, re-validated synchronously immediately adjacent to the
+      // COMPLETE write itself, with no await in between.
       checkFencing(binding);
       // All checks pass: append COMPLETE first (the machine validates
       // the full event chain), then close the ledger item. A crash
       // between the two is re-applied by reconcile from the COMPLETE
       // event; a failure here leaves the ledger untouched.
-      handoff = await handoffs.completeHandoff(handoffId, { actor, recordedAt, reason });
+      handoff = await handoffs.completeHandoff(handoffId, {
+        actor,
+        recordedAt,
+        reason,
+        fenceCheck: () => checkFencing(binding),
+      });
       const queueItem = ledger.queueItems[key];
       if (queueItem) {
         queueItem.status = "CLOSED";

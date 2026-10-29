@@ -1060,6 +1060,40 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
     await c.db.close();
   }, 30000);
 
+  it("TBP4-001A: a rebind that lands after the preflight fencing check but before the COMPLETE write still blocks the write, because fenceCheck re-validates synchronously immediately before it", async () => {
+    // Unlike the TBP4-001 test above (which gates before completeHandoff
+    // is even called), this gates the call to handoffs.completeHandoff
+    // itself, so the outer preflight checkFencing(binding) in
+    // completeVerified has already PASSED by the time the rebind
+    // happens - proving the preflight alone would not have been enough,
+    // and that it is the fenceCheck re-validation inside completeHandoff
+    // (immediately before its COMPLETE write) that actually catches it.
+    const c = await setup();
+    await toQueue(c);
+    const origComplete = c.handoffs.completeHandoff.bind(c.handoffs);
+    let resolveGate, entered;
+    const atGate = new Promise((r) => (entered = r));
+    const gate = new Promise((r) => (resolveGate = r));
+    c.handoffs.completeHandoff = async (id, args) => {
+      entered();
+      await gate;
+      return origComplete(id, args);
+    };
+    const pending = complete(c);
+    await atGate;
+    const d2 = restart(c, { workerId: "worker-b", generation: 2 });
+    await begin(c, d2);
+    resolveGate();
+    await expectCode(pending, P4_CODES.STALE_WORKER);
+    // No COMPLETE event or close occurred: state is still QUEUE_UPDATED,
+    // the queue item is still open, and the binding reflects the real
+    // current owner.
+    expect((await c.handoffs.getHandoff("h-1")).state).toBe("QUEUE_UPDATED");
+    expect(c.ledger.queueItems["task:task-1"].status).not.toBe("CLOSED");
+    expect(c.ledger.bindings["h-1"].workerId).toBe("worker-b");
+    await c.db.close();
+  }, 30000);
+
   it("TBP4-001 positive control: an uninterrupted worker still completes normally", async () => {
     const c = await setup();
     const result = await toComplete(c);
@@ -1133,6 +1167,26 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
     );
     await c.db.close();
   });
+
+  it.each([
+    ["actor-only", { actor: "different-worker" }],
+    ["reason-only", { reason: "different" }],
+    ["recordedAt-only", { recordedAt: T5 }],
+  ])(
+    "TBP4-003A %s: recordQueueAnswer rejects a replay whose content (bytes/prior-blob/destination/binding) is identical but only that one audit field differs, instead of re-delivering through the outbox",
+    async (_label, extra) => {
+      const c = await setup();
+      await begin(c);
+      await publish(c);
+      await readback(c);
+      await queueAnswer(c);
+      await expectCode(queueAnswer(c, c.driver, extra), CODES.CONFLICTING_REPLAY);
+      // The outbox entry was not re-delivered and no second receipt was
+      // written over the original.
+      expect(c.outbox.entries.filter((e) => e.operationId === "op-queue-1")).toHaveLength(1);
+      await c.db.close();
+    },
+  );
 
   it("TBP4-003 extended positive control: an exact recordQueueAnswer replay (identical everything) still returns replayed:true", async () => {
     const c = await setup();
