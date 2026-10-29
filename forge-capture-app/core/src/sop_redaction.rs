@@ -1019,14 +1019,37 @@ pub fn detect_context_dependent(text: &str) -> Vec<DeterministicMatch> {
 /// outside this module at all.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewCandidateMatch {
-    pub rule_id: &'static str,
-    pub reason_code: &'static str,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    rule_id: &'static str,
+    reason_code: &'static str,
+    start_byte: usize,
+    end_byte: usize,
     corroborated: bool,
 }
 
 impl ReviewCandidateMatch {
+    /// C4A-001A: every field is private, not just `corroborated` — a
+    /// struct with even one public field lets an external caller use
+    /// Rust's functional-update syntax (`ReviewCandidateMatch { start_byte:
+    /// 999, ..legit }`) to transplant a real `corroborated: true` verdict
+    /// onto a byte range or rule_id that was never actually checked,
+    /// since `..legit` silently carries private fields across the
+    /// module boundary along with any public ones. With no public field
+    /// at all, no struct-literal expression of this type can be written
+    /// outside this module, `..base` included — the only instances that
+    /// can ever exist outside this module are ones this module itself
+    /// produced and handed out unmodified.
+    pub fn rule_id(&self) -> &'static str {
+        self.rule_id
+    }
+    pub fn reason_code(&self) -> &'static str {
+        self.reason_code
+    }
+    pub fn start_byte(&self) -> usize {
+        self.start_byte
+    }
+    pub fn end_byte(&self) -> usize {
+        self.end_byte
+    }
     /// Whether a nearby phone/address-type label corroborated this
     /// shape — the only signal [`bind_review_candidates`] consults to
     /// choose [`Disposition::Redact`] over [`Disposition::Pending`].
