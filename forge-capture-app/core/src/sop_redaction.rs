@@ -1887,8 +1887,44 @@ pub struct ReviewActionRequest<'a> {
 /// named: a confirmation cannot be transplanted onto a different
 /// reason, candidate, disposition, or session/source/derivative state
 /// than the one it was actually computed against.
+/// C6A-001D: a stable, versioned wire code for each [`Disposition`] —
+/// `{:?}` is Rust's own debug formatting, not a canonical wire
+/// representation, and is never guaranteed stable across a refactor
+/// that renames a variant.
+fn disposition_wire_code(d: Disposition) -> &'static str {
+    match d {
+        Disposition::Pending => "PENDING",
+        Disposition::Redact => "REDACT",
+        Disposition::MarkNonSensitive => "MARK_NON_SENSITIVE",
+    }
+}
+
+/// C6A-001D: length-prefixes every field (`"{len}:{content}"`,
+/// concatenated with no other separator) so field boundaries are
+/// unambiguous regardless of what bytes a field itself contains —
+/// unlike a fixed delimiter (even NUL), a length prefix cannot be
+/// confused with content, so a value placed inside one field can never
+/// shift where the next field is read to begin.
+fn length_prefixed_canonical(parts: &[&str]) -> String {
+    let mut out = String::new();
+    for p in parts {
+        out.push_str(&p.len().to_string());
+        out.push(':');
+        out.push_str(p);
+    }
+    out
+}
+
+/// The confirmation-digest wire format's domain separator and version
+/// tag (C6A-001D) — included as the canonical input's first field, so
+/// a digest computed under a future v2 format (different field set or
+/// order) can never collide with a v1 one even if the remaining bytes
+/// happened to coincide.
+const CONFIRMATION_DIGEST_DOMAIN_V1: &str = "forge-capture-sop-confirmation-v1";
+
 #[allow(clippy::too_many_arguments)]
 pub fn confirmation_digest(
+    session_id: &str,
     frame_id: &str,
     candidate_id: &str,
     new_disposition: Disposition,
@@ -1899,11 +1935,24 @@ pub fn confirmation_digest(
     model_manifest_sha256: Option<&str>,
     session_revision: u64,
 ) -> String {
-    let canonical = format!(
-        "{frame_id}\u{0}{candidate_id}\u{0}{new_disposition:?}\u{0}{reason}\u{0}{source_raster_sha256}\u{0}{}\u{0}{policy_version}\u{0}{}\u{0}{session_revision}",
+    // C6A-001C: session_id is now part of the canonical input, so a
+    // confirmation computed for one session can never validate against
+    // a different session even if every other bound field happens to
+    // coincide (same frame/candidate IDs, digests, policy/model, and
+    // revision number).
+    let canonical = length_prefixed_canonical(&[
+        CONFIRMATION_DIGEST_DOMAIN_V1,
+        session_id,
+        frame_id,
+        candidate_id,
+        disposition_wire_code(new_disposition),
+        reason,
+        source_raster_sha256,
         derivative_sha256.unwrap_or(""),
+        policy_version,
         model_manifest_sha256.unwrap_or(""),
-    );
+        &session_revision.to_string(),
+    ]);
     crate::sop_session::sha256_hex(canonical.as_bytes())
 }
 
@@ -2007,6 +2056,7 @@ pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequ
         return Err(DispositionChangeError::MissingReason);
     }
     let expected_digest = confirmation_digest(
+        &session.session_id,
         request.frame_id,
         request.candidate_id,
         request.new_disposition,
@@ -3819,6 +3869,7 @@ mod tests {
         // default-shaped fixtures.
         let confirmation_digest = confirmed.then(|| {
             let digest = confirmation_digest(
+                "sess-1",
                 frame_id,
                 candidate_id,
                 new_disposition,
@@ -4029,7 +4080,7 @@ mod tests {
         // Swap in a digest that was actually computed for a different
         // reason string - same session/frame/candidate/disposition
         // otherwise.
-        let wrong_digest = confirmation_digest("f1", "c1", Disposition::MarkNonSensitive, "a completely different reason", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let wrong_digest = confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "a completely different reason", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
         request.confirmation_digest = Some(&wrong_digest);
         assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
     }
@@ -4040,7 +4091,7 @@ mod tests {
             "f1",
             vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending), gs_c6_candidate("c2", "det.ssn", Disposition::Pending)],
         )]);
-        let digest_for_c2 = confirmation_digest("f1", "c2", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let digest_for_c2 = confirmation_digest("sess-1", "f1", "c2", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
         let request = ReviewActionRequest {
             frame_id: "f1",
             candidate_id: "c1",
@@ -4061,7 +4112,7 @@ mod tests {
         // landed). The old digest must not still validate just because
         // the caller also updated expected_session_revision to match.
         let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
-        let stale_digest = confirmation_digest("f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let stale_digest = confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
         session.revision = 1;
         let request = ReviewActionRequest {
             frame_id: "f1",
@@ -4081,6 +4132,77 @@ mod tests {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer", true);
         assert_eq!(validate_review_action(&session, &request), Ok(()));
+    }
+
+    #[test]
+    fn a_confirmation_digest_computed_for_a_different_session_does_not_validate() {
+        // C6A-001C: two sessions with identical frame/candidate IDs,
+        // source digest, policy/model, and revision - only session_id
+        // differs. A confirmation digest computed for one session must
+        // not validate against another.
+        let session_a = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let mut session_b = session_a.clone();
+        session_b.session_id = "sess-2".to_string();
+        let digest_for_a =
+            confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let request = ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: "verified",
+            confirmation_digest: Some(&digest_for_a),
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        assert_eq!(validate_review_action(&session_b, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
+    }
+
+    #[test]
+    fn embedded_delimiter_like_text_in_reason_does_not_create_a_field_boundary_collision() {
+        // C6A-001D adversarial partner: a reason crafted to resemble
+        // the canonical encoding's own length-prefix syntax (and to
+        // contain a raw NUL, the old delimiter) must still only match
+        // when the exact same reason is supplied back - length-
+        // prefixing (not a fixed delimiter) is what makes this safe.
+        let tricky_reason = "0:tel\u{0}555-234-5678";
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let correct_digest =
+            confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, tricky_reason, &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let request = ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: tricky_reason,
+            confirmation_digest: Some(&correct_digest),
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
+    }
+
+    #[test]
+    fn a_confirmation_digest_computed_with_no_derivative_does_not_validate_once_one_exists() {
+        // "Missing derivative identity" adversarial partner: a digest
+        // computed assuming no derivative yet (None) must not validate
+        // once the frame actually has one.
+        let mut frame = gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)]);
+        frame.redacted_derivative_sha256 = Some("d".repeat(64));
+        let session = gs_c6_session(vec![frame]);
+        let stale_digest =
+            confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let request = ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: "verified",
+            confirmation_digest: Some(&stale_digest),
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
     }
 
     #[test]
