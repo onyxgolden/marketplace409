@@ -105,6 +105,7 @@ export function createVerifiedHandoffDriver({
   provenanceFor = null,
   allowedRepos = DEFAULT_ALLOWED_REPOS,
   allowedPathPrefixes = DEFAULT_ALLOWED_PATH_PREFIXES,
+  locks = new Map(),
 } = {}) {
   if (!handoffs || typeof handoffs.beginHandoff !== "function") {
     fail(P4_CODES.INCOMPLETE_EVIDENCE, "Verified handoff driver requires a slice-1 handoff machine", {});
@@ -124,6 +125,40 @@ export function createVerifiedHandoffDriver({
 
   function queueItemKeyFor(binding) {
     return binding.taskId ? `task:${binding.taskId}` : `handoff:${binding.handoffId}`;
+  }
+
+  // TBP4-001A: a synchronous fencing re-check immediately before the
+  // COMPLETE write is necessary but not sufficient - the reviewer's
+  // counterexamples correctly showed that JS's run-to-completion
+  // guarantee holds only up to query *dispatch*, not through the
+  // database transaction's actual commit (the UPDATE's own await, the
+  // COMPLETE event INSERT, and the transaction commit itself are all
+  // further yield points a concurrent takeover can land in). Closing
+  // that fully requires one authoritative mechanism shared by takeover
+  // and completion. `locks` is an in-process, per-handoffId critical
+  // section covering both: beginVerified's takeover branch and
+  // completeVerified's entire body both acquire it, so whichever side
+  // gets there first either completes its full effect (fencing check
+  // through DB commit, or rebind through its own DB write) before the
+  // other's fencing check can even run - eliminating the interleaving
+  // instead of trying to out-synchronize it.
+  //
+  // Scope, honestly stated: this lock is in-process (shared across
+  // driver instances that share the same `locks` map, i.e. restarts of
+  // the same worker process, exactly like `ledger` already is). No
+  // running worker exists yet for this slice (per the binding brief);
+  // if/when takeover and completion run as genuinely separate OS
+  // processes, this lock cannot coordinate between them on its own and
+  // the authoritative-store option the review also named (a DB-backed
+  // conditional transition shared by both paths) becomes necessary. That
+  // is a schema-level change to an already-migrated production table
+  // and a separately scoped decision, not something to fold silently
+  // into this post-merge audit fix.
+  function withHandoffLock(handoffId, fn) {
+    const tail = locks.get(handoffId) || Promise.resolve();
+    const result = tail.then(fn);
+    locks.set(handoffId, result.then(() => {}, () => {}));
+    return result;
   }
 
   // Fencing: allowed iff this generation is strictly greater (takeover,
@@ -378,6 +413,14 @@ export function createVerifiedHandoffDriver({
       payloadHash: entry.payloadHash,
       envelopeSha256: sha256Hex(expectedBytes),
       contentSha256: envelope.contentSha256,
+      // TBP4-003: carry the same audit-identity fields publishOutcome's
+      // own receipt does, so a later replay against *this* receipt gets
+      // the same complete-identity comparison, not a weaker one just
+      // because this particular receipt was built via the
+      // delivered-but-not-yet-receipted recovery path.
+      expectedPriorBlob: delivery.priorBlob,
+      actor,
+      reason,
       deliveredAt: recordedAt,
       deliveryMethod: delivery.method || "outbox-resumed",
       outboxReceipt: delivery,
@@ -421,414 +464,7 @@ export function createVerifiedHandoffDriver({
     }
   }
 
-  return {
-    getLedger() {
-      return ledger;
-    },
-
-    getBinding(handoffId) {
-      return ledger.bindings[handoffId] || null;
-    },
-
-    getReceipts(handoffId) {
-      const binding = ledger.bindings[handoffId] || null;
-      return {
-        binding,
-        outcome: ledger.outcomeReceipts[handoffId] || null,
-        readbacks: [...(ledger.readbackReceipts[handoffId] || [])],
-        queueReceipts: ledger.queueReceipts.filter((r) => r.handoffId === handoffId),
-        queueItem: binding ? ledger.queueItems[queueItemKeyFor(binding)] || null : null,
-      };
-    },
-
-    // Bind a handoff to its queue item and owning worker. Re-beginning
-    // with the identical binding is idempotent (and may rebind the
-    // worker on a strictly greater generation); a different task or
-    // task snapshot is a conflicting replay.
-    async beginVerified({ handoffId, taskId = null, taskSnapshot = null, actor, recordedAt, reason }) {
-      assertNonEmptyString(handoffId, "beginVerified.handoffId");
-      assertNonEmptyString(actor, "beginVerified.actor");
-      assertUtcIso(recordedAt, "beginVerified.recordedAt");
-      assertNonEmptyString(reason, "beginVerified.reason");
-      if (taskId !== null) {
-        assertNonEmptyString(taskId, "beginVerified.taskId");
-        if (!taskSnapshot || !Number.isInteger(taskSnapshot.snapshotRevision) || !Number.isInteger(taskSnapshot.assignmentEpoch)) {
-          fail(P4_CODES.UNKNOWN_TASK_BINDING, `Task-bound handoff ${handoffId} requires a task snapshot (snapshotRevision, assignmentEpoch)`, {
-            handoffId,
-            taskId,
-          });
-        }
-      }
-      const existing = ledger.bindings[handoffId];
-      if (existing) {
-        // Field-wise comparison, not JSON string comparison: key order
-        // in the host's snapshot object must not decide identity.
-        const sameBinding =
-          existing.taskId === taskId &&
-          (existing.boundTask === null
-            ? taskSnapshot === null
-            : taskSnapshot !== null &&
-              existing.boundTask.snapshotRevision === taskSnapshot.snapshotRevision &&
-              existing.boundTask.assignmentEpoch === taskSnapshot.assignmentEpoch);
-        if (!sameBinding) {
-          fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already bound to a different task/snapshot`, {
-            handoffId,
-          });
-        }
-        checkFencing(existing);
-        const handoff = await handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
-        return { handoff, binding: existing, replayed: true };
-      }
-      const binding = {
-        handoffId,
-        taskId,
-        boundTask: taskSnapshot ? { ...taskSnapshot } : null,
-        workerId,
-        generation,
-      };
-      ledger.bindings[handoffId] = binding;
-      ledger.revision += 1;
-      const handoff = await handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
-      return { handoff, binding, replayed: false };
-    },
-
-    // Publish one immutable outcome. The stored bytes are the canonical
-    // envelope { operationId, handoffId, content, contentSha256 }, so
-    // the operation stamp is structural and a retry reproduces identical
-    // bytes. A lost reply (DELIVERY_UNKNOWN) leaves the outbox entry
-    // CLAIMED and the handoff OPEN: reconcile, never blind retry, and
-    // never assume the write failed.
-    async publishOutcome({ handoffId, operationId, content, targetRepo, targetPath, expectedPriorBlob, actor, recordedAt, reason }) {
-      const binding = requireBinding(handoffId);
-      checkFencing(binding);
-      assertNonEmptyString(operationId, "publishOutcome.operationId");
-      assertNonEmptyString(actor, "publishOutcome.actor");
-      assertUtcIso(recordedAt, "publishOutcome.recordedAt");
-      assertNonEmptyString(reason, "publishOutcome.reason");
-      assertNonEmptyString(expectedPriorBlob, "publishOutcome.expectedPriorBlob");
-      assertFullHex40(expectedPriorBlob, "publishOutcome.expectedPriorBlob");
-      const contentSha256 = sha256Hex(stableStringify(content));
-      const existingReceipt = ledger.outcomeReceipts[handoffId];
-      if (existingReceipt) {
-        if (
-          existingReceipt.operationId === operationId &&
-          existingReceipt.contentSha256 === contentSha256 &&
-          existingReceipt.artifact.repo === targetRepo &&
-          existingReceipt.artifact.path === targetPath
-        ) {
-          const handoff = await handoffs.getHandoff(handoffId);
-          return { handoff, receipt: existingReceipt, replayed: true };
-        }
-        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already has an outcome for a different operation/content/destination`, {
-          handoffId,
-          operationId,
-        });
-      }
-      const envelope = { operationId, handoffId, content, contentSha256 };
-      const existingEntry = findOutboxEntry(operationId);
-      if (existingEntry && existingEntry.state === "DELIVERED") {
-        // Crash after delivery, before writeOutcome/receipt store:
-        // resume from the delivery receipt without writing again.
-        return { ...(await finishDeliveredOutcome({ binding, operationId, actor, recordedAt, reason })), replayed: false };
-      }
-      const { receipt: deliveryReceipt } = await deliverThroughOutbox({
-        operationId,
-        targetRepo,
-        targetPath,
-        expectedPriorBlob,
-        payload: envelope,
-        createdAt: recordedAt,
-        tasks: null,
-      });
-      const artifact = {
-        repo: deliveryReceipt.targetRepo,
-        path: deliveryReceipt.targetPath,
-        commit: deliveryReceipt.head,
-        blob: deliveryReceipt.newBlob,
-        head: deliveryReceipt.head,
-      };
-      assertFullArtifactBinding(artifact);
-      const handoff = await handoffs.writeOutcome(handoffId, { actor, recordedAt, reason, artifact });
-      const receipt = {
-        operationId,
-        handoffId,
-        artifact,
-        payloadHash: findOutboxEntry(operationId).payloadHash,
-        envelopeSha256: sha256Hex(stableStringify(envelope)),
-        contentSha256,
-        deliveredAt: recordedAt,
-        deliveryMethod: "outbox",
-        outboxReceipt: deliveryReceipt,
-      };
-      ledger.outcomeReceipts[handoffId] = receipt;
-      ledger.revision += 1;
-      return { handoff, receipt, replayed: false };
-    },
-
-    // Advance to READBACK_VERIFIED on an independently produced receipt
-    // only. A caller `verified` field is refused, not ignored. A stored
-    // receipt with identical identity replays idempotently; a stored
-    // receipt with different identity conflicts; a state already past
-    // READBACK_VERIFIED with no stored receipt re-establishes evidence
-    // by a fresh independent read (marked reestablished) without
-    // re-advancing state.
-    async verifyReadback({ handoffId, verifier, checkedAt, reason, ...rest }) {
-      const binding = requireBinding(handoffId);
-      checkFencing(binding);
-      if (rest.verified !== undefined) {
-        fail(P4_CODES.INVALID_READBACK_CLAIM, "Readback refuses a caller-supplied verified claim; verification comes only from an independent Git read", {
-          handoffId,
-        });
-      }
-      assertNonEmptyString(verifier, "verifyReadback.verifier");
-      assertUtcIso(checkedAt, "verifyReadback.checkedAt");
-      assertNonEmptyString(reason, "verifyReadback.reason");
-      const handoff = await handoffs.getHandoff(handoffId);
-      const receipts = ledger.readbackReceipts[handoffId] || [];
-      if (receipts.length > 0) {
-        const latest = receipts[receipts.length - 1];
-        if (!artifactEquals(latest.artifact, handoff.artifact)) {
-          fail(P4_CODES.READBACK_MISMATCH, `Stored readback receipt for ${handoffId} does not match the handoff's written artifact`, {
-            handoffId,
-          });
-        }
-        if (latest.verifier === verifier && latest.checkedAt === checkedAt && latest.reason === reason) {
-          return { handoff, receipt: latest, replayed: true };
-        }
-        fail(CODES.CONFLICTING_REPLAY, `Readback for ${handoffId} already recorded with a different verifier/time/reason`, {
-          handoffId,
-        });
-      }
-      if (handoff.state === "OPEN") {
-        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot verify readback from OPEN; publish an outcome first`, {
-          id: handoffId,
-          state: handoff.state,
-        });
-      }
-      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
-      if (!outcomeReceipt) {
-        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} has no outcome receipt; readback has nothing to verify against`, {
-          handoffId,
-        });
-      }
-      assertFullArtifactBinding(handoff.artifact);
-      if (handoff.artifact.commit !== handoff.artifact.head) {
-        fail(CODES.BINDING_MISMATCH, `Handoff ${handoffId} outcome commit ${handoff.artifact.commit} does not equal its head ${handoff.artifact.head}; P4 outcomes are pinned to the commit that wrote them`, {
-          handoffId,
-        });
-      }
-      checkProvenance(binding, handoff.artifact);
-      const outboxEntry = findOutboxEntry(outcomeReceipt.operationId);
-      if (!outboxEntry) {
-        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Outbox intent for outcome ${outcomeReceipt.operationId} is missing; cannot reconstruct intended bytes`, {
-          handoffId,
-          operationId: outcomeReceipt.operationId,
-        });
-      }
-      const expectedBytes = stableStringify(outboxEntry.payload);
-      const receipt = await readback.verifyBytes({
-        repo: handoff.artifact.repo,
-        commit: handoff.artifact.commit,
-        path: handoff.artifact.path,
-        expectedBytes,
-        expectedBlob: handoff.artifact.blob,
-        verifier,
-        checkedAt,
-        reason,
-        expectedRecordedAt: handoff.updatedAt,
-      });
-      receipt.artifact = { ...handoff.artifact };
-      receipt.handoffId = handoffId;
-      let nextHandoff = handoff;
-      if (handoff.state === "OUTCOME_WRITTEN") {
-        nextHandoff = await handoffs.verifyReadback(handoffId, {
-          verifier,
-          verifiedAt: checkedAt,
-          reason,
-          artifact: handoff.artifact,
-        });
-      } else {
-        // State already past READBACK_VERIFIED: this fresh independent
-        // read repairs missing evidence only; it never re-advances
-        // state and never rewrites history.
-        receipt.reestablished = true;
-      }
-      ledger.readbackReceipts[handoffId] = [...receipts, receipt];
-      ledger.revision += 1;
-      return { handoff: nextHandoff, receipt, replayed: false };
-    },
-
-    // Record the queue answer (ANSWER_RECORDED_PENDING_CLOSE) and
-    // advance to QUEUE_UPDATED. The queue export is delivered through
-    // the outbox and read back independently BEFORE the state advance,
-    // and the receipt binds handoff + outcome + queue Git identity +
-    // row versions. This state is explicitly NOT complete: completion
-    // still requires completeVerified.
-    async recordQueueAnswer({
-      handoffId,
-      taskId = null,
-      queueOperationId,
-      queueExportBytes,
-      targetRepo,
-      targetPath,
-      expectedPriorBlob,
-      actor,
-      recordedAt,
-      reason,
-      verifier = null,
-      tasks = null,
-    }) {
-      const binding = requireBinding(handoffId);
-      checkFencing(binding);
-      assertNonEmptyString(queueOperationId, "recordQueueAnswer.queueOperationId");
-      assertNonEmptyString(actor, "recordQueueAnswer.actor");
-      assertUtcIso(recordedAt, "recordQueueAnswer.recordedAt");
-      assertNonEmptyString(reason, "recordQueueAnswer.reason");
-      assertNonEmptyString(expectedPriorBlob, "recordQueueAnswer.expectedPriorBlob");
-      assertFullHex40(expectedPriorBlob, "recordQueueAnswer.expectedPriorBlob");
-      if (typeof queueExportBytes !== "string" || queueExportBytes.length === 0) {
-        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, "Queue answer requires nonempty queue export bytes", { handoffId });
-      }
-      const handoff = await handoffs.getHandoff(handoffId);
-      if (handoff.state !== "READBACK_VERIFIED" && handoff.state !== "QUEUE_UPDATED") {
-        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot record a queue answer from ${handoff.state}; readback must verify first`, {
-          id: handoffId,
-          state: handoff.state,
-        });
-      }
-      // Task binding: the queue answer closes THIS task, so a moved or
-      // terminal task refuses here, before any Git write.
-      let task = null;
-      if (binding.taskId) {
-        if (taskId !== binding.taskId) {
-          fail(P4_CODES.UNKNOWN_TASK_BINDING, `Queue answer for ${handoffId} names task ${taskId ?? "none"}, bound task is ${binding.taskId}`, {
-            handoffId,
-            taskId,
-          });
-        }
-        task = boundTaskRecord(binding, tasks);
-        checkTaskStillBound(binding, task);
-      } else if (taskId !== null) {
-        fail(P4_CODES.UNKNOWN_TASK_BINDING, `Handoff ${handoffId} is not task-bound but the queue answer names task ${taskId}`, {
-          handoffId,
-          taskId,
-        });
-      }
-      const existingReceipt = ledger.queueReceipts.find(
-        (r) => r.handoffId === handoffId && r.queueOperationId === queueOperationId,
-      );
-      const preEntry = findOutboxEntry(queueOperationId);
-      if (
-        existingReceipt &&
-        handoff.state === "QUEUE_UPDATED" &&
-        preEntry &&
-        preEntry.state === "DELIVERED" &&
-        preEntry.payload.exportBytes === queueExportBytes
-      ) {
-        return { handoff, queueReceipt: existingReceipt, replayed: true };
-      }
-      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
-      if (!outcomeReceipt) {
-        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} has no outcome receipt to bind into a queue receipt`, {
-          handoffId,
-        });
-      }
-      const payload = binding.taskId
-        ? { handoffId, taskId: binding.taskId, exportSha256: sha256Hex(queueExportBytes), exportBytes: queueExportBytes }
-        : { handoffId, exportSha256: sha256Hex(queueExportBytes), exportBytes: queueExportBytes };
-      // The enqueue inside deliverThroughOutbox is the replay gate: a
-      // replayed operation with different bytes or a different task
-      // binding conflicts there, before any write. A DELIVERED entry
-      // resumes without writing again, but only when the delivered
-      // bytes equal this call's export bytes.
-      const delivered = await deliverThroughOutbox({
-        operationId: queueOperationId,
-        targetRepo,
-        targetPath,
-        expectedPriorBlob,
-        payload,
-        writeBytes: queueExportBytes,
-        createdAt: recordedAt,
-        tasks: binding.taskId ? tasks : null,
-        ...(binding.taskId
-          ? { sourceTaskId: binding.taskId, sourceTaskRevision: taskApplicabilityToken(task) }
-          : {}),
-      });
-      if (delivered.resumed) {
-        const resumedEntry = findOutboxEntry(queueOperationId);
-        if (!resumedEntry || resumedEntry.payload.exportBytes !== queueExportBytes) {
-          fail(CODES.CONFLICTING_REPLAY, `Queue export ${queueOperationId} already delivered with different bytes`, {
-            queueOperationId,
-          });
-        }
-      }
-      const deliveryReceipt = delivered.receipt;
-      const queueBinding = {
-        repo: deliveryReceipt.targetRepo,
-        path: deliveryReceipt.targetPath,
-        commit: deliveryReceipt.head,
-        blob: deliveryReceipt.newBlob,
-      };
-      assertFullArtifactBinding({ ...queueBinding, head: queueBinding.commit });
-      // Independent readback of the queue export BEFORE QUEUE_UPDATED:
-      // the receipt binds the Git identity the read actually observed.
-      const queueReadback = await readback.verifyBytes({
-        repo: queueBinding.repo,
-        commit: queueBinding.commit,
-        path: queueBinding.path,
-        expectedBytes: queueExportBytes,
-        expectedBlob: queueBinding.blob,
-        verifier: verifier || workerId,
-        checkedAt: recordedAt,
-        reason,
-      }).catch((error) => {
-        if (error && error.code === P4_CODES.READBACK_MISMATCH) {
-          fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export readback mismatch for ${handoffId}: ${error.message}`, {
-            handoffId,
-            queueOperationId,
-          });
-        }
-        throw error;
-      });
-      const nextHandoff = await handoffs.updateQueue(handoffId, { actor, recordedAt, reason, queue: queueBinding });
-      const key = queueItemKeyFor(binding);
-      const priorItem = ledger.queueItems[key];
-      const queueItemRowVersion = (priorItem ? priorItem.rowVersion : 0) + 1;
-      const queueRevision = (latestQueueReceiptForKey(ledger, key)?.queueRevision || 0) + 1;
-      const queueReceipt = {
-        receiptId: `qr-${sha256Hex(stableStringify({ handoffId, queueOperationId, queueBinding, queueRevision })).slice(0, 24)}`,
-        handoffId,
-        taskId: binding.taskId,
-        queueOperationId,
-        queueItemKey: key,
-        outcome: { ...outcomeReceipt.artifact },
-        queue: { ...queueBinding },
-        taskSnapshotRevision: task ? task.snapshotRevision : null,
-        queueItemRowVersion,
-        queueRevision,
-        queueReadbackReceiptId: queueReadback.receiptId,
-        issuedAt: recordedAt,
-        status: "ANSWER_RECORDED_PENDING_CLOSE",
-      };
-      ledger.queueReceipts.push(queueReceipt);
-      ledger.queueItems[key] = {
-        key,
-        taskId: binding.taskId,
-        boundHandoffId: handoffId,
-        status: "ANSWER_RECORDED_PENDING_CLOSE",
-        rowVersion: queueItemRowVersion,
-        lastQueueReceiptId: queueReceipt.receiptId,
-      };
-      ledger.revision += 1;
-      return { handoff: nextHandoff, queueReceipt, replayed: false };
-    },
-
-    // COMPLETE + close. Rechecks every receipt, provenance, head
-    // currency, and the row-version chain before mutating anything;
-    // any gap refuses with zero closes. A moved head with the outcome
-    // intact recovers by a fresh readback at the new head; a moved head
-    // with the outcome gone refuses as STALE_HEAD.
-    async completeVerified({ handoffId, actor, recordedAt, reason, tasks = null }) {
+  async function completeVerifiedLocked({ handoffId, actor, recordedAt, reason, tasks = null }) {
       const binding = requireBinding(handoffId);
       checkFencing(binding);
       assertNonEmptyString(actor, "completeVerified.actor");
@@ -1013,11 +649,28 @@ export function createVerifiedHandoffDriver({
           });
         }
       }
+      // TBP4-001 / TBP4-001A: re-check fencing immediately before the
+      // commit, not just at entry — this call alone is not enough, since
+      // `completeHandoff` itself crosses several more awaits (its own
+      // handoff/event-chain reads) before it reaches the actual COMPLETE
+      // write. A higher-generation worker can rebind the same `binding`
+      // object (checkFencing mutates it in place) during any of those
+      // awaits, not just the ones before this line. This preflight check
+      // fails fast for the common case without paying for a DB round
+      // trip; `fenceCheck` below is the check that actually closes the
+      // window, re-validated synchronously immediately adjacent to the
+      // COMPLETE write itself, with no await in between.
+      checkFencing(binding);
       // All checks pass: append COMPLETE first (the machine validates
       // the full event chain), then close the ledger item. A crash
       // between the two is re-applied by reconcile from the COMPLETE
       // event; a failure here leaves the ledger untouched.
-      handoff = await handoffs.completeHandoff(handoffId, { actor, recordedAt, reason });
+      handoff = await handoffs.completeHandoff(handoffId, {
+        actor,
+        recordedAt,
+        reason,
+        fenceCheck: () => checkFencing(binding),
+      });
       const queueItem = ledger.queueItems[key];
       if (queueItem) {
         queueItem.status = "CLOSED";
@@ -1046,6 +699,495 @@ export function createVerifiedHandoffDriver({
         );
       }
       return { handoff, queueItem: queueItem || null, tasks: nextTasks, replayed: false };
+  }
+
+  return {
+    getLedger() {
+      return ledger;
+    },
+
+    getBinding(handoffId) {
+      return ledger.bindings[handoffId] || null;
+    },
+
+    getReceipts(handoffId) {
+      const binding = ledger.bindings[handoffId] || null;
+      return {
+        binding,
+        outcome: ledger.outcomeReceipts[handoffId] || null,
+        readbacks: [...(ledger.readbackReceipts[handoffId] || [])],
+        queueReceipts: ledger.queueReceipts.filter((r) => r.handoffId === handoffId),
+        queueItem: binding ? ledger.queueItems[queueItemKeyFor(binding)] || null : null,
+      };
+    },
+
+    // Bind a handoff to its queue item and owning worker. Re-beginning
+    // with the identical binding is idempotent (and may rebind the
+    // worker on a strictly greater generation); a different task or
+    // task snapshot is a conflicting replay.
+    async beginVerified({ handoffId, taskId = null, taskSnapshot = null, actor, recordedAt, reason }) {
+      assertNonEmptyString(handoffId, "beginVerified.handoffId");
+      assertNonEmptyString(actor, "beginVerified.actor");
+      assertUtcIso(recordedAt, "beginVerified.recordedAt");
+      assertNonEmptyString(reason, "beginVerified.reason");
+      if (taskId !== null) {
+        assertNonEmptyString(taskId, "beginVerified.taskId");
+        if (!taskSnapshot || !Number.isInteger(taskSnapshot.snapshotRevision) || !Number.isInteger(taskSnapshot.assignmentEpoch)) {
+          fail(P4_CODES.UNKNOWN_TASK_BINDING, `Task-bound handoff ${handoffId} requires a task snapshot (snapshotRevision, assignmentEpoch)`, {
+            handoffId,
+            taskId,
+          });
+        }
+      }
+      const existing = ledger.bindings[handoffId];
+      if (existing) {
+        // Field-wise comparison, not JSON string comparison: key order
+        // in the host's snapshot object must not decide identity.
+        const sameBinding =
+          existing.taskId === taskId &&
+          (existing.boundTask === null
+            ? taskSnapshot === null
+            : taskSnapshot !== null &&
+              existing.boundTask.snapshotRevision === taskSnapshot.snapshotRevision &&
+              existing.boundTask.assignmentEpoch === taskSnapshot.assignmentEpoch);
+        if (!sameBinding) {
+          fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already bound to a different task/snapshot`, {
+            handoffId,
+          });
+        }
+        // TBP4-001A: takeover and completion share the same per-handoff
+        // critical section (see withHandoffLock above) - this blocks
+        // until any in-flight completeVerified for this handoff has
+        // fully finished (committed or failed), so checkFencing here
+        // always sees the real, settled state, and a completion that
+        // started before this takeover cannot interleave with it.
+        const handoff = await withHandoffLock(handoffId, async () => {
+          checkFencing(existing);
+          return handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
+        });
+        return { handoff, binding: existing, replayed: true };
+      }
+      const binding = {
+        handoffId,
+        taskId,
+        boundTask: taskSnapshot ? { ...taskSnapshot } : null,
+        workerId,
+        generation,
+      };
+      ledger.bindings[handoffId] = binding;
+      ledger.revision += 1;
+      const handoff = await handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
+      return { handoff, binding, replayed: false };
+    },
+
+    // Publish one immutable outcome. The stored bytes are the canonical
+    // envelope { operationId, handoffId, content, contentSha256 }, so
+    // the operation stamp is structural and a retry reproduces identical
+    // bytes. A lost reply (DELIVERY_UNKNOWN) leaves the outbox entry
+    // CLAIMED and the handoff OPEN: reconcile, never blind retry, and
+    // never assume the write failed.
+    async publishOutcome({ handoffId, operationId, content, targetRepo, targetPath, expectedPriorBlob, actor, recordedAt, reason }) {
+      const binding = requireBinding(handoffId);
+      checkFencing(binding);
+      assertNonEmptyString(operationId, "publishOutcome.operationId");
+      assertNonEmptyString(actor, "publishOutcome.actor");
+      assertUtcIso(recordedAt, "publishOutcome.recordedAt");
+      assertNonEmptyString(reason, "publishOutcome.reason");
+      assertNonEmptyString(expectedPriorBlob, "publishOutcome.expectedPriorBlob");
+      assertFullHex40(expectedPriorBlob, "publishOutcome.expectedPriorBlob");
+      const contentSha256 = sha256Hex(stableStringify(content));
+      const existingReceipt = ledger.outcomeReceipts[handoffId];
+      if (existingReceipt) {
+        // TBP4-003: a replay must match the *complete* immutable
+        // operation identity, not just operation id/content/destination
+        // — expectedPriorBlob and the audit parameters (actor,
+        // recordedAt, reason) are part of what the caller is claiming
+        // happened, and a fast-path replay must never be weaker than
+        // the normal CAS-checked write path at accepting a materially
+        // different claim under the same operation id.
+        if (
+          existingReceipt.operationId === operationId &&
+          existingReceipt.contentSha256 === contentSha256 &&
+          existingReceipt.artifact.repo === targetRepo &&
+          existingReceipt.artifact.path === targetPath &&
+          existingReceipt.expectedPriorBlob === expectedPriorBlob &&
+          existingReceipt.actor === actor &&
+          existingReceipt.deliveredAt === recordedAt &&
+          existingReceipt.reason === reason
+        ) {
+          const handoff = await handoffs.getHandoff(handoffId);
+          return { handoff, receipt: existingReceipt, replayed: true };
+        }
+        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already has an outcome for a different operation/content/destination/audit-identity`, {
+          handoffId,
+          operationId,
+        });
+      }
+      const envelope = { operationId, handoffId, content, contentSha256 };
+      const existingEntry = findOutboxEntry(operationId);
+      if (existingEntry && existingEntry.state === "DELIVERED") {
+        // Crash after delivery, before writeOutcome/receipt store:
+        // resume from the delivery receipt without writing again.
+        return { ...(await finishDeliveredOutcome({ binding, operationId, actor, recordedAt, reason })), replayed: false };
+      }
+      const { receipt: deliveryReceipt } = await deliverThroughOutbox({
+        operationId,
+        targetRepo,
+        targetPath,
+        expectedPriorBlob,
+        payload: envelope,
+        createdAt: recordedAt,
+        tasks: null,
+      });
+      const artifact = {
+        repo: deliveryReceipt.targetRepo,
+        path: deliveryReceipt.targetPath,
+        commit: deliveryReceipt.head,
+        blob: deliveryReceipt.newBlob,
+        head: deliveryReceipt.head,
+      };
+      assertFullArtifactBinding(artifact);
+      const handoff = await handoffs.writeOutcome(handoffId, { actor, recordedAt, reason, artifact });
+      const receipt = {
+        operationId,
+        handoffId,
+        artifact,
+        payloadHash: findOutboxEntry(operationId).payloadHash,
+        envelopeSha256: sha256Hex(stableStringify(envelope)),
+        contentSha256,
+        expectedPriorBlob,
+        actor,
+        reason,
+        deliveredAt: recordedAt,
+        deliveryMethod: "outbox",
+        outboxReceipt: deliveryReceipt,
+      };
+      ledger.outcomeReceipts[handoffId] = receipt;
+      ledger.revision += 1;
+      return { handoff, receipt, replayed: false };
+    },
+
+    // Advance to READBACK_VERIFIED on an independently produced receipt
+    // only. A caller `verified` field is refused, not ignored. A stored
+    // receipt with identical identity replays idempotently; a stored
+    // receipt with different identity conflicts; a state already past
+    // READBACK_VERIFIED with no stored receipt re-establishes evidence
+    // by a fresh independent read (marked reestablished) without
+    // re-advancing state.
+    async verifyReadback({ handoffId, verifier, checkedAt, reason, ...rest }) {
+      const binding = requireBinding(handoffId);
+      checkFencing(binding);
+      if (rest.verified !== undefined) {
+        fail(P4_CODES.INVALID_READBACK_CLAIM, "Readback refuses a caller-supplied verified claim; verification comes only from an independent Git read", {
+          handoffId,
+        });
+      }
+      assertNonEmptyString(verifier, "verifyReadback.verifier");
+      assertUtcIso(checkedAt, "verifyReadback.checkedAt");
+      assertNonEmptyString(reason, "verifyReadback.reason");
+      const handoff = await handoffs.getHandoff(handoffId);
+      const receipts = ledger.readbackReceipts[handoffId] || [];
+      if (receipts.length > 0) {
+        const latest = receipts[receipts.length - 1];
+        if (!artifactEquals(latest.artifact, handoff.artifact)) {
+          fail(P4_CODES.READBACK_MISMATCH, `Stored readback receipt for ${handoffId} does not match the handoff's written artifact`, {
+            handoffId,
+          });
+        }
+        if (latest.verifier === verifier && latest.checkedAt === checkedAt && latest.reason === reason) {
+          return { handoff, receipt: latest, replayed: true };
+        }
+        fail(CODES.CONFLICTING_REPLAY, `Readback for ${handoffId} already recorded with a different verifier/time/reason`, {
+          handoffId,
+        });
+      }
+      if (handoff.state === "OPEN") {
+        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot verify readback from OPEN; publish an outcome first`, {
+          id: handoffId,
+          state: handoff.state,
+        });
+      }
+      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
+      if (!outcomeReceipt) {
+        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} has no outcome receipt; readback has nothing to verify against`, {
+          handoffId,
+        });
+      }
+      assertFullArtifactBinding(handoff.artifact);
+      if (handoff.artifact.commit !== handoff.artifact.head) {
+        fail(CODES.BINDING_MISMATCH, `Handoff ${handoffId} outcome commit ${handoff.artifact.commit} does not equal its head ${handoff.artifact.head}; P4 outcomes are pinned to the commit that wrote them`, {
+          handoffId,
+        });
+      }
+      checkProvenance(binding, handoff.artifact);
+      const outboxEntry = findOutboxEntry(outcomeReceipt.operationId);
+      if (!outboxEntry) {
+        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Outbox intent for outcome ${outcomeReceipt.operationId} is missing; cannot reconstruct intended bytes`, {
+          handoffId,
+          operationId: outcomeReceipt.operationId,
+        });
+      }
+      const expectedBytes = stableStringify(outboxEntry.payload);
+      const receipt = await readback.verifyBytes({
+        repo: handoff.artifact.repo,
+        commit: handoff.artifact.commit,
+        path: handoff.artifact.path,
+        expectedBytes,
+        expectedBlob: handoff.artifact.blob,
+        verifier,
+        checkedAt,
+        reason,
+        expectedRecordedAt: handoff.updatedAt,
+      });
+      receipt.artifact = { ...handoff.artifact };
+      receipt.handoffId = handoffId;
+      let nextHandoff = handoff;
+      if (handoff.state === "OUTCOME_WRITTEN") {
+        nextHandoff = await handoffs.verifyReadback(handoffId, {
+          verifier,
+          verifiedAt: checkedAt,
+          reason,
+          artifact: handoff.artifact,
+        });
+      } else {
+        // State already past READBACK_VERIFIED: this fresh independent
+        // read repairs missing evidence only; it never re-advances
+        // state and never rewrites history.
+        receipt.reestablished = true;
+      }
+      ledger.readbackReceipts[handoffId] = [...receipts, receipt];
+      ledger.revision += 1;
+      return { handoff: nextHandoff, receipt, replayed: false };
+    },
+
+    // Record the queue answer (ANSWER_RECORDED_PENDING_CLOSE) and
+    // advance to QUEUE_UPDATED. The queue export is delivered through
+    // the outbox and read back independently BEFORE the state advance,
+    // and the receipt binds handoff + outcome + queue Git identity +
+    // row versions. This state is explicitly NOT complete: completion
+    // still requires completeVerified.
+    async recordQueueAnswer({
+      handoffId,
+      taskId = null,
+      queueOperationId,
+      queueExportBytes,
+      targetRepo,
+      targetPath,
+      expectedPriorBlob,
+      actor,
+      recordedAt,
+      reason,
+      verifier = null,
+      tasks = null,
+    }) {
+      const binding = requireBinding(handoffId);
+      checkFencing(binding);
+      assertNonEmptyString(queueOperationId, "recordQueueAnswer.queueOperationId");
+      assertNonEmptyString(actor, "recordQueueAnswer.actor");
+      assertUtcIso(recordedAt, "recordQueueAnswer.recordedAt");
+      assertNonEmptyString(reason, "recordQueueAnswer.reason");
+      assertNonEmptyString(expectedPriorBlob, "recordQueueAnswer.expectedPriorBlob");
+      assertFullHex40(expectedPriorBlob, "recordQueueAnswer.expectedPriorBlob");
+      if (typeof queueExportBytes !== "string" || queueExportBytes.length === 0) {
+        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, "Queue answer requires nonempty queue export bytes", { handoffId });
+      }
+      const handoff = await handoffs.getHandoff(handoffId);
+      if (handoff.state !== "READBACK_VERIFIED" && handoff.state !== "QUEUE_UPDATED") {
+        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot record a queue answer from ${handoff.state}; readback must verify first`, {
+          id: handoffId,
+          state: handoff.state,
+        });
+      }
+      // Task binding: the queue answer closes THIS task, so a moved or
+      // terminal task refuses here, before any Git write.
+      let task = null;
+      if (binding.taskId) {
+        if (taskId !== binding.taskId) {
+          fail(P4_CODES.UNKNOWN_TASK_BINDING, `Queue answer for ${handoffId} names task ${taskId ?? "none"}, bound task is ${binding.taskId}`, {
+            handoffId,
+            taskId,
+          });
+        }
+        task = boundTaskRecord(binding, tasks);
+        checkTaskStillBound(binding, task);
+      } else if (taskId !== null) {
+        fail(P4_CODES.UNKNOWN_TASK_BINDING, `Handoff ${handoffId} is not task-bound but the queue answer names task ${taskId}`, {
+          handoffId,
+          taskId,
+        });
+      }
+      const existingReceipt = ledger.queueReceipts.find(
+        (r) => r.handoffId === handoffId && r.queueOperationId === queueOperationId,
+      );
+      const preEntry = findOutboxEntry(queueOperationId);
+      // TBP4-003: the same complete-identity comparison publishOutcome
+      // now requires — bytes alone is not the full claim a replay makes;
+      // expectedPriorBlob, destination, and the audit parameters (actor,
+      // recordedAt, reason) must also match, or this is a conflicting
+      // replay, not an idempotent one.
+      if (
+        existingReceipt &&
+        handoff.state === "QUEUE_UPDATED" &&
+        preEntry &&
+        preEntry.state === "DELIVERED" &&
+        preEntry.payload.exportBytes === queueExportBytes &&
+        existingReceipt.queue.repo === targetRepo &&
+        existingReceipt.queue.path === targetPath &&
+        existingReceipt.expectedPriorBlob === expectedPriorBlob &&
+        existingReceipt.actor === actor &&
+        existingReceipt.issuedAt === recordedAt &&
+        existingReceipt.reason === reason
+      ) {
+        return { handoff, queueReceipt: existingReceipt, replayed: true };
+      }
+      // TBP4-003A: deliverThroughOutbox's own replay gate below only
+      // compares *content* identity (export bytes, destination,
+      // expectedPriorBlob, task binding) - it has no idea this call also
+      // claims an audit identity (actor/recordedAt/reason). If content
+      // still matches a previously delivered receipt exactly but the
+      // audit identity is the only thing that changed (the full-identity
+      // check above didn't return, so something differs), falling
+      // through would let deliverThroughOutbox "resume" the already-
+      // delivered entry and a new receipt get written carrying the
+      // changed audit identity - silently accepting an audit-only replay
+      // mismatch instead of refusing it. Catch that case explicitly,
+      // before the fall-through, rather than widening
+      // deliverThroughOutbox's shared conflict gate (other callers rely
+      // on its current, narrower content-only comparison).
+      if (
+        existingReceipt &&
+        handoff.state === "QUEUE_UPDATED" &&
+        preEntry &&
+        preEntry.state === "DELIVERED" &&
+        preEntry.payload.exportBytes === queueExportBytes &&
+        existingReceipt.queue.repo === targetRepo &&
+        existingReceipt.queue.path === targetPath &&
+        existingReceipt.expectedPriorBlob === expectedPriorBlob
+      ) {
+        fail(CODES.CONFLICTING_REPLAY, `Queue answer for ${queueOperationId} already recorded with a different actor/time/reason`, {
+          handoffId,
+          queueOperationId,
+        });
+      }
+      // Identity didn't fully match (or there's no existing receipt
+      // yet): fall through to the normal path below, same as before -
+      // deliverThroughOutbox/enqueueOutbox is the actual conflict gate
+      // for a different-bytes replay of the same operation id; this
+      // block only decides whether the *fast-path* shortcut applies,
+      // never whether a conflict exists.
+      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
+      if (!outcomeReceipt) {
+        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} has no outcome receipt to bind into a queue receipt`, {
+          handoffId,
+        });
+      }
+      const payload = binding.taskId
+        ? { handoffId, taskId: binding.taskId, exportSha256: sha256Hex(queueExportBytes), exportBytes: queueExportBytes }
+        : { handoffId, exportSha256: sha256Hex(queueExportBytes), exportBytes: queueExportBytes };
+      // The enqueue inside deliverThroughOutbox is the replay gate: a
+      // replayed operation with different bytes or a different task
+      // binding conflicts there, before any write. A DELIVERED entry
+      // resumes without writing again, but only when the delivered
+      // bytes equal this call's export bytes.
+      const delivered = await deliverThroughOutbox({
+        operationId: queueOperationId,
+        targetRepo,
+        targetPath,
+        expectedPriorBlob,
+        payload,
+        writeBytes: queueExportBytes,
+        createdAt: recordedAt,
+        tasks: binding.taskId ? tasks : null,
+        ...(binding.taskId
+          ? { sourceTaskId: binding.taskId, sourceTaskRevision: taskApplicabilityToken(task) }
+          : {}),
+      });
+      if (delivered.resumed) {
+        const resumedEntry = findOutboxEntry(queueOperationId);
+        if (!resumedEntry || resumedEntry.payload.exportBytes !== queueExportBytes) {
+          fail(CODES.CONFLICTING_REPLAY, `Queue export ${queueOperationId} already delivered with different bytes`, {
+            queueOperationId,
+          });
+        }
+      }
+      const deliveryReceipt = delivered.receipt;
+      const queueBinding = {
+        repo: deliveryReceipt.targetRepo,
+        path: deliveryReceipt.targetPath,
+        commit: deliveryReceipt.head,
+        blob: deliveryReceipt.newBlob,
+      };
+      assertFullArtifactBinding({ ...queueBinding, head: queueBinding.commit });
+      // Independent readback of the queue export BEFORE QUEUE_UPDATED:
+      // the receipt binds the Git identity the read actually observed.
+      const queueReadback = await readback.verifyBytes({
+        repo: queueBinding.repo,
+        commit: queueBinding.commit,
+        path: queueBinding.path,
+        expectedBytes: queueExportBytes,
+        expectedBlob: queueBinding.blob,
+        verifier: verifier || workerId,
+        checkedAt: recordedAt,
+        reason,
+      }).catch((error) => {
+        if (error && error.code === P4_CODES.READBACK_MISMATCH) {
+          fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export readback mismatch for ${handoffId}: ${error.message}`, {
+            handoffId,
+            queueOperationId,
+          });
+        }
+        throw error;
+      });
+      const nextHandoff = await handoffs.updateQueue(handoffId, { actor, recordedAt, reason, queue: queueBinding });
+      const key = queueItemKeyFor(binding);
+      const priorItem = ledger.queueItems[key];
+      const queueItemRowVersion = (priorItem ? priorItem.rowVersion : 0) + 1;
+      const queueRevision = (latestQueueReceiptForKey(ledger, key)?.queueRevision || 0) + 1;
+      const queueReceipt = {
+        receiptId: `qr-${sha256Hex(stableStringify({ handoffId, queueOperationId, queueBinding, queueRevision })).slice(0, 24)}`,
+        handoffId,
+        taskId: binding.taskId,
+        queueOperationId,
+        queueItemKey: key,
+        outcome: { ...outcomeReceipt.artifact },
+        queue: { ...queueBinding },
+        taskSnapshotRevision: task ? task.snapshotRevision : null,
+        queueItemRowVersion,
+        queueRevision,
+        queueReadbackReceiptId: queueReadback.receiptId,
+        // TBP4-003: carried so a later replay attempt can be compared
+        // against the complete original claim, not just export bytes.
+        expectedPriorBlob,
+        actor,
+        reason,
+        issuedAt: recordedAt,
+        status: "ANSWER_RECORDED_PENDING_CLOSE",
+      };
+      ledger.queueReceipts.push(queueReceipt);
+      ledger.queueItems[key] = {
+        key,
+        taskId: binding.taskId,
+        boundHandoffId: handoffId,
+        status: "ANSWER_RECORDED_PENDING_CLOSE",
+        rowVersion: queueItemRowVersion,
+        lastQueueReceiptId: queueReceipt.receiptId,
+      };
+      ledger.revision += 1;
+      return { handoff: nextHandoff, queueReceipt, replayed: false };
+    },
+
+    // COMPLETE + close. Rechecks every receipt, provenance, head
+    // currency, and the row-version chain before mutating anything;
+    // any gap refuses with zero closes. A moved head with the outcome
+    // intact recovers by a fresh readback at the new head; a moved head
+    // with the outcome gone refuses as STALE_HEAD.
+    // TBP4-001A: the entire body runs inside the per-handoff critical
+    // section (see withHandoffLock above), so a takeover cannot land in
+    // any of this function's many awaited steps (git reads, the
+    // completeHandoff DB transaction itself) between the fencing check
+    // and the effects it guards.
+    async completeVerified({ handoffId, actor, recordedAt, reason, tasks = null }) {
+      return withHandoffLock(handoffId, () => completeVerifiedLocked({ handoffId, actor, recordedAt, reason, tasks }));
     },
 
     // Restart reconciliation. Read-only assessment by default; the
@@ -1276,6 +1418,23 @@ export function createVerifiedHandoffDriver({
           // close idempotently from the COMPLETE event. The machine
           // state already proves completion; this only closes the item.
           checkFencing(binding);
+          // TBP4-002: a historical COMPLETE event is not, by itself,
+          // authority to close a task that has since been reassigned.
+          // Re-verify the same snapshot/epoch binding completeVerified
+          // itself requires, before reapplying the close — never infer
+          // the bound task is still unmoved from the COMPLETE event
+          // alone.
+          if (binding.taskId) {
+            try {
+              const task = boundTaskRecord(binding, tasks);
+              checkTaskStillBound(binding, task);
+            } catch (error) {
+              if (error && (error.code === P4_CODES.TASK_MOVED || error.code === P4_CODES.UNKNOWN_TASK_BINDING)) {
+                return { handoff, state: handoff.state, action: "TASK_REASSIGNED", reason: error.code, detail: error.message };
+              }
+              throw error;
+            }
+          }
           queueItem.status = "CLOSED";
           queueItem.closedAt = queueItem.closedAt || handoff.updatedAt;
           queueItem.closeActor = queueItem.closeActor || "reconciled";
