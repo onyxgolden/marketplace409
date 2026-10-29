@@ -1291,7 +1291,20 @@ const IMAGE_RECT_MAX_SEGMENTS_PER_AXIS: usize = 4000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageRectError {
     ZeroDimension,
+    /// `width * height * 4` itself overflows `usize` — C691-003: plain
+    /// (unchecked) multiplication wrapped this to a small value for
+    /// absurd dimensions, letting an empty/tiny buffer pass the length
+    /// gate and then panic on the first pixel read.
+    DimensionsOverflow { width: u32, height: u32 },
     BufferLengthMismatch { expected: usize, found: usize },
+    /// C691-001: segment collection on one or both axes stopped at
+    /// [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] before finishing the frame —
+    /// the result is incomplete, not "zero rectangles found." A noisy
+    /// frame that happens to contain a real input field must never be
+    /// indistinguishable from a clean frame with none; this is reported
+    /// as a distinct, review-requiring outcome rather than a silent
+    /// `Ok(vec![])`.
+    AnalysisExhausted { h_segments: usize, v_segments: usize },
 }
 
 fn luma_at(rgba: &[u8], width: u32, x: u32, y: u32) -> u8 {
@@ -1326,7 +1339,12 @@ struct VSegment {
 /// where each pixel differs from the one directly above it by at least
 /// [`IMAGE_RECT_EDGE_LUMA_DIFF`] — the signature of a horizontal
 /// top/bottom field border.
-fn scan_horizontal_segments(rgba: &[u8], width: u32, height: u32) -> Vec<HSegment> {
+/// Returns the collected segments plus whether collection stopped early
+/// at [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] (C691-001) — scanning halts
+/// the moment the cap is hit rather than finishing the whole frame
+/// first, so a busy frame's cost is bounded by the cap, not by its
+/// pixel count.
+fn scan_horizontal_segments(rgba: &[u8], width: u32, height: u32) -> (Vec<HSegment>, bool) {
     let mut out = Vec::new();
     for y in 1..height {
         let mut x = 0u32;
@@ -1338,20 +1356,26 @@ fn scan_horizontal_segments(rgba: &[u8], width: u32, height: u32) -> Vec<HSegmen
                 }
                 if x - start >= IMAGE_RECT_MIN_EDGE_RUN_PX {
                     out.push(HSegment { y, x_start: start, x_end: x });
+                    if out.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS {
+                        return (out, true);
+                    }
                 }
             } else {
                 x += 1;
             }
         }
     }
-    out
+    (out, false)
 }
 
 /// Vertical border segments: contiguous runs, within one pixel column,
 /// where each pixel differs from the one directly to its left by at
 /// least [`IMAGE_RECT_EDGE_LUMA_DIFF`] — the signature of a vertical
 /// left/right field border.
-fn scan_vertical_segments(rgba: &[u8], width: u32, height: u32) -> Vec<VSegment> {
+/// Returns the collected segments plus whether collection stopped early
+/// at [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] (C691-001) — see
+/// [`scan_horizontal_segments`]'s doc comment.
+fn scan_vertical_segments(rgba: &[u8], width: u32, height: u32) -> (Vec<VSegment>, bool) {
     let mut out = Vec::new();
     for x in 1..width {
         let mut y = 0u32;
@@ -1363,13 +1387,16 @@ fn scan_vertical_segments(rgba: &[u8], width: u32, height: u32) -> Vec<VSegment>
                 }
                 if y - start >= IMAGE_RECT_MIN_EDGE_RUN_PX {
                     out.push(VSegment { x, y_start: start, y_end: y });
+                    if out.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS {
+                        return (out, true);
+                    }
                 }
             } else {
                 y += 1;
             }
         }
     }
-    out
+    (out, false)
 }
 
 fn within_align_tolerance(a: u32, b: u32) -> bool {
@@ -1458,13 +1485,19 @@ pub fn structural_candidates_from_image_rects(
     if frame_width == 0 || frame_height == 0 {
         return Err(ImageRectError::ZeroDimension);
     }
-    let expected = frame_width as usize * frame_height as usize * 4;
+    let expected = (frame_width as usize)
+        .checked_mul(frame_height as usize)
+        .and_then(|area| area.checked_mul(4))
+        .ok_or(ImageRectError::DimensionsOverflow { width: frame_width, height: frame_height })?;
     if rgba.len() != expected {
         return Err(ImageRectError::BufferLengthMismatch { expected, found: rgba.len() });
     }
 
-    let h_segs = scan_horizontal_segments(rgba, frame_width, frame_height);
-    let v_segs = scan_vertical_segments(rgba, frame_width, frame_height);
+    let (h_segs, h_exhausted) = scan_horizontal_segments(rgba, frame_width, frame_height);
+    let (v_segs, v_exhausted) = scan_vertical_segments(rgba, frame_width, frame_height);
+    if h_exhausted || v_exhausted {
+        return Err(ImageRectError::AnalysisExhausted { h_segments: h_segs.len(), v_segments: v_segs.len() });
+    }
     let boxes = find_rectangles(&h_segs, &v_segs);
 
     Ok(boxes
@@ -2686,6 +2719,70 @@ mod tests {
         fill_rect(&mut buf, width, (10, 10, 6, 6), (220, 220, 220));
         let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1").unwrap();
         assert!(result.is_empty(), "{result:?}");
+    }
+
+    #[test]
+    fn overflowing_dimensions_are_rejected_instead_of_panicking() {
+        // C691-003: the fail-before case - plain unchecked multiplication
+        // of width*height*4 wraps to a small value for absurd
+        // dimensions, letting an empty buffer pass the length gate and
+        // then panic on the first pixel read.
+        let huge = 1u32 << 31;
+        let buf: Vec<u8> = vec![];
+        assert_eq!(
+            structural_candidates_from_image_rects(&buf, huge, huge, "frame-1"),
+            Err(ImageRectError::DimensionsOverflow { width: huge, height: huge })
+        );
+    }
+
+    #[test]
+    fn segment_exhaustion_is_reported_as_a_distinct_error_not_empty_success() {
+        // C691-001: a frame busy enough to exceed
+        // IMAGE_RECT_MAX_SEGMENTS_PER_AXIS, plus a real, well-formed
+        // input field drawn into it, so a non-exhausted run on a
+        // similar clean frame would NOT be empty - proving the
+        // exhausted outcome is specifically about analysis
+        // incompleteness, not an absence of real content. The result
+        // must be a distinct error, never a clean-looking `Ok(vec![])`.
+        let width = 20_000u32;
+        let height = 20u32;
+        let cell = IMAGE_RECT_MIN_EDGE_RUN_PX; // exactly the minimum qualifying run length
+        let mut buf = vec![0u8; width as usize * height as usize * 4]; // starts solid black
+        for y in 0..height {
+            if y % 2 == 1 {
+                // Odd rows: alternating cell-wide black/white blocks.
+                // Compared against an even (solid black) row directly
+                // above, each white block forms its own separate
+                // qualifying run of exactly `cell` pixels - comparing
+                // against the even row *below* it does the same, so
+                // every row transition contributes roughly
+                // width/(2*cell) new segments.
+                let mut x = 0u32;
+                let mut white = false;
+                while x < width {
+                    let block_end = (x + cell).min(width);
+                    if white {
+                        fill_rect(&mut buf, width, (x, y, block_end - x, 1), (255, 255, 255));
+                    }
+                    white = !white;
+                    x = block_end;
+                }
+            }
+        }
+        fill_rect(&mut buf, width, (10, 2, 60, 10), (128, 128, 128));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1");
+        assert!(matches!(result, Err(ImageRectError::AnalysisExhausted { .. })), "{result:?}");
+    }
+
+    #[test]
+    fn a_clean_rectangle_with_no_noise_at_all_does_not_exhaust_analysis() {
+        // Positive control alongside the exhaustion case above: an
+        // ordinary clean frame must not spuriously report exhaustion.
+        let (width, height) = (100, 60);
+        let mut buf = solid_rgba(width, height, (20, 20, 20));
+        fill_rect(&mut buf, width, (10, 10, 60, 20), (220, 220, 220));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1");
+        assert!(result.is_ok(), "{result:?}");
     }
 
     // ---- merge + destructive redaction operation ----
