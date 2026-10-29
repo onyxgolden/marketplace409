@@ -698,6 +698,84 @@ fn context_label_within(norm: &[NormalizedChar], value_start: usize, labels: &[&
     labels.iter().any(|label| word_boundary_contains(&slice, label))
 }
 
+/// The half-open char range of the line immediately preceding the line
+/// containing `idx`, or `None` if `idx`'s own line is the first line.
+fn preceding_line_range(norm: &[NormalizedChar], idx: usize) -> Option<(usize, usize)> {
+    let mut this_line_start = idx;
+    while this_line_start > 0 && norm[this_line_start - 1].ch != '\n' {
+        this_line_start -= 1;
+    }
+    if this_line_start == 0 {
+        return None;
+    }
+    let prev_line_end = this_line_start - 1;
+    let mut prev_line_start = prev_line_end;
+    while prev_line_start > 0 && norm[prev_line_start - 1].ch != '\n' {
+        prev_line_start -= 1;
+    }
+    Some((prev_line_start, prev_line_end))
+}
+
+/// The half-open char range of the line immediately following the line
+/// containing `idx`, or `None` if `idx`'s own line is the last line.
+fn following_line_range(norm: &[NormalizedChar], idx: usize) -> Option<(usize, usize)> {
+    let n = norm.len();
+    let mut this_line_end = idx;
+    while this_line_end < n && norm[this_line_end].ch != '\n' {
+        this_line_end += 1;
+    }
+    if this_line_end >= n {
+        return None;
+    }
+    let next_line_start = this_line_end + 1;
+    let mut next_line_end = next_line_start;
+    while next_line_end < n && norm[next_line_end].ch != '\n' {
+        next_line_end += 1;
+    }
+    Some((next_line_start, next_line_end))
+}
+
+/// True if `labels` appears as a whole word anywhere in `range` (a line
+/// range as returned by [`preceding_line_range`]/[`following_line_range`]).
+fn line_range_contains_label(norm: &[NormalizedChar], range: Option<(usize, usize)>, labels: &[&str]) -> bool {
+    let Some((start, end)) = range else { return false };
+    let slice: String = norm[start..end].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
+    labels.iter().any(|label| word_boundary_contains(&slice, label))
+}
+
+/// True if the `window`-char span immediately after `value_end`, cut
+/// short at the nearest following newline (never crossing into a
+/// different line), contains any of `labels` as a whole word. The
+/// forward-looking counterpart to [`context_label_within`].
+fn context_label_after(norm: &[NormalizedChar], value_end: usize, labels: &[&str], window: usize) -> bool {
+    let n = norm.len();
+    let mut search_end = (value_end + window).min(n);
+    for (offset, c) in norm[value_end..search_end].iter().enumerate() {
+        if c.ch == '\n' {
+            search_end = value_end + offset;
+            break;
+        }
+    }
+    let slice: String = norm[value_end..search_end].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
+    labels.iter().any(|label| word_boundary_contains(&slice, label))
+}
+
+/// C4A-003: the general "nearby label" check — same line before the
+/// value ([`context_label_within`]), same line after the value
+/// ([`context_label_after`]), or on the line immediately before/after
+/// the value's own line ([`preceding_line_range`]/[`following_line_range`]).
+/// Still a textual convention keyed on the `\n` line boundaries
+/// [`join_tokens`] inserts at each OCR `line_id` change — not a true 2D
+/// spatial/box-distance check across columns on the same visual row,
+/// which would need real token geometry this text-only layer doesn't
+/// carry. That remains open as a later structural/UI evidence pass.
+fn context_label_nearby(norm: &[NormalizedChar], value_start: usize, value_end: usize, labels: &[&str], window: usize) -> bool {
+    context_label_within(norm, value_start, labels, window)
+        || context_label_after(norm, value_end, labels, window)
+        || line_range_contains_label(norm, preceding_line_range(norm, value_start), labels)
+        || line_range_contains_label(norm, following_line_range(norm, value_end), labels)
+}
+
 fn word_boundary_contains(haystack: &str, needle: &str) -> bool {
     let bytes = haystack.as_bytes();
     let needle_bytes = needle.as_bytes();
@@ -1142,18 +1220,13 @@ fn detect_phone_number(norm: &[NormalizedChar], out: &mut Vec<ReviewCandidateMat
     while i < n {
         if (is_ascii_digit(norm[i].ch) || norm[i].ch == '(') && (i == 0 || !is_ascii_digit(norm[i - 1].ch)) {
             if let Some((end_idx, _digits)) = read_phone_shape(norm, i) {
-                // C4A-003, disclosed narrowing: this checks only a
-                // same-line window immediately *preceding* the value
-                // (context_label_within's own scope — see that
-                // function's doc comment). A label after the value
-                // ("555-234-5678 Phone"), on an adjacent line/field, or
-                // otherwise spatially nearby but outside this text-only
-                // window does not corroborate. This is the general
-                // "nearby label" rule's narrower textual convention,
-                // not the full spatial-neighborhood contract GS-C4
-                // describes — extending to real token/box geometry is
-                // left open, not claimed closed here.
-                let corroborated = context_label_within(norm, i, PHONE_LABELS, PHONE_CONTEXT_WINDOW);
+                // C4A-003: corroborates on a label before or after the
+                // value on the same line, or on the immediately
+                // preceding/following line (context_label_nearby's own
+                // scope — see that function's doc comment). Real 2D
+                // spatial/box-distance proximity across columns on the
+                // same visual row remains open, not claimed closed here.
+                let corroborated = context_label_nearby(norm, i, end_idx, PHONE_LABELS, PHONE_CONTEXT_WINDOW);
                 let (start_byte, end_byte) = bytes_of(norm, i, end_idx);
                 out.push(ReviewCandidateMatch {
                     start_byte,
@@ -1244,8 +1317,8 @@ fn detect_street_address(norm: &[NormalizedChar], out: &mut Vec<ReviewCandidateM
     while i < n {
         if is_ascii_digit(norm[i].ch) && (i == 0 || !norm[i - 1].ch.is_ascii_alphanumeric()) {
             if let Some(end_idx) = read_street_address_shape(norm, i) {
-                // Same disclosed narrowing as detect_phone_number above.
-                let corroborated = context_label_within(norm, i, ADDRESS_LABELS, ADDRESS_CONTEXT_WINDOW);
+                // Same C4A-003 nearby-label scope as detect_phone_number above.
+                let corroborated = context_label_nearby(norm, i, end_idx, ADDRESS_LABELS, ADDRESS_CONTEXT_WINDOW);
                 let (start_byte, end_byte) = bytes_of(norm, i, end_idx);
                 out.push(ReviewCandidateMatch {
                     start_byte,
@@ -4118,21 +4191,27 @@ mod tests {
     }
 
     #[test]
-    fn phone_label_on_a_different_line_does_not_corroborate() {
+    fn phone_label_on_the_immediately_preceding_line_corroborates() {
+        // C4A-003: closes the "adjacent line" gap - a label on the line
+        // immediately before the value's own line now corroborates.
         let hits = review_matches_for("Phone\n555-234-5678");
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
-        assert!(!m.is_corroborated(), "a label on a different line must not corroborate");
+        assert!(m.is_corroborated(), "a label on the immediately preceding line must corroborate");
     }
 
     #[test]
-    fn phone_label_after_the_value_on_the_same_line_does_not_corroborate() {
-        // C4A-003, disclosed narrowing: context_label_within only ever
-        // looks *before* the value - a label placed after it is outside
-        // that window entirely, by design of this pass's textual
-        // convention, not a bug to be silently worked around here.
+    fn phone_label_on_the_immediately_following_line_corroborates() {
+        let hits = review_matches_for("555-234-5678\nPhone");
+        let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
+        assert!(m.is_corroborated(), "a label on the immediately following line must corroborate");
+    }
+
+    #[test]
+    fn phone_label_after_the_value_on_the_same_line_corroborates() {
+        // C4A-003: closes the "label after the value" gap.
         let hits = review_matches_for("555-234-5678 Phone");
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
-        assert!(!m.is_corroborated(), "a label after the value must not corroborate under this pass's narrower scope");
+        assert!(m.is_corroborated(), "a label after the value on the same line must corroborate");
     }
 
     #[test]
@@ -4140,6 +4219,25 @@ mod tests {
         let hits = review_matches_for("Unrelated heading\n555-234-5678");
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
         assert!(!m.is_corroborated());
+    }
+
+    #[test]
+    fn phone_label_two_lines_away_does_not_corroborate() {
+        // C4A-003's disclosed scope is the immediately adjacent line
+        // only, not transitively further lines - a real 2D spatial/
+        // box-distance check across columns remains open, not claimed
+        // closed here.
+        let hits = review_matches_for("Phone\nUnrelated\n555-234-5678");
+        let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
+        assert!(!m.is_corroborated(), "a label two lines away must not corroborate");
+    }
+
+    #[test]
+    fn phone_label_beyond_the_forward_window_on_the_same_line_does_not_corroborate() {
+        let filler = "x".repeat(PHONE_CONTEXT_WINDOW);
+        let hits = review_matches_for(&format!("555-234-5678 {filler} Phone"));
+        let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
+        assert!(!m.is_corroborated(), "a label beyond the forward window must not corroborate");
     }
 
     // ---- street address: positives ----
@@ -4210,17 +4308,40 @@ mod tests {
     }
 
     #[test]
-    fn street_address_label_after_the_value_does_not_corroborate() {
+    fn street_address_label_after_the_value_corroborates() {
+        // C4A-003: closes the "label after the value" gap.
         let hits = review_matches_for("123 Main Street Address");
         let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
-        assert!(!m.is_corroborated(), "a label after the value must not corroborate under this pass's narrower scope");
+        assert!(m.is_corroborated(), "a label after the value on the same line must corroborate");
     }
 
     #[test]
-    fn street_address_label_on_an_adjacent_line_does_not_corroborate() {
+    fn street_address_label_on_the_immediately_preceding_line_corroborates() {
+        // C4A-003: closes the "adjacent line" gap.
         let hits = review_matches_for("Address\n123 Main Street");
         let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
+        assert!(m.is_corroborated(), "a label on the immediately preceding line must corroborate");
+    }
+
+    #[test]
+    fn street_address_label_on_the_immediately_following_line_corroborates() {
+        let hits = review_matches_for("123 Main Street\nAddress");
+        let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
+        assert!(m.is_corroborated(), "a label on the immediately following line must corroborate");
+    }
+
+    #[test]
+    fn street_address_label_on_an_unrelated_adjacent_line_does_not_corroborate() {
+        let hits = review_matches_for("Unrelated heading\n123 Main Street");
+        let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
         assert!(!m.is_corroborated());
+    }
+
+    #[test]
+    fn street_address_label_two_lines_away_does_not_corroborate() {
+        let hits = review_matches_for("Address\nUnrelated\n123 Main Street");
+        let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
+        assert!(!m.is_corroborated(), "a label two lines away must not corroborate");
     }
 
     // ---- UTF-8 / normalization / box binding ----
