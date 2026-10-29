@@ -1846,7 +1846,20 @@ pub struct ReviewActionRequest<'a> {
     pub candidate_id: &'a str,
     pub new_disposition: Disposition,
     pub reason: &'a str,
-    pub confirmed: bool,
+    /// C6A-001A: a bare `true`/`false` carries no binding to *what* is
+    /// being confirmed — it could be replayed against any reason,
+    /// candidate, or disposition as long as the session-level fields
+    /// happened to match. This must be
+    /// [`confirmation_digest`]`(frame_id, candidate_id, new_disposition,
+    /// reason, source_raster_sha256, derivative_sha256, policy_version,
+    /// model_manifest_sha256, session_revision)` computed over this
+    /// exact request's own fields plus the frame's current source/
+    /// derivative digests — [`validate_review_action`] recomputes the
+    /// same digest from current state and rejects any mismatch, so a
+    /// confirmation cannot be carried over onto a different reason,
+    /// candidate, disposition, or state. `None` means "not confirmed,"
+    /// the same as the old `confirmed: false`.
+    pub confirmation_digest: Option<&'a str>,
     /// The session revision this review was performed against. Stale
     /// relative to the session's actual current revision means another
     /// edit landed first — refused, never silently applied on top.
@@ -1856,6 +1869,42 @@ pub struct ReviewActionRequest<'a> {
     /// The model binding this review was performed against (`None` if
     /// the session itself carries none).
     pub expected_model_manifest_sha256: Option<&'a str>,
+}
+
+/// GS-C6's confirmation-must-bind-to-content requirement, made
+/// concrete: every field the scope names as required binding (reason,
+/// disposition, frame/candidate identity, source raster digest,
+/// derivative digest, policy/model, session revision), hashed together.
+/// [`validate_review_action`] recomputes this from the frame's actual
+/// current `raster_sha256`/`redacted_derivative_sha256` and the
+/// session's actual current `policy_version`/`model_manifest_sha256`/
+/// `revision` — if a caller's supplied digest doesn't match what those
+/// current values would produce, the confirmation is rejected,
+/// regardless of whether it was a real confirmation for some *other*,
+/// no-longer-current state. This does not prove a human actually
+/// clicked confirm (that trust boundary is the caller's, same as the
+/// old bare boolean) — it closes the narrower, concrete gap the review
+/// named: a confirmation cannot be transplanted onto a different
+/// reason, candidate, disposition, or session/source/derivative state
+/// than the one it was actually computed against.
+#[allow(clippy::too_many_arguments)]
+pub fn confirmation_digest(
+    frame_id: &str,
+    candidate_id: &str,
+    new_disposition: Disposition,
+    reason: &str,
+    source_raster_sha256: &str,
+    derivative_sha256: Option<&str>,
+    policy_version: &str,
+    model_manifest_sha256: Option<&str>,
+    session_revision: u64,
+) -> String {
+    let canonical = format!(
+        "{frame_id}\u{0}{candidate_id}\u{0}{new_disposition:?}\u{0}{reason}\u{0}{source_raster_sha256}\u{0}{}\u{0}{policy_version}\u{0}{}\u{0}{session_revision}",
+        derivative_sha256.unwrap_or(""),
+        model_manifest_sha256.unwrap_or(""),
+    );
+    crate::sop_session::sha256_hex(canonical.as_bytes())
 }
 
 /// GS-C6 (C2-P6 review UI safety blocker): why a reviewer-facing
@@ -1871,10 +1920,11 @@ pub enum DispositionChangeError {
     /// outright; "a nonempty string... is insufficient" cuts the other
     /// way too — an *empty* one is refused even more plainly.
     MissingReason,
-    /// `confirmed` was not explicitly `true`. There is no implicit
-    /// confirmation — a caller that defaults this to `true` without
-    /// actually asking a human is misusing this function, not
-    /// satisfying it.
+    /// `confirmation_digest` was absent, or present but did not match
+    /// [`confirmation_digest`] recomputed from the request's own
+    /// fields plus the frame/session's actual current state (C6A-001A:
+    /// a bare boolean carried no such binding and could be replayed
+    /// against different content).
     MissingExplicitConfirmation,
     /// GS-C6: "Credential / private-key / payment-card hard positives
     /// remain NON-OVERRIDABLE even with both fields." Checked first, so
@@ -1956,7 +2006,18 @@ pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequ
     if request.reason.trim().is_empty() {
         return Err(DispositionChangeError::MissingReason);
     }
-    if !request.confirmed {
+    let expected_digest = confirmation_digest(
+        request.frame_id,
+        request.candidate_id,
+        request.new_disposition,
+        request.reason,
+        &frame.raster_sha256,
+        frame.redacted_derivative_sha256.as_deref(),
+        &session.policy_version,
+        session.model_manifest_sha256.as_deref(),
+        session.revision,
+    );
+    if request.confirmation_digest != Some(expected_digest.as_str()) {
         return Err(DispositionChangeError::MissingExplicitConfirmation);
     }
     Ok(())
@@ -3752,12 +3813,30 @@ mod tests {
     }
 
     fn gs_c6_request<'a>(frame_id: &'a str, candidate_id: &'a str, new_disposition: Disposition, reason: &'a str, confirmed: bool) -> ReviewActionRequest<'a> {
+        // Matches gs_c6_frame/gs_c6_session's own defaults exactly, so a
+        // `confirmed: true` request computes the digest
+        // validate_review_action will actually expect against the
+        // default-shaped fixtures.
+        let confirmation_digest = confirmed.then(|| {
+            let digest = confirmation_digest(
+                frame_id,
+                candidate_id,
+                new_disposition,
+                reason,
+                &"a".repeat(64),
+                None,
+                "policy-v1",
+                Some("model-manifest-v1"),
+                0,
+            );
+            &*Box::leak(digest.into_boxed_str())
+        });
         ReviewActionRequest {
             frame_id,
             candidate_id,
             new_disposition,
             reason,
-            confirmed,
+            confirmation_digest,
             expected_session_revision: 0,
             expected_policy_version: "policy-v1",
             expected_model_manifest_sha256: Some("model-manifest-v1"),
@@ -3939,6 +4018,69 @@ mod tests {
             build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()),
             Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
         );
+    }
+
+    // ---- C6A-001A: confirmation_digest cannot be transplanted ----
+
+    #[test]
+    fn a_confirmation_digest_computed_for_a_different_reason_does_not_validate() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let mut request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "the real reason", true);
+        // Swap in a digest that was actually computed for a different
+        // reason string - same session/frame/candidate/disposition
+        // otherwise.
+        let wrong_digest = confirmation_digest("f1", "c1", Disposition::MarkNonSensitive, "a completely different reason", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        request.confirmation_digest = Some(&wrong_digest);
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
+    }
+
+    #[test]
+    fn a_confirmation_digest_computed_for_a_different_candidate_does_not_validate() {
+        let session = gs_c6_session(vec![gs_c6_frame(
+            "f1",
+            vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending), gs_c6_candidate("c2", "det.ssn", Disposition::Pending)],
+        )]);
+        let digest_for_c2 = confirmation_digest("f1", "c2", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let request = ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: "verified",
+            confirmation_digest: Some(&digest_for_c2),
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
+    }
+
+    #[test]
+    fn a_confirmation_digest_computed_against_a_stale_session_revision_does_not_validate_once_current() {
+        // The digest was computed when the session was at revision 0;
+        // the session has since moved to revision 1 (some other edit
+        // landed). The old digest must not still validate just because
+        // the caller also updated expected_session_revision to match.
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let stale_digest = confirmation_digest("f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        session.revision = 1;
+        let request = ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: "verified",
+            confirmation_digest: Some(&stale_digest),
+            expected_session_revision: 1, // caller updated this, but not the digest itself
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
+    }
+
+    #[test]
+    fn a_correctly_computed_confirmation_digest_validates() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer", true);
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
     }
 
     #[test]
