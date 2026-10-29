@@ -1018,3 +1018,131 @@ describe("identity, allowlist, transport, and ordering guards", () => {
     expect((await ctx.handoffs.getHandoff("h-1")).state).toBe("OPEN");
   });
 });
+
+// Post-merge audit fix-forward (results/chatgpt/pr690-team-brain-p4-review-2026-10-28.md):
+// TBP4-001 (worker fencing expires across awaited I/O), TBP4-002
+// (COMPLETE crash recovery closes a reassigned task), TBP4-003
+// (successful publish/queue-answer replay ignores changed operation
+// parameters). Each finding below was independently reproduced first
+// (as a failing-before probe) by running
+// results/chatgpt/probes/pr690-reviewer-characterization-2026-10-28.mjs
+// against the pre-fix code; the tests here assert the corrected
+// behavior, not the drop repo's own characterization artifact (which
+// deliberately still asserts the pre-fix outcome and is not part of
+// this permanent suite).
+describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
+  it("TBP4-001: a worker whose generation is superseded during an awaited read cannot complete, even though it passed fencing at entry", async () => {
+    const c = await setup();
+    await toQueue(c);
+    const orig = c.git.read.bind(c.git);
+    let resolveGate, entered;
+    const atGate = new Promise((r) => (entered = r));
+    const gate = new Promise((r) => (resolveGate = r));
+    let once = true;
+    c.git.read = async (a) => {
+      if (once) {
+        once = false;
+        entered();
+        await gate;
+      }
+      return orig(a);
+    };
+    const pending = complete(c);
+    await atGate;
+    const d2 = restart(c, { workerId: "worker-b", generation: 2 });
+    await begin(c, d2);
+    resolveGate();
+    await expectCode(pending, P4_CODES.STALE_WORKER);
+    // The binding now correctly reflects the real current owner - the
+    // stale completion attempt did not get to overwrite it.
+    expect(c.ledger.bindings["h-1"].workerId).toBe("worker-b");
+    expect((await c.handoffs.getHandoff("h-1")).state).toBe("QUEUE_UPDATED");
+    await c.db.close();
+  }, 30000);
+
+  it("TBP4-001 positive control: an uninterrupted worker still completes normally", async () => {
+    const c = await setup();
+    const result = await toComplete(c);
+    expect(result.handoff.state).toBe("COMPLETE");
+    expect(result.queueItem.status).toBe("CLOSED");
+    expect(result.queueItem.closeActor).toBe("worker-a");
+    await c.db.close();
+  });
+
+  it("TBP4-002: reconcile's CLOSE_REAPPLIED path refuses to close a task that was reassigned after the historical COMPLETE event, and does not touch it", async () => {
+    const c = await setup();
+    await toComplete(c);
+    const item = c.ledger.queueItems["task:task-1"];
+    expect(item).toBeTruthy();
+    // Simulate the documented crash window: COMPLETE already recorded,
+    // ledger close did not happen yet.
+    item.status = "ANSWER_RECORDED_PENDING_CLOSE";
+    const reassignedTasks = taskList().map((t) => ({ ...t, assignmentEpoch: 2, snapshotRevision: 2, ownerAgent: "new-owner" }));
+    const result = await c.driver.reconcile({ handoffId: "h-1", tasks: reassignedTasks });
+    expect(result.action).toBe("TASK_REASSIGNED");
+    // The reassignment must survive untouched - no DONE, no cleared owner.
+    expect(result.tasks).toBeUndefined();
+    expect(c.ledger.queueItems["task:task-1"].status).toBe("ANSWER_RECORDED_PENDING_CLOSE");
+    await c.db.close();
+  });
+
+  it("TBP4-002 positive control: reconcile's CLOSE_REAPPLIED path still closes a genuinely unmoved task", async () => {
+    const c = await setup();
+    await toComplete(c);
+    const item = c.ledger.queueItems["task:task-1"];
+    item.status = "ANSWER_RECORDED_PENDING_CLOSE";
+    const unchangedTasks = taskList();
+    const result = await c.driver.reconcile({ handoffId: "h-1", tasks: unchangedTasks });
+    expect(result.action).toBe("CLOSE_REAPPLIED");
+    expect(result.tasks[0].status).toBe("DONE");
+    expect(result.tasks[0].ownerAgent).toBe(null);
+    expect(c.ledger.queueItems["task:task-1"].status).toBe("CLOSED");
+    await c.db.close();
+  });
+
+  it("TBP4-003: publishOutcome rejects a replay whose audit identity (actor/time/reason/expectedPriorBlob) differs from the original, instead of accepting it as idempotent", async () => {
+    const c = await setup();
+    await begin(c);
+    await publish(c);
+    await expectCode(
+      publish(c, c.driver, { expectedPriorBlob: "f".repeat(40), actor: "different-worker", recordedAt: T5, reason: "different" }),
+      CODES.CONFLICTING_REPLAY,
+    );
+    await c.db.close();
+  });
+
+  it("TBP4-003 positive control: an exact publishOutcome replay (identical everything) still returns replayed:true", async () => {
+    const c = await setup();
+    await begin(c);
+    const first = await publish(c);
+    const second = await publish(c);
+    expect(second.replayed).toBe(true);
+    expect(second.receipt).toEqual(first.receipt);
+    await c.db.close();
+  });
+
+  it("TBP4-003 extended: recordQueueAnswer rejects a replay whose audit identity differs from the original", async () => {
+    const c = await setup();
+    await begin(c);
+    await publish(c);
+    await readback(c);
+    await queueAnswer(c);
+    await expectCode(
+      queueAnswer(c, c.driver, { actor: "different-worker", recordedAt: T5, reason: "different" }),
+      CODES.CONFLICTING_REPLAY,
+    );
+    await c.db.close();
+  });
+
+  it("TBP4-003 extended positive control: an exact recordQueueAnswer replay (identical everything) still returns replayed:true", async () => {
+    const c = await setup();
+    await begin(c);
+    await publish(c);
+    await readback(c);
+    const first = await queueAnswer(c);
+    const second = await queueAnswer(c);
+    expect(second.replayed).toBe(true);
+    expect(second.queueReceipt).toEqual(first.queueReceipt);
+    await c.db.close();
+  });
+});

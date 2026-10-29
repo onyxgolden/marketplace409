@@ -378,6 +378,14 @@ export function createVerifiedHandoffDriver({
       payloadHash: entry.payloadHash,
       envelopeSha256: sha256Hex(expectedBytes),
       contentSha256: envelope.contentSha256,
+      // TBP4-003: carry the same audit-identity fields publishOutcome's
+      // own receipt does, so a later replay against *this* receipt gets
+      // the same complete-identity comparison, not a weaker one just
+      // because this particular receipt was built via the
+      // delivered-but-not-yet-receipted recovery path.
+      expectedPriorBlob: delivery.priorBlob,
+      actor,
+      reason,
       deliveredAt: recordedAt,
       deliveryMethod: delivery.method || "outbox-resumed",
       outboxReceipt: delivery,
@@ -510,16 +518,27 @@ export function createVerifiedHandoffDriver({
       const contentSha256 = sha256Hex(stableStringify(content));
       const existingReceipt = ledger.outcomeReceipts[handoffId];
       if (existingReceipt) {
+        // TBP4-003: a replay must match the *complete* immutable
+        // operation identity, not just operation id/content/destination
+        // — expectedPriorBlob and the audit parameters (actor,
+        // recordedAt, reason) are part of what the caller is claiming
+        // happened, and a fast-path replay must never be weaker than
+        // the normal CAS-checked write path at accepting a materially
+        // different claim under the same operation id.
         if (
           existingReceipt.operationId === operationId &&
           existingReceipt.contentSha256 === contentSha256 &&
           existingReceipt.artifact.repo === targetRepo &&
-          existingReceipt.artifact.path === targetPath
+          existingReceipt.artifact.path === targetPath &&
+          existingReceipt.expectedPriorBlob === expectedPriorBlob &&
+          existingReceipt.actor === actor &&
+          existingReceipt.deliveredAt === recordedAt &&
+          existingReceipt.reason === reason
         ) {
           const handoff = await handoffs.getHandoff(handoffId);
           return { handoff, receipt: existingReceipt, replayed: true };
         }
-        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already has an outcome for a different operation/content/destination`, {
+        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already has an outcome for a different operation/content/destination/audit-identity`, {
           handoffId,
           operationId,
         });
@@ -556,6 +575,9 @@ export function createVerifiedHandoffDriver({
         payloadHash: findOutboxEntry(operationId).payloadHash,
         envelopeSha256: sha256Hex(stableStringify(envelope)),
         contentSha256,
+        expectedPriorBlob,
+        actor,
+        reason,
         deliveredAt: recordedAt,
         deliveryMethod: "outbox",
         outboxReceipt: deliveryReceipt,
@@ -718,15 +740,32 @@ export function createVerifiedHandoffDriver({
         (r) => r.handoffId === handoffId && r.queueOperationId === queueOperationId,
       );
       const preEntry = findOutboxEntry(queueOperationId);
+      // TBP4-003: the same complete-identity comparison publishOutcome
+      // now requires — bytes alone is not the full claim a replay makes;
+      // expectedPriorBlob, destination, and the audit parameters (actor,
+      // recordedAt, reason) must also match, or this is a conflicting
+      // replay, not an idempotent one.
       if (
         existingReceipt &&
         handoff.state === "QUEUE_UPDATED" &&
         preEntry &&
         preEntry.state === "DELIVERED" &&
-        preEntry.payload.exportBytes === queueExportBytes
+        preEntry.payload.exportBytes === queueExportBytes &&
+        existingReceipt.queue.repo === targetRepo &&
+        existingReceipt.queue.path === targetPath &&
+        existingReceipt.expectedPriorBlob === expectedPriorBlob &&
+        existingReceipt.actor === actor &&
+        existingReceipt.issuedAt === recordedAt &&
+        existingReceipt.reason === reason
       ) {
         return { handoff, queueReceipt: existingReceipt, replayed: true };
       }
+      // Identity didn't fully match (or there's no existing receipt
+      // yet): fall through to the normal path below, same as before -
+      // deliverThroughOutbox/enqueueOutbox is the actual conflict gate
+      // for a different-bytes replay of the same operation id; this
+      // block only decides whether the *fast-path* shortcut applies,
+      // never whether a conflict exists.
       const outcomeReceipt = ledger.outcomeReceipts[handoffId];
       if (!outcomeReceipt) {
         fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} has no outcome receipt to bind into a queue receipt`, {
@@ -807,6 +846,11 @@ export function createVerifiedHandoffDriver({
         queueItemRowVersion,
         queueRevision,
         queueReadbackReceiptId: queueReadback.receiptId,
+        // TBP4-003: carried so a later replay attempt can be compared
+        // against the complete original claim, not just export bytes.
+        expectedPriorBlob,
+        actor,
+        reason,
         issuedAt: recordedAt,
         status: "ANSWER_RECORDED_PENDING_CLOSE",
       };
@@ -1013,6 +1057,17 @@ export function createVerifiedHandoffDriver({
           });
         }
       }
+      // TBP4-001: re-check fencing immediately before the commit, not
+      // just at entry. Every check above this point ran across awaited
+      // I/O (git reads/head checks); a higher-generation worker can
+      // rebind the same `binding` object (checkFencing mutates it in
+      // place) while this call is suspended on one of those awaits.
+      // Re-checking here — right before the one remaining await, with
+      // no further awaited step before it — closes the gap the original
+      // single entry-point check left open: a stale worker that was
+      // valid when it started is caught before it ever appends COMPLETE
+      // or closes the queue item, rather than completing anyway.
+      checkFencing(binding);
       // All checks pass: append COMPLETE first (the machine validates
       // the full event chain), then close the ledger item. A crash
       // between the two is re-applied by reconcile from the COMPLETE
@@ -1276,6 +1331,23 @@ export function createVerifiedHandoffDriver({
           // close idempotently from the COMPLETE event. The machine
           // state already proves completion; this only closes the item.
           checkFencing(binding);
+          // TBP4-002: a historical COMPLETE event is not, by itself,
+          // authority to close a task that has since been reassigned.
+          // Re-verify the same snapshot/epoch binding completeVerified
+          // itself requires, before reapplying the close — never infer
+          // the bound task is still unmoved from the COMPLETE event
+          // alone.
+          if (binding.taskId) {
+            try {
+              const task = boundTaskRecord(binding, tasks);
+              checkTaskStillBound(binding, task);
+            } catch (error) {
+              if (error && (error.code === P4_CODES.TASK_MOVED || error.code === P4_CODES.UNKNOWN_TASK_BINDING)) {
+                return { handoff, state: handoff.state, action: "TASK_REASSIGNED", reason: error.code, detail: error.message };
+              }
+              throw error;
+            }
+          }
           queueItem.status = "CLOSED";
           queueItem.closedAt = queueItem.closedAt || handoff.updatedAt;
           queueItem.closeActor = queueItem.closeActor || "reconciled";
