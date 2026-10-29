@@ -135,6 +135,11 @@ async function setup({ workerId = "worker-a", generation = 1, provenance = "VERI
   const git = createSandboxGit();
   const outbox = { entries: [] };
   const ledger = createHandoffLedger();
+  // TBP4-001A: the per-handoff takeover/completion lock, shared across
+  // driver instances the same way `ledger` already is - a `restart()`
+  // simulates a new worker process attaching to the same running
+  // system, not a process with genuinely private memory.
+  const locks = new Map();
   const provenanceState = { status: provenance };
   const provenanceFor =
     provenance === null
@@ -148,9 +153,10 @@ async function setup({ workerId = "worker-a", generation = 1, provenance = "VERI
     workerId,
     generation,
     provenanceFor,
+    locks,
     ...(allowedRepos ? { allowedRepos } : {}),
   });
-  return { db, handoffs, git, outbox, ledger, driver, provenanceState, provenanceFor };
+  return { db, handoffs, git, outbox, ledger, locks, driver, provenanceState, provenanceFor };
 }
 
 // A restart: same durable stores, fresh driver instance.
@@ -163,6 +169,7 @@ function restart(ctx, { workerId = "worker-a", generation = 1, provenanceFor = u
     workerId,
     generation,
     provenanceFor: provenanceFor !== undefined ? provenanceFor : ctx.provenanceFor,
+    locks: ctx.locks,
   });
 }
 
@@ -1031,68 +1038,56 @@ describe("identity, allowlist, transport, and ordering guards", () => {
 // deliberately still asserts the pre-fix outcome and is not part of
 // this permanent suite).
 describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
-  it("TBP4-001: a worker whose generation is superseded during an awaited read cannot complete, even though it passed fencing at entry", async () => {
+  // TBP4-001A superseded the original TBP4-001 test's own strategy: a
+  // gate-and-pause probe made sense when fencing was only a JS-level
+  // preflight check racing an awaited read. Now that takeover
+  // (beginVerified's rebind) and completion (completeVerified) both
+  // acquire the same per-handoff critical section (withHandoffLock),
+  // that exact interleaving can no longer happen by construction -
+  // whichever call enters the lock first fully finishes (or fails)
+  // before the other can even begin its own fencing check. Both tests
+  // below assert the two valid serial outcomes the TBP4-001A re-review
+  // named explicitly, driven by plain call order (no gate needed: both
+  // completeVerified and beginVerified's rebind branch call
+  // withHandoffLock synchronously in their own first tick, so issuing
+  // the two calls back to back without an intervening await determines
+  // the queue order deterministically).
+  it("TBP4-001/001A: a takeover issued before a stale worker's completion call blocks that completion until the takeover finishes, and the stale completion is then refused", async () => {
     const c = await setup();
     await toQueue(c);
-    const orig = c.git.read.bind(c.git);
-    let resolveGate, entered;
-    const atGate = new Promise((r) => (entered = r));
-    const gate = new Promise((r) => (resolveGate = r));
-    let once = true;
-    c.git.read = async (a) => {
-      if (once) {
-        once = false;
-        entered();
-        await gate;
-      }
-      return orig(a);
-    };
-    const pending = complete(c);
-    await atGate;
     const d2 = restart(c, { workerId: "worker-b", generation: 2 });
-    await begin(c, d2);
-    resolveGate();
-    await expectCode(pending, P4_CODES.STALE_WORKER);
-    // The binding now correctly reflects the real current owner - the
-    // stale completion attempt did not get to overwrite it.
-    expect(c.ledger.bindings["h-1"].workerId).toBe("worker-b");
-    expect((await c.handoffs.getHandoff("h-1")).state).toBe("QUEUE_UPDATED");
-    await c.db.close();
-  }, 30000);
-
-  it("TBP4-001A: a rebind that lands after the preflight fencing check but before the COMPLETE write still blocks the write, because fenceCheck re-validates synchronously immediately before it", async () => {
-    // Unlike the TBP4-001 test above (which gates before completeHandoff
-    // is even called), this gates the call to handoffs.completeHandoff
-    // itself, so the outer preflight checkFencing(binding) in
-    // completeVerified has already PASSED by the time the rebind
-    // happens - proving the preflight alone would not have been enough,
-    // and that it is the fenceCheck re-validation inside completeHandoff
-    // (immediately before its COMPLETE write) that actually catches it.
-    const c = await setup();
-    await toQueue(c);
-    const origComplete = c.handoffs.completeHandoff.bind(c.handoffs);
-    let resolveGate, entered;
-    const atGate = new Promise((r) => (entered = r));
-    const gate = new Promise((r) => (resolveGate = r));
-    c.handoffs.completeHandoff = async (id, args) => {
-      entered();
-      await gate;
-      return origComplete(id, args);
-    };
-    const pending = complete(c);
-    await atGate;
-    const d2 = restart(c, { workerId: "worker-b", generation: 2 });
-    await begin(c, d2);
-    resolveGate();
-    await expectCode(pending, P4_CODES.STALE_WORKER);
+    const beginPromise = begin(c, d2);
+    const completePromise = complete(c); // worker-a, generation 1 - now stale
+    await beginPromise;
+    await expectCode(completePromise, P4_CODES.STALE_WORKER);
     // No COMPLETE event or close occurred: state is still QUEUE_UPDATED,
     // the queue item is still open, and the binding reflects the real
-    // current owner.
+    // current owner - the stale completion attempt never got to run its
+    // fencing check until the takeover had already finished.
     expect((await c.handoffs.getHandoff("h-1")).state).toBe("QUEUE_UPDATED");
     expect(c.ledger.queueItems["task:task-1"].status).not.toBe("CLOSED");
     expect(c.ledger.bindings["h-1"].workerId).toBe("worker-b");
     await c.db.close();
-  }, 30000);
+  });
+
+  it("TBP4-001/001A: a completion issued before a competing takeover request finishes entirely (COMPLETE committed, queue closed) before that takeover can proceed", async () => {
+    const c = await setup();
+    await toQueue(c);
+    const d2 = restart(c, { workerId: "worker-b", generation: 2 });
+    const completePromise = complete(c); // worker-a, generation 1, enters the critical section first
+    const beginPromise = begin(c, d2); // queued behind it
+    const result = await completePromise;
+    expect(result.handoff.state).toBe("COMPLETE");
+    expect(result.queueItem.status).toBe("CLOSED");
+    expect(result.queueItem.closeActor).toBe("worker-a");
+    // The takeover proceeds only after completion's critical section has
+    // released - it still succeeds (nothing about a completed handoff
+    // forbids a later rebind), it simply could not interleave with the
+    // completion that was already in flight.
+    await beginPromise;
+    expect(c.ledger.bindings["h-1"].workerId).toBe("worker-b");
+    await c.db.close();
+  });
 
   it("TBP4-001 positive control: an uninterrupted worker still completes normally", async () => {
     const c = await setup();

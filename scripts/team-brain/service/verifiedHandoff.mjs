@@ -105,6 +105,7 @@ export function createVerifiedHandoffDriver({
   provenanceFor = null,
   allowedRepos = DEFAULT_ALLOWED_REPOS,
   allowedPathPrefixes = DEFAULT_ALLOWED_PATH_PREFIXES,
+  locks = new Map(),
 } = {}) {
   if (!handoffs || typeof handoffs.beginHandoff !== "function") {
     fail(P4_CODES.INCOMPLETE_EVIDENCE, "Verified handoff driver requires a slice-1 handoff machine", {});
@@ -124,6 +125,40 @@ export function createVerifiedHandoffDriver({
 
   function queueItemKeyFor(binding) {
     return binding.taskId ? `task:${binding.taskId}` : `handoff:${binding.handoffId}`;
+  }
+
+  // TBP4-001A: a synchronous fencing re-check immediately before the
+  // COMPLETE write is necessary but not sufficient - the reviewer's
+  // counterexamples correctly showed that JS's run-to-completion
+  // guarantee holds only up to query *dispatch*, not through the
+  // database transaction's actual commit (the UPDATE's own await, the
+  // COMPLETE event INSERT, and the transaction commit itself are all
+  // further yield points a concurrent takeover can land in). Closing
+  // that fully requires one authoritative mechanism shared by takeover
+  // and completion. `locks` is an in-process, per-handoffId critical
+  // section covering both: beginVerified's takeover branch and
+  // completeVerified's entire body both acquire it, so whichever side
+  // gets there first either completes its full effect (fencing check
+  // through DB commit, or rebind through its own DB write) before the
+  // other's fencing check can even run - eliminating the interleaving
+  // instead of trying to out-synchronize it.
+  //
+  // Scope, honestly stated: this lock is in-process (shared across
+  // driver instances that share the same `locks` map, i.e. restarts of
+  // the same worker process, exactly like `ledger` already is). No
+  // running worker exists yet for this slice (per the binding brief);
+  // if/when takeover and completion run as genuinely separate OS
+  // processes, this lock cannot coordinate between them on its own and
+  // the authoritative-store option the review also named (a DB-backed
+  // conditional transition shared by both paths) becomes necessary. That
+  // is a schema-level change to an already-migrated production table
+  // and a separately scoped decision, not something to fold silently
+  // into this post-merge audit fix.
+  function withHandoffLock(handoffId, fn) {
+    const tail = locks.get(handoffId) || Promise.resolve();
+    const result = tail.then(fn);
+    locks.set(handoffId, result.then(() => {}, () => {}));
+    return result;
   }
 
   // Fencing: allowed iff this generation is strictly greater (takeover,
@@ -429,6 +464,243 @@ export function createVerifiedHandoffDriver({
     }
   }
 
+  async function completeVerifiedLocked({ handoffId, actor, recordedAt, reason, tasks = null }) {
+      const binding = requireBinding(handoffId);
+      checkFencing(binding);
+      assertNonEmptyString(actor, "completeVerified.actor");
+      assertUtcIso(recordedAt, "completeVerified.recordedAt");
+      assertNonEmptyString(reason, "completeVerified.reason");
+      let handoff = await handoffs.getHandoff(handoffId);
+      if (handoff.state === "COMPLETE") {
+        const events = await handoffs.getEvents(handoffId);
+        const completeEvent = events.find((e) => e.to_state === "COMPLETE");
+        if (
+          completeEvent &&
+          completeEvent.actor === actor &&
+          completeEvent.recorded_at === recordedAt &&
+          completeEvent.reason === reason
+        ) {
+          const key = queueItemKeyFor(binding);
+          return { handoff, queueItem: ledger.queueItems[key] || null, tasks, replayed: true };
+        }
+        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already completed with a different actor/time/reason`, {
+          handoffId,
+        });
+      }
+      if (handoff.state !== "QUEUE_UPDATED") {
+        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot complete from ${handoff.state}; a queue answer must be recorded first`, {
+          id: handoffId,
+          state: handoff.state,
+        });
+      }
+      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
+      if (!outcomeReceipt) {
+        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without an outcome receipt`, { handoffId });
+      }
+      const readbacks = ledger.readbackReceipts[handoffId] || [];
+      if (readbacks.length === 0) {
+        fail(P4_CODES.READBACK_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without a readback receipt`, { handoffId });
+      }
+      const queueReceipt = latestQueueReceiptForHandoff(ledger, handoffId);
+      if (!queueReceipt || queueReceipt.status !== "ANSWER_RECORDED_PENDING_CLOSE") {
+        fail(P4_CODES.QUEUE_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without a pending-close queue receipt`, {
+          handoffId,
+        });
+      }
+      // The queue receipt must bind THIS handoff, THIS outcome, and
+      // THIS task. A receipt carried over from another handoff or task
+      // is a mismatch, never a close.
+      if (!artifactEquals(queueReceipt.outcome, handoff.artifact) || queueReceipt.taskId !== binding.taskId) {
+        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue receipt for ${handoffId} does not bind this handoff's outcome/task`, {
+          handoffId,
+          receiptOutcome: queueReceipt.outcome,
+          handoffArtifact: handoff.artifact,
+          receiptTaskId: queueReceipt.taskId,
+          boundTaskId: binding.taskId,
+        });
+      }
+      checkProvenance(binding, handoff.artifact);
+      if (utcIsoToMs(recordedAt, "completeVerified.recordedAt") < utcIsoToMs(queueReceipt.issuedAt, "queueReceipt.issuedAt")) {
+        fail(P4_CODES.TIME_ORDER, `Complete recordedAt ${recordedAt} precedes queue receipt issuedAt ${queueReceipt.issuedAt}`, {
+          handoffId,
+          recordedAt,
+          issuedAt: queueReceipt.issuedAt,
+        });
+      }
+      // Head currency: the outcome must still be present. A moved head
+      // with identical outcome bytes recovers by re-readback; anything
+      // else refuses without closing.
+      const outcomeEntry = findOutboxEntry(outcomeReceipt.operationId);
+      if (!outcomeEntry) {
+        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Outbox intent for outcome ${outcomeReceipt.operationId} is missing at complete time`, {
+          handoffId,
+          operationId: outcomeReceipt.operationId,
+        });
+      }
+      const expectedOutcomeBytes = stableStringify(outcomeEntry.payload);
+      let currentHead;
+      try {
+        currentHead = await git.head(outcomeReceipt.artifact.repo);
+      } catch (error) {
+        if (error && error.code === P4_CODES.GIT_UNAVAILABLE) throw error;
+        fail(P4_CODES.GIT_UNAVAILABLE, `Cannot establish current head for ${outcomeReceipt.artifact.repo}: ${error.message}`, {
+          repo: outcomeReceipt.artifact.repo,
+        });
+      }
+      assertFullHex40(currentHead, "git.head");
+      if (currentHead !== outcomeReceipt.artifact.head) {
+        let observed;
+        try {
+          observed = await git.read({ repo: outcomeReceipt.artifact.repo, commit: currentHead, path: outcomeReceipt.artifact.path });
+        } catch (error) {
+          if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
+            fail(P4_CODES.STALE_HEAD, `Head moved and outcome ${outcomeReceipt.artifact.path} is absent at new head ${currentHead}`, {
+              handoffId,
+              oldHead: outcomeReceipt.artifact.head,
+              currentHead,
+            });
+          }
+          throw error;
+        }
+        if (observed.bytes !== expectedOutcomeBytes || gitBlobSha1(observed.bytes) !== outcomeReceipt.artifact.blob) {
+          fail(P4_CODES.STALE_HEAD, `Head moved and outcome bytes at new head ${currentHead} no longer match the verified outcome`, {
+            handoffId,
+            oldHead: outcomeReceipt.artifact.head,
+            currentHead,
+          });
+        }
+        // Outcome intact at the new head: fresh readback receipt at the
+        // new head, so the close binds current truth, not stale truth.
+        const movedReceipt = await readback.verifyBytes({
+          repo: outcomeReceipt.artifact.repo,
+          commit: currentHead,
+          path: outcomeReceipt.artifact.path,
+          expectedBytes: expectedOutcomeBytes,
+          expectedBlob: outcomeReceipt.artifact.blob,
+          verifier: workerId,
+          checkedAt: recordedAt,
+          reason: "HEAD_MOVED_REVERIFIED",
+        });
+        movedReceipt.artifact = { ...outcomeReceipt.artifact, commit: currentHead, head: currentHead };
+        movedReceipt.handoffId = handoffId;
+        movedReceipt.headMovedFrom = outcomeReceipt.artifact.head;
+        ledger.readbackReceipts[handoffId] = [...readbacks, movedReceipt];
+        ledger.revision += 1;
+      } else {
+        let observed;
+        try {
+          observed = await git.read({ repo: outcomeReceipt.artifact.repo, commit: outcomeReceipt.artifact.commit, path: outcomeReceipt.artifact.path });
+        } catch (error) {
+          if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
+            fail(P4_CODES.READBACK_MISMATCH, `Outcome absent at its pinned commit ${outcomeReceipt.artifact.commit} at complete time`, {
+              handoffId,
+            });
+          }
+          throw error;
+        }
+        if (observed.bytes !== expectedOutcomeBytes || gitBlobSha1(observed.bytes) !== outcomeReceipt.artifact.blob) {
+          fail(P4_CODES.READBACK_MISMATCH, `Outcome bytes at pinned commit no longer match the verified outcome at complete time`, {
+            handoffId,
+          });
+        }
+      }
+      // Queue receipt recheck: the queue export must still read back at
+      // its pinned commit with the receipt's blob.
+      const queueEntry = findOutboxEntry(queueReceipt.queueOperationId);
+      if (!queueEntry) {
+        fail(P4_CODES.QUEUE_RECEIPT_MISSING, `Outbox intent for queue export ${queueReceipt.queueOperationId} is missing at complete time`, {
+          handoffId,
+          queueOperationId: queueReceipt.queueOperationId,
+        });
+      }
+      let queueObserved;
+      try {
+        queueObserved = await git.read({ repo: queueReceipt.queue.repo, commit: queueReceipt.queue.commit, path: queueReceipt.queue.path });
+      } catch (error) {
+        if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
+          fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export absent at its pinned commit ${queueReceipt.queue.commit} at complete time`, {
+            handoffId,
+          });
+        }
+        throw error;
+      }
+      if (queueObserved.bytes !== queueEntry.payload.exportBytes || gitBlobSha1(queueObserved.bytes) !== queueReceipt.queue.blob) {
+        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export bytes at pinned commit no longer match the queue receipt at complete time`, {
+          handoffId,
+        });
+      }
+      // Row-version chain: no newer queue receipt for this item, and
+      // the bound task (if any) unmoved and non-terminal.
+      const key = queueItemKeyFor(binding);
+      const newestForKey = latestQueueReceiptForKey(ledger, key);
+      if (!newestForKey || newestForKey.receiptId !== queueReceipt.receiptId) {
+        fail(P4_CODES.TASK_MOVED, `A newer queue receipt exists for ${key}; the bound receipt is stale`, {
+          handoffId,
+          key,
+        });
+      }
+      let nextTasks = tasks;
+      if (binding.taskId) {
+        const task = boundTaskRecord(binding, tasks);
+        checkTaskStillBound(binding, task);
+        if (task.snapshotRevision !== queueReceipt.taskSnapshotRevision) {
+          fail(P4_CODES.TASK_MOVED, `Bound task ${task.id} snapshot moved between queue answer and complete`, {
+            taskId: task.id,
+          });
+        }
+      }
+      // TBP4-001 / TBP4-001A: re-check fencing immediately before the
+      // commit, not just at entry — this call alone is not enough, since
+      // `completeHandoff` itself crosses several more awaits (its own
+      // handoff/event-chain reads) before it reaches the actual COMPLETE
+      // write. A higher-generation worker can rebind the same `binding`
+      // object (checkFencing mutates it in place) during any of those
+      // awaits, not just the ones before this line. This preflight check
+      // fails fast for the common case without paying for a DB round
+      // trip; `fenceCheck` below is the check that actually closes the
+      // window, re-validated synchronously immediately adjacent to the
+      // COMPLETE write itself, with no await in between.
+      checkFencing(binding);
+      // All checks pass: append COMPLETE first (the machine validates
+      // the full event chain), then close the ledger item. A crash
+      // between the two is re-applied by reconcile from the COMPLETE
+      // event; a failure here leaves the ledger untouched.
+      handoff = await handoffs.completeHandoff(handoffId, {
+        actor,
+        recordedAt,
+        reason,
+        fenceCheck: () => checkFencing(binding),
+      });
+      const queueItem = ledger.queueItems[key];
+      if (queueItem) {
+        queueItem.status = "CLOSED";
+        queueItem.closedAt = recordedAt;
+        queueItem.closeActor = actor;
+        queueItem.closeReceiptId = queueReceipt.receiptId;
+      }
+      ledger.revision += 1;
+      if (binding.taskId && tasks) {
+        nextTasks = tasks.map((t) =>
+          t.id === binding.taskId
+            ? {
+                ...t,
+                status: "DONE",
+                state: "CLOSED",
+                ownerAgent: null,
+                lease: null,
+                nextAction: null,
+                handoffClose: { handoffId, closedAt: recordedAt, receiptId: queueReceipt.receiptId },
+                transitions: [
+                  ...(t.transitions || []),
+                  { at: recordedAt, from: t.status, to: "DONE", reason: "HANDOFF_COMPLETE", handoffId },
+                ],
+              }
+            : t,
+        );
+      }
+      return { handoff, queueItem: queueItem || null, tasks: nextTasks, replayed: false };
+  }
+
   return {
     getLedger() {
       return ledger;
@@ -483,8 +755,16 @@ export function createVerifiedHandoffDriver({
             handoffId,
           });
         }
-        checkFencing(existing);
-        const handoff = await handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
+        // TBP4-001A: takeover and completion share the same per-handoff
+        // critical section (see withHandoffLock above) - this blocks
+        // until any in-flight completeVerified for this handoff has
+        // fully finished (committed or failed), so checkFencing here
+        // always sees the real, settled state, and a completion that
+        // started before this takeover cannot interleave with it.
+        const handoff = await withHandoffLock(handoffId, async () => {
+          checkFencing(existing);
+          return handoffs.beginHandoff(handoffId, { actor, recordedAt, reason });
+        });
         return { handoff, binding: existing, replayed: true };
       }
       const binding = {
@@ -901,241 +1181,13 @@ export function createVerifiedHandoffDriver({
     // any gap refuses with zero closes. A moved head with the outcome
     // intact recovers by a fresh readback at the new head; a moved head
     // with the outcome gone refuses as STALE_HEAD.
+    // TBP4-001A: the entire body runs inside the per-handoff critical
+    // section (see withHandoffLock above), so a takeover cannot land in
+    // any of this function's many awaited steps (git reads, the
+    // completeHandoff DB transaction itself) between the fencing check
+    // and the effects it guards.
     async completeVerified({ handoffId, actor, recordedAt, reason, tasks = null }) {
-      const binding = requireBinding(handoffId);
-      checkFencing(binding);
-      assertNonEmptyString(actor, "completeVerified.actor");
-      assertUtcIso(recordedAt, "completeVerified.recordedAt");
-      assertNonEmptyString(reason, "completeVerified.reason");
-      let handoff = await handoffs.getHandoff(handoffId);
-      if (handoff.state === "COMPLETE") {
-        const events = await handoffs.getEvents(handoffId);
-        const completeEvent = events.find((e) => e.to_state === "COMPLETE");
-        if (
-          completeEvent &&
-          completeEvent.actor === actor &&
-          completeEvent.recorded_at === recordedAt &&
-          completeEvent.reason === reason
-        ) {
-          const key = queueItemKeyFor(binding);
-          return { handoff, queueItem: ledger.queueItems[key] || null, tasks, replayed: true };
-        }
-        fail(CODES.CONFLICTING_REPLAY, `Handoff ${handoffId} already completed with a different actor/time/reason`, {
-          handoffId,
-        });
-      }
-      if (handoff.state !== "QUEUE_UPDATED") {
-        fail(CODES.SKIPPED_TRANSITION, `Handoff ${handoffId} cannot complete from ${handoff.state}; a queue answer must be recorded first`, {
-          id: handoffId,
-          state: handoff.state,
-        });
-      }
-      const outcomeReceipt = ledger.outcomeReceipts[handoffId];
-      if (!outcomeReceipt) {
-        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without an outcome receipt`, { handoffId });
-      }
-      const readbacks = ledger.readbackReceipts[handoffId] || [];
-      if (readbacks.length === 0) {
-        fail(P4_CODES.READBACK_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without a readback receipt`, { handoffId });
-      }
-      const queueReceipt = latestQueueReceiptForHandoff(ledger, handoffId);
-      if (!queueReceipt || queueReceipt.status !== "ANSWER_RECORDED_PENDING_CLOSE") {
-        fail(P4_CODES.QUEUE_RECEIPT_MISSING, `Handoff ${handoffId} cannot complete without a pending-close queue receipt`, {
-          handoffId,
-        });
-      }
-      // The queue receipt must bind THIS handoff, THIS outcome, and
-      // THIS task. A receipt carried over from another handoff or task
-      // is a mismatch, never a close.
-      if (!artifactEquals(queueReceipt.outcome, handoff.artifact) || queueReceipt.taskId !== binding.taskId) {
-        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue receipt for ${handoffId} does not bind this handoff's outcome/task`, {
-          handoffId,
-          receiptOutcome: queueReceipt.outcome,
-          handoffArtifact: handoff.artifact,
-          receiptTaskId: queueReceipt.taskId,
-          boundTaskId: binding.taskId,
-        });
-      }
-      checkProvenance(binding, handoff.artifact);
-      if (utcIsoToMs(recordedAt, "completeVerified.recordedAt") < utcIsoToMs(queueReceipt.issuedAt, "queueReceipt.issuedAt")) {
-        fail(P4_CODES.TIME_ORDER, `Complete recordedAt ${recordedAt} precedes queue receipt issuedAt ${queueReceipt.issuedAt}`, {
-          handoffId,
-          recordedAt,
-          issuedAt: queueReceipt.issuedAt,
-        });
-      }
-      // Head currency: the outcome must still be present. A moved head
-      // with identical outcome bytes recovers by re-readback; anything
-      // else refuses without closing.
-      const outcomeEntry = findOutboxEntry(outcomeReceipt.operationId);
-      if (!outcomeEntry) {
-        fail(P4_CODES.OUTCOME_RECEIPT_MISSING, `Outbox intent for outcome ${outcomeReceipt.operationId} is missing at complete time`, {
-          handoffId,
-          operationId: outcomeReceipt.operationId,
-        });
-      }
-      const expectedOutcomeBytes = stableStringify(outcomeEntry.payload);
-      let currentHead;
-      try {
-        currentHead = await git.head(outcomeReceipt.artifact.repo);
-      } catch (error) {
-        if (error && error.code === P4_CODES.GIT_UNAVAILABLE) throw error;
-        fail(P4_CODES.GIT_UNAVAILABLE, `Cannot establish current head for ${outcomeReceipt.artifact.repo}: ${error.message}`, {
-          repo: outcomeReceipt.artifact.repo,
-        });
-      }
-      assertFullHex40(currentHead, "git.head");
-      if (currentHead !== outcomeReceipt.artifact.head) {
-        let observed;
-        try {
-          observed = await git.read({ repo: outcomeReceipt.artifact.repo, commit: currentHead, path: outcomeReceipt.artifact.path });
-        } catch (error) {
-          if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
-            fail(P4_CODES.STALE_HEAD, `Head moved and outcome ${outcomeReceipt.artifact.path} is absent at new head ${currentHead}`, {
-              handoffId,
-              oldHead: outcomeReceipt.artifact.head,
-              currentHead,
-            });
-          }
-          throw error;
-        }
-        if (observed.bytes !== expectedOutcomeBytes || gitBlobSha1(observed.bytes) !== outcomeReceipt.artifact.blob) {
-          fail(P4_CODES.STALE_HEAD, `Head moved and outcome bytes at new head ${currentHead} no longer match the verified outcome`, {
-            handoffId,
-            oldHead: outcomeReceipt.artifact.head,
-            currentHead,
-          });
-        }
-        // Outcome intact at the new head: fresh readback receipt at the
-        // new head, so the close binds current truth, not stale truth.
-        const movedReceipt = await readback.verifyBytes({
-          repo: outcomeReceipt.artifact.repo,
-          commit: currentHead,
-          path: outcomeReceipt.artifact.path,
-          expectedBytes: expectedOutcomeBytes,
-          expectedBlob: outcomeReceipt.artifact.blob,
-          verifier: workerId,
-          checkedAt: recordedAt,
-          reason: "HEAD_MOVED_REVERIFIED",
-        });
-        movedReceipt.artifact = { ...outcomeReceipt.artifact, commit: currentHead, head: currentHead };
-        movedReceipt.handoffId = handoffId;
-        movedReceipt.headMovedFrom = outcomeReceipt.artifact.head;
-        ledger.readbackReceipts[handoffId] = [...readbacks, movedReceipt];
-        ledger.revision += 1;
-      } else {
-        let observed;
-        try {
-          observed = await git.read({ repo: outcomeReceipt.artifact.repo, commit: outcomeReceipt.artifact.commit, path: outcomeReceipt.artifact.path });
-        } catch (error) {
-          if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
-            fail(P4_CODES.READBACK_MISMATCH, `Outcome absent at its pinned commit ${outcomeReceipt.artifact.commit} at complete time`, {
-              handoffId,
-            });
-          }
-          throw error;
-        }
-        if (observed.bytes !== expectedOutcomeBytes || gitBlobSha1(observed.bytes) !== outcomeReceipt.artifact.blob) {
-          fail(P4_CODES.READBACK_MISMATCH, `Outcome bytes at pinned commit no longer match the verified outcome at complete time`, {
-            handoffId,
-          });
-        }
-      }
-      // Queue receipt recheck: the queue export must still read back at
-      // its pinned commit with the receipt's blob.
-      const queueEntry = findOutboxEntry(queueReceipt.queueOperationId);
-      if (!queueEntry) {
-        fail(P4_CODES.QUEUE_RECEIPT_MISSING, `Outbox intent for queue export ${queueReceipt.queueOperationId} is missing at complete time`, {
-          handoffId,
-          queueOperationId: queueReceipt.queueOperationId,
-        });
-      }
-      let queueObserved;
-      try {
-        queueObserved = await git.read({ repo: queueReceipt.queue.repo, commit: queueReceipt.queue.commit, path: queueReceipt.queue.path });
-      } catch (error) {
-        if (error && error.code === P4_CODES.GIT_NOT_FOUND) {
-          fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export absent at its pinned commit ${queueReceipt.queue.commit} at complete time`, {
-            handoffId,
-          });
-        }
-        throw error;
-      }
-      if (queueObserved.bytes !== queueEntry.payload.exportBytes || gitBlobSha1(queueObserved.bytes) !== queueReceipt.queue.blob) {
-        fail(P4_CODES.QUEUE_RECEIPT_MISMATCH, `Queue export bytes at pinned commit no longer match the queue receipt at complete time`, {
-          handoffId,
-        });
-      }
-      // Row-version chain: no newer queue receipt for this item, and
-      // the bound task (if any) unmoved and non-terminal.
-      const key = queueItemKeyFor(binding);
-      const newestForKey = latestQueueReceiptForKey(ledger, key);
-      if (!newestForKey || newestForKey.receiptId !== queueReceipt.receiptId) {
-        fail(P4_CODES.TASK_MOVED, `A newer queue receipt exists for ${key}; the bound receipt is stale`, {
-          handoffId,
-          key,
-        });
-      }
-      let nextTasks = tasks;
-      if (binding.taskId) {
-        const task = boundTaskRecord(binding, tasks);
-        checkTaskStillBound(binding, task);
-        if (task.snapshotRevision !== queueReceipt.taskSnapshotRevision) {
-          fail(P4_CODES.TASK_MOVED, `Bound task ${task.id} snapshot moved between queue answer and complete`, {
-            taskId: task.id,
-          });
-        }
-      }
-      // TBP4-001 / TBP4-001A: re-check fencing immediately before the
-      // commit, not just at entry — this call alone is not enough, since
-      // `completeHandoff` itself crosses several more awaits (its own
-      // handoff/event-chain reads) before it reaches the actual COMPLETE
-      // write. A higher-generation worker can rebind the same `binding`
-      // object (checkFencing mutates it in place) during any of those
-      // awaits, not just the ones before this line. This preflight check
-      // fails fast for the common case without paying for a DB round
-      // trip; `fenceCheck` below is the check that actually closes the
-      // window, re-validated synchronously immediately adjacent to the
-      // COMPLETE write itself, with no await in between.
-      checkFencing(binding);
-      // All checks pass: append COMPLETE first (the machine validates
-      // the full event chain), then close the ledger item. A crash
-      // between the two is re-applied by reconcile from the COMPLETE
-      // event; a failure here leaves the ledger untouched.
-      handoff = await handoffs.completeHandoff(handoffId, {
-        actor,
-        recordedAt,
-        reason,
-        fenceCheck: () => checkFencing(binding),
-      });
-      const queueItem = ledger.queueItems[key];
-      if (queueItem) {
-        queueItem.status = "CLOSED";
-        queueItem.closedAt = recordedAt;
-        queueItem.closeActor = actor;
-        queueItem.closeReceiptId = queueReceipt.receiptId;
-      }
-      ledger.revision += 1;
-      if (binding.taskId && tasks) {
-        nextTasks = tasks.map((t) =>
-          t.id === binding.taskId
-            ? {
-                ...t,
-                status: "DONE",
-                state: "CLOSED",
-                ownerAgent: null,
-                lease: null,
-                nextAction: null,
-                handoffClose: { handoffId, closedAt: recordedAt, receiptId: queueReceipt.receiptId },
-                transitions: [
-                  ...(t.transitions || []),
-                  { at: recordedAt, from: t.status, to: "DONE", reason: "HANDOFF_COMPLETE", handoffId },
-                ],
-              }
-            : t,
-        );
-      }
-      return { handoff, queueItem: queueItem || null, tasks: nextTasks, replayed: false };
+      return withHandoffLock(handoffId, () => completeVerifiedLocked({ handoffId, actor, recordedAt, reason, tasks }));
     },
 
     // Restart reconciliation. Read-only assessment by default; the
