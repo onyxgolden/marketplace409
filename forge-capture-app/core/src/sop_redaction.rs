@@ -987,6 +987,232 @@ pub fn detect_context_dependent(text: &str) -> Vec<DeterministicMatch> {
 }
 
 // ---------------------------------------------------------------------
+// Review-candidate shapes (GS-C4/P4A, the "deferred C2-P3 phone/address
+// path" this file's module doc comment names): phone numbers and
+// street/postal addresses are shape-matched the same deterministic way
+// as every other rule in this module, but they are NOT hard positives.
+// A bare shape with no corroborating evidence nearby is reported with
+// rule_id ending in no suffix and [`bind_review_candidates`] gives it
+// [`Disposition::Pending`] — a human (or, once GS-C4/P4B's gated NER
+// pack exists, a model) still has to agree before it's redacted. A
+// shape with a nearby phone/address-type label (the only corroboration
+// signal this pass implements — NER agreement is P4B, gated on model
+// download authorization this slice does not have) gets a rule_id
+// ending in `_corroborated`, which [`bind_review_candidates`] promotes
+// to [`Disposition::Redact`]. Kept as a separate entry point from
+// [`detect_context_free`]/[`detect_context_dependent`] because those
+// two names specifically mean "always a hard positive" — folding a
+// review-candidate-only family into either would be exactly the
+// disposition confusion their own doc comments warn against.
+// ---------------------------------------------------------------------
+
+const PHONE_LABELS: &[&str] = &["phone", "tel", "telephone", "mobile", "cell", "fax"];
+const PHONE_CONTEXT_WINDOW: usize = 40;
+
+/// NANP: an area code or exchange code's first digit is never 0 or 1
+/// (those prefixes are reserved — 0 for operator services, 1 as the
+/// country-code digit itself).
+fn nanp_code_is_valid(code: u32) -> bool {
+    let first_digit = code / 100;
+    first_digit != 0 && first_digit != 1
+}
+
+/// Reads a NANP-shaped phone number starting at `start`: an optional
+/// `(DDD)` area code (optionally followed by one space) or a bare DDD
+/// area code, then one consistent separator (`-`, `.`, ` `, or none)
+/// used at the remaining group boundary, then DDD then DDDD. Returns
+/// the index just past the shape and the 10 digits, or `None`. Area
+/// code and exchange must both be NANP-valid (brief near-miss
+/// requirement: a 10-digit run that merely *looks* like a phone number
+/// is not enough if the area/exchange code itself is reserved).
+fn read_phone_shape(norm: &[NormalizedChar], start: usize) -> Option<(usize, String)> {
+    let n = norm.len();
+    let mut idx = start;
+    let parenthesized = idx < n && norm[idx].ch == '(';
+    if parenthesized {
+        idx += 1;
+    }
+    let mut digits = String::with_capacity(10);
+    let groups = [3usize, 3, 4];
+    let mut separator: Option<char> = None;
+    for (gi, &glen) in groups.iter().enumerate() {
+        for _ in 0..glen {
+            if idx >= n || !is_ascii_digit(norm[idx].ch) {
+                return None;
+            }
+            digits.push(norm[idx].ch);
+            idx += 1;
+        }
+        if gi == 0 && parenthesized {
+            if idx >= n || norm[idx].ch != ')' {
+                return None;
+            }
+            idx += 1;
+            if idx < n && norm[idx].ch == ' ' {
+                idx += 1;
+            }
+            continue;
+        }
+        if gi < groups.len() - 1 {
+            if idx >= n {
+                return None;
+            }
+            let c = norm[idx].ch;
+            match separator {
+                None if c == '-' || c == '.' || c == ' ' => {
+                    separator = Some(c);
+                    idx += 1;
+                }
+                None if is_ascii_digit(c) => separator = Some('\0'),
+                Some('\0') => {}
+                Some(sep) if sep == c => idx += 1,
+                _ => return None,
+            }
+        }
+    }
+    if idx < n && is_ascii_digit(norm[idx].ch) {
+        return None;
+    }
+    if start > 0 && is_ascii_digit(norm[start - 1].ch) {
+        return None;
+    }
+    let area: u32 = digits[0..3].parse().unwrap();
+    let exchange: u32 = digits[3..6].parse().unwrap();
+    if !nanp_code_is_valid(area) || !nanp_code_is_valid(exchange) {
+        return None;
+    }
+    Some((idx, digits))
+}
+
+fn detect_phone_number(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if (is_ascii_digit(norm[i].ch) || norm[i].ch == '(') && (i == 0 || !is_ascii_digit(norm[i - 1].ch)) {
+            if let Some((end_idx, _digits)) = read_phone_shape(norm, i) {
+                let corroborated = context_label_within(norm, i, PHONE_LABELS, PHONE_CONTEXT_WINDOW);
+                let (start_byte, end_byte) = bytes_of(norm, i, end_idx);
+                out.push(DeterministicMatch {
+                    start_byte,
+                    end_byte,
+                    rule_id: if corroborated { "det.phone_number_corroborated" } else { "det.phone_number" },
+                    reason_code: if corroborated { "PHONE_NUMBER_WITH_LABEL" } else { "PHONE_NUMBER_SHAPE" },
+                    score: None,
+                });
+                i = end_idx;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+const ADDRESS_LABELS: &[&str] = &["address", "addr", "street", "mailing", "residence"];
+const ADDRESS_CONTEXT_WINDOW: usize = 40;
+
+const STREET_SUFFIXES: &[&str] = &[
+    "street", "st", "avenue", "ave", "road", "rd", "boulevard", "blvd", "drive", "dr", "lane", "ln", "court", "ct", "way", "place",
+    "pl", "terrace", "ter", "circle", "cir", "highway", "hwy", "parkway", "pkwy",
+];
+
+/// Reads a `<1-6 digit number> <1-4 words>` shape starting at `start`
+/// whose *last* word (case-insensitive, an optional trailing `.`
+/// stripped first) is a street-type suffix — tried longest-word-count
+/// first, so "500 St Johns Road" matches the full "500 St Johns Road"
+/// (suffix "Road") rather than stopping short at the word "St" even
+/// though "st" is itself a valid suffix abbreviation. Returns the index
+/// just past the shape, or `None`.
+fn read_street_address_shape(norm: &[NormalizedChar], start: usize) -> Option<usize> {
+    let n = norm.len();
+    let mut idx = start;
+    let digit_start = idx;
+    while idx < n && is_ascii_digit(norm[idx].ch) {
+        idx += 1;
+    }
+    if !(1..=6).contains(&(idx - digit_start)) {
+        return None;
+    }
+    if idx >= n || norm[idx].ch != ' ' {
+        return None;
+    }
+    idx += 1;
+
+    let mut word_bounds: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = idx;
+    for _ in 0..4 {
+        let word_start = cursor;
+        while cursor < n && norm[cursor].ch.is_alphabetic() {
+            cursor += 1;
+        }
+        if cursor == word_start {
+            break;
+        }
+        word_bounds.push((word_start, cursor));
+        let mut next = cursor;
+        if next < n && norm[next].ch == '.' {
+            next += 1;
+        }
+        if next < n && norm[next].ch == ' ' {
+            cursor = next + 1;
+        } else {
+            break;
+        }
+    }
+    if word_bounds.is_empty() {
+        return None;
+    }
+    for take in (1..=word_bounds.len()).rev() {
+        let (last_start, last_end) = word_bounds[take - 1];
+        let word: String = norm[last_start..last_end].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
+        if STREET_SUFFIXES.contains(&word.as_str()) {
+            let mut end_idx = last_end;
+            if end_idx < n && norm[end_idx].ch == '.' {
+                end_idx += 1;
+            }
+            return Some(end_idx);
+        }
+    }
+    None
+}
+
+fn detect_street_address(norm: &[NormalizedChar], out: &mut Vec<DeterministicMatch>) {
+    let n = norm.len();
+    let mut i = 0;
+    while i < n {
+        if is_ascii_digit(norm[i].ch) && (i == 0 || !norm[i - 1].ch.is_ascii_alphanumeric()) {
+            if let Some(end_idx) = read_street_address_shape(norm, i) {
+                let corroborated = context_label_within(norm, i, ADDRESS_LABELS, ADDRESS_CONTEXT_WINDOW);
+                let (start_byte, end_byte) = bytes_of(norm, i, end_idx);
+                out.push(DeterministicMatch {
+                    start_byte,
+                    end_byte,
+                    rule_id: if corroborated { "det.street_address_corroborated" } else { "det.street_address" },
+                    reason_code: if corroborated { "STREET_ADDRESS_WITH_LABEL" } else { "STREET_ADDRESS_SHAPE" },
+                    score: None,
+                });
+                i = end_idx;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Runs every review-candidate-only rule in this module over `text` and
+/// returns every hit, in source-byte order — the GS-C4/P4A counterpart
+/// to [`detect_context_free`]/[`detect_context_dependent`], neither of
+/// which this function's output should ever be merged into (see this
+/// section's own header comment for why).
+pub fn detect_review_candidates(text: &str) -> Vec<DeterministicMatch> {
+    let norm = normalize(text);
+    let mut out = Vec::new();
+    detect_phone_number(&norm, &mut out);
+    detect_street_address(&norm, &mut out);
+    out.sort_by_key(|m| m.start_byte);
+    out
+}
+
+// ---------------------------------------------------------------------
 // Candidate box binding (brief §3.1): map a [`DeterministicMatch`]'s
 // byte range onto the [`OcrToken`]s it overlaps and build the actual
 // [`RedactionCandidate`] shape brief §4 defines.
@@ -1147,6 +1373,62 @@ pub fn bind_matches_to_candidates(
     frame_height: u32,
     candidate_id_prefix: &str,
 ) -> Result<BindingResult, BindMatchesError> {
+    bind_matches_to_candidates_with_disposition(
+        matches,
+        tokens,
+        token_spans,
+        joined_text_len,
+        frame_width,
+        frame_height,
+        candidate_id_prefix,
+        |_| Disposition::Redact,
+    )
+}
+
+/// GS-C4/P4A: phone/street-postal shapes are review candidates, not
+/// automatic hard positives — "become hard positives when a nearby
+/// label... agrees" (see [`detect_review_candidates`]'s own doc comment
+/// for the full corroboration rule). This binds them the same way
+/// [`bind_matches_to_candidates`] binds hard positives, except the
+/// disposition is [`Disposition::Redact`] only for a match whose
+/// `rule_id` carries this module's `_corroborated` convention, and
+/// [`Disposition::Pending`] otherwise — never silently promoted to
+/// `Redact` by shape alone, since brief §3.5's "a rule... hard positive
+/// cannot be downgraded" cuts the other way too: a bare review-candidate
+/// shape is not yet a hard positive and must not be dispositioned as if
+/// it already were one.
+pub fn bind_review_candidates(
+    matches: &[DeterministicMatch],
+    tokens: &[OcrToken],
+    token_spans: &[(usize, usize)],
+    joined_text_len: usize,
+    frame_width: u32,
+    frame_height: u32,
+    candidate_id_prefix: &str,
+) -> Result<BindingResult, BindMatchesError> {
+    bind_matches_to_candidates_with_disposition(
+        matches,
+        tokens,
+        token_spans,
+        joined_text_len,
+        frame_width,
+        frame_height,
+        candidate_id_prefix,
+        |m| if m.rule_id.ends_with("_corroborated") { Disposition::Redact } else { Disposition::Pending },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bind_matches_to_candidates_with_disposition(
+    matches: &[DeterministicMatch],
+    tokens: &[OcrToken],
+    token_spans: &[(usize, usize)],
+    joined_text_len: usize,
+    frame_width: u32,
+    frame_height: u32,
+    candidate_id_prefix: &str,
+    disposition_for: impl Fn(&DeterministicMatch) -> Disposition,
+) -> Result<BindingResult, BindMatchesError> {
     if tokens.len() != token_spans.len() {
         return Err(BindMatchesError::SpanTableLengthMismatch { tokens_len: tokens.len(), spans_len: token_spans.len() });
     }
@@ -1198,7 +1480,7 @@ pub fn bind_matches_to_candidates(
             original_box,
             expanded_box,
             score: m.score,
-            disposition: Disposition::Redact,
+            disposition: disposition_for(m),
             disposition_event_id: None,
         });
     }
@@ -3632,5 +3914,274 @@ mod tests {
         for evidence in variants {
             assert_ne!(compute_frame_verification(&evidence), FrameVerification::Verified, "{evidence:?}");
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // GS-C4/P4A: review-candidate phone/address shapes. All synthetic
+    // planted data; no real PII, no network/model calls (detect_phone_number/
+    // detect_street_address are pure forward scans over an in-memory
+    // string, same as every other detector in this module).
+    // ---------------------------------------------------------------------
+
+    fn review_matches_for(text: &str) -> Vec<DeterministicMatch> {
+        detect_review_candidates(text)
+    }
+
+    // ---- phone: positives ----
+
+    #[test]
+    fn phone_parenthesized_area_code_is_matched() {
+        let hits = review_matches_for("Call (555) 234-5678 for details");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.phone_number").count(), 1);
+    }
+
+    #[test]
+    fn phone_hyphenated_is_matched() {
+        let hits = review_matches_for("555-234-5678");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_id, "det.phone_number");
+    }
+
+    #[test]
+    fn phone_dotted_is_matched() {
+        let hits = review_matches_for("555.234.5678");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.phone_number").count(), 1);
+    }
+
+    #[test]
+    fn phone_unseparated_ten_digits_is_matched() {
+        let hits = review_matches_for("5552345678");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.phone_number").count(), 1);
+    }
+
+    #[test]
+    fn phone_space_separated_is_matched() {
+        let hits = review_matches_for("555 234 5678");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.phone_number").count(), 1);
+    }
+
+    // ---- phone: near misses ----
+
+    #[test]
+    fn phone_with_reserved_area_code_first_digit_is_not_matched() {
+        // NANP: area code can't start with 0 or 1.
+        assert!(review_matches_for("055-234-5678").iter().all(|m| m.rule_id != "det.phone_number"));
+        assert!(review_matches_for("155-234-5678").iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    #[test]
+    fn phone_with_reserved_exchange_first_digit_is_not_matched() {
+        assert!(review_matches_for("555-034-5678").iter().all(|m| m.rule_id != "det.phone_number"));
+        assert!(review_matches_for("555-134-5678").iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    #[test]
+    fn phone_with_mixed_separators_is_not_matched() {
+        assert!(review_matches_for("555-234.5678").iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    #[test]
+    fn phone_shape_embedded_in_a_longer_digit_run_is_not_matched() {
+        // Not a bounded 10-digit shape - an 11th leading or trailing digit
+        // disqualifies it, same discipline as the SSN/card detectors.
+        assert!(review_matches_for("95552345678").iter().all(|m| m.rule_id != "det.phone_number"));
+        assert!(review_matches_for("55523456789").iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    #[test]
+    fn nine_digits_is_not_matched_as_phone() {
+        assert!(review_matches_for("555-234-567").iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    // ---- phone: bare vs. corroborated partners ----
+
+    #[test]
+    fn phone_with_no_nearby_label_is_bare() {
+        let hits = review_matches_for("Reference code: 555-234-5678 for your file");
+        let m = hits.iter().find(|m| m.rule_id.starts_with("det.phone_number")).unwrap();
+        assert_eq!(m.rule_id, "det.phone_number");
+        assert_eq!(m.reason_code, "PHONE_NUMBER_SHAPE");
+    }
+
+    #[test]
+    fn phone_with_nearby_phone_label_is_corroborated() {
+        let hits = review_matches_for("Phone: 555-234-5678");
+        let m = hits.iter().find(|m| m.rule_id.starts_with("det.phone_number")).unwrap();
+        assert_eq!(m.rule_id, "det.phone_number_corroborated");
+        assert_eq!(m.reason_code, "PHONE_NUMBER_WITH_LABEL");
+    }
+
+    #[test]
+    fn phone_label_on_a_different_line_does_not_corroborate() {
+        let hits = review_matches_for("Phone\n555-234-5678");
+        let m = hits.iter().find(|m| m.rule_id.starts_with("det.phone_number")).unwrap();
+        assert_eq!(m.rule_id, "det.phone_number", "a label on a different line must not corroborate");
+    }
+
+    // ---- street address: positives ----
+
+    #[test]
+    fn street_address_with_full_suffix_word_is_matched() {
+        let hits = review_matches_for("123 Main Street");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.street_address").count(), 1);
+        let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
+        assert_eq!(&"123 Main Street"[m.start_byte..m.end_byte], "123 Main Street");
+    }
+
+    #[test]
+    fn street_address_with_abbreviated_suffix_and_period_is_matched() {
+        let hits = review_matches_for("4500 Oak Ave.");
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.street_address").count(), 1);
+    }
+
+    #[test]
+    fn street_address_longest_match_prefers_the_full_phrase_over_an_earlier_suffix_word() {
+        // "St" (word 1) is itself a valid suffix abbreviation, but the
+        // longest valid shape ending in a real suffix ("Road", word 3)
+        // must win, not the short "500 St" prefix.
+        let text = "500 St Johns Road";
+        let hits = review_matches_for(text);
+        let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
+        assert_eq!(&text[m.start_byte..m.end_byte], "500 St Johns Road");
+    }
+
+    // ---- street address: near misses ----
+
+    #[test]
+    fn a_number_with_no_street_suffix_word_is_not_matched() {
+        assert!(review_matches_for("123 Main Topic").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    #[test]
+    fn a_street_suffix_word_with_no_leading_number_is_not_matched() {
+        assert!(review_matches_for("Main Street is closed").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    #[test]
+    fn more_than_six_leading_digits_is_not_matched_as_a_street_number() {
+        assert!(review_matches_for("1234567 Main Street").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    #[test]
+    fn a_suffix_word_beyond_the_four_word_budget_is_not_matched() {
+        assert!(review_matches_for("123 Alpha Beta Gamma Delta Street").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    // ---- street address: bare vs. corroborated partners ----
+
+    #[test]
+    fn street_address_with_no_nearby_label_is_bare() {
+        let hits = review_matches_for("Meet me at 123 Main Street tomorrow");
+        let m = hits.iter().find(|m| m.rule_id.starts_with("det.street_address")).unwrap();
+        assert_eq!(m.rule_id, "det.street_address");
+        assert_eq!(m.reason_code, "STREET_ADDRESS_SHAPE");
+    }
+
+    #[test]
+    fn street_address_with_nearby_address_label_is_corroborated() {
+        let hits = review_matches_for("Address: 123 Main Street");
+        let m = hits.iter().find(|m| m.rule_id.starts_with("det.street_address")).unwrap();
+        assert_eq!(m.rule_id, "det.street_address_corroborated");
+        assert_eq!(m.reason_code, "STREET_ADDRESS_WITH_LABEL");
+    }
+
+    // ---- UTF-8 / normalization / box binding ----
+
+    #[test]
+    fn full_width_digits_in_a_phone_shape_are_matched() {
+        // Same full-width-digit normalization discipline as the SSN
+        // detector's own full_width_digits_in_an_ssn_shape_are_matched.
+        let text = "\u{FF15}\u{FF15}\u{FF15}-\u{FF12}\u{FF13}\u{FF14}-\u{FF15}\u{FF16}\u{FF17}\u{FF18}"; // "555-234-5678" in full-width
+        let hits = review_matches_for(text);
+        assert_eq!(hits.iter().filter(|m| m.rule_id == "det.phone_number").count(), 1);
+    }
+
+    #[test]
+    fn phone_candidate_binds_to_its_token_box_with_pending_disposition() {
+        let tokens = vec![token("t1", "555-234-5678", "l1", (10, 10, 100, 20))];
+        let (text, spans) = join_tokens(&tokens);
+        let hits = detect_review_candidates(&text);
+        assert_eq!(hits.len(), 1);
+        let result = bind_review_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert!(result.unbound_matches.is_empty());
+        assert_eq!(result.candidates.len(), 1);
+        let c = &result.candidates[0];
+        assert_eq!(c.detector_id, "det.phone_number");
+        assert_eq!(c.source_token_ids, vec!["t1".to_string()]);
+        assert_eq!(c.original_box, (10, 10, 100, 20));
+        // Bare shape, no corroborating label: Pending, never auto-Redact.
+        assert_eq!(c.disposition, Disposition::Pending);
+    }
+
+    #[test]
+    fn corroborated_phone_candidate_binds_with_redact_disposition() {
+        let tokens = vec![token("t1", "Phone:", "l1", (10, 10, 50, 20)), token("t2", "555-234-5678", "l1", (65, 10, 100, 20))];
+        let (text, spans) = join_tokens(&tokens);
+        assert_eq!(text, "Phone: 555-234-5678");
+        let hits = detect_review_candidates(&text);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_id, "det.phone_number_corroborated");
+        let result = bind_review_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        // Corroborated (nearby label agreed): promoted to Redact.
+        assert_eq!(result.candidates[0].disposition, Disposition::Redact);
+    }
+
+    // ---- unknown mapping: a real detection that cannot be bound to any
+    // token must be reported, never silently dropped ----
+
+    #[test]
+    fn a_phone_match_covering_no_token_is_reported_as_unbound() {
+        let tokens = vec![token("t1", "unrelated", "l1", (0, 0, 50, 20))];
+        let synthetic_match =
+            DeterministicMatch { start_byte: 100, end_byte: 112, rule_id: "det.phone_number", reason_code: "PHONE_NUMBER_SHAPE", score: None };
+        // joined_text_len must be large enough for the match's own bounds
+        // check to pass, so the test exercises the "no covering token"
+        // path specifically, not the earlier out-of-bounds rejection.
+        let result = bind_review_candidates(&[synthetic_match.clone()], &tokens, &[(0, 9)], 200, 1000, 1000, "frame-1").unwrap();
+        assert_eq!(result.candidates.len(), 0);
+        assert_eq!(result.unbound_matches, vec![synthetic_match]);
+    }
+
+    // ---- resource limit / +1 boundary ----
+
+    #[test]
+    fn exactly_ten_digits_matches_nine_does_not() {
+        assert_eq!(review_matches_for("555-234-5678").iter().filter(|m| m.rule_id.starts_with("det.phone_number")).count(), 1);
+        assert!(review_matches_for("55-234-5678").iter().all(|m| !m.rule_id.starts_with("det.phone_number")));
+    }
+
+    #[test]
+    fn exactly_six_leading_digits_matches_seven_does_not() {
+        assert_eq!(review_matches_for("123456 Main Street").iter().filter(|m| m.rule_id == "det.street_address").count(), 1);
+        assert!(review_matches_for("1234567 Main Street").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    #[test]
+    fn exactly_four_words_matches_five_does_not() {
+        assert_eq!(review_matches_for("123 Alpha Beta Gamma Street").iter().filter(|m| m.rule_id == "det.street_address").count(), 1);
+        assert!(review_matches_for("123 Alpha Beta Gamma Delta Street").iter().all(|m| m.rule_id != "det.street_address"));
+    }
+
+    #[test]
+    fn a_long_adversarial_digit_run_does_not_hang_or_panic_in_review_candidates() {
+        let text = "5".repeat(50_000);
+        let hits = review_matches_for(&text);
+        assert!(hits.iter().all(|m| m.rule_id != "det.phone_number"));
+    }
+
+    // ---- session round-trip ----
+
+    #[test]
+    fn a_review_candidate_round_trips_through_json_with_disposition_intact() {
+        let tokens = vec![token("t1", "555-234-5678", "l1", (10, 10, 100, 20))];
+        let (text, spans) = join_tokens(&tokens);
+        let hits = detect_review_candidates(&text);
+        let result = bind_review_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-1").unwrap();
+        let candidate = &result.candidates[0];
+        let json = serde_json::to_string(candidate).expect("serialize");
+        let round_tripped: RedactionCandidate = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(&round_tripped, candidate);
+        assert_eq!(round_tripped.disposition, Disposition::Pending);
     }
 }
