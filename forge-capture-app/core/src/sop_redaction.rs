@@ -1265,7 +1265,7 @@ pub fn apply_candidate_redactions(rgba: &mut [u8], width: u32, height: u32, cand
 // folds all three into the brief's [`FrameVerification`] state machine.
 // ---------------------------------------------------------------------
 
-use crate::sop_session::FrameVerification;
+use crate::sop_session::{EditEvent, EditOperation, FrameVerification};
 
 /// Brief §3.5 check 1: "every declared redaction rectangle in the
 /// decoded derivative consists entirely of the fixed opaque redaction
@@ -1365,7 +1365,16 @@ pub enum RemovalProofResult {
 /// flagged source span may remain"). The NER/structural half of this
 /// proof is a later round, once those detectors exist.
 pub fn verify_removal_proof(rerun_text: &str, flagged_source_values: &[String]) -> RemovalProofResult {
-    let residual_hard_positives = detect_context_free(rerun_text);
+    // C688-008: this must rerun every required deterministic rule
+    // family the release actually implements, not just the original
+    // round-1 context-free subset — otherwise a derivative containing a
+    // brand-new credential shape (e.g. a context-dependent
+    // `password=...` form) that happens to share no fragment with the
+    // original flagged values can report Clean while a real, detectable
+    // hard positive is still sitting in the rerun text.
+    let mut residual_hard_positives = detect_context_free(rerun_text);
+    residual_hard_positives.extend(detect_context_dependent(rerun_text));
+    residual_hard_positives.sort_by_key(|m| m.start_byte);
 
     // C2P3-003: the fragment check must apply the *same* offset-
     // preserving normalization the detectors themselves use to both
@@ -1414,6 +1423,13 @@ pub enum CoverageProofFailure {
     /// is `sop_session::validate_edit_chain`'s territory), but it can and
     /// does refuse to accept an override that isn't even backed by one.
     UnevidencedOverride { candidate_id: String },
+    /// C688-005A: a `disposition_event_id` was present, but no event in
+    /// the supplied edit log is actually the *current* `RedactionChange`
+    /// for this candidate with that exact id — the id names a
+    /// nonexistent, stale/superseded, or otherwise non-matching event
+    /// rather than the one that produced this candidate's current
+    /// disposition.
+    UnresolvedOverrideEvent { candidate_id: String, disposition_event_id: String },
 }
 
 /// The rule families brief §3.5 names as categorically unredactable in
@@ -1435,6 +1451,20 @@ pub fn is_unredactable_hard_positive(rule_id: &str) -> bool {
             | "det.github_token_server_to_server"
             | "det.github_token_refresh"
             | "det.github_token_fine_grained_pat"
+            // C688-007: the round-3 context-dependent detectors added
+            // real credential families this list never caught up to -
+            // a bearer/basic/session-cookie/sensitive-key-value/OTP
+            // candidate marked MarkNonSensitive produced no coverage
+            // failure at all, so Phase 2's "credential... cannot be
+            // unredacted" rule silently didn't apply to half the
+            // credential-shaped detectors in the module. Every rule
+            // family here is a credential or a one-time authentication
+            // secret, the same class as the context-free set above.
+            | "det.bearer_auth"
+            | "det.basic_auth"
+            | "det.cookie_header"
+            | "det.sensitive_key_value"
+            | "det.otp_pin"
     )
 }
 
@@ -1444,7 +1474,26 @@ pub fn is_unredactable_hard_positive(rule_id: &str) -> bool {
 /// backed by a recorded disposition event — never accepted on the enum
 /// value alone (C2P3-005). Returns every failure found, not just the
 /// first — the caller needs the complete list to show a reviewer.
-pub fn verify_coverage_proof(candidates: &[RedactionCandidate]) -> Vec<CoverageProofFailure> {
+/// `edit_events` lets this function resolve each `disposition_event_id`
+/// against the append-only edit log (brief §4 `EditEvent`) rather than
+/// accepting any syntactically present string: C688-005A closed the gap
+/// where an arbitrary, nonexistent, or stale event id satisfied the
+/// previous C2P3-005 check (which only tested `is_none()`). An id is
+/// accepted only if it names the *current* (highest-sequence)
+/// `RedactionChange` event recorded for that exact candidate, with a
+/// `MarkNonSensitive` disposition — a superseded or unrelated event id
+/// is rejected the same as a missing one.
+///
+/// **Disclosed boundary this still does not close**: brief §3.5 also
+/// requires "a reason and explicit confirmation" for every override,
+/// but `EditOperation::RedactionChange` (sop_session.rs, C2-P1's
+/// already-merged contract) carries no reason/confirmation field at
+/// all — there is nothing for this function to validate content-wise
+/// even once it has resolved the correct, current event. Closing that
+/// gap means changing an already-merged core session contract's wire
+/// schema, which needs its own separately reviewed slice, not a change
+/// bundled into this fix.
+pub fn verify_coverage_proof(candidates: &[RedactionCandidate], edit_events: &[EditEvent]) -> Vec<CoverageProofFailure> {
     let mut failures = Vec::new();
     for c in candidates {
         if c.disposition == Disposition::Pending {
@@ -1456,8 +1505,32 @@ pub fn verify_coverage_proof(candidates: &[RedactionCandidate]) -> Vec<CoverageP
                 detector_id: c.detector_id.clone(),
             });
         }
-        if c.disposition == Disposition::MarkNonSensitive && c.disposition_event_id.is_none() {
-            failures.push(CoverageProofFailure::UnevidencedOverride { candidate_id: c.candidate_id.clone() });
+        if c.disposition == Disposition::MarkNonSensitive {
+            match &c.disposition_event_id {
+                None => {
+                    failures.push(CoverageProofFailure::UnevidencedOverride { candidate_id: c.candidate_id.clone() });
+                }
+                Some(event_id) => {
+                    let current_for_candidate = edit_events
+                        .iter()
+                        .filter(|e| {
+                            matches!(&e.operation, EditOperation::RedactionChange { candidate_id, .. } if candidate_id == &c.candidate_id)
+                        })
+                        .max_by_key(|e| e.sequence);
+                    let resolved = match current_for_candidate {
+                        Some(event) if &event.event_id == event_id => {
+                            matches!(&event.operation, EditOperation::RedactionChange { disposition: Disposition::MarkNonSensitive, .. })
+                        }
+                        _ => false,
+                    };
+                    if !resolved {
+                        failures.push(CoverageProofFailure::UnresolvedOverrideEvent {
+                            candidate_id: c.candidate_id.clone(),
+                            disposition_event_id: event_id.clone(),
+                        });
+                    }
+                }
+            }
         }
     }
     failures
@@ -2522,6 +2595,19 @@ mod tests {
     }
 
     #[test]
+    fn removal_proof_catches_a_context_dependent_credential_absent_from_the_flagged_inventory() {
+        // C688-008: verify_removal_proof must rerun every required
+        // deterministic family the release implements, not just the
+        // original round-1 context-free subset. A brand-new
+        // context-dependent credential shape in the rerun text, sharing
+        // no fragment with any originally flagged value, must still be
+        // caught - not reported Clean just because it postdates the
+        // flagged-value inventory.
+        let result = verify_removal_proof("password: brandNewLeak123", &[]);
+        assert!(matches!(result, RemovalProofResult::Residual { .. }), "{result:?}");
+    }
+
+    #[test]
     fn removal_proof_catches_a_four_character_residual_fragment() {
         // The original flagged value's shape no longer matches any rule
         // post-redaction, but a readable fragment of it (>=4 chars) is
@@ -2579,30 +2665,46 @@ mod tests {
 
     // ---- verification: coverage proof ----
 
+    fn redaction_change_event(sequence: u64, event_id: &str, candidate_id: &str, disposition: Disposition) -> EditEvent {
+        EditEvent {
+            sequence,
+            event_id: event_id.to_string(),
+            session_revision_before: sequence,
+            session_revision_after: sequence + 1,
+            operation: EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: candidate_id.to_string(), disposition },
+            before_digest: None,
+            after_digest: None,
+            local_timestamp: "2026-10-28T00:00:00Z".to_string(),
+        }
+    }
+
     #[test]
     fn coverage_proof_passes_when_every_candidate_has_a_real_evidenced_disposition() {
         let mut c2 = candidate("c2", (10, 10, 5, 5), Disposition::MarkNonSensitive);
         c2.disposition_event_id = Some("evt-1".to_string());
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact), c2];
-        assert!(verify_coverage_proof(&candidates).is_empty());
+        let events = vec![redaction_change_event(1, "evt-1", "c2", Disposition::MarkNonSensitive)];
+        assert!(verify_coverage_proof(&candidates, &events).is_empty());
     }
 
     #[test]
     fn coverage_proof_flags_a_pending_candidate() {
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Pending)];
-        let failures = verify_coverage_proof(&candidates);
+        let failures = verify_coverage_proof(&candidates, &[]);
         assert_eq!(failures, vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }]);
     }
 
     #[test]
-    fn coverage_proof_flags_a_payment_card_marked_non_sensitive_even_with_an_event_id() {
+    fn coverage_proof_flags_a_payment_card_marked_non_sensitive_even_with_a_real_evidenced_event() {
         // Evidenced or not, credential/private-key/payment-card hard
-        // positives are categorically unredactable in Phase 2 - an event
-        // id does not grant an exception this policy refuses outright.
+        // positives are categorically unredactable in Phase 2 - a real,
+        // current, resolvable event does not grant an exception this
+        // policy refuses outright.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.payment_card".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
-        let failures = verify_coverage_proof(&[c]);
+        let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
+        let failures = verify_coverage_proof(&[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::UnredactableHardPositiveNotRedacted {
@@ -2620,20 +2722,72 @@ mod tests {
         // MarkNonSensitive with no recorded disposition event at all.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
-        let failures = verify_coverage_proof(&[c]);
+        let failures = verify_coverage_proof(&[c], &[]);
         assert_eq!(failures, vec![CoverageProofFailure::UnevidencedOverride { candidate_id: "c1".to_string() }]);
     }
 
     #[test]
-    fn coverage_proof_allows_an_evidenced_ssn_override() {
+    fn coverage_proof_allows_an_evidenced_ssn_override_resolved_against_a_real_event() {
         // SSN is a hard positive that defaults to Redact, but is not in
         // the categorically-unredactable "credential/private-key/
-        // payment-card" set, so a human override backed by a real
-        // disposition event is allowed.
+        // payment-card" set, so a human override backed by a real,
+        // current, matching disposition event is allowed.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
-        assert!(verify_coverage_proof(&[c]).is_empty());
+        let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
+        assert!(verify_coverage_proof(&[c], &events).is_empty());
+    }
+
+    #[test]
+    fn coverage_proof_rejects_a_nonexistent_event_id() {
+        // C688-005A: a syntactically present but entirely fabricated id
+        // must not satisfy the check - nothing in the edit log names it.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-does-not-exist".to_string());
+        let failures = verify_coverage_proof(&[c], &[]);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::UnresolvedOverrideEvent {
+                candidate_id: "c1".to_string(),
+                disposition_event_id: "evt-does-not-exist".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_event_recorded_for_a_different_candidate() {
+        // C688-005A's "foreign candidate" case: the event is real and
+        // current, but it belongs to a different candidate entirely.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let events = vec![redaction_change_event(1, "evt-1", "some-other-candidate", Disposition::MarkNonSensitive)];
+        let failures = verify_coverage_proof(&[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::UnresolvedOverrideEvent { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_a_stale_event_superseded_by_a_later_one() {
+        // C688-005A: the candidate's recorded id names a real event for
+        // the right candidate, but a *later* RedactionChange for that
+        // same candidate exists - the recorded id is stale, not current.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let events = vec![
+            redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive),
+            redaction_change_event(2, "evt-2", "c1", Disposition::Redact),
+        ];
+        let failures = verify_coverage_proof(&[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::UnresolvedOverrideEvent { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
     }
 
     #[test]
@@ -2648,6 +2802,31 @@ mod tests {
         ] {
             assert!(is_unredactable_hard_positive(rule_id), "{rule_id} must be unredactable");
         }
+    }
+
+    #[test]
+    fn is_unredactable_hard_positive_covers_every_context_dependent_credential_family() {
+        // C688-007: round 3's context-dependent detectors added real
+        // credential families this categorical set never caught up to.
+        for rule_id in ["det.bearer_auth", "det.basic_auth", "det.cookie_header", "det.sensitive_key_value", "det.otp_pin"] {
+            assert!(is_unredactable_hard_positive(rule_id), "{rule_id} must be unredactable");
+        }
+    }
+
+    #[test]
+    fn coverage_proof_flags_a_bearer_credential_marked_non_sensitive_even_with_a_real_evidenced_event() {
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.bearer_auth".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
+        let failures = verify_coverage_proof(&[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::UnredactableHardPositiveNotRedacted {
+                candidate_id: "c1".to_string(),
+                detector_id: "det.bearer_auth".to_string()
+            }]
+        );
     }
 
     // ---- verification: frame state machine ----
