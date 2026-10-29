@@ -535,6 +535,25 @@ describe("crash after every boundary, recovered by restart + reconcile", () => {
     expect(done.handoff.state).toBe("COMPLETE");
   });
 
+it("crash after QUEUE_UPDATED, queue bytes changed", async () => {
+  const ctx = await setup();
+  await toQueue(ctx);
+  const realRead = ctx.git.read;
+  ctx.git.read = async (args) => {
+    if (args.path === QUEUE_PATH) {
+      return { bytes: "some-different-bytes" };
+    }
+    return realRead(args);
+  };
+  const d2 = restart(ctx);
+  const rec = await d2.reconcile({ handoffId: "h-1", tasks: taskList() });
+  expect(rec.action).toBe("BLOCKED");
+  expect(rec.reason).toBe(P4_CODES.QUEUE_RECEIPT_MISMATCH);
+  const h = await ctx.handoffs.getHandoff("h-1");
+  expect(h.state).toBe("QUEUE_UPDATED");
+});
+
+
   it("crash after COMPLETE, before ledger close: reconcile re-applies the close once", async () => {
     const ctx = await setup();
     await toQueue(ctx);
