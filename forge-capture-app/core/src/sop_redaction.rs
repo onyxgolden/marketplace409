@@ -1833,6 +1833,86 @@ pub fn is_unredactable_hard_positive(rule_id: &str) -> bool {
     )
 }
 
+/// GS-C6 (C2-P6 review UI safety blocker): why a reviewer-facing
+/// disposition change was refused, caught *before* an
+/// [`crate::sop_session::EditOperation::RedactionChange`] is even
+/// constructed — this is the review UI's own input gate, separate from
+/// (and not a relaxation of) [`verify_coverage_proof`]'s own refusal of
+/// any resolved-but-unsupported override downstream.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DispositionChangeError {
+    /// GS-C6: "Reason AND explicit confirmation" — a `MarkNonSensitive`
+    /// override with an empty or whitespace-only reason is refused
+    /// outright; "a nonempty string... is insufficient" cuts the other
+    /// way too — an *empty* one is refused even more plainly.
+    MissingReason,
+    /// `confirmed` was not explicitly `true`. There is no implicit
+    /// confirmation — a caller that defaults this to `true` without
+    /// actually asking a human is misusing this function, not
+    /// satisfying it.
+    MissingExplicitConfirmation,
+    /// GS-C6: "Credential / private-key / payment-card hard positives
+    /// remain NON-OVERRIDABLE even with both fields." Checked first, so
+    /// a protected credential is refused the same way whether or not a
+    /// reason/confirmation was ever supplied — this is not a reward for
+    /// skipping the paperwork, it genuinely cannot be overridden.
+    ProtectedCredentialNonOverridable { detector_id: String },
+}
+
+/// GS-C6's review-action safety gate — the one authoritative check
+/// every disposition-changing review action in a C2-P6 UI must pass
+/// before constructing an edit event, let alone writing one. Passing
+/// this check is necessary, not sufficient: [`verify_coverage_proof`]
+/// separately still refuses any `MarkNonSensitive` override outright
+/// today (`CoverageProofFailure::OverrideAuthorityContentUnsupported`),
+/// since `RedactionChange` has nowhere durable to store the reason/
+/// confirmation this function requires — that refusal is deliberate
+/// and this function does not relax it; a caller still has to treat a
+/// passing result here as "the review UI's own input was well-formed,"
+/// not as "this override is now proven." Choosing [`Disposition::Redact`]
+/// (the safe default direction) never needs justification and is
+/// always allowed; only choosing to move a candidate *away* from Redact
+/// (`MarkNonSensitive`) is gated here.
+pub fn validate_disposition_change(
+    current_detector_id: &str,
+    new_disposition: Disposition,
+    reason: &str,
+    confirmed: bool,
+) -> Result<(), DispositionChangeError> {
+    if new_disposition != Disposition::MarkNonSensitive {
+        return Ok(());
+    }
+    if is_unredactable_hard_positive(current_detector_id) {
+        return Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: current_detector_id.to_string() });
+    }
+    if reason.trim().is_empty() {
+        return Err(DispositionChangeError::MissingReason);
+    }
+    if !confirmed {
+        return Err(DispositionChangeError::MissingExplicitConfirmation);
+    }
+    Ok(())
+}
+
+/// GS-C6's "Delete/hide: cannot remove a hard positive or unresolved
+/// region from coverage" rule: [`Disposition`] has exactly two ways to
+/// actually resolve a candidate — [`Disposition::Redact`] or a
+/// validated [`Disposition::MarkNonSensitive`] override — and no third
+/// "dismissed"/"hidden" state exists anywhere in this schema. A C2-P6
+/// UI action that wants to make a candidate's box stop demanding
+/// attention has to reach one of those two dispositions through the
+/// normal, audited path; there is no separate "hide" operation this
+/// crate exposes, and this function exists so a caller has one
+/// authoritative place to ask "does this disposition actually resolve
+/// the candidate" before treating anything as settled, rather than
+/// inventing a third state informally (e.g. filtering a candidate out
+/// of what the UI *displays* without changing what
+/// [`verify_coverage_proof`] is actually given — coverage must always
+/// see the complete candidate list, never a UI-filtered subset).
+pub fn disposition_resolves_candidate(disposition: Disposition) -> bool {
+    matches!(disposition, Disposition::Redact | Disposition::MarkNonSensitive)
+}
+
 /// Brief §3.5 check 3 in full: every candidate must have reached a real
 /// disposition, every categorically-unredactable hard positive must
 /// specifically be `Redact`, and any `MarkNonSensitive` override must be
@@ -3504,6 +3584,88 @@ mod tests {
         for rule_id in ["det.bearer_auth", "det.basic_auth", "det.cookie_header", "det.sensitive_key_value", "det.otp_pin"] {
             assert!(is_unredactable_hard_positive(rule_id), "{rule_id} must be unredactable");
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // GS-C6 (C2-P6 review UI safety blocker): validate_disposition_change
+    // and disposition_resolves_candidate.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn redact_never_needs_a_reason_or_confirmation() {
+        assert_eq!(validate_disposition_change("det.ssn", Disposition::Redact, "", false), Ok(()));
+    }
+
+    #[test]
+    fn pending_never_needs_a_reason_or_confirmation() {
+        // Setting a candidate back to Pending (e.g. undoing a prior
+        // disposition) is not an override either - only MarkNonSensitive is gated.
+        assert_eq!(validate_disposition_change("det.ssn", Disposition::Pending, "", false), Ok(()));
+    }
+
+    #[test]
+    fn mark_non_sensitive_with_empty_reason_is_rejected() {
+        assert_eq!(
+            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "", true),
+            Err(DispositionChangeError::MissingReason)
+        );
+    }
+
+    #[test]
+    fn mark_non_sensitive_with_whitespace_only_reason_is_rejected() {
+        assert_eq!(
+            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "   \t\n  ", true),
+            Err(DispositionChangeError::MissingReason)
+        );
+    }
+
+    #[test]
+    fn mark_non_sensitive_without_explicit_confirmation_is_rejected() {
+        assert_eq!(
+            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "verified with the customer by phone", false),
+            Err(DispositionChangeError::MissingExplicitConfirmation)
+        );
+    }
+
+    #[test]
+    fn mark_non_sensitive_with_reason_and_confirmation_on_a_non_protected_detector_is_allowed() {
+        assert_eq!(
+            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "verified with the customer by phone", true),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn mark_non_sensitive_on_a_protected_credential_is_rejected_even_with_reason_and_confirmation() {
+        // GS-C6: "remain NON-OVERRIDABLE even with both fields" - a
+        // complete, well-formed reason/confirmation does not change the
+        // outcome for a categorically unredactable detector.
+        for rule_id in ["det.payment_card", "det.pem_private_key", "det.bearer_auth", "det.otp_pin"] {
+            assert_eq!(
+                validate_disposition_change(rule_id, Disposition::MarkNonSensitive, "a perfectly good reason", true),
+                Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: rule_id.to_string() }),
+                "{rule_id} must stay non-overridable"
+            );
+        }
+    }
+
+    #[test]
+    fn protected_credential_check_runs_before_the_reason_check() {
+        // Even an empty reason on a protected credential reports the
+        // protected-credential error, not MissingReason - the rule that
+        // can never be satisfied takes precedence over one that could be
+        // fixed by typing something in.
+        assert_eq!(
+            validate_disposition_change("det.payment_card", Disposition::MarkNonSensitive, "", false),
+            Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
+        );
+    }
+
+    #[test]
+    fn disposition_resolves_candidate_is_true_only_for_redact_and_mark_non_sensitive() {
+        assert!(!disposition_resolves_candidate(Disposition::Pending));
+        assert!(disposition_resolves_candidate(Disposition::Redact));
+        assert!(disposition_resolves_candidate(Disposition::MarkNonSensitive));
     }
 
     #[test]
