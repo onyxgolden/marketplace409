@@ -616,7 +616,7 @@ fn validate_frame(frame: &SourceFrame) -> Result<(), SessionError> {
                 candidate_id: candidate.candidate_id.clone(),
             });
         }
-        if candidate.source_token_ids.is_empty() {
+        if candidate_requires_source_tokens(&candidate.detector_id) && candidate.source_token_ids.is_empty() {
             return Err(SessionError::EmptySourceTokenIds {
                 frame_id: frame.frame_id.clone(),
                 candidate_id: candidate.candidate_id.clone(),
@@ -646,6 +646,28 @@ fn validate_frame(frame: &SourceFrame) -> Result<(), SessionError> {
         }
     }
     Ok(())
+}
+
+/// Detector IDs for structural/UI evidence that is never bound to OCR
+/// tokens by construction — it has no text-recognition step at all, so
+/// there is no token list to be empty or non-empty (brief §3.3's UIA
+/// password-field and image-only input-rectangle passes:
+/// `sop_redaction::structural_candidates_from_uia`,
+/// `sop_redaction::structural_candidates_from_image_rects`). Kept here
+/// as a short, explicitly named exception list rather than relaxing the
+/// token-backed validation every other candidate kind still needs —
+/// `sop_redaction` (a higher-level module) cannot be imported from this
+/// lower-level one, so this list is duplicated by convention, not
+/// shared code: keep the two in sync if either detector's id ever
+/// changes.
+const STRUCTURAL_EVIDENCE_DETECTOR_IDS: &[&str] = &["det.uia_password_field", "det.image_rect_input_field"];
+
+/// Whether a candidate from `detector_id` is required to carry a
+/// nonempty `source_token_ids` list — true for every OCR-token-bound
+/// detector (the default), false only for the explicitly named
+/// structural/UI evidence detectors above.
+fn candidate_requires_source_tokens(detector_id: &str) -> bool {
+    !STRUCTURAL_EVIDENCE_DETECTOR_IDS.contains(&detector_id)
 }
 
 /// A box is well-formed (nonzero area, non-negative origin) and does not
@@ -1525,6 +1547,25 @@ mod tests {
             validate_session(&s).unwrap_err(),
             SessionError::EmptySourceTokenIds { frame_id: "f1".to_string(), candidate_id: "c1".to_string() }
         );
+    }
+
+    #[test]
+    fn allows_empty_source_token_ids_on_a_named_structural_evidence_candidate() {
+        // C691-002: a UIA password-field or image-only input-rectangle
+        // candidate has no OCR step at all, so it can never carry
+        // source token ids - that must not be conflated with the real
+        // bug `rejects_empty_source_token_ids_on_a_candidate` guards
+        // against (a token-bound detector that lost its tokens).
+        for detector_id in ["det.uia_password_field", "det.image_rect_input_field"] {
+            let mut s = base_session();
+            let mut f = frame("f1", SourceStorage::SessionEncrypted);
+            let mut c = candidate("c1", (0, 0, 10, 10), (0, 0, 14, 14), Disposition::Pending);
+            c.detector_id = detector_id.to_string();
+            c.source_token_ids = vec![];
+            f.redaction_candidates.push(c);
+            s.source_frames.push(f);
+            assert!(validate_session(&s).is_ok(), "{detector_id}: {:?}", validate_session(&s));
+        }
     }
 
     // --- caption-to-frame cross-reference ---

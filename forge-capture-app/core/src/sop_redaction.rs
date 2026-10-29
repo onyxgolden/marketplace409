@@ -1,6 +1,6 @@
 //! FORGE Capture Phase 2 — deterministic hard-positive detection,
 //! candidate box binding, redaction, and verification (build slice
-//! C2-P3, rounds 1-3 of this slice).
+//! C2-P3).
 //!
 //! Plan: `results/chatgpt/capture-ai-caption-pipeline-implementation-brief-2026-10-26.md`
 //! §3. Round 1 ([`detect_context_free`]) covers the **context-free** rule
@@ -17,17 +17,34 @@
 //! nearby label: bearer/basic auth headers, Cookie/Set-Cookie header
 //! values, sensitive key/value forms (which also covers URI query/
 //! fragment values — same shape), OTP/PIN, ABA routing number, and
-//! account number. Still outstanding, separate follow-up rounds of this
-//! same slice: phone/address (review-candidate-only, needs the
-//! review-candidate disposition machinery and NER agreement this slice
-//! doesn't have yet), the structural/UI evidence pass (§3.3, including
-//! masked-credential runs — those need real geometry this text-only
-//! layer doesn't have), and merging overlapping/adjacent *painted*
-//! regions that span both the context-free and context-dependent
-//! detector lists together (today's [`redaction_regions_for_frame`]
-//! takes whichever candidate list a caller gives it, so this already
-//! works once a caller combines both lists — nothing left to build
-//! there). See the C2-P3 filings in `forge-ai-drop/results/claude/`.
+//! account number.
+//!
+//! Brief §3.3's structural/UI evidence pass has two halves. The
+//! UI-Automation half ([`structural_candidates_from_uia`], a hard
+//! positive for password-protected elements during live process
+//! training) is a separate, independently-routed branch and is not
+//! present in this file. This file's own structural pass is the
+//! image-only half: [`structural_candidates_from_image_rects`] locates
+//! input-like rectangles by bounded pixel-level contour/edge detection
+//! over an RGBA buffer, for frames with no (trustworthy) UIA evidence at
+//! all. It is pure geometry, so its candidates default to
+//! [`crate::sop_session::Disposition::Pending`]/`STRUCTURAL_UNKNOWN`,
+//! never an auto-`Redact` hard positive — see that function's own doc
+//! comment for the full reasoning.
+//!
+//! Still outstanding, separate follow-up rounds of this same slice:
+//! phone/address (review-candidate-only, needs the review-candidate
+//! disposition machinery and NER agreement this slice doesn't have
+//! yet); combining the image-rect/UIA structural signals with
+//! OCR/masked-glyph evidence and nearby labels and resolving
+//! disagreement (brief §3.3's full requirement — this needs the same
+//! kind of agreement machinery phone/address escalation is waiting on);
+//! and merging overlapping/adjacent *painted* regions that span both the
+//! context-free and context-dependent detector lists together (today's
+//! [`redaction_regions_for_frame`] takes whichever candidate list a
+//! caller gives it, so this already works once a caller combines both
+//! lists — nothing left to build there). See the C2-P3 filings in
+//! `forge-ai-drop/results/claude/`.
 //!
 //! **Bounded, linear-time, no caller-provided regex** (brief §3.2's lead
 //! sentence): every matcher here is a single hand-rolled forward scan
@@ -1189,6 +1206,340 @@ pub fn bind_matches_to_candidates(
 }
 
 // ---------------------------------------------------------------------
+// Structural/UI evidence pass, image-only half (brief §3.3): "For
+// image-only frames, locate input-like rectangles using bounded
+// contour/edge heuristics." Pure pixel-level processing over an RGBA
+// buffer — no OCR, no UI Automation, no caller-supplied evidence of any
+// kind, since an image-only frame (an imported screenshot, or any frame
+// with no live UIA evidence) has none of that by definition. This is a
+// genuinely different kind of code from every other detector in this
+// module: those scan normalized *text*; this scans raw *pixels* for the
+// shape a flat-filled text-input box typically has — a border where a
+// uniformly-colored region meets a differently-colored surrounding
+// background.
+//
+// Brief §3.3's full image-only requirement also says to combine these
+// rectangles with OCR/masked-glyph evidence and nearby labels, with any
+// disagreement or unreadable field content becoming `STRUCTURAL_UNKNOWN`
+// and requiring review. That combination/agreement step is a further
+// follow-up round — it needs the same kind of review-candidate
+// "agreement" machinery phone/address escalation is waiting on NER/C2-P4
+// for — so this function produces only the geometry half: every detected
+// rectangle becomes its own candidate with [`Disposition::Pending`] and
+// reason code `STRUCTURAL_UNKNOWN` outright, never an auto-`Redact` hard
+// positive. Disclosed judgment call: this routine cannot read a field's
+// contents — it only sees a flat-filled rectangle shape — so
+// `STRUCTURAL_UNKNOWN`/review is the honest disposition for what it
+// alone can prove; brief §3.3's own words, "defense in depth, not proof
+// that a field is safe," argue for flagging more rather than fewer
+// candidates, but not for skipping straight to a confirmed hard
+// positive on geometry alone. A later round's combination step reads
+// these candidates alongside OCR/NER evidence and may re-disposition
+// them; this function does not anticipate that logic.
+// ---------------------------------------------------------------------
+
+/// Minimum luminance difference (0-255 scale) between a pixel and its
+/// predecessor (the pixel above, for a horizontal border; the pixel to
+/// the left, for a vertical border) to count as a contour edge. A
+/// documented heuristic threshold, not a calibrated value — real
+/// screenshots vary in contrast and anti-aliasing; worth tuning against
+/// real captures, not assumed correct by default.
+const IMAGE_RECT_EDGE_LUMA_DIFF: u8 = 24;
+
+/// Minimum contiguous run length, in pixels, for an edge run to count as
+/// a border segment rather than noise/anti-aliasing speckle.
+const IMAGE_RECT_MIN_EDGE_RUN_PX: u32 = 12;
+
+/// Allowed misalignment, in pixels, between a horizontal segment's
+/// endpoint and the vertical segment expected to meet it there —
+/// real captures are not pixel-perfect (anti-aliasing, DPI scaling).
+const IMAGE_RECT_ALIGN_TOLERANCE_PX: i64 = 2;
+
+/// Plausible input-field size bounds, in pixels. Heuristic, not derived
+/// from any real-world measurement study — flagged for review same as
+/// every other bound in this module; the brief gives no exact numbers
+/// for this pass.
+const IMAGE_RECT_MIN_WIDTH_PX: u32 = 24;
+const IMAGE_RECT_MAX_WIDTH_PX: u32 = 2000;
+const IMAGE_RECT_MIN_HEIGHT_PX: u32 = 14;
+const IMAGE_RECT_MAX_HEIGHT_PX: u32 = 120;
+
+/// Caps the number of border segments this pass will try to pair up on
+/// either axis. Rectangle pairing below is worst-case quadratic in the
+/// segment count on one axis; a sufficiently visually busy image (a
+/// photo, a detailed diagram — not necessarily adversarial) could
+/// otherwise turn a bounded-size frame into an unbounded amount of
+/// pairing work. Past this cap the frame is treated as too visually
+/// busy for this heuristic to say anything useful about and contributes
+/// no candidates at all — a conservative "no signal," not evidence the
+/// frame contains no input fields; other evidence paths (UIA, OCR/NER)
+/// are unaffected by this cap.
+const IMAGE_RECT_MAX_SEGMENTS_PER_AXIS: usize = 4000;
+
+/// [`structural_candidates_from_image_rects`] cannot analyze a frame
+/// whose declared dimensions and pixel buffer disagree, or whose
+/// dimensions are degenerate (zero width or height) — that is a
+/// malformed-input failure, not "zero input rectangles found," so it is
+/// a distinct, reported `Err` rather than a silently empty `Ok(vec![])`.
+/// Same "never silently drop a real detection" discipline
+/// [`BindMatchesError`]/[`BindingResult`] established, applied to the
+/// one failure mode this geometry-only function can hit that has
+/// nothing to do with caller-supplied evidence validity — unlike the
+/// OCR-token and UIA paths, this function has no caller-supplied
+/// evidence to validate at all; the only thing that can be wrong is the
+/// pixel buffer itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageRectError {
+    ZeroDimension,
+    /// `width * height * 4` itself overflows `usize` — C691-003: plain
+    /// (unchecked) multiplication wrapped this to a small value for
+    /// absurd dimensions, letting an empty/tiny buffer pass the length
+    /// gate and then panic on the first pixel read.
+    DimensionsOverflow { width: u32, height: u32 },
+    BufferLengthMismatch { expected: usize, found: usize },
+    /// C691-001: segment collection on one or both axes stopped at
+    /// [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] before finishing the frame —
+    /// the result is incomplete, not "zero rectangles found." A noisy
+    /// frame that happens to contain a real input field must never be
+    /// indistinguishable from a clean frame with none; this is reported
+    /// as a distinct, review-requiring outcome rather than a silent
+    /// `Ok(vec![])`.
+    AnalysisExhausted { h_segments: usize, v_segments: usize },
+    /// C691-003A: dimensions and buffer length can both check out exactly
+    /// while still naming a decoded RGBA raster larger than the
+    /// documented, shared 128 MiB decoded-bytes cap
+    /// ([`crate::artifact::MAX_ARTIFACT_BYTES`]) — a segment cap bounds
+    /// segment *count*, not the pixel work of scanning a uniform image of
+    /// that size, so this must be refused before either scan runs, not
+    /// discovered only after one hangs or runs long.
+    DecodedSizeTooLarge { width: u32, height: u32, bytes: u64 },
+}
+
+fn luma_at(rgba: &[u8], width: u32, x: u32, y: u32) -> u8 {
+    let idx = (y as u64 * width as u64 + x as u64) as usize * 4;
+    let r = rgba[idx] as u32;
+    let g = rgba[idx + 1] as u32;
+    let b = rgba[idx + 2] as u32;
+    ((r * 299 + g * 587 + b * 114) / 1000) as u8
+}
+
+fn luma_diff_is_edge(a: u8, b: u8) -> bool {
+    (a as i16 - b as i16).unsigned_abs() >= IMAGE_RECT_EDGE_LUMA_DIFF as u16
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HSegment {
+    y: u32,
+    x_start: u32,
+    /// Exclusive.
+    x_end: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VSegment {
+    x: u32,
+    y_start: u32,
+    /// Exclusive.
+    y_end: u32,
+}
+
+/// Horizontal border segments: contiguous runs, within one pixel row,
+/// where each pixel differs from the one directly above it by at least
+/// [`IMAGE_RECT_EDGE_LUMA_DIFF`] — the signature of a horizontal
+/// top/bottom field border.
+/// Returns the collected segments plus whether collection stopped early
+/// at [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] (C691-001) — scanning halts
+/// the moment the cap is hit rather than finishing the whole frame
+/// first, so a busy frame's cost is bounded by the cap, not by its
+/// pixel count.
+fn scan_horizontal_segments(rgba: &[u8], width: u32, height: u32) -> (Vec<HSegment>, bool) {
+    let mut out = Vec::new();
+    for y in 1..height {
+        let mut x = 0u32;
+        while x < width {
+            if luma_diff_is_edge(luma_at(rgba, width, x, y), luma_at(rgba, width, x, y - 1)) {
+                let start = x;
+                while x < width && luma_diff_is_edge(luma_at(rgba, width, x, y), luma_at(rgba, width, x, y - 1)) {
+                    x += 1;
+                }
+                if x - start >= IMAGE_RECT_MIN_EDGE_RUN_PX {
+                    out.push(HSegment { y, x_start: start, x_end: x });
+                    if out.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS {
+                        return (out, true);
+                    }
+                }
+            } else {
+                x += 1;
+            }
+        }
+    }
+    (out, false)
+}
+
+/// Vertical border segments: contiguous runs, within one pixel column,
+/// where each pixel differs from the one directly to its left by at
+/// least [`IMAGE_RECT_EDGE_LUMA_DIFF`] — the signature of a vertical
+/// left/right field border.
+/// Returns the collected segments plus whether collection stopped early
+/// at [`IMAGE_RECT_MAX_SEGMENTS_PER_AXIS`] (C691-001) — see
+/// [`scan_horizontal_segments`]'s doc comment.
+fn scan_vertical_segments(rgba: &[u8], width: u32, height: u32) -> (Vec<VSegment>, bool) {
+    let mut out = Vec::new();
+    for x in 1..width {
+        let mut y = 0u32;
+        while y < height {
+            if luma_diff_is_edge(luma_at(rgba, width, x, y), luma_at(rgba, width, x - 1, y)) {
+                let start = y;
+                while y < height && luma_diff_is_edge(luma_at(rgba, width, x, y), luma_at(rgba, width, x - 1, y)) {
+                    y += 1;
+                }
+                if y - start >= IMAGE_RECT_MIN_EDGE_RUN_PX {
+                    out.push(VSegment { x, y_start: start, y_end: y });
+                    if out.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS {
+                        return (out, true);
+                    }
+                }
+            } else {
+                y += 1;
+            }
+        }
+    }
+    (out, false)
+}
+
+fn within_align_tolerance(a: u32, b: u32) -> bool {
+    (a as i64 - b as i64).abs() <= IMAGE_RECT_ALIGN_TOLERANCE_PX
+}
+
+fn vsegment_spans(v: &VSegment, top_y: u32, bottom_y: u32) -> bool {
+    let tol = IMAGE_RECT_ALIGN_TOLERANCE_PX;
+    (v.y_start as i64) <= top_y as i64 + tol && (v.y_end as i64) + tol >= bottom_y as i64
+}
+
+/// Pairs up horizontal and vertical border segments into closed
+/// rectangles: a top and a bottom horizontal segment sharing the same
+/// (within [`IMAGE_RECT_ALIGN_TOLERANCE_PX`]) x-extent, with a vertical
+/// segment at each of those x positions spanning (within the same
+/// tolerance) from the top segment's row to the bottom segment's row.
+/// Returns deduplicated boxes in a deterministic (sorted) order so
+/// candidate IDs stay stable across repeated runs on the same input.
+///
+/// This checks only the four border edges — it never samples interior
+/// pixels for fill uniformity. A stack of adjacent, differently-colored
+/// bordered regions can therefore also satisfy the outer pairing and
+/// produce an extra, redundant rectangle spanning both of them, on top
+/// of the two real ones. Disclosed, deliberately not filtered out: an
+/// extra flagged review candidate is the safe-biased direction of error
+/// for a defense-in-depth signal; a missed one is not.
+fn find_rectangles(h_segs: &[HSegment], v_segs: &[VSegment]) -> Vec<(i64, i64, u64, u64)> {
+    let mut found: std::collections::BTreeSet<(i64, i64, u64, u64)> = std::collections::BTreeSet::new();
+    if h_segs.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS || v_segs.len() > IMAGE_RECT_MAX_SEGMENTS_PER_AXIS {
+        return Vec::new();
+    }
+    for (i, top) in h_segs.iter().enumerate() {
+        for bottom in h_segs.iter().skip(i + 1) {
+            if bottom.y <= top.y {
+                continue;
+            }
+            let height = bottom.y - top.y;
+            if !(IMAGE_RECT_MIN_HEIGHT_PX..=IMAGE_RECT_MAX_HEIGHT_PX).contains(&height) {
+                continue;
+            }
+            if !within_align_tolerance(top.x_start, bottom.x_start) || !within_align_tolerance(top.x_end, bottom.x_end) {
+                continue;
+            }
+            let width = top.x_end - top.x_start;
+            if !(IMAGE_RECT_MIN_WIDTH_PX..=IMAGE_RECT_MAX_WIDTH_PX).contains(&width) {
+                continue;
+            }
+            let left_ok = v_segs.iter().any(|v| within_align_tolerance(v.x, top.x_start) && vsegment_spans(v, top.y, bottom.y));
+            let right_ok = v_segs.iter().any(|v| within_align_tolerance(v.x, top.x_end) && vsegment_spans(v, top.y, bottom.y));
+            if left_ok && right_ok {
+                found.insert((top.x_start as i64, top.y as i64, width as u64, height as u64));
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// Locates input-like rectangles in an image-only frame by bounded
+/// pixel-level contour/edge detection over `rgba` (brief §3.3's
+/// image-only half) and produces one [`RedactionCandidate`] per detected
+/// rectangle, dispositioned [`Disposition::Pending`] with reason code
+/// `STRUCTURAL_UNKNOWN` (see this section's header comment for why: pure
+/// geometry with no evidence about the field's actual contents cannot
+/// honestly default to `Redact`). `candidate_id_prefix` scopes generated
+/// IDs the same way [`bind_matches_to_candidates`]/
+/// [`structural_candidates_from_uia`] do.
+///
+/// Boundary this function does not and cannot enforce on its own: brief
+/// §3.3's "the app must not pretend UIA evidence exists for imported
+/// screenshots" has a geometry-side mirror here — this heuristic is
+/// meant for frames where no (or no trustworthy) UIA evidence exists,
+/// but this pure pixel function has no way to know whether the frame it
+/// was handed is actually image-only or a live capture with UIA evidence
+/// a caller simply chose not to pass; that choice is the caller's
+/// contract, not something derivable from pixels alone.
+///
+/// Returns `Err` only for malformed input (zero dimension, or a buffer
+/// whose length doesn't match `frame_width * frame_height * 4`) — never
+/// for "no rectangles found," which is a legitimate `Ok(vec![])`.
+/// C691-003A: separated from the function body so the exact-cap and
+/// one-byte-over-cap boundary can be tested directly, without allocating
+/// an actual 128 MiB (or larger) buffer.
+fn check_decoded_size_admissible(width: u32, height: u32, decoded_bytes: u64) -> Result<(), ImageRectError> {
+    if decoded_bytes > crate::artifact::MAX_ARTIFACT_BYTES as u64 {
+        return Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes });
+    }
+    Ok(())
+}
+
+pub fn structural_candidates_from_image_rects(
+    rgba: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    candidate_id_prefix: &str,
+) -> Result<Vec<RedactionCandidate>, ImageRectError> {
+    if frame_width == 0 || frame_height == 0 {
+        return Err(ImageRectError::ZeroDimension);
+    }
+    let expected = (frame_width as usize)
+        .checked_mul(frame_height as usize)
+        .and_then(|area| area.checked_mul(4))
+        .ok_or(ImageRectError::DimensionsOverflow { width: frame_width, height: frame_height })?;
+    check_decoded_size_admissible(frame_width, frame_height, expected as u64)?;
+    if rgba.len() != expected {
+        return Err(ImageRectError::BufferLengthMismatch { expected, found: rgba.len() });
+    }
+
+    let (h_segs, h_exhausted) = scan_horizontal_segments(rgba, frame_width, frame_height);
+    let (v_segs, v_exhausted) = scan_vertical_segments(rgba, frame_width, frame_height);
+    if h_exhausted || v_exhausted {
+        return Err(ImageRectError::AnalysisExhausted { h_segments: h_segs.len(), v_segments: v_segs.len() });
+    }
+    let boxes = find_rectangles(&h_segs, &v_segs);
+
+    Ok(boxes
+        .into_iter()
+        .enumerate()
+        .map(|(i, original_box)| {
+            let expanded_box = clip_box_to_frame(expand_box(original_box, MIN_EXPAND_PX), frame_width, frame_height);
+            RedactionCandidate {
+                candidate_id: format!("{candidate_id_prefix}-imgrect-{i}"),
+                detector_id: "det.image_rect_input_field".to_string(),
+                reason_code: "STRUCTURAL_UNKNOWN".to_string(),
+                source_token_ids: vec![],
+                original_box,
+                expanded_box,
+                score: None,
+                disposition: Disposition::Pending,
+                disposition_event_id: None,
+            }
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------
 // Destructive redaction operation (brief §3.4): merge overlapping/
 // adjacent accepted-candidate boxes into the final paint-region list and
 // apply the existing solid-fill primitive. Reuses
@@ -2272,6 +2623,230 @@ mod tests {
         let result = bind_matches_to_candidates(&hits, &tokens, &spans, text.len(), 1000, 1000, "frame-xyz").unwrap();
         let ids: Vec<&str> = result.candidates.iter().map(|c| c.candidate_id.as_str()).collect();
         assert_eq!(ids, vec!["frame-xyz-0", "frame-xyz-1"]);
+    }
+
+    // ---- structural/UI evidence: image-only input-rectangle heuristic ----
+
+    fn solid_rgba(width: u32, height: u32, color: (u8, u8, u8)) -> Vec<u8> {
+        let mut buf = vec![0u8; width as usize * height as usize * 4];
+        for px in buf.chunks_mut(4) {
+            px[0] = color.0;
+            px[1] = color.1;
+            px[2] = color.2;
+            px[3] = 255;
+        }
+        buf
+    }
+
+    fn fill_rect(buf: &mut [u8], width: u32, rect: (u32, u32, u32, u32), color: (u8, u8, u8)) {
+        let (x, y, w, h) = rect;
+        for row in y..y + h {
+            for col in x..x + w {
+                let idx = (row as usize * width as usize + col as usize) * 4;
+                buf[idx] = color.0;
+                buf[idx + 1] = color.1;
+                buf[idx + 2] = color.2;
+                buf[idx + 3] = 255;
+            }
+        }
+    }
+
+    #[test]
+    fn a_clean_filled_rectangle_against_a_contrasting_background_is_detected() {
+        let (width, height) = (100, 60);
+        let mut buf = solid_rgba(width, height, (20, 20, 20));
+        fill_rect(&mut buf, width, (10, 10, 60, 20), (220, 220, 220));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1").unwrap();
+        assert_eq!(result.len(), 1, "{result:?}");
+        let c = &result[0];
+        assert_eq!(c.candidate_id, "frame-1-imgrect-0");
+        assert_eq!(c.detector_id, "det.image_rect_input_field");
+        assert_eq!(c.reason_code, "STRUCTURAL_UNKNOWN");
+        assert_eq!(c.disposition, Disposition::Pending);
+        assert!(c.source_token_ids.is_empty());
+        assert_eq!(c.original_box, (10, 10, 60, 20));
+        // MIN_EXPAND_PX (4) on each side, well within the frame so no clipping.
+        assert_eq!(c.expanded_box, (6, 6, 68, 28));
+    }
+
+    #[test]
+    fn two_adjacent_rectangles_sharing_a_border_are_both_detected() {
+        // A realistic stacked-fields layout: two differently-shaded input
+        // boxes directly touching, no gap between them.
+        let (width, height) = (100, 80);
+        let mut buf = solid_rgba(width, height, (0, 0, 0));
+        fill_rect(&mut buf, width, (10, 10, 60, 20), (120, 120, 120));
+        fill_rect(&mut buf, width, (10, 30, 60, 20), (200, 200, 200));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1").unwrap();
+        let boxes: Vec<(i64, i64, u64, u64)> = result.iter().map(|c| c.original_box).collect();
+        assert!(boxes.contains(&(10, 10, 60, 20)), "missing first field: {boxes:?}");
+        assert!(boxes.contains(&(10, 30, 60, 20)), "missing second field: {boxes:?}");
+        // Every candidate from this detector must come out STRUCTURAL_UNKNOWN/Pending,
+        // never silently auto-redacted — including the one real-but-extra
+        // combined box this border-only heuristic also matches here.
+        for c in &result {
+            assert_eq!(c.reason_code, "STRUCTURAL_UNKNOWN");
+            assert_eq!(c.disposition, Disposition::Pending);
+        }
+    }
+
+    #[test]
+    fn low_amplitude_pixel_jitter_with_no_real_borders_produces_no_candidates() {
+        // Deterministic xorshift32 jitter around one base gray value - no
+        // rectangle shape anywhere, just per-pixel noise, same way sensor
+        // noise or compression artifacts would look. Non-rectangle noise
+        // must be rejected, not turned into phantom candidates.
+        let (width, height) = (64, 64);
+        let mut buf = vec![0u8; width as usize * height as usize * 4];
+        let mut state: u32 = 0x1234_5678;
+        for px in buf.chunks_mut(4) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let jitter = (state % 81) as i32 - 40; // -40..=40
+            let v = (128 + jitter).clamp(0, 255) as u8;
+            px[0] = v;
+            px[1] = v;
+            px[2] = v;
+            px[3] = 255;
+        }
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1").unwrap();
+        assert!(result.is_empty(), "{result:?}");
+    }
+
+    #[test]
+    fn zero_dimension_is_reported_as_an_error_not_an_empty_success() {
+        let buf = vec![0u8; 4];
+        assert_eq!(structural_candidates_from_image_rects(&buf, 0, 10, "frame-1"), Err(ImageRectError::ZeroDimension));
+        assert_eq!(structural_candidates_from_image_rects(&buf, 10, 0, "frame-1"), Err(ImageRectError::ZeroDimension));
+    }
+
+    #[test]
+    fn mismatched_buffer_length_is_reported_as_an_error_not_an_empty_success() {
+        let buf = vec![0u8; 10]; // too short for a declared 10x10 RGBA frame (400 bytes)
+        assert_eq!(
+            structural_candidates_from_image_rects(&buf, 10, 10, "frame-1"),
+            Err(ImageRectError::BufferLengthMismatch { expected: 400, found: 10 })
+        );
+    }
+
+    #[test]
+    fn a_rectangle_too_small_to_plausibly_be_an_input_field_is_rejected() {
+        let (width, height) = (60, 40);
+        let mut buf = solid_rgba(width, height, (0, 0, 0));
+        // 6x6: well under both IMAGE_RECT_MIN_WIDTH_PX and IMAGE_RECT_MIN_HEIGHT_PX.
+        fill_rect(&mut buf, width, (10, 10, 6, 6), (220, 220, 220));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1").unwrap();
+        assert!(result.is_empty(), "{result:?}");
+    }
+
+    #[test]
+    fn overflowing_dimensions_are_rejected_instead_of_panicking() {
+        // C691-003: the fail-before case - plain unchecked multiplication
+        // of width*height*4 wraps to a small value for absurd
+        // dimensions, letting an empty buffer pass the length gate and
+        // then panic on the first pixel read.
+        let huge = 1u32 << 31;
+        let buf: Vec<u8> = vec![];
+        assert_eq!(
+            structural_candidates_from_image_rects(&buf, huge, huge, "frame-1"),
+            Err(ImageRectError::DimensionsOverflow { width: huge, height: huge })
+        );
+    }
+
+    #[test]
+    fn decoded_size_exactly_at_the_128_mib_cap_is_admissible() {
+        // C691-003A: 8192 x 4096 x 4 == 128 MiB exactly - the shared
+        // artifact::MAX_ARTIFACT_BYTES cap. Tested against the
+        // extracted admission helper, not the full entrypoint, so this
+        // doesn't need to allocate a 128 MiB buffer.
+        let (width, height): (u32, u32) = (8192, 4096);
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(decoded_bytes, crate::artifact::MAX_ARTIFACT_BYTES as u64);
+        assert_eq!(check_decoded_size_admissible(width, height, decoded_bytes), Ok(()));
+    }
+
+    #[test]
+    fn decoded_size_one_block_over_the_128_mib_cap_is_rejected() {
+        // C691-003A exact counterexample: dimensions and buffer length
+        // can both check out while still naming a decoded raster larger
+        // than the documented 128 MiB decoded-RGBA cap - 8193 x 4096 x 4
+        // is exactly 128 MiB + 16 KiB. Before this fix, no admission
+        // check existed at all, so this buffer size would have reached
+        // both pixel scans.
+        let (width, height): (u32, u32) = (8193, 4096);
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(decoded_bytes, crate::artifact::MAX_ARTIFACT_BYTES as u64 + 16 * 1024);
+        assert_eq!(
+            check_decoded_size_admissible(width, height, decoded_bytes),
+            Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes })
+        );
+    }
+
+    #[test]
+    fn an_oversized_frame_is_refused_by_the_public_entrypoint_before_either_scan() {
+        // Same oversized partner as above, exercised through the public
+        // function this time, with a short/empty buffer standing in for
+        // the (never allocated) 128 MiB+ raster - the size check must
+        // run, and fail, before the buffer-length check that would
+        // otherwise also reject this input for a different reason.
+        let (width, height): (u32, u32) = (8193, 4096);
+        let buf: Vec<u8> = vec![];
+        let decoded_bytes = width as u64 * height as u64 * 4;
+        assert_eq!(
+            structural_candidates_from_image_rects(&buf, width, height, "frame-1"),
+            Err(ImageRectError::DecodedSizeTooLarge { width, height, bytes: decoded_bytes })
+        );
+    }
+
+    #[test]
+    fn segment_exhaustion_is_reported_as_a_distinct_error_not_empty_success() {
+        // C691-001: a frame busy enough to exceed
+        // IMAGE_RECT_MAX_SEGMENTS_PER_AXIS, plus a real, well-formed
+        // input field drawn into it, so a non-exhausted run on a
+        // similar clean frame would NOT be empty - proving the
+        // exhausted outcome is specifically about analysis
+        // incompleteness, not an absence of real content. The result
+        // must be a distinct error, never a clean-looking `Ok(vec![])`.
+        let width = 20_000u32;
+        let height = 20u32;
+        let cell = IMAGE_RECT_MIN_EDGE_RUN_PX; // exactly the minimum qualifying run length
+        let mut buf = vec![0u8; width as usize * height as usize * 4]; // starts solid black
+        for y in 0..height {
+            if y % 2 == 1 {
+                // Odd rows: alternating cell-wide black/white blocks.
+                // Compared against an even (solid black) row directly
+                // above, each white block forms its own separate
+                // qualifying run of exactly `cell` pixels - comparing
+                // against the even row *below* it does the same, so
+                // every row transition contributes roughly
+                // width/(2*cell) new segments.
+                let mut x = 0u32;
+                let mut white = false;
+                while x < width {
+                    let block_end = (x + cell).min(width);
+                    if white {
+                        fill_rect(&mut buf, width, (x, y, block_end - x, 1), (255, 255, 255));
+                    }
+                    white = !white;
+                    x = block_end;
+                }
+            }
+        }
+        fill_rect(&mut buf, width, (10, 2, 60, 10), (128, 128, 128));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1");
+        assert!(matches!(result, Err(ImageRectError::AnalysisExhausted { .. })), "{result:?}");
+    }
+
+    #[test]
+    fn a_clean_rectangle_with_no_noise_at_all_does_not_exhaust_analysis() {
+        // Positive control alongside the exhaustion case above: an
+        // ordinary clean frame must not spuriously report exhaustion.
+        let (width, height) = (100, 60);
+        let mut buf = solid_rgba(width, height, (20, 20, 20));
+        fill_rect(&mut buf, width, (10, 10, 60, 20), (220, 220, 220));
+        let result = structural_candidates_from_image_rects(&buf, width, height, "frame-1");
+        assert!(result.is_ok(), "{result:?}");
     }
 
     // ---- merge + destructive redaction operation ----
