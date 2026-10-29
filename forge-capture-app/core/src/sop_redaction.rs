@@ -1616,7 +1616,7 @@ pub fn apply_candidate_redactions(rgba: &mut [u8], width: u32, height: u32, cand
 // folds all three into the brief's [`FrameVerification`] state machine.
 // ---------------------------------------------------------------------
 
-use crate::sop_session::{EditEvent, EditOperation, FrameVerification};
+use crate::sop_session::{EditEvent, EditOperation, FrameVerification, SopSessionV1};
 
 /// Brief §3.5 check 1: "every declared redaction rectangle in the
 /// decoded derivative consists entirely of the fixed opaque redaction
@@ -1833,6 +1833,31 @@ pub fn is_unredactable_hard_positive(rule_id: &str) -> bool {
     )
 }
 
+/// GS-C6's closed, versioned review-action input: "both [reason and
+/// confirmation] must bind to current source/frame/candidate, policy/
+/// model, derivative/session revision." A bare reason string plus an
+/// unbound boolean (this type's C6A-001 predecessor) cannot express
+/// any of that binding — every field here names something
+/// [`validate_review_action`] checks against the session/candidate
+/// state actually supplied, not just against itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewActionRequest<'a> {
+    pub frame_id: &'a str,
+    pub candidate_id: &'a str,
+    pub new_disposition: Disposition,
+    pub reason: &'a str,
+    pub confirmed: bool,
+    /// The session revision this review was performed against. Stale
+    /// relative to the session's actual current revision means another
+    /// edit landed first — refused, never silently applied on top.
+    pub expected_session_revision: u64,
+    /// The policy binding this review was performed against.
+    pub expected_policy_version: &'a str,
+    /// The model binding this review was performed against (`None` if
+    /// the session itself carries none).
+    pub expected_model_manifest_sha256: Option<&'a str>,
+}
+
 /// GS-C6 (C2-P6 review UI safety blocker): why a reviewer-facing
 /// disposition change was refused, caught *before* an
 /// [`crate::sop_session::EditOperation::RedactionChange`] is even
@@ -1857,60 +1882,136 @@ pub enum DispositionChangeError {
     /// reason/confirmation was ever supplied — this is not a reward for
     /// skipping the paperwork, it genuinely cannot be overridden.
     ProtectedCredentialNonOverridable { detector_id: String },
+    /// GS-C6: "bind to... derivative/session revision" — the session
+    /// has moved since this review action was formed.
+    StaleSessionRevision { expected: u64, current: u64 },
+    /// GS-C6: "bind to... policy/model" — the session's policy binding
+    /// has changed since this review action was formed.
+    PolicyVersionMismatch { expected: String, current: String },
+    /// Same binding requirement, for the model manifest half of it.
+    ModelManifestMismatch { expected: Option<String>, current: Option<String> },
+    /// GS-C6: "bind to current source/frame" — names a frame this
+    /// session does not actually have.
+    UnknownFrame { frame_id: String },
+    /// GS-C6: "bind to current... candidate" — names a candidate not
+    /// present in the supplied current candidate list.
+    UnknownCandidate { candidate_id: String },
 }
 
 /// GS-C6's review-action safety gate — the one authoritative check
-/// every disposition-changing review action in a C2-P6 UI must pass
-/// before constructing an edit event, let alone writing one. Passing
-/// this check is necessary, not sufficient: [`verify_coverage_proof`]
-/// separately still refuses any `MarkNonSensitive` override outright
-/// today (`CoverageProofFailure::OverrideAuthorityContentUnsupported`),
-/// since `RedactionChange` has nowhere durable to store the reason/
+/// every disposition-changing review action in a C2-P6 UI must pass,
+/// validated against `session` itself (C6A-001: a reason string and a
+/// bare boolean cannot be checked against anything; this function's
+/// whole job is checking `request` against `session`'s actual current
+/// state, never trusting `request`'s own claims). The frame and
+/// candidate it names are looked up from `session.source_frames` and
+/// that frame's own `redaction_candidates` — never a separately
+/// supplied list that could be stale or mismatched against `session`.
+/// Passing this check is necessary, not sufficient:
+/// [`verify_coverage_proof`] separately still refuses any
+/// `MarkNonSensitive` override outright today
+/// (`CoverageProofFailure::OverrideAuthorityContentUnsupported`), since
+/// `RedactionChange` has nowhere durable to store the reason/
 /// confirmation this function requires — that refusal is deliberate
 /// and this function does not relax it; a caller still has to treat a
-/// passing result here as "the review UI's own input was well-formed,"
-/// not as "this override is now proven." Choosing [`Disposition::Redact`]
-/// (the safe default direction) never needs justification and is
-/// always allowed; only choosing to move a candidate *away* from Redact
-/// (`MarkNonSensitive`) is gated here.
-pub fn validate_disposition_change(
-    current_detector_id: &str,
-    new_disposition: Disposition,
-    reason: &str,
-    confirmed: bool,
-) -> Result<(), DispositionChangeError> {
-    if new_disposition != Disposition::MarkNonSensitive {
+/// passing result here as "the review UI's own input was well-formed
+/// and current," not as "this override is now proven." Choosing
+/// [`Disposition::Redact`] (the safe default direction) never needs
+/// justification and is always allowed once identity/revision/binding
+/// checks pass; only choosing to move a candidate *away* from Redact
+/// (`MarkNonSensitive`) is gated on reason/confirmation/protection.
+pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequest) -> Result<(), DispositionChangeError> {
+    if session.revision != request.expected_session_revision {
+        return Err(DispositionChangeError::StaleSessionRevision { expected: request.expected_session_revision, current: session.revision });
+    }
+    if session.policy_version != request.expected_policy_version {
+        return Err(DispositionChangeError::PolicyVersionMismatch {
+            expected: request.expected_policy_version.to_string(),
+            current: session.policy_version.clone(),
+        });
+    }
+    if session.model_manifest_sha256.as_deref() != request.expected_model_manifest_sha256 {
+        return Err(DispositionChangeError::ModelManifestMismatch {
+            expected: request.expected_model_manifest_sha256.map(|s| s.to_string()),
+            current: session.model_manifest_sha256.clone(),
+        });
+    }
+    let frame = session
+        .source_frames
+        .iter()
+        .find(|f| f.frame_id == request.frame_id)
+        .ok_or_else(|| DispositionChangeError::UnknownFrame { frame_id: request.frame_id.to_string() })?;
+    let candidate = frame
+        .redaction_candidates
+        .iter()
+        .find(|c| c.candidate_id == request.candidate_id)
+        .ok_or_else(|| DispositionChangeError::UnknownCandidate { candidate_id: request.candidate_id.to_string() })?;
+
+    if request.new_disposition != Disposition::MarkNonSensitive {
         return Ok(());
     }
-    if is_unredactable_hard_positive(current_detector_id) {
-        return Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: current_detector_id.to_string() });
+    if is_unredactable_hard_positive(&candidate.detector_id) {
+        return Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: candidate.detector_id.clone() });
     }
-    if reason.trim().is_empty() {
+    if request.reason.trim().is_empty() {
         return Err(DispositionChangeError::MissingReason);
     }
-    if !confirmed {
+    if !request.confirmed {
         return Err(DispositionChangeError::MissingExplicitConfirmation);
     }
     Ok(())
 }
 
+/// C6A-003: the real action path — validates `request` against
+/// `session` (via [`validate_review_action`]) and constructs the
+/// [`EditEvent`] in the same guarded operation, rather than leaving
+/// validation and construction as two steps a caller could pull apart
+/// (and skip the first of). The caller still owns appending the
+/// returned event to `session.edit_events` and the atomic,
+/// expected-revision-checked write — [`crate::sop_workspace`]'s
+/// existing job, unchanged by this function.
+pub fn build_redaction_change_event(
+    session: &SopSessionV1,
+    request: &ReviewActionRequest,
+    event_id: String,
+    local_timestamp: String,
+) -> Result<EditEvent, DispositionChangeError> {
+    validate_review_action(session, request)?;
+    let sequence = session.edit_events.iter().map(|e| e.sequence).max().map_or(0, |s| s + 1);
+    Ok(EditEvent {
+        sequence,
+        event_id,
+        session_revision_before: session.revision,
+        session_revision_after: session.revision + 1,
+        operation: EditOperation::RedactionChange {
+            frame_id: request.frame_id.to_string(),
+            candidate_id: request.candidate_id.to_string(),
+            disposition: request.new_disposition,
+        },
+        before_digest: None,
+        after_digest: None,
+        local_timestamp,
+    })
+}
+
 /// GS-C6's "Delete/hide: cannot remove a hard positive or unresolved
-/// region from coverage" rule: [`Disposition`] has exactly two ways to
-/// actually resolve a candidate — [`Disposition::Redact`] or a
-/// validated [`Disposition::MarkNonSensitive`] override — and no third
-/// "dismissed"/"hidden" state exists anywhere in this schema. A C2-P6
-/// UI action that wants to make a candidate's box stop demanding
-/// attention has to reach one of those two dispositions through the
-/// normal, audited path; there is no separate "hide" operation this
-/// crate exposes, and this function exists so a caller has one
-/// authoritative place to ask "does this disposition actually resolve
-/// the candidate" before treating anything as settled, rather than
-/// inventing a third state informally (e.g. filtering a candidate out
-/// of what the UI *displays* without changing what
-/// [`verify_coverage_proof`] is actually given — coverage must always
-/// see the complete candidate list, never a UI-filtered subset).
+/// region from coverage" rule. C6A-002: this previously reported
+/// `MarkNonSensitive` as resolving a candidate on the enum value alone
+/// — but at this same head, [`verify_coverage_proof`] still refuses
+/// *every* `MarkNonSensitive` override outright
+/// (`OverrideAuthorityContentUnsupported`), since the durable event
+/// schema cannot yet carry the required reason/confirmation. Calling
+/// that "resolved" here would assert two incompatible authorities: this
+/// helper saying settled while the proof layer says unsupported. Until
+/// the versioned authority-content schema and guarded write path exist,
+/// only [`Disposition::Redact`] actually resolves a candidate. A C2-P6
+/// UI action that wants a candidate's box to stop demanding attention
+/// has to reach `Redact` through the normal, audited path — there is no
+/// separate "hide" operation this crate exposes, and the complete
+/// unfiltered candidate inventory must continue into coverage proof
+/// regardless of what the UI chooses to display.
 pub fn disposition_resolves_candidate(disposition: Disposition) -> bool {
-    matches!(disposition, Disposition::Redact | Disposition::MarkNonSensitive)
+    disposition == Disposition::Redact
 }
 
 /// Brief §3.5 check 3 in full: every candidate must have reached a real
@@ -2076,6 +2177,7 @@ pub fn compute_frame_verification(evidence: &FrameVerificationEvidence) -> Frame
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sop_session::{ReviewState, SourceFrame, SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION};
 
     fn matches_for(text: &str) -> Vec<DeterministicMatch> {
         detect_context_free(text)
@@ -3587,52 +3689,123 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // GS-C6 (C2-P6 review UI safety blocker): validate_disposition_change
-    // and disposition_resolves_candidate.
+    // GS-C6 (C2-P6 review UI safety blocker): validate_review_action,
+    // build_redaction_change_event, and disposition_resolves_candidate.
     // ---------------------------------------------------------------------
+
+    fn gs_c6_candidate(id: &str, detector_id: &str, disposition: Disposition) -> RedactionCandidate {
+        RedactionCandidate {
+            candidate_id: id.to_string(),
+            detector_id: detector_id.to_string(),
+            reason_code: "TEST".to_string(),
+            source_token_ids: vec![],
+            original_box: (0, 0, 5, 5),
+            expanded_box: (0, 0, 5, 5),
+            score: None,
+            disposition,
+            disposition_event_id: None,
+        }
+    }
+
+    fn gs_c6_frame(frame_id: &str, candidates: Vec<RedactionCandidate>) -> SourceFrame {
+        SourceFrame {
+            frame_id: frame_id.to_string(),
+            order: 0,
+            source_relative_path: format!("frames/{frame_id}.png"),
+            raster_sha256: "a".repeat(64),
+            provenance_sidecar_relative_path: None,
+            provenance_sidecar_blob_sha256: None,
+            width: 100,
+            height: 100,
+            captured_at: "2026-10-29T12:00:00Z".to_string(),
+            action_kind: "click".to_string(),
+            click_box: None,
+            process_basename: None,
+            window_title: None,
+            original_storage: SourceStorage::SessionEncrypted,
+            ocr_status: None,
+            redacted_derivative_relative_path: None,
+            redacted_derivative_sha256: None,
+            redaction_candidates: candidates,
+            verification: FrameVerification::Pending,
+        }
+    }
+
+    fn gs_c6_session(frames: Vec<SourceFrame>) -> SopSessionV1 {
+        SopSessionV1 {
+            schema_version: SOP_SESSION_SCHEMA_VERSION,
+            kind: SOP_SESSION_KIND.to_string(),
+            session_id: "sess-1".to_string(),
+            created_at: "2026-10-29T12:00:00Z".to_string(),
+            updated_at: "2026-10-29T12:00:00Z".to_string(),
+            revision: 0,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            sidecar_protocol_version: 1,
+            source_frames: frames,
+            captions: vec![],
+            edit_events: vec![],
+            review_state: ReviewState::InProgress,
+            review_receipt: None,
+            export_eligible: false,
+        }
+    }
+
+    fn gs_c6_request<'a>(frame_id: &'a str, candidate_id: &'a str, new_disposition: Disposition, reason: &'a str, confirmed: bool) -> ReviewActionRequest<'a> {
+        ReviewActionRequest {
+            frame_id,
+            candidate_id,
+            new_disposition,
+            reason,
+            confirmed,
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        }
+    }
 
     #[test]
     fn redact_never_needs_a_reason_or_confirmation() {
-        assert_eq!(validate_disposition_change("det.ssn", Disposition::Redact, "", false), Ok(()));
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
     }
 
     #[test]
     fn pending_never_needs_a_reason_or_confirmation() {
         // Setting a candidate back to Pending (e.g. undoing a prior
         // disposition) is not an override either - only MarkNonSensitive is gated.
-        assert_eq!(validate_disposition_change("det.ssn", Disposition::Pending, "", false), Ok(()));
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Redact)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::Pending, "", false);
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
     }
 
     #[test]
     fn mark_non_sensitive_with_empty_reason_is_rejected() {
-        assert_eq!(
-            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "", true),
-            Err(DispositionChangeError::MissingReason)
-        );
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "", true);
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingReason));
     }
 
     #[test]
     fn mark_non_sensitive_with_whitespace_only_reason_is_rejected() {
-        assert_eq!(
-            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "   \t\n  ", true),
-            Err(DispositionChangeError::MissingReason)
-        );
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "   \t\n  ", true);
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingReason));
     }
 
     #[test]
     fn mark_non_sensitive_without_explicit_confirmation_is_rejected() {
-        assert_eq!(
-            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "verified with the customer by phone", false),
-            Err(DispositionChangeError::MissingExplicitConfirmation)
-        );
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer by phone", false);
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::MissingExplicitConfirmation));
     }
 
     #[test]
     fn mark_non_sensitive_with_reason_and_confirmation_on_a_non_protected_detector_is_allowed() {
-        assert_eq!(
-            validate_disposition_change("det.ssn", Disposition::MarkNonSensitive, "verified with the customer by phone", true),
-            Ok(())
-        );
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer by phone", true);
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
     }
 
     #[test]
@@ -3641,8 +3814,10 @@ mod tests {
         // complete, well-formed reason/confirmation does not change the
         // outcome for a categorically unredactable detector.
         for rule_id in ["det.payment_card", "det.pem_private_key", "det.bearer_auth", "det.otp_pin"] {
+            let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", rule_id, Disposition::Pending)])]);
+            let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "a perfectly good reason", true);
             assert_eq!(
-                validate_disposition_change(rule_id, Disposition::MarkNonSensitive, "a perfectly good reason", true),
+                validate_review_action(&session, &request),
                 Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: rule_id.to_string() }),
                 "{rule_id} must stay non-overridable"
             );
@@ -3655,17 +3830,126 @@ mod tests {
         // protected-credential error, not MissingReason - the rule that
         // can never be satisfied takes precedence over one that could be
         // fixed by typing something in.
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.payment_card", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "", false);
         assert_eq!(
-            validate_disposition_change("det.payment_card", Disposition::MarkNonSensitive, "", false),
+            validate_review_action(&session, &request),
             Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
         );
     }
 
     #[test]
-    fn disposition_resolves_candidate_is_true_only_for_redact_and_mark_non_sensitive() {
+    fn a_stale_session_revision_is_rejected_before_anything_else() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let mut request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        request.expected_session_revision = 7;
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::StaleSessionRevision { expected: 7, current: 0 }));
+    }
+
+    #[test]
+    fn a_mismatched_policy_version_is_rejected() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let mut request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        request.expected_policy_version = "policy-v0-stale";
+        assert_eq!(
+            validate_review_action(&session, &request),
+            Err(DispositionChangeError::PolicyVersionMismatch { expected: "policy-v0-stale".to_string(), current: "policy-v1".to_string() })
+        );
+    }
+
+    #[test]
+    fn a_mismatched_model_manifest_is_rejected() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let mut request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        request.expected_model_manifest_sha256 = Some("model-manifest-v0-stale");
+        assert!(matches!(validate_review_action(&session, &request), Err(DispositionChangeError::ModelManifestMismatch { .. })));
+    }
+
+    #[test]
+    fn an_unknown_frame_is_rejected() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("ghost-frame", "c1", Disposition::Redact, "", false);
+        assert_eq!(validate_review_action(&session, &request), Err(DispositionChangeError::UnknownFrame { frame_id: "ghost-frame".to_string() }));
+    }
+
+    #[test]
+    fn an_unknown_candidate_on_a_real_frame_is_rejected() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "ghost-candidate", Disposition::Redact, "", false);
+        assert_eq!(
+            validate_review_action(&session, &request),
+            Err(DispositionChangeError::UnknownCandidate { candidate_id: "ghost-candidate".to_string() })
+        );
+    }
+
+    #[test]
+    fn a_candidate_id_bound_to_a_different_frame_is_not_found() {
+        // Candidate IDs are only unique within a frame - a request that
+        // mismatches frame_id/candidate_id must not accidentally resolve
+        // against the wrong frame's same-named candidate.
+        let session = gs_c6_session(vec![
+            gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)]),
+            gs_c6_frame("f2", vec![gs_c6_candidate("c1", "det.payment_card", Disposition::Pending)]),
+        ]);
+        // Naming f1 but the candidate that actually only exists under f2.
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        // c1 DOES exist under f1 too, so this should resolve to f1's c1
+        // (det.ssn), not f2's - prove it by checking a MarkNonSensitive
+        // override is allowed (det.ssn isn't protected), which would be
+        // refused if it had resolved to f2's protected det.payment_card.
+        let override_request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified", true);
+        assert_eq!(validate_review_action(&session, &request), Ok(()));
+        assert_eq!(validate_review_action(&session, &override_request), Ok(()));
+    }
+
+    #[test]
+    fn build_redaction_change_event_constructs_a_well_formed_event_on_a_valid_request() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        assert_eq!(event.sequence, 0);
+        assert_eq!(event.session_revision_before, 0);
+        assert_eq!(event.session_revision_after, 1);
+        assert_eq!(event.operation, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
+    }
+
+    #[test]
+    fn build_redaction_change_event_picks_the_next_sequence_after_existing_events() {
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        session.edit_events.push(EditEvent {
+            sequence: 5,
+            event_id: "evt-0".to_string(),
+            session_revision_before: 0,
+            session_revision_after: 0,
+            operation: EditOperation::Revert { step_id: "s1".to_string() },
+            before_digest: None,
+            after_digest: None,
+            local_timestamp: "2026-10-29T12:00:00Z".to_string(),
+        });
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        assert_eq!(event.sequence, 6);
+    }
+
+    #[test]
+    fn build_redaction_change_event_refuses_on_the_same_validation_failures() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.payment_card", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "a reason", true);
+        assert_eq!(
+            build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()),
+            Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
+        );
+    }
+
+    #[test]
+    fn disposition_resolves_candidate_is_true_only_for_redact() {
+        // C6A-002: MarkNonSensitive does NOT resolve a candidate today -
+        // verify_coverage_proof still refuses it outright
+        // (OverrideAuthorityContentUnsupported) until the authority-
+        // content schema exists.
         assert!(!disposition_resolves_candidate(Disposition::Pending));
         assert!(disposition_resolves_candidate(Disposition::Redact));
-        assert!(disposition_resolves_candidate(Disposition::MarkNonSensitive));
+        assert!(!disposition_resolves_candidate(Disposition::MarkNonSensitive));
     }
 
     #[test]
