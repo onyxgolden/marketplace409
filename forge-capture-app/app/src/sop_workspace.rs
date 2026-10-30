@@ -1127,6 +1127,21 @@ pub fn apply_review_action_if_current(
         expected_model_manifest_sha256,
     };
 
+    // C6A-003 (round-4 re-review): `event_id` arrives from the caller
+    // (ultimately the frontend) and `build_redaction_change_event` only
+    // ever assigns the *next sequence number* — it never checked
+    // whether this exact `event_id` was already used. A current-
+    // revision caller could resubmit (accidentally or not) an id this
+    // session's log already has; the old code would append the
+    // duplicate and atomically persist it, making the document
+    // instantly invalid (`validate_edit_chain`'s `DuplicateEventId`) on
+    // every later read even though this function reported success.
+    // Reject the collision here, under the same lock, before
+    // constructing or appending anything.
+    if session.edit_events.iter().any(|e| e.event_id == event_id) {
+        return Err(ApplyReviewActionError::DuplicateEventId(event_id));
+    }
+
     let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone())
         .map_err(ApplyReviewActionError::Validation)?;
 
@@ -1150,6 +1165,15 @@ pub fn apply_review_action_if_current(
     session.updated_at = local_timestamp;
     session.edit_events.push(event);
 
+    // C6A-003 (round-4 re-review): "validate the final mutated document
+    // before the atomic write" — the duplicate-ID check above is the
+    // specific, named collision, but this is the general defense: the
+    // exact document this function is about to make durable must itself
+    // be a valid edit chain, not just "the inputs looked fine." Nothing
+    // is written if this fails.
+    forge_capture_core::sop_session::validate_edit_chain(&session)
+        .map_err(ApplyReviewActionError::PostMutationInvalid)?;
+
     let new_revision = session.revision;
     let bytes =
         serde_json::to_vec(&session).map_err(|e| ApplyReviewActionError::Io(format!("cannot serialize session: {e}")))?;
@@ -1165,6 +1189,17 @@ pub enum ApplyReviewActionError {
     SessionNotFound,
     SessionParse(forge_capture_core::sop_session::SessionError),
     Validation(forge_capture_core::sop_redaction::DispositionChangeError),
+    /// C6A-003 (round-4 re-review): `event_id` collided with one
+    /// already in this session's edit log — rejected before anything
+    /// was constructed or written, rather than silently persisting a
+    /// document `validate_edit_chain` would refuse on its next read.
+    DuplicateEventId(String),
+    /// C6A-003 (round-4 re-review): the fully mutated document (event
+    /// appended, candidate/revision updated) failed `validate_edit_chain`
+    /// — nothing was written. A catch-all defense alongside the explicit
+    /// `DuplicateEventId` check above, for any other way the resulting
+    /// document could have been invalid.
+    PostMutationInvalid(forge_capture_core::sop_session::EditChainError),
     Io(String),
 }
 
@@ -2931,6 +2966,74 @@ mod tests {
             "2026-10-29T12:05:00Z".to_string(),
         );
         assert!(matches!(result, Err(ApplyReviewActionError::SessionNotFound)));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_rejects_a_reused_event_id_and_writes_nothing() {
+        // C6A-003 (round-4 re-review): a caller resubmitting an
+        // existing event_id (accidentally, or by a confused/malicious
+        // client) must be rejected outright, under the same lock,
+        // before anything is constructed or written - not silently
+        // accepted and persisted into a document that would fail
+        // validate_edit_chain on its very next read.
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)],
+            )]),
+        );
+
+        // First action: a real, successful use of "evt-1".
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("first action with a fresh event id must succeed");
+        let bytes_after_first = fs::read(confined.path()).unwrap();
+
+        // Second action: a different candidate, current revision, but
+        // the SAME event_id reused.
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c2",
+            Disposition::Redact,
+            "",
+            false,
+            1,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(result, Err(ApplyReviewActionError::DuplicateEventId(ref id)) if id == "evt-1"), "{result:?}");
+
+        // Nothing was written: the file on disk is byte-for-byte
+        // unchanged from right after the first (successful) action,
+        // and still parses/validates cleanly.
+        let bytes_after_rejected_second = fs::read(confined.path()).unwrap();
+        assert_eq!(bytes_after_first, bytes_after_rejected_second);
+        let on_disk = parse_session(&bytes_after_rejected_second).unwrap();
+        assert_eq!(on_disk.revision, 1);
+        assert_eq!(on_disk.edit_events.len(), 1);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[1].disposition, Disposition::Pending, "c2 untouched");
+        forge_capture_core::sop_session::validate_edit_chain(&on_disk).expect("on-disk session must still be a valid edit chain");
+
         drop(confined);
         fs::remove_dir_all(&root).ok();
     }

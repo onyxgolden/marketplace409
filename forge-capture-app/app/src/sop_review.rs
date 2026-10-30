@@ -53,6 +53,8 @@ fn apply_review_action_error_to_string(err: ApplyReviewActionError) -> String {
         ApplyReviewActionError::SessionNotFound => "no session exists yet at that path".to_string(),
         ApplyReviewActionError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
         ApplyReviewActionError::Validation(e) => format!("review action refused: {e:?}"),
+        ApplyReviewActionError::DuplicateEventId(id) => format!("event id {id} already exists in this session's edit log"),
+        ApplyReviewActionError::PostMutationInvalid(e) => format!("resulting session would be invalid, nothing written: {e:?}"),
         ApplyReviewActionError::Io(msg) => msg,
     }
 }
