@@ -1023,6 +1023,151 @@ pub enum SessionWriteError {
     Io(String),
 }
 
+/// GS-C6 / C6A-003: the guarded, atomic review-action mutation this
+/// module's [`write_session_if_current`] and
+/// [`forge_capture_core::sop_redaction::build_redaction_change_event`]'s
+/// own doc comments both named as the one piece still missing — nothing
+/// in this codebase previously called either of those from the same
+/// guarded span, so a review action's validation (against whatever
+/// session state a caller happened to have read earlier) and its actual
+/// persistence were two separate, unsynchronized steps a concurrent
+/// writer could always race between.
+///
+/// Acquires the exact same [`session_lock`]/[`CrossProcessSessionLock`]
+/// pair [`write_session_if_current`] does, over `confined`'s lock path,
+/// and — **unlike** that function, which only re-checks a bare revision
+/// number against whatever `bytes` the caller already serialized
+/// earlier — reads and parses the **full current session** under that
+/// lock, then calls
+/// [`forge_capture_core::sop_redaction::validate_review_action`] (via
+/// [`forge_capture_core::sop_redaction::build_redaction_change_event`])
+/// against that freshly-read state. A caller cannot pre-build a request
+/// against stale state and have it validated against anything other
+/// than the real, current, lock-held document: there is no window
+/// between "read the state a decision was based on" and "persist that
+/// decision" for a concurrent writer to land in.
+///
+/// `confirmed` is the caller's own already-collected human confirmation
+/// signal — the Tauri command wiring this is reached from (C6A-001B)
+/// gets it from a real native OS dialog, never from a frontend-supplied
+/// boolean or digest. This function computes
+/// [`forge_capture_core::sop_redaction::confirmation_digest`] itself,
+/// from the session state it just read under the lock — there is no
+/// parameter here a caller could use to hand in a precomputed digest
+/// this function didn't independently derive, which is exactly what
+/// made the old digest "a public value anyone could compute," not proof
+/// of anything a human actually did.
+///
+/// On success, appends the resulting
+/// [`EditEvent`](forge_capture_core::sop_session::EditEvent), updates
+/// the named candidate's `disposition`/`disposition_event_id` binding,
+/// bumps `session.revision`/`session.updated_at`, and persists the
+/// whole document with the same temp+fsync+rename atomicity every other
+/// session write gets — all before the locks acquired above are
+/// released.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_review_action_if_current(
+    confined: &ConfinedPath<'_>,
+    frame_id: &str,
+    candidate_id: &str,
+    new_disposition: forge_capture_core::sop_session::Disposition,
+    reason: &str,
+    confirmed: bool,
+    expected_session_revision: u64,
+    expected_policy_version: &str,
+    expected_model_manifest_sha256: Option<&str>,
+    event_id: String,
+    local_timestamp: String,
+) -> Result<u64, ApplyReviewActionError> {
+    use forge_capture_core::sop_redaction::{build_redaction_change_event, confirmation_digest, ReviewActionRequest};
+    use forge_capture_core::sop_session::parse_session;
+
+    let lock = session_lock(confined.lock_path());
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _cross_process_guard =
+        CrossProcessSessionLock::acquire(confined.lock_path()).map_err(ApplyReviewActionError::Io)?;
+
+    let bytes = match fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ApplyReviewActionError::SessionNotFound),
+        Err(e) => return Err(ApplyReviewActionError::Io(format!("cannot read session file: {e}"))),
+    };
+    let mut session = parse_session(&bytes).map_err(ApplyReviewActionError::SessionParse)?;
+
+    // Computed only from state just read under the lock above, never
+    // from a caller-supplied value — see this function's own doc
+    // comment (C6A-001B).
+    let confirmation_digest_value = if confirmed {
+        session.source_frames.iter().find(|f| f.frame_id == frame_id).map(|frame| {
+            confirmation_digest(
+                &session.session_id,
+                frame_id,
+                candidate_id,
+                new_disposition,
+                reason,
+                &frame.raster_sha256,
+                frame.redacted_derivative_sha256.as_deref(),
+                &session.policy_version,
+                session.model_manifest_sha256.as_deref(),
+                session.revision,
+            )
+        })
+    } else {
+        None
+    };
+
+    let request = ReviewActionRequest {
+        frame_id,
+        candidate_id,
+        new_disposition,
+        reason,
+        confirmation_digest: confirmation_digest_value.as_deref(),
+        expected_session_revision,
+        expected_policy_version,
+        expected_model_manifest_sha256,
+    };
+
+    let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone())
+        .map_err(ApplyReviewActionError::Validation)?;
+
+    // `build_redaction_change_event` already re-ran `validate_review_action`
+    // against this exact `session` above, so the frame/candidate it
+    // names are known to exist here.
+    let frame = session
+        .source_frames
+        .iter_mut()
+        .find(|f| f.frame_id == frame_id)
+        .expect("validate_review_action already proved this frame exists");
+    let candidate = frame
+        .redaction_candidates
+        .iter_mut()
+        .find(|c| c.candidate_id == candidate_id)
+        .expect("validate_review_action already proved this candidate exists");
+    candidate.disposition = new_disposition;
+    candidate.disposition_event_id = Some(event_id);
+
+    session.revision = event.session_revision_after;
+    session.updated_at = local_timestamp;
+    session.edit_events.push(event);
+
+    let new_revision = session.revision;
+    let bytes =
+        serde_json::to_vec(&session).map_err(|e| ApplyReviewActionError::Io(format!("cannot serialize session: {e}")))?;
+
+    cleanup_orphaned_temp_files(confined.path());
+    confined.atomic_write_with_fsync(&bytes).map_err(ApplyReviewActionError::Io)?;
+
+    Ok(new_revision)
+}
+
+#[derive(Debug)]
+pub enum ApplyReviewActionError {
+    SessionNotFound,
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    Validation(forge_capture_core::sop_redaction::DispositionChangeError),
+    Io(String),
+}
+
 /// Field names [`redact_log_fields`] blanks out before a value is ever
 /// formatted for a log line — brief §4: "No key, raw pixels, OCR text, or
 /// detected sensitive value is written to logs."
@@ -2453,6 +2598,340 @@ mod tests {
         let root = temp_root();
         assert!(matches!(restrict_vault_acl(&root), Err(VaultAclError::Unsupported)));
         assert!(matches!(verify_vault_acl_is_current_user_only(&root), Err(VaultAclError::Unsupported)));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- apply_review_action_if_current (GS-C6 / C6A-001B / C6A-003:
+    // the guarded, revalidate-under-the-lock, append + persist path) ---
+
+    use forge_capture_core::sop_session::{
+        parse_session, Disposition, FrameVerification, RedactionCandidate, ReviewState, SopSessionV1, SourceFrame,
+        SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION,
+    };
+
+    fn review_candidate(id: &str, disposition: Disposition) -> RedactionCandidate {
+        RedactionCandidate {
+            candidate_id: id.to_string(),
+            detector_id: "det.ssn".to_string(),
+            reason_code: "TEST".to_string(),
+            source_token_ids: vec!["tok-1".to_string()],
+            original_box: (0, 0, 5, 5),
+            expanded_box: (0, 0, 5, 5),
+            score: None,
+            disposition,
+            disposition_event_id: None,
+        }
+    }
+
+    fn review_frame(frame_id: &str, candidates: Vec<RedactionCandidate>) -> SourceFrame {
+        SourceFrame {
+            frame_id: frame_id.to_string(),
+            order: 0,
+            source_relative_path: format!("frames/{frame_id}.png"),
+            raster_sha256: "a".repeat(64),
+            provenance_sidecar_relative_path: None,
+            provenance_sidecar_blob_sha256: None,
+            width: 100,
+            height: 100,
+            captured_at: "2026-10-29T12:00:00Z".to_string(),
+            action_kind: "click".to_string(),
+            click_box: None,
+            process_basename: None,
+            window_title: None,
+            original_storage: SourceStorage::SessionEncrypted,
+            ocr_status: None,
+            redacted_derivative_relative_path: None,
+            redacted_derivative_sha256: None,
+            redaction_candidates: candidates,
+            verification: FrameVerification::Pending,
+        }
+    }
+
+    fn review_session(frames: Vec<SourceFrame>) -> SopSessionV1 {
+        SopSessionV1 {
+            schema_version: SOP_SESSION_SCHEMA_VERSION,
+            kind: SOP_SESSION_KIND.to_string(),
+            session_id: "sess-1".to_string(),
+            created_at: "2026-10-29T12:00:00Z".to_string(),
+            updated_at: "2026-10-29T12:00:00Z".to_string(),
+            revision: 0,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            sidecar_protocol_version: 1,
+            source_frames: frames,
+            captions: vec![],
+            edit_events: vec![],
+            review_state: ReviewState::InProgress,
+            review_receipt: None,
+            export_eligible: false,
+        }
+    }
+
+    fn write_review_session(confined: &ConfinedPath<'_>, session: &SopSessionV1) {
+        confined.atomic_write_with_fsync(&serde_json::to_vec(session).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_allows_redact_with_no_confirmation() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let new_revision = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("Redact never needs a reason or confirmation");
+        assert_eq!(new_revision, 1);
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.revision, 1);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].disposition, Disposition::Redact);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].disposition_event_id, Some("evt-1".to_string()));
+        assert_eq!(on_disk.edit_events.len(), 1);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_mark_non_sensitive_without_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified with the customer",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::MissingExplicitConfirmation))
+        ));
+
+        // Refused: nothing on disk changed.
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.revision, 0);
+        assert!(on_disk.edit_events.is_empty());
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_allows_mark_non_sensitive_when_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let new_revision = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified with the customer",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("a real confirmed signal must be accepted");
+        assert_eq!(new_revision, 1);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_revalidates_against_the_real_current_state_not_a_caller_supplied_revision() {
+        // C6A-003: a caller claiming `expected_session_revision: 0`
+        // against a session that is actually already at revision 1 must
+        // be refused as stale — the whole point of revalidating under
+        // the lock against freshly-read state, not whatever revision a
+        // caller's own earlier read happened to see.
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)])]),
+        );
+        // Advance the real on-disk session to revision 1 via one
+        // legitimate action — a hand-crafted "revision: 1, no events"
+        // fixture would itself be an invalid edit chain and get refused
+        // by `parse_session` before this test ever reaches the behavior
+        // under test.
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("setup: the first action at revision 0 must succeed");
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c2",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-2".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::StaleSessionRevision {
+                expected: 0,
+                current: 1
+            }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_a_protected_credential_override_even_when_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![RedactionCandidate { detector_id: "det.payment_card".to_string(), ..review_candidate("c1", Disposition::Pending) }],
+            )]),
+        );
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "a reason",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::ProtectedCredentialNonOverridable { .. }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_rejects_a_confirmation_computed_against_a_different_reason() {
+        // C6A-001A/B: `confirmed: true` alone is not enough to forge a
+        // match — this function computes the digest itself from the
+        // `reason` actually passed in, so a caller cannot separately
+        // supply a reason that disagrees with whatever was actually
+        // confirmed (there is no digest parameter here at all for a
+        // caller to transplant in the first place).
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        // Same call, different reason text each time, both confirmed —
+        // both must independently succeed against the reason they each
+        // actually carried (proving the digest tracks `reason`, not a
+        // fixed/ignored value), and the second must be refused for
+        // staleness (the first already advanced the revision), not
+        // silently accepted on top.
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "reason A",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("first confirmed action at revision 0 must succeed");
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "reason B",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-2".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::StaleSessionRevision {
+                expected: 0,
+                current: 1
+            }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            None,
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(result, Err(ApplyReviewActionError::SessionNotFound)));
+        drop(confined);
         fs::remove_dir_all(&root).ok();
     }
 }

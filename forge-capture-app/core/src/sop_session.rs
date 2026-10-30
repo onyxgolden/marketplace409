@@ -708,7 +708,7 @@ fn box_contains(expanded: (i64, i64, u64, u64), original: (i64, i64, u64, u64)) 
 /// pairs in display order; the array's own order already carries the
 /// sequence, so nothing beyond `serde_json`'s default encoding is needed
 /// for this to be a stable, deterministic representation.
-fn canonical_state_digest(steps: &[(String, String)]) -> String {
+pub(crate) fn canonical_state_digest(steps: &[(String, String)]) -> String {
     let json = serde_json::to_string(steps).unwrap_or_default();
     sha256_hex(json.as_bytes())
 }

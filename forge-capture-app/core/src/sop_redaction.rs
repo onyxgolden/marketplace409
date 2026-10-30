@@ -2078,9 +2078,23 @@ pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequ
 /// [`EditEvent`] in the same guarded operation, rather than leaving
 /// validation and construction as two steps a caller could pull apart
 /// (and skip the first of). The caller still owns appending the
-/// returned event to `session.edit_events` and the atomic,
-/// expected-revision-checked write — [`crate::sop_workspace`]'s
-/// existing job, unchanged by this function.
+/// returned event to `session.edit_events`, updating the candidate's
+/// `disposition`/`disposition_event_id` binding and `session.revision`,
+/// and the atomic, expected-revision-checked write —
+/// [`crate::sop_workspace::apply_review_action_if_current`]'s job.
+///
+/// `before_digest`/`after_digest` are computed from
+/// [`project_steps`]/`canonical_state_digest`, the same digest chain
+/// every other [`EditOperation`] variant is bound into —
+/// [`RedactionChange`](EditOperation::RedactionChange) is a documented
+/// no-op in `project_steps` (it carries no step text), so the two are
+/// always equal for this operation, but they must still be `Some`:
+/// leaving them `None` (this function's own prior behavior) made the
+/// returned event fail [`validate_edit_chain`]'s `MissingDigestLink`
+/// check the instant a caller actually appended it to a session, which
+/// is exactly the gap this round closes — there was previously no
+/// production path that could append this event to a real session at
+/// all without immediately producing an invalid document.
 pub fn build_redaction_change_event(
     session: &SopSessionV1,
     request: &ReviewActionRequest,
@@ -2089,6 +2103,10 @@ pub fn build_redaction_change_event(
 ) -> Result<EditEvent, DispositionChangeError> {
     validate_review_action(session, request)?;
     let sequence = session.edit_events.iter().map(|e| e.sequence).max().map_or(0, |s| s + 1);
+    let digest = crate::sop_session::canonical_state_digest(&crate::sop_session::project_steps(
+        &session.captions,
+        &session.edit_events,
+    ));
     Ok(EditEvent {
         sequence,
         event_id,
@@ -2099,8 +2117,8 @@ pub fn build_redaction_change_event(
             candidate_id: request.candidate_id.to_string(),
             disposition: request.new_disposition,
         },
-        before_digest: None,
-        after_digest: None,
+        before_digest: Some(digest.clone()),
+        after_digest: Some(digest),
         local_timestamp,
     })
 }
@@ -4059,6 +4077,27 @@ mod tests {
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
         let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
         assert_eq!(event.sequence, 6);
+    }
+
+    #[test]
+    fn build_redaction_change_event_produces_digests_that_pass_the_real_edit_chain_validator() {
+        // C6A-003: this event is no longer a validation-only artifact a
+        // caller inspects and discards — it must survive actually being
+        // appended to `session.edit_events` and re-validated via
+        // `validate_edit_chain`, the exact gate every other append-only
+        // edit event is held to. `before_digest`/`after_digest` being
+        // `None` (this function's prior behavior) failed this with
+        // `MissingDigestLink` on literally every call.
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        assert!(event.before_digest.is_some());
+        assert_eq!(event.before_digest, event.after_digest, "RedactionChange carries no step text, so the projected state is unchanged");
+        session.edit_events.push(event);
+        session.revision = 1;
+        session.source_frames[0].redaction_candidates[0].disposition = Disposition::Redact;
+        session.source_frames[0].redaction_candidates[0].disposition_event_id = Some("evt-1".to_string());
+        assert_eq!(crate::sop_session::validate_edit_chain(&session), Ok(()));
     }
 
     #[test]
