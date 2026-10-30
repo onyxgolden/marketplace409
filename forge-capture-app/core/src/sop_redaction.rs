@@ -2271,10 +2271,35 @@ pub fn build_redaction_change_event(
             .iter()
             .find(|f| f.frame_id == request.frame_id)
             .expect("validate_review_action already proved this frame exists");
-        let confirmation_digest = request
-            .confirmation_digest
-            .expect("validate_review_action already proved a confirmation digest is present for MarkNonSensitive")
-            .to_string();
+        // GS-C6 fix-round-8 (P1 #1): `request.confirmation_digest` was
+        // computed by the caller — and checked by `validate_review_action`
+        // above — against `session.revision` as it stood *before* this
+        // event (the state the human actually confirmed). This record,
+        // once this event lands, will be read back against the
+        // session's *new* current revision (`session.revision + 1` —
+        // the same value this event's own `session_revision_after`
+        // carries, since this is the one event advancing it). Storing
+        // the pre-event digest/revision made every freshly-written
+        // override fail its own very first verification, immediately,
+        // with a correct key and an untampered record — the digest
+        // `authority_matches_current_state` recomputes from the
+        // session it is actually handed can never equal one minted
+        // against a revision that no longer exists by the time anyone
+        // reads it back. Recomputed here, fresh, against the resulting
+        // revision — never reused from `request`.
+        let authority_session_revision = session.revision + 1;
+        let confirmation_digest = confirmation_digest(
+            &session.session_id,
+            request.frame_id,
+            request.candidate_id,
+            request.new_disposition,
+            request.reason,
+            &frame.raster_sha256,
+            frame.redacted_derivative_sha256.as_deref(),
+            &session.policy_version,
+            session.model_manifest_sha256.as_deref(),
+            authority_session_revision,
+        );
         // GS-C6 fix-round-7 (P1 #1): mint the record's origin MAC now,
         // at the trusted boundary, over the exact fields being stored —
         // never derived later from a session file a party without
@@ -2288,7 +2313,7 @@ pub fn build_redaction_change_event(
             frame.redacted_derivative_sha256.as_deref(),
             &session.policy_version,
             session.model_manifest_sha256.as_deref(),
-            session.revision,
+            authority_session_revision,
         );
         Some(OverrideAuthority::V2 {
             session_id: session.session_id.clone(),
@@ -2298,7 +2323,7 @@ pub fn build_redaction_change_event(
             derivative_sha256: frame.redacted_derivative_sha256.clone(),
             policy_version: session.policy_version.clone(),
             model_manifest_sha256: session.model_manifest_sha256.clone(),
-            session_revision: session.revision,
+            session_revision: authority_session_revision,
             authority_mac,
         })
     } else {
@@ -4560,10 +4585,19 @@ mod tests {
         assert_eq!(derivative_sha256, &None);
         assert_eq!(policy_version, "policy-v1");
         assert_eq!(model_manifest_sha256, &Some("model-manifest-v1".to_string()));
-        assert_eq!(*session_revision, 0);
-        // The stored digest must be exactly what validate_review_action
-        // itself just accepted as this request's confirmation.
-        assert_eq!(Some(stored_digest.as_str()), request.confirmation_digest);
+        // GS-C6 fix-round-8 (P1 #1): the stored record is bound to the
+        // event's *resulting* revision (1), not the pre-write revision
+        // (0) `request.confirmation_digest` was confirmed against —
+        // see `build_redaction_change_event`'s own doc comment on why
+        // storing the pre-write revision made every freshly-written
+        // override fail its own first verification.
+        assert_eq!(*session_revision, 1);
+        assert_eq!(event.session_revision_after, 1);
+        // The stored digest is bound to the resulting revision, so it
+        // is deliberately *not* identical to the pre-write
+        // confirmation digest the caller supplied and
+        // validate_review_action accepted against revision 0.
+        assert_ne!(Some(stored_digest.as_str()), request.confirmation_digest);
         // GS-C6 fix-round-7 (P1 #1): the stored MAC must be exactly what
         // minting it against the same fields with the same key produces
         // -- i.e. it really is a keyed MAC over this record's own content,
@@ -4580,12 +4614,19 @@ mod tests {
             *session_revision,
         );
         assert_eq!(stored_mac, &expected_mac);
-        // And the whole record, appended to this exact session/frame,
-        // must pass verify_coverage_proof end to end.
+        // And the whole record, appended to this exact session/frame
+        // AND with the session actually advanced to the event's
+        // resulting revision — the real production transition
+        // `apply_review_action_if_current` performs — must pass
+        // verify_coverage_proof end to end. Round-7's re-review named
+        // exactly this gap: a prior version of this test asserted
+        // success without ever advancing `session_with_event.revision`,
+        // so it could never have caught the P1 fixed in round 8.
         let mut session_with_event = session.clone();
         session_with_event.edit_events.push(event.clone());
         session_with_event.source_frames[0].redaction_candidates[0].disposition = Disposition::MarkNonSensitive;
         session_with_event.source_frames[0].redaction_candidates[0].disposition_event_id = Some("evt-1".to_string());
+        session_with_event.revision = event.session_revision_after;
         let failures = verify_coverage_proof(&session_with_event, &session_with_event.source_frames[0], TEST_AUTHORITY_KEY);
         assert_eq!(failures, vec![]);
     }
