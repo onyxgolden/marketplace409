@@ -525,6 +525,76 @@ describe("crash after every boundary, recovered by restart + reconcile", () => {
     expect(ctx.git.writeCount()).toBe(writesAfterLost); // landed write reused, not duplicated
   });
 
+  it("crash after updateQueue, before queue receipt: reconcile requests evidence and re-run resumes without rewriting", async () => {
+    const uninterrupted = await setup();
+    await toQueue(uninterrupted);
+    const expectedQueueReceipt = uninterrupted.driver.getReceipts("h-1").queueReceipts[0];
+
+    const ctx = await setup();
+    await begin(ctx);
+    await publish(ctx);
+    await readback(ctx);
+    const queueBytes = "# queue export\n- h-1 answered\n";
+    const payload = { handoffId: "h-1", taskId: "task-1", exportSha256: sha256Hex(queueBytes), exportBytes: queueBytes };
+    const enqueued = enqueueOutbox(ctx.outbox.entries, {
+      operationId: "op-queue-1",
+      targetRepo: REPO,
+      targetPath: QUEUE_PATH,
+      expectedPriorBlob: EMPTY_BLOB,
+      payload,
+      createdAt: T3,
+      sourceTaskId: "task-1",
+      sourceTaskRevision: "0:0",
+    });
+    ctx.outbox.entries = enqueued.entries;
+    const claimed = claimOutbox({ entries: ctx.outbox.entries, operationId: "op-queue-1", owner: "worker-a", now: T3, tasks: taskList() });
+    ctx.outbox.entries = claimed.entries;
+    const gitResponse = await ctx.git.write({ repo: REPO, path: QUEUE_PATH, expectedPriorBlob: EMPTY_BLOB, bytes: queueBytes });
+    ctx.outbox.entries = recordDelivery({
+      entries: ctx.outbox.entries,
+      operationId: "op-queue-1",
+      owner: "worker-a",
+      generation: claimed.lease.generation,
+      gitResponse,
+      now: T3,
+      tasks: taskList(),
+    }).entries;
+
+    const queue = {
+      repo: gitResponse.repo,
+      path: gitResponse.path,
+      commit: gitResponse.head,
+      blob: gitResponse.newBlob,
+    };
+    await ctx.handoffs.updateQueue("h-1", { actor: "worker-a", recordedAt: T3, reason: "queue", queue });
+    expect((await ctx.handoffs.getHandoff("h-1")).state).toBe("QUEUE_UPDATED");
+    expect(ctx.ledger.queueReceipts).toHaveLength(0);
+
+    const d2 = restart(ctx);
+    const rec = await d2.reconcile({ handoffId: "h-1", tasks: taskList() });
+    expect(rec.action).toBe("NEEDS_EVIDENCE");
+
+    const writesBeforeResume = ctx.git.writeCount();
+    const resumed = await queueAnswer(ctx, d2);
+    expect(resumed.replayed).toBe(false);
+    expect(resumed.handoff.state).toBe("QUEUE_UPDATED");
+    expect(resumed.queueReceipt).toMatchObject({
+      status: "ANSWER_RECORDED_PENDING_CLOSE",
+      queue,
+      queueItemRowVersion: expectedQueueReceipt.queueItemRowVersion,
+      queueRevision: expectedQueueReceipt.queueRevision,
+    });
+    expect(d2.getReceipts("h-1").queueReceipts).toHaveLength(1);
+    expect(ctx.git.writeCount()).toBe(writesBeforeResume);
+
+    const done = await complete(ctx, d2);
+    expect(done.handoff.state).toBe("COMPLETE");
+    expect(done.queueItem.status).toBe("CLOSED");
+    expect(ctx.git.writeCount()).toBe(uninterrupted.git.writeCount());
+    await ctx.db.close();
+    await uninterrupted.db.close();
+  });
+
   it("crash after QUEUE_UPDATED, before complete: reconcile reports READY_TO_COMPLETE", async () => {
     const ctx = await setup();
     await toQueue(ctx);
