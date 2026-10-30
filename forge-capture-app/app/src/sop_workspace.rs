@@ -3122,28 +3122,27 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
-    /// GS-C6 fix-round-7 re-review, P1 #1 — required repair: "Add an
-    /// end-to-end test that executes `apply_review_action_if_current`,
-    /// reloads the persisted session, obtains the same authority key,
-    /// and proves `verify_coverage_proof` returns no authority failure
-    /// immediately after the write; then advance the revision with a
-    /// later valid event and prove the old authority becomes stale."
+    /// GS-C6 fix-round-8 re-review, P1 #1 — required repair: "a real
+    /// final-state test with at least two MarkNonSensitive candidates
+    /// confirmed in separate events, reload the unmodified final
+    /// session, and require one ordinary `verify_coverage_proof` call
+    /// over the full frame to return no failures." Done here through
+    /// the real guarded write path, twice, then one ordinary reload and
+    /// one ordinary full-frame check — no per-candidate rewinding, no
+    /// synthetic single-candidate frame. Also proves the specific thing
+    /// round 7's binding got backwards: a later, real, unrelated write
+    /// must not invalidate an earlier one.
     #[test]
-    fn apply_review_action_if_current_persists_an_authority_that_verifies_immediately_then_goes_stale_after_a_later_event() {
+    fn apply_review_action_if_current_persists_two_independently_confirmed_overrides_that_coexist_in_one_real_final_state() {
         let root = temp_root();
         let ws = workspace_root(&root);
         let confined = confine_session(&ws, "session.json");
         write_review_session(
             &confined,
-            // c2 starts already `Redact` (never `Pending`) so the first
-            // `verify_coverage_proof` call below — taken right after
-            // only c1's action — checks a frame that is already fully
-            // covered; whether c2 happens to need an event of its own
-            // yet is not what this test is about.
-            &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Redact)])]),
+            &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)])]),
         );
 
-        let new_revision = apply_review_action_if_current(
+        let revision_after_c1 = apply_review_action_if_current(
             &confined,
             "f1",
             "c1",
@@ -3156,52 +3155,51 @@ mod tests {
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
         )
-        .expect("a real confirmed MarkNonSensitive action must succeed");
-        assert_eq!(new_revision, 1);
+        .expect("the first confirmed MarkNonSensitive action must succeed");
+        assert_eq!(revision_after_c1, 1);
 
-        // Reload exactly what got persisted — not the in-memory state
-        // this function already had — and obtain the same durable key
-        // `apply_review_action_if_current` itself used, the same way
-        // any later process/caller would: by loading it, not by being
-        // handed it back.
-        let reloaded = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        // Reload right away and check — this authority must verify
+        // immediately after its own write, same as before.
         let key = load_or_create_authority_key(ws.canonical_path()).expect("the key this write just minted/used must already exist");
-
-        let failures = forge_capture_core::sop_redaction::verify_coverage_proof(&reloaded, &reloaded.source_frames[0], &key);
+        let reloaded_after_c1 = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
         assert_eq!(
-            failures, vec![],
-            "a freshly persisted, untampered override must verify against its own resulting revision immediately, not fail stale"
+            forge_capture_core::sop_redaction::verify_coverage_proof(&reloaded_after_c1, &reloaded_after_c1.source_frames[0], &key),
+            vec![forge_capture_core::sop_redaction::CoverageProofFailure::UndispositionedCandidate { candidate_id: "c2".to_string() }],
+            "c1 must already verify; c2 is simply not yet resolved at all"
         );
 
-        // Advance the session with one later, unrelated valid event —
-        // `c1`'s authority record itself is untouched, but the
-        // session's current revision has now moved past the one it was
-        // bound to.
-        let newer_revision = apply_review_action_if_current(
+        // A second, real, unrelated confirmed action — on a different
+        // candidate in the same frame — advances the session's current
+        // revision past the one c1's authority is bound to.
+        let revision_after_c2 = apply_review_action_if_current(
             &confined,
             "f1",
             "c2",
-            Disposition::Redact,
-            "",
-            false,
+            Disposition::MarkNonSensitive,
+            "verified separately",
+            true,
             1,
             "policy-v1",
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
         )
-        .expect("a second, unrelated action at the now-current revision must succeed");
-        assert_eq!(newer_revision, 2);
+        .expect("the second, independent confirmed action must also succeed");
+        assert_eq!(revision_after_c2, 2);
 
-        let reloaded_again = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
-        let failures_after = forge_capture_core::sop_redaction::verify_coverage_proof(&reloaded_again, &reloaded_again.source_frames[0], &key);
+        // One ordinary reload, one ordinary full-frame
+        // `verify_coverage_proof` call — both real, independently
+        // confirmed overrides must coexist cleanly in this real final
+        // state. Round 7's global-revision binding could never reach
+        // this: the moment evt-2 landed, it would have invalidated c1's
+        // still-genuine authority purely because the session moved on,
+        // not because anything c1's authority is actually bound to
+        // (session id, c1/f1's own content, policy, model) changed.
+        let final_session = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
         assert_eq!(
-            failures_after,
-            vec![forge_capture_core::sop_redaction::CoverageProofFailure::OverrideAuthorityContentInvalid {
-                candidate_id: "c1".to_string(),
-                disposition_event_id: "evt-1".to_string(),
-            }],
-            "c1's authority, bound to revision 1, must now read as stale/invalid once the session has moved on to revision 2"
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_session, &final_session.source_frames[0], &key),
+            vec![],
+            "both independently confirmed overrides must verify together in one real, unmodified final state"
         );
 
         drop(confined);
@@ -3294,47 +3292,123 @@ mod tests {
         // authority record persisted by either caller verifies against
         // it — proving both callers converged on the same key rather
         // than one being silently orphaned by a key the other one's
-        // write replaced. Checked at each event's own resulting
-        // revision (not the final session's current revision): by
-        // design (fix-round-8, P1 #1), an authority goes stale once the
-        // session advances past the revision it was minted for, and c1
-        // and c2's events landed at two different revisions here — that
-        // is a different, already-covered behavior, not what this test
-        // is checking. A MAC minted under the wrong (split) key would
-        // fail this check regardless of which revision is used.
+        // write replaced. One ordinary reload, one ordinary full-frame
+        // check — fix-round-8 (P1 #1) means c1's and c2's authorities,
+        // bound to two different resulting revisions, coexist cleanly
+        // in this one real final state; no per-candidate rewinding
+        // needed. A MAC minted under the wrong (split) key would fail
+        // this regardless.
         let key = load_or_create_authority_key(ws.canonical_path()).expect("a key must exist after both actions completed");
         let final_session = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
-        let mut checked_any = false;
-        for frame in &final_session.source_frames {
-            for candidate in &frame.redaction_candidates {
-                let Some(event_id) = &candidate.disposition_event_id else { continue };
-                let event = final_session.edit_events.iter().find(|e| &e.event_id == event_id).expect("disposition_event_id must resolve");
-                // Isolate this one candidate into its own single-
-                // candidate frame, checked at its own resulting
-                // revision — `verify_coverage_proof` evaluates every
-                // candidate in the frame against one `session.revision`,
-                // and c1/c2 landed at two different resulting revisions
-                // here, so checking them together through the shared
-                // frame would spuriously fail whichever one's revision
-                // the check wasn't set to. A MAC minted under the wrong
-                // (split) key fails this check regardless.
-                let mut session_at_event = final_session.clone();
-                session_at_event.revision = event.session_revision_after;
-                let mut isolated_frame = frame.clone();
-                isolated_frame.redaction_candidates = vec![candidate.clone()];
-                let failures = forge_capture_core::sop_redaction::verify_coverage_proof(&session_at_event, &isolated_frame, &key);
-                assert_eq!(
-                    failures,
-                    vec![],
-                    "candidate {}'s authority must verify against the one durable key at its own resulting revision",
-                    candidate.candidate_id
-                );
-                checked_any = true;
-            }
-        }
-        assert!(checked_any, "both c1 and c2 must have resolved overrides to check");
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_session, &final_session.source_frames[0], &key),
+            vec![],
+            "both candidates' authorities, persisted by the two racing callers, must verify together against the one durable key"
+        );
 
         drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// GS-C6 fix-round-8 re-review, P1 #2 — the re-review's stated
+    /// failure mode: "[the session lock] does not serialize concurrent
+    /// first actions against different session files in the same
+    /// workspace. Those calls hold different in-process mutexes and
+    /// different cross-process session lock files, yet both initialize
+    /// the same workspace key path."
+    ///
+    /// This does not hold against the actual lock key in this codebase.
+    /// [`CrossProcessSessionLock::lock_path_for`]'s own doc comment:
+    /// "derived **only** from `workspace_root`'s own stable NTFS
+    /// identity ... never from the session file" — and
+    /// `resolve_confined_path` calls exactly that function (with the
+    /// `&WorkspaceRoot` the `ConfinedPath` was resolved against, not
+    /// the per-call `relative` session path) to fill in every
+    /// `ConfinedPath::lock_path()`. Two different session files
+    /// confined from the *same* workspace root — even via two
+    /// independent `WorkspaceRoot::open()` calls, as two real separate
+    /// processes would each do — resolve to the identical lock path,
+    /// because that path is a function of the workspace directory's
+    /// own on-disk NTFS identity alone, not of which file within it is
+    /// being touched. The in-process `session_lock` registry is keyed
+    /// by that same `PathBuf`, so it converges too.
+    ///
+    /// This test exercises the re-review's exact named scenario directly
+    /// — two threads, two different session files, one brand-new
+    /// workspace, no key file yet — rather than arguing from the doc
+    /// comment alone.
+    #[test]
+    fn apply_review_action_if_current_resolves_concurrent_first_use_across_different_session_files_in_one_workspace() {
+        let root = temp_root();
+        let ws_a = workspace_root(&root);
+        let confined_a = confine_session(&ws_a, "session-a.json");
+        write_review_session(&confined_a, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let ws_b = workspace_root(&root);
+        let confined_b = confine_session(&ws_b, "session-b.json");
+        write_review_session(&confined_b, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        // No `AUTHORITY_KEY_FILE_NAME` exists under `root` yet. Each
+        // session file is independent (separate revision counters, no
+        // shared `expected_session_revision` precondition to collide
+        // on), so — unlike the same-session-file race above — neither
+        // side needs to retry; the only thing being raced is first-use
+        // key creation.
+        let root_for_thread = root.clone();
+        let handle = std::thread::spawn(move || {
+            let ws_b2 = workspace_root(&root_for_thread);
+            let confined_b2 = confine_session(&ws_b2, "session-b.json");
+            apply_review_action_if_current(
+                &confined_b2,
+                "f1",
+                "c1",
+                Disposition::MarkNonSensitive,
+                "verified b",
+                true,
+                0,
+                "policy-v1",
+                Some("model-manifest-v1"),
+                "evt-b".to_string(),
+                "2026-10-29T12:05:00Z".to_string(),
+            )
+        });
+
+        let result_a = apply_review_action_if_current(
+            &confined_a,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified a",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-a".to_string(),
+            "2026-10-29T12:05:01Z".to_string(),
+        );
+        result_a.expect("session-a's action must succeed");
+        handle.join().unwrap().expect("session-b's action must succeed");
+
+        // Both session files' authorities must verify against the one
+        // durable key — if first-use key creation had actually split
+        // (the re-review's named failure mode), whichever session was
+        // MACed with the losing, now-overwritten key would fail here.
+        let key = load_or_create_authority_key(ws_a.canonical_path()).expect("a key must exist after both actions completed");
+        let final_a = parse_session(&fs::read(confined_a.path()).unwrap()).unwrap();
+        let final_b = parse_session(&fs::read(confined_b.path()).unwrap()).unwrap();
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_a, &final_a.source_frames[0], &key),
+            vec![],
+            "session-a's authority must verify against the one durable key"
+        );
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_b, &final_b.source_frames[0], &key),
+            vec![],
+            "session-b's authority must verify against the same durable key, not a different one it was silently minted/stored under"
+        );
+
+        drop(confined_a);
+        drop(confined_b);
         fs::remove_dir_all(&root).ok();
     }
 }
