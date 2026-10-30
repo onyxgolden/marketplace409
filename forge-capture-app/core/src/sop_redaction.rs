@@ -1616,7 +1616,7 @@ pub fn apply_candidate_redactions(rgba: &mut [u8], width: u32, height: u32, cand
 // folds all three into the brief's [`FrameVerification`] state machine.
 // ---------------------------------------------------------------------
 
-use crate::sop_session::{EditEvent, EditOperation, FrameVerification, SopSessionV1};
+use crate::sop_session::{EditEvent, EditOperation, FrameVerification, OverrideAuthority, SopSessionV1};
 
 /// Brief §3.5 check 1: "every declared redaction rectangle in the
 /// decoded derivative consists entirely of the fixed opaque redaction
@@ -1783,18 +1783,26 @@ pub enum CoverageProofFailure {
     /// event rather than the one that produced this candidate's current
     /// disposition.
     UnresolvedOverrideEvent { candidate_id: String, disposition_event_id: String },
-    /// C688-005A (re-opened): even a cleanly resolved, current,
-    /// correctly frame-scoped `RedactionChange` event cannot satisfy
-    /// brief §3.5's "a reason and explicit confirmation" requirement
-    /// today — `EditOperation::RedactionChange` (C2-P1's already-merged
-    /// contract) has no field to carry either one. Until a separately
-    /// reviewed schema change adds that evidence, no `MarkNonSensitive`
-    /// override can be accepted as proven, no matter how cleanly its
-    /// event resolves — resolving the event is necessary but not
-    /// sufficient, and this failure is what reports the "not sufficient"
-    /// half honestly rather than silently treating a resolved event as
-    /// complete proof.
+    /// GS-C6 fix-round-6: a cleanly resolved, current, correctly
+    /// frame-scoped `RedactionChange` event whose
+    /// [`crate::sop_session::OverrideAuthority`] is `None` — either it
+    /// predates this schema (C2-P1-era / round-4-and-earlier events had
+    /// nowhere to carry a reason/confirmation at all) or the disposition
+    /// it names was never an override to begin with. Resolving the event
+    /// is necessary but not sufficient; an override with no durable
+    /// authority content is reported here rather than silently treated
+    /// as proven.
     OverrideAuthorityContentUnsupported { candidate_id: String, disposition_event_id: String },
+    /// GS-C6 fix-round-6: the resolved event's
+    /// [`crate::sop_session::OverrideAuthority`] is present but failed
+    /// its own self-consistency check — an empty/whitespace-only
+    /// `reason`, or a `confirmation_digest` that does not match
+    /// [`confirmation_digest`] recomputed from the record's own stored
+    /// fields. Either means the durable record itself cannot be trusted
+    /// as proof of what was actually confirmed, so the override is
+    /// treated the same as unevidenced rather than accepted on a record
+    /// that may have been corrupted or hand-edited.
+    OverrideAuthorityContentInvalid { candidate_id: String, disposition_event_id: String },
 }
 
 /// The rule families brief §3.5 names as categorically unredactable in
@@ -2006,15 +2014,14 @@ pub enum DispositionChangeError {
 /// candidate it names are looked up from `session.source_frames` and
 /// that frame's own `redaction_candidates` — never a separately
 /// supplied list that could be stale or mismatched against `session`.
-/// Passing this check is necessary, not sufficient:
-/// [`verify_coverage_proof`] separately still refuses any
-/// `MarkNonSensitive` override outright today
-/// (`CoverageProofFailure::OverrideAuthorityContentUnsupported`), since
-/// `RedactionChange` has nowhere durable to store the reason/
-/// confirmation this function requires — that refusal is deliberate
-/// and this function does not relax it; a caller still has to treat a
-/// passing result here as "the review UI's own input was well-formed
-/// and current," not as "this override is now proven." Choosing
+/// Passing this check is necessary, not sufficient: this function
+/// validates the *request*, not the durable record that will be built
+/// from it — [`build_redaction_change_event`] is what turns an accepted
+/// request into the actual [`crate::sop_session::OverrideAuthority`]
+/// that makes the override durably provable (see
+/// [`verify_coverage_proof`]). A caller still has to treat a passing
+/// result here as "the review UI's own input was well-formed and
+/// current," not as "this override is already recorded." Choosing
 /// [`Disposition::Redact`] (the safe default direction) never needs
 /// justification and is always allowed once identity/revision/binding
 /// checks pass; only choosing to move a candidate *away* from Redact
@@ -2107,6 +2114,34 @@ pub fn build_redaction_change_event(
         &session.captions,
         &session.edit_events,
     ));
+    // GS-C6 fix-round-6: `validate_review_action` above already proved
+    // (for a `MarkNonSensitive` request) that `request.confirmation_digest`
+    // is `Some` and matches the digest this exact frame/session state
+    // produces — capture that same content here, durably, rather than
+    // discarding it the moment this function returns. `Redact`/`Pending`
+    // never needed a reason/confirmation at all, so they carry `None`.
+    let authority = if request.new_disposition == Disposition::MarkNonSensitive {
+        let frame = session
+            .source_frames
+            .iter()
+            .find(|f| f.frame_id == request.frame_id)
+            .expect("validate_review_action already proved this frame exists");
+        Some(OverrideAuthority::V1 {
+            session_id: session.session_id.clone(),
+            reason: request.reason.to_string(),
+            confirmation_digest: request
+                .confirmation_digest
+                .expect("validate_review_action already proved a confirmation digest is present for MarkNonSensitive")
+                .to_string(),
+            source_raster_sha256: frame.raster_sha256.clone(),
+            derivative_sha256: frame.redacted_derivative_sha256.clone(),
+            policy_version: session.policy_version.clone(),
+            model_manifest_sha256: session.model_manifest_sha256.clone(),
+            session_revision: session.revision,
+        })
+    } else {
+        None
+    };
     Ok(EditEvent {
         sequence,
         event_id,
@@ -2116,6 +2151,7 @@ pub fn build_redaction_change_event(
             frame_id: request.frame_id.to_string(),
             candidate_id: request.candidate_id.to_string(),
             disposition: request.new_disposition,
+            authority,
         },
         before_digest: Some(digest.clone()),
         after_digest: Some(digest),
@@ -2125,17 +2161,19 @@ pub fn build_redaction_change_event(
 
 /// GS-C6's "Delete/hide: cannot remove a hard positive or unresolved
 /// region from coverage" rule. C6A-002: this previously reported
-/// `MarkNonSensitive` as resolving a candidate on the enum value alone
-/// — but at this same head, [`verify_coverage_proof`] still refuses
-/// *every* `MarkNonSensitive` override outright
-/// (`OverrideAuthorityContentUnsupported`), since the durable event
-/// schema cannot yet carry the required reason/confirmation. Calling
-/// that "resolved" here would assert two incompatible authorities: this
-/// helper saying settled while the proof layer says unsupported. Until
-/// the versioned authority-content schema and guarded write path exist,
-/// only [`Disposition::Redact`] actually resolves a candidate. A C2-P6
-/// UI action that wants a candidate's box to stop demanding attention
-/// has to reach `Redact` through the normal, audited path — there is no
+/// `MarkNonSensitive` as resolving a candidate on the enum value alone.
+/// This function's own signature only ever sees the bare `Disposition`
+/// — it has no event/evidence context to check — so even after
+/// fix-round-6 added the durable [`crate::sop_session::OverrideAuthority`]
+/// schema, it deliberately keeps reporting `MarkNonSensitive` as *not*
+/// resolving on the enum value alone: whether a specific candidate's
+/// override is actually evidenced (and therefore truly resolved) is
+/// [`verify_coverage_proof`]'s per-candidate, per-event job, not
+/// something this pure helper can answer from a disposition alone. A UI
+/// that wants to know whether a candidate still needs attention should
+/// consult `verify_coverage_proof`'s failures, not this function, for
+/// any `MarkNonSensitive` candidate. Only [`Disposition::Redact`] is
+/// unconditionally resolved regardless of evidence — there is no
 /// separate "hide" operation this crate exposes, and the complete
 /// unfiltered candidate inventory must continue into coverage proof
 /// regardless of what the UI chooses to display.
@@ -2159,15 +2197,20 @@ pub fn disposition_resolves_candidate(disposition: Disposition) -> bool {
 /// `MarkNonSensitive` disposition — a superseded or unrelated event id
 /// is rejected the same as a missing one.
 ///
-/// **Disclosed boundary this still does not close**: brief §3.5 also
-/// requires "a reason and explicit confirmation" for every override,
-/// but `EditOperation::RedactionChange` (sop_session.rs, C2-P1's
-/// already-merged contract) carries no reason/confirmation field at
-/// all — there is nothing for this function to validate content-wise
-/// even once it has resolved the correct, current event. Closing that
-/// gap means changing an already-merged core session contract's wire
-/// schema, which needs its own separately reviewed slice, not a change
-/// bundled into this fix.
+/// GS-C6 fix-round-6: resolving to the correct, current event is still
+/// necessary but is now also *sufficient*, provided that event's
+/// [`crate::sop_session::OverrideAuthority`] is present and
+/// self-consistent (see [`authority_is_self_consistent`]). A resolved
+/// event with no authority (pre-schema, or never an override at all)
+/// still reports [`CoverageProofFailure::OverrideAuthorityContentUnsupported`];
+/// one whose authority fails its own self-consistency check reports
+/// [`CoverageProofFailure::OverrideAuthorityContentInvalid`]. Neither
+/// failure fires for an evidenced, self-consistent override — brief
+/// §3.5's "a reason and explicit confirmation" requirement is satisfied
+/// by the durable record itself, not re-derived from live session
+/// state (this function never receives a session, only the candidates/
+/// events already resolved against one), which is exactly why the
+/// record has to be self-proving rather than an opaque reference.
 pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], edit_events: &[EditEvent]) -> Vec<CoverageProofFailure> {
     let mut failures = Vec::new();
     for c in candidates {
@@ -2198,36 +2241,100 @@ pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], 
                             matches!(&e.operation, EditOperation::RedactionChange { frame_id: fid, candidate_id, .. } if fid == frame_id && candidate_id == &c.candidate_id)
                         })
                         .max_by_key(|e| e.sequence);
-                    let resolved = match current_for_candidate {
-                        Some(event) if &event.event_id == event_id => {
-                            matches!(&event.operation, EditOperation::RedactionChange { disposition: Disposition::MarkNonSensitive, .. })
-                        }
-                        _ => false,
+                    // GS-C6 fix-round-6: once an event resolves (real,
+                    // current, correctly frame-scoped, `MarkNonSensitive`),
+                    // its `authority` is what decides whether that
+                    // resolution is actually *evidenced* — `None` means
+                    // unsupported (pre-schema or not an override), `Some`
+                    // means self-consistency decides.
+                    let resolved_authority: Option<Option<&OverrideAuthority>> = match current_for_candidate {
+                        Some(event) if &event.event_id == event_id => match &event.operation {
+                            EditOperation::RedactionChange { disposition: Disposition::MarkNonSensitive, authority, .. } => {
+                                Some(authority.as_ref())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
                     };
-                    if !resolved {
-                        failures.push(CoverageProofFailure::UnresolvedOverrideEvent {
-                            candidate_id: c.candidate_id.clone(),
-                            disposition_event_id: event_id.clone(),
-                        });
-                    } else {
-                        // C688-005A re-opened: resolving to a real,
-                        // current, correctly frame-scoped event is
-                        // necessary but not sufficient — that event
-                        // cannot carry the required reason/explicit
-                        // confirmation at all today (see the failure's
-                        // own doc comment), so every override still
-                        // fails coverage until a separately reviewed
-                        // schema change adds that evidence.
-                        failures.push(CoverageProofFailure::OverrideAuthorityContentUnsupported {
-                            candidate_id: c.candidate_id.clone(),
-                            disposition_event_id: event_id.clone(),
-                        });
+                    match resolved_authority {
+                        None => {
+                            failures.push(CoverageProofFailure::UnresolvedOverrideEvent {
+                                candidate_id: c.candidate_id.clone(),
+                                disposition_event_id: event_id.clone(),
+                            });
+                        }
+                        Some(None) => {
+                            failures.push(CoverageProofFailure::OverrideAuthorityContentUnsupported {
+                                candidate_id: c.candidate_id.clone(),
+                                disposition_event_id: event_id.clone(),
+                            });
+                        }
+                        Some(Some(authority)) => {
+                            if !authority_is_self_consistent(frame_id, &c.candidate_id, c.disposition, authority) {
+                                failures.push(CoverageProofFailure::OverrideAuthorityContentInvalid {
+                                    candidate_id: c.candidate_id.clone(),
+                                    disposition_event_id: event_id.clone(),
+                                });
+                            }
+                            // Else: a real, current, correctly-scoped
+                            // event backed by a self-consistent,
+                            // versioned authority record — brief §3.5's
+                            // override requirement is satisfied, no
+                            // failure for this candidate.
+                        }
                     }
                 }
             }
         }
     }
     failures
+}
+
+/// GS-C6 fix-round-6: checks a resolved event's
+/// [`crate::sop_session::OverrideAuthority`] against itself — `reason`
+/// must be non-empty once trimmed (GS-C6: "a nonempty string... is
+/// insufficient" cuts both ways; an *empty* one is refused even more
+/// plainly), and the record's own stored `confirmation_digest` must
+/// equal [`confirmation_digest`] recomputed from every other field the
+/// record itself carries. This never re-reads live session state (there
+/// is none available here — only the already-resolved `frame_id`/
+/// `candidate_id`/`disposition` the caller already has from its own
+/// candidate/event lookup) — it proves the durable record is internally
+/// tamper-evident, not that it still matches whatever the frame/session
+/// looks like today. [`validate_review_action`] is what proved the
+/// digest matched *current* state at the moment this record was
+/// created; this function proves the record describing that moment has
+/// not since been altered.
+fn authority_is_self_consistent(frame_id: &str, candidate_id: &str, disposition: Disposition, authority: &OverrideAuthority) -> bool {
+    match authority {
+        OverrideAuthority::V1 {
+            session_id,
+            reason,
+            confirmation_digest: stored_digest,
+            source_raster_sha256,
+            derivative_sha256,
+            policy_version,
+            model_manifest_sha256,
+            session_revision,
+        } => {
+            if reason.trim().is_empty() {
+                return false;
+            }
+            let recomputed = confirmation_digest(
+                session_id,
+                frame_id,
+                candidate_id,
+                disposition,
+                reason,
+                source_raster_sha256,
+                derivative_sha256.as_deref(),
+                policy_version,
+                model_manifest_sha256.as_deref(),
+                *session_revision,
+            );
+            &recomputed == stored_digest
+        }
+    }
 }
 
 /// Everything [`compute_frame_verification`] needs before it can even
@@ -3585,26 +3692,73 @@ mod tests {
     // ---- verification: coverage proof ----
 
     fn redaction_change_event(sequence: u64, event_id: &str, candidate_id: &str, disposition: Disposition) -> EditEvent {
+        redaction_change_event_with_authority(sequence, event_id, candidate_id, disposition, None)
+    }
+
+    /// GS-C6 fix-round-6: same as [`redaction_change_event`] but lets a
+    /// test supply a real [`OverrideAuthority`], to exercise
+    /// `verify_coverage_proof`'s now-possible "fully resolved and
+    /// evidenced" outcome and its self-consistency rejections.
+    fn redaction_change_event_with_authority(
+        sequence: u64,
+        event_id: &str,
+        candidate_id: &str,
+        disposition: Disposition,
+        authority: Option<OverrideAuthority>,
+    ) -> EditEvent {
         EditEvent {
             sequence,
             event_id: event_id.to_string(),
             session_revision_before: sequence,
             session_revision_after: sequence + 1,
-            operation: EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: candidate_id.to_string(), disposition },
+            operation: EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: candidate_id.to_string(), disposition, authority },
             before_digest: None,
             after_digest: None,
             local_timestamp: "2026-10-28T00:00:00Z".to_string(),
         }
     }
 
+    /// GS-C6 fix-round-6: a self-consistent `OverrideAuthority::V1` whose
+    /// `confirmation_digest` genuinely matches its own other fields —
+    /// mirrors what `build_redaction_change_event` would actually
+    /// produce for a `MarkNonSensitive` override against `gs_c6_session`/
+    /// `gs_c6_frame`'s own default-shaped fixtures (session id `sess-1`,
+    /// `raster_sha256` = 64 `'a'`s, no derivative, `policy-v1`,
+    /// `model-manifest-v1`, revision `0`).
+    fn self_consistent_authority(frame_id: &str, candidate_id: &str, disposition: Disposition, reason: &str) -> OverrideAuthority {
+        let digest = confirmation_digest(
+            "sess-1",
+            frame_id,
+            candidate_id,
+            disposition,
+            reason,
+            &"a".repeat(64),
+            None,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            0,
+        );
+        OverrideAuthority::V1 {
+            session_id: "sess-1".to_string(),
+            reason: reason.to_string(),
+            confirmation_digest: digest,
+            source_raster_sha256: "a".repeat(64),
+            derivative_sha256: None,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            session_revision: 0,
+        }
+    }
+
     #[test]
-    fn coverage_proof_still_flags_an_override_even_when_its_event_resolves_cleanly() {
-        // C688-005A re-opened: resolving to a real, current,
-        // correctly-scoped event is necessary but not sufficient - that
-        // event cannot carry the required reason/explicit confirmation
-        // at all today, so every MarkNonSensitive override still fails
-        // coverage until a separately reviewed schema change adds that
-        // evidence.
+    fn coverage_proof_still_flags_an_override_with_no_authority_even_when_its_event_resolves_cleanly() {
+        // C688-005A re-opened, still true after fix-round-6: resolving
+        // to a real, current, correctly-scoped event is necessary but
+        // not sufficient - an event with no OverrideAuthority at all
+        // (this one, via the no-authority `redaction_change_event`
+        // helper) still fails coverage. See
+        // coverage_proof_accepts_a_fully_evidenced_self_consistent_override
+        // for the case where the event *does* carry one.
         let mut c2 = candidate("c2", (10, 10, 5, 5), Disposition::MarkNonSensitive);
         c2.disposition_event_id = Some("evt-1".to_string());
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact), c2];
@@ -3631,8 +3785,12 @@ mod tests {
         // Evidenced or not, credential/private-key/payment-card hard
         // positives are categorically unredactable in Phase 2 - a real,
         // current, resolvable event does not grant an exception this
-        // policy refuses outright. Both the categorical block and the
-        // (now-always-firing) content-unsupported failure apply.
+        // policy refuses outright. This uses the no-authority helper, so
+        // both the categorical block and the content-unsupported
+        // failure apply; a self-consistent authority would still not
+        // excuse the categorical block (there is no override path at
+        // all for a protected credential - see
+        // `mark_non_sensitive_on_a_protected_credential_is_rejected_even_with_reason_and_confirmation`).
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.payment_card".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
@@ -3666,12 +3824,12 @@ mod tests {
     }
 
     #[test]
-    fn coverage_proof_still_flags_a_resolved_ssn_override_pending_the_reason_confirmation_schema() {
+    fn coverage_proof_still_flags_a_resolved_ssn_override_with_no_authority() {
         // SSN is a hard positive that defaults to Redact and is not in
         // the categorically-unredactable "credential/private-key/
-        // payment-card" set, but a resolved event still cannot satisfy
-        // the reason/confirmation requirement today - see the re-opened
-        // test above.
+        // payment-card" set, but a resolved event with no durable
+        // authority record still cannot satisfy the reason/confirmation
+        // requirement - see the re-opened test above.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
@@ -3761,8 +3919,9 @@ mod tests {
         c.disposition_event_id = Some("a".to_string());
         let failures = verify_coverage_proof("f1", &[c], &[event_a, event_b]);
         // Resolves cleanly to "a" (the real f1/c1 event) - the only
-        // failure left is the always-on content-unsupported one, not a
-        // wrongly-stale UnresolvedOverrideEvent.
+        // failure left is content-unsupported (event "a" carries no
+        // authority, via the no-authority helper), not a wrongly-stale
+        // UnresolvedOverrideEvent.
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentUnsupported {
@@ -4058,7 +4217,10 @@ mod tests {
         assert_eq!(event.sequence, 0);
         assert_eq!(event.session_revision_before, 0);
         assert_eq!(event.session_revision_after, 1);
-        assert_eq!(event.operation, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact });
+        assert_eq!(
+            event.operation,
+            EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None }
+        );
     }
 
     #[test]
@@ -4107,6 +4269,112 @@ mod tests {
         assert_eq!(
             build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()),
             Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
+        );
+    }
+
+    // ---- GS-C6 fix-round-6: durable OverrideAuthority record ----
+
+    #[test]
+    fn build_redaction_change_event_carries_no_authority_for_redact() {
+        // Redact never needed a reason/confirmation in the first place
+        // (validate_review_action's own doc comment) - this proves that
+        // extends to the new durable record: no authority is fabricated
+        // for a disposition that was never gated on one.
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        assert!(matches!(event.operation, EditOperation::RedactionChange { authority: None, .. }));
+    }
+
+    #[test]
+    fn build_redaction_change_event_durably_records_the_authority_for_mark_non_sensitive() {
+        let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
+        let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer by phone", true);
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let EditOperation::RedactionChange { disposition, authority, .. } = &event.operation else {
+            panic!("expected a RedactionChange operation");
+        };
+        assert_eq!(*disposition, Disposition::MarkNonSensitive);
+        let OverrideAuthority::V1 { session_id, reason, confirmation_digest: stored_digest, source_raster_sha256, derivative_sha256, policy_version, model_manifest_sha256, session_revision } =
+            authority.as_ref().expect("MarkNonSensitive must carry a durable authority record");
+        assert_eq!(session_id, "sess-1");
+        assert_eq!(reason, "verified with the customer by phone");
+        assert_eq!(source_raster_sha256, &"a".repeat(64));
+        assert_eq!(derivative_sha256, &None);
+        assert_eq!(policy_version, "policy-v1");
+        assert_eq!(model_manifest_sha256, &Some("model-manifest-v1".to_string()));
+        assert_eq!(*session_revision, 0);
+        // The stored digest must be exactly what validate_review_action
+        // itself just accepted as this request's confirmation.
+        assert_eq!(Some(stored_digest.as_str()), request.confirmation_digest);
+        // And, per authority_is_self_consistent's own contract, it must
+        // be independently reproducible from the record's own fields.
+        assert!(authority_is_self_consistent("f1", "c1", Disposition::MarkNonSensitive, authority.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn coverage_proof_accepts_a_fully_evidenced_self_consistent_override() {
+        // The whole point of fix-round-6: a resolved event backed by a
+        // real, self-consistent authority record must no longer report
+        // OverrideAuthorityContentUnsupported at all - brief §3.5's
+        // override requirement is actually satisfied now.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof("f1", &[c], &events);
+        assert_eq!(failures, vec![]);
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authority_whose_confirmation_digest_was_tampered_with() {
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let mut authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let OverrideAuthority::V1 { confirmation_digest, .. } = &mut authority;
+        *confirmation_digest = "0".repeat(64);
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authority_with_an_empty_reason_even_if_the_digest_matches() {
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        // The digest is computed over the same empty reason, so it
+        // "matches" - the empty-reason check must still catch this
+        // independently rather than relying on the digest check alone.
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "   ");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authority_computed_for_a_different_candidate_even_if_present() {
+        // An authority record that is internally self-consistent for
+        // SOME (frame, candidate, disposition) is not proof for a
+        // different one - self-consistency is checked against this
+        // exact candidate/frame, not accepted on presence alone.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "some-other-candidate", Disposition::MarkNonSensitive, "verified");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
         );
     }
 
