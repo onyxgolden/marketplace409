@@ -32,7 +32,10 @@ use tauri::AppHandle;
 
 use forge_capture_core::sop_session::Disposition;
 
-use crate::sop_workspace::{apply_review_action_if_current, resolve_confined_path, ApplyReviewActionError, WorkspaceRoot};
+use crate::sop_workspace::{
+    apply_review_action_if_current, read_review_candidates_snapshot, resolve_confined_path, ApplyReviewActionError, ReadReviewCandidatesError,
+    ReviewCandidatesSnapshot, WorkspaceRoot,
+};
 
 /// Parses a [`Disposition`]'s stable wire code (`"PENDING"`, `"REDACT"`,
 /// `"MARK_NON_SENSITIVE"` — the same `SCREAMING_SNAKE_CASE` serde
@@ -124,6 +127,47 @@ fn review_disposition_change_impl(
         local_timestamp,
     )
     .map_err(apply_review_action_error_to_string)
+}
+
+fn get_review_candidates_error_to_string(err: ReadReviewCandidatesError) -> String {
+    match err {
+        ReadReviewCandidatesError::SessionNotFound => "no session exists yet at that path".to_string(),
+        ReadReviewCandidatesError::Oversized { found_bytes, max_bytes } => {
+            format!("session file is too large to read ({found_bytes} bytes, max {max_bytes})")
+        }
+        ReadReviewCandidatesError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
+        ReadReviewCandidatesError::FrameNotFound(id) => format!("no frame with id {id} in this session"),
+        ReadReviewCandidatesError::Io(msg) => msg,
+    }
+}
+
+/// The real work behind [`get_review_candidates`], factored out the same
+/// way [`review_disposition_change_impl`] is — purely for a consistent
+/// testable-without-Tauri shape; this command needs no `AppHandle` or
+/// confirmation closure, since it never mutates anything.
+fn get_review_candidates_impl(workspace_root: &std::path::Path, session_relative_path: &str, frame_id: &str) -> Result<ReviewCandidatesSnapshot, String> {
+    let root = WorkspaceRoot::open(workspace_root).map_err(|e| format!("cannot open workspace root: {e:?}"))?;
+    let confined = resolve_confined_path(&root, session_relative_path).map_err(|e| format!("cannot resolve session path: {e:?}"))?;
+    read_review_candidates_snapshot(&confined, frame_id).map_err(get_review_candidates_error_to_string)
+}
+
+/// Tauri command: the read-only counterpart to [`review_disposition_change`]
+/// — returns one frame's redaction candidates plus the exact
+/// `sessionRevision`/`policyVersion`/`modelManifestSha256` binding the
+/// mutation command's own `expected*` preconditions require, sourced from
+/// the same validated read, so the frontend never has to guess or combine
+/// them from a second, unbound call. Carries no raw OCR text, candidate
+/// value, pixel data, or source path across IPC — see
+/// [`crate::sop_workspace::ReviewCandidateView`]'s own doc comment for the
+/// exact field list this projects down to.
+///
+/// Tauri matches invoke argument names to Rust parameter names exactly
+/// (no case conversion), so these are camelCase to match what the JS UI
+/// sends — see [`review_disposition_change`] for the same convention.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn get_review_candidates(workspaceRoot: String, sessionRelativePath: String, frameId: String) -> Result<ReviewCandidatesSnapshot, String> {
+    get_review_candidates_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId)
 }
 
 /// Tauri command: apply a single reviewer disposition change to a SOP
@@ -356,6 +400,37 @@ mod tests {
             "2026-10-29T12:05:00Z".to_string(),
             |_reason| true,
         );
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn get_review_candidates_impl_returns_the_snapshot_for_a_real_session() {
+        let root = temp_root();
+        write_minimal_session(&root, "session.json");
+        let snapshot = get_review_candidates_impl(&root, "session.json", "f1").expect("a real session/frame must snapshot cleanly");
+        assert_eq!(snapshot.frame_id, "f1");
+        assert_eq!(snapshot.session_revision, 0);
+        assert_eq!(snapshot.policy_version, "policy-v1");
+        assert_eq!(snapshot.candidates.len(), 1);
+        assert_eq!(snapshot.candidates[0].candidate_id, "c1");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn get_review_candidates_impl_refuses_an_unknown_frame_id() {
+        let root = temp_root();
+        write_minimal_session(&root, "session.json");
+        let result = get_review_candidates_impl(&root, "session.json", "no-such-frame");
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn get_review_candidates_impl_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        std::fs::create_dir_all(&root).ok();
+        let result = get_review_candidates_impl(&root, "session.json", "f1");
         assert!(result.is_err());
         std::fs::remove_dir_all(&root).ok();
     }
