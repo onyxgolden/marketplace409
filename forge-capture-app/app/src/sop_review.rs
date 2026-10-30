@@ -32,7 +32,7 @@ use tauri::AppHandle;
 
 use forge_capture_core::sop_session::Disposition;
 
-use crate::sop_workspace::{apply_review_action_if_current, resolve_confined_path, ApplyReviewActionError, WorkspaceRoot};
+use crate::sop_workspace::{apply_review_action_if_current, load_or_create_authority_key, resolve_confined_path, ApplyReviewActionError, WorkspaceRoot};
 
 /// Parses a [`Disposition`]'s stable wire code (`"PENDING"`, `"REDACT"`,
 /// `"MARK_NON_SENSITIVE"` — the same `SCREAMING_SNAKE_CASE` serde
@@ -94,6 +94,12 @@ fn review_disposition_change_impl(
 
     let root = WorkspaceRoot::open(workspace_root).map_err(|e| format!("cannot open workspace root: {e:?}"))?;
     let confined = resolve_confined_path(&root, session_relative_path).map_err(|e| format!("cannot resolve session path: {e:?}"))?;
+    // GS-C6 fix-round-7 (P1 #1): the trusted-boundary secret this
+    // override's authority record gets MACed with — sourced here, at
+    // the same native-dialog-guarded command this whole module exists
+    // to be, never accepted as an argument a caller (ultimately the
+    // frontend) could supply.
+    let authority_key = load_or_create_authority_key(workspace_root).map_err(|e| format!("cannot load authority key: {e:?}"))?;
 
     apply_review_action_if_current(
         &confined,
@@ -107,6 +113,7 @@ fn review_disposition_change_impl(
         expected_model_manifest_sha256,
         event_id,
         local_timestamp,
+        &authority_key,
     )
     .map_err(apply_review_action_error_to_string)
 }

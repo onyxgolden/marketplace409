@@ -1616,7 +1616,7 @@ pub fn apply_candidate_redactions(rgba: &mut [u8], width: u32, height: u32, cand
 // folds all three into the brief's [`FrameVerification`] state machine.
 // ---------------------------------------------------------------------
 
-use crate::sop_session::{EditEvent, EditOperation, FrameVerification, OverrideAuthority, SopSessionV1};
+use crate::sop_session::{EditEvent, EditOperation, FrameVerification, OverrideAuthority, SopSessionV1, SourceFrame};
 
 /// Brief §3.5 check 1: "every declared redaction rectangle in the
 /// decoded derivative consists entirely of the fixed opaque redaction
@@ -1964,6 +1964,143 @@ pub fn confirmation_digest(
     crate::sop_session::sha256_hex(canonical.as_bytes())
 }
 
+/// GS-C6 fix-round-7 (`results/chatgpt/capture-c2-p6a-fix-round-6-rereview-2026-10-30.md`,
+/// P1 #1): domain separator and version tag for the
+/// [`OverrideAuthority::V2`] record MAC — distinct from
+/// [`CONFIRMATION_DIGEST_DOMAIN_V1`] so a MAC computed under this domain
+/// can never be confused with (or substituted for) the public
+/// confirmation digest even though both are built the same
+/// length-prefixed way.
+const AUTHORITY_MAC_DOMAIN_V1: &str = "forge-capture-sop-authority-mac-v1";
+
+/// The exact canonical byte string an [`OverrideAuthority::V2`] record's
+/// MAC is computed over — every field the record carries beside the MAC
+/// itself, in a fixed order, domain-separated and length-prefixed the
+/// same way [`confirmation_digest`] is. Shared by [`authority_mac`] (mint)
+/// and [`authority_mac_is_valid`] (verify) so the two can never drift
+/// apart on field order.
+#[allow(clippy::too_many_arguments)]
+fn authority_mac_canonical(
+    session_id: &str,
+    reason: &str,
+    confirmation_digest: &str,
+    source_raster_sha256: &str,
+    derivative_sha256: Option<&str>,
+    policy_version: &str,
+    model_manifest_sha256: Option<&str>,
+    session_revision: u64,
+) -> String {
+    length_prefixed_canonical(&[
+        AUTHORITY_MAC_DOMAIN_V1,
+        session_id,
+        reason,
+        confirmation_digest,
+        source_raster_sha256,
+        derivative_sha256.unwrap_or(""),
+        policy_version,
+        model_manifest_sha256.unwrap_or(""),
+        &session_revision.to_string(),
+    ])
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Strict lowercase/uppercase hex decode — `None` on odd length or any
+/// non-hex-digit byte, never a partial/best-effort result.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for i in (0..bytes.len()).step_by(2) {
+        let hi = (bytes[i] as char).to_digit(16)?;
+        let lo = (bytes[i + 1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+    }
+    Some(out)
+}
+
+/// GS-C6 fix-round-7, P1 #1: mints the keyed MAC an [`OverrideAuthority::V2`]
+/// record carries. `key` is the trusted confirmation boundary's own
+/// secret — never derivable from, or stored beside, the session file
+/// itself (see `app/src/sop_workspace.rs`'s DPAPI-protected authority
+/// key) — so a record this function produces can only be reproduced by a
+/// holder of that same key, unlike the plain public SHA-256
+/// [`confirmation_digest`] it is computed over.
+#[allow(clippy::too_many_arguments)]
+fn authority_mac(
+    key: &[u8],
+    session_id: &str,
+    reason: &str,
+    confirmation_digest: &str,
+    source_raster_sha256: &str,
+    derivative_sha256: Option<&str>,
+    policy_version: &str,
+    model_manifest_sha256: Option<&str>,
+    session_revision: u64,
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let canonical = authority_mac_canonical(
+        session_id,
+        reason,
+        confirmation_digest,
+        source_raster_sha256,
+        derivative_sha256,
+        policy_version,
+        model_manifest_sha256,
+        session_revision,
+    );
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(canonical.as_bytes());
+    hex_encode(&mac.finalize().into_bytes())
+}
+
+/// GS-C6 fix-round-7, P1 #1: verifies a stored `authority_mac` hex string
+/// against `key` using the HMAC crate's own constant-time comparison
+/// ([`hmac::Mac::verify_slice`]) rather than a byte/string equality check
+/// — a MAC check is exactly the place a timing side channel would
+/// otherwise leak information about the correct value one byte at a
+/// time. Malformed (non-hex, wrong-length) `stored_mac_hex` fails closed
+/// rather than panicking or decoding partially.
+#[allow(clippy::too_many_arguments)]
+fn authority_mac_is_valid(
+    key: &[u8],
+    session_id: &str,
+    reason: &str,
+    confirmation_digest: &str,
+    source_raster_sha256: &str,
+    derivative_sha256: Option<&str>,
+    policy_version: &str,
+    model_manifest_sha256: Option<&str>,
+    session_revision: u64,
+    stored_mac_hex: &str,
+) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let Some(stored_mac_bytes) = hex_decode(stored_mac_hex) else { return false };
+    let canonical = authority_mac_canonical(
+        session_id,
+        reason,
+        confirmation_digest,
+        source_raster_sha256,
+        derivative_sha256,
+        policy_version,
+        model_manifest_sha256,
+        session_revision,
+    );
+    let Ok(mut mac) = <Hmac<Sha256>>::new_from_slice(key) else { return false };
+    mac.update(canonical.as_bytes());
+    mac.verify_slice(&stored_mac_bytes).is_ok()
+}
+
 /// GS-C6 (C2-P6 review UI safety blocker): why a reviewer-facing
 /// disposition change was refused, caught *before* an
 /// [`crate::sop_session::EditOperation::RedactionChange`] is even
@@ -2102,11 +2239,19 @@ pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequ
 /// is exactly the gap this round closes — there was previously no
 /// production path that could append this event to a real session at
 /// all without immediately producing an invalid document.
+///
+/// GS-C6 fix-round-7 (P1 #1): `authority_key` is the trusted confirmation
+/// boundary's own secret (see `app/src/sop_workspace.rs`'s DPAPI-protected
+/// authority key) — the resulting [`OverrideAuthority::V2`]'s
+/// `authority_mac` is minted with it, so [`verify_coverage_proof`] can
+/// later refuse any record a party without this key could have forged
+/// by recomputing only the public [`confirmation_digest`].
 pub fn build_redaction_change_event(
     session: &SopSessionV1,
     request: &ReviewActionRequest,
     event_id: String,
     local_timestamp: String,
+    authority_key: &[u8],
 ) -> Result<EditEvent, DispositionChangeError> {
     validate_review_action(session, request)?;
     let sequence = session.edit_events.iter().map(|e| e.sequence).max().map_or(0, |s| s + 1);
@@ -2126,18 +2271,35 @@ pub fn build_redaction_change_event(
             .iter()
             .find(|f| f.frame_id == request.frame_id)
             .expect("validate_review_action already proved this frame exists");
-        Some(OverrideAuthority::V1 {
+        let confirmation_digest = request
+            .confirmation_digest
+            .expect("validate_review_action already proved a confirmation digest is present for MarkNonSensitive")
+            .to_string();
+        // GS-C6 fix-round-7 (P1 #1): mint the record's origin MAC now,
+        // at the trusted boundary, over the exact fields being stored —
+        // never derived later from a session file a party without
+        // `authority_key` could have edited.
+        let authority_mac = authority_mac(
+            authority_key,
+            &session.session_id,
+            request.reason,
+            &confirmation_digest,
+            &frame.raster_sha256,
+            frame.redacted_derivative_sha256.as_deref(),
+            &session.policy_version,
+            session.model_manifest_sha256.as_deref(),
+            session.revision,
+        );
+        Some(OverrideAuthority::V2 {
             session_id: session.session_id.clone(),
             reason: request.reason.to_string(),
-            confirmation_digest: request
-                .confirmation_digest
-                .expect("validate_review_action already proved a confirmation digest is present for MarkNonSensitive")
-                .to_string(),
+            confirmation_digest,
             source_raster_sha256: frame.raster_sha256.clone(),
             derivative_sha256: frame.redacted_derivative_sha256.clone(),
             policy_version: session.policy_version.clone(),
             model_manifest_sha256: session.model_manifest_sha256.clone(),
             session_revision: session.revision,
+            authority_mac,
         })
     } else {
         None
@@ -2199,21 +2361,34 @@ pub fn disposition_resolves_candidate(disposition: Disposition) -> bool {
 ///
 /// GS-C6 fix-round-6: resolving to the correct, current event is still
 /// necessary but is now also *sufficient*, provided that event's
-/// [`crate::sop_session::OverrideAuthority`] is present and
-/// self-consistent (see [`authority_is_self_consistent`]). A resolved
+/// [`crate::sop_session::OverrideAuthority`] is present and matches
+/// current state (see [`authority_matches_current_state`]). A resolved
 /// event with no authority (pre-schema, or never an override at all)
 /// still reports [`CoverageProofFailure::OverrideAuthorityContentUnsupported`];
-/// one whose authority fails its own self-consistency check reports
+/// one whose authority fails that check reports
 /// [`CoverageProofFailure::OverrideAuthorityContentInvalid`]. Neither
-/// failure fires for an evidenced, self-consistent override — brief
-/// §3.5's "a reason and explicit confirmation" requirement is satisfied
-/// by the durable record itself, not re-derived from live session
-/// state (this function never receives a session, only the candidates/
-/// events already resolved against one), which is exactly why the
-/// record has to be self-proving rather than an opaque reference.
-pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], edit_events: &[EditEvent]) -> Vec<CoverageProofFailure> {
+/// failure fires for an evidenced, authentic, current override.
+///
+/// GS-C6 fix-round-7 (`results/chatgpt/capture-c2-p6a-fix-round-6-rereview-2026-10-30.md`,
+/// P1 #2): this function now takes `session` and `frame` — the exact
+/// *current* session/frame identity — instead of a bare `frame_id` plus
+/// borrowed-out `candidates`/`edit_events`. Fix-round-6 could only check
+/// an authority record against fields stored beside it, so a
+/// self-consistent record for an old derivative, policy, model, or
+/// session could still satisfy coverage; this round's
+/// [`authority_matches_current_state`] recomputes the confirmation digest
+/// from `session`/`frame`'s own current fields, so an authority that
+/// has since gone stale (derivative re-rendered, policy/model changed,
+/// another edit advanced the session revision, or the record names a
+/// different session entirely) is refused even though it was once
+/// genuine. `authority_key` is the same trusted-boundary secret
+/// [`build_redaction_change_event`] minted the record's MAC with (P1 #1)
+/// — without it, a record a party forged by only recomputing the public
+/// [`confirmation_digest`] is refused regardless of how current its
+/// claimed state looks.
+pub fn verify_coverage_proof(session: &SopSessionV1, frame: &SourceFrame, authority_key: &[u8]) -> Vec<CoverageProofFailure> {
     let mut failures = Vec::new();
-    for c in candidates {
+    for c in &frame.redaction_candidates {
         if c.disposition == Disposition::Pending {
             failures.push(CoverageProofFailure::UndispositionedCandidate { candidate_id: c.candidate_id.clone() });
         }
@@ -2235,10 +2410,11 @@ pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], 
                     // candidate id alone across the whole session's edit
                     // log, which could resolve to (or be shadowed by) an
                     // unrelated frame's same-named candidate.
-                    let current_for_candidate = edit_events
+                    let current_for_candidate = session
+                        .edit_events
                         .iter()
                         .filter(|e| {
-                            matches!(&e.operation, EditOperation::RedactionChange { frame_id: fid, candidate_id, .. } if fid == frame_id && candidate_id == &c.candidate_id)
+                            matches!(&e.operation, EditOperation::RedactionChange { frame_id: fid, candidate_id, .. } if fid == &frame.frame_id && candidate_id == &c.candidate_id)
                         })
                         .max_by_key(|e| e.sequence);
                     // GS-C6 fix-round-6: once an event resolves (real,
@@ -2246,7 +2422,7 @@ pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], 
                     // its `authority` is what decides whether that
                     // resolution is actually *evidenced* — `None` means
                     // unsupported (pre-schema or not an override), `Some`
-                    // means self-consistency decides.
+                    // means the current-state/MAC check decides.
                     let resolved_authority: Option<Option<&OverrideAuthority>> = match current_for_candidate {
                         Some(event) if &event.event_id == event_id => match &event.operation {
                             EditOperation::RedactionChange { disposition: Disposition::MarkNonSensitive, authority, .. } => {
@@ -2270,17 +2446,18 @@ pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], 
                             });
                         }
                         Some(Some(authority)) => {
-                            if !authority_is_self_consistent(frame_id, &c.candidate_id, c.disposition, authority) {
+                            if !authority_matches_current_state(session, frame, &c.candidate_id, c.disposition, authority, authority_key) {
                                 failures.push(CoverageProofFailure::OverrideAuthorityContentInvalid {
                                     candidate_id: c.candidate_id.clone(),
                                     disposition_event_id: event_id.clone(),
                                 });
                             }
                             // Else: a real, current, correctly-scoped
-                            // event backed by a self-consistent,
-                            // versioned authority record — brief §3.5's
-                            // override requirement is satisfied, no
-                            // failure for this candidate.
+                            // event backed by an authentic (MAC-verified)
+                            // authority record whose confirmation digest
+                            // still matches current session/frame state —
+                            // brief §3.5's override requirement is
+                            // satisfied, no failure for this candidate.
                         }
                     }
                 }
@@ -2290,24 +2467,41 @@ pub fn verify_coverage_proof(frame_id: &str, candidates: &[RedactionCandidate], 
     failures
 }
 
-/// GS-C6 fix-round-6: checks a resolved event's
-/// [`crate::sop_session::OverrideAuthority`] against itself — `reason`
-/// must be non-empty once trimmed (GS-C6: "a nonempty string... is
-/// insufficient" cuts both ways; an *empty* one is refused even more
-/// plainly), and the record's own stored `confirmation_digest` must
-/// equal [`confirmation_digest`] recomputed from every other field the
-/// record itself carries. This never re-reads live session state (there
-/// is none available here — only the already-resolved `frame_id`/
-/// `candidate_id`/`disposition` the caller already has from its own
-/// candidate/event lookup) — it proves the durable record is internally
-/// tamper-evident, not that it still matches whatever the frame/session
-/// looks like today. [`validate_review_action`] is what proved the
-/// digest matched *current* state at the moment this record was
-/// created; this function proves the record describing that moment has
-/// not since been altered.
-fn authority_is_self_consistent(frame_id: &str, candidate_id: &str, disposition: Disposition, authority: &OverrideAuthority) -> bool {
+/// GS-C6 fix-round-7 (P1 #1 + P1 #2): checks a resolved event's
+/// [`crate::sop_session::OverrideAuthority`] for both record authenticity
+/// and current-state freshness.
+///
+/// `OverrideAuthority::V1` (fix-round-6's schema) always fails here —
+/// see [`OverrideAuthority`]'s own doc comment: it is publicly
+/// self-mintable and was never actually proof of a trusted confirmation.
+///
+/// `OverrideAuthority::V2` must pass, in order:
+/// 1. `reason` non-empty once trimmed (GS-C6: "a nonempty string... is
+///    insufficient" cuts both ways; an *empty* one is refused even more
+///    plainly).
+/// 2. `authority_mac` verifies under `authority_key` over every other
+///    stored field (P1 #1) — proves this exact record, as stored, was
+///    minted by a holder of the trusted-boundary key, not forged by a
+///    party who could only recompute the public [`confirmation_digest`].
+/// 3. [`confirmation_digest`] recomputed from `session`/`frame`'s
+///    **current** `session_id`/`raster_sha256`/`redacted_derivative_sha256`/
+///    `policy_version`/`model_manifest_sha256`/`revision` (never from the
+///    record's own stored copies of those fields — P1 #2, the exact gap
+///    fix-round-6 left open) equals the record's stored
+///    `confirmation_digest`. `candidate_id`/`disposition` are always the
+///    live, already-resolved values the caller has from its own
+///    candidate/event lookup, same as fix-round-6.
+fn authority_matches_current_state(
+    session: &SopSessionV1,
+    frame: &SourceFrame,
+    candidate_id: &str,
+    disposition: Disposition,
+    authority: &OverrideAuthority,
+    authority_key: &[u8],
+) -> bool {
     match authority {
-        OverrideAuthority::V1 {
+        OverrideAuthority::V1 { .. } => false,
+        OverrideAuthority::V2 {
             session_id,
             reason,
             confirmation_digest: stored_digest,
@@ -2316,23 +2510,38 @@ fn authority_is_self_consistent(frame_id: &str, candidate_id: &str, disposition:
             policy_version,
             model_manifest_sha256,
             session_revision,
+            authority_mac: stored_mac,
         } => {
             if reason.trim().is_empty() {
                 return false;
             }
-            let recomputed = confirmation_digest(
+            if !authority_mac_is_valid(
+                authority_key,
                 session_id,
-                frame_id,
-                candidate_id,
-                disposition,
                 reason,
+                stored_digest,
                 source_raster_sha256,
                 derivative_sha256.as_deref(),
                 policy_version,
                 model_manifest_sha256.as_deref(),
                 *session_revision,
+                stored_mac,
+            ) {
+                return false;
+            }
+            let recomputed_against_current_state = confirmation_digest(
+                &session.session_id,
+                &frame.frame_id,
+                candidate_id,
+                disposition,
+                reason,
+                &frame.raster_sha256,
+                frame.redacted_derivative_sha256.as_deref(),
+                &session.policy_version,
+                session.model_manifest_sha256.as_deref(),
+                session.revision,
             );
-            &recomputed == stored_digest
+            &recomputed_against_current_state == stored_digest
         }
     }
 }
@@ -2413,7 +2622,7 @@ pub fn compute_frame_verification(evidence: &FrameVerificationEvidence) -> Frame
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sop_session::{ReviewState, SourceFrame, SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION};
+    use crate::sop_session::{ReviewState, SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION};
 
     fn matches_for(text: &str) -> Vec<DeterministicMatch> {
         detect_context_free(text)
@@ -3691,14 +3900,20 @@ mod tests {
 
     // ---- verification: coverage proof ----
 
+    /// GS-C6 fix-round-7: the trusted-boundary secret every test in this
+    /// module mints/verifies `OverrideAuthority::V2` records with —
+    /// stands in for the real DPAPI-protected key `app/src/sop_workspace.rs`
+    /// sources in production. Not a real secret; fine to hardcode here.
+    const TEST_AUTHORITY_KEY: &[u8] = b"test-only-authority-key-never-a-real-secret";
+
     fn redaction_change_event(sequence: u64, event_id: &str, candidate_id: &str, disposition: Disposition) -> EditEvent {
         redaction_change_event_with_authority(sequence, event_id, candidate_id, disposition, None)
     }
 
     /// GS-C6 fix-round-6: same as [`redaction_change_event`] but lets a
     /// test supply a real [`OverrideAuthority`], to exercise
-    /// `verify_coverage_proof`'s now-possible "fully resolved and
-    /// evidenced" outcome and its self-consistency rejections.
+    /// `verify_coverage_proof`'s "fully resolved and evidenced" outcome
+    /// and its authenticity/freshness rejections.
     fn redaction_change_event_with_authority(
         sequence: u64,
         event_id: &str,
@@ -3718,13 +3933,31 @@ mod tests {
         }
     }
 
-    /// GS-C6 fix-round-6: a self-consistent `OverrideAuthority::V1` whose
-    /// `confirmation_digest` genuinely matches its own other fields —
-    /// mirrors what `build_redaction_change_event` would actually
-    /// produce for a `MarkNonSensitive` override against `gs_c6_session`/
-    /// `gs_c6_frame`'s own default-shaped fixtures (session id `sess-1`,
-    /// `raster_sha256` = 64 `'a'`s, no derivative, `policy-v1`,
-    /// `model-manifest-v1`, revision `0`).
+    /// GS-C6 fix-round-6/7: a candidate wrapped into a one-frame, one-
+    /// frame-id session via [`gs_c6_frame`]/[`gs_c6_session`] (session id
+    /// `sess-1`, `raster_sha256` = 64 `'a'`s, no derivative, `policy-v1`,
+    /// `model-manifest-v1`, revision `0` — the exact shape
+    /// [`self_consistent_authority`] mints a matching record against),
+    /// then run through the real [`verify_coverage_proof`] with
+    /// [`TEST_AUTHORITY_KEY`]. Exists so every coverage-proof test below
+    /// — most of which predate fix-round-7's `session`/`frame` signature
+    /// — keeps its original "f1" + bare candidate/event-list shape rather
+    /// than hand-building a session per test.
+    fn verify_coverage_proof_for_test(frame_id: &str, candidates: &[RedactionCandidate], edit_events: &[EditEvent]) -> Vec<CoverageProofFailure> {
+        let frame = gs_c6_frame(frame_id, candidates.to_vec());
+        let mut session = gs_c6_session(vec![frame]);
+        session.edit_events = edit_events.to_vec();
+        verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY)
+    }
+
+    /// GS-C6 fix-round-7: an [`OverrideAuthority::V2`] whose
+    /// `confirmation_digest` genuinely matches its own other fields and
+    /// whose `authority_mac` genuinely verifies under
+    /// [`TEST_AUTHORITY_KEY`] — mirrors what `build_redaction_change_event`
+    /// would actually produce for a `MarkNonSensitive` override against
+    /// `gs_c6_session`/`gs_c6_frame`'s own default-shaped fixtures
+    /// (session id `sess-1`, `raster_sha256` = 64 `'a'`s, no derivative,
+    /// `policy-v1`, `model-manifest-v1`, revision `0`).
     fn self_consistent_authority(frame_id: &str, candidate_id: &str, disposition: Disposition, reason: &str) -> OverrideAuthority {
         let digest = confirmation_digest(
             "sess-1",
@@ -3738,7 +3971,18 @@ mod tests {
             Some("model-manifest-v1"),
             0,
         );
-        OverrideAuthority::V1 {
+        let mac = authority_mac(
+            TEST_AUTHORITY_KEY,
+            "sess-1",
+            reason,
+            &digest,
+            &"a".repeat(64),
+            None,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            0,
+        );
+        OverrideAuthority::V2 {
             session_id: "sess-1".to_string(),
             reason: reason.to_string(),
             confirmation_digest: digest,
@@ -3747,6 +3991,7 @@ mod tests {
             policy_version: "policy-v1".to_string(),
             model_manifest_sha256: Some("model-manifest-v1".to_string()),
             session_revision: 0,
+            authority_mac: mac,
         }
     }
 
@@ -3763,7 +4008,7 @@ mod tests {
         c2.disposition_event_id = Some("evt-1".to_string());
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Redact), c2];
         let events = vec![redaction_change_event(1, "evt-1", "c2", Disposition::MarkNonSensitive)];
-        let failures = verify_coverage_proof("f1", &candidates, &events);
+        let failures = verify_coverage_proof_for_test("f1", &candidates, &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentUnsupported {
@@ -3776,7 +4021,7 @@ mod tests {
     #[test]
     fn coverage_proof_flags_a_pending_candidate() {
         let candidates = vec![candidate("c1", (0, 0, 5, 5), Disposition::Pending)];
-        let failures = verify_coverage_proof("f1", &candidates, &[]);
+        let failures = verify_coverage_proof_for_test("f1", &candidates, &[]);
         assert_eq!(failures, vec![CoverageProofFailure::UndispositionedCandidate { candidate_id: "c1".to_string() }]);
     }
 
@@ -3795,7 +4040,7 @@ mod tests {
         c.detector_id = "det.payment_card".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
         let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![
@@ -3819,7 +4064,7 @@ mod tests {
         // MarkNonSensitive with no recorded disposition event at all.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
-        let failures = verify_coverage_proof("f1", &[c], &[]);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &[]);
         assert_eq!(failures, vec![CoverageProofFailure::UnevidencedOverride { candidate_id: "c1".to_string() }]);
     }
 
@@ -3834,7 +4079,7 @@ mod tests {
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
         let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentUnsupported {
@@ -3851,7 +4096,7 @@ mod tests {
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-does-not-exist".to_string());
-        let failures = verify_coverage_proof("f1", &[c], &[]);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &[]);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::UnresolvedOverrideEvent {
@@ -3869,7 +4114,7 @@ mod tests {
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
         let events = vec![redaction_change_event(1, "evt-1", "some-other-candidate", Disposition::MarkNonSensitive)];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::UnresolvedOverrideEvent { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
@@ -3888,7 +4133,7 @@ mod tests {
             redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive),
             redaction_change_event(2, "evt-2", "c1", Disposition::Redact),
         ];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::UnresolvedOverrideEvent { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
@@ -3917,7 +4162,7 @@ mod tests {
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("a".to_string());
-        let failures = verify_coverage_proof("f1", &[c], &[event_a, event_b]);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &[event_a, event_b]);
         // Resolves cleanly to "a" (the real f1/c1 event) - the only
         // failure left is content-unsupported (event "a" carries no
         // authority, via the no-authority helper), not a wrongly-stale
@@ -3946,7 +4191,7 @@ mod tests {
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("b".to_string());
-        let failures = verify_coverage_proof("f1", &[c], &[event_b]);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &[event_b]);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::UnresolvedOverrideEvent { candidate_id: "c1".to_string(), disposition_event_id: "b".to_string() }]
@@ -4213,7 +4458,7 @@ mod tests {
     fn build_redaction_change_event_constructs_a_well_formed_event_on_a_valid_request() {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
         assert_eq!(event.sequence, 0);
         assert_eq!(event.session_revision_before, 0);
         assert_eq!(event.session_revision_after, 1);
@@ -4237,7 +4482,7 @@ mod tests {
             local_timestamp: "2026-10-29T12:00:00Z".to_string(),
         });
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
         assert_eq!(event.sequence, 6);
     }
 
@@ -4252,7 +4497,7 @@ mod tests {
         // `MissingDigestLink` on literally every call.
         let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
         assert!(event.before_digest.is_some());
         assert_eq!(event.before_digest, event.after_digest, "RedactionChange carries no step text, so the projected state is unchanged");
         session.edit_events.push(event);
@@ -4267,7 +4512,7 @@ mod tests {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.payment_card", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "a reason", true);
         assert_eq!(
-            build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()),
+            build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY),
             Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
         );
     }
@@ -4282,7 +4527,7 @@ mod tests {
         // for a disposition that was never gated on one.
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
         assert!(matches!(event.operation, EditOperation::RedactionChange { authority: None, .. }));
     }
 
@@ -4290,13 +4535,25 @@ mod tests {
     fn build_redaction_change_event_durably_records_the_authority_for_mark_non_sensitive() {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer by phone", true);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string()).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
         let EditOperation::RedactionChange { disposition, authority, .. } = &event.operation else {
             panic!("expected a RedactionChange operation");
         };
         assert_eq!(*disposition, Disposition::MarkNonSensitive);
-        let OverrideAuthority::V1 { session_id, reason, confirmation_digest: stored_digest, source_raster_sha256, derivative_sha256, policy_version, model_manifest_sha256, session_revision } =
-            authority.as_ref().expect("MarkNonSensitive must carry a durable authority record");
+        let OverrideAuthority::V2 {
+            session_id,
+            reason,
+            confirmation_digest: stored_digest,
+            source_raster_sha256,
+            derivative_sha256,
+            policy_version,
+            model_manifest_sha256,
+            session_revision,
+            authority_mac: stored_mac,
+        } = authority.as_ref().expect("MarkNonSensitive must carry a durable authority record")
+        else {
+            panic!("expected a V2 authority record");
+        };
         assert_eq!(session_id, "sess-1");
         assert_eq!(reason, "verified with the customer by phone");
         assert_eq!(source_raster_sha256, &"a".repeat(64));
@@ -4307,9 +4564,30 @@ mod tests {
         // The stored digest must be exactly what validate_review_action
         // itself just accepted as this request's confirmation.
         assert_eq!(Some(stored_digest.as_str()), request.confirmation_digest);
-        // And, per authority_is_self_consistent's own contract, it must
-        // be independently reproducible from the record's own fields.
-        assert!(authority_is_self_consistent("f1", "c1", Disposition::MarkNonSensitive, authority.as_ref().unwrap()));
+        // GS-C6 fix-round-7 (P1 #1): the stored MAC must be exactly what
+        // minting it against the same fields with the same key produces
+        // -- i.e. it really is a keyed MAC over this record's own content,
+        // not an arbitrary or copied string.
+        let expected_mac = authority_mac(
+            TEST_AUTHORITY_KEY,
+            session_id,
+            reason,
+            stored_digest,
+            source_raster_sha256,
+            derivative_sha256.as_deref(),
+            policy_version,
+            model_manifest_sha256.as_deref(),
+            *session_revision,
+        );
+        assert_eq!(stored_mac, &expected_mac);
+        // And the whole record, appended to this exact session/frame,
+        // must pass verify_coverage_proof end to end.
+        let mut session_with_event = session.clone();
+        session_with_event.edit_events.push(event.clone());
+        session_with_event.source_frames[0].redaction_candidates[0].disposition = Disposition::MarkNonSensitive;
+        session_with_event.source_frames[0].redaction_candidates[0].disposition_event_id = Some("evt-1".to_string());
+        let failures = verify_coverage_proof(&session_with_event, &session_with_event.source_frames[0], TEST_AUTHORITY_KEY);
+        assert_eq!(failures, vec![]);
     }
 
     #[test]
@@ -4323,20 +4601,222 @@ mod tests {
         c.disposition_event_id = Some("evt-1".to_string());
         let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
         let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(failures, vec![]);
     }
 
     #[test]
     fn coverage_proof_rejects_an_authority_whose_confirmation_digest_was_tampered_with() {
+        // Tampering with the stored digest alone, leaving the MAC as it
+        // was minted, is caught by the MAC check (P1 #1) before the
+        // digest-freshness check (P1 #2) is even reached - the MAC
+        // covers `confirmation_digest` as one of its own fields.
         let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
         c.detector_id = "det.ssn".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
         let mut authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
-        let OverrideAuthority::V1 { confirmation_digest, .. } = &mut authority;
+        let OverrideAuthority::V2 { confirmation_digest, .. } = &mut authority else { panic!("expected V2") };
         *confirmation_digest = "0".repeat(64);
         let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    // ---- GS-C6 fix-round-7 (P1 #1): the authority record must be
+    // keyed/MACed, not publicly self-mintable ----
+
+    #[test]
+    fn coverage_proof_rejects_an_older_v1_authority_record_outright() {
+        // Fix-round-6's schema is kept only so old files still parse -
+        // it is never accepted by coverage proof again, regardless of
+        // how internally consistent it is, because it carries no MAC at
+        // all (the exact gap fix-round-7 closes).
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let digest = confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let authority = OverrideAuthority::V1 {
+            session_id: "sess-1".to_string(),
+            reason: "verified".to_string(),
+            confirmation_digest: digest,
+            source_raster_sha256: "a".repeat(64),
+            derivative_sha256: None,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            session_revision: 0,
+        };
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_a_forged_record_whose_reason_and_public_digest_were_both_recomputed_without_the_key() {
+        // The exact adversarial partner the fix-round-6 re-review named:
+        // a party who can edit the session file changes the reason and
+        // recomputes the (public, unkeyed) confirmation_digest to match
+        // - but cannot reproduce authority_mac without the trusted
+        // boundary's key, so the forged record still fails.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let mut authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let OverrideAuthority::V2 { reason, confirmation_digest, .. } = &mut authority else { panic!("expected V2") };
+        *reason = "a forged reason the real reviewer never gave".to_string();
+        // Recompute the public digest to match the forged reason - an
+        // attacker without the key can do exactly this much.
+        *confirmation_digest = super::confirmation_digest(
+            "sess-1",
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            reason,
+            &"a".repeat(64),
+            None,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            0,
+        );
+        // authority_mac is deliberately left as it was minted for the
+        // ORIGINAL reason/digest - the attacker has no key to re-mint it.
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_a_record_with_a_mac_minted_under_a_different_key() {
+        // A party with SOME key but not THE key (e.g. a different
+        // install, or a guess) cannot satisfy the check either.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let digest = confirmation_digest("sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let wrong_key_mac = authority_mac(b"a-different-key-entirely", "sess-1", "verified", &digest, &"a".repeat(64), None, "policy-v1", Some("model-manifest-v1"), 0);
+        let authority = OverrideAuthority::V2 {
+            session_id: "sess-1".to_string(),
+            reason: "verified".to_string(),
+            confirmation_digest: digest,
+            source_raster_sha256: "a".repeat(64),
+            derivative_sha256: None,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            session_revision: 0,
+            authority_mac: wrong_key_mac,
+        };
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    // ---- GS-C6 fix-round-7 (P1 #2): the authority must bind to CURRENT
+    // session/frame state, not merely to fields stored beside it ----
+
+    #[test]
+    fn coverage_proof_rejects_an_authentic_authority_once_the_frames_raster_has_changed() {
+        // The record is perfectly authentic (real MAC, real key) and was
+        // genuinely confirmed - for a derivative/raster that is no
+        // longer current. Re-capturing/re-rendering the frame since must
+        // invalidate the override, not leave it standing on stale proof.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let mut frame = gs_c6_frame("f1", vec![c]);
+        frame.raster_sha256 = "b".repeat(64); // the frame has since changed.
+        let mut session = gs_c6_session(vec![frame]);
+        session.edit_events = events;
+        let failures = verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authentic_authority_once_the_sessions_policy_version_has_changed() {
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![c])]);
+        session.edit_events = events;
+        session.policy_version = "policy-v2".to_string(); // policy has since changed.
+        let failures = verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authentic_authority_once_the_sessions_model_manifest_has_changed() {
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![c])]);
+        session.edit_events = events;
+        session.model_manifest_sha256 = Some("model-manifest-v2".to_string()); // model has since changed.
+        let failures = verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authentic_authority_once_the_session_id_differs() {
+        // The record names "sess-1"; the session it is being checked
+        // against is a different session entirely (e.g. the record was
+        // copied/replayed across sessions with otherwise-identical
+        // frame/candidate ids and digests).
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![c])]);
+        session.edit_events = events;
+        session.session_id = "sess-2".to_string();
+        let failures = verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY);
+        assert_eq!(
+            failures,
+            vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
+        );
+    }
+
+    #[test]
+    fn coverage_proof_rejects_an_authentic_authority_once_the_session_revision_has_advanced() {
+        // A later, unrelated edit landed and bumped the session's
+        // revision since this override was confirmed - the confirmation
+        // was bound to the revision at the time (GS-C6: "bind to...
+        // session revision"), so it must go stale, not keep validating
+        // forever regardless of what else has happened to the session.
+        let mut c = candidate("c1", (0, 0, 5, 5), Disposition::MarkNonSensitive);
+        c.detector_id = "det.ssn".to_string();
+        c.disposition_event_id = Some("evt-1".to_string());
+        let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer");
+        let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
+        let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![c])]);
+        session.edit_events = events;
+        session.revision = 7; // some other edit has since landed.
+        let failures = verify_coverage_proof(&session, &session.source_frames[0], TEST_AUTHORITY_KEY);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
@@ -4353,7 +4833,7 @@ mod tests {
         // independently rather than relying on the digest check alone.
         let authority = self_consistent_authority("f1", "c1", Disposition::MarkNonSensitive, "   ");
         let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
@@ -4371,7 +4851,7 @@ mod tests {
         c.disposition_event_id = Some("evt-1".to_string());
         let authority = self_consistent_authority("f1", "some-other-candidate", Disposition::MarkNonSensitive, "verified");
         let events = vec![redaction_change_event_with_authority(1, "evt-1", "c1", Disposition::MarkNonSensitive, Some(authority))];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![CoverageProofFailure::OverrideAuthorityContentInvalid { candidate_id: "c1".to_string(), disposition_event_id: "evt-1".to_string() }]
@@ -4529,7 +5009,7 @@ mod tests {
         c.detector_id = "det.bearer_auth".to_string();
         c.disposition_event_id = Some("evt-1".to_string());
         let events = vec![redaction_change_event(1, "evt-1", "c1", Disposition::MarkNonSensitive)];
-        let failures = verify_coverage_proof("f1", &[c], &events);
+        let failures = verify_coverage_proof_for_test("f1", &[c], &events);
         assert_eq!(
             failures,
             vec![

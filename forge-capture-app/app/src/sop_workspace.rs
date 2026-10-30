@@ -1078,6 +1078,7 @@ pub fn apply_review_action_if_current(
     expected_model_manifest_sha256: Option<&str>,
     event_id: String,
     local_timestamp: String,
+    authority_key: &[u8],
 ) -> Result<u64, ApplyReviewActionError> {
     use forge_capture_core::sop_redaction::{build_redaction_change_event, confirmation_digest, ReviewActionRequest};
     use forge_capture_core::sop_session::parse_session;
@@ -1142,7 +1143,7 @@ pub fn apply_review_action_if_current(
         return Err(ApplyReviewActionError::DuplicateEventId(event_id));
     }
 
-    let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone())
+    let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone(), authority_key)
         .map_err(ApplyReviewActionError::Validation)?;
 
     // `build_redaction_change_event` already re-ran `validate_review_action`
@@ -1343,6 +1344,72 @@ mod windows_dpapi {
             let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(out_blob.pbData as *mut _)));
             Ok(result)
         }
+    }
+}
+
+// --- authority key (Windows DPAPI-protected, GS-C6 fix-round-7 P1 #1) ---
+//
+// `results/chatgpt/capture-c2-p6a-fix-round-6-rereview-2026-10-30.md`:
+// an `OverrideAuthority` record's `confirmation_digest` is an ordinary
+// public SHA-256 — a party able to edit the session file could alter the
+// reason or any bound identity, recompute it, and store a matching
+// value, so fix-round-6's record was never actually proof of a trusted
+// confirmation. `forge_capture_core::sop_redaction::build_redaction_change_event`/
+// `verify_coverage_proof` now also MAC the record with a key only this
+// module sources — a party without the key cannot produce a value that
+// passes no matter what public digest they recompute. Random, generated
+// once per workspace on first use, DPAPI-protected (current-user scope,
+// same control as the frame vault above) at rest alongside the session
+// files it authenticates overrides for.
+const AUTHORITY_KEY_FILE_NAME: &str = ".forge-capture-authority-key";
+/// 256-bit key — HMAC-SHA256's own block size, and ample margin over the
+/// MAC's 256-bit output for any key-recovery concern.
+const AUTHORITY_KEY_LEN: usize = 32;
+
+#[derive(Debug)]
+pub enum AuthorityKeyError {
+    Dpapi(DpapiError),
+    Io(String),
+    Random(String),
+}
+
+#[cfg(windows)]
+fn generate_random_bytes(len: usize) -> Result<Vec<u8>, AuthorityKeyError> {
+    use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+    let mut buf = vec![0u8; len];
+    // SAFETY: `buf` is a validly-sized, exclusively-owned buffer for the
+    // duration of this call; a null algorithm handle with
+    // BCRYPT_USE_SYSTEM_PREFERRED_RNG asks CNG to fill it from the OS's
+    // own preferred CSPRNG and touches no other memory.
+    let status = unsafe { BCryptGenRandom(None, &mut buf, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status.is_err() {
+        return Err(AuthorityKeyError::Random(format!("BCryptGenRandom failed: {status:?}")));
+    }
+    Ok(buf)
+}
+
+#[cfg(not(windows))]
+fn generate_random_bytes(_len: usize) -> Result<Vec<u8>, AuthorityKeyError> {
+    Err(AuthorityKeyError::Random("Unsupported".to_string()))
+}
+
+/// Loads this workspace's authority key, generating and durably
+/// DPAPI-protecting a fresh one on first use so every later call against
+/// the same `workspace_root` gets back the same key. Current-user DPAPI
+/// scope means only the same Windows account that minted an
+/// `OverrideAuthority::V2` record can later verify one — the same
+/// account boundary the frame vault itself already relies on.
+pub fn load_or_create_authority_key(workspace_root: &Path) -> Result<Vec<u8>, AuthorityKeyError> {
+    let key_path = workspace_root.join(AUTHORITY_KEY_FILE_NAME);
+    match fs::read(&key_path) {
+        Ok(protected) => dpapi_unprotect(&protected).map_err(AuthorityKeyError::Dpapi),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let key = generate_random_bytes(AUTHORITY_KEY_LEN)?;
+            let protected = dpapi_protect(&key).map_err(AuthorityKeyError::Dpapi)?;
+            atomic_write_with_fsync(&key_path, &protected).map_err(AuthorityKeyError::Io)?;
+            Ok(key)
+        }
+        Err(e) => Err(AuthorityKeyError::Io(format!("cannot read authority key file: {e}"))),
     }
 }
 
@@ -2706,6 +2773,13 @@ mod tests {
         confined.atomic_write_with_fsync(&serde_json::to_vec(session).unwrap()).unwrap();
     }
 
+    /// GS-C6 fix-round-7: stands in for a real `load_or_create_authority_key`
+    /// result in every `apply_review_action_if_current` test below — the
+    /// specific key value is never asserted on, only that
+    /// `build_redaction_change_event`'s own MAC machinery is exercised
+    /// end to end through this module's real call site.
+    const TEST_AUTHORITY_KEY: &[u8] = b"test-only-authority-key-never-a-real-secret";
+
     #[test]
     fn apply_review_action_if_current_allows_redact_with_no_confirmation() {
         let root = temp_root();
@@ -2725,6 +2799,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         )
         .expect("Redact never needs a reason or confirmation");
         assert_eq!(new_revision, 1);
@@ -2757,6 +2832,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(
             result,
@@ -2790,6 +2866,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         )
         .expect("a real confirmed signal must be accepted");
         assert_eq!(new_revision, 1);
@@ -2828,6 +2905,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         )
         .expect("setup: the first action at revision 0 must succeed");
 
@@ -2843,6 +2921,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(
             result,
@@ -2880,6 +2959,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(
             result,
@@ -2920,6 +3000,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         )
         .expect("first confirmed action at revision 0 must succeed");
 
@@ -2935,6 +3016,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(
             result,
@@ -2964,6 +3046,7 @@ mod tests {
             None,
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(result, Err(ApplyReviewActionError::SessionNotFound)));
         drop(confined);
@@ -3002,6 +3085,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         )
         .expect("first action with a fresh event id must succeed");
         let bytes_after_first = fs::read(confined.path()).unwrap();
@@ -3020,6 +3104,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            TEST_AUTHORITY_KEY,
         );
         assert!(matches!(result, Err(ApplyReviewActionError::DuplicateEventId(ref id)) if id == "evt-1"), "{result:?}");
 

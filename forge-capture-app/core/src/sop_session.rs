@@ -219,20 +219,53 @@ pub struct CaptionDraft {
 /// [`EditOperation::RedactionChange::authority`] means either "this is not
 /// an override that needed one" (any disposition other than
 /// `MarkNonSensitive`) or "this event predates this schema" — both are
-/// still unsupported for coverage purposes, same as today. `Some` carries
-/// the actual content a reviewer confirmed, durable and replayable without
-/// the live session: a verifier recomputes
-/// [`crate::sop_redaction::confirmation_digest`] from this struct's own
-/// fields and checks it against the stored `confirmation_digest`, so the
-/// record is self-proving (tamper-evident) rather than an unverified
-/// opaque string. Tagged by `schema_version` so a future `V2` can never be
-/// confused with `V1` even if their remaining fields happened to coincide
-/// — the same domain-separation discipline `CONFIRMATION_DIGEST_DOMAIN_V1`
-/// already uses one level down.
+/// still unsupported for coverage purposes, same as today. Tagged by
+/// `schema_version` so `V1`/`V2` can never be confused with each other even
+/// if their remaining fields happened to coincide — the same domain-
+/// separation discipline `CONFIRMATION_DIGEST_DOMAIN_V1` already uses one
+/// level down.
+///
+/// GS-C6 fix-round-7 re-review (`results/chatgpt/capture-c2-p6a-fix-round-6-rereview-2026-10-30.md`):
+/// `V1`'s `confirmation_digest` is an ordinary public SHA-256 recomputed
+/// from fields stored beside it — a party able to edit the session file
+/// can alter the reason or any bound identity, call the public
+/// [`crate::sop_redaction::confirmation_digest`] function, and store a
+/// matching digest; `V1` is therefore self-mintable, not proof of a real
+/// trusted confirmation (C6A-001B recreated at the durable layer). `V1` is
+/// kept only as a dead, permanently-untrusted schema tag — any session
+/// still carrying one still parses, but
+/// [`crate::sop_redaction::verify_coverage_proof`] never accepts it (see
+/// that function's own doc comment). `V2` is the superseding, trustworthy
+/// shape: [`V2::authority_mac`] is an HMAC-SHA256 over every other field,
+/// keyed with a secret only the trusted confirmation boundary holds (the
+/// DPAPI-protected authority key in `app/src/sop_workspace.rs`) — a party
+/// without that key cannot forge a passing record no matter what public
+/// digest they recompute. A verifier first checks `authority_mac` (record
+/// origin), then recomputes [`crate::sop_redaction::confirmation_digest`]
+/// against the **current** session/frame state supplied by the caller
+/// (never against this record's own stored copies of that state) and
+/// checks it against the stored `confirmation_digest` — so a `V2` record
+/// that is perfectly authentic for a now-stale derivative, policy, model,
+/// session, or revision is still refused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "schema_version", rename_all = "kebab-case")]
 pub enum OverrideAuthority {
+    /// GS-C6 fix-round-6 schema. Self-mintable (see this enum's doc
+    /// comment) — never accepted by `verify_coverage_proof`. Retained only
+    /// so a session file written by that round still deserializes instead
+    /// of failing to load at all.
     V1 {
+        session_id: String,
+        reason: String,
+        confirmation_digest: String,
+        source_raster_sha256: String,
+        derivative_sha256: Option<String>,
+        policy_version: String,
+        model_manifest_sha256: Option<String>,
+        session_revision: u64,
+    },
+    /// GS-C6 fix-round-7 schema — see this enum's doc comment.
+    V2 {
         /// The session this confirmation was computed against — part of
         /// the digest's own canonical input (C6A-001C), so this record
         /// can never be replayed as if it belonged to a different session.
@@ -241,18 +274,26 @@ pub enum OverrideAuthority {
         /// The confirmation digest [`validate_review_action`] actually
         /// accepted for this exact override at the moment it was applied.
         confirmation_digest: String,
-        /// The frame's `raster_sha256`/`redacted_derivative_sha256`,
-        /// the session's `policy_version`/`model_manifest_sha256`, and
-        /// `session_revision` — every other field
-        /// [`crate::sop_redaction::confirmation_digest`] binds into the
-        /// digest, captured at confirmation time so the digest above can
-        /// be independently recomputed and checked later without needing
-        /// the live session to still be in that exact state.
+        /// The frame's `raster_sha256`/`redacted_derivative_sha256`, the
+        /// session's `policy_version`/`model_manifest_sha256`, and
+        /// `session_revision` at the moment this record was minted —
+        /// forensic/audit history only. A verifier's freshness check
+        /// (fix-round-7) recomputes the digest against the **current**
+        /// live session/frame state a caller supplies, never against
+        /// these stored copies — see this enum's doc comment for why
+        /// trusting the stored copies alone was the fix-round-6 gap.
         source_raster_sha256: String,
         derivative_sha256: Option<String>,
         policy_version: String,
         model_manifest_sha256: Option<String>,
         session_revision: u64,
+        /// HMAC-SHA256 (hex) over every field above, keyed with a secret
+        /// only the trusted confirmation boundary holds — see
+        /// [`crate::sop_redaction::build_redaction_change_event`]/
+        /// [`crate::sop_redaction::verify_coverage_proof`]. Proves this
+        /// record's origin; a party who can edit the session file but
+        /// does not hold the key cannot produce a value that passes.
+        authority_mac: String,
     },
 }
 
