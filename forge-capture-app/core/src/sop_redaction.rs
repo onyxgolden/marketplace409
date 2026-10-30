@@ -698,51 +698,6 @@ fn context_label_within(norm: &[NormalizedChar], value_start: usize, labels: &[&
     labels.iter().any(|label| word_boundary_contains(&slice, label))
 }
 
-/// The half-open char range of the line immediately preceding the line
-/// containing `idx`, or `None` if `idx`'s own line is the first line.
-fn preceding_line_range(norm: &[NormalizedChar], idx: usize) -> Option<(usize, usize)> {
-    let mut this_line_start = idx;
-    while this_line_start > 0 && norm[this_line_start - 1].ch != '\n' {
-        this_line_start -= 1;
-    }
-    if this_line_start == 0 {
-        return None;
-    }
-    let prev_line_end = this_line_start - 1;
-    let mut prev_line_start = prev_line_end;
-    while prev_line_start > 0 && norm[prev_line_start - 1].ch != '\n' {
-        prev_line_start -= 1;
-    }
-    Some((prev_line_start, prev_line_end))
-}
-
-/// The half-open char range of the line immediately following the line
-/// containing `idx`, or `None` if `idx`'s own line is the last line.
-fn following_line_range(norm: &[NormalizedChar], idx: usize) -> Option<(usize, usize)> {
-    let n = norm.len();
-    let mut this_line_end = idx;
-    while this_line_end < n && norm[this_line_end].ch != '\n' {
-        this_line_end += 1;
-    }
-    if this_line_end >= n {
-        return None;
-    }
-    let next_line_start = this_line_end + 1;
-    let mut next_line_end = next_line_start;
-    while next_line_end < n && norm[next_line_end].ch != '\n' {
-        next_line_end += 1;
-    }
-    Some((next_line_start, next_line_end))
-}
-
-/// True if `labels` appears as a whole word anywhere in `range` (a line
-/// range as returned by [`preceding_line_range`]/[`following_line_range`]).
-fn line_range_contains_label(norm: &[NormalizedChar], range: Option<(usize, usize)>, labels: &[&str]) -> bool {
-    let Some((start, end)) = range else { return false };
-    let slice: String = norm[start..end].iter().map(|c| c.ch.to_ascii_lowercase()).collect();
-    labels.iter().any(|label| word_boundary_contains(&slice, label))
-}
-
 /// True if the `window`-char span immediately after `value_end`, cut
 /// short at the nearest following newline (never crossing into a
 /// different line), contains any of `labels` as a whole word. The
@@ -760,20 +715,28 @@ fn context_label_after(norm: &[NormalizedChar], value_end: usize, labels: &[&str
     labels.iter().any(|label| word_boundary_contains(&slice, label))
 }
 
-/// C4A-003: the general "nearby label" check — same line before the
-/// value ([`context_label_within`]), same line after the value
-/// ([`context_label_after`]), or on the line immediately before/after
-/// the value's own line ([`preceding_line_range`]/[`following_line_range`]).
-/// Still a textual convention keyed on the `\n` line boundaries
-/// [`join_tokens`] inserts at each OCR `line_id` change — not a true 2D
-/// spatial/box-distance check across columns on the same visual row,
-/// which would need real token geometry this text-only layer doesn't
-/// carry. That remains open as a later structural/UI evidence pass.
+/// C4A-003 / C4A-003A: the general "nearby label" check, deliberately
+/// bounded to the value's *own line* only — same line before the value
+/// ([`context_label_within`]) or same line after it
+/// ([`context_label_after`]), both a fixed `window` characters wide.
+///
+/// An earlier version of this function also treated a label *anywhere*
+/// on the immediately adjacent OCR line as corroborating
+/// (`line_range_contains_label` over `preceding_line_range`/
+/// `following_line_range`). C4A-003A: that was unsafe — an OCR line is
+/// only a textual grouping, with no column/field association at all,
+/// so a label anywhere on a multi-column adjacent line could corroborate
+/// (and promote to [`Disposition::Redact`]) a completely unrelated
+/// value in a different field that merely happens to share a line
+/// boundary. Removed rather than bounded, because no fixed character
+/// window makes "anywhere on another line" safe — the missing
+/// ingredient is field/column association, which doesn't exist without
+/// real token geometry. A label on an adjacent line therefore leaves a
+/// shape `Pending`, same as any other disclosed-open case, until a
+/// structural/UI evidence pass can check real spatial neighborhood and
+/// field association instead.
 fn context_label_nearby(norm: &[NormalizedChar], value_start: usize, value_end: usize, labels: &[&str], window: usize) -> bool {
-    context_label_within(norm, value_start, labels, window)
-        || context_label_after(norm, value_end, labels, window)
-        || line_range_contains_label(norm, preceding_line_range(norm, value_start), labels)
-        || line_range_contains_label(norm, following_line_range(norm, value_end), labels)
+    context_label_within(norm, value_start, labels, window) || context_label_after(norm, value_end, labels, window)
 }
 
 fn word_boundary_contains(haystack: &str, needle: &str) -> bool {
@@ -4191,19 +4154,21 @@ mod tests {
     }
 
     #[test]
-    fn phone_label_on_the_immediately_preceding_line_corroborates() {
-        // C4A-003: closes the "adjacent line" gap - a label on the line
-        // immediately before the value's own line now corroborates.
+    fn phone_label_on_the_immediately_preceding_line_does_not_corroborate() {
+        // C4A-003A: an OCR line is a textual grouping with no column/
+        // field association - a multi-column adjacent line could carry
+        // a label for a completely different field. Stays Pending
+        // until real token/box geometry can check field association.
         let hits = review_matches_for("Phone\n555-234-5678");
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
-        assert!(m.is_corroborated(), "a label on the immediately preceding line must corroborate");
+        assert!(!m.is_corroborated(), "a label on an adjacent line must not corroborate without field association");
     }
 
     #[test]
-    fn phone_label_on_the_immediately_following_line_corroborates() {
+    fn phone_label_on_the_immediately_following_line_does_not_corroborate() {
         let hits = review_matches_for("555-234-5678\nPhone");
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
-        assert!(m.is_corroborated(), "a label on the immediately following line must corroborate");
+        assert!(!m.is_corroborated(), "a label on an adjacent line must not corroborate without field association");
     }
 
     #[test]
@@ -4238,6 +4203,22 @@ mod tests {
         let hits = review_matches_for(&format!("555-234-5678 {filler} Phone"));
         let m = hits.iter().find(|m| m.rule_id == "det.phone_number").unwrap();
         assert!(!m.is_corroborated(), "a label beyond the forward window must not corroborate");
+    }
+
+    #[test]
+    fn an_adjacent_lines_label_for_a_different_phone_number_does_not_corroborate_this_one() {
+        // C4A-003A's exact named counterexample: the preceding line's
+        // "Phone" label genuinely belongs to ITS OWN value
+        // (555-234-5678) - an unrelated bare phone number on the next
+        // line (999-888-7777, e.g. a separately listed fax/alternate
+        // number) must not inherit that label just because an OCR line
+        // has no column/field association to check against.
+        let text = "Phone: 555-234-5678\n999-888-7777";
+        let hits = review_matches_for(text);
+        let phone_hits: Vec<_> = hits.iter().filter(|m| m.rule_id == "det.phone_number").collect();
+        assert_eq!(phone_hits.len(), 2, "{phone_hits:?}");
+        assert!(phone_hits[0].is_corroborated(), "the first phone has its own same-line label");
+        assert!(!phone_hits[1].is_corroborated(), "the second phone must not inherit the first line's unrelated label");
     }
 
     // ---- street address: positives ----
@@ -4316,18 +4297,19 @@ mod tests {
     }
 
     #[test]
-    fn street_address_label_on_the_immediately_preceding_line_corroborates() {
-        // C4A-003: closes the "adjacent line" gap.
+    fn street_address_label_on_the_immediately_preceding_line_does_not_corroborate() {
+        // C4A-003A: same reasoning as the phone-number partner above -
+        // an adjacent OCR line has no column/field association.
         let hits = review_matches_for("Address\n123 Main Street");
         let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
-        assert!(m.is_corroborated(), "a label on the immediately preceding line must corroborate");
+        assert!(!m.is_corroborated(), "a label on an adjacent line must not corroborate without field association");
     }
 
     #[test]
-    fn street_address_label_on_the_immediately_following_line_corroborates() {
+    fn street_address_label_on_the_immediately_following_line_does_not_corroborate() {
         let hits = review_matches_for("123 Main Street\nAddress");
         let m = hits.iter().find(|m| m.rule_id == "det.street_address").unwrap();
-        assert!(m.is_corroborated(), "a label on the immediately following line must corroborate");
+        assert!(!m.is_corroborated(), "a label on an adjacent line must not corroborate without field association");
     }
 
     #[test]
