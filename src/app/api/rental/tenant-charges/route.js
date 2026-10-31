@@ -166,7 +166,7 @@ export async function PATCH(request) {
 }
 
 // POST /api/rental/tenant-charges — standalone ad-hoc tenant charge (damage,
-// fee, utility, other). No expense is fabricated: this creates ONLY the
+// fee, utility, proration, other). No expense is fabricated: this creates ONLY the
 // schedule-less rent_charges row. For expense-linked charges, post through
 // /api/rental/transactions with chargeTenant=true instead.
 // Body: { leaseId, chargeType, amountCents, description, dueDate?, chargeDate? }.
