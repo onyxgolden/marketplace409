@@ -13,6 +13,16 @@ function workspaceMembersQuery() {
   return query;
 }
 function defaultFrom(table) { return table === "workspace_members" ? workspaceMembersQuery() : emptyTenantQuery; }
+// saveLease's primary-on-create step reads pre-save memberships through a
+// chainable select/eq/eq (awaited) and then promotes one tenant via RPC.
+// The shared emptyTenantQuery's async eq cannot chain, so save-lease tests
+// use this client shape instead of the default mock.
+function saveLeaseFrom(table) {
+  if (table === "workspace_members") return workspaceMembersQuery();
+  const query = { select: vi.fn(() => query), eq: vi.fn(() => query),
+    then: (resolve) => resolve({ data: [], error: null }) };
+  return query;
+}
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(defaultFrom) } })),
@@ -667,7 +677,7 @@ describe("Rental Manager route", () => {
     application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "brandy_co_owner" },
-      effectiveOwnerId: "jason_owner", supabaseClient: { from: vi.fn(defaultFrom) } });
+      effectiveOwnerId: "jason_owner", supabaseClient: { from: vi.fn(saveLeaseFrom), rpc: vi.fn(async () => ({ data: null, error: null })) } });
     const response = await POST(request({ operation: "save-lease", lease: { propertyId: "property_1", unitId: "unit_1",
       tenantIds: ["tenant_1"], startDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 } }));
     expect(response.status).toBe(200);
@@ -684,7 +694,7 @@ describe("Rental Manager route", () => {
     ]) {
       application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
       createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
-        effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(defaultFrom) } });
+        effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(saveLeaseFrom), rpc: vi.fn(async () => ({ data: null, error: null })) } });
       const response = await POST(request({ operation: "save-lease", lease }));
       expect(response.status).toBe(200);
     }
@@ -722,7 +732,7 @@ describe("Rental Manager route", () => {
     application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "stranger" },
-      effectiveOwnerId: "stranger", supabaseClient: { from: vi.fn(defaultFrom) } });
+      effectiveOwnerId: "stranger", supabaseClient: { from: vi.fn(saveLeaseFrom), rpc: vi.fn(async () => ({ data: null, error: null })) } });
     const response = await POST(request({ operation: "save-lease", lease: { propertyId: "property_1", unitId: "unit_1",
       tenantIds: ["tenant_1"], startDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 } }));
     expect(response.status).toBe(200);

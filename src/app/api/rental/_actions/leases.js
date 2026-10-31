@@ -12,7 +12,31 @@ export async function saveLease({ authenticated, body, application, effectiveOwn
     documentEvidenceId: input.documentEvidenceId ?? null,
     activatedAt: input.activatedAt ?? null, endedAt: input.endedAt ?? null,
     createdAt: input.createdAt || timestamp, updatedAt: timestamp, notes: input.notes ?? null });
-  return NextResponse.json({ success: true, lease: await application.saveLease(lease, effectiveOwnerId) });
+  // Primary-on-create: save_rental_lease inserts memberships with no role,
+  // so every member lands as co_tenant (the column default) and the lease
+  // has no primary — and add-co-tenant then 409s until someone detours to
+  // another screen to set one. Read the pre-save memberships BEFORE the
+  // save RPC wipes and reinserts them, then restore exactly one primary:
+  // the pre-existing primary when it is still on the lease, otherwise the
+  // first picked tenant. This never creates a second primary (the partial
+  // unique index would refuse it) and never touches leases this save does
+  // not write — existing primary-less leases stay as their owner left them
+  // until the owner sets a primary via the existing make-primary action.
+  const { data: priorMemberships, error: priorMembershipsError } = await authenticated.supabaseClient
+    .from("rental_lease_tenants").select("tenant_id, occupancy_role")
+    .eq("owner_id", effectiveOwnerId).eq("lease_id", lease.id);
+  if (priorMembershipsError) throw priorMembershipsError;
+  const saved = await application.saveLease(lease, effectiveOwnerId);
+  const picked = lease.tenantIds || [];
+  const priorPrimary = (priorMemberships || []).find((row) => row.occupancy_role === "primary")?.tenant_id;
+  const target = (priorPrimary && picked.includes(priorPrimary)) ? priorPrimary : picked[0];
+  if (target) {
+    const { error: primaryError } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
+      p_owner_id: effectiveOwnerId, p_lease_id: lease.id, p_tenant_id: target,
+    });
+    if (primaryError) throw primaryError;
+  }
+  return NextResponse.json({ success: true, lease: saved });
 }
 
 export async function saveSchedule({ authenticated, body, application, effectiveOwnerId, timestamp }) {
