@@ -144,7 +144,7 @@ describe("Rental Manager route", () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
       order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
-    const tables = { rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
+    const tables = { rental_tenant_credits: result([]), rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
       rental_tenants: result([{ id: "tenant_1" }]), rent_schedules: result([{ id: "schedule_1", status: "draft" }]),
       rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]),
       rental_notification_outbox: result([{ id: "notification_1", status: "queued" }]),
@@ -168,7 +168,7 @@ describe("Rental Manager route", () => {
       notifications: [{ id: "notification_1", status: "queued" }], payments: [{ id: "payment_1", status: "succeeded" }],
       settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }], deposits: [{ id: "deposit_1", status: "held" }],
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
-      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],leaseSignatures:[{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],insuranceRequirements:[{lease_id:"lease_1",required:true}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }],
+      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],leaseSignatures:[{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],insuranceRequirements:[{lease_id:"lease_1",required:true}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, credits: [], financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }],
       conversations: [{ id: "conversation_1", tenantId: "tenant_1", lastMessageAt: "2026-09-05T11:00:00Z", lastMessageBody: "Heater is broken", lastMessageSenderType: "tenant", unread: true }] });
   });
   // The guided-workflow session (Today's Priorities) needs the acting user distinguished from the
@@ -178,7 +178,7 @@ describe("Rental Manager route", () => {
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
       order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
     const empty = result([]);
-    const tables = { rent_charges: empty, rental_units: empty, rental_tenants: empty, rent_schedules: empty,
+    const tables = { rental_tenant_credits: empty, rent_charges: empty, rental_units: empty, rental_tenants: empty, rent_schedules: empty,
       rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
       rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
       rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
@@ -204,7 +204,7 @@ describe("Rental Manager route", () => {
       order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
     const empty = result([]);
     const tenantsQuery = result([]);
-    const tables = { rent_charges: empty, rental_units: empty, rental_tenants: tenantsQuery, rent_schedules: empty,
+    const tables = { rental_tenant_credits: empty, rent_charges: empty, rental_units: empty, rental_tenants: tenantsQuery, rent_schedules: empty,
       rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
       rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
       rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
@@ -238,7 +238,7 @@ describe("Rental Manager route", () => {
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValueOnce({ data: firstPage, error: null }).mockResolvedValueOnce({ data: secondPage, error: null }),
     };
-    const tables = { rent_charges: result([]), rental_units: result([]), rental_tenants: result([]), rent_schedules: result([]),
+    const tables = { rental_tenant_credits: result([]), rent_charges: result([]), rental_units: result([]), rental_tenants: result([]), rent_schedules: result([]),
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]),
       rental_settlements: result([]), rental_security_deposits: result([]), rental_security_deposit_transactions: result([]),
       rental_inspections: result([]), rental_inspection_items: result([]), rental_inspection_acknowledgements: result([]),
@@ -270,7 +270,7 @@ describe("Rental Manager route", () => {
       { id: "schedule_forge", collection_mode: "forge", forge_cutover_date: "2020-01-01" },
       { id: "schedule_external", collection_mode: "external", forge_cutover_date: null },
     ];
-    const tables = { rent_charges: result(charges), rental_units: result([]), rental_tenants: result([]), rent_schedules: result(schedules),
+    const tables = { rental_tenant_credits: result([]), rent_charges: result(charges), rental_units: result([]), rental_tenants: result([]), rent_schedules: result(schedules),
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
@@ -293,7 +293,7 @@ describe("Rental Manager route", () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
       order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
-    const tables = { rent_charges: result([]), rental_units: result([{ id: "unit_1", photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }]),
+    const tables = { rental_tenant_credits: result([]), rent_charges: result([]), rental_units: result([{ id: "unit_1", photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }]),
       rental_tenants: result([{ id: "tenant_1", photo_bucket: null, photo_object_path: null }]), rent_schedules: result([]),
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
@@ -320,7 +320,7 @@ describe("Rental Manager route", () => {
       { id: "conversation_read", tenant_id: "tenant_2", last_message_at: "2026-09-04T11:00:00Z", last_message_body: "Thanks!", last_message_sender_type: "tenant", owner_last_read_at: "2026-09-04T12:00:00Z", tenant_last_read_at: "2026-09-04T11:00:00Z" },
       { id: "conversation_owner_sent_last", tenant_id: "tenant_3", last_message_at: "2026-09-03T11:00:00Z", last_message_body: "Sending someone tomorrow.", last_message_sender_type: "owner", owner_last_read_at: "2026-09-03T11:00:00Z", tenant_last_read_at: null },
     ];
-    const tables = { rent_charges: result([]), rental_units: result([]), rental_tenants: result([]), rent_schedules: result([]),
+    const tables = { rental_tenant_credits: result([]), rent_charges: result([]), rental_units: result([]), rental_tenants: result([]), rent_schedules: result([]),
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
