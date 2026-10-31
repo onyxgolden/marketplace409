@@ -292,6 +292,7 @@ export default function OwnerStatementsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(null);
+  const [notice, setNotice] = useState("");
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -343,6 +344,11 @@ export default function OwnerStatementsPanel() {
           {error}
         </p>
       )}
+      {notice ? (
+        <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+          {notice}
+        </p>
+      ) : null}
 
       {/* Balance due card */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -472,7 +478,7 @@ export default function OwnerStatementsPanel() {
               <MovementForm
                 kind={tab === "disbursements" ? "disbursement" : "contribution"}
                 balanceCents={balance?.balanceCents ?? 0}
-                onSaved={() => { setShowForm(null); reload(); }}
+                onSaved={() => { setShowForm(null); setNotice(`✓ Owner ${tab === "disbursements" ? "disbursement" : "contribution"} recorded.`); reload(); }}
                 onCancel={() => setShowForm(null)}
               />
             </div>
@@ -480,7 +486,7 @@ export default function OwnerStatementsPanel() {
           <MovementHistory
             movements={movements}
             kind={tab === "disbursements" ? "disbursement" : "contribution"}
-            onVoided={reload}
+            onVoided={() => { setNotice("✓ Owner movement voided."); reload(); }}
           />
         </div>
       )}

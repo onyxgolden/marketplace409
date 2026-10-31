@@ -41,6 +41,7 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
   const [saveError, setSaveError] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [mutateError, setMutateError] = useState("");
+  const [notice, setNotice] = useState("");
   const currentYear = new Date().getFullYear();
   const [reportYear, setReportYear] = useState(String(currentYear));
 
@@ -128,6 +129,7 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to save the asset.");
+      setNotice(editingId ? `✓ Asset updated: ${form.description}.` : `✓ Asset added: ${form.description}.`);
       setShowForm(false);
       setEditingId(null);
       setMutateError("");
@@ -145,6 +147,7 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
       const response = await fetch(`/api/rental/depreciation-assets/${encodeURIComponent(asset.id)}`, { method: "DELETE" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to delete the asset.");
+      setNotice(`✓ Asset deleted: ${asset.description}.`);
       refreshAll();
     } catch (caught) {
       setMutateError(caught.message);
@@ -184,6 +187,7 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
 
       {assetsError && <p role="alert" className="mt-3 text-sm font-bold text-red-700 dark:text-red-400">{assetsError.message}</p>}
       {mutateError && <p role="alert" className="mt-3 text-sm font-bold text-red-700 dark:text-red-400">{mutateError}</p>}
+      {notice ? <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
 
       {assetsLoading ? (
         <p className="mt-4 text-sm text-slate-500">Loading assets…</p>

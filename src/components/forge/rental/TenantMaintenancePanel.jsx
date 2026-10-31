@@ -57,7 +57,7 @@ export default function TenantMaintenancePanel({ rentals, onSubmitted }) {
     <p className="text-sm font-bold uppercase tracking-widest text-amber-700">Maintenance</p><h2 className="mt-2 text-xl font-black">Report an issue</h2>
     <p className="mt-2 text-sm text-slate-600">For fire, gas odor, flooding, or immediate danger, call 911 or the appropriate emergency service first.</p>
     {error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">{error}</p> : null}
-    {message ? <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-800">{message}</p> : null}
+    {message ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-800">{message}</p> : null}
     {eligible.length ? <form onSubmit={submit} className="mt-5 grid gap-4 md:grid-cols-2">
       <label className="text-sm font-bold">Rental<select name="leaseId" required className="mt-1 w-full rounded-lg border p-3 font-normal">{eligible.map(({ lease, unit }) => <option key={lease.id} value={lease.id}>{unit?.label || "Rental home"}</option>)}</select></label>
       <label className="text-sm font-bold">Priority<select name="priority" defaultValue="routine" className="mt-1 w-full rounded-lg border p-3 font-normal"><option value="routine">Routine</option><option value="soon">Needs attention soon</option><option value="urgent">Urgent</option><option value="emergency">Emergency follow-up</option></select></label>

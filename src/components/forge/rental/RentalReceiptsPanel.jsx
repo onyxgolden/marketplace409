@@ -166,6 +166,7 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
   const [checkNumber, setCheckNumber] = useState("");
   const [applyError, setApplyError] = useState(null);
   const [applying, setApplying] = useState(false);
+  const [detailNotice, setDetailNotice] = useState("");
   const [scanMessage, setScanMessage] = useState(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
@@ -240,6 +241,7 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
           body: JSON.stringify({ vendorId: created.vendor.id }),
         })
       );
+      setDetailNotice("✓ Vendor created from the receipt.");
       onChanged(updated.receipt);
     } catch (createError) {
       setActionError(createError.message);
@@ -263,6 +265,7 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
           Close
         </button>
       </div>
+      {detailNotice ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{detailNotice}</p> : null}
 
       {!receipt.vendorId && receipt.status === "inbox" ? (
         <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm dark:bg-amber-950/40">
@@ -494,6 +497,7 @@ export default function RentalReceiptsPanel() {
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [notice, setNotice] = useState("");
 
   // Pure data fetcher (no setState inside) so the effect can call it through
   // promise callbacks, per the repo's set-state-in-effect lint rule.
@@ -573,6 +577,8 @@ export default function RentalReceiptsPanel() {
         </div>
       </div>
 
+      {notice ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
+
       {tab === "inbox" ? (
         <div className="space-y-4">
           <div>
@@ -588,6 +594,7 @@ export default function RentalReceiptsPanel() {
               onCancel={() => setShowForm(false)}
               onSaved={(receipt) => {
                 setShowForm(false);
+                setNotice("✓ Receipt saved.");
                 setReceipts((rows) => [receipt, ...(rows || [])]);
               }}
             />
@@ -603,6 +610,9 @@ export default function RentalReceiptsPanel() {
                 setSelected(updated);
                 setReceipts((rows) => (rows || []).map((row) => (row.id === updated.id ? updated : row)));
                 if (updated.status !== "inbox") {
+                  // The detail unmounts here, so the apply confirmation rides
+                  // the panel banner — a banner inside the detail would vanish.
+                  if (updated.status === "applied") setNotice("✓ Receipt applied to the bill.");
                   setReceipts((rows) => (rows || []).filter((row) => row.id !== updated.id));
                   setSelected(null);
                 }

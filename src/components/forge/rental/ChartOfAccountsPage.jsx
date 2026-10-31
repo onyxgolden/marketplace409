@@ -82,6 +82,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
   const [editLabel, setEditLabel] = useState("");
   const [confirmDeactivate, setConfirmDeactivate] = useState(null);
   const [actionError, setActionError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -151,6 +152,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(addForm),
       }));
+      setNotice(`✓ Account added: ${addForm.label}.`);
       setAddForm({ code: "", label: "", account_type: "expense" });
       setShowAdd(false);
       await refresh();
@@ -167,6 +169,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: account.id, label: editLabel }),
       }));
+      setNotice(`✓ Account renamed to ${editLabel}.`);
       setEditingId(null);
       await refresh();
     } catch (renameError) {
@@ -183,6 +186,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
         body: JSON.stringify({ id: account.id, is_active: false }),
       }));
       setConfirmDeactivate(null);
+      setNotice(`✓ Account deactivated: ${account.label}.`);
       setOpenAccount(body.account);
       await refresh();
     } catch (deactivateError) {
@@ -199,6 +203,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: account.id, is_active: true }),
       }));
+      setNotice(`✓ Account reactivated: ${account.label}.`);
       await refresh();
     } catch (reactivateError) {
       setActionError(reactivateError.message);
@@ -226,6 +231,7 @@ export default function ChartOfAccountsPage({ onNavigate }) {
 
       {error && <p className="rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">Showing built-in accounts — {error}</p>}
       {actionError && <p className="rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">{actionError}</p>}
+      {notice ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
 
       {showAdd && (
         <form onSubmit={submitAdd} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">

@@ -18,6 +18,7 @@ export default function ReservationInventoryPanel() {
   const [form, setForm] = useState(INITIAL);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
   // Reservable inventory: stale-while-revalidate. The cached units and inventory
   // stay on screen while a save or a bulk import revalidates in the background.
   const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
@@ -27,16 +28,17 @@ export default function ReservationInventoryPanel() {
   const units = (data?.units || []).filter((unit) => !configured.has(unit.id) || unit.id === form.unitId);
   function update(name, value) { setForm((current) => ({ ...current, [name]: value })); }
   async function save(event) {
-    event.preventDefault(); setSaving(true); setSaveError("");
+    event.preventDefault(); setSaving(true); setSaveError(""); setSavedMessage("");
     try {
       const inventory = { ...form, maximumGuests: Number(form.maximumGuests), minimumNights: Number(form.minimumNights), maximumNights: form.maximumNights ? Number(form.maximumNights) : null, turnoverBufferHours: Number(form.turnoverBufferHours), publicAccessReleaseHours: Number(form.publicAccessReleaseHours), amenities: form.amenities.split(",").map((item) => item.trim()).filter(Boolean), nightlyRateCents: Math.round(Number(form.nightlyRate) * 100), cleaningFeeCents: Math.round(Number(form.cleaningFee) * 100), securityDepositCents: Math.round(Number(form.securityDeposit) * 100), lodgingTaxBasisPoints: Math.round(Number(form.lodgingTaxPercent) * 100) };
       const response = await fetch("/api/rental/reservations/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation: "save-inventory", inventory }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to save reservation inventory."); setForm(INITIAL); await refresh();
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to save reservation inventory."); const savedName = form.publicName; setForm(INITIAL); setSavedMessage(`✓ Reservation inventory saved for ${savedName}.`); await refresh();
     } catch (error) { setSaveError(error.message); } finally { setSaving(false); }
   }
   return <section aria-label="RV and short-term rental inventory" className="space-y-5">
     <div><p className="text-xs font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-400">Reservations</p><h2 className="text-2xl font-black text-slate-950 dark:text-white">RV & short-term rentals</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Configure reservable spaces and stays.</p></div>
     {saveError && <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-bold text-red-800">{saveError}</p>}
+    {savedMessage ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{savedMessage}</p> : null}
     <ReservationInventoryBulkImport onImported={refresh}/>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">Reservable inventory</h3>

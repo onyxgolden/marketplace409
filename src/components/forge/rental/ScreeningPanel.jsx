@@ -40,6 +40,7 @@ function StatusBadge({ status }) {
 export default function ScreeningPanel({ applicationId, applicantName, onDecide }) {
   const [state, setState] = useState({ loading: true, error: null, screening: null, events: [], providers: [], suggestion: null });
   const [actionError, setActionError] = useState(null);
+  const [actionNotice, setActionNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState({ creditScore: "", creditBand: "", criminalFlag: false, criminalNotes: "", evictionFlag: false, evictionNotes: "" });
   const [recommendation, setRecommendation] = useState({ recommendation: "", reasons: "" });
@@ -77,6 +78,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
   async function callApi(method, body) {
     setBusy(true);
     setActionError(null);
+    setActionNotice("");
     try {
       const res = await fetch(`/api/rental/applications/${encodeURIComponent(applicationId)}/screening`, {
         method,
@@ -96,7 +98,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
 
   async function requestScreening() {
     const data = await callApi("POST");
-    if (data) await reload();
+    if (data) { setActionNotice(`✓ Screening requested for ${applicantName || "the applicant"}.`); await reload(); }
     return data;
   }
 
@@ -104,6 +106,14 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
     const data = await callApi("PATCH", { action, ...extra });
     if (data) {
       if (data.applicantLink) setApplicantLink(data.applicantLink);
+      const actionNotices = {
+        regenerate_token: "✓ Screening link regenerated.",
+        mark_in_progress: "✓ Screening marked in progress.",
+        record_results: "✓ Screening results recorded.",
+        set_recommendation: "✓ Screening recommendation saved.",
+        complete: "✓ Screening completed.",
+      };
+      setActionNotice(actionNotices[action] || "✓ Screening updated.");
       await reload();
     }
   }
@@ -131,6 +141,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
     }
     setBusy(true);
     setActionError(null);
+    setActionNotice("");
     try {
       const payload = { action, reason };
       if (action === "approve") {
@@ -145,6 +156,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Decision failed.");
+      setActionNotice(action === "approve" ? "✓ Application approved." : "✓ Application denied.");
       await reload();
     } catch (error) {
       setActionError(error.message);
@@ -169,6 +181,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
   return (
     <div className="space-y-4 text-sm">
       {actionError ? <p className="rounded bg-red-50 p-2 text-red-700">{actionError}</p> : null}
+      {actionNotice ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{actionNotice}</p> : null}
 
       <div className="flex items-center gap-2">
         <h3 className="font-semibold">Screening</h3>

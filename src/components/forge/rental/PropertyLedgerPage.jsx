@@ -63,6 +63,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
   const [postKind, setPostKind] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
   const [editError, setEditError] = useState("");
+  const [notice, setNotice] = useState("");
   // Ledger view controls: transaction filter, date range, and display settings.
   const [kindFilter, setKindFilter] = useState("all");
   const [dateRange, setDateRange] = useState("all");
@@ -88,6 +89,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
     try {
       await deleteTransaction(entry.sourceId);
       setDetailEntry(null);
+      setNotice("✓ Transaction deleted.");
       refresh();
     } catch (caught) {
       setEditError(caught.message);
@@ -148,6 +150,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
             <span className="text-slate-950 dark:text-white">{title}</span>
           </p>
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Ledger</h2>
+          {notice ? <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => (onPostIncome ? onPostIncome() : setPostKind("income"))}
@@ -363,7 +366,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
           properties={(properties || []).map((property) => ({ id: property.id, label: property.label }))}
           tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
           initialEvent={editingEvent}
-          onSaved={() => { setEditingEvent(null); refresh(); }}
+          onSaved={() => { setEditingEvent(null); setNotice("✓ Transaction updated."); refresh(); }}
           onCancel={() => setEditingEvent(null)}
         />
       )}
@@ -374,7 +377,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
           properties={(properties || []).map((property) => ({ id: property.id, label: property.label }))}
           tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
           defaultKind={postKind}
-          onSaved={() => { setPostKind(null); refresh(); }}
+          onSaved={() => { setPostKind(null); setNotice("✓ Transaction posted."); refresh(); }}
           onCancel={() => setPostKind(null)}
         />
       )}

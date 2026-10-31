@@ -65,6 +65,11 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     { ttlMs: 60_000 },
   );
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  // Detail-action feedback, rendered at the top of the selected-unit detail
+  // (where the user is looking) instead of the panel-bottom message.
+  const [detailNotice, setDetailNotice] = useState("");
+  const [detailError, setDetailError] = useState("");
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   // Dashboard deep-link filter ("vacant"): narrows the unit queue and shows a
@@ -187,7 +192,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     }, { allowEmptyGroup: Boolean(existing) });
     if (!addressCheck.ok) {
       setAddressErrors(addressCheck.errors);
-      setMessage(`Fix the property address: ${Object.values(addressCheck.errors).join(" ")}`);
+      setError(`Fix the property address: ${Object.values(addressCheck.errors).join(" ")}`);
       return;
     }
     setAddressErrors({});
@@ -195,7 +200,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       ? `Save changes to ${existing.label}?`
       : `Create a new property/unit named ${values.get("label")} (${values.get("propertyId")})? This creates a separate record; it does not edit an existing property.`;
     if (!window.confirm(action)) return;
-    setWorking(true); setMessage("");
+    setWorking(true); setMessage(""); setError(""); setDetailNotice(""); setDetailError("");
     try {
       const saved = await submit("save-unit", "unit", { id: values.get("id") || undefined, propertyId: values.get("propertyId"), label: values.get("label"),
         status: existing?.status || "preparing", bedrooms: Number(values.get("bedrooms")) || null, bathrooms: Number(values.get("bathrooms")) || null,
@@ -204,29 +209,32 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         addressCity: addressCheck.values.city || null, addressState: addressCheck.values.state || null,
         addressZip: addressCheck.values.zip || null,
         availableAt: existing?.available_at || null, createdAt: existing?.created_at || undefined });
-      setMessage(`Unit saved: ${saved.unit.label} — ID: ${saved.unit.id}`);
+      // Edit saves confirm on the detail view; create saves confirm on the
+      // create form — never a raw database id in either message.
+      if (existing) setDetailNotice(`✓ Unit saved: ${saved.unit.label}.`);
+      else setMessage(`✓ Unit saved: ${saved.unit.label}.`);
       setShowCreate(false); setEditingId(null);
       await refreshUnits();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { if (existing) setDetailError(error.message); else setError(error.message); } finally { setWorking(false); }
   }
   async function archiveUnit(unit) {
-    setWorking(true); setMessage("");
+    setWorking(true); setDetailNotice(""); setDetailError("");
     try {
       await submit("archive-unit", "unitId", unit.id);
-      setMessage(`${unit.label} archived. Financial and lease history was preserved.`);
+      setDetailNotice(`✓ ${unit.label} archived. Financial and lease history was preserved.`);
       setArchiveCandidateId(null);
       await refreshUnits();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setDetailError(error.message); } finally { setWorking(false); }
   }
   async function permanentlyDeleteUnit(unit) {
     const typed = window.prompt(`Permanently delete ${unit.label}? Type the exact property/unit name to confirm. This cannot be undone.`);
     if (typed !== unit.label) { if (typed !== null) setMessage("Permanent deletion cancelled: the name did not match."); return; }
-    setWorking(true); setMessage("");
+    setWorking(true); setMessage(""); setError("");
     try {
       await submit("delete-archived-unit", "unitId", unit.id);
-      setMessage(`${unit.label} was permanently deleted.`);
+      setMessage(`✓ ${unit.label} was permanently deleted.`);
       await refreshUnits();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setError(error.message); } finally { setWorking(false); }
   }
   return (
     <>
@@ -247,7 +255,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       {viewFilter === "vacant" && <RentalViewFilterBanner filterLabel="Vacant units only" onClear={() => setViewFilter(null)} />}
       {result && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved units.</p> : null}
       {result && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
-      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
+      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); setDetailNotice(""); setDetailError(""); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
         onRowContextMenu={(event, unit) => onContextMenu(event, unitMenuItems(unit))}
         columns={[
           // One-line spreadsheet rows (same as the tenant index): every cell is a
@@ -272,6 +280,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
               <RentalRecordActions label="Property actions" actions={unitMenuItems(unit)}/>
             </div>
+            {detailError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{detailError}</p> : null}
+            {detailNotice ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{detailNotice}</p> : null}
             <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={refreshUnits} /></div>
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
             {archiveCandidateId === unit.id ? <div className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="font-black text-red-900 dark:text-red-200">Archive {unit.label}?</p><p className="mt-2 text-sm text-red-800 dark:text-red-300">This removes the property/unit from active lists but preserves its financial, lease, and audit history. A property with an active lease cannot be archived.</p><div className="mt-3 flex gap-2"><button type="button" disabled={working} onClick={() => archiveUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white">Confirm archive</button><button type="button" onClick={() => setArchiveCandidateId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold dark:border-slate-600 dark:text-slate-300">Cancel</button></div></div>
@@ -290,7 +300,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         <label className="text-sm font-bold text-slate-900 dark:text-white">Square feet<input name="squareFeet" type="number" min="0" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Notes<input name="notes" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <div className="md:col-span-2 flex flex-wrap items-center gap-4"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Review and create property / unit"}</button><button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Cancel creation</button>
-          {message && <p role="status" className="text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}</div>
+          {error ? <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">{error}</p> : null}
+          {message ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{message}</p> : null}</div>
       </form>}
       {!showCreate && units.some((unit) => unit.status === "inactive") && <div className="mt-6 rounded-2xl border border-slate-300 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
         <h3 className="text-lg font-black text-slate-950 dark:text-white">Archived properties / units</h3>
@@ -300,7 +311,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           <button type="button" disabled={working} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
         </div>)}</div>
       </div>}
-      {!showCreate && message && <p role="status" className="mt-4 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
+      {!showCreate && error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}
+      {!showCreate && message ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{message}</p> : null}
       <CustomFieldsSettingsPanel />
       </>
       )}

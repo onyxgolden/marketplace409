@@ -241,8 +241,10 @@ function PetRecordsSection({ pets, onSave }) {
   const [vaccinationOnFile, setVaccinationOnFile] = useState(false);
   const [vaccinationExpires, setVaccinationExpires] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
 
   async function savePetDetails() {
+    setSavedMessage("");
     const response = await fetch("/api/rental/insurance/pet-records", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -255,6 +257,8 @@ function PetRecordsSection({ pets, onSave }) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
+    const petName = pets.find((pet) => pet.animalId === animalId.trim())?.name || "the pet";
+    setSavedMessage(`✓ Pet details saved for ${petName}.`);
     setAnimalId("");
     setWeightLbs("");
     setVaccinationExpires("");
@@ -271,6 +275,7 @@ function PetRecordsSection({ pets, onSave }) {
 
   return (
     <Card eyebrow="Pets" title="Pet records" blurb="Weight and vaccination records build on the animal records from the pet-liability workflow (Animals section). Pet deposits are record-only — the money movement stays in the existing deposit flows.">
+      {savedMessage ? <p role="status" className="mb-5 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{savedMessage}</p> : null}
       {pets.length ? (
         <ul className="mb-5 space-y-2">
           {pets.map((pet) => (
