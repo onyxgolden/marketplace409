@@ -95,9 +95,18 @@ CREATE TABLE IF NOT EXISTS tb_episode_events (
   note TEXT,
   actor TEXT,
   created_at TEXT NOT NULL,
-  operation_id TEXT
+  operation_id TEXT,
+  -- Fix round 3 (TBP5-011): whether created_at was caller-supplied.
+  -- When false, the bound timestamp is null (a replay supplying one
+  -- conflicts); when true — or NULL on a pre-fix row with unknown
+  -- provenance, which fails closed — created_at is the bound
+  -- timestamp. Without this flag a server-generated created_at is
+  -- indistinguishable from a caller timestamp, and a weaker replay
+  -- omitting the binding would silently reuse the receipt.
+  timestamp_claimed BOOLEAN
 );
 ALTER TABLE tb_episode_events ADD COLUMN IF NOT EXISTS operation_id TEXT;
+ALTER TABLE tb_episode_events ADD COLUMN IF NOT EXISTS timestamp_claimed BOOLEAN;
 CREATE UNIQUE INDEX IF NOT EXISTS tb_episode_events_one_archive_idx
   ON tb_episode_events (episode_id, event_type);
 CREATE INDEX IF NOT EXISTS tb_episode_events_revision_idx

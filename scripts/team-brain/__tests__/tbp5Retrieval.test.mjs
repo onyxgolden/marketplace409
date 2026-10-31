@@ -1404,3 +1404,148 @@ describe("P5 fix round 2 — TBP5-008..010", () => {
     expect(rows.map((r) => r.principal)).toEqual(["a-principal", "b-principal"]);
   });
 });
+
+describe("P5 fix round 3 — TBP5-011 omission/presence", () => {
+  let db;
+  let repo;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await migrate(db);
+    repo = createRetrievalRepository(db);
+  }, 60000);
+  afterAll(async () => {
+    await db.close();
+  });
+  beforeEach(async () => {
+    await truncateAll(db);
+  });
+
+  const synthSrc = {
+    repo: "synthetic/engineering",
+    path: "fixtures/decision.md",
+    commit: "a".repeat(40),
+    blob: "b".repeat(40),
+    watermark: "synthetic@1",
+  };
+  const synth = (overrides = {}) => ({
+    scope: "engineering",
+    title: "Queue decision",
+    body: "The synthetic queue rule orders tasks oldest first.",
+    source: { ...synthSrc },
+    capturedAt: "2026-10-14T16:00:00Z",
+    ...overrides,
+  });
+  const FULL = {
+    note: "approved",
+    actor: "muse",
+    operationId: "op-1",
+    timestamp: "2026-10-31T00:00:00Z",
+  };
+
+  it30("TBP5-011: omitted optional bindings conflict on archiveEpisode replay", async () => {
+    const captured = await repo.captureEpisode(synth());
+    const first = await repo.archiveEpisode(captured.episodeId, FULL);
+    // The round-2 gap: a weaker claim omitting a stored binding was
+    // accepted as replay. Now omission is a difference, not a wildcard.
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "muse", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "muse", operationId: "op-1" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "muse" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    // Failed replays changed nothing: same revision, one event, and
+    // the exact replay still succeeds afterward.
+    expect(await repo.latestRevision()).toBe(first.revision);
+    const { rows } = await db.query(
+      "SELECT COUNT(*) AS c FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(Number(rows[0].c)).toBe(1);
+    const { rows: flagRows } = await db.query(
+      "SELECT timestamp_claimed FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(flagRows[0].timestamp_claimed).toBe(true);
+    const exact = await repo.archiveEpisode(captured.episodeId, FULL);
+    expect(exact).toMatchObject({ episodeId: captured.episodeId, state: "ARCHIVED", revision: first.revision, replayed: true });
+  });
+
+  it30("TBP5-011: supplied-after-absent bindings conflict; exact without optionals replays", async () => {
+    const captured = await repo.captureEpisode(synth());
+    const first = await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
+    // Stored with no optional bindings: a replay claiming one is a
+    // different identity, not an enrichment of the same receipt.
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse", operationId: "op-9" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    expect(await repo.latestRevision()).toBe(first.revision);
+    const { rows } = await db.query(
+      "SELECT timestamp_claimed FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(rows[0].timestamp_claimed).toBe(false);
+    const exact = await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
+    expect(exact).toMatchObject({ episodeId: captured.episodeId, state: "ARCHIVED", revision: first.revision, replayed: true });
+  });
+
+  it30("TBP5-011: import path — omission/presence matrix through capture replay and archiveEpisode", async () => {
+    const base = {
+      title: "Imported archived",
+      body: "An imported archived synthetic rule.",
+      state: "ARCHIVED",
+    };
+    const imported = await repo.captureEpisode(
+      synth({ ...base, archiveAudit: { note: "imported", actor: "muse", operationId: "import-1", timestamp: "2026-10-31T00:00:00Z" } }),
+    );
+    expect(imported.replayed).toBe(false);
+    // Capture-level replay of the import: omitting a stored binding
+    // conflicts on both paths, exact replays on both paths.
+    await expect(
+      repo.captureEpisode(
+        synth({ ...base, archiveAudit: { note: "imported", actor: "muse", timestamp: "2026-10-31T00:00:00Z" } }),
+      ),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.captureEpisode(
+        synth({ ...base, archiveAudit: { note: "imported", actor: "muse", operationId: "import-1" } }),
+      ),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(imported.episodeId, { note: "imported", actor: "muse", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    const again = await repo.captureEpisode(
+      synth({ ...base, archiveAudit: { note: "imported", actor: "muse", operationId: "import-1", timestamp: "2026-10-31T00:00:00Z" } }),
+    );
+    expect(again).toMatchObject({ episodeId: imported.episodeId, replayed: true });
+    const viaArchive = await repo.archiveEpisode(imported.episodeId, {
+      note: "imported",
+      actor: "muse",
+      operationId: "import-1",
+      timestamp: "2026-10-31T00:00:00Z",
+    });
+    expect(viaArchive).toMatchObject({ state: "ARCHIVED", revision: imported.revision, replayed: true });
+    // Import without optionals: supplying one on replay conflicts.
+    const bare = await repo.captureEpisode(
+      synth({ title: "Bare import", body: "A bare imported archived rule.", state: "ARCHIVED", archiveAudit: { note: "bare", actor: "muse" } }),
+    );
+    await expect(
+      repo.captureEpisode(
+        synth({ title: "Bare import", body: "A bare imported archived rule.", state: "ARCHIVED", archiveAudit: { note: "bare", actor: "muse", operationId: "late-1" } }),
+      ),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(bare.episodeId, { note: "bare", actor: "muse", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    const bareExact = await repo.captureEpisode(
+      synth({ title: "Bare import", body: "A bare imported archived rule.", state: "ARCHIVED", archiveAudit: { note: "bare", actor: "muse" } }),
+    );
+    expect(bareExact).toMatchObject({ episodeId: bare.episodeId, replayed: true });
+  });
+});

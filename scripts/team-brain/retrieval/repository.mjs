@@ -262,12 +262,14 @@ async function runTransaction(dbHandle, fn) {
   }
 }
 
-// Archive audit identity (fix round 2, TBP5-009). note and actor are
-// required and non-empty; operationId and timestamp are optional
-// bindings. Unknown fields are rejected — a typo like { acotr } fails
-// instead of silently discarding. The normalized form is what replay
-// comparison uses: required fields always compare; optional bindings
-// compare when the replay call claims them.
+// Archive audit identity (fix round 2, TBP5-009; symmetric comparison
+// fix round 3, TBP5-011). note and actor are required and non-empty;
+// operationId and timestamp are optional bindings. Unknown fields are
+// rejected — a typo like { acotr } fails instead of silently
+// discarding. The normalized form is what replay comparison uses: the
+// FULL identity compares symmetrically, including presence — an
+// omitted optional binding is a value (null), never a wildcard, so a
+// weaker replay claim can never reuse a receipt stored with bindings.
 const ARCHIVE_AUDIT_FIELDS = ["note", "actor", "operationId", "timestamp"];
 function validateArchiveAudit(audit, what) {
   if (audit === null || typeof audit !== "object" || Array.isArray(audit)) {
@@ -291,15 +293,25 @@ function validateArchiveAudit(audit, what) {
 }
 
 // Compares a claimed audit against a stored archive event row
-// ({ note, actor, operation_id, created_at }). Any difference in a
-// compared field fails with a named conflicting-replay result; the
-// caller never reuses a receipt for a different audit claim.
+// ({ note, actor, operation_id, created_at, timestamp_claimed }).
+// Fix round 3 (TBP5-011): the comparison is symmetric over the full
+// normalized identity, including presence. The stored created_at is
+// the bound timestamp only when the event was created with a caller
+// timestamp (timestamp_claimed true); when the timestamp was
+// server-generated (timestamp_claimed false), the bound timestamp is
+// null — a replay supplying one conflicts, a replay omitting one
+// replays. A pre-fix row with unknown provenance (timestamp_claimed
+// NULL) fails closed: its stored created_at is treated as the bound
+// timestamp, so a weaker replay cannot reuse it. Any difference fails
+// with a named conflicting-replay result; the caller never reuses a
+// receipt for a different audit claim.
 function assertArchiveIdentityMatches(stored, claimed, what) {
+  const storedTimestamp = stored.timestamp_claimed === false ? null : stored.created_at;
   const mismatch =
     claimed.note !== stored.note ||
     claimed.actor !== stored.actor ||
-    (claimed.operationId !== null && claimed.operationId !== stored.operation_id) ||
-    (claimed.timestamp !== null && claimed.timestamp !== stored.created_at);
+    claimed.operationId !== stored.operation_id ||
+    claimed.timestamp !== storedTimestamp;
   if (mismatch) {
     fail(
       P5_CODES.ARCHIVE_REPLAY_CONFLICT,
@@ -487,7 +499,7 @@ export function createRetrievalRepository(db) {
         // instead of silently reusing the receipt.
         if (existing.rows[0].state === "ARCHIVED") {
           const event = await tx.query(
-            "SELECT note, actor, operation_id, created_at FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
+            "SELECT note, actor, operation_id, created_at, timestamp_claimed FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
             [episodeId],
           );
           if (!event.rows.length) {
@@ -546,8 +558,8 @@ export function createRetrievalRepository(db) {
         }
         if (state === "ARCHIVED") {
           await tx.query(
-            `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id)
-             VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6)`,
+            `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id, timestamp_claimed)
+             VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6, $7)`,
             [
               episodeId,
               revision,
@@ -555,6 +567,7 @@ export function createRetrievalRepository(db) {
               archiveAudit.actor,
               archiveAudit.timestamp ?? new Date().toISOString(),
               archiveAudit.operationId,
+              archiveAudit.timestamp !== null,
             ],
           );
         }
@@ -594,12 +607,12 @@ export function createRetrievalRepository(db) {
   // identity. Fix round 2 (TBP5-009): note and actor are REQUIRED and
   // non-empty, unknown fields are rejected, and a replay compares the
   // stored full identity — an exact replay returns replayed:true with
-  // no bump and no second event, while any changed actor, note,
-  // claimed operation id, or claimed timestamp fails with a named
-  // conflicting-replay result. Validation runs before the replay
-  // return, so an omitted-audit or typo call can never reuse a
-  // receipt. Episode existence is checked first, so archiving an
-  // unknown episode still reports UNKNOWN_EPISODE.
+  // no bump and no second event, while any changed or omitted binding
+  // fails with a named conflicting-replay result (fix round 3,
+  // TBP5-011: omission is a difference, not a wildcard). Validation
+  // runs before the replay return, so an omitted-audit or typo call
+  // can never reuse a receipt. Episode existence is checked first, so
+  // archiving an unknown episode still reports UNKNOWN_EPISODE.
   async function archiveEpisode(episodeId, audit = {}) {
     assertNonEmptyString(episodeId, "episodeId");
     const found = await db.query(
@@ -611,7 +624,7 @@ export function createRetrievalRepository(db) {
     }
     const claimed = validateArchiveAudit(audit, "audit");
     const prior = await db.query(
-      "SELECT revision, note, actor, operation_id, created_at FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
+      "SELECT revision, note, actor, operation_id, created_at, timestamp_claimed FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
       [episodeId],
     );
     if (prior.rows.length) {
@@ -626,8 +639,8 @@ export function createRetrievalRepository(db) {
         );
         const revision = Number(bumped.rows[0].revision);
         await tx.query(
-          `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id)
-           VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6)`,
+          `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id, timestamp_claimed)
+           VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6, $7)`,
           [
             episodeId,
             revision,
@@ -635,6 +648,7 @@ export function createRetrievalRepository(db) {
             claimed.actor,
             claimed.timestamp ?? new Date().toISOString(),
             claimed.operationId,
+            claimed.timestamp !== null,
           ],
         );
         await tx.query("COMMIT");

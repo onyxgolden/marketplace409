@@ -43,9 +43,9 @@ Baseline: marketplace409 main `9313e75d` (post-#693, post-#695/#696).
   never changes. A latest-state query projects ARCHIVED while an
   earlier pin projects the original state. An exact archive replay
   returns replayed:true with no bump and no second event; any changed
-  actor, note, claimed operation id, or claimed timestamp fails with
-  ARCHIVE_REPLAY_CONFLICT, and unknown audit fields or omitted
-  note/actor are refused. Capturing with state ARCHIVED is a
+  or omitted actor, note, claimed operation id, or claimed timestamp
+  fails with ARCHIVE_REPLAY_CONFLICT, and unknown audit fields or
+  omitted note/actor are refused. Capturing with state ARCHIVED is a
   separately authorized import path only: it requires an archiveAudit
   with the same full identity, written as the episode's archive event
   in the same transaction.
