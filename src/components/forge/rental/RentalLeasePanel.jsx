@@ -74,6 +74,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   const visibleLeases = viewFilter === "expiring" ? (setup.leases || []).filter((lease) => isLeaseExpiringSoon(lease)) : (setup.leases || []);
   const contextTenantId = recordContext?.recordType === "tenant" ? recordContext.recordId : null;
   const [message, setMessage] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
   const [showCreate, setShowCreate] = useState(initialShowCreate ?? initialDefaults.showCreate);
   const [selectedId, setSelectedId] = useState(initialDefaults.selectedId);
   const [selectedUnitId, setSelectedUnitId] = useState("");
@@ -184,7 +185,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function save(event) {
-    event.preventDefault(); setMessage("");
+    event.preventDefault(); setMessage(""); setSaveNotice("");
     const form = new FormData(event.currentTarget);
     const unitId = form.get("unitId");
     const propertyId = propertyIdForSelectedUnit(setup.units, unitId);
@@ -206,7 +207,9 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const scheduleResult = await scheduleResponse.json();
       if (!scheduleResponse.ok) throw new Error(scheduleResult.error || "Lease saved, but its rent schedule could not be saved.");
-      setMessage(`Lease saved: ${leaseResult.lease.id} — Schedule: ${scheduleResult.schedule.id}`);
+      const savedUnitLabel = setup.units.find((item) => item.id === unitId)?.label || "Rental unit";
+      const savedTenantName = setup.tenants.find((item) => item.id === form.get("tenantId"))?.display_name || "Tenant";
+      setSaveNotice(`Lease saved: ${savedUnitLabel} — ${savedTenantName} — ${money.format(Number(leaseResult.lease.monthlyRentCents) / 100)}/mo, draft schedule ready`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
 
@@ -251,6 +254,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <PaymentFrequencyPicker />
       <label className="text-sm font-bold text-slate-900 dark:text-white xl:col-span-2">Notes<input name="notes" placeholder="e.g. Month-to-month after original 1-year term expired" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+      {saveNotice && <p role="status" className="md:col-span-2 xl:col-span-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-base font-black text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100">✓ {saveNotice}</p>}
       <div className="md:col-span-2 xl:col-span-3 flex items-center gap-4"><button disabled={working || setup.units.length === 0 || setup.tenants.length === 0 || !selectedUnitId} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save draft lease and schedule"}</button></div>
     </form>}
   </section>;

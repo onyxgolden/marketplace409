@@ -65,8 +65,11 @@ describe("RentalTenantPanel tenant selection", () => {
     container.querySelector('input[name="displayName"]').value = "Paula Welch";
     container.querySelector('input[name="email"]').value = "paula@example.com";
     await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(container.textContent).toContain("New tenant added: Paula Welch");
-    // The new record opens via navigation to its dedicated record page.
+    expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({ recordType: "tenant", recordId: "tenant_3", notice: "Tenant saved: Paula Welch" }));
+    // The success message now rides with the navigation as a prominent banner
+    // on the record view (covered by RentalTenantPanel.save-confirmation);
+    // this mock navigate does not re-render, so the banner itself is not in
+    // this container — the notice payload is the assertion here.
     expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({ recordType: "tenant", recordId: "tenant_3" }));
     expect(container.querySelector('input[name="displayName"]')).toBeNull();
   });
