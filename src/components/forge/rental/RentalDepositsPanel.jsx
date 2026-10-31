@@ -12,6 +12,29 @@ const label = (value) => value?.replaceAll("_", " ") || "—";
 export const depositBalance = (deposit, transactions) => transactions.filter((item) => item.deposit_id === deposit.id)
   .reduce((sum, item) => sum + (["received", "adjustment_increase"].includes(item.transaction_type) ? 1 : -1) * Number(item.amount_cents), 0);
 
+// A deposit's human identity, resolved from the payload's own joins: the
+// tenant name straight off the deposit, the property via lease -> unit.
+// When nothing resolves, the raw lease id is the label — never a blank.
+export function depositIdentity(deposit, { tenants = [], leases = [], units = [] } = {}) {
+  const tenantName = tenants.find((item) => item.id === deposit?.tenant_id)?.display_name || null;
+  const lease = leases.find((item) => item.id === deposit?.lease_id) || null;
+  const unitLabel = units.find((item) => item.id === lease?.unit_id)?.label || null;
+  const parts = [tenantName, unitLabel].filter(Boolean);
+  return { tenantName, unitLabel, label: parts.length ? parts.join(" — ") : (deposit?.lease_id || "—") };
+}
+
+// Lease-picker label: property via lease -> unit, tenant via the lease's
+// primary membership (first member as fallback). Same never-blank rule.
+export function leasePickerLabel(leaseId, { leases = [], units = [], tenants = [], leaseMemberships = [] } = {}) {
+  const lease = leases.find((item) => item.id === leaseId) || null;
+  const unitLabel = units.find((item) => item.id === lease?.unit_id)?.label || null;
+  const members = leaseMemberships.filter((item) => item.lease_id === leaseId);
+  const primary = members.find((item) => item.occupancy_role === "primary") || members[0];
+  const tenantName = tenants.find((item) => item.id === primary?.tenant_id)?.display_name || null;
+  const parts = [unitLabel, tenantName].filter(Boolean);
+  return parts.length ? parts.join(" — ") : leaseId;
+}
+
 export default function RentalDepositsPanel({ initialData = null }) {
   // Security deposits: stale-while-revalidate. The cached obligations render
   // instantly on return visits and refresh in the background — the last good
@@ -25,7 +48,7 @@ export default function RentalDepositsPanel({ initialData = null }) {
     const response = await fetch("/api/rental");
     const body = await response.json();
     if (!response.ok) throw new Error(body.error);
-    return { deposits: body.deposits || [], transactions: body.depositTransactions || [], schedules: body.schedules || [], tenants: body.tenants || [] };
+    return { deposits: body.deposits || [], transactions: body.depositTransactions || [], schedules: body.schedules || [], tenants: body.tenants || [], units: body.units || [], leases: body.leases || [], leaseMemberships: body.leaseMemberships || [] };
   }, []);
   const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     "rental:deposits",
@@ -75,6 +98,10 @@ export default function RentalDepositsPanel({ initialData = null }) {
   const activeId = data.deposits.some((item) => item.id === selectedId) ? selectedId : data.deposits[0]?.id || "";
   const selected = data.deposits.find((item) => item.id === activeId);
   const transactions = data.transactions.filter((item) => item.deposit_id === activeId);
+  // One picker option per lease: schedules repeat a lease id, and identical
+  // values would render as duplicate labels.
+  const leaseOptions = [];
+  { const seen = new Set(); for (const item of data.schedules) { if (!item.lease_id || seen.has(item.lease_id)) continue; seen.add(item.lease_id); leaseOptions.push(item.lease_id); } }
 
   return <section className="space-y-6" data-rental-deposits>
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -91,16 +118,17 @@ export default function RentalDepositsPanel({ initialData = null }) {
       {data && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved deposits.</p> : null}
       {data && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       {showAdd ? <form aria-label="Add deposit requirement" onSubmit={save} className="mt-6 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40 md:grid-cols-4">
-        <select name="leaseId" required className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Lease</option>{data.schedules.map((item) => <option key={item.id} value={item.lease_id}>{item.lease_id}</option>)}</select>
+        <select name="leaseId" required className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Lease</option>{leaseOptions.map((leaseId) => <option key={leaseId} value={leaseId}>{leasePickerLabel(leaseId, data)}</option>)}</select>
         <select name="tenantId" required className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Tenant</option>{data.tenants.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select>
         <input name="amount" type="number" min="0" step="0.01" required placeholder="Required amount" className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
         <input name="jurisdictionCode" placeholder="Jurisdiction (example TX)" className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
         <button className="rounded-lg bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 md:col-span-4">Save deposit requirement</button>
       </form> : null}
       <div className="mt-6">
-        <RentalRecordBrowser title="Deposit obligations" records={data.deposits} selectedId={activeId} onSelect={(id) => { setSelectedId(id); setShowTransaction(false); }} getTitle={(item) => money.format(Number(item.required_amount_cents) / 100)} getSubtitle={(item) => `${label(item.status)} · ${item.jurisdiction_code || "jurisdiction not recorded"}`} emptyMessage="No deposit obligation recorded.">
+        <RentalRecordBrowser title="Deposit obligations" records={data.deposits} selectedId={activeId} onSelect={(id) => { setSelectedId(id); setShowTransaction(false); }} getTitle={(item) => money.format(Number(item.required_amount_cents) / 100)} getSubtitle={(item) => `${depositIdentity(item, data).label} · ${label(item.status)} · ${item.jurisdiction_code || "jurisdiction not recorded"}`} emptyMessage="No deposit obligation recorded.">
           {!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">Add the lease deposit requirement before recording money received.</p> : <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Selected deposit</p>
+            <p className="mt-2 text-sm font-bold text-slate-950 dark:text-white">{depositIdentity(selected, data).label}</p>
             <div className="mt-2 flex flex-wrap justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black text-slate-950 dark:text-white">{money.format(Number(selected.required_amount_cents) / 100)} required</h3>
