@@ -54,7 +54,12 @@ Baseline: marketplace409 main `9313e75d` (post-#693, post-#695/#696).
   transaction, released in finally; PGlite and checked-out clients run
   on the dedicated connection. A handle that cannot own a transaction
   fails loudly with UNSUPPORTED_HANDLE — pool-level query routing is
-  never used for BEGIN/mutation/COMMIT.
+  never used for BEGIN/mutation/COMMIT. Supported handle shapes are
+  exactly these: a single connection (PGlite, checked-out pg.Client)
+  or a pg.Pool recognized by its bookkeeping counters. A custom pool
+  wrapper without those markers is NOT a supported shape — pass a real
+  pg.Pool or a checked-out client instead; it must never be treated
+  as a dedicated connection merely because it exposes query().
 - Concurrency: every operation on one connection serializes through a
   connection-scoped promise chain shared by all repository instances
   on that handle. In-process only; no cross-process fencing is claimed.
