@@ -80,7 +80,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     const response = await fetch("/api/rental");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
-    return { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [], openCharges: result.openCharges || [], payments: result.payments || [], credits: result.credits || [] };
+    return { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [], openCharges: result.openCharges || [], payments: result.payments || [], credits: result.credits || [], deposits: result.deposits || [] };
   }, []);
   const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     loadOnMount ? "rental:lease-setup" : null,
@@ -236,6 +236,23 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); } finally { setWorking(false); }
   }
+  async function saveLeaseDeposit(event, lease, tenantId) {
+    event.preventDefault(); setWorking(true); setMessage("");
+    const form = new FormData(event.currentTarget);
+    const raw = form.get("securityDeposit");
+    const amountCents = raw === "" || raw == null ? 0 : Math.round(Number(raw) * 100);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) { setMessage("Enter a security deposit amount greater than $0."); setWorking(false); return; }
+    if (!tenantId) { setMessage("No tenant is attached to this lease, so a deposit cannot be recorded."); setWorking(false); return; }
+    const jurisdictionCode = String(form.get("jurisdiction") || "").trim() || null;
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "save-security-deposit", deposit: { leaseId: lease.id, tenantId, requiredAmountCents: amountCents, jurisdictionCode } }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to save the security deposit.");
+      setMessage(`Security deposit ${money.format(amountCents / 100)} recorded.`);
+      await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   async function cancelLease(lease) {
     setWorking(true); setDetailNotice(null); setDetailError(null);
     try {
@@ -253,6 +270,10 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     const unitId = form.get("unitId");
     const propertyId = propertyIdForSelectedUnit(setup.units, unitId);
     if (!propertyId) { setMessage("Select a valid rental unit before saving."); return; }
+    const depositRaw = form.get("securityDeposit");
+    if (depositRaw !== "" && depositRaw != null && (!Number.isFinite(Number(depositRaw)) || Number(depositRaw) < 0)) { setMessage("Enter a valid security deposit amount, or leave it blank."); return; }
+    const depositAmountCents = depositRaw === "" || depositRaw == null ? 0 : Math.round(Number(depositRaw) * 100);
+    const depositJurisdiction = String(form.get("jurisdiction") || "").trim() || null;
     setWorking(true);
     try {
       const leaseResponse = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -272,7 +293,18 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       if (!scheduleResponse.ok) throw new Error(scheduleResult.error || "Lease saved, but its rent schedule could not be saved.");
       const savedUnitLabel = setup.units.find((item) => item.id === unitId)?.label || "Rental unit";
       const savedTenantName = setup.tenants.find((item) => item.id === form.get("tenantId"))?.display_name || "Tenant";
-      setSaveNotice(`Lease saved: ${savedUnitLabel} — ${savedTenantName} — ${money.format(Number(leaseResult.lease.monthlyRentCents) / 100)}/mo, draft schedule ready`);
+      if (depositAmountCents > 0) {
+        const depositResponse = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ operation: "save-security-deposit", deposit: { leaseId: leaseResult.lease.id, tenantId: form.get("tenantId"), requiredAmountCents: depositAmountCents, jurisdictionCode: depositJurisdiction } }) });
+        const depositResult = await depositResponse.json();
+        if (!depositResponse.ok) {
+          setMessage(`Lease saved, but the security deposit was NOT recorded: ${depositResult.error || "Unable to save the security deposit."}`);
+          return;
+        }
+        setSaveNotice(`Lease saved: ${savedUnitLabel} — ${savedTenantName} — ${money.format(Number(leaseResult.lease.monthlyRentCents) / 100)}/mo, draft schedule ready — Security deposit ${money.format(depositAmountCents / 100)} recorded.`);
+      } else {
+        setSaveNotice(`Lease saved: ${savedUnitLabel} — ${savedTenantName} — ${money.format(Number(leaseResult.lease.monthlyRentCents) / 100)}/mo, draft schedule ready`);
+      }
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
 
@@ -297,7 +329,10 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => { const balanceText = leaseBalanceText(leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })); return <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly{ balanceText ? <> · {balanceText}</> : null}</>; }}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
+        const leaseMembershipsForLease = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease?.id);
+        const depositTenantId = (leaseMembershipsForLease.find((item) => item.occupancy_role === "primary") || leaseMembershipsForLease[0])?.tenant_id || null;
+        const existingDeposit = (setup.deposits || []).find((item) => item.lease_id === lease?.id) || null;
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -314,6 +349,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. Leave blank to start charges on the move-in date.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Security deposit<input name="securityDeposit" type="number" min="0" step="0.01" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Optional — leave blank if no deposit is required. It is recorded right after the lease saves.</span></label>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Jurisdiction<input name="jurisdiction" placeholder="e.g. TX" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Optional — used for deposit rules. Leave blank if unsure.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <PaymentFrequencyPicker />
       <label className="text-sm font-bold text-slate-900 dark:text-white xl:col-span-2">Notes<input name="notes" placeholder="e.g. Month-to-month after original 1-year term expired" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
@@ -325,7 +362,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
@@ -364,6 +401,16 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
     </dl>
+    {existingDeposit ? (
+      <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300">Deposit on file: {money.format(Number(existingDeposit.required_amount_cents) / 100)}{existingDeposit.jurisdiction_code ? ` · ${existingDeposit.jurisdiction_code}` : ""} — manage it on the Security deposits screen.</p>
+    ) : depositTenantId && onSaveDeposit && lease.status !== "cancelled" ? (
+      <form onSubmit={(event) => onSaveDeposit(event, lease, depositTenantId)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Security deposit<input name="securityDeposit" type="number" min="0.01" step="0.01" required placeholder="No deposit recorded yet" className="mt-1 w-48 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Jurisdiction<input name="jurisdiction" placeholder="e.g. TX" className="mt-1 w-48 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">{working ? "Saving…" : "Save deposit"}</button>
+        <p className="w-full text-xs text-slate-500 dark:text-slate-400">Recorded for this lease only — it does not create a second deposit if one already exists.</p>
+      </form>
+    ) : null}
     <CustomFieldsEditor groups={[{ entity: "lease", recordId: lease.id }]} />
     {schedule && lease.status !== "cancelled" && (
       <div className="mt-4">
