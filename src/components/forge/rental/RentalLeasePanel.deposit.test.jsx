@@ -108,7 +108,7 @@ describe("RentalLeasePanel security deposit", () => {
     expect(posts.some((post) => post.operation === "save-security-deposit")).toBe(false);
     expect(posts.some((post) => post.operation === "save-lease")).toBe(true);
     // The status message (not the still-open form) must carry no deposit mention.
-    expect(container.querySelector('p[role="status"]').textContent).toBe("Lease saved: lease_new — Schedule: schedule_new");
+    expect(container.querySelector('p[role="status"]').textContent).toBe("✓ Lease saved: 4225 Barnhill — Steven Crabtree — $1,800.00/mo, draft schedule ready");
   });
 
   it("edit with an existing deposit shows it read-only and saves no duplicate", async () => {
