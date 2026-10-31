@@ -225,6 +225,7 @@ function PrintChecksTab({ accounts, accountName }) {
 // Bank deposits — batch received payments into one deposit slip.
 // ---------------------------------------------------------------------------
 function BankDepositsTab({ accounts, accountName, onChanged }) {
+  const [voidNotice, setVoidNotice] = useState("");
   const [receipts, setReceipts] = useState([]);
   const [accountId, setAccountId] = useState("");
   const [selected, setSelected] = useState({}); // eventId -> { tender, checkNumber, receivedFrom }
@@ -323,6 +324,7 @@ function BankDepositsTab({ accounts, accountName, onChanged }) {
       }));
       setVoidTarget(null);
       setVoidReason("");
+      setVoidNotice("✓ Bank deposit voided.");
       await load();
       onChanged?.();
     } catch (err) {
@@ -335,6 +337,7 @@ function BankDepositsTab({ accounts, accountName, onChanged }) {
   return (
     <div>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
+      {voidNotice ? <p role="status" className="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{voidNotice}</p> : null}
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">
           <span className="mb-1 block font-bold text-slate-600">Deposit to account</span>

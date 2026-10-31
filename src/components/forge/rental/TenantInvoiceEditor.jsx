@@ -32,7 +32,7 @@ async function fetchCharge(chargeId) {
 // voidable. Payment-history safety: a line's amount can never drop below what
 // has already been applied to the charge; paid charges are amount-final and
 // voided charges are immutable (the API enforces all of this too).
-export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, tenantEmail, onClose, onSaved }) {
+export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, tenantEmail, onClose, onSaved, onDeleted }) {
   const [charge, setCharge] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -158,7 +158,11 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, te
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to delete the invoice.");
-      onSaved?.();
+      // Deleting closes the editor, so the confirmation rides the ledger's
+      // banner via onDeleted — a local banner here would unmount with it.
+      // Without onDeleted the parent's onSaved text ("Invoice saved.") would
+      // wrongly describe a deletion, so fall back to onClose alone.
+      onDeleted?.();
       onClose?.();
     } catch (caught) {
       setError(caught.message || "Unable to delete the invoice.");

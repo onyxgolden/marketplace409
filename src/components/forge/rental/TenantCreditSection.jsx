@@ -22,6 +22,7 @@ export default function TenantCreditSection({ credits = [], creditApplications =
   const [voidTyped, setVoidTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const openCredits = credits.filter((credit) => credit.status === "open" && Number(credit.remaining_cents) > 0);
   const applicationsByCredit = new Map();
@@ -58,6 +59,7 @@ export default function TenantCreditSection({ credits = [], creditApplications =
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to apply the credit.");
+      setNotice(`✓ Credit of ${money.format(cents / 100)} applied to the charge.`);
       setApplyFor(null); setApplyChargeId(""); setApplyAmount(""); setApplyChecked(false); setApplyTyped("");
       onChanged?.();
     } catch (caught) {
@@ -86,6 +88,7 @@ export default function TenantCreditSection({ credits = [], creditApplications =
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to void the credit.");
+      setNotice("✓ Credit voided.");
       setVoidFor(null); setVoidReason(""); setVoidChecked(false); setVoidTyped("");
       onChanged?.();
     } catch (caught) {
@@ -104,6 +107,7 @@ export default function TenantCreditSection({ credits = [], creditApplications =
         rent charge, oldest first.
       </p>
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
+      {notice ? <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
       <ul className="mt-3 space-y-3">
         {credits.map((credit) => {
           const applications = applicationsByCredit.get(credit.id) || [];

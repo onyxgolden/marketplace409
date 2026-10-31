@@ -21,6 +21,7 @@ export default function RentalAnimalsPanel() {
     { ttlMs: 60_000 },
   );
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
   async function review(event, id, kind) {
     event.preventDefault();
@@ -41,7 +42,7 @@ export default function RentalAnimalsPanel() {
       }),
     });
     const body = await response.json();
-    setMessage(response.ok ? "Animal review saved." : body.error);
+    if (response.ok) { setMessage("✓ Animal review saved."); setError(""); } else { setError(body.error); setMessage(""); }
     if (response.ok) await refresh();
   }
 
@@ -50,6 +51,12 @@ export default function RentalAnimalsPanel() {
       <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Animals</p>
       <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Pet approvals and assistance review</h2>
       <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Pet fees are available only after explicit pet approval. Assistance requests require a human decision and can never receive a pet fee through this workflow.</p>
+
+      {error ? (
+        <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>
+      ) : null}
+
+      {message ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{message}</p> : null}
 
       {!animals && isLoading ? <div className="mt-4"><ForgeLoadingState label="Loading animal requests…" /></div> : null}
 
@@ -103,7 +110,6 @@ export default function RentalAnimalsPanel() {
         </p>
       ) : null}
 
-      {message ? <p role="status" className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p> : null}
     </section>
   );
 }

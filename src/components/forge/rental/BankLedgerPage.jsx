@@ -607,7 +607,7 @@ export default function BankLedgerPage({ onNavigate = null }) {
             defaultKind={postKind}
             initialEvent={{ bankAccountId: effectiveAccountId }}
             submitLabel={postKind === "income" ? "Post income" : "Post expense"}
-            onSaved={() => { setPostKind(null); refresh(); }}
+            onSaved={() => { setPostKind(null); setNotice("✓ Transaction posted."); refresh(); }}
             onCancel={() => setPostKind(null)}
           />
         </Modal>
@@ -635,7 +635,7 @@ export default function BankLedgerPage({ onNavigate = null }) {
           <TransactionForm
             initialEvent={editingEvent}
             submitLabel="Save changes"
-            onSaved={() => { setEditingEvent(null); refresh(); }}
+            onSaved={() => { setEditingEvent(null); setNotice("✓ Transaction updated."); refresh(); }}
             onCancel={() => setEditingEvent(null)}
           />
         </Modal>

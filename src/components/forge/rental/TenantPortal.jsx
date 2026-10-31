@@ -110,6 +110,7 @@ async function fetchTenantPortal(onAuthRequired) {
 export default function TenantPortal({ initialPortal = null } = {}) {
   const [portalOverride, setPortalOverride] = useState(initialPortal);
   const [error, setError] = useState("");
+  const [signedNotice, setSignedNotice] = useState("");
   const [signInRequired, setSignInRequired] = useState(false);
   const [session, setSession] = useState(null); const [starting, setStarting] = useState(null);
   const [review, setReview] = useState(null);
@@ -200,6 +201,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       <h1 className="mt-2 text-3xl font-black text-slate-950">Welcome, {portal.tenant.displayName}</h1></header>
     {(isRefreshing || loadError) ? <p role="status" className="text-xs font-bold text-slate-400">{loadError ? "Could not refresh — showing your last saved portal." : "Updating…"}</p> : null}
     {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p> : null}
+    {signedNotice ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{signedNotice}</p> : null}
     {!session ? <section className="rounded-2xl bg-slate-950 p-6 text-white shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-400">Current balance</p>
       <p className="mt-2 text-4xl font-black">{money.format(summary.dueCents / 100)}</p>
@@ -288,7 +290,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       </section>) }
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
     {!session ? <TenantStatementPanel /> : null}
-    {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={reloadPortal} /> : null}
+    {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={() => { setSignedNotice("✓ Lease signed. Thank you — your landlord has been notified."); reloadPortal(); }} /> : null}
     {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}
     {!session ? <TenantAutopayPanel rentals={portal.rentals} convenienceFeeBps={portal.convenienceFeeBps || 0} onChanged={reloadPortal} /> : null}
     {!session ? <TenantInspectionsPanel rentals={portal.rentals} onAcknowledged={reloadPortal} /> : null}

@@ -662,6 +662,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("open");
   const [selectedVendorId, setSelectedVendorId] = useState(null);
@@ -782,10 +783,11 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
     });
     setShowVendorForm(false);
     setEditingVendor(null);
+    setNotice(`✓ Vendor saved: ${saved.name || "vendor"}.`);
     if (saved.id) { selectVendor(saved.id); refreshVendorDetail(saved.id); }
   }
 
-  function afterBillSaved(saved) {
+  function afterBillSaved(saved, noticeText) {
     setBills((list) => {
       const exists = list.some((b) => b.id === saved.id);
       return exists ? list.map((b) => (b.id === saved.id ? saved : b)) : [saved, ...list];
@@ -794,6 +796,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
     setEditingBill(null);
     setBillVendorPreset(null);
     setVoidingBill(null);
+    setNotice(noticeText || "✓ Vendor bill saved.");
     if (saved.vendorId) refreshVendorDetail(saved.vendorId);
   }
 
@@ -828,10 +831,11 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
     setShowPaymentForm(true);
   }
 
-  function afterPaymentSaved(saved) {
+  function afterPaymentSaved(saved, noticeText) {
     setShowPaymentForm(false);
     setPayingBills(null);
     setVoidingPayment(null);
+    setNotice(noticeText || "✓ Payment recorded.");
     // Bill balances and statuses changed — refresh the bills list and the
     // vendor's ledger so both views agree.
     fetchAll()
@@ -870,6 +874,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
       </div>
 
       {error && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-4 py-2 text-sm font-bold text-red-700 dark:text-red-300">{error}</p>}
+      {notice ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
 
       {tab === "vendors" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1073,8 +1078,8 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
           onClose={() => { setShowBillForm(false); setEditingBill(null); setBillVendorPreset(null); }}
         />
       )}
-      {voidingBill && <VoidBillForm bill={voidingBill} onDone={afterBillSaved} onClose={() => setVoidingBill(null)} />}
-      {unvoidingBill && <UnvoidBillForm bill={unvoidingBill} onDone={afterBillSaved} onClose={() => setUnvoidingBill(null)} />}
+      {voidingBill && <VoidBillForm bill={voidingBill} onDone={(saved) => afterBillSaved(saved, "✓ Bill voided.")} onClose={() => setVoidingBill(null)} />}
+      {unvoidingBill && <UnvoidBillForm bill={unvoidingBill} onDone={(saved) => afterBillSaved(saved, "✓ Bill restored.")} onClose={() => setUnvoidingBill(null)} />}
       {showPaymentForm && payingBills && (
         <PaymentForm
           vendorId={payingBills.vendorId}
@@ -1085,8 +1090,8 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
           onClose={() => { setShowPaymentForm(false); setPayingBills(null); }}
         />
       )}
-      {voidingPayment && <VoidPaymentForm payment={voidingPayment} onDone={afterPaymentSaved} onClose={() => setVoidingPayment(null)} />}
-      {reissuingPayment && <ReissuePaymentForm payment={reissuingPayment} onDone={afterPaymentSaved} onClose={() => setReissuingPayment(null)} />}
+      {voidingPayment && <VoidPaymentForm payment={voidingPayment} onDone={(saved) => afterPaymentSaved(saved, "✓ Payment voided.")} onClose={() => setVoidingPayment(null)} />}
+      {reissuingPayment && <ReissuePaymentForm payment={reissuingPayment} onDone={(saved) => afterPaymentSaved(saved, "✓ Payment reissued.")} onClose={() => setReissuingPayment(null)} />}
     </section>
   );
 }

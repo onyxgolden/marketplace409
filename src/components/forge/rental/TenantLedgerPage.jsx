@@ -167,7 +167,8 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
           <TenantInvoiceEditor chargeId={invoiceCharge.chargeId} tenantId={tenantId} tenantName={tenantName}
             tenantEmail={invoiceCharge.tenantEmail}
             onClose={() => setInvoiceCharge(null)}
-            onSaved={() => { setPostedMessage("Invoice saved."); refresh(); }} />
+            onSaved={() => { setPostedMessage("Invoice saved."); refresh(); }}
+            onDeleted={() => { setPostedMessage("Invoice deleted."); refresh(); }} />
         </div>
       </section>
     );

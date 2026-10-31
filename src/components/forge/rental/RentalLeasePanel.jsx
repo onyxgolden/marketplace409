@@ -105,6 +105,11 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   const contextTenantId = recordContext?.recordType === "tenant" ? recordContext.recordId : null;
   const [message, setMessage] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  // Success/error feedback for lease-detail actions, rendered at the top of
+  // LeaseDetail (where the user is looking) instead of the panel-top message.
+  // Scoped by lease id so a notice never shows on a different lease.
+  const [detailNotice, setDetailNotice] = useState(null);
+  const [detailError, setDetailError] = useState(null);
   const [showCreate, setShowCreate] = useState(initialShowCreate ?? initialDefaults.showCreate);
   const [selectedId, setSelectedId] = useState(initialDefaults.selectedId);
   const [selectedUnitId, setSelectedUnitId] = useState("");
@@ -135,18 +140,21 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     }
   }
   const selectedUnitPropertyId = propertyIdForSelectedUnit(setup.units, selectedUnitId);
+  function unitLabelForLease(lease) {
+    return setup.units.find((item) => item.id === lease.unit_id)?.label || "this unit";
+  }
   async function activateLease(lease) {
     const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
-    if (!schedule) { setMessage("No rent schedule found for this lease — save one before activating."); return; }
-    setWorking(true); setMessage("");
+    if (!schedule) { setDetailError({ leaseId: lease.id, text: "No rent schedule found for this lease — save one before activating." }); return; }
+    setWorking(true); setDetailNotice(null); setDetailError(null);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "activate-lease-schedule", scheduleId: schedule.id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to activate the lease.");
-      setMessage(`Lease activated: ${result.activation.leaseId}`);
+      setDetailNotice({ leaseId: lease.id, text: `✓ Lease activated for ${unitLabelForLease(lease)}.` });
       await refresh();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); } finally { setWorking(false); }
   }
   // Moves one active external schedule onto FORGE billing. The RPC enforces
   // the authenticated owner, so this must go through the app session — never
@@ -174,7 +182,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     } finally { setWorking(false); }
   }
   async function saveEarlyPay(event, schedule) {
-    event.preventDefault(); setWorking(true); setMessage("");
+    event.preventDefault(); setWorking(true); setDetailNotice(null); setDetailError(null);
     const form = new FormData(event.currentTarget);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -191,12 +199,12 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           earlyPayDays: Number(form.get("earlyPayDays")) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the early pay window.");
-      setMessage(`Early pay window saved: ${result.schedule.earlyPayDays ?? 7} days.`);
+      setDetailNotice({ leaseId: schedule.lease_id, text: `✓ Early pay window saved: ${result.schedule.earlyPayDays ?? 7} days.` });
       await refresh();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setDetailError({ leaseId: schedule.lease_id, text: error.message }); } finally { setWorking(false); }
   }
   async function updateLeaseTerms(event, lease, schedule) {
-    event.preventDefault(); setWorking(true); setMessage("");
+    event.preventDefault(); setWorking(true); setDetailNotice(null); setDetailError(null);
     const form = new FormData(event.currentTarget);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -208,12 +216,12 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to update the lease terms.");
-      setMessage("Lease terms updated. Future charges will use the new terms.");
+      setDetailNotice({ leaseId: lease.id, text: "✓ Lease terms updated. Future charges will use the new terms." });
       await refresh();
       return true;
-    } catch (error) { setMessage(error.message); return false; } finally { setWorking(false); }
+    } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); return false; } finally { setWorking(false); }
   }
-  async function createSchedule(event, lease) {    event.preventDefault(); setWorking(true); setMessage("");
+  async function createSchedule(event, lease) {    event.preventDefault(); setWorking(true); setDetailNotice(null); setDetailError(null);
     const form = new FormData(event.currentTarget);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -224,20 +232,20 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the rent schedule.");
-      setMessage(`Rent schedule saved: ${result.schedule.id}. You can now activate this lease.`);
+      setDetailNotice({ leaseId: lease.id, text: `✓ Rent schedule saved for ${unitLabelForLease(lease)} — ${money.format(Number(result.schedule.amount_cents ?? Math.round(Number(form.get("monthlyRent")) * 100)) / 100)}/mo, due day ${result.schedule.due_day ?? form.get("dueDay")}. You can now activate this lease.` });
       await refresh();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); } finally { setWorking(false); }
   }
   async function cancelLease(lease) {
-    setWorking(true); setMessage("");
+    setWorking(true); setDetailNotice(null); setDetailError(null);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "cancel-lease", leaseId: lease.id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to cancel the lease.");
-      setMessage(`Lease cancelled: ${result.lease.id}`);
+      setDetailNotice({ leaseId: lease.id, text: `✓ Lease cancelled for ${unitLabelForLease(lease)}.` });
       await refresh();
-    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+    } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); } finally { setWorking(false); }
   }
   async function save(event) {
     event.preventDefault(); setMessage(""); setSaveNotice("");
@@ -289,7 +297,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => { const balanceText = leaseBalanceText(leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })); return <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly{ balanceText ? <> · {balanceText}</> : null}</>; }}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -317,7 +325,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
@@ -344,6 +352,8 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
       <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${STATUS_BADGE_COLORS[lease.status] || "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300"}`}>{lease.status}</span>
     </div>
     {balanceText && <p className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{dueDayText}{startText ? ` · ${startText}` : ""} · Balance: {balanceText}</p>}
+    {notice ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
+    {detailError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{detailError}</p> : null}
     <dl className="mt-5 grid gap-4 sm:grid-cols-2">
       <Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} />
       <Detail label="Due day" value={lease.rent_due_day || "Not recorded"} />
