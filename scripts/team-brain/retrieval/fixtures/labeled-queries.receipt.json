@@ -1,0 +1,11 @@
+{
+  "fixture": "labeled-queries.json",
+  "fixtureSha256": "f8bcf3e377781aca55ae9c4e05f76b2d9869df7caa88e343fe72f03a98343e24",
+  "episodes": 21,
+  "queries": 40,
+  "pins": 2,
+  "oracle": "Expected citations are derived from this fixture file only: per-episode source (repo/path/commit/blob from sourceDefaults plus per-episode overrides), watermark from sourceDefaults, revision from capture order. The oracle never reads runtime output.",
+  "scorer": "citationMatches (retrieval/citation.mjs) compares episodeId, source.repo, source.path, source.commit, source.blob, revision, watermark field by field. Any single mismatch fails binding for that result.",
+  "mutationProof": "A result whose citation commit/blob are replaced with invented values must fail citationMatches; see tbp5Retrieval.test.mjs \"corrupted citation pins fail the scorer\".",
+  "provenance": "Synthetic engineering-memory records authored independently of retrieval/repository.mjs; no tenant, ledger/financial, enrollment, or scheduling content. Re-issue this receipt (recompute fixtureSha256 and counts) whenever the fixture changes, or the receipt test fails."
+}

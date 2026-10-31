@@ -27,6 +27,7 @@ Binding contract: `onyxgolden/forge-ai-drop` →
 | `report/fixtureSchema.mjs` | Synthetic-fixture-only schema validation |
 | `report/stableStringify.mjs` | Key-sorted JSON serialization |
 | `report/generateSchemaSnapshot.mjs` | Schema snapshot generator (used by the snapshot test) |
+| `retrieval/` | **P5**: immutable episode capture + deterministic retrieval (PostgreSQL FTS, exact-ID, scope, pins, four-slot working set) — see `retrieval/README.md` |
 | `runFixtureReport.mjs` | CLI: `--fixture --db --now [--out]` |
 | `fixtures/` | Synthetic fixtures (`schemaVersion: 1`, `synthetic: true`) |
 | `__tests__/` | Unit, PGlite migration/restart, CLI determinism, network-deny tests |
