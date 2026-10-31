@@ -5,7 +5,7 @@ import { badRequest, now } from "./_actions/shared.js";
 import { saveUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
 import {
   saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
-  updateTenantProfile, setPrimaryTenant, reviewAnimal,
+  updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
 } from "./_actions/tenants.js";
 import {
   saveLease, saveSchedule, cancelLease, updateLeaseTerms, generateCharge, voidCharge,
@@ -43,6 +43,8 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "send-tenant-invite": sendTenantInvite,
   "update-tenant-profile": updateTenantProfile,
   "set-primary-tenant": setPrimaryTenant,
+  "add-co-tenant": addCoTenant,
+  "remove-co-tenant": removeCoTenant,
   "save-lease": saveLease,
   "save-schedule": saveSchedule,
   "cancel-lease": cancelLease,

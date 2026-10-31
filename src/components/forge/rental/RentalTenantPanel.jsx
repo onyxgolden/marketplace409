@@ -31,6 +31,30 @@ export function activeBalanceCentsForTenant(tenant, leases, leaseMemberships, op
     .reduce((sum, charge) => sum + Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0), 0);
 }
 
+// Tenants who can be added to a lease as co-tenants: everyone not already
+// on that lease (primary included — the primary is already attached, so
+// offering them again would only produce a 409).
+export function availableCoTenants(tenants, leaseMemberships, leaseId) {
+  if (!leaseId) return [];
+  const onLease = new Set(leaseMemberships.filter((item) => item.lease_id === leaseId).map((item) => item.tenant_id));
+  return tenants.filter((tenant) => !onLease.has(tenant.id));
+}
+
+// Profile-form payload, kept pure so the save path is unit-testable without
+// rendering. FORGE does not collect tenant birth dates -- there is
+// deliberately no dateOfBirth field here.
+export function tenantProfilePayload(form) {
+  const dollars = form.get("monthlyIncome");
+  return { displayName: form.get("tenantName"), phone: form.get("phone"), workPhone: form.get("workPhone"),
+    employerName: form.get("employerName"), employerPhone: form.get("employerPhone"),
+    monthlyIncomeCents: dollars ? Math.round(Number(dollars) * 100) : null,
+    emergencyContactName: form.get("emergencyContactName"), emergencyContactPhone: form.get("emergencyContactPhone"),
+    applicationStatus: form.get("applicationStatus"), applicationSubmittedAt: form.get("applicationSubmittedAt"),
+    screeningProvider: form.get("screeningProvider"), screeningReference: form.get("screeningReference"),
+    screeningStatus: form.get("screeningStatus"), screeningCompletedAt: form.get("screeningCompletedAt"),
+    ssnLastFour: form.get("ssnLastFour"), landlordNotes: form.get("landlordNotes") };
+}
+
 export function tenantHouseholdForSelection(selectedTenant, tenants, leases, leaseMemberships, units) {
   if (!selectedTenant) return { lease: null, unit: null, primaryTenant: null, coTenants: [] };
   const memberships = leaseMemberships.filter((item) => item.tenant_id === selectedTenant.id);
@@ -215,16 +239,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   }
   async function updateProfile(event, tenantId) {
     event.preventDefault(); setWorking(true); setMessage(""); const form = new FormData(event.currentTarget);
-    const dollars = form.get("monthlyIncome");
-    // FORGE does not collect tenant birth dates -- there is deliberately no dateOfBirth field here.
-    const profile = { phone: form.get("phone"), workPhone: form.get("workPhone"),
-      employerName: form.get("employerName"), employerPhone: form.get("employerPhone"),
-      monthlyIncomeCents: dollars ? Math.round(Number(dollars) * 100) : null,
-      emergencyContactName: form.get("emergencyContactName"), emergencyContactPhone: form.get("emergencyContactPhone"),
-      applicationStatus: form.get("applicationStatus"), applicationSubmittedAt: form.get("applicationSubmittedAt"),
-      screeningProvider: form.get("screeningProvider"), screeningReference: form.get("screeningReference"),
-      screeningStatus: form.get("screeningStatus"), screeningCompletedAt: form.get("screeningCompletedAt"),
-      ssnLastFour: form.get("ssnLastFour"), landlordNotes: form.get("landlordNotes") };
+    const profile = tenantProfilePayload(form);
     try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "update-tenant-profile", tenantId, profile }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to update tenant profile.");
@@ -237,6 +252,33 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       body: JSON.stringify({ operation: "set-primary-tenant", leaseId, tenantId }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to change the primary tenant.");
       setMessage("Primary tenant updated."); await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  // Add a second renter to this lease as a co-tenant. The person must already
+  // exist as a tenant record (Tenants → + Add a new tenant) with their own
+  // email — this step only links them to the lease. After adding, their
+  // email + invite card appear below like any other co-tenant.
+  async function addCoTenant(event, leaseId) {
+    event.preventDefault(); setWorking(true); setMessage(""); const form = new FormData(event.currentTarget);
+    const tenantId = form.get("coTenantId");
+    try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "add-co-tenant", leaseId, tenantId }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to add the co-tenant.");
+      const added = tenants.find((item) => item.id === tenantId);
+      setMessage(`Co-tenant added: ${added?.display_name || "tenant"}. Their email and invite card are below.`);
+      await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  // Remove a co-tenant link. The tenant record itself is untouched — the
+  // person keeps their email and portal history and can be re-added. The
+  // primary tenant can never be removed this way (the server refuses it).
+  async function removeCoTenant(leaseId, tenant) {
+    setWorking(true); setMessage("");
+    try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "remove-co-tenant", leaseId, tenantId: tenant.id }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to remove the co-tenant.");
+      setMessage(`Co-tenant removed: ${tenant.display_name}. Their tenant record is untouched and can be re-added.`);
+      await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   // Per-tenant late-fee override: exempt, or per-field overrides of the
@@ -362,7 +404,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
             </div>
           </div>
         </div>}
-        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3><div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div></div>
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3><div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null} removeCoTenant={household.lease ? ()=>removeCoTenant(household.lease.id,coTenant) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>{household.lease && availableCoTenants(tenants, leaseMemberships, household.lease.id).length > 0 && <form onSubmit={(event)=>addCoTenant(event, household.lease.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required defaultValue="" aria-label="Tenant to add as co-tenant" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="" disabled>Select a saved tenant</option>{availableCoTenants(tenants, leaseMemberships, household.lease.id).map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.display_name} — {candidate.email}</option>)}</select></label><button disabled={working} className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button></form>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></>}
         />
       </div>
@@ -465,7 +507,7 @@ function LeaseSummaryStrip({lease,unit}) {
   </dl>;
 }
 function Field({label,name,defaultValue="",type="text",step}) { return <label className="text-sm font-bold text-slate-900 dark:text-white">{label}<input name={name} type={type} step={step} defaultValue={defaultValue??""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label> }
-function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId,lateFeeOverride,saveLateFeeOverride,workspacePaymentPolicy,paymentPolicyOverride,savePaymentPolicyOverride}) {
+function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,removeCoTenant,sendInviteEmail,leaseId,lateFeeOverride,saveLateFeeOverride,workspacePaymentPolicy,paymentPolicyOverride,savePaymentPolicyOverride}) {
   // Join-up invite confirmation (mirrors the borrower-invite pattern: checkbox
   // plus a typed phrase). The button fires a real email, so a single click
   // must never send it.
@@ -475,7 +517,7 @@ function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadT
   function openInviteConfirm() { setShowInviteConfirm(true); setInviteAck(false); setInviteConfirmText(""); }
   // Dense record section: a headed section with a top divider, not a floating card.
   return <section aria-label={title} className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
-  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">{title}</p><h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">{tenant.display_name}</h4></div>{makePrimary&&<button type="button" disabled={working} onClick={makePrimary} className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-bold text-sky-800 dark:text-sky-300">Make primary tenant</button>}</div>
+  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">{title}</p><h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">{tenant.display_name}</h4></div>{makePrimary&&<button type="button" disabled={working} onClick={makePrimary} className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-bold text-sky-800 dark:text-sky-300">Make primary tenant</button>}{removeCoTenant&&<button type="button" disabled={working} onClick={removeCoTenant} className="rounded-lg border border-red-300 px-3 py-2 text-sm font-bold text-red-800 dark:text-red-300">Remove co-tenant</button>}</div>
   <div className="mt-4"><RentalPhotoUpload entityType="tenant" entityId={tenant.id} photoUrl={tenant.photo_url} onUploaded={loadTenants}/></div>
   <form key={`email-${tenant.id}`} onSubmit={(event)=>updateEmail(event,tenant.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Contact / portal email<input name="portalEmail" type="email" required defaultValue={tenant.email} aria-label={`Portal email for ${tenant.display_name}`} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label><button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white dark:bg-amber-400 dark:text-slate-950">Update email</button></form>
   {!tenant.auth_user_id && <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
@@ -506,7 +548,7 @@ function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadT
     </div>
   </div>}
   <form key={`profile-${tenant.id}`} onSubmit={(event)=>updateProfile(event,tenant.id)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    <Field label="Mobile phone" name="phone" type="tel" defaultValue={tenant.phone}/><Field label="Work phone" name="workPhone" type="tel" defaultValue={tenant.work_phone}/>
+    <Field label="Tenant name" name="tenantName" defaultValue={tenant.display_name}/><Field label="Mobile phone" name="phone" type="tel" defaultValue={tenant.phone}/><Field label="Work phone" name="workPhone" type="tel" defaultValue={tenant.work_phone}/>
     <Field label="Employer" name="employerName" defaultValue={tenant.employer_name}/><Field label="Employer phone" name="employerPhone" type="tel" defaultValue={tenant.employer_phone}/><Field label="Monthly income" name="monthlyIncome" type="number" step="0.01" defaultValue={tenant.monthly_income_cents==null?"":Number(tenant.monthly_income_cents)/100}/>
     <Field label="Emergency contact" name="emergencyContactName" defaultValue={tenant.emergency_contact_name}/><Field label="Emergency contact phone" name="emergencyContactPhone" type="tel" defaultValue={tenant.emergency_contact_phone}/><Field label="SSN last four only" name="ssnLastFour" defaultValue={tenant.ssn_last_four}/>
     <label className="text-sm font-bold text-slate-900 dark:text-white">Application status<select name="applicationStatus" defaultValue={tenant.application_status||""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Not recorded</option><option value="not_started">Not started</option><option value="received">Received</option><option value="screening">Screening</option><option value="approved">Approved</option><option value="denied">Denied</option><option value="withdrawn">Withdrawn</option></select></label>

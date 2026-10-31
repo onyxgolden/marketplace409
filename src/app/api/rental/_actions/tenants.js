@@ -144,7 +144,16 @@ export async function updateTenantProfile({ authenticated, body, effectiveOwnerI
   // FORGE does not collect tenant birth dates (owner privacy decision). Omitting the key
   // entirely means Supabase's .update() never touches that column, so any birth date already
   // stored on a legacy record is left exactly as-is, neither erased nor overwritten.
-  const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone),
+  // displayName is an optional label-only rename: it never touches the id,
+  // email, memberships, or invite state, none of which are in the update
+  // object below. When provided it must be a non-empty string (after trim);
+  // when absent the stored name is left exactly as-is.
+  let displayName;
+  if (profile.displayName !== undefined && profile.displayName !== null) {
+    if (typeof profile.displayName !== "string" || profile.displayName.trim() === "") return badRequest("Tenant name must not be empty.");
+    displayName = profile.displayName.trim();
+  }
+  const update = { ...(displayName !== undefined ? { display_name: displayName } : {}), phone: optional(profile.phone), work_phone: optional(profile.workPhone),
     employer_name: optional(profile.employerName), employer_phone: optional(profile.employerPhone), monthly_income_cents: monthlyIncomeCents,
     emergency_contact_name: optional(profile.emergencyContactName), emergency_contact_phone: optional(profile.emergencyContactPhone),
     application_status: optional(profile.applicationStatus), application_submitted_at: optional(profile.applicationSubmittedAt),
@@ -164,6 +173,62 @@ export async function setPrimaryTenant({ authenticated, body, effectiveOwnerId }
     p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
   });
   if (error) throw error;
+  return NextResponse.json({ success: true });
+}
+
+// Add a second renter to a lease as a co-tenant. Each tenant record holds one
+// email, so a second renter is a separate tenant record linked here — never a
+// second email on the primary's record. The lease keeps exactly one primary
+// (partial unique index); new links are always occupancy_role "co_tenant"
+// (CHECK constraint allows only "primary" / "co_tenant").
+export async function addCoTenant({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
+  if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
+  const leaseId = body.leaseId.trim();
+  const tenantId = body.tenantId.trim();
+  // Owner-scoped lookups: a lease or tenant from another workspace resolves
+  // to 404, never a 403 that would leak its existence.
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+    .select("id, display_name, email").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+  if (tenantError) throw tenantError;
+  if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+  const { data: existing, error: existingError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId).maybeSingle();
+  if (existingError) throw existingError;
+  if (existing?.occupancy_role === "primary") return NextResponse.json({ error: `${tenant.display_name} is already the primary tenant on this lease.` }, { status: 409 });
+  if (existing) return NextResponse.json({ error: `${tenant.display_name} is already on this lease.` }, { status: 409 });
+  const { data: memberships, error: membershipsError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId);
+  if (membershipsError) throw membershipsError;
+  if (!memberships?.some((membership) => membership.occupancy_role === "primary")) return NextResponse.json({ error: "Lease has no primary tenant; add a primary tenant first." }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rental_lease_tenants").insert({
+    owner_id: effectiveOwnerId, lease_id: leaseId, tenant_id: tenantId, occupancy_role: "co_tenant",
+  }).select("lease_id, tenant_id, occupancy_role").maybeSingle();
+  if (error) throw error;
+  return NextResponse.json({ success: true, membership: data });
+}
+
+// Remove a co-tenant link. The tenant record itself is untouched, so the
+// person keeps their email and portal history and can be re-added. The
+// primary membership is never deleted here — change the primary first via
+// the existing make-primary action, so a lease never ends up primary-less.
+export async function removeCoTenant({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
+  if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
+  const leaseId = body.leaseId.trim();
+  const tenantId = body.tenantId.trim();
+  const { data: membership, error: membershipError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId).maybeSingle();
+  if (membershipError) throw membershipError;
+  if (!membership) return NextResponse.json({ error: "Tenant is not on this lease." }, { status: 404 });
+  if (membership.occupancy_role === "primary") return NextResponse.json({ error: "The primary tenant cannot be removed from a lease. Change the primary tenant first." }, { status: 409 });
+  const { error: deleteError } = await authenticated.supabaseClient.from("rental_lease_tenants").delete()
+    .eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId);
+  if (deleteError) throw deleteError;
   return NextResponse.json({ success: true });
 }
 

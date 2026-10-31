@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalTenantPanel, { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection, tenantInviteLabel } from "./RentalTenantPanel";
+import RentalTenantPanel, { activeBalanceCentsForTenant, availableCoTenants, propertyLabelForTenant, tenantHouseholdForSelection, tenantInviteLabel, tenantProfilePayload } from "./RentalTenantPanel";
+import { clearSWRCache, seedCacheEntry } from "@/hooks/swrCache";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -93,5 +94,121 @@ describe("RentalTenantPanel contextual creation", () => {
     const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "Existing", email: "existing@example.com" }]} recordContext={{ openCreateTenant: true }} />);
     expect(markup).toContain("Tenant name");
     expect(markup).toContain("Save tenant");
+  });
+});
+
+describe("availableCoTenants", () => {
+  const tenants = [
+    { id: "t1", display_name: "Primary", email: "primary@example.com" },
+    { id: "t2", display_name: "Spouse", email: "spouse@example.com" },
+    { id: "t3", display_name: "Unassigned", email: "unassigned@example.com" },
+  ];
+  const memberships = [
+    { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
+    { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
+  ];
+
+  it("lists only tenants not already on the lease", () => {
+    expect(availableCoTenants(tenants, memberships, "l1").map((tenant) => tenant.id)).toEqual(["t3"]);
+  });
+
+  it("lists everyone when nobody is on the lease yet", () => {
+    expect(availableCoTenants(tenants, memberships, "l2").map((tenant) => tenant.id)).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("returns an empty list without a lease id", () => {
+    expect(availableCoTenants(tenants, memberships, null)).toEqual([]);
+  });
+});
+
+describe("RentalTenantPanel co-tenant controls", () => {
+  const primary = { id: "t1", display_name: "Primary", email: "primary@example.com", status: "active" };
+  const spouse = { id: "t2", display_name: "Spouse", email: "spouse@example.com", status: "invited" };
+  const unassigned = { id: "t3", display_name: "Unassigned", email: "unassigned@example.com", status: "invited" };
+  const lease = { id: "l1", unit_id: "u1", status: "active" };
+  const units = [{ id: "u1", label: "4225 Barnhill" }];
+
+  function seed(memberships, tenants) {
+    clearSWRCache();
+    seedCacheEntry("rental:tenants", { tenants, leases: [lease], leaseMemberships: memberships, units, openCharges: [] });
+  }
+  function recordMarkup(recordId) {
+    return renderToStaticMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId }} />);
+  }
+
+  it("lists only tenants not on the lease in the Add co-tenant dropdown", () => {
+    seed([
+      { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
+      { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
+    ], [primary, spouse, unassigned]);
+    const markup = recordMarkup("t1");
+    expect(markup).toContain("Add co-tenant");
+    expect(markup).toContain("Unassigned — unassigned@example.com");
+    expect(markup).not.toContain("Spouse — spouse@example.com");
+    expect(markup).not.toContain("Primary — primary@example.com");
+  });
+
+  it("renders an added co-tenant with email, invite, and remove controls", () => {
+    seed([
+      { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
+      { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
+    ], [primary, spouse, unassigned]);
+    const markup = recordMarkup("t1");
+    expect(markup).toContain("Co-tenants / spouse");
+    expect(markup).toContain("spouse@example.com");
+    expect(markup).toContain("Send invite email");
+    expect(markup).toContain("Remove co-tenant");
+    expect(markup).toContain("Make primary tenant");
+  });
+
+  it("keeps the empty state when no co-tenant is assigned", () => {
+    seed([{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }], [primary, unassigned]);
+    const markup = recordMarkup("t1");
+    expect(markup).toContain("No co-tenant is assigned to this lease.");
+    expect(markup).toContain("Add co-tenant");
+  });
+
+  it("never offers Delete unused duplicate for an attached co-tenant", () => {
+    seed([
+      { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
+      { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
+    ], [primary, spouse, unassigned]);
+    // Opening the co-tenant's record shows the household's primary record;
+    // the delete box keys off the primary's membership, which exists.
+    const markup = recordMarkup("t2");
+    expect(markup).not.toContain("Delete unused duplicate");
+  });
+});
+
+describe("RentalTenantPanel tenant name editing", () => {
+  const primary = { id: "t1", display_name: "Steven & Jessica Crabtree", email: "combined@example.com", status: "active" };
+  const lease = { id: "l1", unit_id: "u1", status: "active" };
+
+  function recordMarkup() {
+    clearSWRCache();
+    seedCacheEntry("rental:tenants", { tenants: [primary], leases: [lease],
+      leaseMemberships: [{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }],
+      units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] });
+    return renderToStaticMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId: "t1" }} />);
+  }
+
+  it("renders a Tenant name field prefilled with the current display name", () => {
+    const markup = recordMarkup();
+    expect(markup).toContain("Tenant name");
+    expect(markup).toContain('name="tenantName"');
+    expect(markup).toContain('value="Steven &amp; Jessica Crabtree"');
+    expect(markup).toContain("Save tenant information");
+  });
+
+  it("builds the save payload from the Tenant name field", () => {
+    const form = new Map([
+      ["tenantName", "Jessica Crabtree"],
+      ["phone", "555-1000"],
+      ["monthlyIncome", ""],
+    ]);
+    const payload = tenantProfilePayload({ get: (name) => form.get(name) ?? null });
+    expect(payload.displayName).toBe("Jessica Crabtree");
+    expect(payload.phone).toBe("555-1000");
+    expect(payload.monthlyIncomeCents).toBeNull();
   });
 });
