@@ -118,6 +118,31 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  // Moves one active external schedule onto FORGE billing. The RPC enforces
+  // the authenticated owner, so this must go through the app session — never
+  // a direct call. Returns a result object so the lease detail can confirm
+  // in place; a failed refresh never clobbers the confirmation.
+  async function activateForgeBilling(lease, schedule, { cutoverDate, reconciliationNote }) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "activate-forge-billing", scheduleId: schedule.id, cutoverDate,
+          reconciliationSummary: reconciliationNote ? { note: reconciliationNote } : {} }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to activate FORGE billing.");
+      const unitLabel = (setup.units || []).find((item) => item.id === lease.unit_id)?.label || lease.unit_id;
+      const memberships = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease.id);
+      const primary = memberships.find((item) => item.occupancy_role === "primary") || memberships[0];
+      const tenantName = (setup.tenants || []).find((item) => item.id === primary?.tenant_id)?.display_name;
+      const notice = tenantName
+        ? `FORGE billing activated for ${unitLabel} — ${tenantName} from ${cutoverDate}.`
+        : `FORGE billing activated for ${unitLabel} from ${cutoverDate}.`;
+      try { await refresh(); } catch { /* confirmation stands; data refreshes next visit */ }
+      return { ok: true, notice };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    } finally { setWorking(false); }
+  }
   async function saveEarlyPay(event, schedule) {
     event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
@@ -234,7 +259,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -262,10 +287,23 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms }) {
+export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
+  const [billingNotice, setBillingNotice] = useState("");
+  const [billingError, setBillingError] = useState("");
   async function handleUpdateTerms(event) {
     if (await onUpdateTerms(event, lease, schedule)) setShowEditTerms(false);
+  }
+  async function handleActivateForgeBilling(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const cutoverDate = form.get("cutoverDate");
+    const reconciliationNote = (form.get("reconciliationNote") || "").trim();
+    if (!cutoverDate) { setBillingError("Pick a cutover date before activating FORGE billing."); return; }
+    setBillingNotice(""); setBillingError("");
+    const result = await onActivateForgeBilling(lease, schedule, { cutoverDate, reconciliationNote });
+    if (result?.ok) setBillingNotice(result.notice);
+    else setBillingError(result?.error || "Unable to activate FORGE billing.");
   }
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -308,6 +346,16 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
         <p className="w-full text-xs text-slate-500 dark:text-slate-400">How many days before the due date next month&apos;s rent appears for the tenant to pay early. 0 = only after the month starts.</p>
       </form>
     )}
+    {schedule && schedule.status === "active" && schedule.collection_mode === "external" && lease.status !== "cancelled" && (
+      <form onSubmit={handleActivateForgeBilling} className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
+        <p className="text-sm font-bold text-slate-700 dark:text-slate-300 sm:col-span-2">This lease is collected outside FORGE, so no charges are generated here. Activate FORGE billing to start collecting from the cutover date.</p>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Cutover date<input name="cutoverDate" type="date" required defaultValue={schedule.effective_start_date || lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">FORGE only collects obligations on or after this date.</span></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Reconciliation note (optional)<input name="reconciliationNote" placeholder="e.g. Outside balance settled through Oct 31" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <button disabled={working} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50 sm:col-span-2">{working ? "Activating…" : "Activate FORGE billing"}</button>
+      </form>
+    )}
+    {billingNotice && <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-base font-black text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100">✓ {billingNotice}</p>}
+    {billingError && <p role="status" className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">{billingError}</p>}
     {lease.status === "draft" && (schedule ? (
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button type="button" disabled={working} onClick={() => onActivate(lease)} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">{working ? "Activating…" : "Activate lease"}</button>
