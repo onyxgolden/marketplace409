@@ -1,7 +1,11 @@
 // Tenant charges — the shared charge-creation service for both entry points:
 // Post Expense → "Charge tenant" and the standalone "Add charge" on the tenant
-// ledger. Ad-hoc charges (damage / fee / utility / other) live on rent_charges
-// with schedule_id NULL (migration 20260926160000); rent billing is untouched.
+// ledger. Ad-hoc charges (damage / fee / utility / proration / other) live on
+// rent_charges with schedule_id NULL (migration 20260926160000); rent billing
+// is otherwise untouched. The one exception: "proration" is a manual rent stub
+// for a partial month the schedule can never generate (e.g. a mid-month
+// move-in). It is fenced by assertNoScheduleRentForMonth below so it can
+// never double-bill a month the schedule already billed.
 //
 // Money-flow honesty (ChatGPT review 2026-09-26, keep this invariant):
 // - An expense + charge is an EXPENSE and a RECEIVABLE, not two expenses. When
@@ -16,12 +20,13 @@
 //   charge does NOT delete the owner's expense. A charge with paid_amount_cents
 //   > 0 cannot be voided — resolve through refunds/credits first.
 
-export const TENANT_CHARGE_TYPES = Object.freeze(["damage", "fee", "utility", "other"]);
+export const TENANT_CHARGE_TYPES = Object.freeze(["damage", "fee", "utility", "proration", "other"]);
 
 export const TENANT_CHARGE_LABELS = Object.freeze({
   damage: "Damage",
   fee: "Fee",
   utility: "Utility reimbursement",
+  proration: "Prorated rent",
   other: "Other charge",
 });
 
@@ -60,7 +65,7 @@ export function validateTenantChargeInput(input) {
   const description = text(input?.description);
   const chargeDate = text(input?.chargeDate);
   if (!leaseId) errors.push("A lease is required for the charge.");
-  if (!TENANT_CHARGE_TYPES.includes(chargeType)) errors.push("Charge type must be damage, fee, utility, or other.");
+  if (!TENANT_CHARGE_TYPES.includes(chargeType)) errors.push("Charge type must be damage, fee, utility, proration, or other.");
   const amountCents = Number(input?.amountCents);
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0) errors.push("Charge amount must be a positive number of cents.");
   if (!description) errors.push("A description is required for the charge.");
@@ -73,6 +78,35 @@ export function validateTenantChargeInput(input) {
     errors: [],
     value: { leaseId, chargeType, amountCents, description, chargeDate: chargeDate || null, dueDate },
   };
+}
+
+// Double-billing guard for manual proration charges. Schedule-generated rent
+// rows carry charge_type 'rent' (column default) with a non-null schedule_id,
+// so a same-month schedule rent row means that month is already billed and a
+// manual stub must be refused. Voided rows never block: a voided schedule
+// charge is not a live billing. dueDate is YYYY-MM-DD; the month window is
+// [YYYY-MM-01, next-month-01).
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+export async function assertNoScheduleRentForMonth(db, { ownerId, leaseId, dueDate }) {
+  const year = Number(dueDate.slice(0, 4));
+  const monthNum = Number(dueDate.slice(5, 7));
+  const month = dueDate.slice(0, 7);
+  const nextMonth = monthNum === 12 ? `${year + 1}-01` : `${year}-${String(monthNum + 1).padStart(2, "0")}`;
+  const { data, error } = await db.from("rent_charges")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("lease_id", leaseId)
+    .eq("charge_type", "rent")
+    .not("schedule_id", "is", null)
+    .neq("status", "void")
+    .is("voided_at", null)
+    .gte("due_date", `${month}-01`)
+    .lt("due_date", `${nextMonth}-01`)
+    .limit(1);
+  if (error) throw error;
+  if (data && data.length > 0) {
+    throw new Error(`Rent for ${MONTH_NAMES[monthNum - 1]} ${year} is already billed by the schedule — a prorated charge cannot be added for that month.`);
+  }
 }
 
 // Standalone charge (no expense): inserts the schedule-less rent_charges row
@@ -88,6 +122,10 @@ export async function createTenantCharge(db, { ownerId, leaseId, chargeType, amo
     .select("id, currency_code").eq("owner_id", ownerId).eq("id", value.leaseId).maybeSingle();
   if (leaseError) throw leaseError;
   if (!lease) throw new Error("Lease was not found.");
+
+  if (value.chargeType === "proration") {
+    await assertNoScheduleRentForMonth(db, { ownerId, leaseId: value.leaseId, dueDate: value.dueDate });
+  }
 
   const id = `rent_charge_tenant_${crypto.randomUUID().replaceAll("-", "")}`;
   const row = {
@@ -124,6 +162,10 @@ export async function createExpenseWithTenantCharge(db, { ownerId, event, charge
   const check = validateTenantChargeInput(charge);
   if (!check.valid) throw new Error(check.errors.join(" "));
   const value = check.value;
+
+  if (value.chargeType === "proration") {
+    await assertNoScheduleRentForMonth(db, { ownerId: ownerId.trim(), leaseId: value.leaseId, dueDate: value.dueDate });
+  }
 
   const { data, error } = await db.rpc("create_expense_with_tenant_charge", {
     p_owner_id: ownerId.trim(),

@@ -278,7 +278,9 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                 onCancel={() => setShowAddCharge(false)}
                 onSaved={(charge) => {
                   setShowAddCharge(false);
-                  setPostedMessage(`Charge posted: ${money.format(Number(charge?.amount_cents || 0) / 100)} — ${charge?.notes || "tenant charge"}.`);
+                  setPostedMessage(charge?.charge_type === "proration"
+                    ? `Prorated rent ${money.format(Number(charge?.amount_cents || 0) / 100)} recorded for ${tenantName || "the tenant"}.`
+                    : `Charge posted: ${money.format(Number(charge?.amount_cents || 0) / 100)} — ${charge?.notes || "tenant charge"}.`);
                   refresh();
                 }} />
             </div>

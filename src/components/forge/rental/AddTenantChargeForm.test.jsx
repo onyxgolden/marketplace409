@@ -145,6 +145,36 @@ describe("AddTenantChargeForm", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Unable to load the tenant's leases/);
   });
 
+  it("offers Prorated rent in the charge type dropdown", async () => {
+    const { container } = renderChargeForm();
+    await flushLeases();
+    const typeSelect = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Charge type"))?.querySelector("select");
+    const options = Array.from(typeSelect.querySelectorAll("option")).map((option) => ({
+      value: option.value,
+      label: option.textContent,
+    }));
+    expect(options).toContainEqual({ value: "proration", label: "Prorated rent" });
+  });
+
+  it("posts a proration charge body when Prorated rent is selected", async () => {
+    const { container, onSaved, posted } = renderChargeForm();
+    await flushLeases();
+    fill(container, "Charge type", "proration");
+    fill(container, "Amount", "1103.23");
+    fill(container, "Description", "Prorated rent Oct 13-31");
+    act(() => { confirmCheckbox(container).click(); });
+    await submitForm(container);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({
+      leaseId: "lease-1",
+      chargeType: "proration",
+      amountCents: 110323,
+      description: "Prorated rent Oct 13-31",
+    });
+    expect(onSaved).toHaveBeenCalled();
+  });
+
   it("blocks with a clear message when the tenant has no lease", async () => {
     const { container, posted } = renderChargeForm({ leases: [] });
     await flushLeases();
