@@ -33,14 +33,28 @@ Baseline: marketplace409 main `9313e75d` (post-#693, post-#695/#696).
   exactly the episode's version. Reads revalidate eligibility; a
   withheld reference reads back as null and discloses no identity. A
   denied displacement preserves the prior valid slot.
-- Capture identity includes visibility, grants as a set,
-  provenanceStatus, and state. A capture differing in any of them is a
-  new episode, never a silent replay of different authority. Exact
-  replays still replay.
-- Archive appends an explicit event row (revision + note/actor/time)
-  and bumps the retrieval revision; the episode row never changes. A
-  latest-state query projects ARCHIVED while an earlier pin projects
-  the original state. Archive replay is idempotent.
+- Capture identity includes visibility, grants as a true set
+  (duplicates removed, then sorted), provenanceStatus, and state. A
+  capture differing in any of them is a new episode, never a silent
+  replay of different authority. Exact replays still replay.
+- Archive appends an explicit event row (revision + full audit
+  identity: required non-empty note and actor, optional operation id
+  and timestamp) and bumps the retrieval revision; the episode row
+  never changes. A latest-state query projects ARCHIVED while an
+  earlier pin projects the original state. An exact archive replay
+  returns replayed:true with no bump and no second event; any changed
+  actor, note, claimed operation id, or claimed timestamp fails with
+  ARCHIVE_REPLAY_CONFLICT, and unknown audit fields or omitted
+  note/actor are refused. Capturing with state ARCHIVED is a
+  separately authorized import path only: it requires an archiveAudit
+  with the same full identity, written as the episode's archive event
+  in the same transaction.
+- Transactions own one physical connection: pool-like handles
+  (connect() + pool counters) check out a client per multi-statement
+  transaction, released in finally; PGlite and checked-out clients run
+  on the dedicated connection. A handle that cannot own a transaction
+  fails loudly with UNSUPPORTED_HANDLE — pool-level query routing is
+  never used for BEGIN/mutation/COMMIT.
 - Concurrency: every operation on one connection serializes through a
   connection-scoped promise chain shared by all repository instances
   on that handle. In-process only; no cross-process fencing is claimed.

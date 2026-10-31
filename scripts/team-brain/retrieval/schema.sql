@@ -78,13 +78,15 @@ CREATE TABLE IF NOT EXISTS tb_working_set (
   PRIMARY KEY (principal, slot)
 );
 
--- Episode lifecycle events (fix round 1, TBP5-003). Episode rows are
--- never UPDATE'd: an archive appends one event row here and bumps the
--- retrieval revision, so a query at an earlier pin still projects the
--- original state while a latest-state query projects ARCHIVED. The
--- event carries its revision plus audit context (note, actor, time);
--- replaying an archive for an already-archived episode is a no-op that
--- neither bumps the revision nor appends a second event.
+-- Episode lifecycle events (fix round 1, TBP5-003; identity hardened
+-- fix round 2, TBP5-009). Episode rows are never UPDATE'd: an archive
+-- appends one event row here and bumps the retrieval revision, so a
+-- query at an earlier pin still projects the original state while a
+-- latest-state query projects ARCHIVED. The event carries its revision
+-- plus full audit identity (note, actor, operation_id, time); an
+-- archive replay compares that full identity, and any changed actor,
+-- note, claimed operation id, or claimed timestamp fails with a named
+-- conflicting-replay result instead of reusing the receipt.
 CREATE TABLE IF NOT EXISTS tb_episode_events (
   event_id BIGSERIAL PRIMARY KEY,
   episode_id TEXT NOT NULL REFERENCES tb_episodes (episode_id),
@@ -92,8 +94,10 @@ CREATE TABLE IF NOT EXISTS tb_episode_events (
   revision BIGINT NOT NULL,
   note TEXT,
   actor TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  operation_id TEXT
 );
+ALTER TABLE tb_episode_events ADD COLUMN IF NOT EXISTS operation_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS tb_episode_events_one_archive_idx
   ON tb_episode_events (episode_id, event_type);
 CREATE INDEX IF NOT EXISTS tb_episode_events_revision_idx

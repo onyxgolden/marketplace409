@@ -22,18 +22,33 @@
 //   3. Immutability. Episodes are never updated or deleted by this
 //      adapter. A replayed capture (same deterministic id) is a no-op
 //      that does not bump the revision. Archive appends an explicit
-//      archive event with its own revision and audit context; the
-//      episode row itself never changes, so a query at an earlier pin
-//      still projects the original state (fix round 1, TBP5-003).
+//      archive event with its own revision and full audit identity;
+//      the episode row itself never changes, so a query at an earlier
+//      pin still projects the original state (fix round 1, TBP5-003).
+//      Fix round 2 (TBP5-009): an archive replay compares the stored
+//      full audit identity — actor, note, claimed operation id, and
+//      claimed timestamp — and any difference fails with a named
+//      conflicting-replay result instead of reusing the receipt.
+//      Capturing with state ARCHIVED is a separately authorized import
+//      path only: it requires an archiveAudit carrying the same full
+//      identity, written as the episode's archive event in the same
+//      transaction; without it the capture is refused.
 //   4. In-process only (001A boundary). Every adapter operation on one
 //      connection runs serialized through a connection-scoped promise
 //      chain shared by every repository instance on that connection,
 //      so concurrent captures in one process cannot interleave inside
-//      one transaction (fix round 1, TBP5-002). No advisory lock, no
-//      fencing, no cross-process safety is claimed: two processes
-//      capturing concurrently may still interleave revisions. Do not
-//      deploy this adapter behind two writers without a separately
-//      reviewed fencing step (P6/P8 territory, Jason-gated).
+//      one transaction (fix round 1, TBP5-002). Fix round 2 (TBP5-008):
+//      serialization alone does not own a transaction on a pool —
+//      each multi-statement transaction runs on one checked-out client
+//      (pool-like handles) or on the dedicated single connection
+//      (PGlite, checked-out pg.Client), so BEGIN, mutation, and COMMIT
+//      always share one physical connection. A handle that cannot own
+//      a transaction fails loudly with UNSUPPORTED_HANDLE instead of
+//      silently claiming durability. No advisory lock, no fencing, no
+//      cross-process safety is claimed: two processes capturing
+//      concurrently may still interleave revisions. Do not deploy this
+//      adapter behind two writers without a separately reviewed
+//      fencing step (P6/P8 territory, Jason-gated).
 //   5. Missing provenance is explicit. An episode captured without a
 //      complete source identity carries provenanceStatus UNAVAILABLE;
 //      retrieval withholds its snippet and body and marks the result
@@ -52,11 +67,13 @@
 //      and revalidated on read; withheld references disclose no
 //      forbidden identity, and a denied displacement preserves the
 //      prior valid slot.
-//   9. Capture identity (fix round 1, TBP5-006) includes consequential
-//      persisted metadata — visibility, grants as a set,
-//      provenanceStatus, state — so a capture that differs in any of
-//      them is a new episode, never a silent replay of different
-//      authority. Exact replays (identical metadata) still replay.
+//   9. Capture identity (fix round 1, TBP5-006; set-normalized fix
+//      round 2, TBP5-010) includes consequential persisted metadata —
+//      visibility, grants as a true set (duplicates removed, then
+//      sorted), provenanceStatus, state — so a capture that differs
+//      in any of them is a new episode, never a silent replay of
+//      different authority. Exact replays (identical metadata) still
+//      replay.
 //
 // Hard gates (never in this slice): no DB role LOGIN/password
 // provisioning, no authority registrations, no worker install or
@@ -104,6 +121,7 @@ const EPISODE_FIELDS = [
   "conflictGroup",
   "provenanceStatus",
   "state",
+  "archiveAudit",
 ];
 
 function rejectUnknownFields(obj, allowed, what) {
@@ -133,6 +151,9 @@ function assertScopeAllowed(scope) {
 // computeEpisodeId agrees with captureEpisode for bare and full inputs
 // alike. A capture that differs in any of them is a different episode;
 // it can never silently replay as different authority.
+// Fix round 2 (TBP5-010): grants canonicalize as a true set —
+// duplicates removed before sorting — so ["a","a"] and ["a"] share
+// one episode id, matching the ON CONFLICT DO NOTHING grant storage.
 export function computeEpisodeId(episode) {
   const canonical = stableStringify({
     scope: episode.scope,
@@ -148,7 +169,7 @@ export function computeEpisodeId(episode) {
     capturedAt: episode.capturedAt,
     conflictGroup: episode.conflictGroup ?? null,
     visibility: episode.visibility ?? "public",
-    grants: [...(episode.grants ?? [])].sort(),
+    grants: [...new Set(episode.grants ?? [])].sort(),
     provenanceStatus: episode.provenanceStatus ?? "COMPLETE",
     state: episode.state ?? "ACTIVE",
   });
@@ -163,6 +184,15 @@ export function computeEpisodeId(episode) {
 // breaks: a failed operation still advances the tail, so a later
 // operation is never starved by an earlier error. This is explicitly
 // in-process only — it fences nothing across processes.
+//
+// Fix round 2 (TBP5-008): serialization by handle identity is NOT
+// transaction ownership on a pool. A pg.Pool's per-call query routing
+// may serve BEGIN, mutation, and COMMIT from different physical
+// connections, so the transaction runner below (runTransaction) binds
+// every multi-statement transaction to one checked-out client for
+// pool-like handles, or to the dedicated single connection otherwise.
+// The lock still wraps the whole checkout + transaction, so no two
+// operations on one handle can interleave even across checkout.
 const CONNECTION_LOCKS = new WeakMap();
 function connectionLock(dbHandle) {
   let entry = CONNECTION_LOCKS.get(dbHandle);
@@ -180,15 +210,122 @@ function connectionLock(dbHandle) {
   };
 }
 
+// A pool-like handle exposes connect() plus pool bookkeeping counters
+// (pg.Pool: totalCount/idleCount/waitingCount). A checked-out pg.Client
+// also has connect(), but no pool counters — it IS a single connection
+// and takes the dedicated-connection path. PGlite has neither.
+function isPoolLikeHandle(dbHandle) {
+  return (
+    typeof dbHandle.connect === "function" &&
+    (typeof dbHandle.totalCount === "number" ||
+      typeof dbHandle.idleCount === "number" ||
+      typeof dbHandle.waitingCount === "number")
+  );
+}
+
+function assertTransactionHandle(dbHandle) {
+  if (!dbHandle || typeof dbHandle.query !== "function") {
+    fail(
+      P5_CODES.UNSUPPORTED_HANDLE,
+      "db handle must expose async query(sql, params)",
+      {},
+    );
+  }
+}
+
+// Runs fn(tx) with tx bound to ONE physical connection for the whole
+// multi-statement transaction. Pool-like handles check out a client
+// (released in finally, even on failure); single-connection handles
+// run on themselves. Transaction statements NEVER run on a pool-level
+// query facade: for a pool, the pool handle's own query is never
+// called here, so BEGIN/mutation/COMMIT cannot scatter across
+// connections. A pool whose connect() yields no usable client fails
+// loudly instead of silently claiming transactional durability.
+async function runTransaction(dbHandle, fn) {
+  if (!isPoolLikeHandle(dbHandle)) return fn(dbHandle);
+  const client = await dbHandle.connect();
+  if (
+    !client ||
+    typeof client.query !== "function" ||
+    typeof client.release !== "function"
+  ) {
+    fail(
+      P5_CODES.UNSUPPORTED_HANDLE,
+      "pool connect() must yield a client with query() and release()",
+      {},
+    );
+  }
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
+// Archive audit identity (fix round 2, TBP5-009). note and actor are
+// required and non-empty; operationId and timestamp are optional
+// bindings. Unknown fields are rejected — a typo like { acotr } fails
+// instead of silently discarding. The normalized form is what replay
+// comparison uses: required fields always compare; optional bindings
+// compare when the replay call claims them.
+const ARCHIVE_AUDIT_FIELDS = ["note", "actor", "operationId", "timestamp"];
+function validateArchiveAudit(audit, what) {
+  if (audit === null || typeof audit !== "object" || Array.isArray(audit)) {
+    fail(CODES.INVALID_FIELD, `${what} must be an object`, {});
+  }
+  rejectUnknownFields(audit, ARCHIVE_AUDIT_FIELDS, what);
+  assertNonEmptyString(audit.note, `${what}.note`);
+  assertNonEmptyString(audit.actor, `${what}.actor`);
+  if (audit.operationId !== undefined && audit.operationId !== null) {
+    assertNonEmptyString(audit.operationId, `${what}.operationId`);
+  }
+  if (audit.timestamp !== undefined && audit.timestamp !== null) {
+    assertUtcIso(audit.timestamp, `${what}.timestamp`);
+  }
+  return {
+    note: audit.note,
+    actor: audit.actor,
+    operationId: audit.operationId ?? null,
+    timestamp: audit.timestamp ?? null,
+  };
+}
+
+// Compares a claimed audit against a stored archive event row
+// ({ note, actor, operation_id, created_at }). Any difference in a
+// compared field fails with a named conflicting-replay result; the
+// caller never reuses a receipt for a different audit claim.
+function assertArchiveIdentityMatches(stored, claimed, what) {
+  const mismatch =
+    claimed.note !== stored.note ||
+    claimed.actor !== stored.actor ||
+    (claimed.operationId !== null && claimed.operationId !== stored.operation_id) ||
+    (claimed.timestamp !== null && claimed.timestamp !== stored.created_at);
+  if (mismatch) {
+    fail(
+      P5_CODES.ARCHIVE_REPLAY_CONFLICT,
+      `${what} does not match the stored archive event`,
+      {},
+    );
+  }
+}
+
 export function loadSchemaSql() {
   return readFileSync(join(HERE, "schema.sql"), "utf8");
 }
 
 export async function migrate(db) {
+  if (!db || typeof db.exec !== "function") {
+    fail(
+      P5_CODES.UNSUPPORTED_HANDLE,
+      "migrate requires a handle with exec(sql) (PGlite-style single connection)",
+      {},
+    );
+  }
   await db.exec(loadSchemaSql());
 }
 
 export function createRetrievalRepository(db) {
+  assertTransactionHandle(db);
   async function latestRevision() {
     const { rows } = await db.query(
       "SELECT revision FROM tb_retrieval_revisions WHERE id = 1",
@@ -302,6 +439,26 @@ export function createRetrievalRepository(db) {
     if (!["ACTIVE", "ARCHIVED"].includes(state)) {
       fail(CODES.INVALID_FIELD, "state must be ACTIVE or ARCHIVED", { state });
     }
+    // Fix round 2 (TBP5-009): capturing with state ARCHIVED is a
+    // separately authorized import path only. It requires an
+    // archiveAudit carrying the same full audit identity an
+    // archiveEpisode call would, written as the episode's archive
+    // event in the same transaction — otherwise the capture would
+    // bypass the event/audit contract. An archiveAudit on an ACTIVE
+    // capture is meaningless and refused.
+    let archiveAudit = null;
+    if (state === "ARCHIVED") {
+      if (episode.archiveAudit === undefined || episode.archiveAudit === null) {
+        fail(
+          P5_CODES.ARCHIVE_AUDIT_REQUIRED,
+          "capture with state ARCHIVED requires archiveAudit with note and actor",
+          {},
+        );
+      }
+      archiveAudit = validateArchiveAudit(episode.archiveAudit, "archiveAudit");
+    } else if (episode.archiveAudit !== undefined && episode.archiveAudit !== null) {
+      fail(CODES.INVALID_FIELD, "archiveAudit is only valid with state ARCHIVED", {});
+    }
     const grants = episode.grants ?? [];
     if (!Array.isArray(grants) || grants.some((g) => typeof g !== "string" || g === "")) {
       fail(CODES.INVALID_FIELD, "grants must be an array of non-empty strings", {});
@@ -311,67 +468,107 @@ export function createRetrievalRepository(db) {
     }
 
     const episodeId = computeEpisodeId(episode);
-    const existing = await db.query(
-      "SELECT revision FROM tb_episodes WHERE episode_id = $1",
-      [episodeId],
-    );
-    if (existing.rows.length) {
-      return {
-        episodeId,
-        revision: Number(existing.rows[0].revision),
-        replayed: true,
-      };
-    }
-
     const capturedAtMs = utcIsoToMs(episode.capturedAt, "capturedAt");
-    try {
-      await db.query("BEGIN");
-      const bumped = await db.query(
-        "UPDATE tb_retrieval_revisions SET revision = revision + 1 WHERE id = 1 RETURNING revision",
+    // The whole read/check/write sequence runs on one transaction
+    // owner (fix round 2, TBP5-008): for a pool-like handle the lookup
+    // and the transaction share the checked-out client, so the
+    // existence check cannot observe a different connection's state
+    // than the insert lands on. For a single connection tx === db and
+    // the behavior is unchanged. The replay early-return happens
+    // before BEGIN, so no transaction is left open.
+    return runTransaction(db, async (tx) => {
+      const existing = await tx.query(
+        "SELECT revision, state FROM tb_episodes WHERE episode_id = $1",
+        [episodeId],
       );
-      const revision = Number(bumped.rows[0].revision);
-      await db.query(
-        `INSERT INTO tb_episodes (
-          episode_id, scope, title, body, source_repo, source_path,
-          source_commit, source_blob, source_watermark, captured_at,
-          captured_at_ms, revision, state, visibility, provenance_status,
-          conflict_group
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-        [
+      if (existing.rows.length) {
+        // An ARCHIVED replay must present the same audit identity as
+        // the stored import/archive event; a different claim fails
+        // instead of silently reusing the receipt.
+        if (existing.rows[0].state === "ARCHIVED") {
+          const event = await tx.query(
+            "SELECT note, actor, operation_id, created_at FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
+            [episodeId],
+          );
+          if (!event.rows.length) {
+            fail(
+              P5_CODES.ARCHIVE_REPLAY_CONFLICT,
+              "archived episode has no archive event to replay against",
+              { episodeId },
+            );
+          }
+          assertArchiveIdentityMatches(event.rows[0], archiveAudit, "archiveAudit");
+        }
+        return {
           episodeId,
-          episode.scope,
-          episode.title,
-          episode.body,
-          episode.source.repo,
-          episode.source.path,
-          episode.source.commit ?? null,
-          episode.source.blob ?? null,
-          episode.source.watermark,
-          episode.capturedAt,
-          capturedAtMs,
-          revision,
-          state,
-          visibility,
-          provenanceStatus,
-          episode.conflictGroup ?? null,
-        ],
-      );
-      for (const principal of grants) {
-        await db.query(
-          "INSERT INTO tb_episode_grants (episode_id, principal) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [episodeId, principal],
-        );
+          revision: Number(existing.rows[0].revision),
+          replayed: true,
+        };
       }
-      await db.query("COMMIT");
-      return { episodeId, revision, replayed: false };
-    } catch (err) {
+
+      await tx.query("BEGIN");
       try {
-        await db.query("ROLLBACK");
-      } catch {
-        // Rollback failure must not mask the original error.
+        const bumped = await tx.query(
+          "UPDATE tb_retrieval_revisions SET revision = revision + 1 WHERE id = 1 RETURNING revision",
+        );
+        const revision = Number(bumped.rows[0].revision);
+        await tx.query(
+          `INSERT INTO tb_episodes (
+            episode_id, scope, title, body, source_repo, source_path,
+            source_commit, source_blob, source_watermark, captured_at,
+            captured_at_ms, revision, state, visibility, provenance_status,
+            conflict_group
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [
+            episodeId,
+            episode.scope,
+            episode.title,
+            episode.body,
+            episode.source.repo,
+            episode.source.path,
+            episode.source.commit ?? null,
+            episode.source.blob ?? null,
+            episode.source.watermark,
+            episode.capturedAt,
+            capturedAtMs,
+            revision,
+            state,
+            visibility,
+            provenanceStatus,
+            episode.conflictGroup ?? null,
+          ],
+        );
+        for (const principal of [...new Set(grants)]) {
+          await tx.query(
+            "INSERT INTO tb_episode_grants (episode_id, principal) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            [episodeId, principal],
+          );
+        }
+        if (state === "ARCHIVED") {
+          await tx.query(
+            `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id)
+             VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6)`,
+            [
+              episodeId,
+              revision,
+              archiveAudit.note,
+              archiveAudit.actor,
+              archiveAudit.timestamp ?? new Date().toISOString(),
+              archiveAudit.operationId,
+            ],
+          );
+        }
+        await tx.query("COMMIT");
+        return { episodeId, revision, replayed: false };
+      } catch (err) {
+        try {
+          await tx.query("ROLLBACK");
+        } catch {
+          // Rollback failure must not mask the original error.
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }
 
   async function grantEpisode(episodeId, principal) {
@@ -393,23 +590,18 @@ export function createRetrievalRepository(db) {
 
   // Archive appends an explicit archive event, it never rewrites the
   // episode row (fix round 1, TBP5-003). The event carries its own
-  // revision (a fresh bump of the retrieval counter) plus audit
-  // context (optional note/actor, timestamp). Search projects the
-  // state applicable at as_of: an archive event at or below as_of
-  // yields ARCHIVED, an earlier pin still yields the original state.
-  // Replaying an archive for an already-archived episode is a no-op:
-  // same event revision, no second event, no revision bump.
+  // revision (a fresh bump of the retrieval counter) plus full audit
+  // identity. Fix round 2 (TBP5-009): note and actor are REQUIRED and
+  // non-empty, unknown fields are rejected, and a replay compares the
+  // stored full identity — an exact replay returns replayed:true with
+  // no bump and no second event, while any changed actor, note,
+  // claimed operation id, or claimed timestamp fails with a named
+  // conflicting-replay result. Validation runs before the replay
+  // return, so an omitted-audit or typo call can never reuse a
+  // receipt. Episode existence is checked first, so archiving an
+  // unknown episode still reports UNKNOWN_EPISODE.
   async function archiveEpisode(episodeId, audit = {}) {
     assertNonEmptyString(episodeId, "episodeId");
-    if (audit === null || typeof audit !== "object" || Array.isArray(audit)) {
-      fail(CODES.INVALID_FIELD, "audit must be an object", {});
-    }
-    if (audit.note !== undefined && audit.note !== null && typeof audit.note !== "string") {
-      fail(CODES.INVALID_FIELD, "audit.note must be a string", {});
-    }
-    if (audit.actor !== undefined && audit.actor !== null && typeof audit.actor !== "string") {
-      fail(CODES.INVALID_FIELD, "audit.actor must be a string", {});
-    }
     const found = await db.query(
       "SELECT episode_id FROM tb_episodes WHERE episode_id = $1",
       [episodeId],
@@ -417,34 +609,45 @@ export function createRetrievalRepository(db) {
     if (!found.rows.length) {
       fail(P5_CODES.UNKNOWN_EPISODE, `unknown episode: ${episodeId}`, { episodeId });
     }
+    const claimed = validateArchiveAudit(audit, "audit");
     const prior = await db.query(
-      "SELECT revision FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
+      "SELECT revision, note, actor, operation_id, created_at FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
       [episodeId],
     );
     if (prior.rows.length) {
+      assertArchiveIdentityMatches(prior.rows[0], claimed, "audit");
       return { episodeId, state: "ARCHIVED", revision: Number(prior.rows[0].revision), replayed: true };
     }
-    try {
-      await db.query("BEGIN");
-      const bumped = await db.query(
-        "UPDATE tb_retrieval_revisions SET revision = revision + 1 WHERE id = 1 RETURNING revision",
-      );
-      const revision = Number(bumped.rows[0].revision);
-      await db.query(
-        `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at)
-         VALUES ($1, 'ARCHIVED', $2, $3, $4, $5)`,
-        [episodeId, revision, audit.note ?? null, audit.actor ?? null, new Date().toISOString()],
-      );
-      await db.query("COMMIT");
-      return { episodeId, state: "ARCHIVED", revision, replayed: false };
-    } catch (err) {
+    return runTransaction(db, async (tx) => {
+      await tx.query("BEGIN");
       try {
-        await db.query("ROLLBACK");
-      } catch {
-        // Rollback failure must not mask the original error.
+        const bumped = await tx.query(
+          "UPDATE tb_retrieval_revisions SET revision = revision + 1 WHERE id = 1 RETURNING revision",
+        );
+        const revision = Number(bumped.rows[0].revision);
+        await tx.query(
+          `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at, operation_id)
+           VALUES ($1, 'ARCHIVED', $2, $3, $4, $5, $6)`,
+          [
+            episodeId,
+            revision,
+            claimed.note,
+            claimed.actor,
+            claimed.timestamp ?? new Date().toISOString(),
+            claimed.operationId,
+          ],
+        );
+        await tx.query("COMMIT");
+        return { episodeId, state: "ARCHIVED", revision, replayed: false };
+      } catch (err) {
+        try {
+          await tx.query("ROLLBACK");
+        } catch {
+          // Rollback failure must not mask the original error.
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }
 
   async function pinRevision(pin, revision) {
@@ -797,9 +1000,12 @@ export function createRetrievalRepository(db) {
   // the shared connection lock (fix round 1, TBP5-002), so concurrent
   // calls in one process serialize end to end — read, check, write,
   // commit — and no caller's transaction can swallow another's
-  // acknowledged work. Internal calls above use the unlocked
-  // implementations directly; only the returned wrappers lock, so
-  // there is no re-entrant deadlock.
+  // acknowledged work. Multi-statement transactions additionally bind
+  // to one transaction owner via runTransaction (fix round 2,
+  // TBP5-008): a checked-out client for pool-like handles, the
+  // dedicated connection otherwise. Internal calls above use the
+  // unlocked implementations directly; only the returned wrappers
+  // lock, so there is no re-entrant deadlock.
   const withLock = connectionLock(db);
   return {
     migrate,

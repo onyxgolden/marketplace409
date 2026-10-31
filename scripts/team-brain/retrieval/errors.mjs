@@ -27,4 +27,17 @@ export const P5_CODES = {
   ACCESS_DENIED: "ACCESS_DENIED",
   REVISION_MISMATCH: "REVISION_MISMATCH",
   CAPTURE_CONFLICT: "CAPTURE_CONFLICT",
+  // Fix round 2 (ChatGPT NEEDS CHANGES 2026-10-31, TBP5-008..010).
+  // UNSUPPORTED_HANDLE: the db handle cannot own a multi-statement
+  //   transaction (no query function, or a pool-like handle whose
+  //   connect() yields no usable checked-out client). Raised loudly
+  //   instead of silently claiming transactional durability.
+  // ARCHIVE_REPLAY_CONFLICT: an archive (re)claim whose full audit
+  //   identity differs from the stored archive event — changed actor,
+  //   note, claimed operation id, or claimed timestamp.
+  // ARCHIVE_AUDIT_REQUIRED: a capture with state ARCHIVED carries no
+  //   archiveAudit, so it would bypass the event/audit contract.
+  UNSUPPORTED_HANDLE: "UNSUPPORTED_HANDLE",
+  ARCHIVE_REPLAY_CONFLICT: "ARCHIVE_REPLAY_CONFLICT",
+  ARCHIVE_AUDIT_REQUIRED: "ARCHIVE_AUDIT_REQUIRED",
 };

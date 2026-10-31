@@ -82,6 +82,12 @@ async function seedFixture(repo) {
       conflictGroup: ep.conflictGroup ?? null,
       provenanceStatus: ep.provenanceStatus ?? "COMPLETE",
       state: ep.state ?? "ACTIVE",
+      // Fix round 2 (TBP5-009): the fixture's ARCHIVED episode enters
+      // through the authorized import path, with the same full audit
+      // identity an archiveEpisode call would carry.
+      ...(ep.state === "ARCHIVED"
+        ? { archiveAudit: { note: "Fixture import: archived at capture.", actor: "fixture" } }
+        : {}),
     });
     keyToId[ep.key] = captured.episodeId;
     keyToRevision[ep.key] = captured.revision;
@@ -448,7 +454,7 @@ describe("P5 search", () => {
 
   it30("archived episodes stay retrievable, flagged ARCHIVED", async () => {
     const captured = await repo.captureEpisode(episode());
-    await repo.archiveEpisode(captured.episodeId);
+    await repo.archiveEpisode(captured.episodeId, { note: "Retired.", actor: "muse" });
     const res = await repo.searchMemory({ query: "queue oldest", principal: "muse" });
     expect(res.results.length).toBe(1);
     expect(res.results[0].state).toBe("ARCHIVED");
@@ -876,10 +882,10 @@ describe("P5 fix round 1 — TBP5-001..007 regressions", () => {
     expect(atLatest.dbRevision).toBe(2);
   });
 
-  it30("TBP5-003: archive replay is idempotent and the event row carries revision + audit context", async () => {
+  it30("TBP5-009: exact archive replay returns replayed:true with no bump and no second event", async () => {
     const captured = await repo.captureEpisode(synth());
     const first = await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
-    const second = await repo.archiveEpisode(captured.episodeId);
+    const second = await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
     expect(second).toMatchObject({ episodeId: captured.episodeId, state: "ARCHIVED", revision: first.revision, replayed: true });
     expect(await repo.latestRevision()).toBe(first.revision);
     const { rows } = await db.query(
@@ -891,6 +897,143 @@ describe("P5 fix round 1 — TBP5-001..007 regressions", () => {
     expect(Number(rows[0].revision)).toBe(first.revision);
     expect(rows[0].note).toBe("n");
     expect(rows[0].actor).toBe("muse");
+  });
+
+  it30("TBP5-009: one-field-at-a-time audit mismatches fail with ARCHIVE_REPLAY_CONFLICT", async () => {
+    const captured = await repo.captureEpisode(synth());
+    const first = await repo.archiveEpisode(captured.episodeId, {
+      note: "approved",
+      actor: "muse",
+      operationId: "op-1",
+      timestamp: "2026-10-31T00:00:00Z",
+    });
+    // Changed note, changed actor, changed operation id, changed
+    // claimed timestamp — each alone must fail, never replay.
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "different", actor: "muse", operationId: "op-1", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "other", operationId: "op-1", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "muse", operationId: "op-2", timestamp: "2026-10-31T00:00:00Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "approved", actor: "muse", operationId: "op-1", timestamp: "2026-10-31T00:00:01Z" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    // The failed replays changed nothing: same revision, one event,
+    // and the exact replay still succeeds afterward.
+    expect(await repo.latestRevision()).toBe(first.revision);
+    const { rows } = await db.query(
+      "SELECT COUNT(*) AS c FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(Number(rows[0].c)).toBe(1);
+    const exact = await repo.archiveEpisode(captured.episodeId, {
+      note: "approved",
+      actor: "muse",
+      operationId: "op-1",
+      timestamp: "2026-10-31T00:00:00Z",
+    });
+    expect(exact.replayed).toBe(true);
+    expect(exact.revision).toBe(first.revision);
+  });
+
+  it30("TBP5-009: omitted audit and typo/unknown fields are refused, never replayed", async () => {
+    const captured = await repo.captureEpisode(synth());
+    await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
+    // The verdict's exact gap: a second call supplying no audit fields
+    // was accepted as idempotent replay. Now it is refused.
+    await expect(repo.archiveEpisode(captured.episodeId)).rejects.toMatchObject({
+      code: "INVALID_FIELD",
+    });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "n" }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { actor: "muse" }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    // A typo is silently discarded by no one: unknown fields fail.
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse", acotr: "muse" }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse", reason: "extra" }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    // Empty strings are not audit identity either.
+    await expect(
+      repo.archiveEpisode(captured.episodeId, { note: "", actor: "muse" }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    const { rows } = await db.query(
+      "SELECT COUNT(*) AS c FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(Number(rows[0].c)).toBe(1);
+  });
+
+  it30("TBP5-009: import path — ARCHIVED capture writes the event; replay compares import audit", async () => {
+    const imported = await repo.captureEpisode(
+      synth({
+        title: "Imported archived",
+        body: "An imported archived synthetic rule.",
+        state: "ARCHIVED",
+        archiveAudit: { note: "imported", actor: "muse", operationId: "import-1" },
+      }),
+    );
+    expect(imported.replayed).toBe(false);
+    const { rows } = await db.query(
+      "SELECT note, actor, operation_id, revision FROM tb_episode_events WHERE episode_id = $1",
+      [imported.episodeId],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].note).toBe("imported");
+    expect(rows[0].actor).toBe("muse");
+    expect(rows[0].operation_id).toBe("import-1");
+    expect(Number(rows[0].revision)).toBe(imported.revision);
+    // archiveEpisode against the import event: exact identity replays,
+    // a different claim conflicts — the import does not bypass the
+    // event/audit contract.
+    const replay = await repo.archiveEpisode(imported.episodeId, {
+      note: "imported",
+      actor: "muse",
+      operationId: "import-1",
+    });
+    expect(replay).toMatchObject({ state: "ARCHIVED", revision: imported.revision, replayed: true });
+    await expect(
+      repo.archiveEpisode(imported.episodeId, { note: "changed", actor: "muse", operationId: "import-1" }),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+    // Capture-level replay of the import: same audit replays, a
+    // different audit conflicts instead of silently reusing the id.
+    const again = await repo.captureEpisode(
+      synth({
+        title: "Imported archived",
+        body: "An imported archived synthetic rule.",
+        state: "ARCHIVED",
+        archiveAudit: { note: "imported", actor: "muse", operationId: "import-1" },
+      }),
+    );
+    expect(again.episodeId).toBe(imported.episodeId);
+    expect(again.replayed).toBe(true);
+    await expect(
+      repo.captureEpisode(
+        synth({
+          title: "Imported archived",
+          body: "An imported archived synthetic rule.",
+          state: "ARCHIVED",
+          archiveAudit: { note: "different", actor: "muse", operationId: "import-1" },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_REPLAY_CONFLICT });
+  });
+
+  it30("TBP5-009: ARCHIVED capture without audit refused; ACTIVE capture with audit refused", async () => {
+    await expect(
+      repo.captureEpisode(synth({ state: "ARCHIVED" })),
+    ).rejects.toMatchObject({ code: P5_CODES.ARCHIVE_AUDIT_REQUIRED });
+    await expect(
+      repo.captureEpisode(synth({ archiveAudit: { note: "n", actor: "muse" } })),
+    ).rejects.toMatchObject({ code: "INVALID_FIELD" });
+    expect(await repo.latestRevision()).toBe(0);
   });
 
   it30("TBP5-004: future pin refused with no side effect; future asOf refused", async () => {
@@ -1009,8 +1152,15 @@ describe("P5 fix round 1 — TBP5-001..007 regressions", () => {
     const active = await repo.captureEpisode(
       synth({ title: "State partner", body: "State partner body." }),
     );
+    // Fix round 2 (TBP5-009): an ARCHIVED capture enters only through
+    // the authorized import path, with full archive audit identity.
     const archivedState = await repo.captureEpisode(
-      synth({ title: "State partner", body: "State partner body.", state: "ARCHIVED" }),
+      synth({
+        title: "State partner",
+        body: "State partner body.",
+        state: "ARCHIVED",
+        archiveAudit: { note: "Imported archived.", actor: "muse" },
+      }),
     );
     expect(archivedState.episodeId).not.toBe(active.episodeId);
     expect(archivedState.replayed).toBe(false);
@@ -1052,5 +1202,205 @@ describe("P5 fix round 1 — TBP5-001..007 regressions", () => {
     expect(receipt.episodes).toBe(fixture.episodes.length);
     expect(receipt.queries).toBe(fixture.queries.length);
     expect(receipt.pins).toBe(fixture.pins.length);
+  });
+});
+
+describe("P5 fix round 2 — TBP5-008..010", () => {
+  let db;
+  let repo;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await migrate(db);
+    repo = createRetrievalRepository(db);
+  }, 60000);
+  afterAll(async () => {
+    await db.close();
+  });
+  beforeEach(async () => {
+    await truncateAll(db);
+  });
+
+  const synthSrc = {
+    repo: "synthetic/engineering",
+    path: "fixtures/decision.md",
+    commit: "a".repeat(40),
+    blob: "b".repeat(40),
+    watermark: "synthetic@1",
+  };
+  const synth = (overrides = {}) => ({
+    scope: "engineering",
+    title: "Queue decision",
+    body: "The synthetic queue rule orders tasks oldest first.",
+    source: { ...synthSrc },
+    capturedAt: "2026-10-14T16:00:00Z",
+    ...overrides,
+  });
+
+  // A deterministic stand-in for pg.Pool: N independent PGlite
+  // databases. connect() round-robins checked-out clients; pool-level
+  // query() round-robins per call. The pool markers (totalCount etc.)
+  // are what classify it as pool-like. Because the underlying
+  // databases share nothing, any transaction scattered across them is
+  // observable: no single connection ends up with both the episode row
+  // and the revision bump. On the pre-fix code this test's binding
+  // assertions fail (BEGIN/INSERT/COMMIT scatter); on the fixed code
+  // they pass.
+  class FakePool {
+    constructor(count) {
+      this.connections = [];
+      this.nextConnect = 0;
+      this.nextQuery = 0;
+      this.poolQueryCalls = 0;
+      this.totalCount = count;
+      this.idleCount = count;
+      this.waitingCount = 0;
+    }
+    static async create(count) {
+      const pool = new FakePool(count);
+      for (let i = 0; i < count; i++) {
+        const pg = new PGlite();
+        await migrate(pg);
+        pool.connections.push({ pg, statements: [] });
+      }
+      return pool;
+    }
+    async connect() {
+      const entry = this.connections[this.nextConnect % this.connections.length];
+      this.nextConnect += 1;
+      return {
+        query: async (sql, params) => {
+          entry.statements.push(sql);
+          return entry.pg.query(sql, params);
+        },
+        release: () => {},
+      };
+    }
+    async query(sql, params) {
+      this.poolQueryCalls += 1;
+      const entry = this.connections[this.nextQuery % this.connections.length];
+      this.nextQuery += 1;
+      return entry.pg.query(sql, params);
+    }
+    async closeAll() {
+      for (const entry of this.connections) await entry.pg.close();
+    }
+  }
+
+  async function connectionState(entry) {
+    const { rows: erows } = await entry.pg.query("SELECT COUNT(*) AS c FROM tb_episodes");
+    const { rows: rrows } = await entry.pg.query(
+      "SELECT revision FROM tb_retrieval_revisions WHERE id = 1",
+    );
+    return { episodes: Number(erows[0].c), revision: Number(rrows[0].revision) };
+  }
+
+  it30("TBP5-008: pool transactions bind BEGIN..COMMIT to one checked-out connection", async () => {
+    const pool = await FakePool.create(2);
+    try {
+      const poolRepo = createRetrievalRepository(pool);
+      const first = await poolRepo.captureEpisode(synth());
+      expect(first).toMatchObject({ replayed: false, revision: 1 });
+      // No pool-level query routing happened during the transaction.
+      expect(pool.poolQueryCalls).toBe(0);
+      // Exactly one underlying connection holds BOTH the episode row
+      // and the revision bump; the other holds nothing.
+      const states = [await connectionState(pool.connections[0]), await connectionState(pool.connections[1])];
+      expect(states.filter((s) => s.episodes === 1 && s.revision === 1).length).toBe(1);
+      expect(states.filter((s) => s.episodes === 0 && s.revision === 0).length).toBe(1);
+      // The transaction's statements all hit that one connection.
+      const txEntries = pool.connections.filter((e) => e.statements.includes("BEGIN"));
+      expect(txEntries.length).toBe(1);
+      expect(txEntries[0].statements).toContain("COMMIT");
+      // A second, different capture checks out the OTHER connection
+      // and is likewise whole there.
+      const second = await poolRepo.captureEpisode(
+        synth({ title: "Second decision", body: "A second synthetic rule." }),
+      );
+      expect(second).toMatchObject({ replayed: false, revision: 1 });
+      const states2 = [await connectionState(pool.connections[0]), await connectionState(pool.connections[1])];
+      expect(states2.filter((s) => s.episodes === 1 && s.revision === 1).length).toBe(2);
+      expect(pool.connections.filter((e) => e.statements.includes("BEGIN")).length).toBe(2);
+    } finally {
+      await pool.closeAll();
+    }
+  });
+
+  it30("TBP5-008: a checked-out client (even one with connect()) takes the dedicated-connection path", async () => {
+    const pg = new PGlite();
+    try {
+      await migrate(pg);
+      let connectCalls = 0;
+      const client = {
+        query: (sql, params) => pg.query(sql, params),
+        release: () => {},
+        connect: async () => {
+          connectCalls += 1;
+          throw new Error("client connect must not be called");
+        },
+      };
+      const clientRepo = createRetrievalRepository(client);
+      const first = await clientRepo.captureEpisode(synth());
+      expect(first).toMatchObject({ replayed: false, revision: 1 });
+      const again = await clientRepo.captureEpisode(synth());
+      expect(again).toMatchObject({ replayed: true, revision: 1 });
+      expect(connectCalls).toBe(0);
+      const { rows } = await pg.query("SELECT COUNT(*) AS c FROM tb_episodes");
+      expect(Number(rows[0].c)).toBe(1);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it30("TBP5-008: unsupported handle shapes fail loudly, never silently", async () => {
+    let thrown = null;
+    try {
+      createRetrievalRepository({});
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown?.code).toBe(P5_CODES.UNSUPPORTED_HANDLE);
+    await expect(migrate({})).rejects.toMatchObject({ code: P5_CODES.UNSUPPORTED_HANDLE });
+    // A pool whose connect() yields no usable client fails at the
+    // transaction, and no statement ever runs on the pool facade.
+    let poolQueryCalls = 0;
+    const badPool = {
+      totalCount: 1,
+      idleCount: 1,
+      waitingCount: 0,
+      query: async () => {
+        poolQueryCalls += 1;
+        return { rows: [] };
+      },
+      connect: async () => ({ query: async () => ({ rows: [] }) }),
+    };
+    const badRepo = createRetrievalRepository(badPool);
+    await expect(badRepo.captureEpisode(synth())).rejects.toMatchObject({
+      code: P5_CODES.UNSUPPORTED_HANDLE,
+    });
+    expect(poolQueryCalls).toBe(0);
+  });
+
+  it30("TBP5-010: grants normalize as a set — duplicates and reordered duplicates share one id", async () => {
+    expect(computeEpisodeId(synth({ grants: ["a"] }))).toBe(
+      computeEpisodeId(synth({ grants: ["a", "a"] })),
+    );
+    expect(computeEpisodeId(synth({ grants: ["b", "a", "a"] }))).toBe(
+      computeEpisodeId(synth({ grants: ["a", "b"] })),
+    );
+    expect(computeEpisodeId(synth({ grants: ["a", "b"] }))).not.toBe(
+      computeEpisodeId(synth({ grants: ["a"] })),
+    );
+    const dup = await repo.captureEpisode(
+      synth({ grants: ["b-principal", "a-principal", "a-principal"] }),
+    );
+    const exact = await repo.captureEpisode(synth({ grants: ["a-principal", "b-principal"] }));
+    expect(exact.episodeId).toBe(dup.episodeId);
+    expect(exact.replayed).toBe(true);
+    const { rows } = await db.query(
+      "SELECT principal FROM tb_episode_grants WHERE episode_id = $1 ORDER BY principal",
+      [dup.episodeId],
+    );
+    expect(rows.map((r) => r.principal)).toEqual(["a-principal", "b-principal"]);
   });
 });
