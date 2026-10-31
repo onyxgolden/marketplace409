@@ -9,8 +9,38 @@ import PaymentFrequencyPicker, { paymentFrequencyDescription } from "./PaymentFr
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { useRentalTerminology } from "./rentalTerminologyContext";
+import { leaseBalanceCents } from "@/application/rental/leaseBalance";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+// Lease balance display text: positive = owed, zero = nothing due, negative =
+// the tenant holds an unapplied credit. Never renders "$0.00 due" — a lease
+// with no charges (including an external schedule that never generated any)
+// honestly reads "No balance due", never a faked amount.
+export function leaseBalanceText(balanceCents) {
+  if (typeof balanceCents !== "number" || !Number.isSafeInteger(balanceCents)) return null;
+  if (balanceCents > 0) return `${money.format(balanceCents / 100)} due`;
+  if (balanceCents < 0) return `${money.format(-balanceCents / 100)} credit`;
+  return "No balance due";
+}
+
+function ordinal(day) {
+  const n = Number(day);
+  if (!Number.isSafeInteger(n)) return String(day);
+  if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
+  if (n % 10 === 1) return `${n}st`;
+  if (n % 10 === 2) return `${n}nd`;
+  if (n % 10 === 3) return `${n}rd`;
+  return `${n}th`;
+}
+
+// Formats a YYYY-MM-DD date without timezone drift (split, never Date.parse).
+export function formatShortDate(isoDate) {
+  if (typeof isoDate !== "string") return null;
+  const parts = isoDate.slice(0, 10).split("-").map(Number);
+  if (parts.length !== 3 || parts.some((part) => !Number.isSafeInteger(part))) return null;
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
 const STATUS_TEXT_COLORS = { active: "text-emerald-700 dark:text-emerald-400", draft: "text-amber-700 dark:text-amber-400", cancelled: "text-slate-400 line-through dark:text-slate-500", ended: "text-slate-400 dark:text-slate-500", terminated: "text-slate-400 dark:text-slate-500" };
 const STATUS_BADGE_COLORS = { active: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300", draft: "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300", cancelled: "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400", ended: "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400", terminated: "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400" };
 
@@ -39,7 +69,7 @@ export function isLeaseExpiringSoon(lease, today = new Date().toISOString().slic
   return remaining >= 0 && remaining <= 90;
 }
 
-export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null, initialViewFilter = null }) {
+export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [], openCharges: [], payments: [], credits: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null, initialViewFilter = null }) {
   // R25 terminology: panel headings resolve through the workspace term map.
   const { termLabel } = useRentalTerminology();
   // Lease setup: stale-while-revalidate under one global key (skipped entirely
@@ -50,7 +80,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     const response = await fetch("/api/rental");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
-    return { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [] };
+    return { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [], openCharges: result.openCharges || [], payments: result.payments || [], credits: result.credits || [] };
   }, []);
   const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     loadOnMount ? "rental:lease-setup" : null,
@@ -257,9 +287,9 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     {viewFilter === "expiring" && <RentalViewFilterBanner filterLabel="Leases expiring within 90 days" onClear={() => setViewFilter(null)} />}
     {visibleLeases.length > 0 && <RentalRecordBrowser title="Leases" records={visibleLeases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
-      getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
+      getSubtitle={(lease) => { const balanceText = leaseBalanceText(leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })); return <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly{ balanceText ? <> · {balanceText}</> : null}</>; }}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -287,7 +317,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
@@ -305,11 +335,15 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
     if (result?.ok) setBillingNotice(result.notice);
     else setBillingError(result?.error || "Unable to activate FORGE billing.");
   }
+  const balanceText = leaseBalanceText(balanceCents);
+  const dueDayText = lease.rent_due_day ? `Rent due on the ${ordinal(lease.rent_due_day)}` : "Due day not recorded";
+  const startText = formatShortDate(lease.start_date) ? `Since ${formatShortDate(lease.start_date)}` : null;
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected lease</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit?.label || lease.unit_id}</h3></div>
       <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${STATUS_BADGE_COLORS[lease.status] || "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300"}`}>{lease.status}</span>
     </div>
+    {balanceText && <p className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{dueDayText}{startText ? ` · ${startText}` : ""} · Balance: {balanceText}</p>}
     <dl className="mt-5 grid gap-4 sm:grid-cols-2">
       <Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} />
       <Detail label="Due day" value={lease.rent_due_day || "Not recorded"} />

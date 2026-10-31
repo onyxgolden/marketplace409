@@ -96,7 +96,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult, conversationResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult, conversationResult, creditsResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -163,8 +163,13 @@ export async function GET() {
         columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
       authenticated.supabaseClient.from("rental_conversations").select("id, tenant_id, work_order_id, last_message_at, last_message_body, last_message_sender_type, owner_last_read_at, tenant_last_read_at").order("last_message_at",{ascending:false}),
+      // Unapplied overpayment credits, for per-lease balance display only: the
+      // lease view's balance is open-charge remaining minus unapplied credit
+      // remainder. Credit applications are memo-only (remaining_cents already
+      // nets them) and are not fetched.
+      authenticated.supabaseClient.from("rental_tenant_credits").select("id, lease_id, tenant_id, remaining_cents, status").order("created_at", { ascending: true }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || lateAutoSettingsResult.error || lateTenantOverrideResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error || conversationResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || lateAutoSettingsResult.error || lateTenantOverrideResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error || conversationResult.error || creditsResult.error;
     if (error) throw error;
     const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
@@ -197,7 +202,7 @@ export async function GET() {
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
 
     return NextResponse.json({ success: true, actingUserId: authenticated.user.id, canonicalOwnerId: authenticated.effectiveOwnerId,
-      openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
+      openCharges: chargesResult.data || [], collectionSummary, billingEnabled, credits: creditsResult.data || [],
       units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
