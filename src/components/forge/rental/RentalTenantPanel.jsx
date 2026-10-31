@@ -344,6 +344,19 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   if (recordTenant) {
     const household = tenantHouseholdForSelection(recordTenant, tenants, leases, leaseMemberships, units);
     const tenant = household.primaryTenant || recordTenant;
+    // A lease the form created lands its tenant as co_tenant with no true
+    // primary, which leaves the fallback primary with no Make-primary control:
+    // co-tenant cards (the only other place the button renders) exclude the
+    // fallback primary, so the section reads "No co-tenant is assigned" and no
+    // button exists anywhere. Show the control on the Primary card only while
+    // no true primary exists; with a primary the prop stays null and the
+    // render is unchanged. The card tenant is a lease member by construction
+    // whenever a lease exists; the membership check below is belt-and-braces.
+    const householdHasNoPrimary = household.lease
+      && leaseMemberships.some((item) => item.lease_id === household.lease.id)
+      && !leaseMemberships.some((item) => item.lease_id === household.lease.id && item.occupancy_role === "primary");
+    const primaryCardIsLeaseMember = household.lease
+      && leaseMemberships.some((item) => item.lease_id === household.lease.id && item.tenant_id === tenant.id);
     const context = { recordType: "tenant", recordId: tenant.id };
     const recordMenuItems = tenantMenuItems(tenant, context, { inRecord: true });
     const tenantLeaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
@@ -384,7 +397,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           onOpenBankLedger={() => navigate?.("bank-ledger")}
           details={<>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
-        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={tenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride}/>
+        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={tenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={householdHasNoPrimary && primaryCardIsLeaseMember ? ()=>makePrimary(household.lease.id, tenant.id) : null}/>
         <CustomFieldsEditor groups={[{ entity: "tenant", recordId: tenant.id }]} />
         <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700" data-tenant-notice-log>
           <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Generated notices</p>
