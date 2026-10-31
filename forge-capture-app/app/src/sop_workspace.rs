@@ -1023,6 +1023,204 @@ pub enum SessionWriteError {
     Io(String),
 }
 
+/// GS-C6 / C6A-003: the guarded, atomic review-action mutation this
+/// module's [`write_session_if_current`] and
+/// [`forge_capture_core::sop_redaction::build_redaction_change_event`]'s
+/// own doc comments both named as the one piece still missing — nothing
+/// in this codebase previously called either of those from the same
+/// guarded span, so a review action's validation (against whatever
+/// session state a caller happened to have read earlier) and its actual
+/// persistence were two separate, unsynchronized steps a concurrent
+/// writer could always race between.
+///
+/// Acquires the exact same [`session_lock`]/[`CrossProcessSessionLock`]
+/// pair [`write_session_if_current`] does, over `confined`'s lock path,
+/// and — **unlike** that function, which only re-checks a bare revision
+/// number against whatever `bytes` the caller already serialized
+/// earlier — reads and parses the **full current session** under that
+/// lock, then calls
+/// [`forge_capture_core::sop_redaction::validate_review_action`] (via
+/// [`forge_capture_core::sop_redaction::build_redaction_change_event`])
+/// against that freshly-read state. A caller cannot pre-build a request
+/// against stale state and have it validated against anything other
+/// than the real, current, lock-held document: there is no window
+/// between "read the state a decision was based on" and "persist that
+/// decision" for a concurrent writer to land in.
+///
+/// `confirmed` is the caller's own already-collected human confirmation
+/// signal — the Tauri command wiring this is reached from (C6A-001B)
+/// gets it from a real native OS dialog, never from a frontend-supplied
+/// boolean or digest. This function computes
+/// [`forge_capture_core::sop_redaction::confirmation_digest`] itself,
+/// from the session state it just read under the lock — there is no
+/// parameter here a caller could use to hand in a precomputed digest
+/// this function didn't independently derive, which is exactly what
+/// made the old digest "a public value anyone could compute," not proof
+/// of anything a human actually did.
+///
+/// On success, appends the resulting
+/// [`EditEvent`](forge_capture_core::sop_session::EditEvent), updates
+/// the named candidate's `disposition`/`disposition_event_id` binding,
+/// bumps `session.revision`/`session.updated_at`, and persists the
+/// whole document with the same temp+fsync+rename atomicity every other
+/// session write gets — all before the locks acquired above are
+/// released.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_review_action_if_current(
+    confined: &ConfinedPath<'_>,
+    frame_id: &str,
+    candidate_id: &str,
+    new_disposition: forge_capture_core::sop_session::Disposition,
+    reason: &str,
+    confirmed: bool,
+    expected_session_revision: u64,
+    expected_policy_version: &str,
+    expected_model_manifest_sha256: Option<&str>,
+    event_id: String,
+    local_timestamp: String,
+) -> Result<u64, ApplyReviewActionError> {
+    use forge_capture_core::sop_redaction::{build_redaction_change_event, confirmation_digest, ReviewActionRequest};
+    use forge_capture_core::sop_session::parse_session;
+
+    let lock = session_lock(confined.lock_path());
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _cross_process_guard =
+        CrossProcessSessionLock::acquire(confined.lock_path()).map_err(ApplyReviewActionError::Io)?;
+
+    // GS-C6 fix-round-8 (P1 #2): sourced *after* both locks above are
+    // held, never before. `load_or_create_authority_key` itself has no
+    // locking of its own (read-if-present / else generate+atomic-
+    // replace) — called from outside this lock, two concurrent first
+    // actions on a brand-new workspace could each observe "not found,"
+    // generate different keys, and each atomically overwrite the same
+    // path, so one caller's event would be MACed with a key the
+    // durable file no longer holds. Under this lock there is only ever
+    // one caller in this critical section per workspace, so the first
+    // one to run this line is the only one that can ever observe
+    // "not found" — every later caller (this process or another)
+    // reads back the key the winner just wrote.
+    let authority_key = load_or_create_authority_key(confined.workspace_root().canonical_path())
+        .map_err(ApplyReviewActionError::AuthorityKey)?;
+
+    let bytes = match fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ApplyReviewActionError::SessionNotFound),
+        Err(e) => return Err(ApplyReviewActionError::Io(format!("cannot read session file: {e}"))),
+    };
+    let mut session = parse_session(&bytes).map_err(ApplyReviewActionError::SessionParse)?;
+
+    // Computed only from state just read under the lock above, never
+    // from a caller-supplied value — see this function's own doc
+    // comment (C6A-001B).
+    let confirmation_digest_value = if confirmed {
+        session.source_frames.iter().find(|f| f.frame_id == frame_id).map(|frame| {
+            confirmation_digest(
+                &session.session_id,
+                frame_id,
+                candidate_id,
+                new_disposition,
+                reason,
+                &frame.raster_sha256,
+                frame.redacted_derivative_sha256.as_deref(),
+                &session.policy_version,
+                session.model_manifest_sha256.as_deref(),
+                session.revision,
+            )
+        })
+    } else {
+        None
+    };
+
+    let request = ReviewActionRequest {
+        frame_id,
+        candidate_id,
+        new_disposition,
+        reason,
+        confirmation_digest: confirmation_digest_value.as_deref(),
+        expected_session_revision,
+        expected_policy_version,
+        expected_model_manifest_sha256,
+    };
+
+    // C6A-003 (round-4 re-review): `event_id` arrives from the caller
+    // (ultimately the frontend) and `build_redaction_change_event` only
+    // ever assigns the *next sequence number* — it never checked
+    // whether this exact `event_id` was already used. A current-
+    // revision caller could resubmit (accidentally or not) an id this
+    // session's log already has; the old code would append the
+    // duplicate and atomically persist it, making the document
+    // instantly invalid (`validate_edit_chain`'s `DuplicateEventId`) on
+    // every later read even though this function reported success.
+    // Reject the collision here, under the same lock, before
+    // constructing or appending anything.
+    if session.edit_events.iter().any(|e| e.event_id == event_id) {
+        return Err(ApplyReviewActionError::DuplicateEventId(event_id));
+    }
+
+    let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone(), &authority_key)
+        .map_err(ApplyReviewActionError::Validation)?;
+
+    // `build_redaction_change_event` already re-ran `validate_review_action`
+    // against this exact `session` above, so the frame/candidate it
+    // names are known to exist here.
+    let frame = session
+        .source_frames
+        .iter_mut()
+        .find(|f| f.frame_id == frame_id)
+        .expect("validate_review_action already proved this frame exists");
+    let candidate = frame
+        .redaction_candidates
+        .iter_mut()
+        .find(|c| c.candidate_id == candidate_id)
+        .expect("validate_review_action already proved this candidate exists");
+    candidate.disposition = new_disposition;
+    candidate.disposition_event_id = Some(event_id);
+
+    session.revision = event.session_revision_after;
+    session.updated_at = local_timestamp;
+    session.edit_events.push(event);
+
+    // C6A-003 (round-4 re-review): "validate the final mutated document
+    // before the atomic write" — the duplicate-ID check above is the
+    // specific, named collision, but this is the general defense: the
+    // exact document this function is about to make durable must itself
+    // be a valid edit chain, not just "the inputs looked fine." Nothing
+    // is written if this fails.
+    forge_capture_core::sop_session::validate_edit_chain(&session)
+        .map_err(ApplyReviewActionError::PostMutationInvalid)?;
+
+    let new_revision = session.revision;
+    let bytes =
+        serde_json::to_vec(&session).map_err(|e| ApplyReviewActionError::Io(format!("cannot serialize session: {e}")))?;
+
+    cleanup_orphaned_temp_files(confined.path());
+    confined.atomic_write_with_fsync(&bytes).map_err(ApplyReviewActionError::Io)?;
+
+    Ok(new_revision)
+}
+
+#[derive(Debug)]
+pub enum ApplyReviewActionError {
+    SessionNotFound,
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    Validation(forge_capture_core::sop_redaction::DispositionChangeError),
+    /// C6A-003 (round-4 re-review): `event_id` collided with one
+    /// already in this session's edit log — rejected before anything
+    /// was constructed or written, rather than silently persisting a
+    /// document `validate_edit_chain` would refuse on its next read.
+    DuplicateEventId(String),
+    /// C6A-003 (round-4 re-review): the fully mutated document (event
+    /// appended, candidate/revision updated) failed `validate_edit_chain`
+    /// — nothing was written. A catch-all defense alongside the explicit
+    /// `DuplicateEventId` check above, for any other way the resulting
+    /// document could have been invalid.
+    PostMutationInvalid(forge_capture_core::sop_session::EditChainError),
+    /// GS-C6 fix-round-8 (P1 #2): the workspace's authority key could
+    /// not be loaded or minted under the session lock.
+    AuthorityKey(AuthorityKeyError),
+    Io(String),
+}
+
 /// Field names [`redact_log_fields`] blanks out before a value is ever
 /// formatted for a log line — brief §4: "No key, raw pixels, OCR text, or
 /// detected sensitive value is written to logs."
@@ -1163,6 +1361,72 @@ mod windows_dpapi {
             let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(out_blob.pbData as *mut _)));
             Ok(result)
         }
+    }
+}
+
+// --- authority key (Windows DPAPI-protected, GS-C6 fix-round-7 P1 #1) ---
+//
+// `results/chatgpt/capture-c2-p6a-fix-round-6-rereview-2026-10-30.md`:
+// an `OverrideAuthority` record's `confirmation_digest` is an ordinary
+// public SHA-256 — a party able to edit the session file could alter the
+// reason or any bound identity, recompute it, and store a matching
+// value, so fix-round-6's record was never actually proof of a trusted
+// confirmation. `forge_capture_core::sop_redaction::build_redaction_change_event`/
+// `verify_coverage_proof` now also MAC the record with a key only this
+// module sources — a party without the key cannot produce a value that
+// passes no matter what public digest they recompute. Random, generated
+// once per workspace on first use, DPAPI-protected (current-user scope,
+// same control as the frame vault above) at rest alongside the session
+// files it authenticates overrides for.
+const AUTHORITY_KEY_FILE_NAME: &str = ".forge-capture-authority-key";
+/// 256-bit key — HMAC-SHA256's own block size, and ample margin over the
+/// MAC's 256-bit output for any key-recovery concern.
+const AUTHORITY_KEY_LEN: usize = 32;
+
+#[derive(Debug)]
+pub enum AuthorityKeyError {
+    Dpapi(DpapiError),
+    Io(String),
+    Random(String),
+}
+
+#[cfg(windows)]
+fn generate_random_bytes(len: usize) -> Result<Vec<u8>, AuthorityKeyError> {
+    use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+    let mut buf = vec![0u8; len];
+    // SAFETY: `buf` is a validly-sized, exclusively-owned buffer for the
+    // duration of this call; a null algorithm handle with
+    // BCRYPT_USE_SYSTEM_PREFERRED_RNG asks CNG to fill it from the OS's
+    // own preferred CSPRNG and touches no other memory.
+    let status = unsafe { BCryptGenRandom(None, &mut buf, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status.is_err() {
+        return Err(AuthorityKeyError::Random(format!("BCryptGenRandom failed: {status:?}")));
+    }
+    Ok(buf)
+}
+
+#[cfg(not(windows))]
+fn generate_random_bytes(_len: usize) -> Result<Vec<u8>, AuthorityKeyError> {
+    Err(AuthorityKeyError::Random("Unsupported".to_string()))
+}
+
+/// Loads this workspace's authority key, generating and durably
+/// DPAPI-protecting a fresh one on first use so every later call against
+/// the same `workspace_root` gets back the same key. Current-user DPAPI
+/// scope means only the same Windows account that minted an
+/// `OverrideAuthority::V2` record can later verify one — the same
+/// account boundary the frame vault itself already relies on.
+pub fn load_or_create_authority_key(workspace_root: &Path) -> Result<Vec<u8>, AuthorityKeyError> {
+    let key_path = workspace_root.join(AUTHORITY_KEY_FILE_NAME);
+    match fs::read(&key_path) {
+        Ok(protected) => dpapi_unprotect(&protected).map_err(AuthorityKeyError::Dpapi),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let key = generate_random_bytes(AUTHORITY_KEY_LEN)?;
+            let protected = dpapi_protect(&key).map_err(AuthorityKeyError::Dpapi)?;
+            atomic_write_with_fsync(&key_path, &protected).map_err(AuthorityKeyError::Io)?;
+            Ok(key)
+        }
+        Err(e) => Err(AuthorityKeyError::Io(format!("cannot read authority key file: {e}"))),
     }
 }
 
@@ -2453,6 +2717,698 @@ mod tests {
         let root = temp_root();
         assert!(matches!(restrict_vault_acl(&root), Err(VaultAclError::Unsupported)));
         assert!(matches!(verify_vault_acl_is_current_user_only(&root), Err(VaultAclError::Unsupported)));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- apply_review_action_if_current (GS-C6 / C6A-001B / C6A-003:
+    // the guarded, revalidate-under-the-lock, append + persist path) ---
+
+    use forge_capture_core::sop_session::{
+        parse_session, Disposition, FrameVerification, RedactionCandidate, ReviewState, SopSessionV1, SourceFrame,
+        SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION,
+    };
+
+    fn review_candidate(id: &str, disposition: Disposition) -> RedactionCandidate {
+        RedactionCandidate {
+            candidate_id: id.to_string(),
+            detector_id: "det.ssn".to_string(),
+            reason_code: "TEST".to_string(),
+            source_token_ids: vec!["tok-1".to_string()],
+            original_box: (0, 0, 5, 5),
+            expanded_box: (0, 0, 5, 5),
+            score: None,
+            disposition,
+            disposition_event_id: None,
+        }
+    }
+
+    fn review_frame(frame_id: &str, candidates: Vec<RedactionCandidate>) -> SourceFrame {
+        SourceFrame {
+            frame_id: frame_id.to_string(),
+            order: 0,
+            source_relative_path: format!("frames/{frame_id}.png"),
+            raster_sha256: "a".repeat(64),
+            provenance_sidecar_relative_path: None,
+            provenance_sidecar_blob_sha256: None,
+            width: 100,
+            height: 100,
+            captured_at: "2026-10-29T12:00:00Z".to_string(),
+            action_kind: "click".to_string(),
+            click_box: None,
+            process_basename: None,
+            window_title: None,
+            original_storage: SourceStorage::SessionEncrypted,
+            ocr_status: None,
+            redacted_derivative_relative_path: None,
+            redacted_derivative_sha256: None,
+            redaction_candidates: candidates,
+            verification: FrameVerification::Pending,
+        }
+    }
+
+    fn review_session(frames: Vec<SourceFrame>) -> SopSessionV1 {
+        SopSessionV1 {
+            schema_version: SOP_SESSION_SCHEMA_VERSION,
+            kind: SOP_SESSION_KIND.to_string(),
+            session_id: "sess-1".to_string(),
+            created_at: "2026-10-29T12:00:00Z".to_string(),
+            updated_at: "2026-10-29T12:00:00Z".to_string(),
+            revision: 0,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256: Some("model-manifest-v1".to_string()),
+            sidecar_protocol_version: 1,
+            source_frames: frames,
+            captions: vec![],
+            edit_events: vec![],
+            review_state: ReviewState::InProgress,
+            review_receipt: None,
+            export_eligible: false,
+        }
+    }
+
+    fn write_review_session(confined: &ConfinedPath<'_>, session: &SopSessionV1) {
+        confined.atomic_write_with_fsync(&serde_json::to_vec(session).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_allows_redact_with_no_confirmation() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let new_revision = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("Redact never needs a reason or confirmation");
+        assert_eq!(new_revision, 1);
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.revision, 1);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].disposition, Disposition::Redact);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].disposition_event_id, Some("evt-1".to_string()));
+        assert_eq!(on_disk.edit_events.len(), 1);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_mark_non_sensitive_without_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified with the customer",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::MissingExplicitConfirmation))
+        ));
+
+        // Refused: nothing on disk changed.
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.revision, 0);
+        assert!(on_disk.edit_events.is_empty());
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_allows_mark_non_sensitive_when_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let new_revision = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified with the customer",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("a real confirmed signal must be accepted");
+        assert_eq!(new_revision, 1);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_revalidates_against_the_real_current_state_not_a_caller_supplied_revision() {
+        // C6A-003: a caller claiming `expected_session_revision: 0`
+        // against a session that is actually already at revision 1 must
+        // be refused as stale — the whole point of revalidating under
+        // the lock against freshly-read state, not whatever revision a
+        // caller's own earlier read happened to see.
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)])]),
+        );
+        // Advance the real on-disk session to revision 1 via one
+        // legitimate action — a hand-crafted "revision: 1, no events"
+        // fixture would itself be an invalid edit chain and get refused
+        // by `parse_session` before this test ever reaches the behavior
+        // under test.
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("setup: the first action at revision 0 must succeed");
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c2",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-2".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::StaleSessionRevision {
+                expected: 0,
+                current: 1
+            }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_a_protected_credential_override_even_when_confirmed() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![RedactionCandidate { detector_id: "det.payment_card".to_string(), ..review_candidate("c1", Disposition::Pending) }],
+            )]),
+        );
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "a reason",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::ProtectedCredentialNonOverridable { .. }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_rejects_a_confirmation_computed_against_a_different_reason() {
+        // C6A-001A/B: `confirmed: true` alone is not enough to forge a
+        // match — this function computes the digest itself from the
+        // `reason` actually passed in, so a caller cannot separately
+        // supply a reason that disagrees with whatever was actually
+        // confirmed (there is no digest parameter here at all for a
+        // caller to transplant in the first place).
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        // Same call, different reason text each time, both confirmed —
+        // both must independently succeed against the reason they each
+        // actually carried (proving the digest tracks `reason`, not a
+        // fixed/ignored value), and the second must be refused for
+        // staleness (the first already advanced the revision), not
+        // silently accepted on top.
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "reason A",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("first confirmed action at revision 0 must succeed");
+
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "reason B",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-2".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(
+            result,
+            Err(ApplyReviewActionError::Validation(forge_capture_core::sop_redaction::DispositionChangeError::StaleSessionRevision {
+                expected: 0,
+                current: 1
+            }))
+        ));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            None,
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        );
+        assert!(matches!(result, Err(ApplyReviewActionError::SessionNotFound)));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_rejects_a_reused_event_id_and_writes_nothing() {
+        // C6A-003 (round-4 re-review): a caller resubmitting an
+        // existing event_id (accidentally, or by a confused/malicious
+        // client) must be rejected outright, under the same lock,
+        // before anything is constructed or written - not silently
+        // accepted and persisted into a document that would fail
+        // validate_edit_chain on its very next read.
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)],
+            )]),
+        );
+
+        // First action: a real, successful use of "evt-1".
+        apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::Redact,
+            "",
+            false,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("first action with a fresh event id must succeed");
+        let bytes_after_first = fs::read(confined.path()).unwrap();
+
+        // Second action: a different candidate, current revision, but
+        // the SAME event_id reused.
+        let result = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c2",
+            Disposition::Redact,
+            "",
+            false,
+            1,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        );
+        assert!(matches!(result, Err(ApplyReviewActionError::DuplicateEventId(ref id)) if id == "evt-1"), "{result:?}");
+
+        // Nothing was written: the file on disk is byte-for-byte
+        // unchanged from right after the first (successful) action,
+        // and still parses/validates cleanly.
+        let bytes_after_rejected_second = fs::read(confined.path()).unwrap();
+        assert_eq!(bytes_after_first, bytes_after_rejected_second);
+        let on_disk = parse_session(&bytes_after_rejected_second).unwrap();
+        assert_eq!(on_disk.revision, 1);
+        assert_eq!(on_disk.edit_events.len(), 1);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[1].disposition, Disposition::Pending, "c2 untouched");
+        forge_capture_core::sop_session::validate_edit_chain(&on_disk).expect("on-disk session must still be a valid edit chain");
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// GS-C6 fix-round-8 re-review, P1 #1 — required repair: "a real
+    /// final-state test with at least two MarkNonSensitive candidates
+    /// confirmed in separate events, reload the unmodified final
+    /// session, and require one ordinary `verify_coverage_proof` call
+    /// over the full frame to return no failures." Done here through
+    /// the real guarded write path, twice, then one ordinary reload and
+    /// one ordinary full-frame check — no per-candidate rewinding, no
+    /// synthetic single-candidate frame. Also proves the specific thing
+    /// round 7's binding got backwards: a later, real, unrelated write
+    /// must not invalidate an earlier one.
+    #[test]
+    fn apply_review_action_if_current_persists_two_independently_confirmed_overrides_that_coexist_in_one_real_final_state() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)])]),
+        );
+
+        let revision_after_c1 = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified with the customer",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-1".to_string(),
+            "2026-10-29T12:05:00Z".to_string(),
+        )
+        .expect("the first confirmed MarkNonSensitive action must succeed");
+        assert_eq!(revision_after_c1, 1);
+
+        // Reload right away and check — this authority must verify
+        // immediately after its own write, same as before.
+        let key = load_or_create_authority_key(ws.canonical_path()).expect("the key this write just minted/used must already exist");
+        let reloaded_after_c1 = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&reloaded_after_c1, &reloaded_after_c1.source_frames[0], &key),
+            vec![forge_capture_core::sop_redaction::CoverageProofFailure::UndispositionedCandidate { candidate_id: "c2".to_string() }],
+            "c1 must already verify; c2 is simply not yet resolved at all"
+        );
+
+        // A second, real, unrelated confirmed action — on a different
+        // candidate in the same frame — advances the session's current
+        // revision past the one c1's authority is bound to.
+        let revision_after_c2 = apply_review_action_if_current(
+            &confined,
+            "f1",
+            "c2",
+            Disposition::MarkNonSensitive,
+            "verified separately",
+            true,
+            1,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-2".to_string(),
+            "2026-10-29T12:06:00Z".to_string(),
+        )
+        .expect("the second, independent confirmed action must also succeed");
+        assert_eq!(revision_after_c2, 2);
+
+        // One ordinary reload, one ordinary full-frame
+        // `verify_coverage_proof` call — both real, independently
+        // confirmed overrides must coexist cleanly in this real final
+        // state. Round 7's global-revision binding could never reach
+        // this: the moment evt-2 landed, it would have invalidated c1's
+        // still-genuine authority purely because the session moved on,
+        // not because anything c1's authority is actually bound to
+        // (session id, c1/f1's own content, policy, model) changed.
+        let final_session = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_session, &final_session.source_frames[0], &key),
+            vec![],
+            "both independently confirmed overrides must verify together in one real, unmodified final state"
+        );
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// GS-C6 fix-round-7 re-review, P1 #2 — required repair: "Add a
+    /// concurrent first-use test with two independent callers/processes
+    /// that proves both receive the same durable key and that every
+    /// persisted authority verifies after reload." Modeled as two
+    /// threads racing `apply_review_action_if_current` against two
+    /// distinct frames in the same brand-new workspace (no authority
+    /// key file exists yet when either starts), rather than two real
+    /// processes — `load_or_create_authority_key` is now only ever
+    /// called from inside this function's own session lock, so a
+    /// same-process thread race already exercises the exact "two
+    /// concurrent first calls, one key file" race the fix closes; a
+    /// cross-process race differs only in which OS primitive serializes
+    /// the callers, not in whether the key converges.
+    #[test]
+    fn apply_review_action_if_current_resolves_concurrent_first_use_authority_key_creation_to_one_durable_key() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Pending)],
+            )]),
+        );
+
+        // No `AUTHORITY_KEY_FILE_NAME` exists under `root` yet — both
+        // threads below race the real "not found -> generate ->
+        // atomic-write" path inside `load_or_create_authority_key`,
+        // each from its own call to `apply_review_action_if_current`,
+        // serialized only by that function's own in-process/cross-
+        // process session locks, exactly as two real concurrent first
+        // actions on a brand-new workspace would be. Both sides retry
+        // on a stale-revision rejection — the session lock guarantees
+        // one of these two always wins the *first* attempt at
+        // `expected_session_revision: 0`, and the loser is rejected for
+        // being stale, not for anything to do with the key — so both
+        // sides are written symmetrically rather than assuming an
+        // ordering.
+        fn apply_with_revision_retry(
+            confined: &ConfinedPath<'_>,
+            candidate_id: &str,
+            reason: &str,
+            event_id: &str,
+            local_timestamp: &str,
+        ) -> Result<u64, ApplyReviewActionError> {
+            loop {
+                let current_revision = match fs::read(confined.path()) {
+                    Ok(bytes) => parse_session(&bytes).unwrap().revision,
+                    Err(_) => 0,
+                };
+                let result = apply_review_action_if_current(
+                    confined,
+                    "f1",
+                    candidate_id,
+                    Disposition::MarkNonSensitive,
+                    reason,
+                    true,
+                    current_revision,
+                    "policy-v1",
+                    Some("model-manifest-v1"),
+                    event_id.to_string(),
+                    local_timestamp.to_string(),
+                );
+                if matches!(result, Err(ApplyReviewActionError::Validation(_))) {
+                    continue;
+                }
+                return result;
+            }
+        }
+
+        let root_for_thread = root.clone();
+        let handle = std::thread::spawn(move || {
+            let ws2 = workspace_root(&root_for_thread);
+            let confined2 = confine_session(&ws2, "session.json");
+            apply_with_revision_retry(&confined2, "c1", "verified with the customer", "evt-1", "2026-10-29T12:05:00Z")
+        });
+
+        let result_c2 = apply_with_revision_retry(&confined, "c2", "verified separately", "evt-2", "2026-10-29T12:05:01Z");
+        result_c2.expect("c2's action must eventually succeed once it retries at the real current revision");
+        handle.join().unwrap().expect("c1's action must eventually succeed once it retries at the real current revision");
+
+        // Exactly one key file was ever durably written, and every
+        // authority record persisted by either caller verifies against
+        // it — proving both callers converged on the same key rather
+        // than one being silently orphaned by a key the other one's
+        // write replaced. One ordinary reload, one ordinary full-frame
+        // check — fix-round-8 (P1 #1) means c1's and c2's authorities,
+        // bound to two different resulting revisions, coexist cleanly
+        // in this one real final state; no per-candidate rewinding
+        // needed. A MAC minted under the wrong (split) key would fail
+        // this regardless.
+        let key = load_or_create_authority_key(ws.canonical_path()).expect("a key must exist after both actions completed");
+        let final_session = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_session, &final_session.source_frames[0], &key),
+            vec![],
+            "both candidates' authorities, persisted by the two racing callers, must verify together against the one durable key"
+        );
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// GS-C6 fix-round-8 re-review, P1 #2 — the re-review's stated
+    /// failure mode: "[the session lock] does not serialize concurrent
+    /// first actions against different session files in the same
+    /// workspace. Those calls hold different in-process mutexes and
+    /// different cross-process session lock files, yet both initialize
+    /// the same workspace key path."
+    ///
+    /// This does not hold against the actual lock key in this codebase.
+    /// [`CrossProcessSessionLock::lock_path_for`]'s own doc comment:
+    /// "derived **only** from `workspace_root`'s own stable NTFS
+    /// identity ... never from the session file" — and
+    /// `resolve_confined_path` calls exactly that function (with the
+    /// `&WorkspaceRoot` the `ConfinedPath` was resolved against, not
+    /// the per-call `relative` session path) to fill in every
+    /// `ConfinedPath::lock_path()`. Two different session files
+    /// confined from the *same* workspace root — even via two
+    /// independent `WorkspaceRoot::open()` calls, as two real separate
+    /// processes would each do — resolve to the identical lock path,
+    /// because that path is a function of the workspace directory's
+    /// own on-disk NTFS identity alone, not of which file within it is
+    /// being touched. The in-process `session_lock` registry is keyed
+    /// by that same `PathBuf`, so it converges too.
+    ///
+    /// This test exercises the re-review's exact named scenario directly
+    /// — two threads, two different session files, one brand-new
+    /// workspace, no key file yet — rather than arguing from the doc
+    /// comment alone.
+    #[test]
+    fn apply_review_action_if_current_resolves_concurrent_first_use_across_different_session_files_in_one_workspace() {
+        let root = temp_root();
+        let ws_a = workspace_root(&root);
+        let confined_a = confine_session(&ws_a, "session-a.json");
+        write_review_session(&confined_a, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let ws_b = workspace_root(&root);
+        let confined_b = confine_session(&ws_b, "session-b.json");
+        write_review_session(&confined_b, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        // No `AUTHORITY_KEY_FILE_NAME` exists under `root` yet. Each
+        // session file is independent (separate revision counters, no
+        // shared `expected_session_revision` precondition to collide
+        // on), so — unlike the same-session-file race above — neither
+        // side needs to retry; the only thing being raced is first-use
+        // key creation.
+        let root_for_thread = root.clone();
+        let handle = std::thread::spawn(move || {
+            let ws_b2 = workspace_root(&root_for_thread);
+            let confined_b2 = confine_session(&ws_b2, "session-b.json");
+            apply_review_action_if_current(
+                &confined_b2,
+                "f1",
+                "c1",
+                Disposition::MarkNonSensitive,
+                "verified b",
+                true,
+                0,
+                "policy-v1",
+                Some("model-manifest-v1"),
+                "evt-b".to_string(),
+                "2026-10-29T12:05:00Z".to_string(),
+            )
+        });
+
+        let result_a = apply_review_action_if_current(
+            &confined_a,
+            "f1",
+            "c1",
+            Disposition::MarkNonSensitive,
+            "verified a",
+            true,
+            0,
+            "policy-v1",
+            Some("model-manifest-v1"),
+            "evt-a".to_string(),
+            "2026-10-29T12:05:01Z".to_string(),
+        );
+        result_a.expect("session-a's action must succeed");
+        handle.join().unwrap().expect("session-b's action must succeed");
+
+        // Both session files' authorities must verify against the one
+        // durable key — if first-use key creation had actually split
+        // (the re-review's named failure mode), whichever session was
+        // MACed with the losing, now-overwritten key would fail here.
+        let key = load_or_create_authority_key(ws_a.canonical_path()).expect("a key must exist after both actions completed");
+        let final_a = parse_session(&fs::read(confined_a.path()).unwrap()).unwrap();
+        let final_b = parse_session(&fs::read(confined_b.path()).unwrap()).unwrap();
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_a, &final_a.source_frames[0], &key),
+            vec![],
+            "session-a's authority must verify against the one durable key"
+        );
+        assert_eq!(
+            forge_capture_core::sop_redaction::verify_coverage_proof(&final_b, &final_b.source_frames[0], &key),
+            vec![],
+            "session-b's authority must verify against the same durable key, not a different one it was silently minted/stored under"
+        );
+
+        drop(confined_a);
+        drop(confined_b);
         fs::remove_dir_all(&root).ok();
     }
 }
