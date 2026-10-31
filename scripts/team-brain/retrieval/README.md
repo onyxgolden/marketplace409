@@ -10,10 +10,12 @@ Baseline: marketplace409 main `9313e75d` (post-#693, post-#695/#696).
 
 | Path | Responsibility |
 |---|---|
-| `schema.sql` | P5-only tables (episodes, grants, pins, working set, revision counter). Does not touch migration 001 or its pinned snapshot. |
+| `schema.sql` | P5-only tables (episodes, grants, pins, working set, revision counter, episode events). Does not touch migration 001 or its pinned snapshot. |
 | `repository.mjs` | Capture + search + pins + working set over any `query(sql, params)` handle (PGlite in tests, pg in production). |
+| `citation.mjs` | Pure citation oracle/scorer: full citation identity vs the labeled fixture, never vs a second renderer call. |
 | `errors.mjs` | P5 typed codes on the shared `TeamBrainError`. |
 | `fixtures/labeled-queries.json` | 40 independently labeled queries with expected citations over 21 synthetic episodes. |
+| `fixtures/labeled-queries.receipt.json` | Fixture authentication receipt: sha256 + counts + oracle/scorer rule. Re-issue on any fixture change. |
 
 ## Retrieval contract (fixed, not open)
 
@@ -22,8 +24,30 @@ Baseline: marketplace409 main `9313e75d` (post-#693, post-#695/#696).
 - Maximum 20 candidates. `truncated` + `totalAuthorized` reported.
 - Historical pins: a pin name binds one revision; repointing to a
   different revision is refused. `as_of` is a revision number; `as_of`
-  and `pin` together are refused.
-- Four-slot durable-reference working set, per principal.
+  and `pin` together are refused. A pin or `as_of` above the admitted
+  high-water mark is refused with `FUTURE_REVISION`, never silently
+  clamped; revision 0 (empty store) stays valid.
+- Four-slot durable-reference working set, per principal. Displacement
+  validates before writing: the episode must exist, be in an allowed
+  scope, and be readable by the slot owner, and the revision must be
+  exactly the episode's version. Reads revalidate eligibility; a
+  withheld reference reads back as null and discloses no identity. A
+  denied displacement preserves the prior valid slot.
+- Capture identity includes visibility, grants as a set,
+  provenanceStatus, and state. A capture differing in any of them is a
+  new episode, never a silent replay of different authority. Exact
+  replays still replay.
+- Archive appends an explicit event row (revision + note/actor/time)
+  and bumps the retrieval revision; the episode row never changes. A
+  latest-state query projects ARCHIVED while an earlier pin projects
+  the original state. Archive replay is idempotent.
+- Concurrency: every operation on one connection serializes through a
+  connection-scoped promise chain shared by all repository instances
+  on that handle. In-process only; no cross-process fencing is claimed.
+- Citation evidence: the scorer compares every result's full citation
+  (episode, repo, path, commit, blob, revision, watermark) against the
+  labeled fixture oracle. The fixture receipt binds the fixture bytes
+  by sha256; the scorer test proves invented commit/blob pins fail.
 - Cosine / vector-store selection is NOT built and NOT an open
   decision for this slice.
 
@@ -39,15 +63,18 @@ yields byte-identical results.
 Grants, visibility, forbidden scopes, scope, and the as_of revision
 filter in the query itself, before ranking and limiting. The reported
 count is the authorized count only. Denied episodes are invisible to
-snippets, counts, and diagnostics. A caller principal is required;
-anonymous retrieval is refused.
+snippets, counts, and diagnostics — including conflict metadata:
+conflict counterparts pass the same authorization, allowed-domain,
+scope, and revision boundary as retrieval (the FTS keyword match is
+not applied to counterparts, so an authorized contrary statement is
+never hidden by keyword mismatch).
 
 ## Result binding
 
 Every result carries: `episodeId`, `scope`, `title`, `snippet`,
 `score`, `capturedAt`, `revision`, `state`, `freshness` (`current`
-when the episode revision equals the latest revision, else
-`historical`), `provenanceStatus`, `hasConflict` + `conflictWith`
+when the episode revision equals the query's as_of revision — the
+latest revision for an unpinned search — else `historical`), `provenanceStatus`, `hasConflict` + `conflictWith`
 (other members of its conflict group at the same as_of revision),
 `uncertainty`, `citation` (episode id + full source identity +
 revision + watermark), `dbRevision` (the as_of revision used), and
@@ -75,10 +102,10 @@ injection-hostile content is covered by tests).
 No DB role LOGIN/password provisioning, no authority registrations,
 no worker install/activation, no P8 cutover, no production migration,
 no spend. Cross-process fencing is NOT claimed (001A holds in-process
-only): the revision bump is one transaction on one connection, and
-two concurrent writers may interleave revisions. Archive flips only
-the state flag; content, source, and revision never change, and
-archived episodes stay retrievable.
+only): operations on one connection serialize through a shared
+promise chain, and two concurrent writers in different processes may
+still interleave revisions. Episode rows are never updated; archive
+appends an event, and archived episodes stay retrievable.
 
 ## Tests
 

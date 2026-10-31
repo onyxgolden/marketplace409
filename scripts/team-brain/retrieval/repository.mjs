@@ -11,21 +11,29 @@
 //      forbidden domains, and the as_of revision in SQL; ranking and
 //      the 20-result cap apply only to the authorized set. Denied
 //      content therefore cannot leak through snippets, result counts,
-//      or diagnostic metadata.
+//      or diagnostic metadata — including conflict metadata (fix
+//      round 1, TBP5-001): conflict counterparts pass the same
+//      authorization/source-visibility, allowed-domain, scope, and
+//      revision boundary as retrieval.
 //   2. Deterministic ranking. Score DESC, captured_at_ms DESC,
 //      episode_id ASC. Episode ids are unique, so the tie-break chain
 //      is total: the same store + query always yields byte-identical
 //      results.
 //   3. Immutability. Episodes are never updated or deleted by this
 //      adapter. A replayed capture (same deterministic id) is a no-op
-//      that does not bump the revision. Archive flips only the state
-//      flag; content, source, and revision never change.
-//   4. In-process only (001A boundary). The revision bump is a single
-//      transaction on one connection. No advisory lock, no fencing,
-//      no cross-process safety is claimed: two processes capturing
-//      concurrently may interleave revisions. Do not deploy this
-//      adapter behind two writers without a separately reviewed
-//      fencing step (P6/P8 territory, Jason-gated).
+//      that does not bump the revision. Archive appends an explicit
+//      archive event with its own revision and audit context; the
+//      episode row itself never changes, so a query at an earlier pin
+//      still projects the original state (fix round 1, TBP5-003).
+//   4. In-process only (001A boundary). Every adapter operation on one
+//      connection runs serialized through a connection-scoped promise
+//      chain shared by every repository instance on that connection,
+//      so concurrent captures in one process cannot interleave inside
+//      one transaction (fix round 1, TBP5-002). No advisory lock, no
+//      fencing, no cross-process safety is claimed: two processes
+//      capturing concurrently may still interleave revisions. Do not
+//      deploy this adapter behind two writers without a separately
+//      reviewed fencing step (P6/P8 territory, Jason-gated).
 //   5. Missing provenance is explicit. An episode captured without a
 //      complete source identity carries provenanceStatus UNAVAILABLE;
 //      retrieval withholds its snippet and body and marks the result
@@ -35,6 +43,20 @@
 //      and excluded from search even if inserted directly. Scope-based
 //      exclusion is deliberate: a keyword scan would false-positive on
 //      engineering text that merely mentions ledgers or schedules.
+//   7. Revision boundary (fix round 1, TBP5-004). Pins and asOf values
+//      are validated against the admitted high-water mark: a future
+//      revision is refused, never silently clamped. Revision 0 (empty
+//      store) and existing historical pins stay valid.
+//   8. Working-set references (fix round 1, TBP5-005) are validated
+//      before displacement — authorized episode, real episode version —
+//      and revalidated on read; withheld references disclose no
+//      forbidden identity, and a denied displacement preserves the
+//      prior valid slot.
+//   9. Capture identity (fix round 1, TBP5-006) includes consequential
+//      persisted metadata — visibility, grants as a set,
+//      provenanceStatus, state — so a capture that differs in any of
+//      them is a new episode, never a silent replay of different
+//      authority. Exact replays (identical metadata) still replay.
 //
 // Hard gates (never in this slice): no DB role LOGIN/password
 // provisioning, no authority registrations, no worker install or
@@ -105,6 +127,12 @@ function assertScopeAllowed(scope) {
 // Deterministic episode identity: sha256 over the canonical capture.
 // Same capture bytes always yield the same id, so replay is idempotent
 // and a correction links as a new episode (new bytes, new id).
+// Fix round 1 (TBP5-006): the canonical form includes the consequential
+// persisted capture metadata — visibility, grants as a sorted set,
+// provenanceStatus, state — each normalized to the capture defaults, so
+// computeEpisodeId agrees with captureEpisode for bare and full inputs
+// alike. A capture that differs in any of them is a different episode;
+// it can never silently replay as different authority.
 export function computeEpisodeId(episode) {
   const canonical = stableStringify({
     scope: episode.scope,
@@ -119,8 +147,37 @@ export function computeEpisodeId(episode) {
     },
     capturedAt: episode.capturedAt,
     conflictGroup: episode.conflictGroup ?? null,
+    visibility: episode.visibility ?? "public",
+    grants: [...(episode.grants ?? [])].sort(),
+    provenanceStatus: episode.provenanceStatus ?? "COMPLETE",
+    state: episode.state ?? "ACTIVE",
   });
   return `ep-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
+}
+
+// In-process serialization boundary (fix round 1, TBP5-002). One promise
+// chain per db handle, shared by every repository instance created on
+// that handle (WeakMap keyed by handle identity). Each operation runs
+// to completion before the next starts, so no two operations on one
+// connection can interleave inside one transaction. The chain never
+// breaks: a failed operation still advances the tail, so a later
+// operation is never starved by an earlier error. This is explicitly
+// in-process only — it fences nothing across processes.
+const CONNECTION_LOCKS = new WeakMap();
+function connectionLock(dbHandle) {
+  let entry = CONNECTION_LOCKS.get(dbHandle);
+  if (!entry) {
+    entry = { tail: Promise.resolve() };
+    CONNECTION_LOCKS.set(dbHandle, entry);
+  }
+  return (fn) => {
+    const run = entry.tail.then(fn);
+    entry.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 }
 
 export function loadSchemaSql() {
@@ -139,10 +196,19 @@ export function createRetrievalRepository(db) {
     return rows.length ? Number(rows[0].revision) : 0;
   }
 
+  // Resolve the snapshot boundary for a search: a pin name, an asOf
+  // revision, or the latest revision. Fix round 1 (TBP5-004): the
+  // result is validated against the admitted high-water mark. A
+  // future revision is refused with FUTURE_REVISION, never silently
+  // clamped to latest — a historical pin must never become a promise
+  // to accumulate future data, and dbRevision must never assert a
+  // snapshot that does not exist. Revision 0 (empty store) stays
+  // valid; pins created at or below the high-water mark stay valid.
   async function resolveRevision({ asOf = null, pin = null } = {}) {
     if (asOf !== null && pin !== null) {
       fail(CODES.INVALID_FIELD, "asOf and pin are mutually exclusive", {});
     }
+    const latest = await latestRevision();
     if (pin !== null) {
       assertNonEmptyString(pin, "pin");
       const { rows } = await db.query(
@@ -152,7 +218,15 @@ export function createRetrievalRepository(db) {
       if (!rows.length) {
         fail(P5_CODES.UNKNOWN_PIN, `unknown pin: ${pin}`, { pin });
       }
-      return Number(rows[0].revision);
+      const pinned = Number(rows[0].revision);
+      if (pinned > latest) {
+        fail(P5_CODES.FUTURE_REVISION, `pin ${pin} points above the latest revision`, {
+          pin,
+          revision: pinned,
+          latestRevision: latest,
+        });
+      }
+      return pinned;
     }
     if (asOf !== null) {
       if (!Number.isInteger(asOf) || asOf < 0) {
@@ -160,9 +234,15 @@ export function createRetrievalRepository(db) {
           asOf,
         });
       }
+      if (asOf > latest) {
+        fail(P5_CODES.FUTURE_REVISION, `asOf ${asOf} is above the latest revision`, {
+          asOf,
+          latestRevision: latest,
+        });
+      }
       return asOf;
     }
-    return latestRevision();
+    return latest;
   }
 
   // Capture one episode immutably. Returns { episodeId, revision, replayed }.
@@ -311,18 +391,60 @@ export function createRetrievalRepository(db) {
     return { episodeId, principal };
   }
 
-  // Archive flips only the state flag. Content, source, and revision
-  // never change; archived episodes stay retrievable, flagged ARCHIVED.
-  async function archiveEpisode(episodeId) {
+  // Archive appends an explicit archive event, it never rewrites the
+  // episode row (fix round 1, TBP5-003). The event carries its own
+  // revision (a fresh bump of the retrieval counter) plus audit
+  // context (optional note/actor, timestamp). Search projects the
+  // state applicable at as_of: an archive event at or below as_of
+  // yields ARCHIVED, an earlier pin still yields the original state.
+  // Replaying an archive for an already-archived episode is a no-op:
+  // same event revision, no second event, no revision bump.
+  async function archiveEpisode(episodeId, audit = {}) {
     assertNonEmptyString(episodeId, "episodeId");
-    const { rows } = await db.query(
-      "UPDATE tb_episodes SET state = 'ARCHIVED' WHERE episode_id = $1 RETURNING episode_id",
+    if (audit === null || typeof audit !== "object" || Array.isArray(audit)) {
+      fail(CODES.INVALID_FIELD, "audit must be an object", {});
+    }
+    if (audit.note !== undefined && audit.note !== null && typeof audit.note !== "string") {
+      fail(CODES.INVALID_FIELD, "audit.note must be a string", {});
+    }
+    if (audit.actor !== undefined && audit.actor !== null && typeof audit.actor !== "string") {
+      fail(CODES.INVALID_FIELD, "audit.actor must be a string", {});
+    }
+    const found = await db.query(
+      "SELECT episode_id FROM tb_episodes WHERE episode_id = $1",
       [episodeId],
     );
-    if (!rows.length) {
+    if (!found.rows.length) {
       fail(P5_CODES.UNKNOWN_EPISODE, `unknown episode: ${episodeId}`, { episodeId });
     }
-    return { episodeId, state: "ARCHIVED" };
+    const prior = await db.query(
+      "SELECT revision FROM tb_episode_events WHERE episode_id = $1 AND event_type = 'ARCHIVED'",
+      [episodeId],
+    );
+    if (prior.rows.length) {
+      return { episodeId, state: "ARCHIVED", revision: Number(prior.rows[0].revision), replayed: true };
+    }
+    try {
+      await db.query("BEGIN");
+      const bumped = await db.query(
+        "UPDATE tb_retrieval_revisions SET revision = revision + 1 WHERE id = 1 RETURNING revision",
+      );
+      const revision = Number(bumped.rows[0].revision);
+      await db.query(
+        `INSERT INTO tb_episode_events (episode_id, event_type, revision, note, actor, created_at)
+         VALUES ($1, 'ARCHIVED', $2, $3, $4, $5)`,
+        [episodeId, revision, audit.note ?? null, audit.actor ?? null, new Date().toISOString()],
+      );
+      await db.query("COMMIT");
+      return { episodeId, state: "ARCHIVED", revision, replayed: false };
+    } catch (err) {
+      try {
+        await db.query("ROLLBACK");
+      } catch {
+        // Rollback failure must not mask the original error.
+      }
+      throw err;
+    }
   }
 
   async function pinRevision(pin, revision) {
@@ -342,6 +464,17 @@ export function createRetrievalRepository(db) {
       }
       return { pin, revision, replayed: true };
     }
+    // Fix round 1 (TBP5-004): a new pin above the admitted high-water
+    // mark is refused, never stored. Revision 0 on an empty store is
+    // valid. This check has no side effect on refusal.
+    const latest = await latestRevision();
+    if (revision > latest) {
+      fail(P5_CODES.FUTURE_REVISION, `pin ${pin} at revision ${revision} is above the latest revision`, {
+        pin,
+        revision,
+        latestRevision: latest,
+      });
+    }
     await db.query(
       "INSERT INTO tb_pins (pin_name, revision, pinned_at) VALUES ($1, $2, $3)",
       [pin, revision, new Date().toISOString()],
@@ -349,6 +482,40 @@ export function createRetrievalRepository(db) {
     return { pin, revision, replayed: false };
   }
 
+  // Read eligibility for one episode under one principal: existence,
+  // allowed domain, and authorization. Used by the working-set setter
+  // (refusals, before any displacement) and getter (revalidation on
+  // read). A withheld reference discloses nothing: callers that fail
+  // this check learn no content, only the refusal code.
+  async function episodeReadEligibility(episodeId, principal) {
+    const { rows } = await db.query(
+      `SELECT e.scope, e.visibility, e.revision,
+        EXISTS (SELECT 1 FROM tb_episode_grants g
+                WHERE g.episode_id = e.episode_id AND g.principal = $2) AS granted
+       FROM tb_episodes e WHERE e.episode_id = $1`,
+      [episodeId, principal],
+    );
+    if (!rows.length) {
+      fail(P5_CODES.UNKNOWN_EPISODE, `unknown episode: ${episodeId}`, { episodeId });
+    }
+    const row = rows[0];
+    if (FORBIDDEN_SCOPES.includes(row.scope)) {
+      fail(P5_CODES.FORBIDDEN_DOMAIN, `episode scope is excluded from retrieval: ${row.scope}`, {
+        scope: row.scope,
+      });
+    }
+    if (row.visibility !== "public" && !row.granted) {
+      fail(P5_CODES.ACCESS_DENIED, `principal may not read episode: ${episodeId}`, {
+        episodeId,
+      });
+    }
+    return { scope: row.scope, visibility: row.visibility, revision: Number(row.revision) };
+  }
+
+  // Get the caller's four slots, revalidated on read (fix round 1,
+  // TBP5-005). A slot whose reference is no longer eligible — episode
+  // gone, scope forbidden, grant missing, revision diverged — reads
+  // back as null, never as the forbidden identity.
   async function getWorkingSet(principal) {
     assertNonEmptyString(principal, "principal");
     const { rows } = await db.query(
@@ -357,14 +524,30 @@ export function createRetrievalRepository(db) {
     );
     const slots = { 1: null, 2: null, 3: null, 4: null };
     for (const row of rows) {
-      slots[row.slot] = { episodeId: row.episode_id, revision: Number(row.revision) };
+      let eligible = null;
+      try {
+        eligible = await episodeReadEligibility(row.episode_id, principal);
+      } catch (err) {
+        // Only eligibility refusals withhold the slot. A genuine
+        // database failure must surface, never masquerade as withheld.
+        if (err?.name !== "TeamBrainError") throw err;
+        eligible = null;
+      }
+      if (eligible && eligible.revision === Number(row.revision)) {
+        slots[row.slot] = { episodeId: row.episode_id, revision: Number(row.revision) };
+      } else {
+        slots[row.slot] = null;
+      }
     }
     return slots;
   }
 
-  // Displacement writes through in a single UPSERT: if the write fails,
-  // the previous slot value remains (the adapter holds no in-memory
-  // copy that could diverge from the stored slot).
+  // Displacement validates before writing (fix round 1, TBP5-005):
+  // the episode must exist, be in an allowed scope, and be readable
+  // by the slot owner, and the revision must be exactly the episode's
+  // actual version (revision means episode version here). Every
+  // refusal happens before the UPSERT, so a failed or denied
+  // displacement preserves the prior valid slot.
   async function setWorkingSetSlot(principal, slot, episodeId, revision) {
     assertNonEmptyString(principal, "principal");
     if (!Number.isInteger(slot) || slot < 1 || slot > 4) {
@@ -374,12 +557,13 @@ export function createRetrievalRepository(db) {
     if (!Number.isInteger(revision) || revision < 0) {
       fail(CODES.INVALID_FIELD, "revision must be a non-negative integer", { revision });
     }
-    const found = await db.query(
-      "SELECT 1 FROM tb_episodes WHERE episode_id = $1",
-      [episodeId],
-    );
-    if (!found.rows.length) {
-      fail(P5_CODES.UNKNOWN_EPISODE, `unknown episode: ${episodeId}`, { episodeId });
+    const eligible = await episodeReadEligibility(episodeId, principal);
+    if (eligible.revision !== revision) {
+      fail(P5_CODES.REVISION_MISMATCH, `revision ${revision} is not the episode version ${eligible.revision}`, {
+        episodeId,
+        revision,
+        episodeRevision: eligible.revision,
+      });
     }
     await db.query(
       `INSERT INTO tb_working_set (principal, slot, episode_id, revision)
@@ -502,19 +686,49 @@ export function createRetrievalRepository(db) {
       rows = listRes.rows;
     }
 
+    // Conflict metadata passes the SAME boundary as retrieval (fix
+    // round 1, TBP5-001): authorization/source visibility,
+    // allowed-domain, scope, and revision — before any member, count,
+    // or flag is exposed. The FTS keyword match is deliberately NOT
+    // applied to counterparts, so an authorized contrary statement is
+    // never hidden by keyword mismatch; the access boundary is what
+    // filters. A denied counterpart contributes nothing: no id in
+    // conflictWith, no hasConflict, no uncertainty.
     const conflictGroups = [...new Set(rows.map((r) => r.conflict_group).filter(Boolean))];
     const conflictMap = new Map();
     if (conflictGroups.length) {
+      const cParams = [conflictGroups, asOfRevision, principal];
+      if (scope !== null) cParams.push(scope);
       const { rows: crows } = await db.query(
-        `SELECT conflict_group, episode_id FROM tb_episodes
-         WHERE conflict_group = ANY($1) AND revision <= $2
+        `SELECT conflict_group, episode_id FROM tb_episodes e
+         WHERE e.conflict_group = ANY($1) AND e.revision <= $2
+         AND e.scope NOT IN ('tenant', 'ledger', 'financial', 'enrollment', 'scheduling')
+         AND (e.visibility = 'public' OR EXISTS (
+           SELECT 1 FROM tb_episode_grants g
+           WHERE g.episode_id = e.episode_id AND g.principal = $3
+         ))
+         ${scope !== null ? "AND e.scope = $4" : ""}
          ORDER BY episode_id ASC`,
-        [conflictGroups, asOfRevision],
+        cParams,
       );
       for (const row of crows) {
         if (!conflictMap.has(row.conflict_group)) conflictMap.set(row.conflict_group, []);
         conflictMap.get(row.conflict_group).push(row.episode_id);
       }
+    }
+
+    // Archive projection (fix round 1, TBP5-003): an archive event at
+    // or below as_of makes the projected state ARCHIVED; an earlier
+    // pin projects the original state. Capture-time ARCHIVED stays
+    // ARCHIVED at every as_of.
+    const archivedIds = new Set();
+    if (rows.length) {
+      const { rows: erows } = await db.query(
+        `SELECT episode_id FROM tb_episode_events
+         WHERE episode_id = ANY($1) AND event_type = 'ARCHIVED' AND revision <= $2`,
+        [rows.map((r) => r.episode_id), asOfRevision],
+      );
+      for (const row of erows) archivedIds.add(row.episode_id);
     }
 
     const results = rows.map((row) => {
@@ -532,8 +746,14 @@ export function createRetrievalRepository(db) {
         score: Number(row.score),
         capturedAt: row.captured_at,
         revision: Number(row.revision),
-        state: row.state,
-        freshness: Number(row.revision) === latest ? "current" : "historical",
+        state: row.state === "ARCHIVED" || archivedIds.has(row.episode_id) ? "ARCHIVED" : "ACTIVE",
+        // Freshness is relative to the query's snapshot boundary, not
+        // the store's moving head: within a pinned as_of view, the
+        // head episode of that snapshot is current. This keeps a
+        // historical pin's results byte-stable across later captures
+        // (fix round 1, TBP5-004). An unpinned search uses as_of =
+        // latest, so the old latest-vs-older reading is unchanged.
+        freshness: Number(row.revision) === asOfRevision ? "current" : "historical",
         provenanceStatus: row.provenance_status,
         unavailableReason: unavailable ? "MISSING_PROVENANCE" : null,
         hasConflict: conflictWith.length > 0,
@@ -573,16 +793,24 @@ export function createRetrievalRepository(db) {
     };
   }
 
+  // Public surface: every operation on this connection runs through
+  // the shared connection lock (fix round 1, TBP5-002), so concurrent
+  // calls in one process serialize end to end — read, check, write,
+  // commit — and no caller's transaction can swallow another's
+  // acknowledged work. Internal calls above use the unlocked
+  // implementations directly; only the returned wrappers lock, so
+  // there is no re-entrant deadlock.
+  const withLock = connectionLock(db);
   return {
     migrate,
-    latestRevision,
-    captureEpisode,
-    grantEpisode,
-    archiveEpisode,
-    pinRevision,
-    getWorkingSet,
-    setWorkingSetSlot,
-    searchMemory,
+    latestRevision: (...args) => withLock(() => latestRevision(...args)),
+    captureEpisode: (...args) => withLock(() => captureEpisode(...args)),
+    grantEpisode: (...args) => withLock(() => grantEpisode(...args)),
+    archiveEpisode: (...args) => withLock(() => archiveEpisode(...args)),
+    pinRevision: (...args) => withLock(() => pinRevision(...args)),
+    getWorkingSet: (...args) => withLock(() => getWorkingSet(...args)),
+    setWorkingSetSlot: (...args) => withLock(() => setWorkingSetSlot(...args)),
+    searchMemory: (...args) => withLock(() => searchMemory(...args)),
   };
 }
 

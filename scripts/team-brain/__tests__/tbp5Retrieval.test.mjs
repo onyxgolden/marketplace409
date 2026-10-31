@@ -4,6 +4,7 @@
 // fixed literal; no wall-clock reads in assertions.
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
@@ -15,6 +16,10 @@ import {
   createRetrievalRepository,
   migrate,
 } from "../retrieval/repository.mjs";
+import {
+  citationMatches,
+  expectedCitationFor,
+} from "../retrieval/citation.mjs";
 import { P5_CODES } from "../retrieval/errors.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +46,7 @@ function episode(overrides = {}) {
 
 async function truncateAll(db) {
   await db.query(
-    "TRUNCATE tb_working_set, tb_episode_grants, tb_pins, tb_episodes",
+    "TRUNCATE tb_working_set, tb_episode_grants, tb_pins, tb_episode_events, tb_episodes",
   );
   await db.query("UPDATE tb_retrieval_revisions SET revision = 0 WHERE id = 1");
 }
@@ -380,6 +385,12 @@ describe("P5 search", () => {
     expect(hit.citation.revision).toBe(captured.revision);
     expect(hit.citation.source.repo).toBe(SRC.repo);
     expect(hit.citation.source.path).toBe(SRC.path);
+    // Fix round 1 (TBP5-007): commit/blob are asserted against the
+    // independently supplied capture input, never against a refetch of
+    // the same renderer — a renderer returning invented pins on every
+    // lookup must fail here.
+    expect(hit.citation.source.commit).toBe(SRC.commit);
+    expect(hit.citation.source.blob).toBe(SRC.blob);
     expect(hit.citation.watermark).toBe(SRC.watermark);
     expect(hit.dbRevision).toBe(res.asOfRevision);
     const refetch = await repo.searchMemory({ query: hit.episodeId, principal: "muse" });
@@ -611,8 +622,14 @@ describe("P5 labeled-fixture evaluation", () => {
   });
 
   it30("40 labeled queries: citation binding 100%, seeded-conflict recall 100%, honest precision/recall@5", async () => {
-    const { keyToId, fixture } = await seedFixture(repo);
+    const { keyToId, keyToRevision, fixture } = await seedFixture(repo);
     const toIds = (keys) => keys.map((k) => keyToId[k]);
+    const idToKey = Object.fromEntries(
+      Object.entries(keyToId).map(([key, id]) => [id, key]),
+    );
+    const episodeByKey = Object.fromEntries(
+      fixture.episodes.map((e) => [e.key, e]),
+    );
 
     let citationChecked = 0;
     let citationBound = 0;
@@ -634,23 +651,24 @@ describe("P5 labeled-fixture evaluation", () => {
       const returnedIds = res.results.map((r) => r.episodeId);
       const expectedIds = toIds(q.expectedKeys);
 
-      // Citation binding: every result's citation resolves by exact ID
-      // to the same revision and source.
+      // Citation binding (fix round 1, TBP5-007): every result's FULL
+      // citation identity — episode, repo, path, commit, blob,
+      // revision, watermark — is compared against the independently
+      // labeled fixture oracle, never against a second call to the
+      // same renderer. An invented commit/blob fails here.
       for (const hit of res.results) {
         citationChecked += 1;
-        const refetch = await repo.searchMemory({
-          query: hit.episodeId,
-          principal: q.principal ?? "muse",
-        });
-        const cited = refetch.results.find((r) => r.episodeId === hit.episodeId);
-        if (
-          cited &&
-          cited.citation.episodeId === hit.citation.episodeId &&
-          cited.citation.revision === hit.citation.revision &&
-          cited.citation.source.repo === hit.citation.source.repo &&
-          cited.citation.source.path === hit.citation.source.path &&
-          cited.citation.watermark === hit.citation.watermark
-        ) {
+        const key = idToKey[hit.episodeId];
+        const expected =
+          key === undefined
+            ? null
+            : expectedCitationFor(
+                fixture,
+                episodeByKey[key],
+                hit.episodeId,
+                keyToRevision[key],
+              );
+        if (expected && citationMatches(hit.citation, expected)) {
           citationBound += 1;
         }
       }
@@ -712,5 +730,327 @@ describe("P5 labeled-fixture evaluation", () => {
     expect(meanP5).toBeLessThanOrEqual(1);
     expect(meanR5).toBeGreaterThanOrEqual(0);
     expect(meanR5).toBeLessThanOrEqual(1);
+  });
+});
+
+// Fix round 1 (ChatGPT NEEDS CHANGES 2026-10-30, TBP5-001..007).
+// Each test freezes one executed counterexample from
+// results/chatgpt/probes/team-brain-p5-counterexamples-2026-10-30.mjs
+// with the repaired expectation. No live database, no network.
+describe("P5 fix round 1 — TBP5-001..007 regressions", () => {
+  let db;
+  let repo;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await migrate(db);
+    repo = createRetrievalRepository(db);
+  }, 60000);
+  afterAll(async () => {
+    await db.close();
+  });
+  beforeEach(async () => {
+    await truncateAll(db);
+  });
+
+  // Counterexample probe shape: one public engineering episode plus a
+  // restricted alternative in the same conflict group.
+  const synthSrc = {
+    repo: "synthetic/engineering",
+    path: "fixtures/decision.md",
+    commit: "a".repeat(40),
+    blob: "b".repeat(40),
+    watermark: "synthetic@1",
+  };
+  const synth = (overrides = {}) => ({
+    scope: "engineering",
+    title: "Queue decision",
+    body: "The synthetic queue rule orders tasks oldest first.",
+    source: { ...synthSrc },
+    capturedAt: "2026-10-14T16:00:00Z",
+    ...overrides,
+  });
+
+  it30("TBP5-001: conflict metadata hides denied counterparts, shows authorized ones", async () => {
+    const pub = await repo.captureEpisode(synth({ conflictGroup: "g" }));
+    const restricted = await repo.captureEpisode(
+      synth({
+        title: "Restricted alternative",
+        body: "Restricted synthetic alternative rule.",
+        visibility: "restricted",
+        grants: ["owner"],
+        conflictGroup: "g",
+      }),
+    );
+    const guest = await repo.searchMemory({ query: pub.episodeId, principal: "guest" });
+    expect(guest.results.length).toBe(1);
+    expect(guest.results[0].conflictWith).toEqual([]);
+    expect(guest.results[0].hasConflict).toBe(false);
+    expect(guest.results[0].uncertainty).toBe("NONE");
+    expect(JSON.stringify(guest)).not.toContain(restricted.episodeId);
+    const owner = await repo.searchMemory({ scope: "engineering", principal: "owner" });
+    expect(owner.results.map((r) => r.episodeId).sort()).toEqual(
+      [pub.episodeId, restricted.episodeId].sort(),
+    );
+    for (const hit of owner.results) {
+      expect(hit.hasConflict).toBe(true);
+      expect(hit.conflictWith.length).toBe(1);
+    }
+  });
+
+  it30("TBP5-001: forbidden-domain counterparts never appear in conflict metadata", async () => {
+    const pub = await repo.captureEpisode(synth({ conflictGroup: "g2" }));
+    await db.query(
+      `INSERT INTO tb_episodes (
+        episode_id, scope, title, body, source_repo, source_path,
+        source_commit, source_blob, source_watermark, captured_at,
+        captured_at_ms, revision, state, visibility, provenance_status, conflict_group
+      ) VALUES ('ep-direct-tenant-g2', 'tenant', 'Tenant record', 'Tenant body.', $1, $2, $3, $4, $5, $6, $7, 1, 'ACTIVE', 'public', 'COMPLETE', 'g2')`,
+      [synthSrc.repo, synthSrc.path, synthSrc.commit, synthSrc.blob, synthSrc.watermark, "2026-10-14T16:00:00Z", 1728921600000],
+    );
+    for (const principal of ["guest", "muse"]) {
+      const res = await repo.searchMemory({ query: pub.episodeId, principal });
+      expect(res.results[0].conflictWith).toEqual([]);
+      expect(res.results[0].hasConflict).toBe(false);
+      expect(JSON.stringify(res)).not.toContain("ep-direct-tenant-g2");
+    }
+  });
+
+  it30("TBP5-002: concurrent exact duplicates yield one durable episode + consistent replay", async () => {
+    const outcomes = await Promise.allSettled([
+      repo.captureEpisode(synth()),
+      repo.captureEpisode(synth()),
+    ]);
+    expect(outcomes.map((o) => o.status)).toEqual(["fulfilled", "fulfilled"]);
+    const replayed = outcomes.map((o) => o.value.replayed).sort();
+    expect(replayed).toEqual([false, true]);
+    expect(outcomes[0].value.episodeId).toBe(outcomes[1].value.episodeId);
+    const { rows } = await db.query("SELECT COUNT(*) AS c FROM tb_episodes");
+    expect(Number(rows[0].c)).toBe(1);
+    expect(await repo.latestRevision()).toBe(1);
+  });
+
+  it30("TBP5-002: the lock is shared by every adapter instance on one connection", async () => {
+    const repo2 = createRetrievalRepository(db);
+    const outcomes = await Promise.allSettled([
+      repo.captureEpisode(synth()),
+      repo2.captureEpisode(synth()),
+    ]);
+    expect(outcomes.map((o) => o.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(outcomes.map((o) => o.value.replayed).sort()).toEqual([false, true]);
+    const { rows } = await db.query("SELECT COUNT(*) AS c FROM tb_episodes");
+    expect(Number(rows[0].c)).toBe(1);
+  });
+
+  it30("TBP5-002: distinct concurrent captures both persist; a failing capture rolls back nothing acknowledged", async () => {
+    const distinct = await Promise.allSettled([
+      repo.captureEpisode(synth()),
+      repo.captureEpisode(synth({ title: "Second decision", body: "A second synthetic rule." })),
+    ]);
+    expect(distinct.map((o) => o.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(await repo.latestRevision()).toBe(2);
+    const mixed = await Promise.allSettled([
+      repo.captureEpisode(synth({ title: "Third decision", body: "A third synthetic rule." })),
+      repo.captureEpisode(synth({ body: "x".repeat(64 * 1024 + 1) })),
+    ]);
+    expect(mixed[0].status).toBe("fulfilled");
+    expect(mixed[1].status).toBe("rejected");
+    const { rows } = await db.query("SELECT COUNT(*) AS c FROM tb_episodes");
+    expect(Number(rows[0].c)).toBe(3);
+    expect(await repo.latestRevision()).toBe(3);
+  });
+
+  it30("TBP5-003: archive event projects ARCHIVED at latest, original state at the earlier pin", async () => {
+    const captured = await repo.captureEpisode(synth());
+    await repo.pinRevision("before-archive", 1);
+    const before = await repo.searchMemory({ query: captured.episodeId, pin: "before-archive", principal: "guest" });
+    expect(before.results[0].state).toBe("ACTIVE");
+    const archived = await repo.archiveEpisode(captured.episodeId, { note: "Superseded by later rule.", actor: "muse" });
+    expect(archived).toMatchObject({ episodeId: captured.episodeId, state: "ARCHIVED", revision: 2, replayed: false });
+    expect(await repo.latestRevision()).toBe(2);
+    const atPin = await repo.searchMemory({ query: captured.episodeId, pin: "before-archive", principal: "guest" });
+    expect(atPin.results[0].state).toBe("ACTIVE");
+    expect(atPin.dbRevision).toBe(1);
+    const atLatest = await repo.searchMemory({ query: captured.episodeId, principal: "guest" });
+    expect(atLatest.results[0].state).toBe("ARCHIVED");
+    expect(atLatest.dbRevision).toBe(2);
+  });
+
+  it30("TBP5-003: archive replay is idempotent and the event row carries revision + audit context", async () => {
+    const captured = await repo.captureEpisode(synth());
+    const first = await repo.archiveEpisode(captured.episodeId, { note: "n", actor: "muse" });
+    const second = await repo.archiveEpisode(captured.episodeId);
+    expect(second).toMatchObject({ episodeId: captured.episodeId, state: "ARCHIVED", revision: first.revision, replayed: true });
+    expect(await repo.latestRevision()).toBe(first.revision);
+    const { rows } = await db.query(
+      "SELECT event_type, revision, note, actor FROM tb_episode_events WHERE episode_id = $1",
+      [captured.episodeId],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].event_type).toBe("ARCHIVED");
+    expect(Number(rows[0].revision)).toBe(first.revision);
+    expect(rows[0].note).toBe("n");
+    expect(rows[0].actor).toBe("muse");
+  });
+
+  it30("TBP5-004: future pin refused with no side effect; future asOf refused", async () => {
+    await expect(repo.pinRevision("future", 10)).rejects.toMatchObject({
+      code: P5_CODES.FUTURE_REVISION,
+    });
+    expect(await repo.latestRevision()).toBe(0);
+    await expect(
+      repo.searchMemory({ query: "queue", pin: "future", principal: "guest" }),
+    ).rejects.toMatchObject({ code: P5_CODES.UNKNOWN_PIN });
+    await repo.captureEpisode(synth());
+    await expect(
+      repo.searchMemory({ scope: "engineering", asOf: 100, principal: "guest" }),
+    ).rejects.toMatchObject({ code: P5_CODES.FUTURE_REVISION });
+    expect(await repo.latestRevision()).toBe(1);
+  });
+
+  it30("TBP5-004: revision 0 and historical pins stay valid; historical queries are stable", async () => {
+    const empty = await repo.pinRevision("empty", 0);
+    expect(empty.replayed).toBe(false);
+    const atEmpty = await repo.searchMemory({ scope: "engineering", pin: "empty", principal: "guest" });
+    expect(atEmpty.asOfRevision).toBe(0);
+    expect(atEmpty.results).toEqual([]);
+    const first = await repo.captureEpisode(synth());
+    await repo.pinRevision("after-first", 1);
+    const a = await repo.searchMemory({ query: first.episodeId, pin: "after-first", principal: "guest" });
+    await repo.captureEpisode(synth({ title: "Later decision", body: "A later synthetic rule." }));
+    const b = await repo.searchMemory({ query: first.episodeId, pin: "after-first", principal: "guest" });
+    // Pinned results are stable across later captures. (The envelope's
+    // latestRevision/freshness legitimately track the store's current
+    // head; stability binds the pinned as_of view, not the envelope.)
+    expect(JSON.stringify(b.results)).toBe(JSON.stringify(a.results));
+    expect(b.asOfRevision).toBe(a.asOfRevision);
+    expect(b.dbRevision).toBe(a.dbRevision);
+    expect(b.results[0].episodeId).toBe(first.episodeId);
+  });
+
+  it30("TBP5-005: denied displacement preserves the prior slot; wrong revision refused", async () => {
+    const pub = await repo.captureEpisode(synth());
+    const restricted = await repo.captureEpisode(
+      synth({
+        title: "Restricted decision",
+        body: "A restricted synthetic rule.",
+        visibility: "restricted",
+        grants: ["owner"],
+      }),
+    );
+    await repo.setWorkingSetSlot("guest", 1, pub.episodeId, pub.revision);
+    await expect(
+      repo.setWorkingSetSlot("guest", 1, restricted.episodeId, restricted.revision),
+    ).rejects.toMatchObject({ code: P5_CODES.ACCESS_DENIED });
+    expect((await repo.getWorkingSet("guest"))[1]).toEqual({
+      episodeId: pub.episodeId,
+      revision: pub.revision,
+    });
+    await expect(
+      repo.setWorkingSetSlot("guest", 1, pub.episodeId, 999),
+    ).rejects.toMatchObject({ code: P5_CODES.REVISION_MISMATCH });
+    expect((await repo.getWorkingSet("guest"))[1]).toEqual({
+      episodeId: pub.episodeId,
+      revision: pub.revision,
+    });
+  });
+
+  it30("TBP5-005: authorized displacement succeeds; read revalidation withholds ineligible references", async () => {
+    const restricted = await repo.captureEpisode(
+      synth({
+        title: "Restricted decision",
+        body: "A restricted synthetic rule.",
+        visibility: "restricted",
+        grants: ["owner"],
+      }),
+    );
+    const set = await repo.setWorkingSetSlot("owner", 1, restricted.episodeId, restricted.revision);
+    expect(set).toEqual({ principal: "owner", slot: 1, episodeId: restricted.episodeId, revision: restricted.revision });
+    expect((await repo.getWorkingSet("owner"))[1]).toEqual({
+      episodeId: restricted.episodeId,
+      revision: restricted.revision,
+    });
+    // Grant removed directly: the slot must read back withheld, and the
+    // forbidden identity must not appear in the returned working set.
+    await db.query("DELETE FROM tb_episode_grants WHERE episode_id = $1", [restricted.episodeId]);
+    const after = await repo.getWorkingSet("owner");
+    expect(after[1]).toBeNull();
+    expect(JSON.stringify(after)).not.toContain(restricted.episodeId);
+  });
+
+  it30("TBP5-006: changed visibility is a new episode, never a silent replay", async () => {
+    const pub = await repo.captureEpisode(synth({ visibility: "public" }));
+    const restricted = await repo.captureEpisode(
+      synth({ visibility: "restricted", grants: ["owner"] }),
+    );
+    expect(restricted.episodeId).not.toBe(pub.episodeId);
+    expect(restricted.replayed).toBe(false);
+    const guest = await repo.searchMemory({ query: pub.episodeId, principal: "guest" });
+    expect(guest.results.map((r) => r.episodeId)).toEqual([pub.episodeId]);
+    const owner = await repo.searchMemory({ scope: "engineering", principal: "owner" });
+    expect(owner.results.map((r) => r.episodeId).sort()).toEqual(
+      [pub.episodeId, restricted.episodeId].sort(),
+    );
+  });
+
+  it30("TBP5-006: grant order is a set; provenance and state partners differ; exact replay still replays", async () => {
+    const ordered = await repo.captureEpisode(synth({ grants: ["b-principal", "a-principal"] }));
+    const reordered = await repo.captureEpisode(synth({ grants: ["a-principal", "b-principal"] }));
+    expect(reordered.episodeId).toBe(ordered.episodeId);
+    expect(reordered.replayed).toBe(true);
+    const complete = await repo.captureEpisode(
+      synth({ title: "Provenance partner", body: "Provenance partner body." }),
+    );
+    const unavailable = await repo.captureEpisode(
+      synth({ title: "Provenance partner", body: "Provenance partner body.", provenanceStatus: "UNAVAILABLE" }),
+    );
+    expect(unavailable.episodeId).not.toBe(complete.episodeId);
+    expect(unavailable.replayed).toBe(false);
+    const active = await repo.captureEpisode(
+      synth({ title: "State partner", body: "State partner body." }),
+    );
+    const archivedState = await repo.captureEpisode(
+      synth({ title: "State partner", body: "State partner body.", state: "ARCHIVED" }),
+    );
+    expect(archivedState.episodeId).not.toBe(active.episodeId);
+    expect(archivedState.replayed).toBe(false);
+    const exact = await repo.captureEpisode(synth());
+    const exactReplay = await repo.captureEpisode(synth());
+    expect(exactReplay.episodeId).toBe(exact.episodeId);
+    expect(exactReplay.replayed).toBe(true);
+  });
+
+  it30("TBP5-007: corrupted citation pins fail the scorer", async () => {
+    const { keyToId, keyToRevision, fixture } = await seedFixture(repo);
+    const res = await repo.searchMemory({ query: "oldest unanswered queue ordering", principal: "muse" });
+    expect(res.results.length).toBeGreaterThan(0);
+    const hit = res.results[0];
+    const key = Object.entries(keyToId).find(([, id]) => id === hit.episodeId)[0];
+    const episode = fixture.episodes.find((e) => e.key === key);
+    const expected = expectedCitationFor(fixture, episode, hit.episodeId, keyToRevision[key]);
+    expect(citationMatches(hit.citation, expected)).toBe(true);
+    // The verdict's exact mutation: invented commit/blob on the
+    // returned citation. The oracle comparison must fail it.
+    const corrupted = {
+      ...hit.citation,
+      source: { ...hit.citation.source, commit: "invented-commit", blob: "invented-blob" },
+    };
+    expect(citationMatches(corrupted, expected)).toBe(false);
+  });
+
+  it30("TBP5-007: fixture receipt authenticates the labeled fixture", async () => {
+    const receipt = JSON.parse(
+      readFileSync(join(HERE, "..", "retrieval", "fixtures", "labeled-queries.receipt.json"), "utf8"),
+    );
+    const fixtureBytes = readFileSync(
+      join(HERE, "..", "retrieval", "fixtures", "labeled-queries.json"),
+    );
+    expect(receipt.fixtureSha256).toBe(
+      createHash("sha256").update(fixtureBytes).digest("hex"),
+    );
+    const fixture = JSON.parse(fixtureBytes.toString("utf8"));
+    expect(receipt.episodes).toBe(fixture.episodes.length);
+    expect(receipt.queries).toBe(fixture.queries.length);
+    expect(receipt.pins).toBe(fixture.pins.length);
   });
 });
