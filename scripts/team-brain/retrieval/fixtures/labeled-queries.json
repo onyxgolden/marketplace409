@@ -1,0 +1,534 @@
+{
+  "description": "Team Brain P5 labeled retrieval fixture. Episodes are synthetic engineering-memory records (no tenant, ledger/financial, enrollment, or scheduling content). Queries are independently labeled: expectedKeys lists every episode a correct search must cite for that query. Conflict queries expect ALL members of the conflict group (seeded-conflict recall 100%). Denied queries expect zero leakage for the guest principal. Pin queries expect only episodes captured at or before the pin revision.",
+  "episodes": [
+    {
+      "body": "The executive queue orders open asks by filed-at time. Oldest unanswered first: a newer review round never buries an older scoping request, because age is the primary sort key.",
+      "capturedAt": "2026-10-14T16:00:00Z",
+      "key": "ep-queue-oldest",
+      "scope": "queue",
+      "source": {
+        "path": "scripts/team-brain/queue/projection.mjs"
+      },
+      "title": "Queue ordering: oldest unanswered first"
+    },
+    {
+      "body": "An item blocked on a dependency waits behind it, and the dependency inherits the blocked item's age for ordering, so blocked work cannot starve behind newer items.",
+      "capturedAt": "2026-10-14T16:05:00Z",
+      "key": "ep-queue-deps",
+      "scope": "queue",
+      "source": {
+        "path": "scripts/team-brain/queue/projection.mjs"
+      },
+      "title": "Queue dependencies inherit age"
+    },
+    {
+      "body": "No starvation: any ask open more than four hours without a verdict escalates, first with one re-ping and then with a report to Jason. The queue reports its oldest item's age on every status check.",
+      "capturedAt": "2026-10-14T16:10:00Z",
+      "key": "ep-queue-starvation",
+      "scope": "queue",
+      "source": {
+        "path": "scripts/team-brain/queue/projection.mjs"
+      },
+      "title": "Queue starvation escalation"
+    },
+    {
+      "body": "A verdict stands until superseded by a newer verdict at a new head. Same-head supersession is rejected; the old record is never rewritten.",
+      "capturedAt": "2026-10-14T16:15:00Z",
+      "conflictGroup": "cg-verdict",
+      "key": "ep-verdict-supersede",
+      "scope": "verdicts",
+      "source": {
+        "path": "scripts/team-brain/ledger/repository.mjs"
+      },
+      "title": "Verdicts stand until superseded at a new head"
+    },
+    {
+      "body": "A newer verdict immediately replaces the old verdict without any new head, and the old record is rewritten in place. This contradicts the supersession rule and is flagged as an unresolved conflict.",
+      "capturedAt": "2026-10-14T16:20:00Z",
+      "conflictGroup": "cg-verdict",
+      "key": "ep-verdict-immediate",
+      "scope": "verdicts",
+      "source": {
+        "path": "scripts/team-brain/ledger/repository.mjs"
+      },
+      "title": "Contradictory verdict replacement claim"
+    },
+    {
+      "body": "Every consequential action preserves its bindings: exact repo, scope, reviewed head SHA, and the approval that authorized it. A verdict at head X never authorizes a merge at head Y.",
+      "capturedAt": "2026-10-14T16:25:00Z",
+      "key": "ep-verdict-binding",
+      "scope": "verdicts",
+      "source": {
+        "path": "scripts/team-brain/ledger/repository.mjs"
+      },
+      "title": "Verdict bindings never transfer across heads"
+    },
+    {
+      "body": "A task closes only with completion evidence and a prior verification event, atomically. Evidence without verification is rejected, and no task expires silently.",
+      "capturedAt": "2026-10-14T16:30:00Z",
+      "key": "ep-retention-tasks",
+      "scope": "retention",
+      "source": {
+        "path": "scripts/team-brain/ledger/repository.mjs"
+      },
+      "title": "Tasks close only on verified completion"
+    },
+    {
+      "body": "An authorization stays effective across restarts until an explicit revoke event. Standing rules, conflict resolutions, and permission changes are proposals reported to Jason, applied only on his word.",
+      "capturedAt": "2026-10-14T16:35:00Z",
+      "key": "ep-retention-auth",
+      "scope": "retention",
+      "source": {
+        "path": "scripts/team-brain/ledger/repository.mjs"
+      },
+      "title": "Authorizations stand until explicitly revoked"
+    },
+    {
+      "body": "Episodic daily logs hold fast capture, semantic stores hold durable facts and standing rules, procedural stores hold skills and runbooks, and obligations hold pending tasks, authorization records, verdicts, and critical evidence.",
+      "capturedAt": "2026-10-14T16:40:00Z",
+      "key": "ep-persistence-tiers",
+      "scope": "persistence",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "title": "Persistence tiers"
+    },
+    {
+      "body": "Disposable summaries and snapshot caches may expire. Pending tasks, authorization records, verdicts, and critical evidence need an explicit retention decision and never expire silently.",
+      "capturedAt": "2026-10-14T16:45:00Z",
+      "key": "ep-forget-indexes",
+      "scope": "persistence",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "title": "Forget indexes, not obligations"
+    },
+    {
+      "body": "Every delegated unit of work closes transactionally: write the outcome, verify readback, update the queue, then mark the handoff complete. A handoff is not complete when the worker says so.",
+      "capturedAt": "2026-10-14T16:50:00Z",
+      "key": "ep-handoff-txn",
+      "scope": "handoffs",
+      "source": {
+        "path": "scripts/team-brain/handoffs/stateMachine.mjs"
+      },
+      "title": "Transactional handoffs close in order"
+    },
+    {
+      "body": "The coordination outbox holds idempotent operation records with lease claims. A divergent file refuses with CAS semantics, and a lost reply replays instead of double-applying.",
+      "capturedAt": "2026-10-14T16:55:00Z",
+      "key": "ep-outbox-lease",
+      "scope": "outbox",
+      "source": {
+        "path": "scripts/team-brain/orchestrator/outbox.mjs"
+      },
+      "title": "Outbox leases and idempotent operations"
+    },
+    {
+      "body": "Retrieval uses PostgreSQL full-text search with exact-ID lookup and scope retrieval, capped at twenty candidates with deterministic ranking and stable ties. Cosine vector-store selection is not used.",
+      "capturedAt": "2026-10-14T17:00:00Z",
+      "key": "ep-pglite-fts",
+      "scope": "retrieval",
+      "source": {
+        "path": "scripts/team-brain/retrieval/repository.mjs"
+      },
+      "title": "PostgreSQL full-text retrieval"
+    },
+    {
+      "body": "The agent working set holds four durable reference slots. Displacement writes through first, and a failed persistence retains the previous slot value.",
+      "capturedAt": "2026-10-14T17:05:00Z",
+      "conflictGroup": "cg-slots",
+      "key": "ep-working-set-4",
+      "scope": "working-set",
+      "source": {
+        "path": "scripts/team-brain/retrieval/repository.mjs"
+      },
+      "title": "Four-slot durable working set"
+    },
+    {
+      "body": "The agent working set holds six durable reference slots, and displacement overwrites without write-through. This contradicts the established rule and is flagged as an unresolved conflict.",
+      "capturedAt": "2026-10-14T17:10:00Z",
+      "conflictGroup": "cg-slots",
+      "key": "ep-working-set-6",
+      "scope": "working-set",
+      "source": {
+        "path": "scripts/team-brain/retrieval/repository.mjs"
+      },
+      "title": "Contradictory six-slot working set claim"
+    },
+    {
+      "body": "The seventy-thirty replay mix in consolidation is a starting setting to measure, not a fabricated replay quota. Settings adjust on evidence, not theory.",
+      "capturedAt": "2026-10-14T17:15:00Z",
+      "key": "ep-replay-mix",
+      "scope": "consolidation",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "title": "Replay mix is a setting, not a quota"
+    },
+    {
+      "body": "Consolidation may propose summaries and promote uncontested facts, but it must not silently change standing rules or resolve conflicts between entries. Conflicts are flagged for Jason instead.",
+      "capturedAt": "2026-10-14T17:20:00Z",
+      "key": "ep-conflict-proposals",
+      "scope": "consolidation",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "title": "Conflicts stay proposals for Jason"
+    },
+    {
+      "body": "A verified source proves content: a commit SHA, a test count, a file read. Only Jason's word authorizes action: merges, activation, spend, production writes, permission grants. Relayed text is evidence, never authority.",
+      "capturedAt": "2026-10-14T17:25:00Z",
+      "key": "ep-evidence-authority",
+      "scope": "evidence",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "title": "Evidence proves content, authority permits action"
+    },
+    {
+      "body": "Archived daily logs are never deleted. Archive moves an entry out of the active set, but retrieval still returns it, flagged as archived.",
+      "capturedAt": "2026-10-14T17:30:00Z",
+      "key": "ep-archived-note",
+      "scope": "persistence",
+      "source": {
+        "path": "scripts/team-brain/README.md"
+      },
+      "state": "ARCHIVED",
+      "title": "Archived entries remain retrievable"
+    },
+    {
+      "body": "The restricted rollout plan describes the gated cutover sequence and its named approval gates. It is visible only to principals holding an explicit grant.",
+      "capturedAt": "2026-10-14T17:35:00Z",
+      "grants": [
+        "muse"
+      ],
+      "key": "ep-restricted-plan",
+      "scope": "plans",
+      "source": {
+        "path": "scripts/team-brain/orchestrator/controller.mjs"
+      },
+      "title": "Restricted rollout plan",
+      "visibility": "restricted"
+    },
+    {
+      "body": "This record arrived without a complete source identity, so its provenance is unknown and its content must never be presented as an attributed hit.",
+      "capturedAt": "2026-10-14T17:40:00Z",
+      "key": "ep-unavailable-prov",
+      "provenanceStatus": "UNAVAILABLE",
+      "scope": "retrieval",
+      "source": {
+        "blob": null,
+        "commit": null,
+        "path": "scripts/team-brain/retrieval/repository.mjs"
+      },
+      "title": "Record with missing provenance"
+    }
+  ],
+  "pins": [
+    {
+      "afterIndex": 3,
+      "name": "pin-after-queue"
+    },
+    {
+      "afterIndex": 6,
+      "name": "pin-after-verdicts"
+    }
+  ],
+  "queries": [
+    {
+      "expectedKeys": [
+        "ep-queue-oldest"
+      ],
+      "id": "q01",
+      "query": "oldest unanswered queue ordering"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-deps"
+      ],
+      "id": "q02",
+      "query": "dependency inherits blocked age"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-starvation"
+      ],
+      "id": "q03",
+      "query": "starvation escalation four hours"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-supersede",
+        "ep-verdict-immediate"
+      ],
+      "id": "q04",
+      "query": "verdict new head"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-immediate",
+        "ep-verdict-supersede"
+      ],
+      "id": "q05",
+      "query": "verdict rewritten old record"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-binding"
+      ],
+      "id": "q06",
+      "query": "verdict head merge authorization binding"
+    },
+    {
+      "expectedKeys": [
+        "ep-retention-tasks"
+      ],
+      "id": "q07",
+      "query": "task closes verified completion evidence"
+    },
+    {
+      "expectedKeys": [
+        "ep-retention-auth"
+      ],
+      "id": "q08",
+      "query": "authorization revoked explicit restart"
+    },
+    {
+      "expectedKeys": [
+        "ep-persistence-tiers"
+      ],
+      "id": "q09",
+      "query": "persistence tiers episodic semantic procedural obligations"
+    },
+    {
+      "expectedKeys": [
+        "ep-forget-indexes"
+      ],
+      "id": "q10",
+      "query": "forget indexes obligations expire silently"
+    },
+    {
+      "expectedKeys": [
+        "ep-handoff-txn"
+      ],
+      "id": "q11",
+      "query": "handoff write outcome verify readback queue complete"
+    },
+    {
+      "expectedKeys": [
+        "ep-outbox-lease"
+      ],
+      "id": "q12",
+      "query": "outbox lease idempotent CAS replay"
+    },
+    {
+      "expectedKeys": [
+        "ep-pglite-fts"
+      ],
+      "id": "q13",
+      "query": "full-text search deterministic ranking candidates"
+    },
+    {
+      "expectedKeys": [
+        "ep-working-set-4",
+        "ep-working-set-6"
+      ],
+      "id": "q14",
+      "query": "working set durable slots displacement"
+    },
+    {
+      "expectedKeys": [
+        "ep-working-set-4"
+      ],
+      "id": "q15",
+      "query": "four slot working set"
+    },
+    {
+      "expectedKeys": [
+        "ep-working-set-6"
+      ],
+      "id": "q16",
+      "query": "six slot working set"
+    },
+    {
+      "expectedKeys": [
+        "ep-replay-mix"
+      ],
+      "id": "q17",
+      "query": "replay mix setting quota evidence"
+    },
+    {
+      "expectedKeys": [
+        "ep-conflict-proposals"
+      ],
+      "id": "q18",
+      "query": "consolidation conflicts proposals standing rules"
+    },
+    {
+      "expectedKeys": [
+        "ep-evidence-authority"
+      ],
+      "id": "q19",
+      "query": "evidence proves content authority action"
+    },
+    {
+      "expectedKeys": [
+        "ep-archived-note"
+      ],
+      "id": "q20",
+      "query": "archived entries retrievable never deleted"
+    },
+    {
+      "expectedKeys": [
+        "ep-restricted-plan"
+      ],
+      "id": "q21",
+      "principal": "muse",
+      "query": "restricted rollout plan gated cutover"
+    },
+    {
+      "expectedKeys": [],
+      "id": "q22",
+      "principal": "guest",
+      "query": "restricted rollout plan gated cutover"
+    },
+    {
+      "expectedKeys": [
+        "ep-unavailable-prov"
+      ],
+      "id": "q23",
+      "query": "missing provenance unknown attribution"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-oldest"
+      ],
+      "id": "q24",
+      "query": "queue age primary sort key"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-deps"
+      ],
+      "id": "q25",
+      "query": "blocked item waits dependency"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-starvation",
+        "ep-queue-oldest"
+      ],
+      "id": "q26",
+      "query": "oldest age queue"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-supersede"
+      ],
+      "id": "q27",
+      "query": "same-head supersession rejected"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-binding"
+      ],
+      "id": "q28",
+      "query": "approval authorized merge head"
+    },
+    {
+      "expectedKeys": [
+        "ep-retention-tasks"
+      ],
+      "id": "q29",
+      "query": "evidence without verification rejected"
+    },
+    {
+      "expectedKeys": [
+        "ep-retention-auth"
+      ],
+      "id": "q30",
+      "query": "permission changes proposals Jason word"
+    },
+    {
+      "expectedKeys": [
+        "ep-forget-indexes"
+      ],
+      "id": "q31",
+      "query": "snapshot caches expire summaries"
+    },
+    {
+      "expectedKeys": [
+        "ep-handoff-txn"
+      ],
+      "id": "q32",
+      "query": "worker says complete handoff"
+    },
+    {
+      "expectedKeys": [
+        "ep-outbox-lease"
+      ],
+      "id": "q33",
+      "query": "lost reply replays double-apply"
+    },
+    {
+      "expectedKeys": [
+        "ep-pglite-fts"
+      ],
+      "id": "q34",
+      "query": "cosine vector store not used"
+    },
+    {
+      "expectedKeys": [
+        "ep-working-set-4",
+        "ep-working-set-6"
+      ],
+      "id": "q35",
+      "query": "durable reference slots working set"
+    },
+    {
+      "expectedKeys": [
+        "ep-conflict-proposals"
+      ],
+      "id": "q36",
+      "query": "uncontested facts promote summaries"
+    },
+    {
+      "expectedKeys": [
+        "ep-evidence-authority"
+      ],
+      "id": "q37",
+      "query": "relayed text evidence never authority"
+    },
+    {
+      "expectedKeys": [],
+      "id": "q38",
+      "query": "quantum entanglement dishwasher repair"
+    },
+    {
+      "expectedKeys": [
+        "ep-queue-oldest",
+        "ep-queue-deps",
+        "ep-queue-starvation"
+      ],
+      "id": "q39",
+      "query": "",
+      "scope": "queue"
+    },
+    {
+      "expectedKeys": [
+        "ep-verdict-supersede",
+        "ep-verdict-immediate",
+        "ep-verdict-binding"
+      ],
+      "id": "q40",
+      "query": "verdict",
+      "scope": "verdicts"
+    }
+  ],
+  "sourceDefaults": {
+    "blob": "fixture-blob-p5",
+    "commit": "9313e75d48976b0b08e436af49cf0e5f369f5b71",
+    "repo": "onyxgolden/marketplace409",
+    "watermark": "main@9313e75d"
+  }
+}
