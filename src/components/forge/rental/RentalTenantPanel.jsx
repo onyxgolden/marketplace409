@@ -191,9 +191,14 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       formElement.reset();
       await refresh();
       setShowCreate(false);
-      setMessage(`New tenant added: ${result.tenant.displayName}. The saved tenant record is open.`);
+      // The confirmation rides with the navigation so it lands on the record
+      // view itself in a success style nothing else on the page uses: the old
+      // local message rendered in the same sky style as the "Working with"
+      // banner above it and was easy to miss.
+      const notice = `Tenant saved: ${result.tenant.displayName}`;
       // The closure's tenant list is stale post-refresh, so label explicitly.
-      navigate?.("tenants", { recordType: "tenant", recordId: savedId, recordLabel: result.tenant.displayName });
+      if (navigate) navigate("tenants", { recordType: "tenant", recordId: savedId, recordLabel: result.tenant.displayName, notice });
+      else setMessage(notice);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function deleteUnusedTenant(tenant) {
@@ -345,6 +350,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     const tenantMovedIn = leases.some((lease) => tenantLeaseIds.includes(lease.id) && lease.status === "active");
     return <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-record>
       <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
+      {recordContext?.notice && <p role="status" className="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-base font-black text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100">✓ {recordContext.notice}</p>}
       {message && <p role="status" className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
       <div data-rental-tenant-detail {...{ [CARD_REGION_ATTRIBUTE]: "" }}
         onContextMenu={(event) => onContextMenu(event, recordMenuItems)}
@@ -420,11 +426,12 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
     </div>
     <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
+    {recordContext?.notice && <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-base font-black text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100">✓ {recordContext.notice}</p>}
     {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
     {isLoading && <div className="mt-4"><ForgeLoadingState label="Loading tenants…" /></div>}
     {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
     {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
-    {recordTenantId && data && <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">That tenant record wasn&apos;t found. Showing the full tenant list.</p>}
+    {recordTenantId && data && !recordContext?.notice && <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">That tenant record wasn&apos;t found. Showing the full tenant list.</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={null}
       onSelect={(id) => goToTenantRecord(tenants.find((item) => item.id === id))}
       getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
