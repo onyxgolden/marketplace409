@@ -53,7 +53,8 @@ async function truncateAll(db) {
   await db.query(
     `TRUNCATE tb_consolidated_facts, tb_consolidation_proposals,
       tb_consolidation_checkpoints, tb_consolidation_audit,
-      tb_consolidation_runs, tb_working_set, tb_episode_grants,
+      tb_consolidation_runs, tb_consolidation_run_bindings,
+      tb_working_set, tb_episode_grants,
       tb_pins, tb_episode_events, tb_episodes CASCADE`,
   );
   await db.query("UPDATE tb_retrieval_revisions SET revision = 0 WHERE id = 1");
@@ -69,6 +70,38 @@ async function countRows(db, table) {
 
 function expectTeamBrainError(promise, code) {
   return expect(promise).rejects.toMatchObject({ name: "TeamBrainError", code });
+}
+
+// Battery-wide role setup (fix round 1, TBP6-006): the engine
+// derives execution identity from the connection's current_user,
+// so every block that runs the engine must first create the
+// consolidator role, grant it the battery's working privileges, and
+// SET ROLE to it. A run as postgres or any other role is refused
+// with ROLE_DENIED before any write. Each describe block owns a
+// fresh PGlite, so CREATE ROLE never collides.
+const BATTERY_TABLES = [
+  "tb_episodes",
+  "tb_episode_grants",
+  "tb_episode_events",
+  "tb_retrieval_revisions",
+  "tb_working_set",
+  "tb_pins",
+  "tb_consolidation_runs",
+  "tb_consolidation_lease",
+  "tb_consolidated_facts",
+  "tb_consolidation_proposals",
+  "tb_consolidation_checkpoints",
+  "tb_consolidation_audit",
+  "tb_consolidation_run_bindings",
+];
+
+async function prepareBatteryRole(db) {
+  await db.query("CREATE ROLE tb_consolidator NOLOGIN");
+  await db.query(
+    `GRANT SELECT, INSERT, UPDATE, TRUNCATE ON ${BATTERY_TABLES.join(", ")} TO tb_consolidator`,
+  );
+  await db.query("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO tb_consolidator");
+  await db.query("SET ROLE tb_consolidator");
 }
 
 describe("P6 schema", () => {
@@ -97,7 +130,7 @@ describe("P6 schema", () => {
     expect(Number(rows[0].n)).toBe(1);
   });
 
-  it30("all six P6 tables exist", async () => {
+  it30("all seven P6 tables exist", async () => {
     for (const table of [
       "tb_consolidation_runs",
       "tb_consolidation_lease",
@@ -105,6 +138,7 @@ describe("P6 schema", () => {
       "tb_consolidation_proposals",
       "tb_consolidation_checkpoints",
       "tb_consolidation_audit",
+      "tb_consolidation_run_bindings",
     ]) {
       const { rows } = await db.query(
         "SELECT 1 FROM information_schema.tables WHERE table_name = $1",
@@ -184,6 +218,7 @@ describe("P6 run gates", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -194,31 +229,50 @@ describe("P6 run gates", () => {
     await truncateAll(db);
   });
 
-  it30("lesser roles are denied with zero persisted effects", async () => {
-    for (const role of ["tb_reader", "tb_writer", "public"]) {
-      await expectTeamBrainError(
-        engine.runConsolidation({ runDate: RUN_1031, role, now: NOW_1031 }),
-        P6_CODES.ROLE_DENIED,
-      );
-    }
-    // An empty role is an input error, not a role denial — still zero writes.
+  it30("callers whose database identity is not tb_consolidator are denied with zero persisted effects", async () => {
+    // Fresh DB per case so the block's session stays tb_consolidator.
+    const runDeniedAs = async (setupStatements) => {
+      const db2 = new PGlite();
+      try {
+        await migrateP5(db2);
+        await migrateP6(db2);
+        const engine2 = createConsolidationEngine(db2);
+        for (const sql of setupStatements ?? []) await db2.query(sql);
+        await expectTeamBrainError(
+          engine2.runConsolidation({ runDate: RUN_1031, now: NOW_1031 }),
+          P6_CODES.ROLE_DENIED,
+        );
+        for (const table of [
+          "tb_consolidation_runs",
+          "tb_consolidated_facts",
+          "tb_consolidation_proposals",
+          "tb_consolidation_checkpoints",
+          "tb_consolidation_audit",
+        ]) {
+          expect(await countRows(db2, table)).toBe(0);
+        }
+        const { rows } = await db2.query("SELECT holder FROM tb_consolidation_lease WHERE id = 1");
+        expect(rows[0].holder).toBeNull();
+      } finally {
+        await db2.close();
+      }
+    };
+    // postgres superuser with no SET ROLE: the TBP6-006
+    // counterexample — a caller label used to claim consolidator
+    // authority here; now the connection identity denies it.
+    await runDeniedAs([]);
+    // A real lesser role with SELECT-only grants.
+    await runDeniedAs([
+      "CREATE ROLE tb_reader NOLOGIN",
+      "GRANT SELECT ON ALL TABLES IN SCHEMA public TO tb_reader",
+      "SET ROLE tb_reader",
+    ]);
+    // An empty principal is an input error, not a role denial —
+    // still zero writes.
     await expectTeamBrainError(
-      engine.runConsolidation({ runDate: RUN_1031, role: "", now: NOW_1031 }),
+      engine.runConsolidation({ runDate: RUN_1031, principal: "", now: NOW_1031 }),
       "INVALID_FIELD",
     );
-    for (const table of [
-      "tb_consolidation_runs",
-      "tb_consolidated_facts",
-      "tb_consolidation_proposals",
-      "tb_consolidation_checkpoints",
-      "tb_consolidation_audit",
-    ]) {
-      expect(await countRows(db, table)).toBe(0);
-    }
-    const { rows } = await db.query(
-      "SELECT holder FROM tb_consolidation_lease WHERE id = 1",
-    );
-    expect(rows[0].holder).toBeNull();
   });
 
   it30("a run before its slot is refused with zero writes", async () => {
@@ -283,6 +337,7 @@ describe("P6 happy-path run", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -416,15 +471,18 @@ describe("P6 happy-path run", () => {
   it30("getRunReceipt returns the stored receipt; unknown run refused", async () => {
     await seedMixed();
     const receipt = await engine.runConsolidation({ runDate: RUN_1031, now: NOW_1031 });
-    const readback = await engine.getRunReceipt(RUN_1031);
+    const readback = await engine.getRunReceipt(RUN_1031, { principal: "consolidator" });
     expect(readback.receiptId).toBe(receipt.receiptId);
-    await expectTeamBrainError(engine.getRunReceipt("2026-10-30"), P6_CODES.UNKNOWN_RUN);
+    await expectTeamBrainError(
+      engine.getRunReceipt("2026-10-30", { principal: "consolidator" }),
+      P6_CODES.UNKNOWN_RUN,
+    );
   });
 
   it30("audit export is ordered and covers every step", async () => {
     await seedMixed();
     await engine.runConsolidation({ runDate: RUN_1031, now: NOW_1031 });
-    const exported = await engine.exportAudit(RUN_1031);
+    const exported = await engine.exportAudit(RUN_1031, { principal: "consolidator" });
     expect(exported.state).toBe("COMPLETED");
     const types = exported.entries.map((e) => e.entryType);
     for (const step of ["RUN_STARTED", "SNAPSHOT", "SELECTION", "VERIFICATION", "PROPOSALS", "APPLY", "EXPORT", "RUN_COMPLETED"]) {
@@ -432,7 +490,10 @@ describe("P6 happy-path run", () => {
     }
     const seqs = exported.entries.map((e) => e.seq);
     expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
-    await expectTeamBrainError(engine.exportAudit("2026-10-30"), P6_CODES.UNKNOWN_RUN);
+    await expectTeamBrainError(
+      engine.exportAudit("2026-10-30", { principal: "consolidator" }),
+      P6_CODES.UNKNOWN_RUN,
+    );
   });
 
   it30("same seed in two fresh databases yields the same receipt id", async () => {
@@ -441,6 +502,7 @@ describe("P6 happy-path run", () => {
       try {
         await migrateP5(db2);
         await migrateP6(db2);
+        await prepareBatteryRole(db2);
         const repo2 = createRetrievalRepository(db2);
         const engine2 = createConsolidationEngine(db2);
         await repo2.captureEpisode(episode({ title: "Alpha" }));
@@ -464,6 +526,7 @@ describe("P6 selection", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -548,6 +611,7 @@ describe("P6 verification details", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -664,6 +728,7 @@ describe("P6 explicit proposals (guarded types)", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -773,6 +838,7 @@ describe("P6 apply + archive-without-delete", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -837,6 +903,7 @@ describe("P6 lease, restart, two workers", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -948,6 +1015,7 @@ describe("P6 missed slots + DST runs", () => {
     db = new PGlite();
     await migrateP5(db);
     await migrateP6(db);
+    await prepareBatteryRole(db);
     repo = createRetrievalRepository(db);
     engine = createConsolidationEngine(db);
   }, 60000);
@@ -968,7 +1036,10 @@ describe("P6 missed slots + DST runs", () => {
     );
     expect(rows[0].state).toBe("MISSED");
     // The missed date has no receipt and no facts of its own.
-    await expectTeamBrainError(engine.getRunReceipt("2026-10-31"), P6_CODES.UNKNOWN_RUN);
+    await expectTeamBrainError(
+      engine.getRunReceipt("2026-10-31", { principal: "consolidator" }),
+      P6_CODES.UNKNOWN_RUN,
+    );
   });
 
   it30("a first-ever run marks no missed dates", async () => {

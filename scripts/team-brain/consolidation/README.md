@@ -135,6 +135,90 @@ in-memory, no network, no live database, no credentials. Run:
 npx vitest run scripts/team-brain/__tests__/tbp6Consolidation.test.mjs --testTimeout=30000
 ```
 
+`scripts/team-brain/__tests__/tbp6FixRound1.test.mjs` — fix-round
+partners for ChatGPT findings TBP6-001..007 (verdict 2026-10-31),
+same PGlite setup. Run both files together for the full battery.
+
+## Fix round 1 (ChatGPT TBP6-001..007, 2026-10-31)
+
+- **Principal binding (001).** Every run is bound to a principal
+  (`tb_consolidation_run_bindings.principal`) and a slot. A
+  COMPLETED replay, `getRunReceipt`, and `exportAudit` all require
+  the same principal; the argument is required, there is no
+  implicit reader. Reverify joins facts to authorized episodes, so
+  a denied principal's facts are never scanned, archived, or
+  reported. MISSED-row audit exports carry no episode data and any
+  principal may read them.
+- **Restart fences (002).** The binding (principal, slot, settings,
+  source revision) is written before any step work. A retry with no
+  run row but an existing binding resumes that binding instead of
+  overwriting it; a retry with different principal, limit, or
+  budgets is refused (`PRINCIPAL_MISMATCH` /
+  `RUN_BINDING_MISMATCH`). Step checkpoints stay insert-only; only
+  the INCOMPLETE checkpoint upserts. The final run row +
+  RUN_COMPLETED audit commit in one explicit transaction, and a
+  replay reconciles a missing RUN_COMPLETED row to exactly one.
+  Step transactions were deliberately NOT used: single-connection
+  sequencing plus idempotent writes plus binding convergence give
+  the same single-logical-outcome guarantee without risking
+  aborted-transaction poisoning on crash-injection handles. A
+  binding with no row is never marked MISSED by a later run's
+  missed walk (its own resume owns it).
+- **Missed slots are terminal (003).** A MISSED row refuses ordinary
+  execution (`SLOT_MISSED`); a fresh date that is not the current
+  Chicago civil date refuses (`SLOT_EXPIRED`). Same-day late
+  execution still succeeds. A run with no COMPLETED row in the
+  30-day lookback but an older row records the window as MISSED
+  plus an `outageBaseline` and a `RUN_OUTAGE_NOTED` audit entry
+  (the old code wrongly treated it as first-ever). A bound
+  continuation (INCOMPLETE row or orphan binding) is exempt from
+  the same-day gate: it completes bound work, it does not execute
+  a new historical date.
+- **Conflict currency (004).** A newly multi-member authorized group
+  supersedes the members' ACTIVE `CONFLICT_FREE` facts (state
+  `SUPERSEDED`, row retained, never auto-reinstated). Other fact
+  types stay ACTIVE; neither side is resolved; both sides go to
+  Jason via the CONFLICT proposal. Historical receipts are
+  unchanged.
+- **Typed duplicates (005).** The duplicate key is
+  scope + source (repo, path, commit, blob, exactly — never
+  lowercased) + visibility + grants + normalized prose. Prose
+  normalization is case-insensitive + whitespace-collapsed; source
+  and identifier fields are compared exactly. Equal text with
+  different typed identity promotes both facts and files a
+  `similarityOnly` DUPLICATE proposal that suppresses nothing.
+  True typed duplicates collapse to the canonical, which earns a
+  fifth fact type, `DUPLICATE_CANONICAL`.
+- **Real role boundary (006).** The per-run `role` option is REMOVED.
+  Engine creation takes trusted config `{consolidatorRole}` (default
+  `tb_consolidator`); execution identity is `SELECT current_user`
+  at run start and re-checked before finalize. A mismatch refuses
+  with `ROLE_DENIED` before any write. The receipt `role` is the
+  verified database user. Proven in PGlite with real roles:
+  postgres superuser denied, SELECT-only reader denied with zero
+  writes, PUBLIC grants and inherited membership do not bypass,
+  direct writes as a lesser role are denied by the database itself,
+  and the strict-grant consolidator positive performs only Section
+  4 effects (SELECT on P5 tables, full rights only on P6 tables).
+- **Trusted budgets (007).** Budgets are engine-creation config
+  (`{version, selectionLimitMax, consultedObjectMax,
+  consultedByteMax, deadlineMs}`); a per-run limit above the cap
+  refuses with `LIMIT_EXCEEDED` before any write, and per-run
+  budget options are ignored. All consulted work is charged before
+  processing (rows materialized plus rows written, objects plus
+  `stableStringify` bytes). A stop persists an INCOMPLETE run row,
+  an upserted INCOMPLETE checkpoint, and a `RUN_INCOMPLETE` audit
+  entry, and returns `{incomplete: true}`; the next attempt resumes
+  from binding cursors with a fresh per-attempt charge. Progress
+  persists after EVERY row of a paged scan (snapshot, selection
+  sides, reverify): per-page persistence would stall whenever a
+  page exceeds a tiny budget. Documented exceptions: a single row
+  larger than the byte budget is processed anyway, and a single
+  conflict group larger than the object budget is processed whole
+  — otherwise either could never complete. The deadline uses an
+  injected clock (default `Date.now`); recorded timestamps still
+  come from the caller's `now` input.
+
 ## Disclosed judgments (builder's calls, not scope text)
 
 - The "snapshot source watermark" is a fingerprint over authorized
@@ -142,9 +226,11 @@ npx vitest run scripts/team-brain/__tests__/tbp6Consolidation.test.mjs --testTim
   carry their own watermark, and no single one represents a run.
 - The 30-day recent/older boundary operationalizes the contract's
   70/30 mix (the contract names the mix, not the window).
-- Duplicate normalization is case-insensitive + whitespace-collapsed:
-  a deterministic choice; case-only differences are treated as the
-  same fact text, not distinct facts.
+- Duplicate normalization is case-insensitive + whitespace-collapsed
+  for prose (title/body) only; source and identifier fields
+  (repo, path, commit, blob) and authorization fields (visibility,
+  grants) are compared exactly — case-only differences in a commit
+  hash are distinct facts, not duplicates (fix round 1, TBP6-005).
 - A sole authorized member of a conflict group promotes (its
   contrary statements, if any, are denied to this principal and
   therefore invisible — same boundary as P5 conflict metadata).

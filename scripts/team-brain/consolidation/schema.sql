@@ -20,11 +20,14 @@
 -- One row per civil date (America/Chicago). A date's run is COMPLETED
 -- exactly once; a date whose slot passed with no run is MISSED
 -- (audit-only — a missed slot is never silently backfilled).
--- A run receipt is stored as canonical JSON text for readback.
+-- INCOMPLETE means a budget-bounded attempt stopped mid-run with a
+-- stable continuation in tb_consolidation_run_bindings; a later
+-- attempt resumes it. A run receipt is stored as canonical JSON text
+-- for readback.
 CREATE TABLE IF NOT EXISTS tb_consolidation_runs (
   run_date TEXT PRIMARY KEY,
   slot_instant TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('COMPLETED', 'MISSED')),
+  state TEXT NOT NULL CHECK (state IN ('COMPLETED', 'MISSED', 'INCOMPLETE')),
   lease_generation BIGINT NOT NULL DEFAULT 0,
   source_revision BIGINT,
   source_watermark TEXT,
@@ -58,7 +61,10 @@ ON CONFLICT (id) DO NOTHING;
 -- Promoted facts. One row per (episode, fact type). A fact is a
 -- deterministic derivation from a verified uncontested episode — never
 -- free text, never a model output. Archive flips state + note only;
--- rows are never deleted (archive-without-delete).
+-- rows are never deleted (archive-without-delete). SUPERSEDED means a
+-- later authorized conflict retired the fact's currency as a current
+-- assertion; the row is retained as immutable history and is never
+-- reinstated automatically (fix round 1, TBP6-004).
 CREATE TABLE IF NOT EXISTS tb_consolidated_facts (
   fact_id TEXT PRIMARY KEY,
   episode_id TEXT NOT NULL REFERENCES tb_episodes (episode_id),
@@ -71,10 +77,12 @@ CREATE TABLE IF NOT EXISTS tb_consolidated_facts (
   promoted_revision BIGINT NOT NULL,
   promoted_run_date TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'ACTIVE'
-    CHECK (state IN ('ACTIVE', 'ARCHIVED')),
+    CHECK (state IN ('ACTIVE', 'ARCHIVED', 'SUPERSEDED')),
   archived_note TEXT,
   archived_actor TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  superseded_note TEXT,
+  superseded_at TEXT
 );
 CREATE INDEX IF NOT EXISTS tb_consolidated_facts_episode_idx
   ON tb_consolidated_facts (episode_id);
@@ -106,15 +114,37 @@ CREATE INDEX IF NOT EXISTS tb_consolidation_proposals_group_idx
 -- Fenced checkpoints. One row per (run, checkpoint). The six ordered
 -- steps each write their checkpoint before the next step starts, so a
 -- restart resumes after the last recorded checkpoint without
--- re-applying. counts is canonical JSON text.
+-- re-applying. counts is canonical JSON text. INCOMPLETE is not a
+-- step: it marks a budget-bounded attempt that stopped with a stable
+-- continuation in tb_consolidation_run_bindings (fix round 1, TBP6-007).
 CREATE TABLE IF NOT EXISTS tb_consolidation_checkpoints (
   run_date TEXT NOT NULL,
   checkpoint TEXT NOT NULL CHECK (checkpoint IN (
-    'SNAPSHOT', 'SELECTION', 'VERIFICATION', 'PROPOSALS', 'APPLY', 'EXPORT'
+    'SNAPSHOT', 'SELECTION', 'VERIFICATION', 'PROPOSALS', 'APPLY', 'EXPORT', 'INCOMPLETE'
   )),
   counts TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   PRIMARY KEY (run_date, checkpoint)
+);
+
+-- Durably bound run context (fix round 1, TBP6-002). One row per
+-- civil date, written before any step work and updated as the run
+-- progresses. A retry resumes the BOUND inputs (principal, slot,
+-- settings, source snapshot) instead of recomputing from latest
+-- state, so a crash plus new captures cannot drift the receipt away
+-- from its checkpoint. progress is canonical JSON: the last completed
+-- step, per-step cursors, and accumulated outputs needed to skip
+-- completed work on resume. The binding is a progress record, not a
+-- lock: the lease row remains the worker arbiter.
+CREATE TABLE IF NOT EXISTS tb_consolidation_run_bindings (
+  run_date TEXT PRIMARY KEY,
+  principal TEXT NOT NULL,
+  slot_instant TEXT NOT NULL,
+  settings TEXT NOT NULL,
+  progress TEXT NOT NULL,
+  lease_generation BIGINT NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 -- Audit export rows. Every step appends rows; export reads them back
