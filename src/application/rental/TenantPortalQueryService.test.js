@@ -384,3 +384,72 @@ describe("TenantPortalQueryService tenant credits", () => {
     });
   });
 });
+
+describe("TenantPortalQueryService standalone charges", () => {
+  function chain(result) {
+    const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+      order: vi.fn(() => node), maybeSingle: vi.fn(async () => result), then: (resolve) => resolve(result) };
+    return node;
+  }
+  const TENANT = { id: "tenant_1", owner_id: "owner_1", auth_user_id: "auth_1", display_name: "T",
+    email: "t@example.com", phone: null, status: "active", invited_at: null, activated_at: null,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+  const LEASE = { owner_id: "owner_1", id: "lease_1", property_id: "property_1", unit_id: "unit_1",
+    status: "active", start_date: "2026-10-13", end_date: null, monthly_rent_cents: 185000,
+    currency_code: "USD", rent_due_day: 1, document_evidence_id: null, activated_at: null, ended_at: null,
+    begin_charges_date: "2026-10-13", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", notes: null };
+  const standaloneCharge = (overrides = {}) => ({ owner_id: "owner_1", id: "charge_standalone",
+    lease_id: "lease_1", schedule_id: null, period: "2026-10", due_date: "2026-10-13",
+    amount_cents: 113387, paid_amount_cents: 113387, currency_code: "USD", status: "paid",
+    source_key: "tenantcharge:standalone:charge_standalone", created_at: "2026-10-13T00:00:00Z",
+    updated_at: "2026-10-13T00:00:00Z", voided_at: null, notes: "Prorated rent", charge_type: "other",
+    related_charge_id: null, ...overrides });
+  function tablesFor(chargeRows) {
+    return {
+      rental_tenants: chain({ data: TENANT, error: null }),
+      rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+      rental_lease_tenants: chain({ data: [{ owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1" }], error: null }),
+      rental_leases: chain({ data: [LEASE], error: null }),
+      rental_units: chain({ data: null, error: null }),
+      rent_schedules: chain({ data: [], error: null }),
+      rent_charges: chain({ data: chargeRows, error: null }),
+      rental_payments: chain({ data: [], error: null }),
+      renters_insurance_requirements: chain({ data: null, error: null }),
+      renters_insurance_policies: chain({ data: [], error: null }),
+      rental_maintenance_requests: chain({ data: [], error: null }),
+      rental_security_deposits: chain({ data: [], error: null }),
+      rental_inspections: chain({ data: [], error: null }),
+      rental_autopay_enrollments: chain({ data: [], error: null }),
+      rental_animals: chain({ data: [], error: null }),
+      rental_lease_preparations: chain({ data: null, error: null }),
+      rental_tenant_credits: chain({ data: [], error: null }),
+      rental_credit_applications: chain({ data: [], error: null }),
+      rental_conversations: chain({ data: null, error: null }),
+    };
+  }
+  async function loadWith(chargeRows) {
+    const tables = tablesFor(chargeRows);
+    const service = new TenantPortalQueryService({
+      from: vi.fn((table) => tables[table]),
+      rpc: vi.fn(async () => ({ data: [], error: null })),
+    });
+    return service.load("auth_1");
+  }
+
+  it("loads the portal with a null-schedule charge present instead of throwing", async () => {
+    const portal = await loadWith([standaloneCharge()]);
+    expect(portal.rentals).toHaveLength(1);
+    expect(portal.rentals[0].charges).toHaveLength(1);
+    expect(portal.rentals[0].charges[0].scheduleId).toBeNull();
+    expect(portal.rentals[0].charges[0].chargeType).toBe("other");
+  });
+
+  it("loads a linked charge alongside a standalone charge", async () => {
+    const linked = standaloneCharge({ id: "charge_linked", schedule_id: "schedule_1", period: "2026-11",
+      due_date: "2026-11-01", amount_cents: 185000, paid_amount_cents: 0, status: "due",
+      source_key: "rent:schedule_1:2026-11", charge_type: "rent" });
+    const portal = await loadWith([standaloneCharge(), linked]);
+    expect(portal.rentals[0].charges).toHaveLength(2);
+    expect(portal.rentals[0].charges.map((charge) => charge.scheduleId)).toEqual([null, "schedule_1"]);
+  });
+});

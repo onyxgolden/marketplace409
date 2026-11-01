@@ -56,6 +56,15 @@ describe("isChargePayableThroughForge", () => {
   it("is not payable when no schedule matches the charge's scheduleId", () => {
     expect(isChargePayableThroughForge({ scheduleId: "schedule_missing", dueDate: "2026-08-01" }, [forgeSchedule], true, "2026-08-16")).toBe(false);
   });
+  // Standalone/hand-posted charges carry scheduleId null: the gate stays
+  // unchanged (no schedule match -> not FORGE-payable) and the charge
+  // renders as externally managed instead of breaking the portal load.
+  it("is not payable for a standalone charge with a null scheduleId", () => {
+    expect(isChargePayableThroughForge({ scheduleId: null, dueDate: "2026-08-01" }, [forgeSchedule], true, "2026-08-16")).toBe(false);
+    expect(buildTenantPaymentSummary([{ schedules: [forgeSchedule], charges: [
+      { scheduleId: null, dueDate: "2026-08-01", amountCents: 100000, paidAmountCents: 0, status: "due" },
+    ] }], true)).toEqual({ dueCents: 0, openCharges: 0, externallyManagedCents: 100000, externallyManagedChargeCount: 1 });
+  });
 
   // Owner-level master pause: must block even an otherwise fully-eligible, individually
   // FORGE-activated schedule — per-schedule activation alone must never be sufficient.

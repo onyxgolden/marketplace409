@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { mapRentScheduleRow, paymentFrequencyOf, paymentAnchorDate, dueDatesInWindow } from "@/domains/rent-schedule";
-import { generateRentCharge, mapRentChargeToRow } from "@/domains/rent-charge";
+import { generateRentCharge, hasBlockingRentCharge, mapRentChargeToRow } from "@/domains/rent-charge";
 
 export const runtime = "nodejs";
 
@@ -62,7 +62,7 @@ export async function GET(request) {
     const enabledOwnerIds = (enabledSettings || []).map((row) => row.owner_id);
 
     if (enabledOwnerIds.length === 0) {
-      return NextResponse.json({ success: true, period, scheduleCount: 0, processed: 0, failed: 0 });
+      return NextResponse.json({ success: true, period, scheduleCount: 0, processed: 0, failed: 0, skippedExistingRent: 0 });
     }
 
     // collection_mode='forge' is a required pre-filter, not just an optimization: an 'external' or
@@ -84,13 +84,32 @@ export async function GET(request) {
     if (leaseError) throw leaseError;
     const beginChargesByLease = new Map((leaseRows || []).map((lease) => [lease.id, lease.begin_charges_date ?? null]));
 
-    let processed = 0, failed = 0;
+    // Reverse double-billing guard: live rent-like charges already on the
+    // books for a lease+period (rent or proration, any source key) mean
+    // that period's rent is already billed. The upsert below dedups only on
+    // (owner_id, source_key), so a hand-posted row with a standalone key
+    // would otherwise NOT stop a second generated charge for the same
+    // period. One batched lookup covers every schedule in this run.
+    const { data: existingRentRows, error: existingRentError } = leaseIds.length
+      ? await db.from("rent_charges").select("lease_id, period, charge_type, status, voided_at")
+        .in("lease_id", leaseIds).in("owner_id", enabledOwnerIds).in("charge_type", ["rent", "proration"])
+      : { data: [], error: null };
+    if (existingRentError) throw existingRentError;
+    const existingRentCharges = (existingRentRows || []).map((row) => ({ leaseId: row.lease_id, period: row.period,
+      chargeType: row.charge_type, status: row.status, voidedAt: row.voided_at }));
+
+    let processed = 0, failed = 0, skippedExistingRent = 0;
     for (const row of schedules || []) {
       try {
         const schedule = { ...mapRentScheduleRow(row), beginChargesDate: beginChargesByLease.get(row.lease_id) ?? null };
         for (const p of chargePeriodsForSchedule(schedule, { period, nextPeriod, todayStr })) {
           const charge = generateRentCharge({ schedule, period: p });
           if (!charge) continue;
+          // Already billed by hand for this lease+period: skip, never
+          // double-bill. (A previously generated row for the same period
+          // also lands here; skipping it is the same no-op the upsert's
+          // ignoreDuplicates used to perform.)
+          if (hasBlockingRentCharge(existingRentCharges, charge.leaseId, charge.period)) { skippedExistingRent += 1; continue; }
           const { error: upsertError } = await db.from("rent_charges")
             .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
           if (upsertError) throw upsertError;
@@ -101,7 +120,7 @@ export async function GET(request) {
         console.error("Rent charge generation failed for schedule", row.id, scheduleError);
       }
     }
-    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed });
+    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed, skippedExistingRent });
   } catch (error) {
     console.error("Rent charge generation cron error", error);
     return NextResponse.json({ error: "Unable to generate rent charges." }, { status: 500 });

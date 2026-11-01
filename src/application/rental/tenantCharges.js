@@ -1,8 +1,9 @@
 // Tenant charges — the shared charge-creation service for both entry points:
 // Post Expense → "Charge tenant" and the standalone "Add charge" on the tenant
 // ledger. Ad-hoc charges (damage / fee / utility / proration / other) live on
-// rent_charges with schedule_id NULL (migration 20260926160000); rent billing
-// is otherwise untouched. The one exception: "proration" is a manual rent stub
+// rent_charges linked to the lease's schedule when one exists, standalone
+// (schedule_id NULL, migration 20260926160000) only when the lease has no
+// schedule; rent billing is otherwise untouched. The one exception: "proration" is a manual rent stub
 // for a partial month the schedule can never generate (e.g. a mid-month
 // move-in). It is fenced by assertNoScheduleRentForMonth below so it can
 // never double-bill a month the schedule already billed.
@@ -55,9 +56,9 @@ export function isAutopayCollectibleChargeType(chargeType) {
   return AUTOPAY_COLLECTIBLE_CHARGE_TYPES.includes(chargeType);
 }
 
-// Pure validation for a tenant charge. leaseId is mandatory; schedule is never
-// accepted here — ad-hoc charges are schedule-less by definition. dueDate
-// defaults to chargeDate + 15 days when omitted.
+// Pure validation for a tenant charge. leaseId is mandatory; a schedule is
+// never accepted from input — createTenantCharge resolves the lease's own
+// schedule server-side. dueDate defaults to chargeDate + 15 days when omitted.
 export function validateTenantChargeInput(input) {
   const errors = [];
   const leaseId = text(input?.leaseId);
@@ -109,10 +110,17 @@ export async function assertNoScheduleRentForMonth(db, { ownerId, leaseId, dueDa
   }
 }
 
-// Standalone charge (no expense): inserts the schedule-less rent_charges row
-// directly. The caller verifies workspace ownership of the lease; RLS enforces
-// it at the database. source_key is unique per charge so retries never double
-// the tenant's balance.
+// Standalone charge (no expense): inserts the rent_charges row directly.
+// The caller verifies workspace ownership of the lease; RLS enforces it at
+// the database. source_key is unique per charge so retries never double
+// the tenant's balance. When the lease has a rent schedule, the charge is
+// linked to it: a schedule-less hand-posted charge used to 500 the whole
+// tenant portal (the portal mapper required a schedule id), and an
+// unlinked charge can never resolve to a payable schedule. Leases with no
+// schedule stay standalone (schedule_id null), which the portal renders as
+// non-payable. The link is to the lease's schedule only — never from
+// caller input — and it does not change the charge type, so the proration
+// guard above (which keys on charge_type 'rent') is unaffected.
 export async function createTenantCharge(db, { ownerId, leaseId, chargeType, amountCents, description, dueDate, chargeDate, sourceKey }) {
   const check = validateTenantChargeInput({ leaseId, chargeType, amountCents, description, dueDate, chargeDate });
   if (!check.valid) throw new Error(check.errors.join(" "));
@@ -127,12 +135,21 @@ export async function createTenantCharge(db, { ownerId, leaseId, chargeType, amo
     await assertNoScheduleRentForMonth(db, { ownerId, leaseId: value.leaseId, dueDate: value.dueDate });
   }
 
+  // The lease's current schedule: the active one when there is one, else the
+  // latest by effective start. A lease with no schedule row at all stays
+  // standalone.
+  const { data: schedules, error: scheduleError } = await db.from("rent_schedules")
+    .select("id, status, effective_start_date").eq("owner_id", ownerId).eq("lease_id", value.leaseId)
+    .order("effective_start_date", { ascending: false });
+  if (scheduleError) throw scheduleError;
+  const leaseSchedule = (schedules || []).find((schedule) => schedule.status === "active") || (schedules || [])[0] || null;
+
   const id = `rent_charge_tenant_${crypto.randomUUID().replaceAll("-", "")}`;
   const row = {
     owner_id: ownerId,
     id,
     lease_id: value.leaseId,
-    schedule_id: null,
+    schedule_id: leaseSchedule ? leaseSchedule.id : null,
     period: (value.chargeDate || value.dueDate).slice(0, 7),
     due_date: value.dueDate,
     amount_cents: value.amountCents,

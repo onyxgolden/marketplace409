@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRentSchedule } from "../../rent-schedule";
 import { createRentCharge } from "../rent-charge.types";
-import { generateRentCharge } from "../rent-charge-generator";
+import { generateRentCharge, hasBlockingRentCharge } from "../rent-charge-generator";
 const build = (overrides = {}) => ({ id: "charge_1", leaseId: "lease_1", scheduleId: "schedule_1", period: "2026-09",
   dueDate: "2026-09-01", amountCents: 125000, paidAmountCents: 0, currencyCode: "USD", status: "due" as const,
   sourceKey: "rent:schedule_1:2026-09", createdAt: "2026-09-01T00:00:00.000Z",
@@ -120,5 +120,36 @@ describe("RentCharge", () => {
       expect(generateRentCharge({ schedule: movedInSep, period: "2026-08", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
       expect(generateRentCharge({ schedule: movedInSep, period: "2026-07", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
     });
+  });
+});
+
+describe("standalone charges (null schedule id)", () => {
+  it("accepts a null schedule id for hand-posted charges instead of throwing the load", () => {
+    expect(createRentCharge(build({ scheduleId: null })).scheduleId).toBeNull();
+  });
+  it("still rejects an empty schedule id string (malformed, not standalone)", () => {
+    expect(() => createRentCharge(build({ scheduleId: "" }))).toThrow();
+  });
+});
+
+describe("hasBlockingRentCharge (generator reverse guard)", () => {
+  const row = (overrides = {}) => ({ leaseId: "lease_1", period: "2026-09", chargeType: "rent",
+    status: "due", voidedAt: null, ...overrides });
+  it("blocks on a live rent charge for the same lease+period, whatever its source key", () => {
+    expect(hasBlockingRentCharge([row()], "lease_1", "2026-09")).toBe(true);
+  });
+  it("blocks on a live proration charge for the same lease+period (proration is rent)", () => {
+    expect(hasBlockingRentCharge([row({ chargeType: "proration" })], "lease_1", "2026-09")).toBe(true);
+  });
+  it("does not block on fees, deposits, or other distinct charges for the same period", () => {
+    for (const chargeType of ["fee", "damage", "utility", "other", "late_fee"]) {
+      expect(hasBlockingRentCharge([row({ chargeType })], "lease_1", "2026-09")).toBe(false);
+    }
+  });
+  it("does not block on voided rent charges, other periods, or other leases", () => {
+    expect(hasBlockingRentCharge([row({ status: "void", voidedAt: "2026-09-02T00:00:00.000Z" })], "lease_1", "2026-09")).toBe(false);
+    expect(hasBlockingRentCharge([row({ period: "2026-10" })], "lease_1", "2026-09")).toBe(false);
+    expect(hasBlockingRentCharge([row({ leaseId: "lease_2" })], "lease_1", "2026-09")).toBe(false);
+    expect(hasBlockingRentCharge([], "lease_1", "2026-09")).toBe(false);
   });
 });

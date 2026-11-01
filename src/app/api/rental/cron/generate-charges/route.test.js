@@ -319,3 +319,51 @@ describe("rent charge generation cron", () => {
       expect(row.source_key).toBe(`rent:schedule_1:${todayStr.slice(0, 7)}`);
     });
   });
+
+describe("reverse guard: existing rent-like charges block generation", () => {
+  const currentPeriod = new Date().toISOString().slice(0, 7);
+  const schedule = { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active",
+    amount_cents: 185000, currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01",
+    effective_end_date: null, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+    collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01", early_pay_days: 0 };
+  const existingRow = (overrides = {}) => ({ lease_id: "lease_1", period: currentPeriod,
+    charge_type: "rent", status: "due", voided_at: null, ...overrides });
+  async function runWith(existingRows) {
+    const schedules = chain({ data: [schedule], error: null });
+    const charges = chain({ data: existingRows, error: null });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
+    const response = await GET(request({ authorization: "Bearer cron-secret" }));
+    return { body: await response.json(), charges };
+  }
+
+  it("emits nothing for a period with an existing hand-posted rent charge under a standalone key", async () => {
+    const { body, charges } = await runWith([existingRow()]);
+    expect(body.processed).toBe(0);
+    expect(body.skippedExistingRent).toBe(1);
+    expect(charges.upsert).not.toHaveBeenCalled();
+  });
+
+  it("emits nothing for a period with an existing manual proration charge", async () => {
+    const { body, charges } = await runWith([existingRow({ charge_type: "proration" })]);
+    expect(body.processed).toBe(0);
+    expect(body.skippedExistingRent).toBe(1);
+    expect(charges.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still generates when the only same-period rows are fees or voided rent", async () => {
+    const { body, charges } = await runWith([
+      existingRow({ charge_type: "fee" }),
+      existingRow({ status: "void", voided_at: "2026-01-02T00:00:00.000Z" }),
+    ]);
+    expect(body.processed).toBe(1);
+    expect(body.skippedExistingRent).toBe(0);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("still generates when the blocking row is for a different period", async () => {
+    const { body, charges } = await runWith([existingRow({ period: "1999-01" })]);
+    expect(body.processed).toBe(1);
+    expect(body.skippedExistingRent).toBe(0);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+  });
+});

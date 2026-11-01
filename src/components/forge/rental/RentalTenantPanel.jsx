@@ -181,7 +181,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-tenant", tenant: { displayName: form.get("displayName"),
-          email: form.get("email"), phone: form.get("phone") || null, status: "invited" } }) });
+          email: form.get("email"), phone: form.get("phone") || null } }) });
       const result = await response.json();
       if (!response.ok) {
         if (result.existingTenant?.id) { setShowCreate(false); goToTenantRecord(result.existingTenant); }

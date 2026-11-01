@@ -10,7 +10,7 @@ import {
 
 // Minimal Supabase-shaped mock: chainable filters with real filter semantics
 // so the double-billing guard is exercised, not just stubbed.
-function makeDb({ leases = [{ id: "lease-1", owner_id: "owner-1", currency_code: "USD" }], charges = [] } = {}) {
+function makeDb({ leases = [{ id: "lease-1", owner_id: "owner-1", currency_code: "USD" }], charges = [], schedules = [] } = {}) {
   const inserted = [];
   const rpcCalls = [];
   const applyFilters = (rows, filters) => rows.filter((row) => filters.every((f) => {
@@ -37,6 +37,7 @@ function makeDb({ leases = [{ id: "lease-1", owner_id: "owner-1", currency_code:
     not(col, op, val) { this.filters.push({ op: `not-${op}`, col, val }); return this; }
     gte(col, val) { this.filters.push({ op: "gte", col, val }); return this; }
     lt(col, val) { this.filters.push({ op: "lt", col, val }); return this; }
+    order() { return this; }
     limit(n) { this.limitN = n; return this; }
     insert(row) {
       this.insertedRow = row;
@@ -45,6 +46,7 @@ function makeDb({ leases = [{ id: "lease-1", owner_id: "owner-1", currency_code:
     }
     run() {
       if (this.table === "rental_leases") return applyFilters(leases, this.filters);
+      if (this.table === "rent_schedules") return applyFilters(schedules, this.filters);
       if (this.table === "rent_charges") {
         const rows = applyFilters(charges, this.filters);
         return this.limitN === null ? rows : rows.slice(0, this.limitN);
@@ -194,5 +196,41 @@ describe("tenantCharges proration type", () => {
       charge: { ...baseCharge, chargeType: "proration" },
     });
     expect(rpcCalls).toHaveLength(1);
+  });
+});
+
+describe("tenantCharges schedule linking", () => {
+  it("links a manual charge to the lease's active schedule", async () => {
+    const { db, inserted } = makeDb({
+      schedules: [
+        { id: "schedule-old", owner_id: "owner-1", lease_id: "lease-1", status: "ended", effective_start_date: "2025-01-01" },
+        { id: "schedule-1", owner_id: "owner-1", lease_id: "lease-1", status: "active", effective_start_date: "2026-10-01" },
+      ],
+    });
+    const row = await createTenantCharge(db, { ...baseCharge, chargeType: "fee", description: "Pet fee" });
+    expect(inserted).toHaveLength(1);
+    expect(row.schedule_id).toBe("schedule-1");
+  });
+
+  it("leaves a manual charge standalone when the lease has no schedule", async () => {
+    const { db, inserted } = makeDb({ schedules: [] });
+    const row = await createTenantCharge(db, { ...baseCharge, chargeType: "fee", description: "Pet fee" });
+    expect(inserted).toHaveLength(1);
+    expect(row.schedule_id).toBeNull();
+  });
+
+  it("still refuses a proration charge when the schedule already billed rent that month, even with the lease schedule present", async () => {
+    const { db, inserted } = makeDb({
+      schedules: [
+        { id: "schedule-1", owner_id: "owner-1", lease_id: "lease-1", status: "active", effective_start_date: "2026-10-01" },
+      ],
+      charges: [{
+        id: "rent-charge-1", owner_id: "owner-1", lease_id: "lease-1", schedule_id: "schedule-1",
+        charge_type: "rent", due_date: "2026-10-01", status: "due", voided_at: null,
+      }],
+    });
+    await expect(createTenantCharge(db, { ...baseCharge, chargeType: "proration" }))
+      .rejects.toThrow("Rent for October 2026 is already billed by the schedule");
+    expect(inserted).toHaveLength(0);
   });
 });
