@@ -71,6 +71,28 @@ async function voidMovement(id) {
   return body.movement;
 }
 
+// Controls-sweep follow-up G13: edit an active movement. The route's PUT
+// returns 503 with plain wording while the movement-edit migration is
+// unapplied — that message surfaces verbatim instead of a generic failure,
+// so the landlord knows the edit needs a database update, not a retry.
+async function editMovement(payload) {
+  const response = await fetch("/api/rental/owner-movements", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to edit the movement.");
+  return body.movement;
+}
+
+async function fetchMovementEdits(movementId) {
+  const response = await fetch(`/api/rental/owner-movement-edits?movementId=${encodeURIComponent(movementId)}`);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to load the edit history.");
+  return body.edits || [];
+}
+
 // Statement mailto: no server-side email in this slice (real outbound email
 // needs Jason's word), so the email action opens the owner's mail client with
 // a pre-filled statement summary.
@@ -90,28 +112,37 @@ function statementEmailBody(statement) {
   return lines.join("\n");
 }
 
-function MovementForm({ kind, balanceCents, onSaved, onCancel }) {
-  const [amount, setAmount] = useState("");
-  const [movementDate, setMovementDate] = useState(todayIso());
-  const [method, setMethod] = useState("check");
-  const [memo, setMemo] = useState("");
+function MovementForm({ kind, balanceCents, editing = null, onSaved, onCancel }) {
+  const [amount, setAmount] = useState(editing ? String(editing.amount ?? "") : "");
+  const [movementDate, setMovementDate] = useState(editing ? (editing.movementDate || todayIso()) : todayIso());
+  const [method, setMethod] = useState(editing ? (editing.method || "check") : "check");
+  const [memo, setMemo] = useState(editing ? (editing.memo || "") : "");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
 
   const isDisbursement = kind === "disbursement";
+  // Editing a disbursement frees its old amount first: the available figure
+  // is the live balance PLUS the amount already counted for this row.
+  const availableCents = editing && isDisbursement
+    ? (balanceCents ?? 0) + Math.round(Number(editing.amount || 0) * 100)
+    : balanceCents;
 
   const submit = async (event) => {
     event.preventDefault();
     setFormError(null);
     setSaving(true);
     try {
-      await recordMovement({
-        kind,
-        amount: Number(amount),
-        movementDate,
-        method,
-        memo: memo.trim(),
-      });
+      if (editing) {
+        await editMovement({ id: editing.id, amount: Number(amount), movementDate, method, memo: memo.trim() });
+      } else {
+        await recordMovement({
+          kind,
+          amount: Number(amount),
+          movementDate,
+          method,
+          memo: memo.trim(),
+        });
+      }
       onSaved();
     } catch (error) {
       setFormError(error.message);
@@ -122,7 +153,7 @@ function MovementForm({ kind, balanceCents, onSaved, onCancel }) {
   return (
     <form onSubmit={submit} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60 print:hidden">
       <h4 className="text-sm font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
-        Record {isDisbursement ? "disbursement" : "contribution"}
+        {editing ? `Edit ${isDisbursement ? "disbursement" : "contribution"}` : `Record ${isDisbursement ? "disbursement" : "contribution"}`}
       </h4>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block">
@@ -165,7 +196,7 @@ function MovementForm({ kind, balanceCents, onSaved, onCancel }) {
       </div>
       {isDisbursement && (
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          Available: <span className={balanceClass(balanceCents)}>{cents(balanceCents)}</span> — a disbursement cannot exceed it.
+          Available: <span className={balanceClass(availableCents)}>{cents(availableCents)}</span> — a disbursement cannot exceed it.
         </p>
       )}
       {!isDisbursement && (
@@ -176,7 +207,7 @@ function MovementForm({ kind, balanceCents, onSaved, onCancel }) {
       {formError && <p role="alert" className="mt-2 text-sm font-bold text-red-700 dark:text-red-400">{formError}</p>}
       <div className="mt-3 flex gap-2">
         <button type="submit" disabled={saving} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-          {saving ? "Saving…" : `Save ${isDisbursement ? "disbursement" : "contribution"}`}
+          {saving ? "Saving…" : editing ? "Save changes" : `Save ${isDisbursement ? "disbursement" : "contribution"}`}
         </button>
         <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200">
           Cancel
@@ -186,10 +217,15 @@ function MovementForm({ kind, balanceCents, onSaved, onCancel }) {
   );
 }
 
-function MovementHistory({ movements, kind, onVoided }) {
+function MovementHistory({ movements, kind, onVoided, onEdited, balanceCents = 0 }) {
   const rows = movements.filter((row) => row.kind === kind);
   const [voidingId, setVoidingId] = useState(null);
   const [voidError, setVoidError] = useState(null);
+  const [editingRow, setEditingRow] = useState(null);
+  const [editsById, setEditsById] = useState({});
+  const [editsOpenId, setEditsOpenId] = useState(null);
+  const [editsLoadingId, setEditsLoadingId] = useState(null);
+  const [editsError, setEditsError] = useState(null);
 
   const confirmVoid = async (row) => {
     setVoidError(null);
@@ -202,6 +238,24 @@ function MovementHistory({ movements, kind, onVoided }) {
     } finally {
       setVoidingId(null);
     }
+  };
+
+  const toggleEdits = async (row) => {
+    if (editsOpenId === row.id) { setEditsOpenId(null); return; }
+    setEditsError(null);
+    if (!editsById[row.id]) {
+      setEditsLoadingId(row.id);
+      try {
+        const edits = await fetchMovementEdits(row.id);
+        setEditsById((current) => ({ ...current, [row.id]: edits }));
+      } catch (error) {
+        setEditsError(error.message);
+        setEditsLoadingId(null);
+        return;
+      }
+      setEditsLoadingId(null);
+    }
+    setEditsOpenId(row.id);
   };
 
   if (rows.length === 0) {
@@ -225,7 +279,14 @@ function MovementHistory({ movements, kind, onVoided }) {
           {rows.map((row) => (
             <tr key={row.id} className="border-t border-slate-200 dark:border-slate-700">
               <td className="px-2 py-2 whitespace-nowrap">{formatDate(row.movementDate)}</td>
-              <td className="px-2 py-2">{row.memo || "—"}</td>
+              <td className="px-2 py-2">
+                {row.memo || "—"}
+                {row.editCount > 0 && (
+                  <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                    Edited{row.editCount > 1 ? ` ×${row.editCount}` : ""}
+                  </span>
+                )}
+              </td>
               <td className="px-2 py-2 capitalize">{methodLabel(row.method)}</td>
               <td className="px-2 py-2 text-right font-bold">{cents(row.amount * 100)}</td>
               <td className="px-2 py-2">
@@ -235,13 +296,25 @@ function MovementHistory({ movements, kind, onVoided }) {
               </td>
               <td className="px-2 py-2 print:hidden">
                 {row.status === "active" && (
-                  <button
-                    type="button"
-                    disabled={voidingId === row.id}
-                    onClick={() => confirmVoid(row)}
-                    className="rounded-lg border border-red-300 px-3 py-1 text-xs font-bold text-red-700 disabled:opacity-50 dark:border-red-800 dark:text-red-400"
-                  >
-                    {voidingId === row.id ? "Voiding…" : "Void"}
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => setEditingRow(row)}
+                      className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200">
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={voidingId === row.id}
+                      onClick={() => confirmVoid(row)}
+                      className="rounded-lg border border-red-300 px-3 py-1 text-xs font-bold text-red-700 disabled:opacity-50 dark:border-red-800 dark:text-red-400"
+                    >
+                      {voidingId === row.id ? "Voiding…" : "Void"}
+                    </button>
+                  </span>
+                )}
+                {row.editCount > 0 && (
+                  <button type="button" onClick={() => toggleEdits(row)} disabled={editsLoadingId === row.id}
+                    className="ml-2 text-xs font-bold text-sky-700 underline hover:text-sky-900 disabled:opacity-50 dark:text-sky-400">
+                    {editsLoadingId === row.id ? "Loading…" : editsOpenId === row.id ? "Hide edits" : "View edits"}
                   </button>
                 )}
               </td>
@@ -250,6 +323,36 @@ function MovementHistory({ movements, kind, onVoided }) {
         </tbody>
       </table>
       {voidError && <p role="alert" className="mt-2 text-sm font-bold text-red-700 dark:text-red-400">{voidError}</p>}
+      {editsError && <p role="alert" className="mt-2 text-sm font-bold text-red-700 dark:text-red-400">{editsError}</p>}
+      {editsOpenId && editsById[editsOpenId] && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60" data-movement-edits>
+          <p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Edit history</p>
+          {editsById[editsOpenId].length === 0
+            ? <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No edits recorded.</p>
+            : <ul className="mt-2 space-y-2 text-sm">
+              {editsById[editsOpenId].map((edit) => (
+                <li key={edit.id} className="font-bold text-slate-700 dark:text-slate-300">
+                  {formatDate(edit.editedAt ? String(edit.editedAt).slice(0, 10) : null)}
+                  {edit.oldAmount !== edit.newAmount && <> · Amount {cents(edit.oldAmount * 100)} → {cents(edit.newAmount * 100)}</>}
+                  {edit.oldMovementDate !== edit.newMovementDate && <> · Date {formatDate(edit.oldMovementDate)} → {formatDate(edit.newMovementDate)}</>}
+                  {edit.oldMethod !== edit.newMethod && <> · Method {methodLabel(edit.oldMethod)} → {methodLabel(edit.newMethod)}</>}
+                  {edit.oldMemo !== edit.newMemo && <> · Memo &ldquo;{edit.oldMemo || "—"}&rdquo; → &ldquo;{edit.newMemo || "—"}&rdquo;</>}
+                </li>
+              ))}
+            </ul>}
+        </div>
+      )}
+      {editingRow && (
+        <div className="mt-4">
+          <MovementForm
+            kind={kind}
+            balanceCents={balanceCents}
+            editing={editingRow}
+            onSaved={() => { setEditingRow(null); onEdited?.(); }}
+            onCancel={() => setEditingRow(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -486,7 +589,9 @@ export default function OwnerStatementsPanel() {
           <MovementHistory
             movements={movements}
             kind={tab === "disbursements" ? "disbursement" : "contribution"}
+            balanceCents={balance?.balanceCents ?? 0}
             onVoided={() => { setNotice("✓ Owner movement voided."); reload(); }}
+            onEdited={() => { setNotice("✓ Owner movement updated."); reload(); }}
           />
         </div>
       )}
