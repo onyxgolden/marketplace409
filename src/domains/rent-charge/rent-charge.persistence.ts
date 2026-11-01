@@ -1,7 +1,7 @@
 import { createRentCharge } from "./rent-charge.types";
 import type { RentCharge, RentChargeStatus } from "./rent-charge.types";
 export type RentChargeContext = Readonly<{ ownerId: string }>;
-export type RentChargeRow = Readonly<{ owner_id: string; id: string; lease_id: string; schedule_id: string; period: string;
+export type RentChargeRow = Readonly<{ owner_id: string; id: string; lease_id: string; schedule_id: string | null; period: string;
   due_date: string; amount_cents: number; paid_amount_cents: number; currency_code: string; status: RentChargeStatus;
   source_key: string; created_at: string; updated_at: string; voided_at: string | null; notes: string | null }>;
 export interface RentChargeRepository { save(value: RentCharge, context: RentChargeContext): Promise<RentCharge>;

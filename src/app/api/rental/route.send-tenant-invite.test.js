@@ -72,6 +72,8 @@ describe("send-tenant-invite", () => {
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0].table).toBe("rental_tenants");
     expect(updateCalls[0].patch.invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // A real send flips status to "invited" too — creation no longer stamps it.
+    expect(updateCalls[0].patch.status).toBe("invited");
   });
 
   it("sends without a lease summary when no lease is given", async () => {

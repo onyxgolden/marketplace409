@@ -4,7 +4,12 @@ export type RentChargeStatus = typeof RENT_CHARGE_STATUSES[number];
 export type RentCharge = Readonly<{
   id: string;
   leaseId: string;
-  scheduleId: string;
+  // Nullable by design: hand-posted / standalone charges (migration
+  // 20260926160000) carry no schedule until they are linked to one. A null
+  // scheduleId must render as non-payable (the portal Pay gate finds no
+  // matching schedule and returns false) — it must never throw a load.
+  // Only generated rent charges are guaranteed a schedule id.
+  scheduleId: string | null;
   period: string;
   dueDate: string;
   amountCents: number;
@@ -51,7 +56,7 @@ export function createRentCharge(charge: RentCharge): RentCharge {
     throw new Error("Partially paid rent charges require a partial payment.");
   if (charge.status === "void" && charge.voidedAt === null) throw new Error("Void rent charges require voidedAt.");
   return Object.freeze({ ...charge, id: required(charge.id, "an id"), leaseId: required(charge.leaseId, "a lease id"),
-    scheduleId: required(charge.scheduleId, "a schedule id"), period: charge.period, dueDate: date(charge.dueDate, "dueDate"),
+    scheduleId: charge.scheduleId === null ? null : required(charge.scheduleId, "a schedule id"), period: charge.period, dueDate: date(charge.dueDate, "dueDate"),
     currencyCode, sourceKey: required(charge.sourceKey, "a source key"), createdAt: timestamp(charge.createdAt, "createdAt"),
     updatedAt: timestamp(charge.updatedAt, "updatedAt"), voidedAt: charge.voidedAt === null ? null : timestamp(charge.voidedAt, "voidedAt"),
     notes: charge.notes?.trim() || null });

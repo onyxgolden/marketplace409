@@ -23,6 +23,39 @@ export function rentChargeSourceKey(scheduleId: string, period: string): string 
   return `rent:${scheduleId}:${period}`;
 }
 
+// Rent-like charge types for the generation guard below: the generator's own
+// 'rent' rows plus manual proration stubs. 'proration' IS prorated rent for
+// a partial month (a sibling build generates first-period prorations with
+// this type), so rent and proration are one family for the lease+period
+// check — anything else (fee, damage, utility, other, late_fee, deposit)
+// is a distinct obligation and never blocks generation.
+export const RENT_LIKE_CHARGE_TYPES = ["rent", "proration"] as const;
+
+export type RentLikeChargeRow = Readonly<{
+  leaseId: string;
+  period: string;
+  chargeType: string;
+  status: string;
+  voidedAt: string | null;
+}>;
+
+// Reverse guard to the manual-side proration guard: a live rent-like charge
+// already on the books for this lease+period means that period's rent is
+// already billed, whatever source key it carries. Hand-posted rows use
+// standalone keys the generator's (owner_id, source_key) upsert can never
+// see, so without this check the generator would post a second rent charge
+// for the same period. Voided rows never block: a voided charge is not a
+// live billing.
+export function hasBlockingRentCharge(
+  charges: readonly RentLikeChargeRow[] | null | undefined,
+  leaseId: string,
+  period: string,
+): boolean {
+  return (charges || []).some((charge) => charge.leaseId === leaseId && charge.period === period
+    && (RENT_LIKE_CHARGE_TYPES as readonly string[]).includes(charge.chargeType)
+    && charge.status !== "void" && charge.voidedAt === null);
+}
+
 export function generateRentCharge({
   schedule,
   period,

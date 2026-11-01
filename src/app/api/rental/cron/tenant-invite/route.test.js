@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route.js";
+import { chicagoSlotFor, LEDGER_STATES } from "@/application/notifications/scheduledSendLedger";
 
 const mocks = vi.hoisted(() => ({ send: vi.fn() }));
 
@@ -8,32 +9,30 @@ vi.mock("@/infrastructure/notifications/ResendRentalEmailProvider", () => ({
 }));
 
 let DB;
-let upsertCalls;
 let updateCalls;
-let ledgerCalls;
-let eventLog;
+
+function matches(row, filters) {
+  return filters.every((f) => {
+    const v = row[f.col];
+    if (f.op === "eq") return v === f.val;
+    if (f.op === "is") return f.val === null ? v === null || v === undefined : v === f.val;
+    if (f.op === "in") return f.val.includes(v);
+    return true;
+  });
+}
 
 function ledgerChainable() {
-  if (!DB.scheduled_send_ledger) DB.scheduled_send_ledger = [];
   const rows = DB.scheduled_send_ledger;
   const keyOf = (r) => `${r.schedule_name}|${r.scheduled_slot}|${r.recipient_allowlist_id}`;
-  const matches = (filters) => (r) => filters.every(([c, v]) => r[c] === v);
   const obj = {
-    select() {
-      return obj;
-    },
-    eq(col, val) {
-      obj._filters.push([col, val]);
-      return obj;
-    },
-    order() {
-      return obj;
-    },
+    _filters: [],
+    _patch: null,
+    select() { return obj; },
+    eq(col, val) { obj._filters.push({ op: "eq", col, val }); return obj; },
     async maybeSingle() {
-      return { data: rows.find(matches(obj._filters)) ?? null, error: null };
+      return { data: rows.find((r) => matches(r, obj._filters)) ?? null, error: null };
     },
     upsert(row, options) {
-      ledgerCalls.push({ op: "upsert", row, options });
       const exists = rows.some((r) => keyOf(r) === keyOf(row));
       return {
         select: () => ({
@@ -46,30 +45,14 @@ function ledgerChainable() {
         }),
       };
     },
-    update(patch) {
-      ledgerCalls.push({ op: "update", patch });
-      const updFilters = [];
-      const upd = {
-        eq(col, val) {
-          updFilters.push([col, val]);
-          return upd;
-        },
-        select: () => ({
-          then: (resolve) => {
-            const idx = rows.findIndex(matches(updFilters));
-            if (idx === -1) return resolve({ data: [], error: null });
-            rows[idx] = { ...rows[idx], ...patch };
-            resolve({ data: [rows[idx]], error: null });
-          },
-        }),
-      };
-      return upd;
-    },
+    update(patch) { obj._patch = patch; return obj; },
     then(resolve) {
-      resolve({ data: rows.filter(matches(obj._filters)), error: null });
+      if (!obj._patch) return resolve({ data: rows.filter((r) => matches(r, obj._filters)), error: null });
+      const matched = rows.filter((r) => matches(r, obj._filters));
+      for (const row of matched) Object.assign(row, obj._patch);
+      return resolve({ data: matched, error: null });
     },
   };
-  obj._filters = [];
   return obj;
 }
 
@@ -77,20 +60,23 @@ function chainable(table) {
   if (table === "scheduled_send_ledger") return ledgerChainable();
   const rows = DB[table] ?? [];
   const obj = {
-    select: () => obj,
-    eq: () => obj,
-    maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
-    upsert: (row, options) => {
-      upsertCalls.push({ table, row, options });
-      eventLog.push("billing-enabled");
-      return obj;
+    _filters: [],
+    _patch: null,
+    select() { return obj; },
+    eq(col, val) { obj._filters.push({ op: "eq", col, val }); return obj; },
+    is(col, val) { obj._filters.push({ op: "is", col, val }); return obj; },
+    in(col, val) { obj._filters.push({ op: "in", col, val }); return obj; },
+    async maybeSingle() {
+      return { data: rows.find((r) => matches(r, obj._filters)) ?? null, error: null };
     },
-    update: (patch) => {
-      updateCalls.push({ table, patch });
-      eventLog.push("invited_at-stamped");
-      return obj;
+    update(patch) { obj._patch = patch; return obj; },
+    then(resolve) {
+      if (!obj._patch) return resolve({ data: rows.filter((r) => matches(r, obj._filters)), error: null });
+      const matched = rows.filter((r) => matches(r, obj._filters));
+      for (const row of matched) Object.assign(row, obj._patch);
+      updateCalls.push({ table, patch: obj._patch, ids: matched.map((r) => r.id) });
+      return resolve({ data: matched, error: null });
     },
-    then: (resolve) => resolve({ data: [], error: null }),
   };
   return obj;
 }
@@ -99,477 +85,191 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
   createRentalWebhookClient: () => ({ from: (table) => chainable(table) }),
 }));
 
-const ERIC_TENANT = {
-  id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-  display_name: "Eric Carrillo",
-  email: "eric.carillo5@yahoo.com",
-  status: "invited",
-  auth_user_id: null,
-  invited_at: "2026-09-01T00:33:55.808Z",
-};
+function tenant(id, overrides = {}) {
+  return { id, display_name: `Tenant ${id}`, email: `${id}@example.com`, status: "inactive",
+    auth_user_id: null, invited_at: null, ...overrides };
+}
 
-function seedDefaultDb() {
+function seed({ tenants, memberships, leases, units }) {
   DB = {
-    rental_tenants: [{ ...ERIC_TENANT }],
-    rental_lease_tenants: [{ lease_id: "rental_lease_9530cad2-7457-4bca-8d7c-974cc5d6c1e3" }],
-    rental_leases: [{ unit_id: "unit_paula", start_date: "2026-08-29", monthly_rent_cents: 160000 }],
-    rental_units: [{ label: "308 PAULA" }],
+    rental_tenants: tenants,
+    rental_lease_tenants: memberships,
+    rental_leases: leases,
+    rental_units: units,
+    scheduled_send_ledger: [],
   };
 }
 
 function authedRequest(path = "/api/rental/cron/tenant-invite") {
-  return new Request(`https://example.com${path}`, {
-    headers: { authorization: "Bearer test-cron-secret" },
-  });
+  return new Request(`http://localhost${path}`, { headers: { authorization: "Bearer cron-secret" } });
 }
 
-beforeEach(() => {
-  process.env.CRON_SECRET = "test-cron-secret";
-  delete process.env.RENTAL_EMAIL_SENDER;
-  process.env.NEXT_PUBLIC_SITE_URL = "https://marketplace409.vercel.app";
-  mocks.send.mockReset().mockImplementation(async () => {
-    eventLog.push("invite-sent");
-    return { id: "resend_msg_1" };
-  });
-  upsertCalls = [];
-  updateCalls = [];
-  ledgerCalls = [];
-  eventLog = [];
-  seedDefaultDb();
-});
+const ACTIVE_LEASE = { id: "lease_active", unit_id: "unit_1", start_date: "2026-10-01",
+  monthly_rent_cents: 185000, status: "active" };
+const DRAFT_LEASE = { id: "lease_draft", unit_id: "unit_1", start_date: "2026-11-01",
+  monthly_rent_cents: 185000, status: "draft" };
 
-afterEach(() => {
-  delete process.env.CRON_SECRET;
-});
-
-describe("tenant-invite cron route", () => {
-  it("returns 401 without the cron secret", async () => {
-    const res = await GET(new Request("https://example.com/api/rental/cron/tenant-invite"));
-    expect(res.status).toBe(401);
-    expect(mocks.send).not.toHaveBeenCalled();
+describe("generalized tenant-invite sweep", () => {
+  beforeEach(() => {
+    process.env.CRON_SECRET = "cron-secret";
+    mocks.send.mockResolvedValue({ id: "resend_1" });
+    updateCalls = [];
+    vi.clearAllMocks();
+    mocks.send.mockResolvedValue({ id: "resend_1" });
   });
 
-  it("dry run plans the send without writing or emailing", async () => {
-    const res = await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.action).toBe("would_send");
-    expect(body.recipient).toBe("eric.carillo5@yahoo.com");
-    expect(body.leaseSummary).toEqual({ unitLabel: "308 PAULA", monthlyRentCents: 160000, startDate: "2026-08-29" });
-    expect(body.subject).toContain("FORGE");
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
-    expect(updateCalls).toEqual([]);
+  it("rejects callers without the cron secret", async () => {
+    const response = await GET(new Request("http://localhost/api/rental/cron/tenant-invite"));
+    expect(response.status).toBe(401);
   });
 
-  it("live run enables billing, sends the invite, and stamps invited_at", async () => {
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: true, action: "sent", recipient: "eric.carillo5@yahoo.com", billingEnabled: true });
-
-    expect(upsertCalls).toHaveLength(1);
-    expect(upsertCalls[0].table).toBe("rental_billing_settings");
-    expect(upsertCalls[0].row).toMatchObject({ owner_id: "e1b22131-9100-4a79-bbe2-b82d43af922e", billing_enabled: true });
-    expect(upsertCalls[0].options).toEqual({ onConflict: "owner_id" });
-
-    expect(mocks.send).toHaveBeenCalledTimes(1);
-    const payload = mocks.send.mock.calls[0][0];
-    expect(payload.recipient).toBe("eric.carillo5@yahoo.com");
-    expect(payload.senderEmail).toBe("rentals@mail.409marketplace.online");
-    expect(payload.id).toMatch(/^tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
-
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].table).toBe("rental_tenants");
-    expect(updateCalls[0].patch.invited_at).toBeTruthy();
-
-    // Failure-ordering regression: billing must flip on only after the invite
-    // is sent and recorded, so a send failure never leaves billing on.
-    expect(eventLog).toEqual(["invite-sent", "invited_at-stamped", "billing-enabled"]);
-  });
-
-  it("no-ops when the tenant already claimed portal access (billing still ensured)", async () => {
-    DB.rental_tenants[0].auth_user_id = "75f6fe34-0000-4000-8000-000000000000";
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(body.action).toBe("already_claimed");
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toHaveLength(1);
-    expect(updateCalls).toEqual([]);
-  });
-
-  it("no-ops when an invite was already recorded after the go-live cutoff", async () => {
-    DB.rental_tenants[0].invited_at = "2026-09-26T15:05:00.000Z";
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(body.action).toBe("already_sent");
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(updateCalls).toEqual([]);
-  });
-
-  it("returns 404 when the tenant record is missing", async () => {
-    DB.rental_tenants = [];
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(404);
-    expect(mocks.send).not.toHaveBeenCalled();
-  });
-
-  it("returns 422 when the tenant has no valid email", async () => {
-    DB.rental_tenants[0].email = "not-an-email";
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(422);
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
-  });
-
-  it("live run writes a claimed-then-provider_accepted ledger row before/after the send", async () => {
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(200);
-    const rows = DB.scheduled_send_ledger;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      schedule_name: "tenant_invite",
-      recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-      state: "provider_accepted",
-      provider_message_id: "resend_msg_1",
+  it("sends to an eligible tenant on an active lease and stamps invited_at + status", async () => {
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
     });
-    expect(rows[0].scheduled_slot).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // Claim happened before the send: the upsert op precedes the send call.
-    const ops = ledgerCalls.map((c) => c.op);
-    expect(ops[0]).toBe("upsert");
-    expect(ops).toContain("update");
-  });
-
-  it("provider failure records provider_failed in the ledger and returns 500", async () => {
-    mocks.send.mockRejectedValueOnce(new Error("Resend rejected email delivery (500)."));
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(500);
-    const rows = DB.scheduled_send_ledger;
-    expect(rows).toHaveLength(1);
-    expect(rows[0].state).toBe("provider_failed");
-    expect(rows[0].failure_reason).toContain("500");
-  });
-
-  it("refire with a terminal ledger row reconciles instead of re-sending", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "earlier_run",
-        state: "provider_accepted",
-        provider_message_id: "resend_msg_0",
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true });
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(DB.scheduled_send_ledger).toHaveLength(1);
-  });
-
-  it("already_claimed records a no_op ledger row", async () => {
-    DB.rental_tenants[0].auth_user_id = "75f6fe34-0000-4000-8000-000000000000";
-    const res = await GET(authedRequest());
-    expect((await res.json()).action).toBe("already_claimed");
-    const rows = DB.scheduled_send_ledger;
-    expect(rows).toHaveLength(1);
-    expect(rows[0].state).toBe("no_op");
-  });
-
-  it("refire with a provider_failed ledger row retries under the stable identity", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "earlier_run",
-        state: "provider_failed",
-        failure_reason: "Resend rejected email delivery (500).",
-        send_attempts: 1,
-        claimed_at: "2026-10-12T15:00:00.000Z",
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    // RDL-001: a failed row is retried, NOT reconciled as sent.
-    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
-    expect(body.reconciled).toBeUndefined();
+    const response = await GET(authedRequest());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.sent).toEqual(["tenant_1"]);
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    // Stable provider idempotency: same key the failed run used.
-    const payload = mocks.send.mock.calls[0][0];
-    expect(payload.id).toMatch(/^tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
-    const row = DB.scheduled_send_ledger[0];
-    expect(row.state).toBe("provider_accepted");
-    expect(row.send_attempts).toBe(2);
-    expect(row.run_id).not.toBe("earlier_run");
-    // Billing order preserved: invite sent and stamped before billing.
-    expect(eventLog).toEqual(["invite-sent", "invited_at-stamped", "billing-enabled"]);
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ recipient: "tenant_1@example.com" }));
+    expect(DB.rental_tenants[0].invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(DB.rental_tenants[0].status).toBe("invited");
   });
 
-  it("refire with exhausted send attempts fails closed without billing or send", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "earlier_run",
-        state: "provider_failed",
-        failure_reason: "Resend rejected email delivery (500).",
-        send_attempts: 3,
-        claimed_at: "2026-10-12T15:00:00.000Z",
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    // RDL-001/RDL-002A: explicit exhausted failure; billing stays off.
-    expect(res.status).toBe(500);
-    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
+  it("does NOT send to an already-claimed tenant", async () => {
+    seed({
+      tenants: [tenant("tenant_1", { auth_user_id: "auth_1", status: "active" })],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual([]);
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
   });
 
-  it("refire with provider_accepted but a lost invited_at stamp reconciles and stamps", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "earlier_run",
-        state: "provider_accepted",
-        provider_message_id: "resend_msg_0",
-        send_attempts: 1,
-        claimed_at: "2026-10-12T15:00:00.000Z",
-      },
-    ];
-    // Provider accepted, but the local stamp never landed (pre-cutoff).
-    DB.rental_tenants[0].invited_at = "2026-09-01T00:33:55.808Z";
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true, billingEnabled: true });
+  it("does NOT send to a tenant whose only lease is a draft", async () => {
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_draft" }],
+      leases: [DRAFT_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual([]);
+    expect(body.skipped.noActiveLease).toBe(1);
     expect(mocks.send).not.toHaveBeenCalled();
-    // The lost stamp is repaired idempotently; billing still goes last.
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].table).toBe("rental_tenants");
-    expect(updateCalls[0].patch.invited_at).toBeTruthy();
-    expect(eventLog).toEqual(["invited_at-stamped", "billing-enabled"]);
   });
 
-  it("a fresh claim held by another run defers with 409 and never sends", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "other_live_run",
-        state: "claimed",
-        send_attempts: 1,
-        claimed_at: new Date().toISOString(),
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    // RDL-002: the loser defers; it must not send on a claim it did not win.
-    expect(res.status).toBe(409);
-    expect(body).toMatchObject({ success: false, action: "deferred_claim_held", billingEnabled: false });
+  it("does NOT send to a tenant without an email", async () => {
+    seed({
+      tenants: [tenant("tenant_1", { email: null })],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual([]);
+    expect(body.skipped.noEmail).toBe(1);
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
-    expect(DB.scheduled_send_ledger[0].run_id).toBe("other_live_run");
   });
 
-  it("a stale claimed row is taken over and sent", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "crashed_run",
-        state: "claimed",
-        send_attempts: 1,
-        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+  it("does NOT send to a tenant who was already sent an invite", async () => {
+    seed({
+      tenants: [tenant("tenant_1", { invited_at: "2026-10-31T12:00:00.000Z", status: "invited" })],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual([]);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("sends to the eligible tenants and skips the rest in one mixed run", async () => {
+    seed({
+      tenants: [
+        tenant("tenant_ok"),
+        tenant("tenant_draft"),
+        tenant("tenant_noemail", { email: "  " }),
+        tenant("tenant_claimed", { auth_user_id: "auth_9", status: "active" }),
+      ],
+      memberships: [
+        { tenant_id: "tenant_ok", lease_id: "lease_active" },
+        { tenant_id: "tenant_draft", lease_id: "lease_draft" },
+        { tenant_id: "tenant_noemail", lease_id: "lease_active" },
+        { tenant_id: "tenant_claimed", lease_id: "lease_active" },
+      ],
+      leases: [ACTIVE_LEASE, DRAFT_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual(["tenant_ok"]);
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    const row = DB.scheduled_send_ledger[0];
-    expect(row.run_id).not.toBe("crashed_run");
-    expect(row.state).toBe("provider_accepted");
   });
 
-  it("dry run writes no ledger rows", async () => {
-    await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
-    expect(DB.scheduled_send_ledger ?? []).toEqual([]);
-  });
-
-  it("refire with exhausted attempts on a STALE claimed row is blocked_attempts_exhausted (RDL-002A)", async () => {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "crashed_run",
-        state: "claimed",
-        send_attempts: 3,
-        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
-      },
-    ];
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    // RDL-002A: stale is not unlimited — explicit exhausted, no send, no billing.
-    expect(res.status).toBe(500);
-    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
-    expect(body.sendAttempts).toBe(3);
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
-  });
-});
-
-describe("tenant-invite provider key pinning (RDL-002B)", () => {
-  async function currentFingerprint() {
-    const { buildTenantInviteEmail, fingerprintString } = await import(
-      "@/domains/rental-tenant/tenantInviteEmail.js"
-    );
-    const rendered = buildTenantInviteEmail({
-      tenantName: "Eric Carrillo",
-      tenantEmail: "eric.carillo5@yahoo.com",
-      leaseSummary: { unitLabel: "308 PAULA", monthlyRentCents: 160000, startDate: "2026-08-29" },
-      portalUrl: "https://marketplace409.vercel.app/forge/rental/portal",
+  it("dryRun lists would-be sends without sending or stamping", async () => {
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
     });
-    return fingerprintString(`${rendered.subject}\n${rendered.bodyText}`);
-  }
-
-  async function seedStaleClaimedRow(overrides = {}) {
-    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
-    DB.scheduled_send_ledger = [
-      {
-        id: "ledger_1",
-        schedule_name: "tenant_invite",
-        scheduled_slot: chicagoSlotFor(),
-        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
-        run_id: "crashed_run",
-        state: "claimed",
-        send_attempts: 1,
-        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
-        ...overrides,
-      },
-    ];
-  }
-
-  it("an ambiguous transport failure retries under the SAME stored provider key", async () => {
-    // First run: claim persists key+digest, then the provider call throws
-    // an ambiguous transport timeout (outcome unknown).
-    mocks.send.mockRejectedValueOnce(new Error("socket timeout reading response"));
-    const r1 = await GET(authedRequest());
-    expect(r1.status).toBe(500);
-    const stored = DB.scheduled_send_ledger[0];
-    expect(stored.state).toBe("provider_failed");
-    expect(stored.provider_request_key).toMatch(/^tenant-invite-/);
-    expect(stored.payload_digest).toMatch(/^[0-9a-f]{8}$/);
-
-    // Refire with the identical payload: takeover, then the provider call
-    // reuses the STORED key — one logical send, one idempotency key.
-    const r2 = await GET(authedRequest());
-    const body2 = await r2.json();
-    expect(r2.status).toBe(200);
-    expect(body2).toMatchObject({ success: true, action: "sent", billingEnabled: true });
-    expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.send.mock.calls[1][0].id).toBe(stored.provider_request_key);
-    expect(DB.scheduled_send_ledger[0].send_attempts).toBe(2);
-    expect(DB.scheduled_send_ledger[0].state).toBe("provider_accepted");
+    const body = await (await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"))).json();
+    expect(body.wouldSend).toHaveLength(1);
+    expect(body.wouldSend[0].tenantId).toBe("tenant_1");
+    expect(body.sent).toEqual([]);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(DB.rental_tenants[0].invited_at).toBeNull();
   });
 
-  it("a refire uses the pinned key even when recomputation would differ", async () => {
-    const fp = await currentFingerprint();
-    await seedStaleClaimedRow({
-      provider_request_key: "pinned-key-from-first-run",
-      payload_digest: fp,
+  it("reconciles positive ledger evidence instead of resending", async () => {
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
     });
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(200);
-    expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(mocks.send.mock.calls[0][0].id).toBe("pinned-key-from-first-run");
-  });
-
-  it("a UTC date rollover between claim and refire does not rotate the provider key", async () => {
-    const fp = await currentFingerprint();
-    const yesterdayKey = `tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-2026-10-11-${fp}`;
-    await seedStaleClaimedRow({ provider_request_key: yesterdayKey, payload_digest: fp });
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(200);
-    // The stale slot's key is honored; today's recomputed key is not used.
-    expect(mocks.send.mock.calls[0][0].id).toBe(yesterdayKey);
-  });
-
-  it("a changed payload under an ambiguous send fails closed as blocked_payload_changed", async () => {
-    await seedStaleClaimedRow({
-      provider_request_key: "pinned-key-from-first-run",
-      payload_digest: "deadbeef",
+    DB.scheduled_send_ledger.push({
+      id: "ledger_1", schedule_name: "tenant_invite", scheduled_slot: chicagoSlotFor(),
+      recipient_allowlist_id: "tenant_1", run_id: "earlier_run", state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      provider_request_key: "key_1", payload_digest: "digest_1",
     });
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(500);
-    expect(body).toMatchObject({ success: false, action: "blocked_payload_changed", billingEnabled: false });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.reconciled).toEqual(["tenant_1"]);
+    expect(body.sent).toEqual([]);
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
+    expect(DB.rental_tenants[0].invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("a changed recipient email after the claim fails closed (mutable boundary)", async () => {
-    const fp = await currentFingerprint();
-    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
-    DB.rental_tenants[0].email = "eric.newaddress@yahoo.com";
-    const res = await GET(authedRequest());
-    const body = await res.json();
-    expect(res.status).toBe(500);
-    expect(body.action).toBe("blocked_payload_changed");
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(upsertCalls).toEqual([]);
+  it("records a _sweep no_op row when there is nothing to send", async () => {
+    seed({ tenants: [], memberships: [], leases: [], units: [] });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.action).toBe("no_candidates");
+    expect(body.sent).toEqual([]);
+    const sweepRow = DB.scheduled_send_ledger.find((r) => r.recipient_allowlist_id === "_sweep");
+    expect(sweepRow).toBeDefined();
+    expect(sweepRow.state).toBe(LEDGER_STATES.NO_OP);
   });
 
-  it("a changed unit label after the claim fails closed (mutable boundary)", async () => {
-    const fp = await currentFingerprint();
-    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
-    DB.rental_units[0].label = "308 PAULA RENAMED";
-    const res = await GET(authedRequest());
-    expect((await res.json()).action).toBe("blocked_payload_changed");
-    expect(mocks.send).not.toHaveBeenCalled();
-  });
-
-  it("a changed site URL after the claim fails closed (mutable boundary)", async () => {
-    const fp = await currentFingerprint();
-    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
-    process.env.NEXT_PUBLIC_SITE_URL = "https://409marketplace.online";
-    const res = await GET(authedRequest());
-    expect((await res.json()).action).toBe("blocked_payload_changed");
-    expect(mocks.send).not.toHaveBeenCalled();
-  });
-
-  it("a fresh claim persists the provider key, digest, and claim token", async () => {
-    const res = await GET(authedRequest());
-    expect(res.status).toBe(200);
-    const row = DB.scheduled_send_ledger[0];
-    expect(row.provider_request_key).toBe(mocks.send.mock.calls[0][0].id);
-    expect(row.payload_digest).toMatch(/^[0-9a-f]{8}$/);
-    expect(row.claim_token).toBeTruthy();
-    expect(row.summary_version).toBe(0);
+  it("fails a tenant closed on a provider error without aborting the run", async () => {
+    mocks.send.mockRejectedValueOnce(new Error("provider down"));
+    seed({
+      tenants: [tenant("tenant_bad"), tenant("tenant_ok")],
+      memberships: [
+        { tenant_id: "tenant_bad", lease_id: "lease_active" },
+        { tenant_id: "tenant_ok", lease_id: "lease_active" },
+      ],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.sent).toEqual(["tenant_ok"]);
+    expect(body.skipped.failed).toBe(1);
+    expect(DB.rental_tenants.find((t) => t.id === "tenant_bad").invited_at).toBeNull();
   });
 });

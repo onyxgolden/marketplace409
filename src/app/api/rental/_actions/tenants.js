@@ -18,7 +18,15 @@ export async function saveTenant({ authenticated, body, application, effectiveOw
     existingTenant: duplicate,
   }, { status: 409 });
   const tenant = createRentalTenant({ ...input, id: id("rental_tenant", input.id), authUserId: input.authUserId ?? null,
-    email: normalizedEmail, phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
+    // Invite honesty: creating a record is NOT sending an invite. A new
+    // tenant starts "inactive" with no invited_at — the panel reads invite
+    // state from invited_at, so it correctly shows "Invite not sent" until
+    // sendTenantInvite actually sends (which stamps invited_at and flips
+    // status to "invited" on success). The old default ("invited" + now)
+    // made every freshly created tenant falsely read "Invite sent <creation
+    // date>" before any email went out. Existing rows are untouched: their
+    // stamps stand, and the panel button can still (re)send to them.
+    email: normalizedEmail, phone: input.phone ?? null, status: input.status ?? "inactive", invitedAt: input.invitedAt ?? null,
     activatedAt: input.activatedAt ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
   return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, effectiveOwnerId) });
 }
@@ -124,9 +132,11 @@ export async function sendTenantInvite({ authenticated, body, effectiveOwnerId, 
     return NextResponse.json({ error: "The invite email could not be sent. Please try again." }, { status: 502 });
   }
   // invited_at is a UI convenience ("Invite sent <date>"), not the
-  // delivery ledger: a failed send never reaches this update.
+  // delivery ledger: a failed send never reaches this update. The status
+  // flip to "invited" happens here too, on actual send only — creation
+  // no longer stamps it (see saveTenant).
   const { error: updateError } = await authenticated.supabaseClient.from("rental_tenants")
-    .update({ invited_at: timestamp, updated_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", tenantId);
+    .update({ invited_at: timestamp, status: "invited", updated_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", tenantId);
   if (updateError) throw updateError;
   return NextResponse.json({ success: true, tenantId, invitedAt: timestamp });
 }

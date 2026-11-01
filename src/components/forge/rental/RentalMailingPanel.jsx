@@ -44,7 +44,11 @@ export default function RentalMailingPanel() {
     const response = await fetch("/api/rental");
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || "Unable to load tenants.");
-    return (body.tenants || []).filter((tenant) => ["active", "invited"].includes(tenant.status));
+    // Mailing reach is current tenants, not just portal-claimed ones:
+    // "inactive" is the pre-invite creation state (a record exists, no
+    // invite sent yet), so it stays in reach exactly as "invited" did
+    // before creation stopped stamping it. "former" stays excluded.
+    return (body.tenants || []).filter((tenant) => ["active", "invited", "inactive"].includes(tenant.status));
   }, []);
   const fetchBatches = useCallback(async () => {
     const response = await fetch("/api/rental/mailing");
