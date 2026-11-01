@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { validateSplits } from "@/application/rental/validateSplits";
 import { TENANT_CHARGE_TYPES, TENANT_CHARGE_LABELS, defaultTenantChargeDueDate } from "@/application/rental/tenantCharges";
+import AddTenantChargeForm from "./AddTenantChargeForm";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -307,6 +308,23 @@ export default function TransactionForm({
   // human-gate confirm checkbox.
   const chargeSectionVisible = !editingId && form.transactionKind === "expense" && Boolean(form.tenantId);
   const chargeRef = useRef(null);
+
+  // Controls-sweep follow-up G15: the edit-mode charge section used to
+  // vanish silently. The server deliberately rejects chargeTenant on PATCH
+  // (a charge is created once, atomically, at posting time — editing must
+  // not rewrite or orphan it), so edit mode gets explicit text instead of
+  // the section, in every expense case:
+  //  - already charged: the charge exists; the path is void-in-Rent-&-payments.
+  //  - not charged + tenant selected: a toggle opens AddTenantChargeForm
+  //    below this form (a separate <form> — it cannot nest inside this one)
+  //    so the landlord can still post the charge separately.
+  //  - not charged + no tenant: text says so; picking a tenant above
+  //    reveals the separate-charge button live. Income never shows either.
+  const editChargeNoteVisible = Boolean(editingId) && form.transactionKind === "expense";
+  const editChargeAlreadyAttached = form.chargeTenant === true;
+  const editChargeTenantName = (tenants || []).find((tenant) => tenant.id === form.tenantId)?.name || "tenant";
+  const [showSeparateCharge, setShowSeparateCharge] = useState(false);
+  const [separateChargeSaved, setSeparateChargeSaved] = useState(false);
 
   // Load existing attachments and split lines in edit mode — once on mount.
   // State updates happen in the fetch callbacks, never synchronously in the
@@ -724,6 +742,35 @@ export default function TransactionForm({
             </>
           )}
 
+          {editChargeNoteVisible && (
+            <div data-edit-charge-note className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+              <div className={labelClass}>
+                <SectionTitle step={6}>Charge tenant</SectionTitle>
+              </div>
+              {editChargeAlreadyAttached ? (
+                <p className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300">
+                  This transaction already has a tenant charge attached. Charges can&apos;t be changed by editing
+                  the transaction — void the charge in Rent &amp; payments instead.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300">
+                    Tenant charges can only be attached when a transaction is first created — this transaction was
+                    posted without one. {form.tenantId
+                      ? "Post the charge separately below; it lands on the tenant's ledger like any other charge."
+                      : "Select a tenant above to post a separate charge, or post it from the tenant's ledger."}
+                  </p>
+                  {form.tenantId && !showSeparateCharge && !separateChargeSaved && (
+                    <button type="button" onClick={() => setShowSeparateCharge(true)}
+                      className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">
+                      Post a tenant charge separately
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           <div className="mt-5 flex items-center justify-between gap-3">
             <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
               {form.amount && Number(form.amount) > 0 ? `Posting ${money.format(Number(form.amount))} as ${isIncome ? "credit" : "debit"}` : " "}
@@ -734,6 +781,19 @@ export default function TransactionForm({
             </button>
           </div>
         </form>
+
+        {editChargeNoteVisible && !editChargeAlreadyAttached && showSeparateCharge && form.tenantId && (
+          <div className="mt-4" data-separate-charge-form>
+            <AddTenantChargeForm tenantId={form.tenantId} tenantName={editChargeTenantName}
+              onSaved={() => { setShowSeparateCharge(false); setSeparateChargeSaved(true); }}
+              onCancel={() => setShowSeparateCharge(false)} />
+          </div>
+        )}
+        {editChargeNoteVisible && !editChargeAlreadyAttached && separateChargeSaved && (
+          <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+            ✓ Tenant charge posted to {editChargeTenantName}&apos;s ledger.
+          </p>
+        )}
       </div>
     </div>
   );
