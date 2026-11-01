@@ -279,6 +279,54 @@ export async function setScheduleStatus({ authenticated, body, effectiveOwnerId,
   return NextResponse.json({ success: true, schedule: data });
 }
 
+export async function setPaymentFrequency({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G8 (M-10): landlord override/revert of a tenant-changed
+  // payment frequency. The tenant RPC change_rental_payment_frequency cannot
+  // serve this: it resolves the tenant from auth.uid() and 42501s for a
+  // landlord session. So this op performs the same schedule mutation
+  // owner-side — active schedule only, anchor reset to the change date (same
+  // rule as the tenant RPC: the new cadence starts cleanly, posted charges
+  // keep their terms) — and notifies the tenant through the same shared
+  // thread mechanism in reverse (send_rental_conversation_owner_message,
+  // which the tenant portal surfaces as unread). The notification is
+  // best-effort: if it fails, the change still stands and the response says
+  // so plainly instead of pretending the tenant was told.
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit rent schedules." }, { status: 403 });
+  if (typeof body.scheduleId !== "string" || body.scheduleId.trim() === "") return badRequest("scheduleId is required.");
+  if (!RENT_SCHEDULE_PAYMENT_FREQUENCIES.includes(body.paymentFrequency)) return badRequest("paymentFrequency must be weekly, biweekly, or monthly.");
+  const scheduleId = body.scheduleId.trim();
+  const { data: schedule, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+    .select("id, status, lease_id, payment_frequency").eq("owner_id", effectiveOwnerId).eq("id", scheduleId).maybeSingle();
+  if (scheduleError) throw scheduleError;
+  if (!schedule) return NextResponse.json({ error: "Rent schedule was not found." }, { status: 404 });
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", schedule.lease_id).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  if (schedule.status !== "active") return NextResponse.json({ error: `Only an active schedule can change payment frequency (this one is ${schedule.status}).` }, { status: 409 });
+  const previous = schedule.payment_frequency || "monthly";
+  if (previous === body.paymentFrequency) return NextResponse.json({ success: true, unchanged: true, schedule });
+  const { data, error } = await authenticated.supabaseClient.from("rent_schedules")
+    .update({ payment_frequency: body.paymentFrequency, payment_anchor_date: timestamp.slice(0, 10), updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", scheduleId).eq("status", "active").select("id, payment_frequency").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "The schedule changed while updating — try again." }, { status: 409 });
+  let tenantNotified = false;
+  const { data: members } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", schedule.lease_id);
+  const tenantId = (members || []).find((row) => row.occupancy_role === "primary")?.tenant_id
+    || (members || [])[0]?.tenant_id;
+  if (tenantId) {
+    const label = (value) => value === "weekly" ? "weekly" : value === "biweekly" ? "every two weeks" : "monthly";
+    const { error: notifyError } = await authenticated.supabaseClient.rpc("send_rental_conversation_owner_message", {
+      p_tenant_id: tenantId,
+      p_body: `[Automatic update] Your landlord changed your payment schedule from ${label(previous)} to ${label(body.paymentFrequency)}. Future charges follow the new schedule; charges already generated keep their original terms.`,
+    });
+    tenantNotified = !notifyError;
+  }
+  return NextResponse.json({ success: true, schedule: data, tenantNotified });
+}
+
 export async function activateLeaseSchedule({ authenticated, body, effectiveOwnerId }) {
   if (!body.scheduleId) return badRequest("scheduleId is required.");
   const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {
