@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import ConversationThread from "./ConversationThread";
+import MessageTemplatePicker from "./MessageTemplatePicker";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 
@@ -28,7 +29,11 @@ async function fetchOwnerInbox() {
     type: "private-financing", id: row.borrowerId, name: row.borrowerName,
     lastMessageAt: row.lastMessageAt, lastMessageBody: row.lastMessageBody, lastMessageSenderType: row.lastMessageSenderType, unread: row.unread,
   }));
-  return [...rentalEntries, ...pfEntries].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  // Controls-sweep follow-up G24 (O-17): the tenant list rides along so a
+  // tenant with no prior conversation row can still be picked — opening
+  // their empty thread and sending creates the row via the send RPC.
+  const tenants = (rental.payload.tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name }));
+  return { entries: [...rentalEntries, ...pfEntries].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)), tenants };
 }
 
 // A single owner inbox across both messaging domains -- a landlord and a private-financing lender
@@ -43,7 +48,8 @@ export default function MessagesPanel() {
     fetchOwnerInbox,
     { ttlMs: 60_000 },
   );
-  const entries = data ?? null;
+  const entries = data?.entries ?? null;
+  const tenants = data?.tenants ?? [];
   const [selected, setSelected] = useState(null);
   const [thread, setThread] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -76,6 +82,15 @@ export default function MessagesPanel() {
     <p className="mt-2 text-sm text-slate-500">One list across both messaging domains: rental tenants and private-financing borrowers. Each thread still resolves through its own domain-scoped API.</p>
     {entries && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400">Could not refresh — showing the last saved inbox.</p> : null}
     {entries && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400">Updating…</p> : null}
+    <div className="mt-6 flex flex-wrap items-center gap-2">
+      <label className="text-sm font-bold text-slate-700">New message
+        <select aria-label="Start a new message with a tenant" defaultValue="" onChange={(event) => { const tenantId = event.target.value; if (!tenantId) return; const tenant = tenants.find((item) => item.id === tenantId); openThread({ type: "rental", id: tenantId, name: tenant?.name || tenantId }); event.target.value = ""; }} className="ml-2 rounded-xl border p-2 text-sm font-normal text-slate-950">
+          <option value="">Pick a tenant…</option>
+          {tenants.filter((tenant) => !entries.some((entry) => entry.type === "rental" && entry.id === tenant.id)).map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
+        </select>
+      </label>
+      {tenants.length > 0 && tenants.every((tenant) => entries.some((entry) => entry.type === "rental" && entry.id === tenant.id)) ? <span className="text-sm text-slate-500">Every tenant already has a conversation.</span> : null}
+    </div>
     <div className="mt-6 grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
       <ol className="divide-y rounded-xl border">
         {entries.length === 0 ? <li className="p-4 text-sm text-slate-500">No conversations yet.</li> : entries.map((entry) => (
@@ -95,7 +110,8 @@ export default function MessagesPanel() {
       </ol>
       <div>
         {!selected ? <p className="text-sm text-slate-500">Select a conversation to view it.</p> : !thread ? <p className="text-sm text-slate-500">Loading conversation…</p> :
-          <ConversationThread messages={thread} selfSenderType="owner" onSend={send} busy={busy} error={sendError} />}
+          <ConversationThread messages={thread} selfSenderType="owner" onSend={send} busy={busy} error={sendError}
+            composerAddon={({ insertText }) => (<MessageTemplatePicker onInsert={insertText} />)} />}
       </div>
     </div>
   </section>;

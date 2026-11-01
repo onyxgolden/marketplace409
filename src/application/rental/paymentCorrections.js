@@ -11,7 +11,7 @@
 // the write path — these pure helpers are the test surface):
 //   - Only completed ('succeeded') payments are correctable.
 //   - Amount/date/method corrections are allowed ONLY on offline
-//     (manually recorded: cash / cashiers_check) payments. A provider
+//     (manually recorded: cash / cashiers_check / check) payments. A provider
 //     payment moved real money — its amount/date/method would lie about
 //     what settled; notes and receipt reference stay correctable.
 //   - Corrected amounts must be positive — never zero or negative.
@@ -76,7 +76,7 @@ export const PAYMENT_CORRECTION_FIELDS = Object.freeze([
   ...PAYMENT_CORRECTION_NOTE_FIELDS,
 ]);
 
-export const OFFLINE_PAYMENT_METHODS = Object.freeze(["cash", "cashiers_check"]);
+export const OFFLINE_PAYMENT_METHODS = Object.freeze(["cash", "cashiers_check", "check"]);
 
 // Column names on rental_payments for each correction field — the audit row
 // stores before/after against these columns.

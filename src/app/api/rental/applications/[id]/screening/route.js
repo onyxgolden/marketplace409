@@ -279,7 +279,11 @@ export async function PATCH(request, { params }) {
 
     let payload = {};
     if (action === "mark_in_progress") {
-      if (!canTransitionScreening(screening.status, "in_progress")) {
+      // Explicit 'requested' check, not the shared machine: G21 reopen is
+      // the ONLY exit from complete, and it must go through the audited
+      // reopen action — mark_in_progress must never move a complete
+      // screening back (the RPC arm agrees: requested only).
+      if (screening.status !== "requested") {
         return badRequest(`Cannot mark in-progress from status "${screening.status}".`, 409);
       }
     } else if (action === "record_results") {
@@ -312,6 +316,34 @@ export async function PATCH(request, { params }) {
       if (!screeningHasResults(screening)) {
         return badRequest("Record manual results before completing the screening.", 409);
       }
+    } else if (action === "reopen") {
+      // Controls-sweep follow-up G21 (O-10): reopen a completed screening
+      // for correction (typo'd score/band/recommendation). Returns to
+      // in_progress so results and recommendation can be re-recorded.
+      // Code-first: pre-migration the RPC has no reopen arm and raises
+      // SCREENING_INVALID "unknown screening action" — surfaced as a plain
+      // 503, never a confusing 400, with the screening untouched.
+      if (screening.status !== "complete") {
+        return badRequest(`Only a completed screening can be reopened (this one is "${screening.status}").`, 409);
+      }
+      const { data: reopenedRow, error: reopenError } = await authenticated.supabaseClient.rpc("transition_screening", {
+        p_owner_id: authenticated.effectiveOwnerId,
+        p_screening_id: screening.id,
+        p_action: "reopen",
+        p_actor_user_id: authenticated.user.id,
+        p_payload: { reason: typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : null },
+      });
+      if (reopenError) {
+        const message = String(reopenError.message || "");
+        if (/SCREENING_INVALID/i.test(message) && message.includes("unknown screening action")) {
+          return NextResponse.json({ error: "Screening reopening has not been applied yet — the reopening update is pending." }, { status: 503 });
+        }
+        const mapped = mapRpcError(reopenError);
+        if (mapped) return mapped;
+        throw reopenError;
+      }
+      if (!reopenedRow?.id) throw new Error("transition_screening returned no screening row.");
+      return NextResponse.json({ success: true, screening: mapScreening(reopenedRow) });
     } else if (action === "regenerate_token") {
       const token = generateScreeningToken();
       const { mapped, screeningRow } = await applyTransition(authenticated, screening.id, action, { token });

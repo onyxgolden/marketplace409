@@ -19,6 +19,12 @@ import {
 //   A disbursement may not exceed the available owner balance (422 otherwise).
 // PATCH — void a movement. Body: { id }. Voids restore the balance; a voided
 //   movement is never un-voided and never hard-deleted.
+// PUT — edit an ACTIVE movement. Body: { id, amount, movementDate, method, memo }.
+//   Kind never changes. A disbursement edit must still fit the owner balance
+//   (recomputed excluding the edited row); the edit is audit-trailed in
+//   owner_cash_movement_edits via the update_owner_movement RPC (migration
+//   20261101020000). Voided movements 409. Until that migration applies, PUT
+//   fails plainly (missing RPC) and GET simply omits edit info.
 //
 // Authorization: read for everyone; writes are owner/co-owner only —
 // read-only members get a 403 (the getActiveWorkspaceRole pattern).
@@ -103,9 +109,36 @@ export async function GET(request) {
 
     const balance = buildOwnerBalance({ financialEvents, cashMovements: allMovements });
 
+    // Edit trail (G13): per-movement edit counts + last edit time, merged
+    // onto the serialized rows. Deliberately degraded: when the movement-edit
+    // migration has not applied yet, this table does not exist and the query
+    // fails — the panel still loads, just without edit badges.
+    let editInfoById = null;
+    try {
+      const { data: edits, error: editsError } = await supabaseClient
+        .from("owner_cash_movement_edits")
+        .select("movement_id, edited_at")
+        .eq("owner_id", effectiveOwnerId)
+        .order("edited_at", { ascending: false });
+      if (editsError) throw editsError;
+      editInfoById = new Map();
+      for (const edit of edits || []) {
+        if (!edit.movement_id) continue;
+        const current = editInfoById.get(edit.movement_id);
+        if (!current) editInfoById.set(edit.movement_id, { editCount: 1, lastEditedAt: edit.edited_at || null });
+        else current.editCount += 1;
+      }
+    } catch {
+      editInfoById = null;
+    }
+
     return NextResponse.json({
       success: true,
-      movements: movements.map(serialize),
+      movements: movements.map((row) => {
+        const serializedRow = serialize(row);
+        const info = editInfoById?.get(row.id);
+        return info ? { ...serializedRow, editCount: info.editCount, lastEditedAt: info.lastEditedAt } : serializedRow;
+      }),
       balance,
     });
   } catch (error) {
@@ -267,5 +300,106 @@ export async function PATCH(request) {
   } catch (error) {
     console.error("Owner movement void error", error);
     return NextResponse.json({ error: "Unable to void the owner movement." }, { status: 500 });
+  }
+}
+
+export async function PUT(request) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+    const forbidden = await requireOwner(authenticated);
+    if (forbidden) return forbidden;
+    const { supabaseClient, effectiveOwnerId, user } = authenticated;
+
+    const body = await request.json();
+    const id = String(body.id || "").trim();
+    const amount = Number(body.amount);
+    const movementDate = String(body.movementDate || "").trim();
+    const method = String(body.method || "").trim();
+    const memo = String(body.memo || "").trim();
+
+    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json({ error: "Enter an amount greater than zero." }, { status: 400 });
+    }
+    if (!DATE_PATTERN.test(movementDate) || Number.isNaN(new Date(`${movementDate}T12:00:00`).getTime())) {
+      return NextResponse.json({ error: "movementDate must be a valid YYYY-MM-DD date." }, { status: 400 });
+    }
+    if (!VALID_METHODS.has(method)) {
+      return NextResponse.json({ error: "method must be check, ach, wire, cash, or other." }, { status: 400 });
+    }
+    if (memo.length > 500) {
+      return NextResponse.json({ error: "Memo is limited to 500 characters." }, { status: 400 });
+    }
+
+    // Look the row up inside the workspace first: cross-workspace ids 404,
+    // and only active rows can be edited (voided rows stay uneditable).
+    const { data: existing, error: lookupError } = await supabaseClient
+      .from("owner_cash_movements")
+      .select("id, kind, amount, movement_date, method, memo, status")
+      .eq("owner_id", effectiveOwnerId)
+      .eq("id", id)
+      .single();
+    if (lookupError || !existing) {
+      return NextResponse.json({ error: "Owner movement not found." }, { status: 404 });
+    }
+    if (existing.status !== "active") {
+      return NextResponse.json({ error: "Only an active movement can be edited." }, { status: 409 });
+    }
+
+    // Fast UX precheck for disbursements (mirrors the POST precheck): the
+    // balance recomputed WITHOUT the edited row must still cover the new
+    // amount. The RPC re-enforces this under the advisory lock.
+    if (existing.kind === "disbursement") {
+      const [events, movements] = await Promise.all([
+        fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
+          columns: "id, event_date, amount, transaction_kind, property_id, status, is_deleted",
+        }),
+        listMovements(supabaseClient, effectiveOwnerId, {}),
+      ]);
+      const balance = buildOwnerBalance({
+        financialEvents: events,
+        cashMovements: movements.filter((movement) => movement.id !== id),
+      });
+      const violation = validateNewDisbursement({ amountCents: Math.round(amount * 100), balanceCents: balance.balanceCents });
+      if (violation) return NextResponse.json({ error: violation, balanceCents: balance.balanceCents }, { status: 422 });
+    }
+
+    const { data: rpcData, error: rpcError } = await supabaseClient.rpc("update_owner_movement", {
+      p_owner_id: effectiveOwnerId,
+      p_movement_id: id,
+      p_amount: Math.round(amount * 100) / 100,
+      p_movement_date: movementDate,
+      p_method: method,
+      p_memo: memo,
+      p_edited_by: user.id,
+    });
+    if (rpcError) {
+      const message = String(rpcError.message || "");
+      if (message.includes("OVER_DISBURSEMENT")) {
+        const available = /Available balance: (-?\d+) cents/.exec(message)?.[1];
+        const errorBody = { error: "The disbursement exceeds the amount due to the owner." };
+        if (available !== undefined) errorBody.balanceCents = Number(available);
+        return NextResponse.json(errorBody, { status: 422 });
+      }
+      if (message.includes("NOT_ACTIVE")) {
+        return NextResponse.json({ error: "Only an active movement can be edited." }, { status: 409 });
+      }
+      if (message.includes("Owner movement not found")) {
+        return NextResponse.json({ error: "Owner movement not found." }, { status: 404 });
+      }
+      if (message.includes("Could not find the function")) {
+        return NextResponse.json({ error: "The owner-movement edit update has not been applied yet." }, { status: 503 });
+      }
+      throw rpcError;
+    }
+    const movementRow = rpcData && rpcData.movement;
+    if (!movementRow || !movementRow.id) {
+      throw new Error("update_owner_movement returned no movement row.");
+    }
+    return NextResponse.json({ success: true, movement: serialize(movementRow) });
+  } catch (error) {
+    console.error("Owner movement edit error", error);
+    return NextResponse.json({ error: "Unable to edit the owner movement." }, { status: 500 });
   }
 }

@@ -9,7 +9,7 @@ import CorrectPaymentDialog from "./CorrectPaymentDialog";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
-import { DEPOSIT_STATE_DEPOSITED } from "@/application/rental/paymentDepositState";
+import { DEPOSIT_STATE_DEPOSITED, DEPOSIT_STATE_RECEIVED, MONEY_MOVED_STATUSES } from "@/application/rental/paymentDepositState";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -61,6 +61,8 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const [detailEntry, setDetailEntry] = useState(null);
   const [correctEntry, setCorrectEntry] = useState(null);
   const [invoiceCharge, setInvoiceCharge] = useState(null);
+  const [confirmVoidChargeId, setConfirmVoidChargeId] = useState(null);
+  const [actionNotice, setActionNotice] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
   const [showAddCharge, setShowAddCharge] = useState(false);
   const [postedMessage, setPostedMessage] = useState("");
@@ -140,6 +142,35 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
     if (entry.kind !== "charge" || entry.status === "void") return;
     setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label, tenantEmail: data?.tenant?.email || "" });
   };
+
+  // Controls-sweep follow-up G11: the ledger is no longer a read-only detour
+  // for the two actions landlords used to leave it to perform. Deposit-state
+  // flips use the same money-moved rule as the Payments panel; charge voids
+  // post the same void-charge op the invoice editor's Delete uses (server
+  // 409s when a payment is applied — the message surfaces here verbatim).
+  async function postLedgerAction(body, successMessage) {
+    setActionNotice(null);
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to complete this action.");
+      setActionNotice({ kind: "ok", text: successMessage });
+      refresh();
+      return true;
+    } catch (failure) {
+      setActionNotice({ kind: "error", text: failure?.message || "Unable to complete this action." });
+      return false;
+    }
+  }
+  function toggleDepositState(entry) {
+    const target = entry.depositState === DEPOSIT_STATE_DEPOSITED ? DEPOSIT_STATE_RECEIVED : DEPOSIT_STATE_DEPOSITED;
+    return postLedgerAction({ operation: "set-payment-deposit-state", paymentId: entry.sourceId, depositState: target },
+      target === DEPOSIT_STATE_DEPOSITED ? "Payment marked as deposited." : "Payment marked as awaiting deposit.");
+  }
+  function voidLedgerCharge(entry) {
+    const chargeId = entry.sourceId || String(entry.id).replace(/^charge:/, "");
+    return postLedgerAction({ operation: "void-charge", chargeId, reason: "Charge voided from the tenant ledger." }, "Charge voided.");
+  }
 
   async function sendStatementEmail() {
     const response = await fetch("/api/rental/tenant-statement-email", {
@@ -253,6 +284,9 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       </div>
 
       {postedMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200 print:hidden">{postedMessage}</p>}
+      {actionNotice && (actionNotice.kind === "ok"
+        ? <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200 print:hidden">{actionNotice.text}</p>
+        : <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300 print:hidden">{actionNotice.text}</p>)}
       {isLoading && <ForgeLoadingState label="Loading ledger…" />}
       {isRefreshing && ledger && (
         <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
@@ -404,9 +438,15 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                             <span className="block text-xs text-slate-500 dark:text-slate-400">
                               {[entry.period, entry.method ? label(entry.method) : null, isCharge ? label(entry.status) : null].filter(Boolean).join(" · ")}
                               {isCreditMemo && entry.remainingCents != null && ` · ${money.format(entry.remainingCents / 100)} remaining`}
-                              {deposited && onOpenBankLedger && (
+                              {isPayment && onOpenBankLedger && (
                                 <> · <button type="button" onClick={() => onOpenBankLedger()}
                                   className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">View in bank ledger</button></>
+                              )}
+                              {isPayment && entry.sourceId && MONEY_MOVED_STATUSES.has(entry.status) && (
+                                <> · <button type="button" onClick={() => toggleDepositState(entry)}
+                                  className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">
+                                  {deposited ? "Mark awaiting deposit" : "Mark deposited"}
+                                </button></>
                               )}
                             </span>
                           )}
@@ -431,6 +471,21 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                               ✎
                             </button>
                           ) : <span className="text-slate-300 dark:text-slate-700">—</span>}
+                          {isCharge && entry.status !== "void" && (
+                            confirmVoidChargeId === entry.id ? (
+                              <span className="ml-1 inline-flex items-center gap-1">
+                                <button type="button" onClick={async () => { const ok = await voidLedgerCharge(entry); if (ok) setConfirmVoidChargeId(null); }}
+                                  className="rounded-lg bg-red-600 px-2 py-1 text-xs font-black text-white hover:bg-red-700">Confirm void</button>
+                                <button type="button" onClick={() => setConfirmVoidChargeId(null)}
+                                  className="rounded-lg px-2 py-1 text-xs font-bold text-slate-600 underline">Keep</button>
+                              </span>
+                            ) : (
+                              <button type="button" onClick={() => setConfirmVoidChargeId(entry.id)} title="Void this charge" aria-label={`Void charge: ${entry.label}`}
+                                className="ml-1 rounded-lg px-2 py-1 text-xs font-black text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40">
+                                Void
+                              </button>
+                            )
+                          )}
                         </td>
                       </tr>
                     );
@@ -489,6 +544,16 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
           <div ref={depositsRef} className={`mt-6 scroll-mt-6 rounded-2xl border bg-slate-50 p-5 transition-shadow dark:bg-slate-950/40 ${depositsFlash ? "border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.35)] dark:border-sky-500" : "border-slate-200 dark:border-slate-700"}`} data-ledger-deposits>
             <h4 className="text-lg font-black text-slate-950 dark:text-white">Deposits — held separately, never rent</h4>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Currently held: {money.format(heldCents / 100)}.</p>
+            <div className="mt-3 flex flex-wrap gap-2 print:hidden">
+              <a href="/forge/rental?section=deposits"
+                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">
+                Record a deposit transaction
+              </a>
+              <a href="/forge/rental?section=deposits" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                Open the Deposits section
+              </a>
+            </div>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Recording opens the Deposits panel, where every requirement is listed — the ledger itself carries transactions only, not requirements.</p>
             {(deposits?.entries?.length || 0) === 0
               ? <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No deposit activity recorded.</p>
               : <ul className="mt-3 space-y-2 text-sm">

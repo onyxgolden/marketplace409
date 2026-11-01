@@ -15,6 +15,9 @@ const AUDIT_LABELS = {
   "member.permissions_changed": "Permissions changed",
   "member.suspended": "Suspended",
   "member.reactivated": "Reactivated",
+  "member.removed": "Removed",
+  "member.invite_cancelled": "Invite cancelled",
+  "member.invite_resent": "Invite resent",
   "preview.start": "Preview started",
   "preview.end": "Preview ended",
 };
@@ -45,7 +48,7 @@ function groupedCatalog(catalog) {
   return groups;
 }
 
-function MemberCard({ member, catalog, viewerId, onChanged, onNotify }) {
+function MemberCard({ member, catalog, viewerId, onChanged, onRemoved, onNotify }) {
   // NO-GO fix 2026-10-01 (finding 2): team.manage is never offered as a per-person
   // override for staff — only the primary owner (implicit) and co_owner hold it.
   const toggleableCatalog = member.role === "co_owner"
@@ -55,6 +58,9 @@ function MemberCard({ member, catalog, viewerId, onChanged, onNotify }) {
   const [overrides, setOverrides] = useState(member.permissionOverrides || {});
   const [saving, setSaving] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
+  // Controls-sweep follow-up G25 (O-21): removal is two-step — a departed
+  // member loses access outright, so it must not fire on a stray click.
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const defaults = useMemo(
     () => new Set(ROLE_DEFAULT_PERMISSIONS[role] || []),
@@ -90,6 +96,28 @@ function MemberCard({ member, catalog, viewerId, onChanged, onNotify }) {
 
   function togglePermission(key) {
     setOverrides((prev) => ({ ...prev, [key]: !effective(key) }));
+  }
+
+  // Controls-sweep follow-up G25 (O-21): remove/cancel drop the card
+  // (the route returns no member), unlike patch() which refreshes it.
+  async function removeMember(statusAction, successMessage) {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/rental/team", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ memberId: member.id, statusAction }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || "Unable to update that member.");
+      onRemoved(member.id);
+      onNotify(successMessage, false);
+    } catch (error) {
+      onNotify(error.message, true);
+    } finally {
+      setSaving(false);
+    }
   }
 
   const isSelf = member.memberUserId === viewerId;
@@ -133,6 +161,7 @@ function MemberCard({ member, catalog, viewerId, onChanged, onNotify }) {
             {isSelf && <span className="ml-2 text-xs font-bold text-slate-500">(you)</span>}
           </p>
         </div>
+        {isSelf && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Another owner must edit your role.</p>}
         <div className="flex flex-wrap gap-2">
           {member.status === "active" && !isSelf && (
             <button
@@ -165,8 +194,65 @@ function MemberCard({ member, catalog, viewerId, onChanged, onNotify }) {
               Reactivate
             </button>
           )}
+          {!isSelf && member.status === "invited" && (
+            <>
+              <button
+                type="button"
+                onClick={() => patch({ statusAction: "resend" }, `Invite resent to ${member.email}.`)}
+                disabled={saving}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-bold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+              >
+                Resend invite
+              </button>
+              <button
+                type="button"
+                onClick={() => removeMember("cancel", `Invite to ${member.email} cancelled.`)}
+                disabled={saving}
+                className="rounded-full border border-red-300 px-3 py-1.5 text-sm font-bold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+              >
+                Cancel invite
+              </button>
+            </>
+          )}
+          {!isSelf && (member.status === "active" || member.status === "suspended") && (
+            confirmingRemove ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => removeMember("remove", `${member.email} removed from the team.`)}
+                  disabled={saving}
+                  className="rounded-full border border-red-300 bg-red-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  Remove this member?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRemove(false)}
+                  disabled={saving}
+                  className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-bold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+                >
+                  Keep member
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingRemove(true)}
+                disabled={saving}
+                className="rounded-full border border-red-300 px-3 py-1.5 text-sm font-bold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+              >
+                Remove
+              </button>
+            )
+          )}
         </div>
       </div>
+
+      {!isSelf && member.status === "suspended" && (
+        <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">
+          Role and permissions can be changed after reactivating this member.
+        </p>
+      )}
 
       {!isSelf && member.status === "active" && (
         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -352,6 +438,11 @@ export default function RentalTeamPanel() {
     load();
   }
 
+  function handleMemberRemoved(id) {
+    setMembers((prev) => (prev || []).filter((m) => m.id !== id));
+    load();
+  }
+
   return (
     <section data-rental-team-panel className="space-y-6">
       <div>
@@ -435,6 +526,7 @@ export default function RentalTeamPanel() {
               catalog={catalog}
               viewerId={viewerId}
               onChanged={handleMemberChanged}
+              onRemoved={handleMemberRemoved}
               onNotify={notify}
             />
           ))}

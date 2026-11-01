@@ -67,7 +67,15 @@ export default function CustomFieldsEditor({ groups = [] }) {
   useEffect(() => { load(); }, [load]);
 
   const fieldCount = sections.reduce((sum, section) => sum + section.fields.length, 0);
-  if (!loading && !error && fieldCount === 0) return null;
+  // Controls-sweep follow-up E1 (L-19): with zero fields defined the editor
+  // used to render nothing at all — no pointer to where fields are defined.
+  // Render the shell with the pointer instead of vanishing.
+  if (!loading && !error && fieldCount === 0) return (
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/60 p-5 dark:border-slate-700 dark:bg-slate-950/30" data-custom-fields-editor>
+      <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Custom fields</p>
+      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">No custom fields are defined yet — define them under <a className="underline" href="/forge/rental?section=setup">Properties → settings</a>, then values can be set here.</p>
+    </div>
+  );
 
   function setValue(sectionIndex, fieldId, value) {
     setSections((current) => current.map((section, index) => (

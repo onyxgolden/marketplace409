@@ -249,6 +249,7 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
                       <select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
                         <option value="cash">Cash</option>
                         <option value="cashiers_check">Cashier&rsquo;s check</option>
+                        <option value="check">Personal check</option>
                       </select>
                     </label>
                     <label className={labelClass}>Deposit state

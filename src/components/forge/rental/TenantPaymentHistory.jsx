@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { DEPOSIT_STATE_DEPOSITED } from "@/application/rental/paymentDepositState";
+import { DEPOSIT_STATE_DEPOSITED, DEPOSIT_STATE_RECEIVED, MONEY_MOVED_STATUSES } from "@/application/rental/paymentDepositState";
+import CorrectPaymentDialog from "./CorrectPaymentDialog";
+import TenantInvoiceEditor from "./TenantInvoiceEditor";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -43,6 +45,9 @@ async function fetchTenantLedger(tenantId) {
 // instantly and refreshes in the background — the old data never blanks out.
 export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullLedger = null }) {
   const [expanded, setExpanded] = useState(false);
+  const [correctEntry, setCorrectEntry] = useState(null);
+  const [invoiceCharge, setInvoiceCharge] = useState(null);
+  const [actionNotice, setActionNotice] = useState(null);
   const { data: body, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     tenantId ? `tenant-ledger:${tenantId}` : null,
     () => fetchTenantLedger(tenantId),
@@ -52,8 +57,32 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
   const deposits = body?.deposits ?? null;
   const importedHistory = body?.importedHistory ?? null;
 
-  // Right-click shortcut: a tenant card context menu dispatches this to open the full
-  // ledger for exactly this tenant without any re-selection step.
+  // Controls-sweep follow-up G11 (M-16): the history surfaces are no longer
+  // actionless. Payment rows flip deposit state with the same money-moved
+  // rule as the Payments panel; succeeded payments open the correction
+  // dialog; charges open the invoice editor (whose Delete voids). The
+  // expanded inline ledger is the full ledger when no opener prop exists,
+  // so its rows carry the same actions rather than a dead end.
+  async function toggleDepositState(entry) {
+    const target = entry.depositState === DEPOSIT_STATE_DEPOSITED ? DEPOSIT_STATE_RECEIVED : DEPOSIT_STATE_DEPOSITED;
+    setActionNotice(null);
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "set-payment-deposit-state", paymentId: entry.sourceId, depositState: target }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to change the deposit state.");
+      setActionNotice({ kind: "ok", text: target === DEPOSIT_STATE_DEPOSITED ? "Payment marked as deposited." : "Payment marked as awaiting deposit." });
+      refresh();
+    } catch (failure) {
+      setActionNotice({ kind: "error", text: failure?.message || "Unable to change the deposit state." });
+    }
+  }
+  const depositToggle = (entry) => entry.kind === "payment" && entry.sourceId && MONEY_MOVED_STATUSES.has(entry.status) ? (
+    <button type="button" onClick={() => toggleDepositState(entry)}
+      className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">
+      {entry.depositState === DEPOSIT_STATE_DEPOSITED ? "Mark awaiting deposit" : "Mark deposited"}
+    </button>
+  ) : null;
   useEffect(() => {
     const open = (event) => {
       if (event.detail?.tenantId === tenantId) {
@@ -85,6 +114,9 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
 
       {isLoading && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading payment history…</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
+      {actionNotice && (actionNotice.kind === "ok"
+        ? <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{actionNotice.text}</p>
+        : <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{actionNotice.text}</p>)}
       {isRefreshing && ledger && <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
 
       {!isLoading && !error && ledger && (
@@ -98,6 +130,7 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
                   <p className="mt-1 text-xs font-bold text-slate-600 dark:text-slate-300">{formatDate(entry.date)} · {label(entry.method)}</p>
                   <p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}<DepositBadge entry={entry} /></p>
                   {entry.refundedAmountCents > 0 && <p className="mt-1 text-xs font-bold text-amber-700 dark:text-amber-400">Refunded {money.format(entry.refundedAmountCents / 100)}</p>}
+                  {depositToggle(entry) && <p className="mt-1 text-xs">{depositToggle(entry)}</p>}
                 </li>
               ))}
             </ul>}
@@ -122,7 +155,8 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
                         <th className="py-2 pr-3 font-black">Status</th>
                         <th className="py-2 pr-3 font-black">Reference</th>
                         <th className="py-2 pr-3 text-right font-black">Amount</th>
-                        <th className="py-2 text-right font-black">Balance</th>
+                        <th className="py-2 pr-3 text-right font-black">Balance</th>
+                        <th className="py-2 font-black">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -141,7 +175,20 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
                           <td className="py-2 pr-3 text-slate-600 dark:text-slate-400">{label(entry.status)}</td>
                           <td className="py-2 pr-3 text-xs text-slate-500 dark:text-slate-400">{entry.reference || "—"}</td>
                           <td className={`py-2 pr-3 text-right font-black ${amountClass(entry.balanceEffectCents)}`}>{money.format(entry.amountCents / 100)}</td>
-                          <td className="py-2 text-right font-black text-slate-950 dark:text-white">{money.format(entry.balanceAfterCents / 100)}</td>
+                          <td className="py-2 pr-3 text-right font-black text-slate-950 dark:text-white">{money.format(entry.balanceAfterCents / 100)}</td>
+                          <td className="py-2">
+                            <span className="flex flex-wrap gap-2 text-xs">
+                              {entry.kind === "payment" && entry.status === "succeeded" && (
+                                <button type="button" onClick={() => setCorrectEntry(entry)}
+                                  className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">Correct</button>
+                              )}
+                              {depositToggle(entry)}
+                              {entry.kind === "charge" && entry.status !== "void" && (
+                                <button type="button" onClick={() => setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label })}
+                                  className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">Edit invoice</button>
+                              )}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -212,6 +259,17 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
             </div>
           )}
         </>
+      )}
+
+      {correctEntry && (
+        <CorrectPaymentDialog paymentId={correctEntry.sourceId} onClose={() => setCorrectEntry(null)}
+          onDone={() => { setCorrectEntry(null); setActionNotice({ kind: "ok", text: "Payment corrected." }); refresh(); }} />
+      )}
+      {invoiceCharge && (
+        <TenantInvoiceEditor chargeId={invoiceCharge.chargeId} tenantId={tenantId} tenantName={tenantName} tenantEmail=""
+          onClose={() => setInvoiceCharge(null)}
+          onSaved={() => { setInvoiceCharge(null); setActionNotice({ kind: "ok", text: "Invoice saved." }); refresh(); }}
+          onDeleted={() => { setInvoiceCharge(null); setActionNotice({ kind: "ok", text: "Invoice voided." }); refresh(); }} />
       )}
     </section>
   );

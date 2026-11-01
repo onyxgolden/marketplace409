@@ -6,14 +6,10 @@ import { useEffect, useState } from "react";
 // the work order's merge fields, and hands the rendered text to onInsert.
 // No send path: the composer owns sending, exactly as before.
 //
-// Wiring (R5 WorkOrderMessages in RentalMaintenancePanel.jsx, once PR #510
-// merges — ConversationThread already accepts composerAddon):
-//   <ConversationThread
-//     ...
-//     composerAddon={({ insertText }) => (
-//       <MessageTemplatePicker workOrderId={workOrderId} onInsert={insertText} />
-//     )}
-//   />
+// Wiring (controls-sweep follow-up G24, O-18): WorkOrderMessages in
+// RentalMaintenancePanel.jsx passes workOrderId for merge fields, and
+// MessagesPanel.jsx passes none — the render endpoint then leaves
+// work-order fields blank with a warning instead of failing.
 
 export default function MessageTemplatePicker({ workOrderId, audience = "tenant", kind = "text", onInsert }) {
   const [templates, setTemplates] = useState([]);

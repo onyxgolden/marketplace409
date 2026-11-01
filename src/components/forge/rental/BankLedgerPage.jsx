@@ -204,7 +204,7 @@ function Modal({ title, onClose, children, wide = false }) {
 // viewed account serves the cached register instantly and refreshes in the
 // background.
 export default function BankLedgerPage({ onNavigate = null }) {
-  const { data: accountsData, error: accountsError, isLoading: accountsLoading } = useStaleWhileRevalidate(
+  const { data: accountsData, error: accountsError, isLoading: accountsLoading, refresh: refreshAccounts } = useStaleWhileRevalidate(
     "bank-ledger:accounts",
     fetchBankAccounts,
     { ttlMs: 300_000 },
@@ -231,6 +231,43 @@ export default function BankLedgerPage({ onNavigate = null }) {
   const [editingEvent, setEditingEvent] = useState(null);
   const [editError, setEditError] = useState("");
   const [notice, setNotice] = useState("");
+  // Controls-sweep follow-up G14: the empty state used to dead-end. The
+  // inline creation form below posts to the rental bank-accounts POST.
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [newAccountType, setNewAccountType] = useState("depository");
+  const [newAccountBalance, setNewAccountBalance] = useState("");
+  const [newAccountAsOf, setNewAccountAsOf] = useState("");
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [createAccountError, setCreateAccountError] = useState("");
+
+  async function createAccount(event) {
+    event.preventDefault();
+    setCreateAccountError("");
+    setCreatingAccount(true);
+    try {
+      const response = await fetch("/api/rental/bank-accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: newAccountName.trim(),
+          type: newAccountType,
+          currentBalanceCents: Math.round(Number(newAccountBalance || 0) * 100),
+          asOf: newAccountAsOf || undefined,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to create the bank account.");
+      setShowAddAccount(false);
+      setNotice(`✓ Bank account "${body.account?.name || newAccountName.trim()}" added.`);
+      if (body.account?.id) setSelectedAccountId(body.account.id);
+      await refreshAccounts();
+    } catch (caught) {
+      setCreateAccountError(caught.message);
+    } finally {
+      setCreatingAccount(false);
+    }
+  }
 
   const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     effectiveAccountId ? `bank-ledger:${effectiveAccountId}` : null,
@@ -403,9 +440,60 @@ export default function BankLedgerPage({ onNavigate = null }) {
       {accountsError && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{accountsError}</p>}
       {accountsLoading && <ForgeLoadingState label="Loading accounts…" />}
       {!accountsLoading && !accountsError && accounts.length === 0 && (
-        <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          No active bank accounts yet. Add an account first, then come back to the register.
-        </p>
+        <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 dark:border-slate-700">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No active bank accounts yet. Add an account first, then come back to the register.
+          </p>
+          {!showAddAccount ? (
+            <button type="button" onClick={() => setShowAddAccount(true)}
+              className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">
+              Add a bank account
+            </button>
+          ) : (
+            <form onSubmit={createAccount} className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Account name</span>
+                <input type="text" required value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)}
+                  placeholder="Business checking"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Type</span>
+                <select value={newAccountType} onChange={(event) => setNewAccountType(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                  <option value="depository">Bank account</option>
+                  <option value="credit">Credit card / line</option>
+                  <option value="loan">Loan</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Opening balance (USD)</span>
+                <input type="number" min="0" step="0.01" value={newAccountBalance} onChange={(event) => setNewAccountBalance(event.target.value)}
+                  placeholder="0.00"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Balance as of</span>
+                <input type="date" value={newAccountAsOf} onChange={(event) => setNewAccountAsOf(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
+              </label>
+              {createAccountError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 sm:col-span-2 dark:bg-red-950/40 dark:text-red-300">{createAccountError}</p>}
+              <div className="flex gap-2 sm:col-span-2">
+                <button type="submit" disabled={creatingAccount}
+                  className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950">
+                  {creatingAccount ? "Adding…" : "Add account"}
+                </button>
+                <button type="button" onClick={() => { setShowAddAccount(false); setCreateAccountError(""); }}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200">
+                  Cancel
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 sm:col-span-2 dark:text-slate-400">
+                A manual account for the register. A bank-linked account still comes from the financial dashboard&apos;s link flow.
+              </p>
+            </form>
+          )}
+        </div>
       )}
 
       {effectiveAccountId && (

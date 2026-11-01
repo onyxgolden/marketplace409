@@ -7,7 +7,7 @@ import { badRequest, findPolicyTenantIdForCharge, ownerOnlyFeeWriteBlocked, owne
 
 export async function recordOfflinePayment({ authenticated, body, effectiveOwnerId }) {
   const input = body.payment;
-  if (!input?.chargeId || !["cash", "cashiers_check"].includes(input.paymentMethod))
+  if (!input?.chargeId || !["cash", "cashiers_check", "check"].includes(input.paymentMethod))
     return badRequest("chargeId and a supported offline payment method are required.");
   const amountCents = Number(input.amountCents);
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive payment amount is required.");

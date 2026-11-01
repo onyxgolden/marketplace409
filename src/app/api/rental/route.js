@@ -6,10 +6,14 @@ import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit }
 import {
   saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
   updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
+  createAnimal, revokeAnimal,
 } from "./_actions/tenants.js";
 import {
+  recordInsuranceProof, updateInsuranceProof, reopenInsurancePolicy,
+} from "./_actions/insurance.js";
+import {
   saveLease, saveSchedule, cancelLease, restoreLease, endLease, updateLeaseTerms, generateCharge, voidCharge,
-  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, setScheduleStatus, saveLeaseChange,
+  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, setScheduleStatus, setPaymentFrequency, saveLeaseChange,
   approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
 } from "./_actions/leases.js";
 import {
@@ -17,14 +21,16 @@ import {
   voidPayment, refundPayment, createTenantCredit,
   saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
 } from "./_actions/payments.js";
-import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
+import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals, retryRentNotification, resendRentNotification } from "./_actions/notifications.js";
 import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_actions/autopay.js";
 import {
-  updateMaintenanceRequest, saveContractor, recordContractorPayment, updateSupportCase,
+  updateMaintenanceRequest, createMaintenanceRequest, saveContractor, updateContractor,
+  deactivateContractor, reactivateContractor, recordContractorPayment, updateSupportCase,
+  createSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
 import { saveSecurityDeposit, updateSecurityDeposit, voidSecurityDeposit, recordSecurityDepositTransaction, voidSecurityDepositTransaction } from "./_actions/deposits.js";
-import { saveInspection, finalizeInspection } from "./_actions/inspections.js";
+import { saveInspection, finalizeInspection, deleteInspection } from "./_actions/inspections.js";
 import {
   saveLateFeeRule, assessLateFee, saveLateFeeAutoSettings, saveLateFeeTenantOverride,
 } from "./_actions/lateFees.js";
@@ -41,6 +47,11 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "archive-unit": archiveUnit,
   "delete-archived-unit": deleteArchivedUnit,
   "review-animal": reviewAnimal,
+  "create-animal": createAnimal,
+  "revoke-animal": revokeAnimal,
+  "record-insurance-proof": recordInsuranceProof,
+  "update-insurance-proof": updateInsuranceProof,
+  "reopen-insurance-policy": reopenInsurancePolicy,
   "save-tenant": saveTenant,
   "delete-unused-tenant": deleteUnusedTenant,
   "update-tenant-email": updateTenantEmail,
@@ -62,6 +73,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-convenience-fee": saveConvenienceFee,
   "activate-lease-schedule": activateLeaseSchedule,
   "set-schedule-status": setScheduleStatus,
+  "set-payment-frequency": setPaymentFrequency,
   "record-offline-payment": recordOfflinePayment,
   "set-payment-deposit-state": setPaymentDepositState,
   "apply-tenant-credit": applyTenantCredit,
@@ -75,8 +87,11 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "update-autopay": updateAutopay,
   "queue-rent-reminder": queueRentReminder,
   "cancel-rent-notification": cancelRentNotification,
+  "retry-rent-notification": retryRentNotification,
+  "resend-rent-notification": resendRentNotification,
   "queue-insurance-renewals": queueInsuranceRenewals,
   "update-maintenance-request": updateMaintenanceRequest,
+  "create-maintenance-request": createMaintenanceRequest,
   "save-security-deposit": saveSecurityDeposit,
   "update-security-deposit": updateSecurityDeposit,
   "void-security-deposit": voidSecurityDeposit,
@@ -84,6 +99,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "void-security-deposit-transaction": voidSecurityDepositTransaction,
   "save-inspection": saveInspection,
   "finalize-inspection": finalizeInspection,
+  "delete-inspection": deleteInspection,
   "save-lease-change": saveLeaseChange,
   "approve-lease-change": approveLeaseChange,
   "save-late-fee-rule": saveLateFeeRule,
@@ -93,8 +109,12 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-payment-policy": savePaymentPolicy,
   "save-payment-policy-tenant-override": savePaymentPolicyTenantOverride,
   "save-contractor": saveContractor,
+  "update-contractor": updateContractor,
+  "deactivate-contractor": deactivateContractor,
+  "reactivate-contractor": reactivateContractor,
   "record-contractor-payment": recordContractorPayment,
   "update-support-case": updateSupportCase,
+  "create-support-case": createSupportCase,
   "create-maintenance-work-order": createMaintenanceWorkOrder,
   "update-maintenance-work-order": updateMaintenanceWorkOrder,
   "save-lease-preparation-version": saveLeasePreparationVersion,

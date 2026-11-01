@@ -107,9 +107,10 @@ describe("PropertyLedgerPage ledger table", () => {
     const headers = Array.from(container.querySelectorAll("th")).map((th) => th.textContent);
     expect(headers).toContain("Check #");
     expect(headers).toContain("C");
-    // Check number cell, cleared check, attachment pin.
+    // Check number cell, cleared toggle (G12: the C cell is a button now,
+    // not text — the old title="Cleared" span is superseded), attachment pin.
     expect(row.textContent).toContain("1024");
-    expect(row.querySelector('[title="Cleared"]')).not.toBeNull();
+    expect(row.querySelector('button[aria-label="Unclear: Water heater replacement"]')).not.toBeNull();
     expect(row.querySelector('[aria-label="Has attachments"]')).not.toBeNull();
     // Description sub-line carries payee/category/memo.
     expect(row.textContent).toContain("Gulf Coast Plumbing");

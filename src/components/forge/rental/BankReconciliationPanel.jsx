@@ -346,6 +346,9 @@ export default function BankReconciliationPanel({ bankAccountId, entries = [], o
                 {latestActive?.id === rec.id && (
                   <button type="button" className="text-sm font-bold text-red-700 underline dark:text-red-400" onClick={() => setGate({ undo: rec })}>Undo</button>
                 )}
+                {rec.status === "active" && latestActive?.id !== rec.id && (
+                  <span className="text-sm text-slate-500 dark:text-slate-400">Only the latest reconciliation can be undone.</span>
+                )}
               </span>
             </div>
             {openReport === rec.id && <ReconciliationReport rec={rec} entries={entries} />}

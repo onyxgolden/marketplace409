@@ -200,6 +200,9 @@ export default function TenantCreditSection({ credits = [], creditApplications =
                       Apply to a charge…
                     </button>
                   )}
+                  {openCharges.length === 0 && (
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Nothing to apply to yet — this credit will auto-apply to the next charge.</p>
+                  )}
                   <button type="button" onClick={() => { setVoidFor(credit); setVoidReason(""); setVoidChecked(false); setVoidTyped(""); setError(""); }}
                     className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800">
                     Void remaining…

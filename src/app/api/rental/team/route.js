@@ -110,6 +110,26 @@ export async function PATCH(request) {
     const statusAction = body?.statusAction == null ? null : String(body.statusAction).trim();
     if (role === "" ) return NextResponse.json({ error: "Role cannot be blank." }, { status: 400 });
 
+    // Controls-sweep follow-up G25 (O-21): remove / cancel-invite / resend-
+    // invite. update_workspace_member knows only suspend/reactivate, and
+    // direct table access would fail RLS for co-owner managers (owner-only
+    // policies), so these go through the manage_workspace_member_membership
+    // RPC, which enforces the same guards (never self, co-owner changes
+    // primary-owner-only). Pre-migration the RPC is missing: PostgREST
+    // PGRST202 maps to a plain 503, same as the G21 pattern.
+    if (["remove", "cancel", "resend"].includes(statusAction)) {
+      const { data, error } = await authenticated.supabaseClient.rpc("manage_workspace_member_membership", {
+        p_member_id: memberId, p_action: statusAction,
+      });
+      if (error) {
+        if (error.code === "PGRST202")
+          return NextResponse.json({ error: "Team membership removal has not been applied yet — the database change is still pending approval." }, { status: 503 });
+        return NextResponse.json({ error: error.message || "Unable to update that member." }, { status: 400 });
+      }
+      if (!data) return NextResponse.json({ success: true, removed: true });
+      return NextResponse.json({ success: true, member: serializeMember(data) });
+    }
+
     const { data, error } = await authenticated.supabaseClient.rpc("update_workspace_member", {
       p_member_id: memberId,
       p_role: role || null,
