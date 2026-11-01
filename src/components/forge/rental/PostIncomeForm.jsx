@@ -74,7 +74,7 @@ export default function PostIncomeForm({ tenantId, tenantName, openCharges = [],
     if (date > today()) return "The payment date cannot be in the future.";
     const cents = Math.round(Number(amount) * 100);
     if (!Number.isSafeInteger(cents) || cents <= 0) return "Enter a positive payment amount.";
-    if (!["cash", "cashiers_check"].includes(paymentMethod)) return "Choose a supported payment type.";
+    if (!["cash", "cashiers_check", "check"].includes(paymentMethod)) return "Choose a supported payment type.";
     return "";
   }
 
@@ -167,6 +167,7 @@ export default function PostIncomeForm({ tenantId, tenantName, openCharges = [],
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
               <option value="cash">Cash</option>
               <option value="cashiers_check">Cashier&apos;s check</option>
+              <option value="check">Personal check</option>
             </select>
           </label>
           <label className="text-sm font-bold text-slate-900 dark:text-white">Apply to

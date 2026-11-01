@@ -129,6 +129,7 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
           <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 block rounded-xl border border-slate-300 bg-white p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white">
             <option value="cash">Cash</option>
             <option value="cashiers_check">Cashier&apos;s check</option>
+            <option value="check">Personal check</option>
           </select>
         </label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Date received
