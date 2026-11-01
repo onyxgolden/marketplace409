@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { badRequest } from "./shared.js";
+import { badRequest, readOnlyWriteBlocked } from "./shared.js";
 
 export async function saveInspection({ authenticated, body, effectiveOwnerId }) {
   const input = body.inspection;
@@ -20,9 +20,64 @@ export async function saveInspection({ authenticated, body, effectiveOwnerId }) 
     if (evidenceError) throw evidenceError;
     if ((evidence || []).length !== evidenceIds.length) return badRequest("Inspection evidence must be a saved document for the selected lease.");
   }
+  // Controls-sweep follow-up G23 (O-14): the save RPC inserts
+  // unconditionally (no upsert, no status check), so passing an existing
+  // draft id through it would 23505. Edit is handled owner-side here with
+  // the same validations above: header update, item replacement, same id.
+  // Drafts are never tenant-visible (tenant select requires finalized /
+  // acknowledged), so a partial failure stays re-editable through this
+  // same path — no published record is ever half-written.
+  if (input.id) {
+    if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit inspections." }, { status: 403 });
+    const { data: existing, error: existingError } = await authenticated.supabaseClient.from("rental_inspections")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", input.id).maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) return NextResponse.json({ error: "Inspection was not found." }, { status: 404 });
+    if (existing.status !== "draft")
+      return NextResponse.json({ error: "Only a draft inspection can be edited — finalized inspections are terminal." }, { status: 409 });
+    const { error: headerError } = await authenticated.supabaseClient.from("rental_inspections").update({
+      lease_id: input.leaseId, unit_id: input.unitId, tenant_id: input.tenantId,
+      inspection_type: input.inspectionType, inspection_date: input.inspectionDate,
+      general_notes: input.generalNotes?.trim() ? input.generalNotes.trim() : null,
+      updated_at: new Date().toISOString(),
+    }).eq("owner_id", effectiveOwnerId).eq("id", input.id);
+    if (headerError) throw headerError;
+    const { error: clearError } = await authenticated.supabaseClient.from("rental_inspection_items")
+      .delete().eq("owner_id", effectiveOwnerId).eq("inspection_id", input.id);
+    if (clearError) throw clearError;
+    const { error: itemsError } = await authenticated.supabaseClient.from("rental_inspection_items").insert(items.map((item) => ({
+      owner_id: effectiveOwnerId, id: `rental_inspection_item_${crypto.randomUUID()}`, inspection_id: input.id,
+      area: item.area.trim(), component: item.component.trim(), condition_rating: item.conditionRating,
+      notes: item.notes?.trim() ? item.notes.trim() : null, damage_observed: Boolean(item.damageObserved),
+      deposit_review_recommended: Boolean(item.depositReviewRecommended),
+      estimated_cost_cents: item.estimatedCostCents ?? null, evidence_document_id: item.evidenceDocumentId || null,
+    })));
+    if (itemsError) throw itemsError;
+    return NextResponse.json({ success: true, inspection: { id: input.id, status: "draft" } });
+  }
   const { data, error } = await authenticated.supabaseClient.rpc("save_rental_inspection", { p_owner_id: effectiveOwnerId, p_inspection: input, p_items: items });
   if (error) throw error;
   return NextResponse.json({ success: true, inspection: data });
+}
+
+// Controls-sweep follow-up G23 (O-14): delete in any state. Items cascade
+// on inspection delete; acknowledgement rows restrict, so they are removed
+// first — the acknowledgement is part of the inspection record being deleted.
+export async function deleteInspection({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot delete inspections." }, { status: 403 });
+  if (typeof body.inspectionId !== "string" || !body.inspectionId.trim()) return badRequest("inspectionId is required.");
+  const inspectionId = body.inspectionId.trim();
+  const { data: existing, error: existingError } = await authenticated.supabaseClient.from("rental_inspections")
+    .select("id").eq("owner_id", effectiveOwnerId).eq("id", inspectionId).maybeSingle();
+  if (existingError) throw existingError;
+  if (!existing) return NextResponse.json({ error: "Inspection was not found." }, { status: 404 });
+  const { error: ackError } = await authenticated.supabaseClient.from("rental_inspection_acknowledgements")
+    .delete().eq("owner_id", effectiveOwnerId).eq("inspection_id", inspectionId);
+  if (ackError) throw ackError;
+  const { error: deleteError } = await authenticated.supabaseClient.from("rental_inspections")
+    .delete().eq("owner_id", effectiveOwnerId).eq("id", inspectionId);
+  if (deleteError) throw deleteError;
+  return NextResponse.json({ success: true });
 }
 
 export async function finalizeInspection({ authenticated, body, effectiveOwnerId, timestamp }) {
