@@ -134,3 +134,27 @@ describe("RentalLeasePanel controls sweep — G2 lease-side add posts", () => {
     }
   });
 });
+
+describe("RentalLeasePanel controls sweep — G3 cancelled-lease recovery", () => {
+  const g3Setup = (status) => ({
+    units: [{ id: "unit_1", label: "4225 Barnhill", property_id: "4225-barnhill" }],
+    tenants: [{ id: "tenant_1", display_name: "Steven Crabtree", email: "s@example.com" }],
+    schedules: [{ id: "schedule_1", lease_id: "lease_1", status: "draft" }],
+    leaseMemberships: [],
+    leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "4225-barnhill", status, monthly_rent_cents: 180000, rent_due_day: 1, start_date: "2026-10-13" }],
+  });
+
+  it("offers Restore plus a replacement pointer on a cancelled lease", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={g3Setup("cancelled")} loadOnMount={false} />);
+    expect(markup).toContain("Restore this lease");
+    expect(markup).toContain("cannot be edited");
+    expect(markup).toContain("add a replacement lease");
+  });
+
+  it("offers no Restore on draft or active leases", () => {
+    for (const status of ["draft", "active"]) {
+      const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={g3Setup(status)} loadOnMount={false} />);
+      expect(markup).not.toContain("Restore this lease");
+    }
+  });
+});

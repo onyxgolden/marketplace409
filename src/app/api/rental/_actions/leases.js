@@ -67,6 +67,22 @@ export async function cancelLease({ authenticated, body, effectiveOwnerId, times
   return NextResponse.json({ success: true, lease: data });
 }
 
+export async function restoreLease({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G3: restore a cancelled lease to draft (L-03). Cancel only
+  // ever applies to draft leases, so a cancelled lease never had charges
+  // generated — restoring returns it to exactly the state it was in before
+  // cancel, with its draft schedule intact. No financial side effects to
+  // unwind, and no new lease id: memberships and history keep continuity.
+  if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
+  const { data, error } = await authenticated.supabaseClient.from("rental_leases")
+    .update({ status: "draft", updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", body.leaseId.trim()).eq("status", "cancelled")
+    .select("id, status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Only a cancelled lease can be restored." }, { status: 409 });
+  return NextResponse.json({ success: true, lease: data });
+}
+
 export async function endLease({ authenticated, body, effectiveOwnerId, timestamp }) {
   // End an ACTIVE lease (B1). Ending stops future charge generation and
   // unblocks archiving the unit (archiveUnit only refuses ACTIVE leases).

@@ -496,3 +496,22 @@ describe("cancelled-lease guards (controls sweep G1)", () => {
     expect((await post({ operation: "approve-lease-preparation-version", preparationId: "prep_1", versionNumber: 1, ownerApprovalConfirmed: true })).status).toBe(200);
   });
 });
+
+describe("restore-lease (controls sweep G3)", () => {
+  it("restores a cancelled lease to draft", async () => {
+    const calls = authFor({ leaseUpdate: { id: "lease_1", status: "draft" } });
+    const response = await post({ operation: "restore-lease", leaseId: "lease_1" });
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.success).toBe(true);
+    expect(json.lease.status).toBe("draft");
+    expect(calls.find((call) => call.table === "rental_leases").values.status).toBe("draft");
+  });
+
+  it("refuses to restore a lease that is not cancelled", async () => {
+    authFor({ leaseUpdate: null });
+    const response = await post({ operation: "restore-lease", leaseId: "lease_1" });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/Only a cancelled lease can be restored/);
+  });
+});
