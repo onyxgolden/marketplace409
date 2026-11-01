@@ -41,7 +41,9 @@ export default function NoticeLogList({ tenantId = null, tenantName = null, comp
   }
 
   return (
-    <ul className={compact ? "mt-2 space-y-2" : "mt-4 space-y-2"}>
+    <div>
+      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Notices are delivered by print and mail — there is no electronic send from this surface. Print a copy and queue it in <a href="/forge/rental?section=mailing" className="font-bold text-sky-700 underline dark:text-sky-400">Mailing</a>.</p>
+      <ul className={compact ? "mt-2 space-y-2" : "mt-4 space-y-2"}>
       {notices.map((notice) => {
         const expanded = expandedId === notice.id;
         return (
@@ -66,5 +68,6 @@ export default function NoticeLogList({ tenantId = null, tenantName = null, comp
         );
       })}
     </ul>
+    </div>
   );
 }

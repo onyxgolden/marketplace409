@@ -21,7 +21,7 @@ import {
   voidPayment, refundPayment, createTenantCredit,
   saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
 } from "./_actions/payments.js";
-import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
+import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals, retryRentNotification, resendRentNotification } from "./_actions/notifications.js";
 import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_actions/autopay.js";
 import {
   updateMaintenanceRequest, createMaintenanceRequest, saveContractor, updateContractor,
@@ -86,6 +86,8 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "update-autopay": updateAutopay,
   "queue-rent-reminder": queueRentReminder,
   "cancel-rent-notification": cancelRentNotification,
+  "retry-rent-notification": retryRentNotification,
+  "resend-rent-notification": resendRentNotification,
   "queue-insurance-renewals": queueInsuranceRenewals,
   "update-maintenance-request": updateMaintenanceRequest,
   "create-maintenance-request": createMaintenanceRequest,

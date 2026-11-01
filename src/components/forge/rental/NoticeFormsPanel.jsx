@@ -347,6 +347,7 @@ export default function NoticeFormsPanel() {
                 </p>
               )}
               <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-4 font-serif text-sm leading-relaxed text-slate-900 dark:bg-slate-900 dark:text-slate-100">{preview.text}</pre>
+              <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">Notices are delivered by print and mail — there is no electronic send from this surface. Print a copy and queue it in <a href="/forge/rental?section=mailing" className="font-bold text-sky-700 underline dark:text-sky-400">Mailing</a>.</p>
             </div>
           )}
 
