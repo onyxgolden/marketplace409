@@ -16,6 +16,81 @@ export async function updateMaintenanceRequest({ authenticated, body, effectiveO
   return NextResponse.json({ success: true, request: data });
 }
 
+export async function createMaintenanceRequest({ authenticated, body, effectiveOwnerId }) {
+  // Controls-sweep follow-up G19 (O-05): the landlord path for a
+  // phone-reported issue. The tenant portal RPC cannot serve it — it
+  // resolves the tenant from auth.uid() and rejects a landlord session —
+  // so this inserts owner-side. The request is filed against the lease's
+  // household: primary tenant, else the first member. The lease must be
+  // active, matching the tenant RPC's gate.
+  const input = body.request || {};
+  if (typeof input.leaseId !== "string" || input.leaseId.trim() === "")
+    return badRequest("A lease is required.");
+  if (typeof input.title !== "string" || input.title.trim() === "")
+    return badRequest("A maintenance request title is required.");
+  if (typeof input.description !== "string" || input.description.trim() === "")
+    return badRequest("A maintenance request description is required.");
+  const priority = ["routine", "soon", "urgent", "emergency"].includes(input.priority) ? input.priority : "routine";
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, unit_id, status").eq("owner_id", effectiveOwnerId).eq("id", input.leaseId.trim()).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  if (lease.status !== "active")
+    return NextResponse.json({ error: "Maintenance requests can only be filed against an active lease." }, { status: 409 });
+  const { data: members, error: memberError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", lease.id);
+  if (memberError) throw memberError;
+  const tenantId = (members || []).find((row) => row.occupancy_role === "primary")?.tenant_id
+    || (members || [])[0]?.tenant_id;
+  if (!tenantId)
+    return NextResponse.json({ error: "The lease has no tenants to file the request against." }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rental_maintenance_requests").insert({
+    owner_id: effectiveOwnerId, id: id("rental_maintenance", input.id), lease_id: lease.id, unit_id: lease.unit_id,
+    tenant_id: tenantId, title: input.title.trim(), description: input.description.trim(), priority,
+    status: "submitted", permission_to_enter: input.permissionToEnter === true,
+    contact_phone: typeof input.contactPhone === "string" ? input.contactPhone.trim() || null : null,
+  }).select("*").single();
+  if (error) throw error;
+  return NextResponse.json({ success: true, request: data });
+}
+
+export async function updateContractor({ authenticated, body, effectiveOwnerId }) {
+  // Controls-sweep follow-up G19 (O-06): save-contractor was insert-only,
+  // so a typo'd phone/trade could never be fixed. Same validators as the
+  // insert; status is not editable here (see setContractorStatus).
+  const input = body.contractor || {};
+  if (!input?.id) return badRequest("Contractor id is required.");
+  if (!input?.businessName?.trim()) return badRequest("Contractor business name is required.");
+  const taxLast4 = input.taxIdLast4?.trim() || null;
+  if (taxLast4 && !/^\d{4}$/.test(taxLast4)) return badRequest("Tax ID last four must contain four digits.");
+  const { data, error } = await authenticated.supabaseClient.from("rental_contractors").update({
+    business_name: input.businessName.trim(), contact_name: input.contactName?.trim() || null,
+    email: input.email?.trim() || null, phone: input.phone?.trim() || null,
+    trade: input.trade?.trim() || null, license_reference: input.licenseReference?.trim() || null,
+    insurance_expiration: input.insuranceExpiration || null, w9_status: input.w9Status || "not_requested",
+    tax_classification: input.taxClassification?.trim() || null, tax_id_last4: taxLast4,
+  }).eq("owner_id", effectiveOwnerId).eq("id", input.id).select("*").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Contractor was not found." }, { status: 404 });
+  return NextResponse.json({ success: true, contractor: data });
+}
+
+async function setContractorStatus({ authenticated, body, effectiveOwnerId }, status) {
+  // Controls-sweep follow-up G19 (O-06): deactivation is what makes the
+  // work-order form's `status === "active"` filter meaningful — a retired
+  // contractor stops being assignable. Reactivation is the symmetric undo
+  // so a mistaken deactivation is not a one-way trap.
+  if (!body?.contractorId) return badRequest("Contractor id is required.");
+  const { data, error } = await authenticated.supabaseClient.from("rental_contractors").update({ status })
+    .eq("owner_id", effectiveOwnerId).eq("id", body.contractorId).select("id, status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Contractor was not found." }, { status: 404 });
+  return NextResponse.json({ success: true, contractor: data });
+}
+
+export async function deactivateContractor(args) { return setContractorStatus(args, "inactive"); }
+export async function reactivateContractor(args) { return setContractorStatus(args, "active"); }
+
 export async function saveContractor({ authenticated, body, effectiveOwnerId }) {
   const input = body.contractor;
   if (!input?.businessName?.trim()) return badRequest("Contractor business name is required.");

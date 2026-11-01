@@ -20,7 +20,8 @@ import {
 import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
 import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_actions/autopay.js";
 import {
-  updateMaintenanceRequest, saveContractor, recordContractorPayment, updateSupportCase,
+  updateMaintenanceRequest, createMaintenanceRequest, saveContractor, updateContractor,
+  deactivateContractor, reactivateContractor, recordContractorPayment, updateSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
 import { saveSecurityDeposit, updateSecurityDeposit, voidSecurityDeposit, recordSecurityDepositTransaction, voidSecurityDepositTransaction } from "./_actions/deposits.js";
@@ -78,6 +79,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "cancel-rent-notification": cancelRentNotification,
   "queue-insurance-renewals": queueInsuranceRenewals,
   "update-maintenance-request": updateMaintenanceRequest,
+  "create-maintenance-request": createMaintenanceRequest,
   "save-security-deposit": saveSecurityDeposit,
   "update-security-deposit": updateSecurityDeposit,
   "void-security-deposit": voidSecurityDeposit,
@@ -94,6 +96,9 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-payment-policy": savePaymentPolicy,
   "save-payment-policy-tenant-override": savePaymentPolicyTenantOverride,
   "save-contractor": saveContractor,
+  "update-contractor": updateContractor,
+  "deactivate-contractor": deactivateContractor,
+  "reactivate-contractor": reactivateContractor,
   "record-contractor-payment": recordContractorPayment,
   "update-support-case": updateSupportCase,
   "create-maintenance-work-order": createMaintenanceWorkOrder,
