@@ -27,12 +27,13 @@ export const SCREENING_STATUSES = Object.freeze([
 
 // Status machine. complete is terminal; requested may skip straight to
 // complete when the owner records manual results without a separate
-// in-progress step.
+// in-progress step. Controls-sweep follow-up G21 (O-10): complete may
+// reopen to in_progress for correction — the only exit from complete.
 const STATUS_TRANSITIONS = Object.freeze({
   not_requested: ["requested"],
   requested: ["in_progress", "complete"],
   in_progress: ["complete"],
-  complete: [],
+  complete: ["in_progress"],
 });
 
 export function canTransitionScreening(from, to) {
@@ -50,6 +51,9 @@ export const SCREENING_EVENTS = Object.freeze([
   "provider_attempt_blocked",
   "completed",
   "token_regenerated",
+  // Controls-sweep follow-up G21 (O-10): a completed screening reopened
+  // for correction.
+  "reopened",
 ]);
 
 // Fail-closed consent predicate: a screening request is only accepted when

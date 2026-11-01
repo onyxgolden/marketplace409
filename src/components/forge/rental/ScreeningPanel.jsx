@@ -44,6 +44,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState({ creditScore: "", creditBand: "", criminalFlag: false, criminalNotes: "", evictionFlag: false, evictionNotes: "" });
   const [recommendation, setRecommendation] = useState({ recommendation: "", reasons: "" });
+  const [reopenReason, setReopenReason] = useState("");
   const [copied, setCopied] = useState(false);
   const [applicantLink, setApplicantLink] = useState(null);
 
@@ -112,6 +113,7 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
         record_results: "✓ Screening results recorded.",
         set_recommendation: "✓ Screening recommendation saved.",
         complete: "✓ Screening completed.",
+        reopen: "✓ Screening reopened — correct the results or recommendation, then complete it again.",
       };
       setActionNotice(actionNotices[action] || "✓ Screening updated.");
       await reload();
@@ -322,6 +324,19 @@ export default function ScreeningPanel({ applicationId, applicantName, onDecide 
               <div className="mt-2 flex gap-2">
                 <button type="button" disabled={busy} onClick={() => decide("approve")} className={buttonClass}>Approve</button>
                 <button type="button" disabled={busy} onClick={() => decide("deny")} className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">Deny</button>
+              </div>
+              <div className="mt-4 border-t border-gray-200 pt-3">
+                <p className="font-medium">Correct this screening</p>
+                <p className="text-gray-600">Reopening returns the screening to in-progress so a typo&apos;d score, band, or recommendation can be fixed and the screening completed again.</p>
+                <div className="mt-2 flex gap-2">
+                  <input value={reopenReason} onChange={(event) => setReopenReason(event.target.value)}
+                    placeholder="Reason for reopening (optional)" className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm" />
+                  <button type="button" disabled={busy}
+                    onClick={() => runAction("reopen", { reason: reopenReason.trim() || undefined })}
+                    className={secondaryButtonClass}>
+                    Reopen screening
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}

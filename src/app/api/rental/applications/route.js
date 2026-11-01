@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
+import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 
 export const runtime = "nodejs";
 
@@ -66,5 +67,49 @@ export async function GET(request) {
   } catch (error) {
     console.error("Applications queue error", error);
     return NextResponse.json({ error: "Unable to load applications." }, { status: 500 });
+  }
+}
+
+// POST — Controls-sweep follow-up G21 (O-11): landlord paper entry. The
+// public form posts through the no-login apply route; this is the
+// owner-authenticated equivalent for an applicant who applied on paper.
+// No form validation (the landlord enters it, the public rate limit and
+// honeypot do not apply), but the listing must be the owner's and the
+// answers must name the applicant, so the queue row renders. Fee is
+// recorded as none: a paper fee, if any, is collected offline.
+export async function POST(request) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+    if ((await getActiveWorkspaceRole({
+      supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id,
+    })) === "read_only") {
+      return NextResponse.json({ error: "Read-only members cannot create applications." }, { status: 403 });
+    }
+    const body = await request.json();
+    const listingId = typeof body?.listingId === "string" ? body.listingId.trim() : "";
+    if (!listingId) return NextResponse.json({ error: "A listing is required." }, { status: 400 });
+    const answers = body?.answers || {};
+    const personal = answers.personal || {};
+    const named = [personal.firstName, personal.lastName].filter(Boolean).join(" ").trim() || personal.email;
+    if (!named) {
+      return NextResponse.json({ error: "The applicant's name or email is required." }, { status: 400 });
+    }
+    const { data: listing, error: listingError } = await authenticated.supabaseClient
+      .from("rental_listings").select("id")
+      .eq("owner_id", authenticated.effectiveOwnerId).eq("id", listingId).maybeSingle();
+    if (listingError) throw listingError;
+    if (!listing) return NextResponse.json({ error: "Listing was not found." }, { status: 404 });
+    const timestamp = new Date().toISOString();
+    const { data, error } = await authenticated.supabaseClient.from("rental_applications").insert({
+      owner_id: authenticated.effectiveOwnerId, listing_id: listing.id, form_id: null,
+      status: "pending", answers, fee_amount_cents: 0, fee_recorded: false,
+      submitted_at: timestamp, created_at: timestamp, updated_at: timestamp,
+    }).select(APPLICATION_COLUMNS).single();
+    if (error) throw error;
+    return NextResponse.json({ success: true, application: rowToApplication(data) }, { status: 201 });
+  } catch (error) {
+    console.error("Application create error", error);
+    return NextResponse.json({ error: "Unable to create the application." }, { status: 500 });
   }
 }

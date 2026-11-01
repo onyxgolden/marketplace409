@@ -32,6 +32,12 @@ export default function ApplicationsPanel() {
   const [message, setMessage] = useState("");
   const [denyReason, setDenyReason] = useState("");
   const [leaseDraft, setLeaseDraft] = useState({ startDate: "", monthlyRentCents: "", rentDueDay: "1", endDate: "" });
+  // Controls-sweep follow-up G21 (O-11): paper entry + finality paths.
+  const [listings, setListings] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ listingId: "", firstName: "", lastName: "", email: "", phone: "" });
+  const [reopenReason, setReopenReason] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const load = useCallback(async (statusFilter) => {
     setLoading(true); setError("");
@@ -54,6 +60,8 @@ export default function ApplicationsPanel() {
       if (!response.ok) throw new Error(body.error || "Unable to load the application.");
       setDetail(body);
       setDenyReason("");
+      setConfirmingDelete(false);
+      setReopenReason("");
       setLeaseDraft({ startDate: "", monthlyRentCents: body.listing?.rentCents ?? "", rentDueDay: "1", endDate: "" });
     } catch (reason) { setError(reason.message); }
     finally { setBusy(false); }
@@ -85,6 +93,62 @@ export default function ApplicationsPanel() {
         ? "Approved — tenant record and draft lease created. Finalize the lease in the normal lease flow."
         : "Denied — the reason is on the audit record.");
       await load(filter);
+    } catch (reason) { setError(reason.message); }
+    finally { setBusy(false); }
+  }
+
+  async function manage(action, extra = {}) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(`/api/rental/applications/${encodeURIComponent(detail.application.id)}/manage`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, ...extra }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to change the application.");
+      setDetail(null);
+      setConfirmingDelete(false);
+      setReopenReason("");
+      setMessage(action === "reopen"
+        ? "Application reopened — it is pending again."
+        : "Application deleted.");
+      await load(filter);
+    } catch (reason) { setError(reason.message); }
+    finally { setBusy(false); }
+  }
+
+  async function openCreate() {
+    if (showCreate) { setShowCreate(false); return; }
+    setShowCreate(true);
+    if (listings) return;
+    try {
+      const response = await fetch("/api/rental/listings");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to load listings.");
+      setListings(body.listings || []);
+    } catch (reason) { setError(reason.message); }
+  }
+
+  async function createApplication(event) {
+    event.preventDefault();
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/rental/applications", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          listingId: createForm.listingId,
+          answers: { personal: {
+            firstName: createForm.firstName.trim(), lastName: createForm.lastName.trim(),
+            email: createForm.email.trim(), phone: createForm.phone.trim(),
+          } },
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to create the application.");
+      setShowCreate(false);
+      setCreateForm({ listingId: "", firstName: "", lastName: "", email: "", phone: "" });
+      setMessage("Paper application entered — it is pending in the queue.");
+      setFilter("pending");
+      await load("pending");
     } catch (reason) { setError(reason.message); }
     finally { setBusy(false); }
   }
@@ -144,7 +208,34 @@ export default function ApplicationsPanel() {
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Applications</h2>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review queue — online applications arrive here as pending.</p>
         </div>
+        <button type="button" onClick={openCreate} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+          {showCreate ? "Cancel paper entry" : "Enter a paper application"}
+        </button>
       </div>
+      {showCreate && (
+        <form onSubmit={createApplication} className="mt-4 grid gap-2 rounded-2xl border border-slate-200 p-4 dark:border-slate-700 md:grid-cols-2">
+          <p className="text-sm text-slate-600 dark:text-slate-400 md:col-span-2">For an applicant who applied on paper instead of the online form. The entry lands in the queue as pending.</p>
+          <label className="text-sm font-bold text-slate-900 dark:text-white">Listing
+            <select required value={createForm.listingId} onChange={(e) => setCreateForm({ ...createForm, listingId: e.target.value })} className={`${inputClass} mt-1 w-full`}>
+              <option value="">Select a listing</option>
+              {(listings || []).map((listing) => <option key={listing.id} value={listing.id}>{listing.title || listing.id} ({listing.status})</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-bold text-slate-900 dark:text-white">Email
+            <input type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} className={`${inputClass} mt-1 w-full`} placeholder="applicant@example.com" />
+          </label>
+          <label className="text-sm font-bold text-slate-900 dark:text-white">First name
+            <input value={createForm.firstName} onChange={(e) => setCreateForm({ ...createForm, firstName: e.target.value })} className={`${inputClass} mt-1 w-full`} />
+          </label>
+          <label className="text-sm font-bold text-slate-900 dark:text-white">Last name
+            <input value={createForm.lastName} onChange={(e) => setCreateForm({ ...createForm, lastName: e.target.value })} className={`${inputClass} mt-1 w-full`} />
+          </label>
+          <label className="text-sm font-bold text-slate-900 dark:text-white md:col-span-2">Phone
+            <input value={createForm.phone} onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} className={`${inputClass} mt-1 w-full`} />
+          </label>
+          <button type="submit" disabled={busy} className={`rounded-xl px-4 py-2 text-sm font-bold transition md:col-span-2 ${goldControlClass}`}>Enter application</button>
+        </form>
+      )}
       <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Application status">
         {STATUS_FILTERS.map(([value, label]) => (
           <button key={value} type="button" role="tab" aria-selected={filter === value} onClick={() => setFilter(value)}
@@ -219,6 +310,55 @@ export default function ApplicationsPanel() {
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => decide("deny")} disabled={busy} className="rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950">Deny application</button>
                 </div>
+                {!confirmingDelete ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setConfirmingDelete(true)} className="rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950">Delete application</button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-bold text-red-700 dark:text-red-300">Delete this pending application? Spam and duplicates only — this cannot be undone.</p>
+                    <button type="button" onClick={() => manage("delete")} disabled={busy} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700">Yes, delete</button>
+                    <button type="button" onClick={() => setConfirmingDelete(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Keep it</button>
+                  </div>
+                )}
+              </div>
+            ) : null}
+            {detail.application.status !== "pending" ? (
+              <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+                {detail.application.status === "approved" ? (
+                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                    This application was approved — the tenant record and draft lease already exist, so it cannot be
+                    reopened or deleted here.
+                  </p>
+                ) : null}
+                {(detail.application.status === "denied" || detail.application.status === "withdrawn") ? (
+                  <>
+                    <label className="text-sm font-bold text-slate-900 dark:text-white">Reason for reopening (optional)
+                      <input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} className={`${inputClass} mt-1 w-full`} placeholder="Stored on the audit record" />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => manage("reopen", { reason: reopenReason.trim() || undefined })} disabled={busy} className={`rounded-xl px-4 py-2 text-sm font-bold transition ${goldControlClass}`}>Reopen application</button>
+                    </div>
+                    {detail.application.status === "denied" ? (
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Denied applications stay on the audit record and cannot be deleted — reopen it to review again.</p>
+                    ) : null}
+                  </>
+                ) : null}
+                {(detail.application.status === "withdrawn") ? (
+                  <>
+                    {!confirmingDelete ? (
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => setConfirmingDelete(true)} className="rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950">Delete application</button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-bold text-red-700 dark:text-red-300">Delete this withdrawn application? This cannot be undone.</p>
+                        <button type="button" onClick={() => manage("delete")} disabled={busy} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700">Yes, delete</button>
+                        <button type="button" onClick={() => setConfirmingDelete(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Keep it</button>
+                      </div>
+                    )}
+                  </>
+                ) : null}
               </div>
             ) : null}
             <div className="mt-4 flex justify-end">
