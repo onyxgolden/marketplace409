@@ -170,6 +170,21 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
   const [scanMessage, setScanMessage] = useState(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editAmount, setEditAmount] = useState((Number(receipt.amountCents) / 100).toFixed(2));
+  const [editDate, setEditDate] = useState(receipt.receiptDate || "");
+  const [editVendorId, setEditVendorId] = useState(receipt.vendorId || "");
+  const [editVendorHint, setEditVendorHint] = useState(receipt.vendorNameHint || "");
+  const [editNotes, setEditNotes] = useState(receipt.notes || "");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [savedMessage, setSavedMessage] = useState(null);
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [voidChecked, setVoidChecked] = useState(false);
+  const [voidTyped, setVoidTyped] = useState("");
+  const [voidBusy, setVoidBusy] = useState(false);
+  const [voidError, setVoidError] = useState(null);
 
   const loadMatches = useCallback(async () => {
     const body = await readJson(await fetch(`/api/rental/receipts/${encodeURIComponent(receipt.id)}/matches`));
@@ -248,6 +263,63 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
     }
   }
 
+  // Controls-sweep B5: edit / void an inbox receipt through the existing
+  // PATCH and DELETE endpoints. Applied/voided receipts stay uneditable here
+  // (see the applied/voided view in G16); the void precondition for applied
+  // receipts ("void the vendor payment first") surfaces from the API error.
+  async function saveEdit() {
+    const amountCents = Math.round(Number(editAmount) * 100);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) { setEditError("Receipt total must be a positive amount."); return; }
+    if (!editDate) { setEditError("Receipt date is required."); return; }
+    if (!editVendorId && !editVendorHint.trim()) { setEditError("A vendor is required — pick one or type the name shown on the receipt."); return; }
+    setEditBusy(true); setEditError(null); setSavedMessage(null);
+    try {
+      const updated = await readJson(
+        await fetch(`/api/rental/receipts/${encodeURIComponent(receipt.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            amountCents,
+            receiptDate: editDate,
+            vendorId: editVendorId || undefined,
+            vendorNameHint: editVendorId ? undefined : editVendorHint.trim(),
+            notes: editNotes.trim() || undefined,
+          }),
+        })
+      );
+      setSavedMessage(`✓ Receipt updated: ${updated.receipt.vendorName || updated.receipt.vendorNameHint || "Receipt"} — ${cents(updated.receipt.amountCents)}.`);
+      setEditOpen(false);
+      onChanged(updated.receipt);
+    } catch (saveError) {
+      setEditError(saveError.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function voidReceipt() {
+    if (!voidReason.trim()) { setVoidError("A reason is required to void a receipt."); return; }
+    if (!voidChecked || voidTyped.trim().toUpperCase() !== "CONFIRM") {
+      setVoidError("Check the confirmation and type CONFIRM to void this receipt.");
+      return;
+    }
+    setVoidBusy(true); setVoidError(null);
+    try {
+      await readJson(
+        await fetch(`/api/rental/receipts/${encodeURIComponent(receipt.id)}`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reason: voidReason.trim() }),
+        })
+      );
+      onChanged({ ...receipt, status: "voided", voidReason: voidReason.trim() });
+    } catch (voidFailure) {
+      setVoidError(voidFailure.message);
+    } finally {
+      setVoidBusy(false);
+    }
+  }
+
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex items-start justify-between gap-4">
@@ -266,6 +338,107 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
         </button>
       </div>
       {detailNotice ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{detailNotice}</p> : null}
+
+      {savedMessage ? (
+        <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-black text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{savedMessage}</p>
+      ) : null}
+
+      {receipt.status === "inbox" ? (
+        <div className="mt-4 flex flex-wrap gap-2 print:hidden">
+          <button type="button" onClick={() => { setEditOpen((value) => !value); setEditError(null); }}
+            className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">
+            {editOpen ? "Hide edit form" : "Edit receipt"}
+          </button>
+          <button type="button" onClick={() => { setVoidOpen((value) => !value); setVoidError(null); }}
+            className="rounded-xl border border-red-300 px-3 py-1.5 text-sm font-bold text-red-700 dark:border-red-700 dark:text-red-400">
+            {voidOpen ? "Hide void form" : "Void receipt"}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+          Only inbox receipts can be edited or voided. Applied receipts must have their vendor payment voided first.
+        </p>
+      )}
+
+      {editOpen && receipt.status === "inbox" ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+          <p className="text-sm font-black text-slate-950 dark:text-white">Edit this receipt</p>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            <label className="block text-sm">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Amount</span>
+              <input value={editAmount} onChange={(event) => setEditAmount(event.target.value)} inputMode="decimal" placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800" />
+            </label>
+            <label className="block text-sm">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Receipt date</span>
+              <input type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800" />
+            </label>
+            <label className="block text-sm">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Vendor</span>
+              <select value={editVendorId} onChange={(event) => setEditVendorId(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800">
+                <option value="">— Unknown vendor —</option>
+                {vendors.map((vendor) => (
+                  <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                ))}
+              </select>
+            </label>
+            {!editVendorId ? (
+              <label className="block text-sm">
+                <span className="font-bold text-slate-700 dark:text-slate-300">Vendor name on receipt</span>
+                <input value={editVendorHint} onChange={(event) => setEditVendorHint(event.target.value)} placeholder="e.g. Acme Plumbing"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800" />
+              </label>
+            ) : null}
+            <label className="block text-sm md:col-span-2">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Notes</span>
+              <input value={editNotes} onChange={(event) => setEditNotes(event.target.value)} placeholder="Optional note"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800" />
+            </label>
+          </div>
+          {editError ? <p role="alert" className="mt-2 text-xs font-bold text-red-700 dark:text-red-400">{editError}</p> : null}
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={saveEdit} disabled={editBusy}
+              className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+              {editBusy ? "Saving…" : "Save receipt"}
+            </button>
+            <button type="button" onClick={() => setEditOpen(false)}
+              className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-bold dark:border-slate-600">Cancel</button>
+          </div>
+        </div>
+      ) : null}
+
+      {voidOpen && receipt.status === "inbox" ? (
+        <div className="mt-4 rounded-2xl border-2 border-red-400 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950/30">
+          <p className="text-sm font-black text-red-900 dark:text-red-200">Void this receipt</p>
+          <p className="mt-1 text-xs text-red-800 dark:text-red-300">
+            Voiding is a reversal, not a deletion — the receipt stays in history as voided. An applied receipt
+            cannot be voided here; void its vendor payment first.
+          </p>
+          <label className="mt-2 block text-sm font-bold text-red-900 dark:text-red-200">Reason
+            <input value={voidReason} onChange={(event) => setVoidReason(event.target.value)} placeholder="e.g. duplicate scan"
+              className="mt-1 w-full rounded-xl border border-red-400 bg-white px-3 py-2 dark:border-red-700 dark:bg-slate-900 dark:text-white" />
+          </label>
+          <label className="mt-3 flex items-start gap-2 text-sm font-bold text-red-900 dark:text-red-200">
+            <input type="checkbox" checked={voidChecked} onChange={(event) => setVoidChecked(event.target.checked)} className="mt-1 h-4 w-4 accent-red-600" />
+            I confirm this receipt should be voided for the reason above.
+          </label>
+          <label className="mt-2 block text-sm font-bold text-red-900 dark:text-red-200">Type CONFIRM
+            <input value={voidTyped} onChange={(event) => setVoidTyped(event.target.value)} placeholder="CONFIRM"
+              className="mt-1 w-full rounded-xl border border-red-400 bg-white px-3 py-2 dark:border-red-700 dark:bg-slate-900 dark:text-white" />
+          </label>
+          {voidError ? <p role="alert" className="mt-2 text-xs font-bold text-red-700 dark:text-red-400">{voidError}</p> : null}
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={voidReceipt} disabled={voidBusy}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50 hover:bg-red-700">
+              {voidBusy ? "Voiding…" : "Void receipt"}
+            </button>
+            <button type="button" onClick={() => setVoidOpen(false)}
+              className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-bold dark:border-slate-600">Cancel</button>
+          </div>
+        </div>
+      ) : null}
 
       {!receipt.vendorId && receipt.status === "inbox" ? (
         <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm dark:bg-amber-950/40">
@@ -613,11 +786,19 @@ export default function RentalReceiptsPanel() {
                   // The detail unmounts here, so the apply confirmation rides
                   // the panel banner — a banner inside the detail would vanish.
                   if (updated.status === "applied") setNotice("✓ Receipt applied to the bill.");
+                  // Controls-sweep B5: the voided receipt leaves the inbox list,
+                  // but the confirmation must stay where the landlord is looking.
+                  if (updated.status === "voided") {
+                    setNotice(`✓ Receipt voided: ${updated.vendorName || updated.vendorNameHint || "Receipt"} — ${cents(updated.amountCents)}${updated.voidReason ? ` · Reason: ${updated.voidReason}` : ""}.`);
+                  }
                   setReceipts((rows) => (rows || []).filter((row) => row.id !== updated.id));
                   setSelected(null);
                 }
               }}
             />
+          ) : null}
+          {notice ? (
+            <p role="status" className="rounded-2xl bg-emerald-50 p-4 text-sm font-black text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{notice}</p>
           ) : null}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <h3 className="text-lg font-black text-slate-950 dark:text-white">Unmatched inbox ({inbox.length})</h3>
