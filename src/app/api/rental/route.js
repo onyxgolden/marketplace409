@@ -23,7 +23,7 @@ import {
   updateMaintenanceRequest, saveContractor, recordContractorPayment, updateSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
-import { saveSecurityDeposit, recordSecurityDepositTransaction } from "./_actions/deposits.js";
+import { saveSecurityDeposit, updateSecurityDeposit, voidSecurityDeposit, recordSecurityDepositTransaction, voidSecurityDepositTransaction } from "./_actions/deposits.js";
 import { saveInspection, finalizeInspection } from "./_actions/inspections.js";
 import {
   saveLateFeeRule, assessLateFee, saveLateFeeAutoSettings, saveLateFeeTenantOverride,
@@ -77,7 +77,10 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "queue-insurance-renewals": queueInsuranceRenewals,
   "update-maintenance-request": updateMaintenanceRequest,
   "save-security-deposit": saveSecurityDeposit,
+  "update-security-deposit": updateSecurityDeposit,
+  "void-security-deposit": voidSecurityDeposit,
   "record-security-deposit-transaction": recordSecurityDepositTransaction,
+  "void-security-deposit-transaction": voidSecurityDepositTransaction,
   "save-inspection": saveInspection,
   "finalize-inspection": finalizeInspection,
   "save-lease-change": saveLeaseChange,
