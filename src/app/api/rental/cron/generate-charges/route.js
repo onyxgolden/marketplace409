@@ -62,7 +62,7 @@ export async function GET(request) {
     const enabledOwnerIds = (enabledSettings || []).map((row) => row.owner_id);
 
     if (enabledOwnerIds.length === 0) {
-      return NextResponse.json({ success: true, period, scheduleCount: 0, processed: 0, failed: 0, skippedExistingRent: 0 });
+      return NextResponse.json({ success: true, period, scheduleCount: 0, processed: 0, failed: 0, skippedExistingRent: 0, creditsApplied: 0 });
     }
 
     // collection_mode='forge' is a required pre-filter, not just an optimization: an 'external' or
@@ -98,7 +98,7 @@ export async function GET(request) {
     const existingRentCharges = (existingRentRows || []).map((row) => ({ leaseId: row.lease_id, period: row.period,
       chargeType: row.charge_type, status: row.status, voidedAt: row.voided_at }));
 
-    let processed = 0, failed = 0, skippedExistingRent = 0;
+    let processed = 0, failed = 0, skippedExistingRent = 0, creditsApplied = 0;
     for (const row of schedules || []) {
       try {
         const schedule = { ...mapRentScheduleRow(row), beginChargesDate: beginChargesByLease.get(row.lease_id) ?? null };
@@ -110,17 +110,39 @@ export async function GET(request) {
           // also lands here; skipping it is the same no-op the upsert's
           // ignoreDuplicates used to perform.)
           if (hasBlockingRentCharge(existingRentCharges, charge.leaseId, charge.period)) { skippedExistingRent += 1; continue; }
+          // Auto-apply runs ONLY for freshly inserted charges: a pre-existing
+          // row means a previous run already generated this period, and
+          // re-running must never double-apply (the same inserted_id gate as
+          // generate_monthly_rent_charge). An unreadable pre-check fails safe
+          // toward no auto-apply — generation itself still succeeds.
+          const { data: existingCharge, error: existingError } = await db.from("rent_charges")
+            .select("id").eq("owner_id", row.owner_id).eq("source_key", charge.sourceKey).maybeSingle();
+          const isNew = !existingError && !existingCharge;
+          if (existingError) console.error("Overpayment credit pre-check failed for charge", charge.id, existingError);
           const { error: upsertError } = await db.from("rent_charges")
             .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
           if (upsertError) throw upsertError;
           processed += 1;
+          if (isNew) {
+            // Graceful degradation: until the auto-apply migration lands, the
+            // RPC does not exist — generation must still succeed, and the
+            // credit simply waits for a later run after the migration.
+            try {
+              const { data: applied, error: applyError } = await db.rpc("apply_overpayment_credits_to_charge",
+                { p_owner_id: row.owner_id, p_charge_id: charge.id });
+              if (applyError) throw applyError;
+              if (applied && applied.appliedCents > 0) creditsApplied += 1;
+            } catch (applyError) {
+              console.error("Overpayment credit auto-apply failed for charge", charge.id, applyError);
+            }
+          }
         }
       } catch (scheduleError) {
         failed += 1;
         console.error("Rent charge generation failed for schedule", row.id, scheduleError);
       }
     }
-    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed, skippedExistingRent });
+    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed, skippedExistingRent, creditsApplied });
   } catch (error) {
     console.error("Rent charge generation cron error", error);
     return NextResponse.json({ error: "Unable to generate rent charges." }, { status: 500 });

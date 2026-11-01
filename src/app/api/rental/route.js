@@ -142,7 +142,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_tenants")
         .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, payment_policy, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
-        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date, payment_frequency, payment_anchor_date")
+        .select("id, lease_id, status, amount_cents, pet_fee_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date, payment_frequency, payment_anchor_date")
         .order("effective_start_date", { ascending: false }),
       authenticated.supabaseClient.from("rental_maintenance_requests")
         .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")

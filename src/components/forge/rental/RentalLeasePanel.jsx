@@ -11,6 +11,7 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { useRentalTerminology } from "./rentalTerminologyContext";
 import { leaseBalanceCents } from "@/application/rental/leaseBalance";
+import { rentBreakdown, rentBreakdownText } from "@/domains/rent-schedule";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -245,6 +246,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           startDate: form.get("startDate"), endDate: form.get("endDate") || null,
           beginChargesDate: form.get("beginChargesDate") || null,
           earlyPayDays: Number(form.get("earlyPayDays") ?? 7),
+          petFeeCents: Math.round(Number(form.get("petFee") || 0) * 100),
           paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to update the lease terms.");
@@ -258,7 +260,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-schedule", schedule: { leaseId: lease.id, status: "draft",
-          amountCents: Math.round(Number(form.get("monthlyRent")) * 100), currencyCode: lease.currency_code || "USD",
+          amountCents: Math.round(Number(form.get("monthlyRent")) * 100), petFeeCents: Math.round(Number(form.get("petFee") || 0) * 100),
+          currencyCode: lease.currency_code || "USD",
           dueDay: Number(form.get("dueDay")), effectiveStartDate: form.get("startDate"), effectiveEndDate: form.get("endDate") || null,
           paymentFrequency: form.get("paymentFrequency") || "monthly",
           earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
@@ -355,7 +358,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       if (!leaseResponse.ok) throw new Error(leaseResult.error || "Unable to save lease.");
       const scheduleResponse = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-schedule", schedule: { leaseId: leaseResult.lease.id, status: "draft",
-          amountCents: leaseResult.lease.monthlyRentCents, currencyCode: "USD", dueDay: leaseResult.lease.rentDueDay,
+          amountCents: leaseResult.lease.monthlyRentCents, petFeeCents: Math.round(Number(form.get("petFee") || 0) * 100),
+          currencyCode: "USD", dueDay: leaseResult.lease.rentDueDay,
           effectiveStartDate: leaseResult.lease.startDate, effectiveEndDate: leaseResult.lease.endDate,
           paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const scheduleResult = await scheduleResponse.json();
@@ -396,7 +400,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     {viewFilter === "expiring" && <RentalViewFilterBanner filterLabel="Leases expiring within 90 days" onClear={() => setViewFilter(null)} />}
     {visibleLeases.length > 0 && <RentalRecordBrowser title="Leases" records={visibleLeases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
-      getSubtitle={(lease) => { const balanceText = leaseBalanceText(leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })); return <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly{ balanceText ? <> · {balanceText}</> : null}</>; }}>
+      getSubtitle={(lease) => { const balanceText = leaseBalanceText(leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })); const breakdown = rentBreakdown({ totalCents: Number(lease.monthly_rent_cents), petFeeCents: (setup.schedules || []).find((item) => item.lease_id === lease.id)?.pet_fee_cents }); const monthlyText = breakdown.hasPetFee ? `Rent ${money.format(breakdown.rentCents / 100)} + Pet fee ${money.format(breakdown.petFeeCents / 100)} = ${money.format(breakdown.totalCents / 100)} monthly` : `${money.format(Number(lease.monthly_rent_cents) / 100)} monthly`; return <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {monthlyText}{ balanceText ? <> · {balanceText}</> : null}</>; }}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
         const leaseMembershipsForLease = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease?.id);
         const depositTenantId = (leaseMembershipsForLease.find((item) => item.occupancy_role === "primary") || leaseMembershipsForLease[0])?.tenant_id || null;
@@ -418,6 +422,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. Leave blank to start charges on the move-in date.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Pet fee (per month)<input name="petFee" type="number" min="0" step="0.01" defaultValue="0" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Part of the monthly total above — e.g. $50 of an $1,850 total. Leave 0 if there is no pet fee.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Security deposit<input name="securityDeposit" type="number" min="0" step="0.01" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Optional — leave blank if no deposit is required. It is recorded right after the lease saves.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Jurisdiction<input name="jurisdiction" placeholder="e.g. TX" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Optional — used for deposit rules. Leave blank if unsure.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
@@ -471,7 +476,7 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
     {notice ? <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
     {detailError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{detailError}</p> : null}
     <dl className="mt-5 grid gap-4 sm:grid-cols-2">
-      <Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} />
+      <Detail label="Monthly rent" value={rentBreakdownText({ totalCents: Number(lease.monthly_rent_cents), petFeeCents: schedule?.pet_fee_cents }, (cents) => money.format(cents / 100)) || money.format(Number(lease.monthly_rent_cents) / 100)} />
       <Detail label="Due day" value={lease.rent_due_day || "Not recorded"} />
       <Detail label="Move-in date" value={lease.start_date} />
       <Detail label="Charges begin" value={lease.begin_charges_date || lease.start_date} />
@@ -524,6 +529,7 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
         {showEditTerms && (
           <form onSubmit={handleUpdateTerms} className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
             <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Pet fee (per month)<input name="petFee" type="number" min="0" step="0.01" defaultValue={((Number(schedule.pet_fee_cents || 0)) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Part of the monthly total above. Applies to future charges only.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Move-in date<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day they move in.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" required defaultValue={lease.begin_charges_date || lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. No charge is ever generated for a period due before this date.</span></label>
@@ -565,6 +571,7 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
       <form onSubmit={(event) => onSaveSchedule(event, lease)} className="mt-5 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
         <p className="text-sm font-bold text-slate-700 dark:text-slate-300 sm:col-span-2">No rent schedule yet — confirm billing terms before this lease can be activated.</p>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Pet fee (per month)<input name="petFee" type="number" min="0" step="0.01" defaultValue="0" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Part of the monthly total above. Leave 0 if there is no pet fee.</span></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" defaultValue={7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <div className="sm:col-span-2"><PaymentFrequencyPicker name="paymentFrequency" defaultValue="monthly" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></div>
