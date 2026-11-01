@@ -48,6 +48,7 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
   const asOf = today || todayISO();
   const rows = useMemo(() => buildBatchRentRows(data?.openCharges, data, asOf), [data, asOf]);
   const [checked, setChecked] = useState({});
+  const [rowEdits, setRowEdits] = useState({});
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [receivedDate, setReceivedDate] = useState(asOf);
   const [busy, setBusy] = useState(false);
@@ -55,7 +56,19 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
   const [summary, setSummary] = useState(null);
 
   const selectedRows = rows.filter((row) => checked[row.chargeId]);
-  const selectedTotalCents = selectedRows.reduce((sum, row) => sum + row.balanceCents, 0);
+  // Per-row amount overrides: an empty override means the full balance (the
+  // old behavior). Edited amounts are validated per row at submit; a bad
+  // row fails alone and never blocks the rest.
+  function rowAmountCents(row) {
+    const raw = rowEdits[row.chargeId]?.amount;
+    if (raw === undefined || raw === "") return row.balanceCents;
+    const cents = Math.round(Number(raw) * 100);
+    return Number.isSafeInteger(cents) ? cents : NaN;
+  }
+  const selectedTotalCents = selectedRows.reduce((sum, row) => {
+    const cents = rowAmountCents(row);
+    return sum + (Number.isSafeInteger(cents) ? cents : 0);
+  }, 0);
   const allChecked = rows.length > 0 && rows.every((row) => checked[row.chargeId]);
 
   function toggleRow(chargeId) {
@@ -76,28 +89,39 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
     setBusy(true); setError(""); setSummary(null);
     const recorded = [], failed = [];
     for (const row of selectedRows) {
+      const amountCents = rowAmountCents(row);
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > row.balanceCents) {
+        failed.push({ row, error: `Enter an amount between $0.01 and ${money.format(row.balanceCents / 100)} for this row.` });
+        continue;
+      }
+      const receiptReference = rowEdits[row.chargeId]?.receiptReference?.trim() || "";
+      const notes = rowEdits[row.chargeId]?.notes?.trim() || "Batch rent collection";
+      const keyParts = [`batch-rent-payment-${row.chargeId}-${receivedDate}-${paymentMethod}-${amountCents}`];
+      if (receiptReference) keyParts.push(`ref-${receiptReference}`);
+      if (rowEdits[row.chargeId]?.notes?.trim() && notes !== "Batch rent collection") keyParts.push(`memo-${notes}`);
       const payload = {
         operation: "record-offline-payment",
         payment: {
           chargeId: row.chargeId,
           paymentMethod,
-          amountCents: row.balanceCents,
+          amountCents,
           receivedAt: new Date(`${receivedDate}T12:00:00`).toISOString(),
-          receiptReference: "",
-          notes: "Batch rent collection",
+          receiptReference,
+          notes,
           // Deterministic per payment intent: the same charge recorded with the
           // same received date, method, and amount always produces the same
           // key, so a retry after a refresh or remount replays instead of
           // double-recording. A genuinely different payment (different date,
-          // method, or amount) gets a different key.
-          idempotencyKey: `batch-rent-payment-${row.chargeId}-${receivedDate}-${paymentMethod}-${row.balanceCents}`,
+          // method, amount, receipt, or memo) gets a different key. Empty
+          // receipt / default memo keep the historical key shape.
+          idempotencyKey: keyParts.join("-"),
         },
       };
       try {
         const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || "Unable to record payment.");
-        recorded.push(row);
+        recorded.push({ row, amountCents });
       } catch (failure) {
         failed.push({ row, error: failure?.message || "Unable to record payment." });
       }
@@ -106,12 +130,16 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
     setSummary({
       recorded,
       failed,
-      totalCents: recorded.reduce((sum, row) => sum + row.balanceCents, 0),
+      totalCents: recorded.reduce((sum, entry) => sum + entry.amountCents, 0),
     });
     setChecked({});
     if (recorded.length > 0) {
       try { await onRefresh(); } catch (refreshError) { setError(String(refreshError?.message || refreshError)); }
     }
+  }
+
+  function setRowEdit(chargeId, field, value) {
+    setRowEdits((previous) => ({ ...previous, [chargeId]: { ...previous[chargeId], [field]: value } }));
   }
 
   return <section data-batch-rent-checklist className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
@@ -144,12 +172,15 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
       <p className="mt-4 rounded-xl bg-white p-4 text-sm font-bold text-slate-500 dark:bg-slate-900 dark:text-slate-400">No outstanding rent as of {asOf} — every charge is settled.</p>
     ) : (
       <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[1080px] text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 dark:border-slate-700">
               <th className="p-3"><input type="checkbox" aria-label="Select all outstanding rents" checked={allChecked} onChange={toggleAll} className="h-4 w-4 accent-amber-600" /></th>
               <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Tenant / property</th>
               <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Amount owed</th>
+              <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Amount to record</th>
+              <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Receipt ref</th>
+              <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Memo</th>
               <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Due date</th>
               <th className="p-3 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Days overdue</th>
             </tr>
@@ -160,6 +191,9 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
                 <td className="p-3"><input type="checkbox" aria-label={`Record rent for ${row.tenantLabel}, ${row.period}`} checked={!!checked[row.chargeId]} onChange={() => toggleRow(row.chargeId)} className="h-4 w-4 accent-amber-600" /></td>
                 <td className="p-3 font-bold text-slate-900 dark:text-white">{row.tenantLabel}<span className="block text-xs font-normal text-slate-500 dark:text-slate-400">{row.unitLabel} · {row.propertyLabel} · {row.period} · {label(row.chargeType)}</span></td>
                 <td className="p-3 font-black text-slate-950 dark:text-white">{money.format(row.balanceCents / 100)}</td>
+                <td className="p-3"><input aria-label={`Amount to record for ${row.tenantLabel}, ${row.period}`} type="number" min="0.01" step="0.01" placeholder={money.format(row.balanceCents / 100)} value={rowEdits[row.chargeId]?.amount ?? ""} onChange={(event) => setRowEdit(row.chargeId, "amount", event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></td>
+                <td className="p-3"><input aria-label={`Receipt reference for ${row.tenantLabel}, ${row.period}`} value={rowEdits[row.chargeId]?.receiptReference ?? ""} onChange={(event) => setRowEdit(row.chargeId, "receiptReference", event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></td>
+                <td className="p-3"><input aria-label={`Memo for ${row.tenantLabel}, ${row.period}`} value={rowEdits[row.chargeId]?.notes ?? ""} onChange={(event) => setRowEdit(row.chargeId, "notes", event.target.value)} placeholder="Batch rent collection" className="w-36 rounded-lg border border-slate-300 bg-white p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></td>
                 <td className="p-3 font-bold text-slate-700 dark:text-slate-300">{row.dueDate}</td>
                 <td className="p-3"><span className={`inline-block rounded-full px-2.5 py-1 text-xs font-black ${row.daysOverdue > 0 ? "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"}`}>{overdueText(row)}</span></td>
               </tr>
@@ -173,7 +207,7 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
       <button type="button" onClick={recordBatch} disabled={busy || selectedRows.length === 0} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>
         {busy ? "Recording…" : selectedRows.length ? `Record received — ${selectedRows.length} payment${selectedRows.length === 1 ? "" : "s"} · ${money.format(selectedTotalCents / 100)}` : "Record received"}
       </button>
-      {selectedRows.length > 0 ? <p className="text-sm font-bold text-slate-600 dark:text-slate-400">Recording each checked row as a {paymentMethod === "cash" ? "cash" : "cashier's check"} payment dated {receivedDate}.</p> : null}
+      {selectedRows.length > 0 ? <p className="text-sm font-bold text-slate-600 dark:text-slate-400">Recording each checked row as a {paymentMethod === "cash" ? "cash" : paymentMethod === "check" ? "personal check" : "cashier's check"} payment dated {receivedDate}. Leave a row's amount blank to record its full balance.</p> : null}
     </div>
 
     {summary ? (
@@ -182,7 +216,7 @@ export default function RentalBatchRentChecklist({ data, onRefresh = async () =>
           Recorded {summary.recorded.length} payment{summary.recorded.length === 1 ? "" : "s"} totaling {money.format(summary.totalCents / 100)}.
         </p>
         {summary.recorded.length ? <ul className="mt-2 space-y-1 text-sm font-bold text-emerald-800 dark:text-emerald-300">
-          {summary.recorded.map((row) => <li key={row.chargeId}>{row.tenantLabel} — {money.format(row.balanceCents / 100)} for {row.period} rent (due {row.dueDate})</li>)}
+          {summary.recorded.map(({ row, amountCents }) => <li key={row.chargeId}>{row.tenantLabel} — {money.format(amountCents / 100)} for {row.period} rent (due {row.dueDate}){amountCents < row.balanceCents ? ` · ${money.format((row.balanceCents - amountCents) / 100)} still owed` : ""}</li>)}
         </ul> : null}
         {summary.failed.length ? <div className="mt-3 rounded-lg bg-red-50 p-3 dark:bg-red-950/40">
           <p className="text-sm font-black text-red-800 dark:text-red-300">{summary.failed.length} payment{summary.failed.length === 1 ? " was" : "s were"} not recorded — those rows are still outstanding.</p>
