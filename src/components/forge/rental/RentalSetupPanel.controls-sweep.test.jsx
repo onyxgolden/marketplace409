@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearSWRCache } from "../../../hooks/swrCache";
-import RentalSetupPanel from "./RentalSetupPanel";
+import RentalSetupPanel, { unitHasDeleteProtection } from "./RentalSetupPanel";
 
 afterEach(() => { clearSWRCache(); });
 
@@ -55,6 +55,51 @@ describe("RentalSetupPanel controls sweep — G4 unit status transitions", () =>
       expect(posted).toHaveLength(1);
       expect(posted[0]).toMatchObject({ operation: "set-unit-status", unitId: "unit_1", status: "available" });
       expect(container.textContent).toContain("930 Highland Drive is now available.");
+      await act(async () => { root.unmount(); });
+      container.remove();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe("RentalSetupPanel controls sweep — G5 archived delete protection", () => {
+  it("unitHasDeleteProtection mirrors the server guard's three sources", () => {
+    const unit = { id: "unit_1" };
+    expect(unitHasDeleteProtection(unit, [], [], [])).toBe(false);
+    expect(unitHasDeleteProtection(unit, [{ unit_id: "unit_1" }], [], [])).toBe(true);
+    expect(unitHasDeleteProtection(unit, [], [{ unit_id: "unit_1" }], [])).toBe(true);
+    expect(unitHasDeleteProtection(unit, [], [], [{ unit_id: "unit_1" }])).toBe(true);
+    expect(unitHasDeleteProtection(unit, [{ unit_id: "unit_other" }], [], [])).toBe(false);
+  });
+
+  it("disables delete for a history-protected archived unit and keeps it for a clean duplicate", async () => {
+    const originalFetch = globalThis.fetch;
+    const payload = {
+      units: [
+        { id: "unit_1", label: "Protected House", property_id: "protected-house", status: "inactive" },
+        { id: "unit_2", label: "Clean Dup", property_id: "clean-dup", status: "inactive" },
+        { id: "unit_3", label: "Live Unit", property_id: "live-unit", status: "available" },
+      ],
+      leases: [{ id: "lease_1", unit_id: "unit_1", status: "ended" }],
+      leaseMemberships: [], tenants: [], openCharges: [],
+      maintenanceRequests: [], inspections: [],
+    };
+    globalThis.fetch = async () => ({ ok: true, json: async () => payload });
+    try {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      await act(async () => { root.render(<RentalSetupPanel initialUnits={payload.units} />); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      const archived = [...container.querySelectorAll("div")].find((candidate) => candidate.textContent.includes("Archived properties"));
+      expect(archived).toBeTruthy();
+      expect(archived.textContent).toContain("cannot be permanently deleted");
+      const deletes = [...archived.querySelectorAll("button")].filter((candidate) => candidate.textContent === "Permanently delete duplicate");
+      expect(deletes).toHaveLength(2);
+      const byRow = (label) => deletes.find((candidate) => candidate.closest("div").parentElement.textContent.includes(label));
+      expect(byRow("Protected House").disabled).toBe(true);
+      expect(byRow("Clean Dup").disabled).toBe(false);
       await act(async () => { root.unmount(); });
       container.remove();
     } finally {

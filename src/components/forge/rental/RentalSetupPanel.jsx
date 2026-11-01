@@ -39,6 +39,15 @@ export function activeBalanceCentsForUnit(unit, leases, openCharges) {
     .reduce((sum, charge) => sum + Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0), 0);
 }
 
+// Controls-sweep G5 (L-17): mirrors deleteArchivedUnit's server guard — a
+// unit with any lease, maintenance, or inspection row is history-protected
+// and its delete button must be disabled on sight, not after confirmation.
+export function unitHasDeleteProtection(unit, leases = [], maintenanceRequests = [], inspections = []) {
+  return leases.some((lease) => lease.unit_id === unit.id)
+    || maintenanceRequests.some((request) => request.unit_id === unit.id)
+    || inspections.some((inspection) => inspection.unit_id === unit.id);
+}
+
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 // A unit is vacant when it has no active lease on file -- i.e. there is no
@@ -123,6 +132,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const leaseMemberships = result?.leaseMemberships || [];
   const tenants = result?.tenants || [];
   const openCharges = result?.openCharges || [];
+  const maintenanceRequests = result?.maintenanceRequests || [];
+  const inspections = result?.inspections || [];
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
   // Rentec parity (same as the tenant rows): one menu drives the row
   // right-click, the detail-card right-click, and the ⋮ actions button —
@@ -339,10 +350,11 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         <h3 className="text-lg font-black text-slate-950 dark:text-white">Archived properties / units</h3>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Permanent deletion is available only for empty accidental duplicates. Records with lease, maintenance, or inspection history are protected.</p>
         <div className="mt-4 grid gap-3">{units.filter((unit) => unit.status === "inactive").map((unit) => <div key={unit.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          <div><p className="font-black text-slate-950 dark:text-white">{unit.label}</p><p className="text-xs text-slate-500 dark:text-slate-400">{unit.property_id}</p></div>
+          <div><p className="font-black text-slate-950 dark:text-white">{unit.label}</p><p className="text-xs text-slate-500 dark:text-slate-400">{unit.property_id}</p>
+          {unitHasDeleteProtection(unit, leases, maintenanceRequests, inspections) && <p className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">This unit has linked lease, maintenance, or inspection history and cannot be permanently deleted.</p>}</div>
           <div className="flex gap-2">
             <button type="button" disabled={working} onClick={() => restoreUnit(unit)} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Restore unit</button>
-            <button type="button" disabled={working} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
+            <button type="button" disabled={working || unitHasDeleteProtection(unit, leases, maintenanceRequests, inspections)} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
           </div>
         </div>)}</div>
       </div>}

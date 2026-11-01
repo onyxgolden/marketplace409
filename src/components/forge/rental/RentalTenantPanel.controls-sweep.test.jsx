@@ -83,3 +83,37 @@ describe("RentalTenantPanel controls sweep — G1 cancelled-lease membership gua
     expect(buttonsNamed("Add co-tenant")).toHaveLength(1);
   });
 });
+
+describe("RentalTenantPanel controls sweep — G5 claimed-tenant email form", () => {
+  function claimedDataset() {
+    const tenant_primary = { id: "tenant_primary", display_name: "Steven Crabtree", email: "s@example.com", auth_user_id: "auth_1" };
+    const tenant_other = { id: "tenant_other", display_name: "Jessica Crabtree", email: "j@example.com" };
+    return {
+      tenants: [tenant_primary, tenant_other],
+      leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "4225-barnhill", status: "active", monthly_rent_cents: 180000, rent_due_day: 1, start_date: "2026-10-13" }],
+      leaseMemberships: [{ id: "membership_primary", lease_id: "lease_1", tenant_id: "tenant_primary", role: "primary" }],
+      units: [{ id: "unit_1", label: "4225 Barnhill", property_id: "4225-barnhill" }],
+      openCharges: [],
+    };
+  }
+
+  it("hides the email form and explains for a portal-claimed tenant", async () => {
+    const dataset = claimedDataset();
+    vi.stubGlobal("fetch", vi.fn(async (url, options) => {
+      if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      if (options?.method === "POST") return { ok: false, json: async () => ({ error: "unexpected operation" }) };
+      return { ok: true, json: async () => dataset };
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<RentalTenantPanel initialTenants={dataset.tenants} recordContext={{ recordType: "tenant", recordId: "tenant_primary" }} />));
+      expect(container.textContent).toContain("tied to their portal sign-in and cannot be changed from the landlord side");
+      expect([...container.querySelectorAll("button")].some((candidate) => candidate.textContent === "Update email")).toBe(false);
+    } finally {
+      await act(async () => { root.unmount(); });
+      container.remove();
+    }
+  });
+});

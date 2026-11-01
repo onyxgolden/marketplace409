@@ -130,8 +130,13 @@ export function defaultChargeDueDate(schedule, today = new Date()) {
   return new Date((Number.isNaN(anchorMs) ? todayMs : anchorMs) + index * step * 86_400_000).toISOString().slice(0, 10);
 }
 
-export function isChargeVoidable(charge) {
-  return charge.status !== "void" && Number(charge.paid_amount_cents) === 0;
+export function isChargeVoidable(charge, payments = []) {
+  if (charge.status === "void" || Number(charge.paid_amount_cents) !== 0) return false;
+  // Mirror of void_rental_rent_charge (20260822000000): any payment for this
+  // charge outside refunded/failed/cancelled blocks voiding — including
+  // in-flight ones that have not yet touched paid_amount_cents.
+  const chargeId = charge.sourceId || charge.id;
+  return !(payments || []).some((payment) => payment.charge_id === chargeId && !["refunded", "failed", "cancelled"].includes(payment.status));
 }
 
 // "Landlord charge lists" containment: the schedule tied to a charge (by schedule_id) determines
@@ -375,24 +380,29 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
         getTitle={(item) => { if (item.kind !== "charge") return `${money.format(Number(item.amount_cents) / 100)} payment`; const identity = resolveChargeIdentity(item, data); return `${identity.tenantLabel} · ${identity.unitLabel} · ${identity.propertyLabel}`; }}
         getSubtitle={(item) => { if (item.kind !== "charge") return `${label(item.payment_method || item.provider)} · ${label(item.status)} · ${depositStateLabel(item, item.settlement || null)}`; const identity = resolveChargeIdentity(item, data); return `${label(item.charge_type)} · ${item.period} · ${money.format(Number(item.amount_cents) / 100)} · ${label(item.status)} · due ${item.due_date} · lease ${identity.leaseId || "Unknown"} · ${chargeCollectionLabel(item, data.schedules)}`; }}
         emptyMessage="No rent charges or payments recorded.">
-        {!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">Select a charge or payment to review its details.</p> : <RecordDetail record={selected} chargeIdentity={selected.kind === "charge" ? resolveChargeIdentity(selected, data) : null} collectionLabel={selected.kind === "charge" ? chargeCollectionLabel(selected, data.schedules) : null} onRecordPayment={() => setShowOffline(true)} onVoidCharge={voidCharge} onSetDepositState={setDepositState} onVoidPayment={voidPayment} onRefundPayment={refundPayment} />}
+        {!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">Select a charge or payment to review its details.</p> : <RecordDetail record={selected} payments={data.payments} chargeIdentity={selected.kind === "charge" ? resolveChargeIdentity(selected, data) : null} collectionLabel={selected.kind === "charge" ? chargeCollectionLabel(selected, data.schedules) : null} onRecordPayment={() => setShowOffline(true)} onVoidCharge={voidCharge} onSetDepositState={setDepositState} onVoidPayment={voidPayment} onRefundPayment={refundPayment} />}
       </RentalRecordBrowser>
       <a href="/forge/rental/portal" className="mt-6 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant portal</a>
     </div>
   </section>;
 }
 
-function RecordDetail({ record, chargeIdentity, collectionLabel, onRecordPayment, onVoidCharge, onSetDepositState, onVoidPayment, onRefundPayment }) {
+function RecordDetail({ record, payments = [], chargeIdentity, collectionLabel, onRecordPayment, onVoidCharge, onSetDepositState, onVoidPayment, onRefundPayment }) {
   const [showVoidConfirm, setShowVoidConfirm] = useState(false);
   const [showDepositConfirm, setShowDepositConfirm] = useState(false);
   const [showVoidPaymentConfirm, setShowVoidPaymentConfirm] = useState(false);
   const [showRefundConfirm, setShowRefundConfirm] = useState(false);
-  if (record.kind === "charge") return <div><p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Selected charge</p><h3 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{record.period} rent</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Tenant" value={chargeIdentity.tenantLabel} /><Fact term="Unit" value={chargeIdentity.unitLabel} /><Fact term="Property" value={chargeIdentity.propertyLabel} /><Fact term="Status" value={label(record.status)} /><Fact term="Collection" value={collectionLabel} /><Fact term="Due date" value={record.due_date} /><Fact term="Original amount" value={money.format(Number(record.amount_cents) / 100)} /><Fact term="Paid amount" value={money.format(Number(record.paid_amount_cents) / 100)} /><Fact term="Balance" value={money.format((Number(record.amount_cents) - Number(record.paid_amount_cents)) / 100)} /><Fact term="Charge type" value={label(record.charge_type)} /><Fact term="Lease ID" value={chargeIdentity.leaseId || "Unknown"} /></dl><button type="button" onClick={onRecordPayment} className={`mt-6 rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}>Record payment for an open charge</button>
-    {isChargeVoidable(record) ? (showVoidConfirm ? <form aria-label="Void charge" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const success = await onVoidCharge(record.sourceId, form.get("reason")); if (success) setShowVoidConfirm(false); }} className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+  // Controls-sweep G5 (M-08): a payment outside refunded/failed/cancelled
+  // blocks voiding even when paid_amount_cents is still 0 — surface that
+  // instead of letting the landlord confirm and then fail.
+  const blockingPayment = record.kind === "charge" && record.status !== "void" && Number(record.paid_amount_cents) === 0
+    && (payments || []).some((payment) => payment.charge_id === (record.sourceId || record.id) && !["refunded", "failed", "cancelled"].includes(payment.status));
+  if (record.kind === "charge") return <div><p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Selected charge</p><h3 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{record.period} rent</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Tenant" value={chargeIdentity.tenantLabel} /><Fact term="Unit" value={chargeIdentity.unitLabel} /><Fact term="Property" value={chargeIdentity.propertyLabel} /><Fact term="Status" value={label(record.status)} /><Fact term="Collection" value={collectionLabel} /><Fact term="Due date" value={record.due_date} /><Fact term="Original amount" value={money.format(Number(record.amount_cents) / 100)} /><Fact term="Paid amount" value={money.format(Number(record.paid_amount_cents) / 100)} /><Fact term="Balance" value={money.format((Number(record.amount_cents) - Number(record.paid_amount_cents)) / 100)} /><Fact term="Charge type" value={label(record.charge_type)} /><Fact term="Lease ID" value={chargeIdentity.leaseId || "Unknown"} /></dl>{record.status === "paid" ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">This charge is paid in full — record payments against an open charge instead.</p> : record.status === "void" ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">This charge is void — it cannot take payments.</p> : <button type="button" onClick={onRecordPayment} className={`mt-6 rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}>Record payment for an open charge</button>}
+    {isChargeVoidable(record, payments) ? (showVoidConfirm ? <form aria-label="Void charge" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const success = await onVoidCharge(record.sourceId, form.get("reason")); if (success) setShowVoidConfirm(false); }} className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
       <label className="text-sm font-bold text-slate-900 dark:text-white">Reason for voiding<input name="reason" required className="mt-1 w-full rounded-lg border border-slate-300 p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="mt-3 flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><input type="checkbox" name="confirmed" required /> I confirm I want to void this charge. This preserves it as history but makes it non-payable.</label>
       <div className="mt-3 flex items-center gap-3"><button type="submit" className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800">Confirm void</button><button type="button" onClick={() => setShowVoidConfirm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button></div>
-    </form> : <button type="button" onClick={() => setShowVoidConfirm(true)} className="ml-2 mt-6 rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Void charge</button>) : null}
+    </form> : <button type="button" onClick={() => setShowVoidConfirm(true)} className="ml-2 mt-6 rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Void charge</button>) : (blockingPayment ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">This charge has a payment that is still open — it cannot be voided until that payment is voided, refunded, fails, or is cancelled.</p> : null)}
   </div>;
   const timestamp = paymentDisplayTimestamp(record);
   const fundsState = resolveDepositState(record, record.settlement || null);
