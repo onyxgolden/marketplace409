@@ -404,3 +404,95 @@ describe("create-tenant-credit (controls sweep B4)", () => {
     expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t_nope", amountCents: 5000, reason: "x", ownerConfirmed: true } })).status).toBe(404);
   });
 });
+
+function g1Client(script) {
+  const calls = [];
+  function query(table) {
+    const q = {
+      table,
+      select() { return q; },
+      eq() { return q; },
+      update(values) { calls.push({ table, values }); return q; },
+      insert(values) { calls.push({ table, values }); return q; },
+      delete() { calls.push({ table, values: null }); return q; },
+      async maybeSingle() {
+        if (table === "rental_leases") return { data: script.lease ?? null, error: null };
+        if (table === "rental_tenants") return { data: script.tenant ?? null, error: null };
+        if (table === "rental_lease_tenants") return { data: script.existing ?? null, error: null };
+        if (table === "rental_lease_changes") {
+          if (script.changeUpdate) return { data: script.changeUpdate, error: null };
+          return { data: script.change ?? null, error: null };
+        }
+        if (table === "rental_lease_preparations") return { data: script.preparation ?? null, error: null };
+        return { data: null, error: null };
+      },
+      async single() {
+        if (table === "rental_lease_tenants") return { data: script.insert ?? null, error: null };
+        if (table === "rental_lease_changes") return { data: script.changeInsert ?? null, error: null };
+        if (table === "rental_late_fee_rules") return { data: script.ruleInsert ?? null, error: null };
+        return { data: null, error: null };
+      },
+      then(resolve) {
+        resolve({ data: table === "rental_lease_tenants" ? (script.memberships ?? []) : [], error: null });
+      },
+    };
+    return q;
+  }
+  return { calls, client: { from: (table) => query(table), rpc: async () => ({ data: null, error: null }) } };
+}
+
+function authForG1(script) {
+  const { calls, client } = g1Client(script);
+  mockedAuth.current = {
+    application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+  };
+  return calls;
+}
+
+const cancelledLease = { id: "lease_1", status: "cancelled" };
+const activeLease = { id: "lease_1", status: "active" };
+
+describe("cancelled-lease guards (controls sweep G1)", () => {
+  it("refuses add/remove/make-primary on a cancelled lease, allows them on an active one", async () => {
+    authForG1({ lease: cancelledLease });
+    expect((await post({ operation: "add-co-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(409);
+    expect((await post({ operation: "remove-co-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(409);
+    expect((await post({ operation: "set-primary-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(409);
+    authForG1({
+      lease: activeLease,
+      tenant: { id: "t2", display_name: "Two", email: "two@example.com" },
+      existing: null,
+      memberships: [{ tenant_id: "t1", occupancy_role: "primary" }],
+      insert: { lease_id: "lease_1", tenant_id: "t2", occupancy_role: "co_tenant" },
+    });
+    expect((await post({ operation: "add-co-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(200);
+    authForG1({ lease: activeLease, existing: { tenant_id: "t2", occupancy_role: "co_tenant" } });
+    expect((await post({ operation: "remove-co-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(200);
+    authForG1({ lease: activeLease });
+    expect((await post({ operation: "set-primary-tenant", leaseId: "lease_1", tenantId: "t2" })).status).toBe(200);
+  });
+
+  it("refuses lease-change save and approval on a cancelled lease", async () => {
+    authForG1({ lease: cancelledLease });
+    expect((await post({ operation: "save-lease-change", change: { leaseId: "lease_1", changeType: "renewal", effectiveDate: "2026-12-01", reason: "Renew" } })).status).toBe(409);
+    authForG1({ lease: cancelledLease, change: { id: "chg_1", lease_id: "lease_1" } });
+    expect((await post({ operation: "approve-lease-change", changeId: "chg_1" })).status).toBe(409);
+    authForG1({ lease: activeLease, changeInsert: { id: "chg_1", lease_id: "lease_1", status: "draft" } });
+    expect((await post({ operation: "save-lease-change", change: { leaseId: "lease_1", changeType: "renewal", effectiveDate: "2026-12-01", reason: "Renew" } })).status).toBe(200);
+  });
+
+  it("refuses schedule saves and late-fee rules on a cancelled lease", async () => {
+    authForG1({ lease: cancelledLease });
+    expect((await post({ operation: "save-schedule", schedule: { leaseId: "lease_1", status: "active", amountCents: 180000, dueDay: 1, currencyCode: "USD", effectiveStartDate: "2026-10-01", earlyPayDays: 3 } })).status).toBe(409);
+    expect((await post({ operation: "save-late-fee-rule", rule: { leaseId: "lease_1", jurisdictionCode: "TX", ruleSource: "Lease 4.2", graceDays: 3, calculationType: "fixed", fixedAmountCents: 5000, manualApprovalConfirmed: true } })).status).toBe(409);
+    authForG1({ lease: activeLease, ruleInsert: { id: "rule_1", lease_id: "lease_1", status: "active" } });
+    expect((await post({ operation: "save-late-fee-rule", rule: { leaseId: "lease_1", jurisdictionCode: "TX", ruleSource: "Lease 4.2", graceDays: 3, calculationType: "fixed", fixedAmountCents: 5000, manualApprovalConfirmed: true } })).status).toBe(200);
+  });
+
+  it("refuses preparation approval on a cancelled lease", async () => {
+    authForG1({ lease: cancelledLease, preparation: { id: "prep_1", lease_id: "lease_1" } });
+    expect((await post({ operation: "approve-lease-preparation-version", preparationId: "prep_1", versionNumber: 1, ownerApprovalConfirmed: true })).status).toBe(409);
+    authForG1({ lease: activeLease, preparation: { id: "prep_1", lease_id: "lease_1" } });
+    expect((await post({ operation: "approve-lease-preparation-version", preparationId: "prep_1", versionNumber: 1, ownerApprovalConfirmed: true })).status).toBe(200);
+  });
+});

@@ -103,6 +103,16 @@ export async function POST(request) {
     if (!recordExists) {
       return NextResponse.json({ error: "The record was not found." }, { status: 404 });
     }
+    // Controls-sweep G1 (Q-11): custom-field saves on a cancelled lease
+    // detail used to accept — a cancelled lease is terminal.
+    if (entity === "lease") {
+      const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+        .select("id, status").eq("owner_id", authenticated.effectiveOwnerId).eq("id", recordId).maybeSingle();
+      if (leaseError) throw leaseError;
+      if (lease?.status === "cancelled") {
+        return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+      }
+    }
     const fields = await loadDefinitions(authenticated, entity);
     const byId = new Map(fields.map((field) => [field.id, field]));
 

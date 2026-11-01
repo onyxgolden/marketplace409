@@ -446,7 +446,7 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
         )}
       </div>
     )}
-    {schedule && (
+    {schedule && lease.status !== "cancelled" && (
       <form onSubmit={(event) => onSaveEarlyPay(event, schedule)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
         <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-24 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">{working ? "Saving…" : "Save"}</button>
@@ -463,6 +463,9 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
     )}
     {billingNotice && <p role="status" className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-base font-black text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100">✓ {billingNotice}</p>}
     {billingError && <p role="status" className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">{billingError}</p>}
+    {schedule && lease.status === "cancelled" && (
+      <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">This lease is cancelled — its early-pay window cannot be changed.</p>
+    )}
     {lease.status === "draft" && (schedule ? (
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button type="button" disabled={working} onClick={() => onActivate(lease)} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">{working ? "Activating…" : "Activate lease"}</button>

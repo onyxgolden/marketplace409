@@ -24,3 +24,18 @@ describe("RentalLeasePanel controls sweep — B1 end lease", () => {
     }
   });
 });
+
+describe("RentalLeasePanel controls sweep — G1 cancelled-lease early-pay guard", () => {
+  it("hides the early-pay form and explains on a cancelled lease with a schedule", () => {
+    const setup = { ...baseSetup, leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "1218-wagner", status: "cancelled", monthly_rent_cents: 130000, rent_due_day: 1, start_date: "2026-08-01" }] };
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={setup} loadOnMount={false} />);
+    expect(markup).toContain("early-pay window cannot be changed");
+    expect(markup).not.toContain("How many days before the due date");
+  });
+
+  it("keeps the early-pay form on an active lease with a schedule", () => {
+    const setup = { ...baseSetup, leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "1218-wagner", status: "active", monthly_rent_cents: 130000, rent_due_day: 1, start_date: "2026-08-01" }] };
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={setup} loadOnMount={false} />);
+    expect(markup).toContain("How many days before the due date");
+  });
+});

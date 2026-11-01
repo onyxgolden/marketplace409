@@ -169,6 +169,12 @@ export async function updateTenantProfile({ authenticated, body, effectiveOwnerI
 
 export async function setPrimaryTenant({ authenticated, body, effectiveOwnerId }) {
   if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
+  // Controls-sweep G1: membership changes on a cancelled lease are refused
+  // server-side, not just hidden in the UI — a cancelled lease is terminal.
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", body.leaseId).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const { error } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
     p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
   });
@@ -189,9 +195,11 @@ export async function addCoTenant({ authenticated, body, effectiveOwnerId }) {
   // Owner-scoped lookups: a lease or tenant from another workspace resolves
   // to 404, never a 403 that would leak its existence.
   const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
-    .select("id").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
   if (leaseError) throw leaseError;
   if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  // Controls-sweep G1: a cancelled lease is terminal — no membership changes.
+  if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
     .select("id, display_name, email").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
   if (tenantError) throw tenantError;
@@ -221,6 +229,12 @@ export async function removeCoTenant({ authenticated, body, effectiveOwnerId }) 
   if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
   const leaseId = body.leaseId.trim();
   const tenantId = body.tenantId.trim();
+  // Controls-sweep G1: a cancelled lease is terminal — no membership changes.
+  // A missing lease row leaves the existing membership checks to answer.
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const { data: membership, error: membershipError } = await authenticated.supabaseClient.from("rental_lease_tenants")
     .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId).maybeSingle();
   if (membershipError) throw membershipError;

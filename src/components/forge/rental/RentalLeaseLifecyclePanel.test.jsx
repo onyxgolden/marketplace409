@@ -280,3 +280,21 @@ describe("RentalLeaseLifecyclePanel Lease Changes submission contract", () => {
     unmountPanel(mounted);
   });
 });
+
+describe("RentalLeaseLifecyclePanel controls sweep — G1", () => {
+  it("excludes cancelled leases from the change and late-fee selects and explains why", async () => {
+    await fetchWithDedupe("rental:lease-lifecycle", () => Promise.resolve({
+      leases: [
+        { id: "lease_active", unit_id: "unit_1", property_id: "property-1", status: "active", monthly_rent_cents: 130000 },
+        { id: "lease_cancelled", unit_id: "unit_2", property_id: "property-2", status: "cancelled", monthly_rent_cents: 130000 },
+      ],
+      leaseChanges: [], lateFeeRules: [], lateFeeAssessments: [], tenants: [],
+      units: [{ id: "unit_1", label: "1218 Wagner", property_id: "property-1" }, { id: "unit_2", label: "Rear unit", property_id: "property-2" }],
+      properties: [], leaseMemberships: [], schedules: [],
+    }));
+    const html = renderToStaticMarkup(<RentalLeaseLifecyclePanel />);
+    expect(html).toContain("Cancelled leases are not listed — they cannot be changed.");
+    expect(html).not.toContain('value="lease_cancelled"');
+    expect(html).toContain('value="lease_active"');
+  });
+});

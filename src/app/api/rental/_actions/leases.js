@@ -45,6 +45,14 @@ export async function saveSchedule({ authenticated, body, application, effective
   if (!input || typeof input !== "object") return badRequest("schedule is required.");
   const schedule = createRentSchedule({ ...input, id: id("rent_schedule", input.id), status: input.status ?? "draft",
     effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
+  // Controls-sweep G1: a schedule on a cancelled lease must not change —
+  // this is the early-pay window guard (L-09), which previously accepted.
+  if (schedule.leaseId) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", schedule.leaseId).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, effectiveOwnerId) });
 }
 
@@ -244,6 +252,9 @@ export async function saveLeaseChange({ authenticated, body, effectiveOwnerId })
   const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases").select("*").eq("owner_id", effectiveOwnerId).eq("id", input.leaseId).maybeSingle();
   if (leaseError) throw leaseError;
   if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  // Controls-sweep G1: a renewal/amendment on a cancelled lease must not
+  // create a new active schedule while the lease stays cancelled (L-10).
+  if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const newTerms = input.changeType === "proration"
     ? { amountCents: Number(input.amountCents) }
     : { monthlyRentCents: Number(input.monthlyRentCents) || lease.monthly_rent_cents, rentDueDay: Number(input.rentDueDay) || lease.rent_due_day, endDate: input.endDate || lease.end_date };
@@ -261,6 +272,17 @@ export async function saveLeaseChange({ authenticated, body, effectiveOwnerId })
 
 export async function approveLeaseChange({ authenticated, body, effectiveOwnerId, timestamp }) {
   if (!body.changeId) return badRequest("changeId is required.");
+  // Controls-sweep G1: approving a draft change on a lease that was cancelled
+  // after the draft was saved must not create an active schedule on it.
+  const { data: change, error: changeError } = await authenticated.supabaseClient.from("rental_lease_changes")
+    .select("id, lease_id").eq("owner_id", effectiveOwnerId).eq("id", body.changeId).maybeSingle();
+  if (changeError) throw changeError;
+  if (change?.lease_id) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", change.lease_id).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   const { data: approved, error: approvalError } = await authenticated.supabaseClient.from("rental_lease_changes")
     .update({ status: "approved", approved_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", body.changeId).eq("status", "draft")
     .select("id").maybeSingle();
@@ -287,6 +309,17 @@ export async function approveLeasePreparationVersion({ authenticated, body, effe
   const version = Number(body.versionNumber);
   if (!body.preparationId || !Number.isInteger(version) || version < 1 || body.ownerApprovalConfirmed !== true)
     return badRequest("Preparation, version, and explicit owner approval are required.");
+  // Controls-sweep G1 (Q-11): a preparation approval on a cancelled lease
+  // must not publish terms for a dead lease.
+  const { data: preparation, error: preparationError } = await authenticated.supabaseClient.from("rental_lease_preparations")
+    .select("id, lease_id").eq("owner_id", effectiveOwnerId).eq("id", body.preparationId).maybeSingle();
+  if (preparationError) throw preparationError;
+  if (preparation?.lease_id) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", preparation.lease_id).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   const { data, error } = await authenticated.supabaseClient.rpc("approve_rental_lease_preparation_version", {
     p_owner_id: effectiveOwnerId, p_preparation_id: body.preparationId, p_version_number: version,
   });
