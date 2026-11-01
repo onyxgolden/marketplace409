@@ -161,6 +161,7 @@ function MemberCard({ member, catalog, viewerId, onChanged, onRemoved, onNotify 
             {isSelf && <span className="ml-2 text-xs font-bold text-slate-500">(you)</span>}
           </p>
         </div>
+        {isSelf && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Another owner must edit your role.</p>}
         <div className="flex flex-wrap gap-2">
           {member.status === "active" && !isSelf && (
             <button

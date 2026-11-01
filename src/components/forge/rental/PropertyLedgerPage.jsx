@@ -381,7 +381,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
                             ✎
                           </button>
                         ) : (
-                          <span className="font-normal text-slate-300 dark:text-slate-700">—</span>
+                          <span className="font-normal text-slate-300 dark:text-slate-700" title="Imported transactions are read-only here">—</span>
                         )}
                       </td>
                     </tr>
@@ -585,6 +585,9 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
               </button>
             )}
           </div>
+        )}
+        {!canEdit && (
+          <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">Imported transactions are read-only here.</p>
         )}
 
         {eventLoading && canEdit && (

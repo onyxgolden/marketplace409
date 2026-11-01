@@ -327,6 +327,10 @@ export default function ChartOfAccountsPage({ onNavigate }) {
               </div>
             )}
 
+            {String(openAccount.id).startsWith("fallback-") && (
+              <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">Fallback accounts are synthetic and cannot be renamed or deactivated.</p>
+            )}
+
             <h3 className="mt-4 text-sm font-black text-slate-900 dark:text-slate-100">Postings ({drawerRows === null ? "…" : drawerRows.length})</h3>
             {drawerError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{drawerError}</p>}
             {drawerRows !== null && drawerRows.length === 0 && (
