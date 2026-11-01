@@ -175,7 +175,6 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       setMessage(`Co-tenant removed: ${tenant.display_name}. Their tenant record is untouched and can be re-added.`); await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
-  }
   async function activateLease(lease) {
     const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
     if (!schedule) { setDetailError({ leaseId: lease.id, text: "No rent schedule found for this lease — save one before activating." }); return; }

@@ -20,7 +20,6 @@ export default function ReservationInventoryPanel() {
   const [savedMessage, setSavedMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [savedMessage, setSavedMessage] = useState("");
   // Reservable inventory: stale-while-revalidate. The cached units and inventory
   // stay on screen while a save or a bulk import revalidates in the background.
   const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
