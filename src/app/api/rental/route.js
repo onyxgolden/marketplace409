@@ -14,6 +14,7 @@ import {
 } from "./_actions/leases.js";
 import {
   recordOfflinePayment, setPaymentDepositState, applyTenantCredit, voidTenantCredit,
+  voidPayment, refundPayment,
   saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
 } from "./_actions/payments.js";
 import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
@@ -60,6 +61,8 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "set-payment-deposit-state": setPaymentDepositState,
   "apply-tenant-credit": applyTenantCredit,
   "void-tenant-credit": voidTenantCredit,
+  "void-payment": voidPayment,
+  "refund-payment": refundPayment,
   "queue-rent-reminder": queueRentReminder,
   "cancel-rent-notification": cancelRentNotification,
   "queue-insurance-renewals": queueInsuranceRenewals,

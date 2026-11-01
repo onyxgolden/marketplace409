@@ -208,7 +208,7 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, te
       </div>
       {confirmDelete && (
         <p role="alert" className="mt-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
-          Deleting voids this invoice. It is blocked while any payment is applied — resolve payments through refunds or credits first.
+          Deleting voids this invoice. It is blocked while any payment is applied — void the offline payment or refund the Stripe payment first.
           <button type="button" onClick={() => setConfirmDelete(false)} className="ml-3 underline">Keep it</button>
         </p>
       )}

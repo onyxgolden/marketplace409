@@ -308,6 +308,21 @@ export class StripeBillingProvider {
   async listPayoutBalanceTransactionIds(context,payoutId){const page=await this.stripe.balanceTransactions.list({payout:required(payoutId,"a payout id"),limit:100},{stripeAccount:required(context.connectedAccountId,"a connected account id")});return Object.freeze(page.data.map(item=>item.id));}
   async createOffSessionPayment(context,input,idempotencyKey){const intent=await this.stripe.paymentIntents.create({amount:input.amountCents,currency:input.currencyCode.toLowerCase(),customer:required(input.customerId,"a customer id"),payment_method:required(input.paymentMethodId,"a payment method id"),...(input.mandateId?{mandate:input.mandateId}:{}),off_session:true,confirm:true,metadata:{forge_payment_id:input.paymentId,forge_charge_id:input.chargeId,forge_autopay_enrollment_id:input.enrollmentId}},{stripeAccount:required(context.connectedAccountId,"a connected account id"),idempotencyKey:required(idempotencyKey,"an idempotency key")});return Object.freeze({paymentIntentId:intent.id,status:intent.status});}
 
+  // Landlord-initiated refund of a settled tenant payment. Refunds the payment
+  // intent on the connected account; the caller updates the rental_payments row
+  // to the matching refunded state, which fires the database reversal trigger
+  // that restores the charge balance and posts the ledger reversal event. A
+  // refund is never issued for an offline payment — those are voided instead.
+  async createRefund(context, input, idempotencyKey) {
+    const refund = await this.stripe.refunds.create({
+      payment_intent: required(input.paymentIntentId, "a payment intent id"),
+      amount: input.amountCents,
+      reason: "requested_by_customer",
+      metadata: { forge_payment_id: required(input.paymentId, "a payment id") },
+    }, { stripeAccount: required(context.connectedAccountId, "a connected account id"), idempotencyKey: required(idempotencyKey, "an idempotency key") });
+    return Object.freeze({ refundId: refund.id, status: refund.status });
+  }
+
   // ACH-only autopay activation: collects the tenant's bank account once and stores the
   // resulting payment method + mandate on the autopay enrollment for recurring off-session
   // debits. No `mandate_data` at creation: Stripe rejects mandate_data on a SetupIntent
