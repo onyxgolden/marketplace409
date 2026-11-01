@@ -308,6 +308,17 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  async function setScheduleStatus(schedule, status) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "set-schedule-status", scheduleId: schedule.id, status }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to change the schedule status.");
+      setMessage(status === "paused" ? "Rent schedule paused — no new charges will generate until it resumes." : "Rent schedule resumed — charge generation is active again.");
+      await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   async function endLease(event, lease) {
     event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
@@ -391,7 +402,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
         const leaseMembershipsForLease = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease?.id);
         const depositTenantId = (leaseMembershipsForLease.find((item) => item.occupancy_role === "primary") || leaseMembershipsForLease[0])?.tenant_id || null;
         const existingDeposit = (setup.deposits || []).find((item) => item.lease_id === lease?.id) || null;
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onRestore={restoreLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} onEnd={endLease} tenants={setup.tenants || []} leaseMemberships={setup.leaseMemberships || []} onMakePrimary={makePrimary} onAddCoTenant={addCoTenant} onRemoveCoTenant={removeCoTenant} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onRestore={restoreLease} onSetScheduleStatus={setScheduleStatus} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} onEnd={endLease} tenants={setup.tenants || []} leaseMemberships={setup.leaseMemberships || []} onMakePrimary={makePrimary} onAddCoTenant={addCoTenant} onRemoveCoTenant={removeCoTenant} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -421,7 +432,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onRestore, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null, onEnd, tenants = [], leaseMemberships = [], onMakePrimary, onAddCoTenant, onRemoveCoTenant }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onRestore, onSetScheduleStatus, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null, onEnd, tenants = [], leaseMemberships = [], onMakePrimary, onAddCoTenant, onRemoveCoTenant }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
@@ -567,6 +578,18 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
       <div className="mt-4 flex items-center gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
         <button type="button" disabled={working} onClick={() => onCancel(lease)} className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Cancel this lease</button>
         <p className="text-xs text-slate-500 dark:text-slate-400">Only cancel a genuine duplicate or one created in error — this is a real record change.</p>
+      </div>
+    )}
+    {schedule && schedule.status === "active" && lease.status !== "cancelled" && (
+      <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <button type="button" disabled={working} onClick={() => onSetScheduleStatus?.(schedule, "paused")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Pause schedule</button>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Pausing stops new charge generation for this lease only — the portfolio billing switch is untouched.</p>
+      </div>
+    )}
+    {schedule && schedule.status === "paused" && lease.status !== "cancelled" && (
+      <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <button type="button" disabled={working} onClick={() => onSetScheduleStatus?.(schedule, "active")} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">Resume schedule</button>
+        <p className="text-xs text-slate-500 dark:text-slate-400">This schedule is paused — no new charges generate until it resumes.</p>
       </div>
     )}
     {lease.status === "cancelled" && (

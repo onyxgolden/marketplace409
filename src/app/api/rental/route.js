@@ -9,7 +9,7 @@ import {
 } from "./_actions/tenants.js";
 import {
   saveLease, saveSchedule, cancelLease, restoreLease, endLease, updateLeaseTerms, generateCharge, voidCharge,
-  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, saveLeaseChange,
+  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, setScheduleStatus, saveLeaseChange,
   approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
 } from "./_actions/leases.js";
 import {
@@ -61,6 +61,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "set-billing-enabled": setBillingEnabled,
   "save-convenience-fee": saveConvenienceFee,
   "activate-lease-schedule": activateLeaseSchedule,
+  "set-schedule-status": setScheduleStatus,
   "record-offline-payment": recordOfflinePayment,
   "set-payment-deposit-state": setPaymentDepositState,
   "apply-tenant-credit": applyTenantCredit,

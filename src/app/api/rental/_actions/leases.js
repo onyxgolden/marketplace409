@@ -252,6 +252,33 @@ export async function setBillingEnabled({ authenticated, body, effectiveOwnerId 
   return NextResponse.json({ success: true, settings: data });
 }
 
+export async function setScheduleStatus({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G7 (L-04): per-schedule pause/resume. Pausing stops charge
+  // generation (generate-charge requires an active schedule); resuming
+  // restores it. Draft and ended schedules cannot move, and a cancelled
+  // lease's schedule cannot change (G1 rule). Portfolio billing pause
+  // (set-billing-enabled) is untouched — this is per-schedule only.
+  if (typeof body.scheduleId !== "string" || body.scheduleId.trim() === "") return badRequest("scheduleId is required.");
+  if (body.status !== "paused" && body.status !== "active") return badRequest("status must be paused or active.");
+  const scheduleId = body.scheduleId.trim();
+  const { data: schedule, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+    .select("id, status, lease_id").eq("owner_id", effectiveOwnerId).eq("id", scheduleId).maybeSingle();
+  if (scheduleError) throw scheduleError;
+  if (!schedule) return NextResponse.json({ error: "Rent schedule was not found." }, { status: 404 });
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", schedule.lease_id).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  if (body.status === "paused" && schedule.status !== "active") return NextResponse.json({ error: `Only an active schedule can be paused (this one is ${schedule.status}).` }, { status: 409 });
+  if (body.status === "active" && schedule.status !== "paused") return NextResponse.json({ error: `Only a paused schedule can be resumed (this one is ${schedule.status}).` }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rent_schedules")
+    .update({ status: body.status, updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", scheduleId).eq("status", schedule.status).select("id, status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "The schedule changed while pausing — try again." }, { status: 409 });
+  return NextResponse.json({ success: true, schedule: data });
+}
+
 export async function activateLeaseSchedule({ authenticated, body, effectiveOwnerId }) {
   if (!body.scheduleId) return badRequest("scheduleId is required.");
   const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {

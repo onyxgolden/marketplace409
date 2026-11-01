@@ -158,3 +158,32 @@ describe("RentalLeasePanel controls sweep — G3 cancelled-lease recovery", () =
     }
   });
 });
+
+describe("RentalLeasePanel controls sweep — G7 schedule pause/resume", () => {
+  const g7Setup = (scheduleStatus) => ({
+    units: [{ id: "unit_1", label: "4225 Barnhill", property_id: "4225-barnhill" }],
+    tenants: [{ id: "tenant_1", display_name: "Steven Crabtree", email: "s@example.com" }],
+    schedules: [{ id: "schedule_1", lease_id: "lease_1", status: scheduleStatus }],
+    leaseMemberships: [],
+    leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "4225-barnhill", status: "active", monthly_rent_cents: 180000, rent_due_day: 1, start_date: "2026-10-13" }],
+  });
+
+  it("offers Pause on an active schedule", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={g7Setup("active")} loadOnMount={false} />);
+    expect(markup).toContain("Pause schedule");
+    expect(markup).not.toContain("Resume schedule");
+  });
+
+  it("offers Resume and the no-charges text on a paused schedule", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={g7Setup("paused")} loadOnMount={false} />);
+    expect(markup).toContain("Resume schedule");
+    expect(markup).toContain("no new charges generate until it resumes");
+    expect(markup).not.toContain("Pause schedule");
+  });
+
+  it("offers neither on a draft schedule", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={g7Setup("draft")} loadOnMount={false} />);
+    expect(markup).not.toContain("Pause schedule");
+    expect(markup).not.toContain("Resume schedule");
+  });
+});

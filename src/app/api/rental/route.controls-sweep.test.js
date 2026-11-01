@@ -26,6 +26,8 @@ function scriptedClient(script) {
       async maybeSingle() {
         if (table === "rental_leases" && !q._updated) return { data: script.leaseLookup ?? null, error: null };
         if (table === "rental_leases" && q._updated) return { data: script.leaseUpdate ?? null, error: null };
+        if (table === "rent_schedules" && !q._updated) return { data: script.scheduleLookup ?? null, error: null };
+        if (table === "rent_schedules" && q._updated) return { data: script.scheduleUpdate ?? null, error: null };
         return { data: null, error: null };
       },
       async single() { return { data: null, error: null }; },
@@ -564,5 +566,53 @@ describe("set-unit-status / restore-unit (controls sweep G4)", () => {
     authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "available" });
     const refused = await post({ operation: "restore-unit", unitId: "unit_1" });
     expect(refused.status).toBe(409);
+  });
+});
+
+describe("set-schedule-status (controls sweep G7)", () => {
+  it("pauses an active schedule and resumes a paused one", async () => {
+    const calls = authFor({
+      scheduleLookup: { id: "schedule_1", status: "active", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "active" },
+      scheduleUpdate: { id: "schedule_1", status: "paused" },
+    });
+    const paused = await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "paused" });
+    expect(paused.status).toBe(200);
+    expect((await paused.json()).schedule.status).toBe("paused");
+    expect(calls.find((call) => call.table === "rent_schedules").values.status).toBe("paused");
+
+    authFor({
+      scheduleLookup: { id: "schedule_1", status: "paused", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "active" },
+      scheduleUpdate: { id: "schedule_1", status: "active" },
+    });
+    const resumed = await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "active" });
+    expect(resumed.status).toBe(200);
+    expect((await resumed.json()).schedule.status).toBe("active");
+  });
+
+  it("refuses illegal transitions, cancelled leases, missing schedules, and bad statuses", async () => {
+    authFor({
+      scheduleLookup: { id: "schedule_1", status: "draft", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "active" },
+    });
+    expect((await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "paused" })).status).toBe(409);
+    authFor({
+      scheduleLookup: { id: "schedule_1", status: "active", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "active" },
+    });
+    expect((await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "active" })).status).toBe(409);
+    authFor({
+      scheduleLookup: { id: "schedule_1", status: "active", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "cancelled" },
+    });
+    expect((await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "paused" })).status).toBe(409);
+    authFor({ scheduleLookup: null, leaseLookup: null });
+    expect((await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "paused" })).status).toBe(404);
+    authFor({
+      scheduleLookup: { id: "schedule_1", status: "active", lease_id: "lease_1" },
+      leaseLookup: { id: "lease_1", status: "active" },
+    });
+    expect((await post({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "ended" })).status).toBe(400);
   });
 });

@@ -2,7 +2,7 @@
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalPaymentsPanel, { isChargeVoidable } from "./RentalPaymentsPanel";
@@ -148,5 +148,64 @@ describe("RentalPaymentsPanel controls sweep — G5 dead controls", () => {
     selectChargeRow(refunded.container, "2026-08");
     expect([...refunded.container.querySelectorAll("button")].some((candidate) => candidate.textContent === "Void charge")).toBe(true);
     unmount(refunded);
+  });
+});
+
+describe("RentalPaymentsPanel controls sweep — G7 billing-setup schedule controls", () => {
+  const g7Base = {
+    openCharges: [], payments: [], settlements: [],
+    leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "property-1", status: "active" }],
+    units: [{ id: "unit_1", label: "Main residence", property_id: "property-1" }],
+    tenants: [{ id: "tenant_1", display_name: "Anthony Babino" }],
+    leaseMemberships: [{ lease_id: "lease_1", tenant_id: "tenant_1" }],
+  };
+  const schedule = (status) => ({ id: "schedule_1", lease_id: "lease_1", amount_cents: 130000, due_day: 1, status, payment_frequency: "monthly" });
+
+  function renderSetup(status) {
+    return renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...g7Base, schedules: [schedule(status)] }} initialAccount={null} initialShowSetup />);
+  }
+
+  it("offers Pause and Edit on an active schedule", () => {
+    const markup = renderSetup("active");
+    expect(markup).toContain("Pause schedule");
+    expect(markup).toContain("Edit schedule");
+    expect(markup).toContain("edited with the lease terms on the lease detail");
+  });
+
+  it("offers Resume and the no-charges text on a paused schedule", () => {
+    const markup = renderSetup("paused");
+    expect(markup).toContain("Resume schedule");
+    expect(markup).toContain("no new charges generate until it resumes");
+  });
+
+  it("points a draft schedule at cancelling its draft lease", () => {
+    const markup = renderSetup("draft");
+    expect(markup).toContain("removed by cancelling its draft lease under Leases");
+    expect(markup).toContain("Activate lease and schedule");
+  });
+
+  it("posts set-schedule-status when Pause is clicked", async () => {
+    const posted = [];
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") { posted.push(JSON.parse(options.body)); return Promise.resolve({ ok: true, json: async () => ({ success: true, schedule: { id: "schedule_1", status: "paused" } }) }); }
+      return Promise.resolve({ ok: true, json: async () => ({ ...g7Base, schedules: [schedule("active")] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      await act(async () => { root.render(<RentalPaymentsPanel initialData={{ ...g7Base, schedules: [schedule("active")] }} initialAccount={null} initialShowSetup />); });
+      const button = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent === "Pause schedule");
+      expect(button).toBeTruthy();
+      await act(async () => { button.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).toMatchObject({ operation: "set-schedule-status", scheduleId: "schedule_1", status: "paused" });
+      expect(container.textContent).toContain("Rent schedule paused");
+      await act(async () => { root.unmount(); });
+      container.remove();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
