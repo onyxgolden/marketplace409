@@ -37,15 +37,14 @@ describe("ReservationsPanel controls sweep — B7", () => {
     return container;
   }
 
-  it("explains a held reservation and offers cancel, but no landlord confirm", async () => {
+  it("explains a held reservation and offers confirm and cancel", async () => {
     const container = await mountHeld(vi.fn((url) => Promise.resolve(response(url.endsWith("/inventory")
       ? { inventory: [{ unit_id: "unit-1", public_name: "Cabin One", booking_status: "active" }] }
       : { reservations: [held], events: [] }))));
     const detail = container.querySelector("[aria-label='Reservation detail']");
     expect(detail.textContent).toContain("on hold");
-    expect(detail.textContent).toContain("no landlord confirm action");
+    expect(detail.textContent).toContain("Confirm hold");
     expect(detail.textContent).toContain("Cancel hold");
-    expect(detail.textContent).not.toContain("Confirm hold");
     expect([...container.querySelectorAll("button")].map((button) => button.textContent)).not.toContain("Check in");
   });
 
@@ -68,5 +67,35 @@ describe("ReservationsPanel controls sweep — B7", () => {
     expect(JSON.parse(cancelCall[1].body).operation).toBe("cancel");
     expect(JSON.parse(cancelCall[1].body).reservationId).toBe("res-held");
     expect(container.querySelector('[role="status"]').textContent).toContain("Reservation cancel complete.");
+  });
+
+  it("confirm hold calls the real confirm transition and the row gains confirmed actions", async () => {
+    vi.stubGlobal("confirm", () => true);
+    let confirmed = false;
+    const fetchMock = vi.fn(async (url, options) => {
+      if (options?.method === "PATCH") {
+        confirmed = true;
+        return response({ success: true, reservation: { ...held, status: "confirmed" } });
+      }
+      return response(url.endsWith("/inventory")
+        ? { inventory: [{ unit_id: "unit-1", public_name: "Cabin One", booking_status: "active" }] }
+        : { reservations: [confirmed ? { ...held, status: "confirmed" } : held], events: [] });
+    });
+    const container = await mountHeld(fetchMock);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Confirm hold").click();
+      await Promise.resolve();
+    });
+    await flush();
+    const confirmCall = fetchMock.mock.calls.find(([, options]) => options?.method === "PATCH");
+    expect(confirmCall).toBeDefined();
+    expect(JSON.parse(confirmCall[1].body).operation).toBe("confirm");
+    expect(JSON.parse(confirmCall[1].body).reservationId).toBe("res-held");
+    expect(container.querySelector('[role="status"]').textContent).toContain("Reservation confirm complete.");
+    const buttons = [...container.querySelectorAll("button")].map((button) => button.textContent);
+    expect(buttons).toContain("Modify");
+    expect(buttons).toContain("Check in");
+    expect(buttons).toContain("Cancel");
+    expect(buttons).not.toContain("Confirm hold");
   });
 });
