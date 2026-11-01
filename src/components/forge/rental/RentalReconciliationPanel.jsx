@@ -26,7 +26,11 @@ export default function RentalReconciliationPanel() {
   // table renders instantly on return visits and refreshes in the background —
   // the last good data never blanks out. Reconciliation stays human-gated:
   // the panel is read-only; any future confirm flow must keep the checkbox +
-  // "CONFIRM" gate and soft/reversible writes.
+  // "CONFIRM" gate and soft/reversible writes. The Action column is navigation
+  // only (no writes): there is no per-payment deep link in the app — the
+  // record-param types are property/tenant/unit — so each row links to the
+  // Rent & payments surface, which lists the payment by the id shown in the
+  // row. Every row gets the link; no row is a dead end.
   const fetchReconciliation = useCallback(async () => {
     const response = await fetch("/api/rental");
     const body = await response.json();
@@ -61,6 +65,7 @@ export default function RentalReconciliationPanel() {
               <th className="p-3 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Payment status</th>
               <th className="p-3 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Reconciliation</th>
               <th className="p-3 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Net deposit</th>
+              <th className="p-3 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -71,9 +76,15 @@ export default function RentalReconciliationPanel() {
                 <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{payment.status.replaceAll("_", " ")}</td>
                 <td className={`p-3 font-bold capitalize ${STATE_TONE[reconciliationState] || "text-slate-700 dark:text-slate-300"}`}>{reconciliationState.replaceAll("_", " ")}</td>
                 <td className="p-3 tabular-nums text-slate-700 dark:text-slate-300">{settlement ? money.format(settlement.net_amount_cents / 100) : "—"}</td>
+                <td className="p-3">
+                  <a href="/forge/rental?section=charges" className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
+                    aria-label={`View payment ${payment.id} in Rent & payments`}>View in Rent &amp; payments</a>
+                  {reconciliationState === "attention" && <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Needs attention — act on this payment there.</div>}
+                  {reconciliationState === "awaiting_settlement" && <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Stripe has not settled this payment yet — no action needed.</div>}
+                </td>
               </tr>
             ))}
-            {rows.length === 0 ? <tr><td colSpan="5" className="p-4 text-slate-500 dark:text-slate-400">No rental payments recorded.</td></tr> : null}
+            {rows.length === 0 ? <tr><td colSpan="6" className="p-4 text-slate-500 dark:text-slate-400">No rental payments recorded.</td></tr> : null}
           </tbody>
         </table>
       </div>
