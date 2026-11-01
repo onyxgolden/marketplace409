@@ -19,6 +19,7 @@ async function readJson(response) {
 
 const TABS = [
   { id: "inbox", label: "Inbox" },
+  { id: "history", label: "Applied & voided" },
   { id: "assist", label: "Reconciliation assist" },
 ];
 
@@ -355,9 +356,23 @@ function ReceiptDetail({ receipt, vendors, bankAccounts, onChanged, onClose }) {
           </button>
         </div>
       ) : (
-        <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-          Only inbox receipts can be edited or voided. Applied receipts must have their vendor payment voided first.
-        </p>
+        <div className="mt-4">
+          {receipt.status === "voided" ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              This receipt is already voided — it cannot be edited or voided again.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Only inbox receipts can be edited or voided. This receipt was applied to a bill — void the vendor payment first.
+              </p>
+              <button type="button" disabled title="Void the vendor payment first"
+                className="mt-2 cursor-not-allowed rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-400 dark:border-slate-600 dark:text-slate-500">
+                Void receipt
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {editOpen && receipt.status === "inbox" ? (
@@ -671,6 +686,31 @@ export default function RentalReceiptsPanel() {
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState("");
+  // Controls-sweep follow-up G16: applied/voided receipts used to vanish
+  // from this panel entirely (the inbox fetch is unmatched-only, and the
+  // detail unmounts non-inbox rows). The history tab loads every receipt
+  // once it opens and keeps only the non-inbox rows, so applied and voided
+  // receipts stay visible with their read-only detail.
+  const [historyReceipts, setHistoryReceipts] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const [historySelected, setHistorySelected] = useState(null);
+
+  useEffect(() => {
+    if (tab !== "history") return undefined;
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    fetch("/api/rental/receipts?status=all")
+      .then((response) => readJson(response))
+      .then((body) => {
+        if (cancelled) return;
+        setHistoryReceipts((body.receipts || []).filter((receipt) => receipt.status !== "inbox"));
+        setHistoryLoading(false);
+      })
+      .catch((loadError) => { if (!cancelled) { setHistoryError(loadError.message); setHistoryLoading(false); } });
+    return () => { cancelled = true; };
+  }, [tab]);
 
   // Pure data fetcher (no setState inside) so the effect can call it through
   // promise callbacks, per the repo's set-state-in-effect lint rule.
@@ -819,6 +859,58 @@ export default function RentalReceiptsPanel() {
                           {receipt.propertyId ? ` · ${receipt.propertyId}` : ""}
                           {receipt.documentId ? " · has file" : ""}
                         </span>
+                      </span>
+                      <span className="text-sm font-black text-slate-900 dark:text-slate-100">{cents(receipt.amountCents)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      ) : tab === "history" ? (
+        <div className="space-y-4">
+          {historySelected ? (
+            <ReceiptDetail
+              key={historySelected.id}
+              receipt={historySelected}
+              vendors={vendors}
+              bankAccounts={bankAccounts}
+              onClose={() => setHistorySelected(null)}
+              onChanged={(updated) => {
+                setHistorySelected(updated);
+                setHistoryReceipts((rows) => (rows || []).map((row) => (row.id === updated.id ? updated : row)));
+              }}
+            />
+          ) : null}
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <h3 className="text-lg font-black text-slate-950 dark:text-white">Applied &amp; voided ({historyReceipts ? historyReceipts.length : "…"})</h3>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Receipts that left the inbox. Applied receipts are read-only here — void the vendor payment first, then the receipt can be voided.
+            </p>
+            {historyLoading && <p className="mt-3 text-sm font-bold text-slate-500 dark:text-slate-400">Loading history…</p>}
+            {historyError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{historyError}</p>}
+            {!historyLoading && !historyError && historyReceipts && historyReceipts.length === 0 && (
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">No applied or voided receipts yet.</p>
+            )}
+            {!historyLoading && !historyError && historyReceipts && historyReceipts.length > 0 && (
+              <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                {historyReceipts.map((receipt) => (
+                  <li key={receipt.id}>
+                    <button type="button" onClick={() => setHistorySelected(receipt)}
+                      className="flex w-full items-center justify-between gap-4 py-3 text-left">
+                      <span>
+                        <span className="block text-sm font-black text-slate-900 dark:text-slate-100">
+                          {receipt.vendorName || receipt.vendorNameHint || "Unknown vendor"}
+                        </span>
+                        <span className="block text-xs text-slate-500 dark:text-slate-400">
+                          {receipt.receiptDate}
+                          {receipt.propertyId ? ` · ${receipt.propertyId}` : ""}
+                          {receipt.status === "voided" ? " · voided" : receipt.appliedBillId ? " · applied to bill" : " · applied"}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${receipt.status === "voided" ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"}`}>
+                        {receipt.status}
                       </span>
                       <span className="text-sm font-black text-slate-900 dark:text-slate-100">{cents(receipt.amountCents)}</span>
                     </button>
