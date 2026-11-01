@@ -88,7 +88,7 @@ export default function RentalAutopayPanel() {
     {error ? <p role="alert" className="mt-3 rounded-xl bg-red-100 px-4 py-3 text-sm font-bold text-red-900 dark:bg-red-900/40 dark:text-red-200">{error}</p> : null}
     {items && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved authorizations.</p> : null}
     {items && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
-    <div className="mt-5 space-y-3">{items.length ? items.map((item) => <article key={item.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+    <div className="mt-5 space-y-3">{items?.length ? items.map((item) => <article key={item.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
       <strong className="text-slate-950 dark:text-white">{resolveEnrollmentLabel(item, data || {})}</strong>
       <p className="text-sm text-slate-600 dark:text-slate-400">{item.status.replaceAll("_", " ")} · {item.payment_method_type.replaceAll("_", " ")} · day {item.charge_day} · reminded {item.reminder_days_before} days before</p>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Consented {new Date(item.consented_at).toLocaleString()}{item.cancelled_at ? ` · Cancelled ${new Date(item.cancelled_at).toLocaleString()}` : ""}</p>

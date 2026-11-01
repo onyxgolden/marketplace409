@@ -17,7 +17,7 @@ import RentalLeasePanel from "./RentalLeasePanel.jsx";
 // cold SSR renders exercise the panels' real markup (headings, copy, controls)
 // instead of the loading skeletons.
 const SWR_SEEDS = {
-  "rental:autopay": [],
+  "rental:autopay": { autopayEnrollments: [] },
   "rental:communications": { notifications: [], charges: [] },
   "rental:email-settings": { settings: null, readiness: { resendConfigured: false, workerConfigured: false, domainConfigured: false, verifiedDomain: null } },
   "rental:deposits": { deposits: [], transactions: [], schedules: [], tenants: [] },
