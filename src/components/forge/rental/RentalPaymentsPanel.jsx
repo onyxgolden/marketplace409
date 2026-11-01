@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
+import CorrectPaymentDialog from "./CorrectPaymentDialog";
 import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import RentalBatchRentChecklist from "./RentalBatchRentChecklist";
 import { isChargeForgeCollectible } from "@/application/rental/isChargeForgeCollectible";
@@ -13,6 +14,22 @@ import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "
 import { formatFeePercent } from "@/domains/rental-payment/convenienceFee";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+// Plain-words summary of a correction for the panel's saved banner: names
+// the payment (by amount) and lists what changed, never a raw id alone.
+function describeCorrection(correction, paymentAmountCents, chargeLabels) {
+  const changes = (correction?.changes || []).map((change) => {
+    const format = (value) => {
+      if (value === null || value === undefined || value === "") return "—";
+      if (change.field === "amount_cents" || change.field === "deposit_amount_cents") return money.format(Number(value) / 100);
+      if (change.field === "charge_id") return chargeLabels?.[value] || String(value);
+      return String(value).replaceAll("_", " ");
+    };
+    return `${change.label}: ${format(change.from)} → ${format(change.to)}`;
+  });
+  const paymentName = paymentAmountCents ? `${money.format(Number(paymentAmountCents) / 100)} payment` : "Payment";
+  return changes.length > 0 ? `${paymentName} corrected: ${changes.join("; ")}` : `${paymentName} corrected.`;
+}
 
 // R12: card convenience fee settings. The owner enters a human percent
 // ("2.95"); the server validates and stores integer basis points. The fee is
@@ -312,6 +329,22 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   async function setDepositState(paymentId, depositState) { return post({ operation: "set-payment-deposit-state", paymentId, depositState }, (body) => body?.payment?.changed === false ? "Deposit state is already up to date." : depositState === "deposited" ? "Payment marked as deposited." : "Payment marked as awaiting deposit."); }
   async function voidPayment(paymentId, reason) { return post({ operation: "void-payment", paymentId, reason, ownerConfirmed: true }, (body) => `Payment voided: ${money.format(Number(body?.payment?.amount_cents || 0) / 100)} — the charge balance is restored.`); }
   async function refundPayment(record) { const remaining = Number(record.amount_cents || 0) - Number(record.refunded_amount_cents || 0); return post({ operation: "refund-payment", paymentId: record.sourceId, ownerConfirmed: true }, () => `Refund sent: ${money.format(remaining / 100)} back to the tenant. The charge balance is restored.`); }
+  // Edit-payment confirmation (standing rule: every save confirms): the
+  // dialog already shows its own emerald done summary while open; when the
+  // user clicks Done, this banner persists on the panel naming the payment
+  // and what changed. refresh() runs behind the dialog so the record
+  // browser shows the corrected values when the dialog closes.
+  async function handlePaymentCorrected(correction) {
+    const chargeLabels = {};
+    for (const record of visibleRecords) {
+      if (record.kind === "charge") {
+        chargeLabels[record.sourceId] = `${record.period ? `${record.period} · ` : ""}due ${record.due_date || "—"} · ${money.format(Number(record.amount_cents || 0) / 100)}`;
+      }
+    }
+    const payment = (data.payments || []).find((item) => item.id === correction?.paymentId);
+    setSaved(`✓ ${describeCorrection(correction, payment?.amount_cents, chargeLabels)}`);
+    await refresh();
+  }
   async function voidCharge(chargeId, reason) { return post({ operation: "void-charge", chargeId, reason }, () => "Charge voided."); }
   async function setBillingEnabled(nextEnabled) { return post({ operation: "set-billing-enabled", enabled: nextEnabled }, () => nextEnabled ? "Rental online billing resumed." : "Rental online billing paused."); }
   async function setPaymentPolicy(policy) { return post({ operation: "save-payment-policy", policy }, () => `Payment policy saved: ${policy.replaceAll("_", " ")}.`); }
@@ -384,18 +417,19 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
         getTitle={(item) => { if (item.kind !== "charge") return `${money.format(Number(item.amount_cents) / 100)} payment`; const identity = resolveChargeIdentity(item, data); return `${identity.tenantLabel} · ${identity.unitLabel} · ${identity.propertyLabel}`; }}
         getSubtitle={(item) => { if (item.kind !== "charge") return `${label(item.payment_method || item.provider)} · ${label(item.status)} · ${depositStateLabel(item, item.settlement || null)}`; const identity = resolveChargeIdentity(item, data); return `${label(item.charge_type)} · ${item.period} · ${money.format(Number(item.amount_cents) / 100)} · ${label(item.status)} · due ${item.due_date} · lease ${identity.leaseId || "Unknown"} · ${chargeCollectionLabel(item, data.schedules)}`; }}
         emptyMessage="No rent charges or payments recorded.">
-        {!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">Select a charge or payment to review its details.</p> : <RecordDetail record={selected} payments={data.payments} chargeIdentity={selected.kind === "charge" ? resolveChargeIdentity(selected, data) : null} collectionLabel={selected.kind === "charge" ? chargeCollectionLabel(selected, data.schedules) : null} onRecordPayment={() => setShowOffline(true)} onVoidCharge={voidCharge} onSetDepositState={setDepositState} onVoidPayment={voidPayment} onRefundPayment={refundPayment} />}
+        {!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">Select a charge or payment to review its details.</p> : <RecordDetail record={selected} payments={data.payments} chargeIdentity={selected.kind === "charge" ? resolveChargeIdentity(selected, data) : null} collectionLabel={selected.kind === "charge" ? chargeCollectionLabel(selected, data.schedules) : null} onRecordPayment={() => setShowOffline(true)} onVoidCharge={voidCharge} onSetDepositState={setDepositState} onVoidPayment={voidPayment} onRefundPayment={refundPayment} onCorrected={handlePaymentCorrected} />}
       </RentalRecordBrowser>
       <a href="/forge/rental/portal" className="mt-6 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant portal</a>
     </div>
   </section>;
 }
 
-function RecordDetail({ record, payments = [], chargeIdentity, collectionLabel, onRecordPayment, onVoidCharge, onSetDepositState, onVoidPayment, onRefundPayment }) {
+function RecordDetail({ record, payments = [], chargeIdentity, collectionLabel, onRecordPayment, onVoidCharge, onSetDepositState, onVoidPayment, onRefundPayment, onCorrected }) {
   const [showVoidConfirm, setShowVoidConfirm] = useState(false);
   const [showDepositConfirm, setShowDepositConfirm] = useState(false);
   const [showVoidPaymentConfirm, setShowVoidPaymentConfirm] = useState(false);
   const [showRefundConfirm, setShowRefundConfirm] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   // Controls-sweep G5 (M-08): a payment outside refunded/failed/cancelled
   // blocks voiding even when paid_amount_cents is still 0 — surface that
   // instead of letting the landlord confirm and then fail.
@@ -411,6 +445,10 @@ function RecordDetail({ record, payments = [], chargeIdentity, collectionLabel, 
   const timestamp = paymentDisplayTimestamp(record);
   const fundsState = resolveDepositState(record, record.settlement || null);
   const canTransitionFunds = MONEY_MOVED_STATUSES.has(record.status);
+  // Edit payment: landlord-recorded (offline) completed payments with no
+  // refund. Provider payments moved real money — read-only here; voided or
+  // refunded payments are never editable through this control.
+  const canEditPayment = record.provider === "offline" && record.status === "succeeded" && Number(record.refunded_amount_cents || 0) === 0;
   return <div><p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Selected payment</p><h3 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{money.format(Number(record.amount_cents) / 100)} payment</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Method" value={label(record.payment_method || record.provider)} /><Fact term="Funds" value={depositStateLabel(record, record.settlement || null)} /><Fact term="Received" value={timestamp ? new Date(timestamp).toLocaleDateString() : "—"} /><Fact term="Refunded" value={money.format(Number(record.refunded_amount_cents || 0) / 100)} /><Fact term="Receipt" value={paymentReceiptReference(record)} /><Fact term="Settlement" value={record.provider === "stripe" ? label(record.settlement?.status || "awaiting settlement") : "Not applicable"} /></dl>
   {fundsState === DEPOSIT_STATE_RECEIVED ? <span className="mt-4 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-black uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Awaiting deposit</span> : <span className="mt-4 inline-block rounded-full bg-emerald-100 px-3 py-1 text-xs font-black uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Deposited</span>}
   {canTransitionFunds ? (showDepositConfirm ? <div role="alertdialog" aria-label="Confirm deposit state change" className="mt-4 rounded-xl border border-slate-300 bg-white p-4 dark:border-slate-600 dark:bg-slate-900">
@@ -434,6 +472,8 @@ function RecordDetail({ record, payments = [], chargeIdentity, collectionLabel, 
       <button type="button" onClick={async () => { const success = await onRefundPayment(record); if (success) setShowRefundConfirm(false); }} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800">Confirm refund</button>
       <button type="button" onClick={() => setShowRefundConfirm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
     </div>
-  </div> : <button type="button" onClick={() => setShowRefundConfirm(true)} className="ml-2 mt-4 rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Refund this payment</button>) : null}</div>;
+  </div> : <button type="button" onClick={() => setShowRefundConfirm(true)} className="ml-2 mt-4 rounded-xl border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Refund this payment</button>) : null}
+  {canEditPayment ? <button type="button" onClick={() => setShowEdit(true)} className="ml-2 mt-4 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Edit payment</button> : null}
+  {showEdit ? <div onClick={(event) => event.stopPropagation()}><CorrectPaymentDialog paymentId={record.sourceId} onClose={() => setShowEdit(false)} onDone={(correction) => { onCorrected?.(correction); }} /></div> : null}</div>;
 }
 function Fact({ term, value }) { return <div><dt className="text-xs font-bold uppercase text-slate-500 dark:text-slate-400">{term}</dt><dd className="mt-1 font-bold capitalize text-slate-900 dark:text-white">{value}</dd></div>; }

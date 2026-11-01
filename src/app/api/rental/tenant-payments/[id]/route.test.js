@@ -28,11 +28,17 @@ function chain(result) {
   return b;
 }
 
-function clientFor({ paymentRow = payment, corrections = [correctionRow] } = {}) {
+const chargeRows = [
+  { id: "rent_charge_1", period: "2026-09", due_date: "2026-09-01", amount_cents: 160000, paid_amount_cents: 160000, status: "paid", charge_type: "rent" },
+  { id: "rent_charge_2", period: "2026-10", due_date: "2026-10-01", amount_cents: 160000, paid_amount_cents: 0, status: "due", charge_type: "rent" },
+];
+
+function clientFor({ paymentRow = payment, corrections = [correctionRow], charges = chargeRows } = {}) {
   return {
     from: vi.fn((table) => {
       if (table === "rental_payments") return chain(paymentRow);
       if (table === "rental_payment_corrections") return chain(corrections);
+      if (table === "rent_charges") return chain(charges);
       return chain(null);
     }),
   };
@@ -74,6 +80,21 @@ describe("GET /api/rental/tenant-payments/[id]", () => {
     const body = await (await get()).json();
     expect(body.payment.correctable).toBe(true);
     expect(body.payment.moneyFieldsCorrectable).toBe(false);
+  });
+
+  it("returns the charge, lease, deposit state, and same-lease charges for the edit dialog", async () => {
+    authAs(clientFor({ paymentRow: { ...payment, deposit_state: "received", deposit_amount_cents: 50000 } }));
+    const body = await (await get()).json();
+    expect(body.payment).toMatchObject({
+      chargeId: "rent_charge_1",
+      leaseId: "lease_1",
+      depositState: "received",
+      depositAmountCents: 50000,
+    });
+    expect(body.availableCharges).toEqual([
+      { id: "rent_charge_1", period: "2026-09", dueDate: "2026-09-01", amountCents: 160000, paidAmountCents: 160000, status: "paid", chargeType: "rent" },
+      { id: "rent_charge_2", period: "2026-10", dueDate: "2026-10-01", amountCents: 160000, paidAmountCents: 0, status: "due", chargeType: "rent" },
+    ]);
   });
 
   it("404s for another workspace's payment", async () => {

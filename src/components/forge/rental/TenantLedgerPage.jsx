@@ -504,7 +504,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       )}
 
       {detailEntry && <TransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} onCorrected={refresh} />}
-      {correctEntry && <CorrectPaymentDialog paymentId={correctEntry.sourceId} onClose={() => setCorrectEntry(null)} onDone={() => { setCorrectEntry(null); refresh(); }} />}
+      {correctEntry && <CorrectPaymentDialog paymentId={correctEntry.sourceId} onClose={() => setCorrectEntry(null)} onDone={() => refresh()} />}
       {emailStatementOpen && (
         <StatementEmailDialog
           title={`Email statement — ${tenantName || "tenant"}`}
@@ -596,7 +596,7 @@ function TransactionDetailModal({ entry, onClose, onCorrected }) {
           <CorrectPaymentDialog
             paymentId={entry.sourceId}
             onClose={() => setShowCorrect(false)}
-            onDone={() => { setShowCorrect(false); onClose(); onCorrected?.(); }}
+            onDone={() => { onCorrected?.(); }}
           />
         </div>
       )}

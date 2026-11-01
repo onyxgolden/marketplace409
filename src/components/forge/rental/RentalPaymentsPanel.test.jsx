@@ -609,3 +609,132 @@ describe("RentalPaymentsPanel billing pause banner", () => {
     unmountPanel(mounted);
   });
 });
+
+describe("RentalPaymentsPanel Edit payment", () => {
+  let mounted;
+
+  afterEach(() => {
+    if (mounted) { unmountPanel(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+    clearSWRCache();
+  });
+
+  const editablePayment = {
+    id: "pay_1", lease_id: "lease_1", amount_cents: 160000, refunded_amount_cents: 0,
+    status: "succeeded", payment_method: "cash", provider: "offline",
+    received_at: "2026-09-01T12:00:00Z", created_at: "2026-09-01T12:00:00Z",
+    deposit_state: "received", settlement: null,
+  };
+  const dialogPayment = {
+    id: "pay_1", chargeId: "charge_1", leaseId: "lease_1", provider: "offline",
+    status: "succeeded", amountCents: 160000, refundedAmountCents: 0,
+    currencyCode: "USD", receivedAt: "2026-09-01", paymentMethod: "cash",
+    depositState: "received", receiptReference: null, notes: "September rent",
+    correctable: true, correctableReason: null, moneyFieldsCorrectable: true,
+  };
+  const dialogCharges = [
+    { id: "charge_1", period: "2026-09", dueDate: "2026-09-01", amountCents: 160000, paidAmountCents: 160000, status: "paid", chargeType: "rent" },
+    { id: "charge_2", period: "2026-10", dueDate: "2026-10-01", amountCents: 160000, paidAmountCents: 0, status: "due", chargeType: "rent" },
+  ];
+
+  function stubDialogFetch(data) {
+    return vi.fn(async (url, options = {}) => {
+      if (String(url).includes("/tenant-payments/") && options.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({
+            correction: {
+              paymentId: "pay_1",
+              changes: [{ field: "deposit_state", label: "Deposit state", from: "received", to: "deposited" }],
+              balanceDeltaCents: 0,
+              reconciledWarning: false,
+            },
+          }),
+        };
+      }
+      if (String(url).includes("/tenant-payments/")) {
+        return {
+          ok: true,
+          json: async () => ({ payment: dialogPayment, corrections: [], availableCharges: dialogCharges }),
+        };
+      }
+      if (String(url) === "/api/rental") {
+        return { ok: true, json: async () => data };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+  }
+
+  async function flush() {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+
+  function setInputValue(element, value) {
+    const proto = element.tagName === "SELECT" ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+    setter.call(element, value);
+    element.dispatchEvent(new Event(element.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  }
+
+  it("shows Edit payment only for editable offline payments", () => {
+    // The panel seeds parent-supplied data into the shared cache (first
+    // writer wins), so each static render needs a cleared cache to see its
+    // own fixture — otherwise every render shows the first payment.
+    const withEditable = { ...baseData, payments: [editablePayment] };
+    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withEditable} initialAccount={null} />)).toContain("Edit payment");
+    clearSWRCache();
+    const withStripe = { ...baseData, payments: [{ ...editablePayment, provider: "stripe", payment_method: "card" }] };
+    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withStripe} initialAccount={null} />)).not.toContain("Edit payment");
+    clearSWRCache();
+    const withRefund = { ...baseData, payments: [{ ...editablePayment, refunded_amount_cents: 160000 }] };
+    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withRefund} initialAccount={null} />)).not.toContain("Edit payment");
+  });
+
+  it("opens the correction dialog from the selected payment detail", async () => {
+    const data = { ...baseData, payments: [editablePayment] };
+    vi.stubGlobal("fetch", stubDialogFetch(data));
+    mounted = mountPanel(<RentalPaymentsPanel initialData={data} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Edit payment"));
+    await flush();
+    expect(mounted.container.textContent).toContain("Correct payment");
+    expect(mounted.container.textContent).toContain("Deposit state");
+  });
+
+  it("confirms the save on the panel with an emerald banner naming the payment and what changed", async () => {
+    const data = { ...baseData, payments: [editablePayment] };
+    vi.stubGlobal("fetch", stubDialogFetch(data));
+    mounted = mountPanel(<RentalPaymentsPanel initialData={data} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Edit payment"));
+    await flush();
+    const dialog = mounted.container;
+    await act(async () => {
+      const dialogEl = dialog.querySelector('[role="dialog"]');
+      const depositSelect = [...dialogEl.querySelectorAll("label")]
+        .find((el) => el.textContent.startsWith("Deposit state"))?.querySelector("select");
+      setInputValue(depositSelect, "deposited");
+      const reason = dialogEl.querySelector('input[placeholder="Why is this payment being corrected?"]');
+      setInputValue(reason, "bank run");
+      const checkbox = dialogEl.querySelector('input[type="checkbox"]');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
+      setter.call(checkbox, true);
+      checkbox.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    // Scope the submit to the dialog: the panel itself renders other
+    // submit buttons (e.g. Save payment policy) earlier in the DOM.
+    await clickButtonAndFlush(dialog.querySelector('[role="dialog"] button[type="submit"]'));
+    await flush();
+    // The dialog's own emerald confirmation names the payment and the change.
+    const status = dialog.querySelector('[role="dialog"] [role="status"]');
+    expect(status).not.toBeNull();
+    expect(status.textContent).toContain("✓");
+    expect(status.textContent).toContain("$1,600.00 payment corrected");
+    // Clicking Done closes the dialog; the panel banner persists the same
+    // confirmation where the user is looking.
+    await clickButtonAndFlush(findButtonByText(dialog, "Done"));
+    await flush();
+    expect(dialog.querySelector('[role="dialog"]')).toBeNull();
+    const banner = dialog.querySelector('[role="status"]');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("✓ $1,600.00 payment corrected: Deposit state: received → deposited");
+  });
+});

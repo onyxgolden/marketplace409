@@ -5,15 +5,25 @@ import { useEffect, useMemo, useState } from "react";
 //
 // The dialog shows before → after for every changed field, requires a
 // reason, and lists the payment's correction history (the audit trail).
-// Amount/date/method are editable only for manually recorded (offline)
-// payments — provider payments moved real money, so their correctable
-// surface is notes + receipt reference.
+// Amount/date/method/deposit amount/charge are editable only for manually
+// recorded (offline) payments — provider payments moved real money, so
+// their correctable surface is notes + receipt reference. Deposit amount
+// is the portion of this payment that is security-deposit money (default
+// 0, never more than the payment amount); it moves no charge or credit
+// balance by design, so changing it can never strand one.
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToDollars = (cents) => money.format(Number(cents || 0) / 100);
 const dollarsToCents = (value) => {
   const n = Number(String(value || "").replaceAll(",", "").trim());
   if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100);
+};
+// Deposit amounts may be zero (no deposit portion); an empty input reads as 0.
+const dollarsToDepositCents = (value) => {
+  if (String(value || "").trim() === "") return 0;
+  const n = Number(String(value).replaceAll(",", "").trim());
+  if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
 };
 const inputClass = "mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100";
@@ -25,13 +35,23 @@ const formatDate = (value) => {
 };
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
 
-function formatCorrectionValue(field, value) {
+function formatCorrectionValue(field, value, chargeLabels) {
   if (value === null || value === undefined || value === "") return "—";
   if (field === "amount_cents") return centsToDollars(Number(value));
+  if (field === "deposit_amount_cents") return centsToDollars(Number(value));
   if (field === "received_at") return formatDate(String(value).slice(0, 10));
   if (field === "payment_method") return label(value);
+  if (field === "deposit_state") return label(value);
+  if (field === "charge_id") return chargeLabels?.[value] || String(value);
   return String(value);
 }
+
+const chargeLabel = (charge) => {
+  if (!charge) return null;
+  const period = charge.period ? `${charge.period} · ` : "";
+  const due = charge.dueDate ? `due ${formatDate(charge.dueDate)} · ` : "";
+  return `${period}${due}${centsToDollars(charge.amountCents)}`;
+};
 
 export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
   const [payment, setPayment] = useState(null);
@@ -41,6 +61,10 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
   const [amount, setAmount] = useState("");
   const [receivedAt, setReceivedAt] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [depositState, setDepositState] = useState("received");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [chargeId, setChargeId] = useState("");
+  const [availableCharges, setAvailableCharges] = useState([]);
   const [receiptReference, setReceiptReference] = useState("");
   const [notes, setNotes] = useState("");
   const [reason, setReason] = useState("");
@@ -61,9 +85,13 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
         if (cancelled) return;
         setPayment(body.payment);
         setCorrections(body.corrections || []);
+        setAvailableCharges(body.availableCharges || []);
         setAmount((Number(body.payment.amountCents || 0) / 100).toFixed(2));
         setReceivedAt(String(body.payment.receivedAt || "").slice(0, 10));
         setPaymentMethod(body.payment.paymentMethod || "");
+        setDepositState(body.payment.depositState || "received");
+        setDepositAmount((Number(body.payment.depositAmountCents || 0) / 100).toFixed(2));
+        setChargeId(body.payment.chargeId || "");
         setReceiptReference(body.payment.receiptReference || "");
         setNotes(body.payment.notes || "");
       } catch (caught) {
@@ -75,6 +103,27 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
     load();
     return () => { cancelled = true; };
   }, [paymentId]);
+
+  // Charge labels for the select, the preview, and history rows: never a
+  // raw id alone. The select offers the current charge plus same-lease
+  // charges that can still take money (due, scheduled, partially paid).
+  const chargeLabels = useMemo(() => {
+    const map = {};
+    for (const charge of availableCharges) {
+      map[charge.id] = chargeLabel(charge) || charge.id;
+    }
+    return map;
+  }, [availableCharges]);
+  const chargeOptions = useMemo(() => {
+    if (!payment) return [];
+    const current = availableCharges.find((charge) => charge.id === payment.chargeId);
+    const payable = availableCharges.filter(
+      (charge) =>
+        charge.id !== payment.chargeId &&
+        ["due", "scheduled", "partially_paid"].includes(charge.status)
+    );
+    return [...(current ? [current] : []), ...payable];
+  }, [payment, availableCharges]);
 
   // Before → after preview: only fields the user actually changed.
   const preview = useMemo(() => {
@@ -92,6 +141,16 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
       if (paymentMethod && paymentMethod !== (payment.paymentMethod || "")) {
         rows.push({ field: "payment_method", label: "Payment method", from: payment.paymentMethod || "", to: paymentMethod });
       }
+      if (depositState !== (payment.depositState || "received")) {
+        rows.push({ field: "deposit_state", label: "Deposit state", from: payment.depositState || "received", to: depositState });
+      }
+      const depositCents = dollarsToDepositCents(depositAmount);
+      if (depositCents !== null && depositCents !== Number(payment.depositAmountCents || 0)) {
+        rows.push({ field: "deposit_amount_cents", label: "Deposit amount", from: Number(payment.depositAmountCents || 0), to: depositCents });
+      }
+      if (chargeId && chargeId !== (payment.chargeId || "")) {
+        rows.push({ field: "charge_id", label: "Applies to", from: payment.chargeId || "", to: chargeId });
+      }
     }
     const ref = receiptReference.trim();
     if (ref !== (payment.receiptReference || "")) {
@@ -101,7 +160,7 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
       rows.push({ field: "notes", label: "Notes", from: payment.notes || "", to: notes.trim() || null });
     }
     return rows;
-  }, [payment, amount, receivedAt, paymentMethod, receiptReference, notes]);
+  }, [payment, amount, receivedAt, paymentMethod, depositState, depositAmount, chargeId, receiptReference, notes]);
 
   async function submit(event) {
     event.preventDefault();
@@ -117,6 +176,11 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
       if (amountCents !== Number(payment.amountCents || 0)) changes.amountCents = amountCents;
       if (receivedAt && receivedAt !== String(payment.receivedAt || "").slice(0, 10)) changes.receivedAt = receivedAt;
       if (paymentMethod && paymentMethod !== (payment.paymentMethod || "")) changes.paymentMethod = paymentMethod;
+      if (depositState !== (payment.depositState || "received")) changes.depositState = depositState;
+      const depositCents = dollarsToDepositCents(depositAmount);
+      if (depositCents === null) { setError("Enter a valid deposit amount (0 or more)."); return; }
+      if (depositCents !== Number(payment.depositAmountCents || 0)) changes.depositAmountCents = depositCents;
+      if (chargeId && chargeId !== (payment.chargeId || "")) changes.chargeId = chargeId;
     }
     const ref = receiptReference.trim();
     if (ref !== (payment.receiptReference || "")) changes.receiptReference = ref || null;
@@ -132,7 +196,11 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Unable to correct the payment.");
       setDoneSummary(body.correction);
-      onDone();
+      // The dialog stays open on its emerald done summary (the confirmation
+      // where the user is looking); the parent only refreshes behind it.
+      // Done → onClose. Parents must NOT unmount on onDone, or the
+      // confirmation never paints.
+      onDone(body.correction);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -183,6 +251,25 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
                         <option value="cashiers_check">Cashier&rsquo;s check</option>
                       </select>
                     </label>
+                    <label className={labelClass}>Deposit state
+                      <select className={inputClass} value={depositState} onChange={(e) => setDepositState(e.target.value)}>
+                        <option value="received">Received — awaiting deposit</option>
+                        <option value="deposited">Deposited</option>
+                      </select>
+                    </label>
+                    <label className={labelClass}>Deposit amount
+                      <input className={inputClass} value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} inputMode="decimal" placeholder="Portion of this payment that is security-deposit money" />
+                    </label>
+                    <label className={labelClass}>Applies to
+                      <select className={inputClass} value={chargeId} onChange={(e) => setChargeId(e.target.value)}>
+                        {chargeOptions.length === 0 && <option value="">No other open charge on this lease</option>}
+                        {chargeOptions.map((charge) => (
+                          <option key={charge.id} value={charge.id}>
+                            {charge.id === payment.chargeId ? "Current: " : ""}{chargeLabels[charge.id] || charge.id}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </>
                 )}
                 <label className={labelClass}>Receipt reference
@@ -198,7 +285,7 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
                     <ul className="mt-1.5 space-y-1 text-sm font-bold text-sky-900 dark:text-sky-200">
                       {preview.map((row) => (
                         <li key={row.field}>
-                          {row.label}: {formatCorrectionValue(row.field, row.from)} <span aria-hidden="true">→</span> {formatCorrectionValue(row.field, row.to)}
+                          {row.label}: {formatCorrectionValue(row.field, row.from, chargeLabels)} <span aria-hidden="true">→</span> {formatCorrectionValue(row.field, row.to, chargeLabels)}
                         </li>
                       ))}
                     </ul>
@@ -229,11 +316,11 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
                       <p className="font-bold text-slate-900 dark:text-white">{formatDate(correction.correctedAt)} — {correction.reason}</p>
                       <ul className="mt-1 space-y-0.5 text-slate-600 dark:text-slate-300">
                         {correction.changes.map((change) => (
-                          <li key={change.field}>{change.label}: {formatCorrectionValue(change.field, change.from)} <span aria-hidden="true">→</span> {formatCorrectionValue(change.field, change.to)}</li>
+                          <li key={change.field}>{change.label}: {formatCorrectionValue(change.field, change.from, chargeLabels)} <span aria-hidden="true">→</span> {formatCorrectionValue(change.field, change.to, chargeLabels)}</li>
                         ))}
                       </ul>
                       {correction.reconciledWarning && (
-                        <p className="mt-1 font-bold text-amber-700 dark:text-amber-300">Corrected while reconciled — notes only, no money facts changed.</p>
+                        <p className="mt-1 font-bold text-amber-700 dark:text-amber-300">Corrected while reconciled — no money facts changed.</p>
                       )}
                     </li>
                   ))}
@@ -245,12 +332,12 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
 
         {doneSummary && (
           <div className="mt-4">
-            <p className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-              Payment corrected. The ledger, statement, and receipt now show the corrected values; the originals are kept in the correction history below.
+            <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+              ✓ {centsToDollars(payment.amountCents)} payment corrected. The ledger, statement, and receipt now show the corrected values; the originals are kept in the correction history below.
             </p>
             <ul className="mt-3 space-y-1 text-sm font-bold text-slate-700 dark:text-slate-300">
               {doneSummary.changes.map((change) => (
-                <li key={change.field}>{change.label}: {formatCorrectionValue(change.field, change.from)} <span aria-hidden="true">→</span> {formatCorrectionValue(change.field, change.to)}</li>
+                <li key={change.field}>{change.label}: {formatCorrectionValue(change.field, change.from, chargeLabels)} <span aria-hidden="true">→</span> {formatCorrectionValue(change.field, change.to, chargeLabels)}</li>
               ))}
             </ul>
             <div className="mt-4 flex justify-end">

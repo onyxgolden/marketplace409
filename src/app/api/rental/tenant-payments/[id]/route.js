@@ -32,7 +32,7 @@ async function requireOwnerOrCoOwner(authenticated) {
 }
 
 const PAYMENT_COLUMNS =
-  "id, charge_id, lease_id, tenant_id, provider, payment_method, amount_cents, refunded_amount_cents, currency_code, status, received_at, succeeded_at, created_at, receipt_reference, notes, recorded_by";
+  "id, charge_id, lease_id, tenant_id, provider, payment_method, amount_cents, refunded_amount_cents, currency_code, status, received_at, succeeded_at, created_at, receipt_reference, notes, recorded_by, deposit_state, deposit_amount_cents";
 
 async function findOwnedPayment(supabaseClient, ownerId, paymentId) {
   const { data, error } = await supabaseClient
@@ -50,6 +50,8 @@ function serializePayment(payment) {
   const isOffline = payment.provider === "offline";
   return {
     id: payment.id,
+    chargeId: payment.charge_id || null,
+    leaseId: payment.lease_id || null,
     provider: payment.provider,
     status: payment.status,
     amountCents: Number(payment.amount_cents || 0),
@@ -57,6 +59,8 @@ function serializePayment(payment) {
     currencyCode: payment.currency_code,
     receivedAt: payment.received_at,
     paymentMethod: payment.payment_method || null,
+    depositState: payment.deposit_state || null,
+    depositAmountCents: Number(payment.deposit_amount_cents || 0),
     receiptReference: payment.receipt_reference || null,
     notes: payment.notes || null,
     correctable: eligibility.ok,
@@ -65,6 +69,29 @@ function serializePayment(payment) {
     // moved real money — their correctable surface is notes + reference.
     moneyFieldsCorrectable: eligibility.ok && isOffline && Number(payment.refunded_amount_cents || 0) === 0,
   };
+}
+
+// Same-lease charges for the correction dialog's "applies to" select: the
+// full list (any status) so charge labels resolve for history rows too; the
+// dialog filters the select itself to the current charge + payable charges.
+async function loadAvailableCharges(supabaseClient, ownerId, leaseId) {
+  if (!leaseId) return [];
+  const { data, error } = await supabaseClient
+    .from("rent_charges")
+    .select("id, period, due_date, amount_cents, paid_amount_cents, status, charge_type")
+    .eq("owner_id", ownerId)
+    .eq("lease_id", leaseId)
+    .order("due_date", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((charge) => ({
+    id: charge.id,
+    period: charge.period || null,
+    dueDate: charge.due_date || null,
+    amountCents: Number(charge.amount_cents || 0),
+    paidAmountCents: Number(charge.paid_amount_cents || 0),
+    status: charge.status,
+    chargeType: charge.charge_type || null,
+  }));
 }
 
 async function loadCorrections(supabaseClient, ownerId, paymentId) {
@@ -90,7 +117,8 @@ export async function GET(request, { params }) {
     if (!payment) return NextResponse.json({ error: "The payment was not found." }, { status: 404 });
 
     const corrections = await loadCorrections(supabaseClient, effectiveOwnerId, payment.id);
-    return NextResponse.json({ success: true, payment: serializePayment(payment), corrections });
+    const availableCharges = await loadAvailableCharges(supabaseClient, effectiveOwnerId, payment.lease_id);
+    return NextResponse.json({ success: true, payment: serializePayment(payment), corrections, availableCharges });
   } catch (error) {
     console.error("Tenant payment detail error", error);
     return NextResponse.json({ error: "Unable to load the payment." }, { status: 500 });

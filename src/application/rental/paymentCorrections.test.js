@@ -5,6 +5,7 @@ import {
   validatePaymentCorrection,
   applyCorrectionDelta,
   computeCreditAwareCorrection,
+  computeChargeMoveCorrection,
   serializePaymentCorrection,
 } from "./paymentCorrections";
 
@@ -46,15 +47,19 @@ describe("canCorrectPayment", () => {
 });
 
 describe("correctionTouchesMoney", () => {
-  it("is true when amount, date, or method change", () => {
+  it("is true when amount, date, method, or charge change", () => {
     expect(correctionTouchesMoney({ amountCents: 150000 })).toBe(true);
     expect(correctionTouchesMoney({ receivedAt: "2026-09-02" })).toBe(true);
     expect(correctionTouchesMoney({ paymentMethod: "cashiers_check" })).toBe(true);
+    expect(correctionTouchesMoney({ chargeId: "rent_charge_2" })).toBe(true);
   });
 
-  it("is false for notes-only, receipt-reference, empty, or missing changes", () => {
+  it("is false for notes-only, receipt-reference, deposit-state, deposit-amount, empty, or missing changes", () => {
     expect(correctionTouchesMoney({ notes: "new notes" })).toBe(false);
     expect(correctionTouchesMoney({ receiptReference: "MO-42" })).toBe(false);
+    expect(correctionTouchesMoney({ depositState: "deposited" })).toBe(false);
+    // Deposit amount moves no charge or credit balance by design.
+    expect(correctionTouchesMoney({ depositAmountCents: 50000 })).toBe(false);
     expect(correctionTouchesMoney({})).toBe(false);
     expect(correctionTouchesMoney(null)).toBe(false);
   });
@@ -128,6 +133,202 @@ describe("validatePaymentCorrection", () => {
     const result = validatePaymentCorrection({ paymentMethod: "bitcoin", reason: "x" }, offlinePayment());
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/cash or cashier's check/i);
+  });
+
+  it("accepts a deposit-state change on an offline payment without touching money", () => {
+    const result = validatePaymentCorrection({ depositState: "deposited", reason: "bank run" }, offlinePayment());
+    expect(result.valid).toBe(true);
+    expect(result.value.changes.depositState).toBe("deposited");
+    expect(correctionTouchesMoney(result.value.changes)).toBe(false);
+  });
+
+  it("rejects invalid deposit states and deposit-state changes on provider or refunded payments", () => {
+    expect(validatePaymentCorrection({ depositState: "lost", reason: "x" }, offlinePayment()).valid).toBe(false);
+    const stripe = offlinePayment({ provider: "stripe", payment_method: "ach" });
+    expect(validatePaymentCorrection({ depositState: "deposited", reason: "x" }, stripe).valid).toBe(false);
+    const refunded = offlinePayment({ refunded_amount_cents: 160000 });
+    const result = validatePaymentCorrection({ depositState: "deposited", reason: "x" }, refunded);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/refund/i);
+  });
+
+  it("accepts a charge move on an offline payment as a money-touching change", () => {
+    const result = validatePaymentCorrection({ chargeId: "rent_charge_2", reason: "wrong month" }, offlinePayment());
+    expect(result.valid).toBe(true);
+    expect(result.value.changes.chargeId).toBe("rent_charge_2");
+    expect(correctionTouchesMoney(result.value.changes)).toBe(true);
+  });
+
+  it("rejects charge moves on provider or refunded payments and empty targets", () => {
+    const stripe = offlinePayment({ provider: "stripe", payment_method: "ach" });
+    expect(validatePaymentCorrection({ chargeId: "rent_charge_2", reason: "x" }, stripe).valid).toBe(false);
+    const refunded = offlinePayment({ refunded_amount_cents: 160000 });
+    const result = validatePaymentCorrection({ chargeId: "rent_charge_2", reason: "x" }, refunded);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/refund/i);
+    expect(validatePaymentCorrection({ chargeId: "   ", reason: "x" }, offlinePayment()).valid).toBe(false);
+  });
+
+  it("accepts a deposit amount on an offline payment without touching money", () => {
+    const result = validatePaymentCorrection({ depositAmountCents: 50000, reason: "part deposit" }, offlinePayment());
+    expect(result.valid).toBe(true);
+    expect(result.value.changes.depositAmountCents).toBe(50000);
+    expect(correctionTouchesMoney(result.value.changes)).toBe(false);
+    const zeroed = validatePaymentCorrection({ depositAmountCents: 0, reason: "not deposit" }, offlinePayment());
+    expect(zeroed.valid).toBe(true);
+    expect(zeroed.value.changes.depositAmountCents).toBe(0);
+  });
+
+  it("rejects negative deposit amounts and deposit amounts above the payment amount", () => {
+    expect(validatePaymentCorrection({ depositAmountCents: -100, reason: "x" }, offlinePayment()).valid).toBe(false);
+    const over = validatePaymentCorrection({ depositAmountCents: 160001, reason: "x" }, offlinePayment());
+    expect(over.valid).toBe(false);
+    expect(over.errors[0]).toMatch(/cannot exceed the payment amount/i);
+  });
+
+  it("rejects shrinking the amount below the recorded deposit amount", () => {
+    const withDeposit = offlinePayment({ deposit_amount_cents: 50000 });
+    const result = validatePaymentCorrection({ amountCents: 40000, reason: "x" }, withDeposit);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/cannot exceed the payment amount/i);
+    // Growing the deposit and the amount together stays consistent.
+    const grown = validatePaymentCorrection(
+      { amountCents: 200000, depositAmountCents: 60000, reason: "x" },
+      withDeposit
+    );
+    expect(grown.valid).toBe(true);
+  });
+
+  it("blocks deposit amounts on provider or refunded payments", () => {
+    const stripe = offlinePayment({ provider: "stripe", payment_method: "ach" });
+    expect(validatePaymentCorrection({ depositAmountCents: 50000, reason: "x" }, stripe).valid).toBe(false);
+    const refunded = offlinePayment({ refunded_amount_cents: 160000 });
+    const result = validatePaymentCorrection({ depositAmountCents: 50000, reason: "x" }, refunded);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/refund/i);
+  });
+});
+
+describe("computeChargeMoveCorrection", () => {
+  const oldCharge = {
+    id: "rent_charge_1", lease_id: "lease_1", amount_cents: 160000,
+    paid_amount_cents: 160000, status: "paid", due_date: "2026-09-01",
+  };
+  const newCharge = {
+    id: "rent_charge_2", lease_id: "lease_1", amount_cents: 160000,
+    paid_amount_cents: 0, status: "due", due_date: "2026-10-01",
+  };
+
+  it("moves a payment cleanly: old charge unpaid, new charge paid", () => {
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge, oldAmountCents: 160000, newAmountCents: 160000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      oldAppliedCents: 160000,
+      newAppliedCents: 160000,
+      oldChargeNewPaidCents: 0,
+      oldChargeNewStatus: "due",
+      newChargeNewPaidCents: 160000,
+      newChargeNewStatus: "paid",
+      newExcessCents: 0,
+      creditAction: "none",
+      balanceDeltaCents: 0,
+    });
+  });
+
+  it("leaves other contributions on the old charge untouched", () => {
+    // $1,600 charge paid in full: $1,400 from this $1,500 payment ($100
+    // excess became credit) plus $200 from another payment. Moving the
+    // $1,500 payment to a $1,600 open charge unapplies only its $1,400.
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge, oldAmountCents: 150000, newAmountCents: 150000,
+      creditAmountCents: 10000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      oldAppliedCents: 140000,
+      oldChargeNewPaidCents: 20000,
+      oldChargeNewStatus: "partially_paid",
+      newChargeNewPaidCents: 150000,
+      newChargeNewStatus: "partially_paid",
+      newExcessCents: 0,
+      creditAction: "void",
+    });
+  });
+
+  it("grows the credit when the new charge is smaller than the payment", () => {
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge: { ...newCharge, amount_cents: 150000 },
+      oldAmountCents: 180000, newAmountCents: 180000, creditAmountCents: 20000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      oldAppliedCents: 160000,
+      newAppliedCents: 150000,
+      newExcessCents: 30000,
+      creditAction: "adjust",
+      balanceDeltaCents: -10000,
+    });
+  });
+
+  it("creates a credit when the move overpays the new charge", () => {
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge: { ...newCharge, amount_cents: 100000 },
+      oldAmountCents: 160000, newAmountCents: 160000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      newAppliedCents: 100000,
+      newExcessCents: 60000,
+      creditAction: "create",
+      balanceDeltaCents: -60000,
+    });
+  });
+
+  it("voids the credit when the new charge absorbs the full payment", () => {
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge: { ...newCharge, amount_cents: 200000 },
+      oldAmountCents: 180000, newAmountCents: 180000, creditAmountCents: 20000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      newAppliedCents: 180000,
+      newExcessCents: 0,
+      creditAction: "void",
+      newChargeNewStatus: "partially_paid",
+    });
+  });
+
+  it("marks a fully unpaid old charge scheduled when its due date is in the future", () => {
+    const result = computeChargeMoveCorrection({
+      oldCharge: { ...oldCharge, due_date: "2099-01-01" },
+      newCharge, oldAmountCents: 160000, newAmountCents: 160000,
+    });
+    expect(result).toMatchObject({ ok: true, oldChargeNewStatus: "scheduled" });
+  });
+
+  it("blocks when partially applied credit cannot be covered by the new excess", () => {
+    // $200 credit, $150 already applied; the new $1,700 charge leaves $100 excess.
+    const result = computeChargeMoveCorrection({
+      oldCharge, newCharge: { ...newCharge, amount_cents: 170000 },
+      oldAmountCents: 180000, newAmountCents: 180000,
+      creditAmountCents: 20000, appliedCreditCents: 15000,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("CREDIT_APPLICATIONS_APPLIED");
+    expect(result.reason).toMatch(/already been applied/i);
+  });
+
+  it("refuses voided, paid, cross-lease, and missing charge targets", () => {
+    const base = { oldCharge, newCharge, oldAmountCents: 160000, newAmountCents: 160000 };
+    expect(computeChargeMoveCorrection({ ...base, oldCharge: { ...oldCharge, status: "void" } }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, newCharge: { ...newCharge, status: "void" } }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, newCharge: { ...newCharge, status: "paid" } }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, newCharge: { ...newCharge, lease_id: "lease_2" } }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, oldCharge: null }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, newCharge: null }).ok).toBe(false);
+    expect(computeChargeMoveCorrection({ ...base, newAmountCents: 0 }).ok).toBe(false);
   });
 });
 
@@ -405,6 +606,28 @@ describe("serializePaymentCorrection", () => {
       changes: [
         { field: "amount_cents", label: "Amount", from: 160000, to: 150000 },
         { field: "notes", label: "Notes", from: "a", to: "b" },
+      ],
+    });
+  });
+
+  it("labels deposit-state and charge changes for the history view", () => {
+    const row = {
+      id: "corr_2",
+      payment_id: "rental_payment_1",
+      corrected_at: "2026-10-02T00:00:00Z",
+      corrected_by: "user_1",
+      reason: "wrong month",
+      changes: {
+        deposit_state: { from: "received", to: "deposited" },
+        charge_id: { from: "rent_charge_1", to: "rent_charge_2" },
+      },
+      balance_delta_cents: 0,
+      reconciled_warning: false,
+    };
+    expect(serializePaymentCorrection(row)).toMatchObject({
+      changes: [
+        { field: "deposit_state", label: "Deposit state", from: "received", to: "deposited" },
+        { field: "charge_id", label: "Applies to charge", from: "rent_charge_1", to: "rent_charge_2" },
       ],
     });
   });
