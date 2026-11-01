@@ -170,4 +170,43 @@ describe("POST /api/rental/tenant-payments/[id]/correct", () => {
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/credit applications/i);
   });
+
+  it("passes deposit-state and charge-move changes through to the RPC", async () => {
+    const client = clientFor();
+    authAs(client);
+    const response = await post({ depositState: "deposited", chargeId: "rent_charge_2", reason: "bank run + wrong month" });
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("correct_rental_payment", expect.objectContaining({
+      p_owner_id: "owner_1",
+      p_payment_id: "rental_payment_1",
+      p_changes: { depositState: "deposited", chargeId: "rent_charge_2" },
+      p_reason: "bank run + wrong month",
+    }));
+  });
+
+  it("blocks deposit-state and charge moves on provider-settled payments", async () => {
+    const client = clientFor({ paymentRow: { ...payment, provider: "stripe", payment_method: "ach" } });
+    authAs(client);
+    const deposit = await post({ depositState: "deposited", reason: "x" });
+    expect(deposit.status).toBe(400);
+    const move = await post({ chargeId: "rent_charge_2", reason: "x" });
+    expect(move.status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("passes deposit amounts through to the RPC and refuses amounts below the recorded deposit", async () => {
+    const client = clientFor();
+    authAs(client);
+    const response = await post({ depositAmountCents: 50000, reason: "part deposit" });
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("correct_rental_payment", expect.objectContaining({
+      p_changes: { depositAmountCents: 50000 },
+    }));
+    const withDeposit = clientFor({ paymentRow: { ...payment, deposit_amount_cents: 50000 } });
+    authAs(withDeposit);
+    const shrunk = await post({ amountCents: 40000, reason: "x" });
+    expect(shrunk.status).toBe(400);
+    expect((await shrunk.json()).error).toMatch(/cannot exceed the payment amount/i);
+    expect(withDeposit.rpc).not.toHaveBeenCalled();
+  });
 });

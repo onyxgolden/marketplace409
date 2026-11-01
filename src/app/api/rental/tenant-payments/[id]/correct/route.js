@@ -27,7 +27,7 @@ async function requireOwnerOrCoOwner(authenticated) {
 }
 
 const PAYMENT_COLUMNS =
-  "id, charge_id, lease_id, tenant_id, provider, payment_method, amount_cents, refunded_amount_cents, currency_code, status, received_at, succeeded_at, created_at, receipt_reference, notes, recorded_by";
+  "id, charge_id, lease_id, tenant_id, provider, payment_method, amount_cents, refunded_amount_cents, currency_code, status, received_at, succeeded_at, created_at, receipt_reference, notes, recorded_by, deposit_amount_cents";
 
 async function findOwnedPayment(supabaseClient, ownerId, paymentId) {
   const { data, error } = await supabaseClient
