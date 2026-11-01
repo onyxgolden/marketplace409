@@ -94,6 +94,16 @@ export default function Tax1099Panel({ initialTab = "summary" }) {
   const [previewId, setPreviewId] = useState("");
   const [entryForm, setEntryForm] = useState(null);
   const [exportResult, setExportResult] = useState(null);
+  // Controls-sweep follow-up G17: manual entries used to be visible only
+  // inside aggregated totals. The entries list below (recipients tab) shows
+  // every entry for the year with per-entry void/correct. There is no
+  // in-place edit endpoint by design — tax records are reversal-friendly,
+  // so "correct" voids the original (with a reason) and opens the entry
+  // form prefilled, and saving posts the replacement.
+  const [entries, setEntries] = useState([]);
+  const [voidTarget, setVoidTarget] = useState(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [voidBusy, setVoidBusy] = useState(false);
 
   // R23 attribution-race isolation. Every property-link load captures a
   // request id; only the latest request may write into the open editor, and
@@ -143,13 +153,14 @@ export default function Tax1099Panel({ initialTab = "summary" }) {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [summaryBody, recipientsBody, vendorsBody, payerBody, efileBody, rentalBody] = await Promise.all([
+      const [summaryBody, recipientsBody, vendorsBody, payerBody, efileBody, rentalBody, entriesBody] = await Promise.all([
         readJson(await fetch(`/api/rental/1099/summary?taxYear=${encodeURIComponent(taxYear)}`)),
         readJson(await fetch("/api/rental/1099/recipients")),
         readJson(await fetch("/api/rental/vendors")),
         readJson(await fetch(`/api/rental/1099/payer-profile?taxYear=${encodeURIComponent(taxYear)}`)),
         readJson(await fetch("/api/rental/1099/efile-status")),
         readJson(await fetch("/api/rental")).catch(() => ({ units: [] })),
+        readJson(await fetch(`/api/rental/1099/payment-entries?taxYear=${encodeURIComponent(taxYear)}`)).catch(() => ({ entries: [] })),
       ]);
       setSummary(summaryBody);
       setRecipients(recipientsBody.recipients || []);
@@ -157,6 +168,7 @@ export default function Tax1099Panel({ initialTab = "summary" }) {
       // Property attribution picker: link key is the unit's property_id slug
       // (matches financial_events.property_id for gross-rent aggregation).
       setProperties((rentalBody.units || []).filter((unit) => unit.status !== "archived"));
+      setEntries(entriesBody.entries || []);
       setPayer(payerBody.profile);
       if (payerBody.profile) {
         const profile = payerBody.profile;
@@ -294,6 +306,40 @@ export default function Tax1099Panel({ initialTab = "summary" }) {
       await load();
     } catch (reason) { setError(reason.message); }
     finally { setBusy(false); }
+  }
+
+  // G17: void (and correct-via-void) for one entry. Correcting voids the
+  // original with the typed reason, then opens the entry form prefilled —
+  // saving posts the replacement as a new entry. Cancelling the form leaves
+  // the original voided, with its reason on record.
+  async function confirmVoidEntry() {
+    if (!voidTarget) return;
+    if (!voidReason.trim()) { setError("A void reason is required."); return; }
+    setVoidBusy(true); setError(""); setMessage("");
+    try {
+      await readJson(await fetch(`/api/rental/1099/payment-entries/${encodeURIComponent(voidTarget.entry.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "voided", voidReason: voidReason.trim() }),
+      }));
+      const corrected = voidTarget.mode === "correct";
+      const entry = voidTarget.entry;
+      setVoidTarget(null);
+      setVoidReason("");
+      if (corrected) {
+        setEntryForm({
+          recipientId: entry.recipient_id,
+          paymentDate: entry.payment_date,
+          amountDollars: (Number(entry.amount_cents || 0) / 100).toFixed(2),
+          memo: entry.memo || "",
+        });
+        setMessage("Original entry voided — save the corrected entry below, or Cancel to leave it voided.");
+      } else {
+        setMessage("Distribution entry voided.");
+      }
+      await load();
+    } catch (reason) { setError(reason.message); }
+    finally { setVoidBusy(false); }
   }
 
   async function transitionStatus(recipientId, toStatus) {
@@ -656,6 +702,81 @@ export default function Tax1099Panel({ initialTab = "summary" }) {
                 {recipients.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-slate-500">No recipients yet.</td></tr>}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-8" data-1099-entries>
+            <h3 className="font-bold">Owner distribution entries — {taxYear} ({entries.length})</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Every manual entry for this year. A mistyped entry is corrected by voiding it with a reason and
+              posting the replacement — entries are never rewritten in place.
+            </p>
+            {voidTarget && (
+              <div className="mt-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                <p className="text-sm font-semibold">
+                  {voidTarget.mode === "correct" ? "Correct this entry?" : "Void this entry?"}{" "}
+                  {formatMoney(voidTarget.entry.amount_cents)} · {voidTarget.entry.payment_date}
+                  {voidTarget.mode === "correct" && " — voiding opens the entry form prefilled so you can save the replacement."}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <input value={voidReason} onChange={(event) => setVoidReason(event.target.value)}
+                    placeholder={voidTarget.mode === "correct" ? "Reason for correction" : "Reason for voiding"}
+                    className="min-w-64 flex-1 rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+                  <button type="button" onClick={confirmVoidEntry} disabled={voidBusy}
+                    className="rounded-lg bg-red-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                    {voidBusy ? "Saving…" : voidTarget.mode === "correct" ? "Void & correct" : "Confirm void"}
+                  </button>
+                  <button type="button" onClick={() => { setVoidTarget(null); setVoidReason(""); }}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600">
+                    Keep it
+                  </button>
+                </div>
+              </div>
+            )}
+            {entries.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">No distribution entries for {taxYear} yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase text-slate-500">
+                      <th className="p-2">Date</th><th className="p-2">Recipient</th><th className="p-2">Amount</th>
+                      <th className="p-2">Memo</th><th className="p-2">Status</th><th className="p-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((entry) => {
+                      const recipient = recipients.find((item) => item.id === entry.recipient_id);
+                      const isVoided = entry.status === "voided";
+                      return (
+                        <tr key={entry.id} className="border-t border-slate-200 dark:border-slate-700">
+                          <td className="p-2 whitespace-nowrap">{entry.payment_date}</td>
+                          <td className="p-2 font-semibold">{recipient?.displayName || entry.recipient_id}</td>
+                          <td className="p-2">{formatMoney(entry.amount_cents)}</td>
+                          <td className="p-2">{entry.memo || "—"}</td>
+                          <td className="p-2 text-xs">
+                            {isVoided ? (
+                              <span className="font-semibold text-slate-400 line-through">Voided{entry.void_reason ? ` · ${entry.void_reason}` : ""}</span>
+                            ) : (
+                              <span className="font-semibold text-emerald-700 dark:text-emerald-300">Active</span>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            {!isVoided && (
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => { setVoidTarget({ entry, mode: "correct" }); setVoidReason(""); }}
+                                  className="text-xs underline">Correct</button>
+                                <button type="button" onClick={() => { setVoidTarget({ entry, mode: "void" }); setVoidReason(""); }}
+                                  className="text-xs text-red-600 underline dark:text-red-400">Void</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
