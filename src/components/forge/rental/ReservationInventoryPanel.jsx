@@ -11,11 +11,13 @@ async function fetchReservationInventory() {
   const response = await fetch("/api/rental/reservations/inventory");
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Unable to load reservation inventory.");
-  return { units: payload.units || [], inventory: payload.inventory || [] };
+  return { units: payload.units || [], inventory: payload.inventory || [], ratePlans: payload.ratePlans || [] };
 }
 
 export default function ReservationInventoryPanel() {
   const [form, setForm] = useState(INITIAL);
+  const [editingUnitId, setEditingUnitId] = useState(null);
+  const [savedMessage, setSavedMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
@@ -27,12 +29,52 @@ export default function ReservationInventoryPanel() {
   const configured = useMemo(() => new Set(inventoryItems.map((item) => item.unit_id)), [inventoryItems]);
   const units = (data?.units || []).filter((unit) => !configured.has(unit.id) || unit.id === form.unitId);
   function update(name, value) { setForm((current) => ({ ...current, [name]: value })); }
+  // Controls-sweep B6: edit a configured space (rate, name, status) — the form
+  // prefills from the list item, including already-configured units, and the
+  // booking-status control drives the existing save-inventory upsert, so a
+  // draft space can be switched on (and an active one back to draft) here.
+  function editItem(item) {
+    const baseRate = (data?.ratePlans || []).find((plan) => plan.unit_id === item.unit_id && plan.label === "Base nightly rate");
+    setEditingUnitId(item.unit_id);
+    setSavedMessage("");
+    setSaveError("");
+    setForm({
+      ...INITIAL,
+      unitId: item.unit_id,
+      inventoryType: item.inventory_type || "rv_site",
+      publicName: item.public_name || "",
+      maximumGuests: String(item.maximum_guests ?? 4),
+      minimumNights: String(item.minimum_nights ?? 1),
+      maximumNights: item.maximum_nights == null ? "" : String(item.maximum_nights),
+      turnoverBufferHours: String(item.turnover_buffer_hours ?? 0),
+      amenities: (item.amenities || []).join(", "),
+      bookingStatus: item.booking_status || "draft",
+      nightlyRate: baseRate ? (Number(baseRate.amount_cents) / 100).toFixed(2) : "",
+      cleaningFee: (Number(item.cleaning_fee_cents || 0) / 100).toFixed(2),
+      securityDeposit: (Number(item.security_deposit_cents || 0) / 100).toFixed(2),
+      lodgingTaxPercent: (Number(item.lodging_tax_basis_points || 0) / 100).toFixed(2),
+      publicGuestAgreement: item.public_guest_agreement || INITIAL.publicGuestAgreement,
+      publicArrivalInstructions: item.public_arrival_instructions || "",
+      publicAccessReleaseHours: String(item.public_access_release_hours ?? 24),
+    });
+  }
+  function cancelEdit() { setEditingUnitId(null); setForm(INITIAL); }
   async function save(event) {
     event.preventDefault(); setSaving(true); setSaveError(""); setSavedMessage("");
     try {
       const inventory = { ...form, maximumGuests: Number(form.maximumGuests), minimumNights: Number(form.minimumNights), maximumNights: form.maximumNights ? Number(form.maximumNights) : null, turnoverBufferHours: Number(form.turnoverBufferHours), publicAccessReleaseHours: Number(form.publicAccessReleaseHours), amenities: form.amenities.split(",").map((item) => item.trim()).filter(Boolean), nightlyRateCents: Math.round(Number(form.nightlyRate) * 100), cleaningFeeCents: Math.round(Number(form.cleaningFee) * 100), securityDepositCents: Math.round(Number(form.securityDeposit) * 100), lodgingTaxBasisPoints: Math.round(Number(form.lodgingTaxPercent) * 100) };
       const response = await fetch("/api/rental/reservations/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation: "save-inventory", inventory }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to save reservation inventory."); const savedName = form.publicName; setForm(INITIAL); setSavedMessage(`✓ Reservation inventory saved for ${savedName}.`); await refresh();
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to save reservation inventory.");
+      // Create-save keeps the sweep's confirmation; edit-save keeps the branch's
+      // booking-status confirmation — the two tests assert different strings for
+      // the two modes, and editingUnitId distinguishes them.
+      if (editingUnitId) {
+        setSavedMessage(`✓ Inventory saved: ${form.publicName} — booking ${form.bookingStatus}.`);
+        setEditingUnitId(null);
+      } else {
+        setSavedMessage(`✓ Reservation inventory saved for ${form.publicName}.`);
+      }
+      setForm(INITIAL); await refresh();
     } catch (error) { setSaveError(error.message); } finally { setSaving(false); }
   }
   return <section aria-label="RV and short-term rental inventory" className="space-y-5">
@@ -42,11 +84,14 @@ export default function ReservationInventoryPanel() {
     <ReservationInventoryBulkImport onImported={refresh}/>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">Reservable inventory</h3>
-        {!data && isLoading ? <ForgeLoadingState label="Loading reservation inventory…" /> : !data && loadError ? <ForgeErrorState title="Unable to load reservation inventory." detail={loadError} onRetry={refresh} /> : inventoryItems.length === 0 ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">No RV or short-term rental inventory configured yet.</p> : <ul className="mt-3 space-y-3">{inventoryItems.map((item) => <li key={item.unit_id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="flex items-start justify-between gap-3"><div><p className="font-black">{item.public_name}</p><p className="text-sm text-slate-600 dark:text-slate-300">{TYPE_LABELS[item.inventory_type]} · up to {item.maximum_guests} guests · {item.minimum_nights} night minimum</p>{item.booking_status === "active" && item.public_booking_slug && <a className="mt-2 inline-block text-sm font-black text-sky-700 underline dark:text-sky-400" href={`/book/${item.public_booking_slug}`} target="_blank" rel="noreferrer">Open guest booking page</a>}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black uppercase dark:bg-slate-800">{item.booking_status}</span></div></li>)}</ul>}
+        {!data && isLoading ? <ForgeLoadingState label="Loading reservation inventory…" /> : !data && loadError ? <ForgeErrorState title="Unable to load reservation inventory." detail={loadError} onRetry={refresh} /> : inventoryItems.length === 0 ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">No RV or short-term rental inventory configured yet.</p> : <ul className="mt-3 space-y-3">{inventoryItems.map((item) => <li key={item.unit_id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="flex items-start justify-between gap-3"><div><p className="font-black">{item.public_name}</p><p className="text-sm text-slate-600 dark:text-slate-300">{TYPE_LABELS[item.inventory_type]} · up to {item.maximum_guests} guests · {item.minimum_nights} night minimum</p>{item.booking_status === "active" && item.public_booking_slug && <a className="mt-2 inline-block text-sm font-black text-sky-700 underline dark:text-sky-400" href={`/book/${item.public_booking_slug}`} target="_blank" rel="noreferrer">Open guest booking page</a>}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black uppercase dark:bg-slate-800">{item.booking_status}</span></div><div className="mt-3 print:hidden"><button type="button" onClick={() => editItem(item)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-700 dark:border-slate-600 dark:text-slate-300">Edit</button></div></li>)}</ul>}
         {data && (isRefreshing || loadError) ? <p role="status" className="mt-3 text-xs font-bold text-slate-400">{loadError ? "Could not refresh — showing the last saved inventory." : "Updating…"}</p> : null}
       </div>
-      <form onSubmit={save} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">Configure a space</h3>
-        <label className="block text-sm font-bold">Rental Manager property/unit<select required value={form.unitId} onChange={(e)=>update("unitId",e.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"><option value="">Select inventory</option>{units.map((unit)=><option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+      <form onSubmit={save} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">{editingUnitId ? "Edit space" : "Configure a space"}</h3>
+        {savedMessage && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-black text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{savedMessage}</p>}
+        <label className="block text-sm font-bold">Rental Manager property/unit<select required disabled={!!editingUnitId} value={form.unitId} onChange={(e)=>update("unitId",e.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 disabled:opacity-50"><option value="">Select inventory</option>{units.map((unit)=><option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+        {editingUnitId ? <p className="text-xs font-bold text-slate-500 dark:text-slate-400">The unit cannot change while editing — cancel to configure another space.</p> : null}
+        <label className="block text-sm font-bold">Booking status<select value={form.bookingStatus} onChange={(e)=>update("bookingStatus",e.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"><option value="draft">Draft — not bookable</option><option value="active">Active — bookable</option></select></label>
         <label className="block text-sm font-bold">Space type<select value={form.inventoryType} onChange={(e)=>update("inventoryType",e.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100">{Object.entries(TYPE_LABELS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
         <label className="block text-sm font-bold">Public name<input required value={form.publicName} onChange={(e)=>update("publicName",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label>
         <div className="grid grid-cols-2 gap-3"><label className="text-sm font-bold">Maximum guests<input type="number" min="1" required value={form.maximumGuests} onChange={(e)=>update("maximumGuests",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label><label className="text-sm font-bold">Minimum nights<input type="number" min="1" required value={form.minimumNights} onChange={(e)=>update("minimumNights",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label></div>
@@ -58,6 +103,7 @@ export default function ReservationInventoryPanel() {
         <div className="grid grid-cols-2 gap-3"><label className="text-sm font-bold">Nightly rate ($)<input type="number" min="0.01" step="0.01" required value={form.nightlyRate} onChange={(e)=>update("nightlyRate",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label><label className="text-sm font-bold">Cleaning fee ($)<input type="number" min="0" step="0.01" value={form.cleaningFee} onChange={(e)=>update("cleaningFee",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label></div>
         <div className="grid grid-cols-2 gap-3"><label className="text-sm font-bold">Security deposit ($)<input type="number" min="0" step="0.01" value={form.securityDeposit} onChange={(e)=>update("securityDeposit",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label><label className="text-sm font-bold">Lodging tax (%)<input type="number" min="0" max="100" step="0.01" value={form.lodgingTaxPercent} onChange={(e)=>update("lodgingTaxPercent",e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:border-slate-600 dark:bg-slate-950" /></label></div>
         <button disabled={saving} className="w-full rounded-lg bg-slate-950 px-4 py-2 font-black text-white disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950">{saving ? "Saving…" : "Save reservation inventory"}</button>
+        {editingUnitId ? <button type="button" onClick={cancelEdit} className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Cancel edit</button> : null}
       </form>
     </div>
   </section>;
