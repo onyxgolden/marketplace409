@@ -238,3 +238,92 @@ describe("refund-payment (controls sweep B2)", () => {
     expect((await post({ operation: "refund-payment", paymentId: "pay_nope", ownerConfirmed: true })).status).toBe(404);
   });
 });
+
+function autopayClient(script) {
+  const calls = [];
+  function query(table) {
+    const q = {
+      table,
+      _updated: false,
+      select() { return q; },
+      eq() { return q; },
+      in() { return q; },
+      update(values) { calls.push({ table, values }); q._updated = true; return q; },
+      async maybeSingle() {
+        if (table === "rental_autopay_enrollments" && !q._updated) return { data: script.enrollment ?? null, error: null };
+        if (table === "rental_autopay_enrollments" && q._updated) return { data: script.enrollmentUpdate ?? null, error: null };
+        return { data: null, error: null };
+      },
+    };
+    return q;
+  }
+  return { calls, client: { from: (table) => query(table), rpc: async () => ({ data: null, error: null }) } };
+}
+
+function authForAutopay(script) {
+  const { calls, client } = autopayClient(script);
+  mockedAuth.current = {
+    application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+  };
+  return calls;
+}
+
+const activeEnrollment = { id: "enr_1", lease_id: "lease_1", tenant_id: "tenant_1", status: "active", payment_method_type: "us_bank_account", charge_day: 1, reminder_days_before: 3 };
+
+describe("autopay controls (controls sweep B3)", () => {
+  it("pauses an active enrollment and resumes a paused one (round-trip)", async () => {
+    let calls = authForAutopay({ enrollment: activeEnrollment, enrollmentUpdate: { ...activeEnrollment, status: "paused" } });
+    let response = await post({ operation: "pause-autopay", enrollmentId: "enr_1" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).enrollment.status).toBe("paused");
+    expect(calls.find((call) => call.table === "rental_autopay_enrollments").values.status).toBe("paused");
+
+    calls = authForAutopay({ enrollment: { ...activeEnrollment, status: "paused" }, enrollmentUpdate: { ...activeEnrollment, status: "active" } });
+    response = await post({ operation: "resume-autopay", enrollmentId: "enr_1" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).enrollment.status).toBe("active");
+  });
+
+  it("refuses pause on a paused enrollment and resume on an active one", async () => {
+    authForAutopay({ enrollment: { ...activeEnrollment, status: "paused" } });
+    expect((await post({ operation: "pause-autopay", enrollmentId: "enr_1" })).status).toBe(409);
+    authForAutopay({ enrollment: activeEnrollment });
+    expect((await post({ operation: "resume-autopay", enrollmentId: "enr_1" })).status).toBe(409);
+  });
+
+  it("cancels a current enrollment with reason and confirmation", async () => {
+    const calls = authForAutopay({ enrollment: activeEnrollment, enrollmentUpdate: { ...activeEnrollment, status: "cancelled" } });
+    const response = await post({ operation: "cancel-autopay", enrollmentId: "enr_1", reason: "Tenant moved out", ownerConfirmed: true });
+    expect(response.status).toBe(200);
+    expect((await response.json()).enrollment.status).toBe("cancelled");
+    const update = calls.find((call) => call.table === "rental_autopay_enrollments");
+    expect(update.values.status).toBe("cancelled");
+    expect(update.values.cancellation_reason).toBe("Tenant moved out");
+  });
+
+  it("refuses cancel without reason or confirmation, and on an already cancelled enrollment", async () => {
+    authForAutopay({ enrollment: activeEnrollment });
+    expect((await post({ operation: "cancel-autopay", enrollmentId: "enr_1", ownerConfirmed: true })).status).toBe(400);
+    expect((await post({ operation: "cancel-autopay", enrollmentId: "enr_1", reason: "x" })).status).toBe(400);
+    authForAutopay({ enrollment: { ...activeEnrollment, status: "cancelled" } });
+    expect((await post({ operation: "cancel-autopay", enrollmentId: "enr_1", reason: "x", ownerConfirmed: true })).status).toBe(409);
+  });
+
+  it("edits charge day and reminder days, and rejects out-of-range values", async () => {
+    const calls = authForAutopay({ enrollment: activeEnrollment, enrollmentUpdate: { ...activeEnrollment, charge_day: 15, reminder_days_before: 5 } });
+    const response = await post({ operation: "update-autopay", enrollmentId: "enr_1", chargeDay: 15, reminderDaysBefore: 5 });
+    expect(response.status).toBe(200);
+    const update = calls.find((call) => call.table === "rental_autopay_enrollments");
+    expect(update.values.charge_day).toBe(15);
+    expect(update.values.reminder_days_before).toBe(5);
+    authForAutopay({ enrollment: activeEnrollment });
+    expect((await post({ operation: "update-autopay", enrollmentId: "enr_1", chargeDay: 29, reminderDaysBefore: 3 })).status).toBe(400);
+    expect((await post({ operation: "update-autopay", enrollmentId: "enr_1", chargeDay: 1, reminderDaysBefore: 15 })).status).toBe(400);
+  });
+
+  it("returns 404 for a missing enrollment", async () => {
+    authForAutopay({ enrollment: null });
+    expect((await post({ operation: "pause-autopay", enrollmentId: "enr_nope" })).status).toBe(404);
+    expect((await post({ operation: "update-autopay", enrollmentId: "enr_nope", chargeDay: 1, reminderDaysBefore: 3 })).status).toBe(404);
+  });
+});
