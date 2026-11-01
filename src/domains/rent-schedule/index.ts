@@ -5,3 +5,5 @@ export { InMemoryRentScheduleRepository, mapRentScheduleRow, mapRentScheduleToRo
 export type { RentScheduleContext, RentScheduleRepository, RentScheduleRow } from "./rent-schedule.persistence";
 export { paymentFrequencyOf, periodsPerYear, frequencyStepDays, paymentAnchorDate, periodAmountCents,
   occurrenceIndexForDueDate, dueDatesInWindow, nextPaymentDueDate, describePaymentFrequency } from "./payment-frequency";
+export { rentBreakdown, rentBreakdownText } from "./rent-breakdown";
+export type { RentBreakdownInput } from "./rent-breakdown";

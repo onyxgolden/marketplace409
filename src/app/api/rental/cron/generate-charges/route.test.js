@@ -8,7 +8,7 @@ import { GET } from "./route.js";
 function request(headers = {}) { return new Request("https://test/api", { headers }); }
 
 function chain(result) {
-  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node), upsert: vi.fn(async () => result), then: (resolve) => resolve(result) };
+  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node), upsert: vi.fn(async () => result), maybeSingle: vi.fn(async () => result), then: (resolve) => resolve(result) };
   return node;
 }
 
@@ -16,14 +16,14 @@ function settingsChain(ownerIds) {
   return chain({ data: ownerIds.map((owner_id) => ({ owner_id })), error: null });
 }
 
-function db({ settings, schedules, charges, leases = chain({ data: [], error: null }) }) {
+function db({ settings, schedules, charges, leases = chain({ data: [], error: null }), rpc = vi.fn(async () => ({ data: { appliedCents: 0 }, error: null })) }) {
   const from = vi.fn((table) => {
     if (table === "rental_billing_settings") return settings;
     if (table === "rent_schedules") return schedules;
     if (table === "rental_leases") return leases;
     return charges;
   });
-  return { from };
+  return { from, rpc };
 }
 
 beforeEach(() => { process.env.CRON_SECRET = "cron-secret"; });
@@ -365,5 +365,78 @@ describe("reverse guard: existing rent-like charges block generation", () => {
     expect(body.processed).toBe(1);
     expect(body.skippedExistingRent).toBe(0);
     expect(charges.upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Overpayment-credit auto-apply: the cron calls the RPC only for freshly
+// inserted charges, never for a period a previous run already generated,
+// and a missing RPC (migration not yet applied) never fails generation.
+describe("overpayment credit auto-apply", () => {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const baseRow = (overrides = {}) => ({ owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1",
+    status: "active", amount_cents: 185000, currency_code: "USD", due_day: 1,
+    effective_start_date: "2020-01-01", effective_end_date: null,
+    created_at: "2020-01-01T00:00:00.000Z", updated_at: "2020-01-01T00:00:00.000Z",
+    collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+    early_pay_days: 0, ...overrides });
+  const runWith = ({ charges, rpc }) => {
+    const schedules = chain({ data: [baseRow()], error: null });
+    createRentalWebhookClient.mockReturnValue(
+      db({ settings: settingsChain(["owner_1"]), schedules, charges, rpc }));
+    return GET(request({ authorization: "Bearer cron-secret" })).then(async (response) =>
+      ({ response, body: await response.json(), charges }));
+  };
+
+  it("calls the auto-apply RPC for a newly generated charge and reports it", async () => {
+    const rpc = vi.fn(async () => ({ data: { appliedCents: 66613, applicationCount: 1 }, error: null }));
+    const { response, body, charges } = await runWith({ charges: chain({ data: null, error: null }), rpc });
+    expect(response.status).toBe(200);
+    expect(body.processed).toBe(1);
+    expect(body.creditsApplied).toBe(1);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("apply_overpayment_credits_to_charge",
+      { p_owner_id: "owner_1", p_charge_id: `rent_charge_schedule_1_${todayStr.slice(0, 7).replaceAll("-", "")}` });
+  });
+
+  it("skips auto-apply when the charge already exists from a previous run", async () => {
+    // Merged behavior: a live previous row is caught by the reverse guard
+    // before the upsert, so the RPC never runs and the charge is not
+    // re-generated. (The pre-check below covers the voided-row case, where
+    // the guard passes but the row still occupies the source key.)
+    const rpc = vi.fn(async () => ({ data: { appliedCents: 66613 }, error: null }));
+    const currentPeriod = new Date().toISOString().slice(0, 7);
+    const blockingRow = { lease_id: "lease_1", period: currentPeriod, charge_type: "rent", status: "due", voided_at: null };
+    const { response, body, charges } = await runWith({ charges: chain({ data: [blockingRow], error: null }), rpc });
+    expect(response.status).toBe(200);
+    expect(body.processed).toBe(0);
+    expect(body.skippedExistingRent).toBe(1);
+    expect(body.creditsApplied).toBe(0);
+    expect(charges.upsert).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("skips auto-apply when a voided row still occupies the source key", async () => {
+    // The guard passes voided rows, but the pre-check finds the row by
+    // source key, so the upsert no-ops and the RPC never runs.
+    const rpc = vi.fn(async () => ({ data: { appliedCents: 66613 }, error: null }));
+    const currentPeriod = new Date().toISOString().slice(0, 7);
+    const voidedRow = { lease_id: "lease_1", period: currentPeriod, charge_type: "rent", status: "void", voided_at: "2026-01-02T00:00:00.000Z" };
+    const { response, body, charges } = await runWith({ charges: chain({ data: [voidedRow], error: null }), rpc });
+    expect(response.status).toBe(200);
+    expect(body.processed).toBe(1);
+    expect(body.skippedExistingRent).toBe(0);
+    expect(body.creditsApplied).toBe(0);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("still generates the charge when the RPC is unavailable (migration not yet applied)", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "function does not exist" } }));
+    const { response, body } = await runWith({ charges: chain({ data: null, error: null }), rpc });
+    expect(response.status).toBe(200);
+    expect(body.processed).toBe(1);
+    expect(body.failed).toBe(0);
+    expect(body.creditsApplied).toBe(0);
   });
 });

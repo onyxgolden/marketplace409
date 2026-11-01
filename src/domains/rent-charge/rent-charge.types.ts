@@ -1,6 +1,13 @@
 export const RENT_CHARGE_STATUSES = ["scheduled", "due", "partially_paid", "paid", "overdue", "void"] as const;
 export type RentChargeStatus = typeof RENT_CHARGE_STATUSES[number];
 
+// Mirrors the rent_charges.charge_type CHECK constraint. Generated charges are
+// 'rent' except the prorated first period, which is 'proration' (the same type
+// the manual "Prorated rent" charge uses) so the portal, autopay, and any
+// rent-or-proration guard treat generated and hand-posted proration alike.
+export const RENT_CHARGE_TYPES = ["rent", "proration", "late_fee", "damage", "fee", "utility", "other"] as const;
+export type RentChargeType = typeof RENT_CHARGE_TYPES[number];
+
 export type RentCharge = Readonly<{
   id: string;
   leaseId: string;
@@ -21,6 +28,9 @@ export type RentCharge = Readonly<{
   updatedAt: string;
   voidedAt: string | null;
   notes: string | null;
+  // Optional on input — createRentCharge() defaults it to 'rent', so every
+  // existing caller that predates the field keeps producing rent charges.
+  chargeType?: RentChargeType;
 }>;
 
 function required(value: string, field: string): string {
@@ -55,7 +65,9 @@ export function createRentCharge(charge: RentCharge): RentCharge {
   if (charge.status === "partially_paid" && (charge.paidAmountCents === 0 || charge.paidAmountCents === charge.amountCents))
     throw new Error("Partially paid rent charges require a partial payment.");
   if (charge.status === "void" && charge.voidedAt === null) throw new Error("Void rent charges require voidedAt.");
-  return Object.freeze({ ...charge, id: required(charge.id, "an id"), leaseId: required(charge.leaseId, "a lease id"),
+  const chargeType = charge.chargeType ?? "rent";
+  if (!RENT_CHARGE_TYPES.includes(chargeType)) throw new Error("Rent charge requires a supported charge type.");
+  return Object.freeze({ ...charge, chargeType, id: required(charge.id, "an id"), leaseId: required(charge.leaseId, "a lease id"),
     scheduleId: charge.scheduleId === null ? null : required(charge.scheduleId, "a schedule id"), period: charge.period, dueDate: date(charge.dueDate, "dueDate"),
     currencyCode, sourceKey: required(charge.sourceKey, "a source key"), createdAt: timestamp(charge.createdAt, "createdAt"),
     updatedAt: timestamp(charge.updatedAt, "updatedAt"), voidedAt: charge.voidedAt === null ? null : timestamp(charge.voidedAt, "voidedAt"),

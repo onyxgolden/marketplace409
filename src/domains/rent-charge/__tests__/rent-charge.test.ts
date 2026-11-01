@@ -105,10 +105,17 @@ describe("RentCharge", () => {
       const august = generateRentCharge({ schedule: chargesFromAug1(), period: "2026-08", now: "2026-08-02T00:00:00.000Z" });
       expect(august?.dueDate).toBe("2026-08-01");
     });
-    it("still suppresses the move-in month's charge when its due date precedes the begin-charges date", () => {
+    // SUPERSEDED by first-period proration: the begin month no longer
+    // suppresses outright when the nominal due day precedes the begin date —
+    // it generates one prorated charge due on the begin date itself (Aug 28–31:
+    // $1,250 x 4/31 = $161.29). September still bills in full.
+    it("prorates the move-in month instead of suppressing it when the due day precedes the begin-charges date", () => {
       const chargesFromAug28 = schedule({ effectiveStartDate: "2026-08-28", beginChargesDate: "2026-08-28",
         forgeCutoverDate: "2026-08-01" });
-      expect(generateRentCharge({ schedule: chargesFromAug28, period: "2026-08", now: "2026-08-29T00:00:00.000Z" })).toBeNull();
+      const august = generateRentCharge({ schedule: chargesFromAug28, period: "2026-08", now: "2026-08-29T00:00:00.000Z" });
+      expect(august?.dueDate).toBe("2026-08-28");
+      expect(august?.amountCents).toBe(16129);
+      expect(august?.chargeType).toBe("proration");
       expect(generateRentCharge({ schedule: chargesFromAug28, period: "2026-09", now: "2026-09-01T00:00:00.000Z" })?.dueDate).toBe("2026-09-01");
     });
     it("keeps the move-in month eligible with no begin-charges date (pre-R10 fail-open)", () => {
@@ -119,6 +126,65 @@ describe("RentCharge", () => {
       const movedInSep = schedule({ effectiveStartDate: "2026-09-05", beginChargesDate: null, forgeCutoverDate: "2026-08-01" });
       expect(generateRentCharge({ schedule: movedInSep, period: "2026-08", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
       expect(generateRentCharge({ schedule: movedInSep, period: "2026-07", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
+    });
+  });
+
+  // First-period proration (standing rent rule): the begin month's charge
+  // covers only the occupied days, due on the begin-charges date itself.
+  describe("first-period proration", () => {
+    it("prorates the Barnhill begin month: $1,850 x 19/31 = $1,133.87 due Oct 13", () => {
+      const barnhill = schedule({ amountCents: 185000, beginChargesDate: "2026-10-13",
+        effectiveStartDate: "2026-10-13", forgeCutoverDate: "2026-10-13" });
+      const charge = generateRentCharge({ schedule: barnhill, period: "2026-10", now: "2026-10-13T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(113387);
+      expect(charge?.dueDate).toBe("2026-10-13");
+      expect(charge?.status).toBe("due");
+      expect(charge?.chargeType).toBe("proration");
+      expect(charge?.sourceKey).toBe("rent:schedule_1:2026-10");
+    });
+    it("bills the full month when charges begin on the 1st", () => {
+      const first = schedule({ amountCents: 185000, beginChargesDate: "2026-10-01",
+        effectiveStartDate: "2026-10-01", forgeCutoverDate: "2026-10-01" });
+      const charge = generateRentCharge({ schedule: first, period: "2026-10", now: "2026-10-01T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(185000);
+      expect(charge?.dueDate).toBe("2026-10-01");
+      expect(charge?.chargeType).toBe("rent");
+    });
+    it("prorates a 30-day month: $1,200 x 15/30 = $600", () => {
+      const mid = schedule({ amountCents: 120000, beginChargesDate: "2026-09-16",
+        effectiveStartDate: "2026-09-16", forgeCutoverDate: "2026-09-16" });
+      const charge = generateRentCharge({ schedule: mid, period: "2026-09", now: "2026-09-16T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(60000);
+      expect(charge?.dueDate).toBe("2026-09-16");
+      expect(charge?.chargeType).toBe("proration");
+    });
+    it("leaves later periods at the full monthly total", () => {
+      const barnhill = schedule({ amountCents: 185000, beginChargesDate: "2026-10-13",
+        effectiveStartDate: "2026-10-13", forgeCutoverDate: "2026-10-13" });
+      const charge = generateRentCharge({ schedule: barnhill, period: "2026-11", now: "2026-11-01T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(185000);
+      expect(charge?.dueDate).toBe("2026-11-01");
+      expect(charge?.chargeType).toBe("rent");
+    });
+    it("generates nothing for the begin month when the cutover is after it (no backfill)", () => {
+      const late = schedule({ amountCents: 185000, beginChargesDate: "2026-10-13",
+        effectiveStartDate: "2026-10-13", forgeCutoverDate: "2026-11-01" });
+      expect(generateRentCharge({ schedule: late, period: "2026-10", now: "2026-11-01T00:00:00.000Z" })).toBeNull();
+    });
+    it("keeps the begin month eligible with no begin-charges date (pre-R10 fail-open)", () => {
+      const noGate = schedule({ amountCents: 185000, beginChargesDate: null,
+        effectiveStartDate: "2026-10-01", forgeCutoverDate: "2026-10-01" });
+      const charge = generateRentCharge({ schedule: noGate, period: "2026-10", now: "2026-10-13T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(185000);
+      expect(charge?.chargeType).toBe("rent");
+    });
+    it("still prorates a move-in on the 29th-31st, where the old -28 overlap proxy would have skipped the month", () => {
+      const lateMonth = schedule({ amountCents: 185000, beginChargesDate: "2026-10-30",
+        effectiveStartDate: "2026-10-29", forgeCutoverDate: "2026-10-29" });
+      const charge = generateRentCharge({ schedule: lateMonth, period: "2026-10", now: "2026-10-30T00:00:00.000Z" });
+      expect(charge?.amountCents).toBe(11935);
+      expect(charge?.dueDate).toBe("2026-10-30");
+      expect(charge?.chargeType).toBe("proration");
     });
   });
 });
