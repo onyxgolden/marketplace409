@@ -679,6 +679,8 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
   const [voidingPayment, setVoidingPayment] = useState(null);
   const [reissuingPayment, setReissuingPayment] = useState(null);
   const [togglingActive, setTogglingActive] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Pure data fetchers (no setState inside) so effects can call them through
   // promise callbacks, per the repo's set-state-in-effect lint rule.
@@ -818,6 +820,27 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
     }
   }
 
+  async function deleteVendor(vendor) {
+    // Controls-sweep follow-up G20 (O-08): history-free vendors delete;
+    // the server 409s vendors with bills, payments, receipts, or a 1099
+    // link, and that message surfaces verbatim so the landlord can
+    // deactivate instead.
+    setDeleting(true);
+    setError("");
+    try {
+      await readJson(await fetch(`/api/rental/vendors/${encodeURIComponent(vendor.id)}`, { method: "DELETE" }));
+      setVendors((list) => list.filter((v) => v.id !== vendor.id));
+      setSelectedVendorId(null);
+      setVendorDetail(null);
+      setConfirmingDelete(false);
+      setNotice(`✓ Vendor deleted: ${vendor.name}.`);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function openBillForm(vendorId = null, bill = null) {
     setBillVendorPreset(vendorId ? { vendorId } : null);
     setEditingBill(bill);
@@ -916,8 +939,19 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                     <button type="button" disabled={togglingActive} onClick={() => toggleVendorActive(vendorDetail.vendor)} className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-50">
                       {vendorDetail.vendor.isActive ? "Deactivate" : "Reactivate"}
                     </button>
+                    <button type="button" onClick={() => setConfirmingDelete(true)} className="rounded-lg border border-red-300 dark:border-red-700 px-3 py-2 text-sm font-bold text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40">Delete</button>
                   </div>
                 </div>
+
+                {confirmingDelete && (
+                  <div className="rounded-xl border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-950/40">
+                    <p className="text-sm font-bold text-red-800 dark:text-red-200">Delete {vendorDetail.vendor.name}? This cannot be undone — and it only works for vendors with no bills, payments, receipts, or 1099 link on record.</p>
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" disabled={deleting} onClick={() => deleteVendor(vendorDetail.vendor)} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">{deleting ? "Deleting…" : "Yes, delete"}</button>
+                      <button type="button" onClick={() => setConfirmingDelete(false)} className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-bold text-slate-700 dark:text-slate-200">Keep it</button>
+                    </div>
+                  </div>
+                )}
 
                 <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                   {[["Contact", vendorDetail.vendor.contactName], ["Email", vendorDetail.vendor.email], ["Phone", vendorDetail.vendor.phone], ["Address", vendorDetail.vendor.address], ["Tax classification", vendorDetail.vendor.taxClassification], ["Tax ID (last 4)", vendorDetail.vendor.taxIdLast4 ? `•••• ${vendorDetail.vendor.taxIdLast4}` : null]].map(([label, value]) => (
@@ -958,6 +992,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                                   {(bill.status === "open") && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
                                   {bill.status === "voided" && <button type="button" onClick={() => setUnvoidingBill(bill)} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Un-void</button>}
                                 </span>
+                                {(bill.status === "partial" || bill.status === "paid") && <div className="mt-1 text-xs text-slate-500">To correct this bill, void its payment first — voiding a payment rolls the bill back to open, where it can be edited or voided.</div>}
                               </td>
                             </tr>
                           ))}
@@ -1057,6 +1092,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                           {bill.status === "open" && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
                           {bill.status === "voided" && <button type="button" onClick={() => setUnvoidingBill(bill)} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Un-void</button>}
                         </span>
+                        {(bill.status === "partial" || bill.status === "paid") && <div className="mt-1 text-xs text-slate-500">To correct this bill, void its payment first — voiding a payment rolls the bill back to open, where it can be edited or voided.</div>}
                       </td>
                     </tr>
                   ))}

@@ -125,6 +125,48 @@ export async function GET(request, { params }) {
   }
 }
 
+// DELETE /api/rental/vendors/[id] — delete a history-free vendor.
+// Vendors with bills, payments, receipts, or a 1099-recipient link on
+// record cannot be deleted: their ledger history must stay auditable.
+// Deactivate remains the path for those (the panel offers it on the
+// 409). A mistaken vendor with no history deletes cleanly, freeing the
+// name the create duplicate-name 409 would otherwise keep reserved.
+export async function DELETE(request, { params }) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+    const forbidden = await requireWriter(authenticated);
+    if (forbidden) return forbidden;
+    const { supabaseClient, effectiveOwnerId } = authenticated;
+
+    const vendor = await findOwnedVendor(supabaseClient, effectiveOwnerId, params.id);
+    if (!vendor) return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
+
+    const historyChecks = [
+      ["bills", supabaseClient.from("rental_vendor_bills").select("id").eq("owner_id", effectiveOwnerId).eq("vendor_id", vendor.id).limit(1)],
+      ["payments", supabaseClient.from("rental_vendor_payments").select("id").eq("owner_id", effectiveOwnerId).eq("vendor_id", vendor.id).limit(1)],
+      ["receipts", supabaseClient.from("rental_receipts").select("id").eq("owner_id", effectiveOwnerId).eq("vendor_id", vendor.id).limit(1)],
+      ["1099 recipient link", supabaseClient.from("rental_1099_recipients").select("id").eq("owner_id", effectiveOwnerId).eq("linked_vendor_id", vendor.id).limit(1)],
+    ];
+    const blockers = [];
+    for (const [label, query] of historyChecks) {
+      const { data, error } = await query;
+      if (error) throw error;
+      if ((data || []).length > 0) blockers.push(label);
+    }
+    if (blockers.length > 0) {
+      return NextResponse.json({ error: `This vendor has ${blockers.join(", ")} on record and cannot be deleted — deactivate it instead.` }, { status: 409 });
+    }
+
+    const { error } = await supabaseClient.from("rental_vendors").delete()
+      .eq("owner_id", effectiveOwnerId).eq("id", vendor.id);
+    if (error) throw error;
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Vendor delete error", error);
+    return NextResponse.json({ error: "Unable to delete the vendor." }, { status: 500 });
+  }
+}
 // PATCH /api/rental/vendors/[id] — edit the vendor, or deactivate/reactivate
 // via { isActive }. Deactivation never deletes history: bills stay on the
 // ledger and the vendor can be reactivated.
