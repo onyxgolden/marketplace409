@@ -302,6 +302,7 @@ export default function ListingsPanel() {
                   <p className="font-black text-slate-950 dark:text-white">{form.name} {form.isDefault ? <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-black text-sky-800 dark:bg-sky-900 dark:text-sky-200">Default</span> : null}</p>
                   <p className="text-xs text-slate-500">
                     {Object.entries(form.sections).filter(([, on]) => on).length} of 4 sections · {form.customQuestions.length} custom questions · fee {money(form.feeAmountCents)} (record-only)
+                    {form.isDefault ? " · The default form cannot be deleted." : ""}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -363,9 +364,10 @@ export default function ListingsPanel() {
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <label className="text-sm font-bold text-slate-900 dark:text-white md:col-span-2">Unit
                 <select value={listingEditor.unitId} disabled={!!listingEditor.id} onChange={(e) => setListingEditor({ ...listingEditor, unitId: e.target.value })} required className={`${inputClass} mt-1 w-full`}>
-                  <option value="">Select a vacant unit…</option>
+                  <option value="">{units.length === 0 ? "No available units — mark a unit available under Setup first" : "Select a vacant unit…"}</option>
                   {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label} · {unit.property_id}</option>)}
                 </select>
+                {listingEditor.id ? <span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">The unit is fixed when editing a listing — delete this listing and create a new one to list a different unit.</span> : null}
               </label>
               <label className="text-sm font-bold text-slate-900 dark:text-white md:col-span-2">Title
                 <input value={listingEditor.title} onChange={(e) => setListingEditor({ ...listingEditor, title: e.target.value })} required className={`${inputClass} mt-1 w-full`} placeholder="Sunny 2-bed near downtown" />

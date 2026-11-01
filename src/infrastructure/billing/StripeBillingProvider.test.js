@@ -26,6 +26,7 @@ function setup() {
       })) },
     setupIntents: { create: vi.fn(async () => ({ id: "seti_1", client_secret: "seti_1_secret_test", status: "requires_payment_method" })),
       retrieve: vi.fn(async () => ({ id: "seti_1", status: "succeeded", payment_method: "pm_bank_1", mandate: "mandate_1" })) },
+    refunds: { create: vi.fn(async () => ({ id: "re_1", status: "succeeded" })) },
     webhooks: { constructEvent: vi.fn(() => ({ id: "evt_1" })) },
   };
   return { stripeClient, provider: new StripeBillingProvider({ stripeClient }) };
@@ -510,5 +511,18 @@ describe("createStripeBillingProvider (mode resolution)", () => {
     const { createStripeBillingProvider } = await import("./StripeBillingProvider.js");
     expect(() => createStripeBillingProvider({ STRIPE_MODE: "live", STRIPE_SECRET_KEY: "sk_test_abc123" })).toThrow(/does not start with/);
     expect(() => createStripeBillingProvider({ STRIPE_SECRET_KEY: "sk_test_abc123" })).toThrow(/STRIPE_MODE/);
+  });
+});
+
+describe("StripeBillingProvider refunds (controls sweep B2)", () => {
+  it("refunds a payment intent on the connected account with an idempotency key", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.createRefund({ connectedAccountId: "acct_1" },
+      { paymentIntentId: "pi_1", paymentId: "pay_2", amountCents: 80000 }, "refund:pay_2:80000");
+    expect(stripeClient.refunds.create).toHaveBeenCalledWith({
+      payment_intent: "pi_1", amount: 80000, reason: "requested_by_customer",
+      metadata: { forge_payment_id: "pay_2" },
+    }, { stripeAccount: "acct_1", idempotencyKey: "refund:pay_2:80000" });
+    expect(result).toEqual({ refundId: "re_1", status: "succeeded" });
   });
 });

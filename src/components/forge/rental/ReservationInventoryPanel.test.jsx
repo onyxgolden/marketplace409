@@ -28,10 +28,11 @@ describe("ReservationInventoryPanel", () => {
     const form = mounted.container.querySelector("form");
     const selects = Array.from(form.querySelectorAll("select"));
     expect(form.className).toContain("dark:text-slate-100");
-    expect(selects).toHaveLength(2);
+    expect(selects).toHaveLength(3);
     selects.forEach((select) => expect(select.className).toContain("dark:text-slate-100"));
     expect(selects[0].textContent).toContain("Site 1");
-    expect(selects[1].textContent).toContain("RV site");
+    expect(selects[1].textContent).toContain("Draft — not bookable");
+    expect(selects[2].textContent).toContain("RV site");
   });
   it("shows the opaque guest booking page only for active inventory", async () => {
     mounted = await mount({ units: [], inventory: [{ unit_id: "unit-1", public_name: "Pine Cabin", inventory_type: "cabin", maximum_guests: 4, minimum_nights: 2, booking_status: "active", public_booking_slug: "stay-opaque" }] });

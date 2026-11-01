@@ -138,6 +138,31 @@ describe("reservation lifecycle PATCH route: confirmed-reservation modify never 
   });
 });
 
+describe("reservation lifecycle PATCH route: landlord confirm transition (B7 confirm leg)", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("routes a confirm PATCH to transition_owner_reservation with p_action confirm", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { ...CURRENT_RESERVATION, status: "confirmed" }, error: null });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue(baseApp(rpc));
+    const response = await PATCH(patchRequest({ reservationId: "reservation-1", operation: "confirm" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("transition_owner_reservation", {
+      p_owner_id: "owner-a", p_reservation_id: "reservation-1", p_action: "confirm", p_reason: null,
+    });
+  });
+
+  it("surfaces the RPC's non-held guard message verbatim instead of a generic failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "Reservation cannot transition from cancelled using confirm." } });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue(baseApp(rpc));
+    const response = await PATCH(patchRequest({ reservationId: "reservation-1", operation: "confirm" }));
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/Reservation cannot transition from cancelled using confirm/);
+  });
+});
+
 describe("owner reservation finance read model authorization", () => {
   let from;
   let eqCalls;

@@ -9,7 +9,7 @@ import { GET, POST } from "./route";
 
 // memberRole: null = primary owner (no workspace_members row),
 // otherwise the active membership role.
-function makeDb({ definitions = [], values = [], memberRole = null, recordExists = true, rpcError = null } = {}) {
+function makeDb({ definitions = [], values = [], memberRole = null, recordExists = true, rpcError = null, leaseStatus = null } = {}) {
   const calls = { rpc: [], tableOps: [] };
   const tableFor = (name) => {
     const chain = {
@@ -23,6 +23,9 @@ function makeDb({ definitions = [], values = [], memberRole = null, recordExists
       async maybeSingle() {
         if (name === "workspace_members") {
           return { data: memberRole === null ? null : { role: memberRole }, error: null };
+        }
+        if (name === "rental_leases" && leaseStatus !== null) {
+          return { data: { id: "lease_1", status: leaseStatus }, error: null };
         }
         // Record-existence probe for the custom-field entity tables.
         return { data: recordExists ? { probe: 1 } : null, error: null };
@@ -186,5 +189,28 @@ describe("custom field values route", () => {
     authAs(db);
     const res = await post({ entity: "tenant", recordId: "tenant_1", values: { f_date: "2026-10-15" } });
     expect(res.status).toBe(expectedStatus);
+  });
+});
+
+describe("custom field values route controls sweep — G1", () => {
+  const LEASE_DEFS = [
+    { id: "f_note", entity: "lease", name: "Note", field_key: "note", field_type: "text", is_required: false, picklist_options: null, sort_order: 0, updated_at: "t" },
+  ];
+
+  it("refuses saves on a cancelled lease and writes nothing", async () => {
+    const { db, calls } = makeDb({ definitions: LEASE_DEFS, leaseStatus: "cancelled" });
+    authAs(db);
+    const res = await post({ entity: "lease", recordId: "lease_1", values: { f_note: "hello" } });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/cancelled lease cannot be changed/);
+    expect(calls.rpc).toHaveLength(0);
+  });
+
+  it("allows saves on an active lease", async () => {
+    const { db, calls } = makeDb({ definitions: LEASE_DEFS, leaseStatus: "active" });
+    authAs(db);
+    const res = await post({ entity: "lease", recordId: "lease_1", values: { f_note: "hello" } });
+    expect(res.status).toBe(200);
+    expect(calls.rpc).toHaveLength(1);
   });
 });

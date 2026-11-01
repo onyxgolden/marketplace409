@@ -7,6 +7,12 @@ export async function saveLateFeeRule({ authenticated, body, effectiveOwnerId })
     return badRequest("Lease, jurisdiction, rule source, and manual-approval confirmation are required.");
   const graceDays = Number(input.graceDays);
   if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 31) return badRequest("Grace days must be between 0 and 31.");
+  // Controls-sweep G1 (Q-11): a late-fee rule on a cancelled lease must not
+  // be created — the Lifecycle panel's unfiltered select used to allow it.
+  const { data: ruleLease, error: ruleLeaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", input.leaseId).maybeSingle();
+  if (ruleLeaseError) throw ruleLeaseError;
+  if (ruleLease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const calculationType = input.calculationType;
   const fixed = calculationType === "fixed" ? Number(input.fixedAmountCents) : null;
   const percentage = calculationType === "percentage" ? Number(input.percentageBasisPoints) : null;

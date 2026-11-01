@@ -53,6 +53,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const openCharges = data?.openCharges || [];
   const credits = data?.credits || [];
   const creditApplications = data?.creditApplications || [];
+  const tenantLeases = data?.tenantLeases || [];
   const availableCreditCents = credits
     .filter((credit) => credit.status === "open")
     .reduce((sum, credit) => sum + Number(credit.remaining_cents || 0), 0);
@@ -483,7 +484,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             </div>
           )}
 
-          <TenantCreditSection credits={credits} creditApplications={creditApplications} openCharges={openCharges} onChanged={refresh} />
+          <TenantCreditSection credits={credits} creditApplications={creditApplications} openCharges={openCharges} onChanged={refresh} tenantId={tenantId} tenantName={tenantName} tenantLeases={tenantLeases} />
 
           <div ref={depositsRef} className={`mt-6 scroll-mt-6 rounded-2xl border bg-slate-50 p-5 transition-shadow dark:bg-slate-950/40 ${depositsFlash ? "border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.35)] dark:border-sky-500" : "border-slate-200 dark:border-slate-700"}`} data-ledger-deposits>
             <h4 className="text-lg font-black text-slate-950 dark:text-white">Deposits — held separately, never rent</h4>

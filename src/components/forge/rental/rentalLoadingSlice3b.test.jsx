@@ -104,7 +104,7 @@ beforeEach(() => { clearSWRCache(); });
 
 describe("slice B warm-switch behavior", () => {
   it("renders cached autopay enrollments instantly with no loading flash", async () => {
-    await fetchWithDedupe("rental:autopay", () => Promise.resolve(autopayPayload));
+    await fetchWithDedupe("rental:autopay", () => Promise.resolve({ autopayEnrollments: autopayPayload }));
     const html = renderToStaticMarkup(<RentalAutopayPanel />);
     expect(html).toContain("lease_1");
     expect(html).not.toContain("Loading autopay");
@@ -116,7 +116,7 @@ describe("slice B warm-switch behavior", () => {
   });
 
   it("keeps the last good autopay data visible when a refresh fails", async () => {
-    await fetchWithDedupe("rental:autopay", () => Promise.resolve(autopayPayload));
+    await fetchWithDedupe("rental:autopay", () => Promise.resolve({ autopayEnrollments: autopayPayload }));
     await fetchWithDedupe("rental:autopay", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
     const html = renderToStaticMarkup(<RentalAutopayPanel />);
     expect(html).toContain("lease_1");

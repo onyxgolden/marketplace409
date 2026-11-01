@@ -45,6 +45,14 @@ export async function saveSchedule({ authenticated, body, application, effective
   if (!input || typeof input !== "object") return badRequest("schedule is required.");
   const schedule = createRentSchedule({ ...input, id: id("rent_schedule", input.id), status: input.status ?? "draft",
     effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
+  // Controls-sweep G1: a schedule on a cancelled lease must not change —
+  // this is the early-pay window guard (L-09), which previously accepted.
+  if (schedule.leaseId) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", schedule.leaseId).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, effectiveOwnerId) });
 }
 
@@ -57,6 +65,59 @@ export async function cancelLease({ authenticated, body, effectiveOwnerId, times
   if (error) throw error;
   if (!data) return NextResponse.json({ error: "Only a draft lease can be cancelled." }, { status: 409 });
   return NextResponse.json({ success: true, lease: data });
+}
+
+export async function restoreLease({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G3: restore a cancelled lease to draft (L-03). Cancel only
+  // ever applies to draft leases, so a cancelled lease never had charges
+  // generated — restoring returns it to exactly the state it was in before
+  // cancel, with its draft schedule intact. No financial side effects to
+  // unwind, and no new lease id: memberships and history keep continuity.
+  if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
+  const { data, error } = await authenticated.supabaseClient.from("rental_leases")
+    .update({ status: "draft", updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", body.leaseId.trim()).eq("status", "cancelled")
+    .select("id, status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Only a cancelled lease can be restored." }, { status: 409 });
+  return NextResponse.json({ success: true, lease: data });
+}
+
+export async function endLease({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // End an ACTIVE lease (B1). Ending stops future charge generation and
+  // unblocks archiving the unit (archiveUnit only refuses ACTIVE leases).
+  // Deliberate semantics, documented here so review can hold them:
+  // - The lease row moves to status "ended" with end_date + ended_at set.
+  // - Active rent schedules for the lease move to "ended" too, so the
+  //   charge generator (which requires an active schedule) never creates
+  //   another charge for the ended term.
+  // - Open charges are left exactly as they are: history is preserved and
+  //   any remaining balance stays collectible (void/refund are separate
+  //   actions). Nothing is deleted.
+  if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
+  const leaseId = body.leaseId.trim();
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  const endDate = body.endDate === null || body.endDate === undefined || body.endDate === ""
+    ? new Date().toISOString().slice(0, 10) : String(body.endDate).trim();
+  if (!datePattern.test(endDate)) return badRequest("A valid end date (YYYY-MM-DD) is required.");
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  if (lease.status !== "active") return NextResponse.json({ error: "Only an active lease can be ended." }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rental_leases")
+    .update({ status: "ended", end_date: endDate, ended_at: timestamp, updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", leaseId).eq("status", "active")
+    .select("id, status, end_date").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Only an active lease can be ended." }, { status: 409 });
+  const { data: endedSchedules, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+    .update({ status: "ended", updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("status", "active")
+    .select("id");
+  if (scheduleError) throw scheduleError;
+  return NextResponse.json({ success: true, lease: data, schedulesEnded: (endedSchedules || []).length, reason: reason || null });
 }
 
 export async function updateLeaseTerms({ authenticated, body, effectiveOwnerId, timestamp }) {
@@ -191,6 +252,33 @@ export async function setBillingEnabled({ authenticated, body, effectiveOwnerId 
   return NextResponse.json({ success: true, settings: data });
 }
 
+export async function setScheduleStatus({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G7 (L-04): per-schedule pause/resume. Pausing stops charge
+  // generation (generate-charge requires an active schedule); resuming
+  // restores it. Draft and ended schedules cannot move, and a cancelled
+  // lease's schedule cannot change (G1 rule). Portfolio billing pause
+  // (set-billing-enabled) is untouched — this is per-schedule only.
+  if (typeof body.scheduleId !== "string" || body.scheduleId.trim() === "") return badRequest("scheduleId is required.");
+  if (body.status !== "paused" && body.status !== "active") return badRequest("status must be paused or active.");
+  const scheduleId = body.scheduleId.trim();
+  const { data: schedule, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+    .select("id, status, lease_id").eq("owner_id", effectiveOwnerId).eq("id", scheduleId).maybeSingle();
+  if (scheduleError) throw scheduleError;
+  if (!schedule) return NextResponse.json({ error: "Rent schedule was not found." }, { status: 404 });
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", schedule.lease_id).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  if (body.status === "paused" && schedule.status !== "active") return NextResponse.json({ error: `Only an active schedule can be paused (this one is ${schedule.status}).` }, { status: 409 });
+  if (body.status === "active" && schedule.status !== "paused") return NextResponse.json({ error: `Only a paused schedule can be resumed (this one is ${schedule.status}).` }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rent_schedules")
+    .update({ status: body.status, updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", scheduleId).eq("status", schedule.status).select("id, status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "The schedule changed while pausing — try again." }, { status: 409 });
+  return NextResponse.json({ success: true, schedule: data });
+}
+
 export async function activateLeaseSchedule({ authenticated, body, effectiveOwnerId }) {
   if (!body.scheduleId) return badRequest("scheduleId is required.");
   const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {
@@ -207,6 +295,9 @@ export async function saveLeaseChange({ authenticated, body, effectiveOwnerId })
   const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases").select("*").eq("owner_id", effectiveOwnerId).eq("id", input.leaseId).maybeSingle();
   if (leaseError) throw leaseError;
   if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  // Controls-sweep G1: a renewal/amendment on a cancelled lease must not
+  // create a new active schedule while the lease stays cancelled (L-10).
+  if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
   const newTerms = input.changeType === "proration"
     ? { amountCents: Number(input.amountCents) }
     : { monthlyRentCents: Number(input.monthlyRentCents) || lease.monthly_rent_cents, rentDueDay: Number(input.rentDueDay) || lease.rent_due_day, endDate: input.endDate || lease.end_date };
@@ -224,6 +315,17 @@ export async function saveLeaseChange({ authenticated, body, effectiveOwnerId })
 
 export async function approveLeaseChange({ authenticated, body, effectiveOwnerId, timestamp }) {
   if (!body.changeId) return badRequest("changeId is required.");
+  // Controls-sweep G1: approving a draft change on a lease that was cancelled
+  // after the draft was saved must not create an active schedule on it.
+  const { data: change, error: changeError } = await authenticated.supabaseClient.from("rental_lease_changes")
+    .select("id, lease_id").eq("owner_id", effectiveOwnerId).eq("id", body.changeId).maybeSingle();
+  if (changeError) throw changeError;
+  if (change?.lease_id) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", change.lease_id).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   const { data: approved, error: approvalError } = await authenticated.supabaseClient.from("rental_lease_changes")
     .update({ status: "approved", approved_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", body.changeId).eq("status", "draft")
     .select("id").maybeSingle();
@@ -250,6 +352,17 @@ export async function approveLeasePreparationVersion({ authenticated, body, effe
   const version = Number(body.versionNumber);
   if (!body.preparationId || !Number.isInteger(version) || version < 1 || body.ownerApprovalConfirmed !== true)
     return badRequest("Preparation, version, and explicit owner approval are required.");
+  // Controls-sweep G1 (Q-11): a preparation approval on a cancelled lease
+  // must not publish terms for a dead lease.
+  const { data: preparation, error: preparationError } = await authenticated.supabaseClient.from("rental_lease_preparations")
+    .select("id, lease_id").eq("owner_id", effectiveOwnerId).eq("id", body.preparationId).maybeSingle();
+  if (preparationError) throw preparationError;
+  if (preparation?.lease_id) {
+    const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+      .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", preparation.lease_id).maybeSingle();
+    if (leaseError) throw leaseError;
+    if (lease?.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be changed." }, { status: 409 });
+  }
   const { data, error } = await authenticated.supabaseClient.rpc("approve_rental_lease_preparation_version", {
     p_owner_id: effectiveOwnerId, p_preparation_id: body.preparationId, p_version_number: version,
   });

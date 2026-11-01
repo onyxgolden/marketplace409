@@ -2,26 +2,28 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { badRequest, now } from "./_actions/shared.js";
-import { saveUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
+import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
 import {
   saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
   updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
 } from "./_actions/tenants.js";
 import {
-  saveLease, saveSchedule, cancelLease, updateLeaseTerms, generateCharge, voidCharge,
-  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, saveLeaseChange,
+  saveLease, saveSchedule, cancelLease, restoreLease, endLease, updateLeaseTerms, generateCharge, voidCharge,
+  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, setScheduleStatus, saveLeaseChange,
   approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
 } from "./_actions/leases.js";
 import {
   recordOfflinePayment, setPaymentDepositState, applyTenantCredit, voidTenantCredit,
+  voidPayment, refundPayment, createTenantCredit,
   saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
 } from "./_actions/payments.js";
 import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
+import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_actions/autopay.js";
 import {
   updateMaintenanceRequest, saveContractor, recordContractorPayment, updateSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
-import { saveSecurityDeposit, recordSecurityDepositTransaction } from "./_actions/deposits.js";
+import { saveSecurityDeposit, updateSecurityDeposit, voidSecurityDeposit, recordSecurityDepositTransaction, voidSecurityDepositTransaction } from "./_actions/deposits.js";
 import { saveInspection, finalizeInspection } from "./_actions/inspections.js";
 import {
   saveLateFeeRule, assessLateFee, saveLateFeeAutoSettings, saveLateFeeTenantOverride,
@@ -34,6 +36,8 @@ import {
 // "toString", "__proto__", "hasOwnProperty") must never dispatch to a handler.
 const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-unit": saveUnit,
+  "set-unit-status": setUnitStatus,
+  "restore-unit": restoreUnit,
   "archive-unit": archiveUnit,
   "delete-archived-unit": deleteArchivedUnit,
   "review-animal": reviewAnimal,
@@ -48,6 +52,8 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-lease": saveLease,
   "save-schedule": saveSchedule,
   "cancel-lease": cancelLease,
+  "restore-lease": restoreLease,
+  "end-lease": endLease,
   "update-lease-terms": updateLeaseTerms,
   "generate-charge": generateCharge,
   "void-charge": voidCharge,
@@ -55,16 +61,27 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "set-billing-enabled": setBillingEnabled,
   "save-convenience-fee": saveConvenienceFee,
   "activate-lease-schedule": activateLeaseSchedule,
+  "set-schedule-status": setScheduleStatus,
   "record-offline-payment": recordOfflinePayment,
   "set-payment-deposit-state": setPaymentDepositState,
   "apply-tenant-credit": applyTenantCredit,
   "void-tenant-credit": voidTenantCredit,
+  "void-payment": voidPayment,
+  "refund-payment": refundPayment,
+  "create-tenant-credit": createTenantCredit,
+  "pause-autopay": pauseAutopay,
+  "resume-autopay": resumeAutopay,
+  "cancel-autopay": cancelAutopay,
+  "update-autopay": updateAutopay,
   "queue-rent-reminder": queueRentReminder,
   "cancel-rent-notification": cancelRentNotification,
   "queue-insurance-renewals": queueInsuranceRenewals,
   "update-maintenance-request": updateMaintenanceRequest,
   "save-security-deposit": saveSecurityDeposit,
+  "update-security-deposit": updateSecurityDeposit,
+  "void-security-deposit": voidSecurityDeposit,
   "record-security-deposit-transaction": recordSecurityDepositTransaction,
+  "void-security-deposit-transaction": voidSecurityDepositTransaction,
   "save-inspection": saveInspection,
   "finalize-inspection": finalizeInspection,
   "save-lease-change": saveLeaseChange,

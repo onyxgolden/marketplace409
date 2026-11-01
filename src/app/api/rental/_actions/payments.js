@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
 import { isPaymentPolicy, PAYMENT_POLICIES } from "@/domains/rental-payment/paymentPolicy";
 import { validateFeeInput } from "@/domains/rental-payment/convenienceFee";
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { badRequest, findPolicyTenantIdForCharge, ownerOnlyFeeWriteBlocked, ownerOnlyPolicyWriteBlocked } from "./shared.js";
 
 export async function recordOfflinePayment({ authenticated, body, effectiveOwnerId }) {
@@ -84,6 +85,112 @@ export async function voidTenantCredit({ authenticated, body, effectiveOwnerId }
   });
   if (error) throw error;
   return NextResponse.json({ success: true, credit: data });
+}
+
+// Controls-sweep B4: create a tenant credit without an overpayment. Requires
+// the 20261031230000 migration (source 'manual', nullable source_payment_id).
+// The lease is explicit when given (and must be one of the tenant's leases);
+// otherwise it resolves from the tenant's memberships, and refuses when the
+// tenant has none or more than one — a manual credit must never land on an
+// ambiguous lease. The reason is stored in notes so the ledger shows why this
+// money exists; manual credits apply to charges exactly like overpayments.
+export async function createTenantCredit({ authenticated, body, effectiveOwnerId }) {
+  const input = body.credit;
+  if (typeof input?.tenantId !== "string" || !input.tenantId.trim()) return badRequest("tenantId is required.");
+  const amountCents = Number(input.amountCents);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive credit amount is required.");
+  if (typeof input.reason !== "string" || !input.reason.trim()) return badRequest("A reason is required to create a credit.");
+  if (input.ownerConfirmed !== true) return badRequest("Owner confirmation is required to create a credit.");
+  const tenantId = input.tenantId.trim();
+  const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+    .select("id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+  if (tenantError) throw tenantError;
+  if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+  const { data: memberships, error: membershipError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("lease_id").eq("owner_id", effectiveOwnerId).eq("tenant_id", tenantId);
+  if (membershipError) throw membershipError;
+  const leaseIds = (memberships || []).map((item) => item.lease_id);
+  let leaseId = typeof input.leaseId === "string" && input.leaseId.trim() ? input.leaseId.trim() : null;
+  if (leaseId) {
+    if (!leaseIds.includes(leaseId)) return NextResponse.json({ error: "Tenant is not on the selected lease." }, { status: 409 });
+  } else {
+    if (leaseIds.length === 0) return NextResponse.json({ error: "Tenant has no lease to attach this credit to." }, { status: 409 });
+    if (leaseIds.length > 1) return NextResponse.json({ error: "Tenant has more than one lease — select the lease for this credit." }, { status: 409 });
+    leaseId = leaseIds[0];
+  }
+  const { data, error } = await authenticated.supabaseClient.from("rental_tenant_credits").insert({
+    owner_id: effectiveOwnerId, id: `rental_credit_${crypto.randomUUID()}`, tenant_id: tenantId, lease_id: leaseId,
+    amount_cents: amountCents, remaining_cents: amountCents, source: "manual", source_payment_id: null,
+    status: "open", notes: `Manual credit: ${input.reason.trim()}`,
+  }).select("id, tenant_id, lease_id, amount_cents, remaining_cents, source, status").single();
+  if (error) throw error;
+  return NextResponse.json({ success: true, credit: data });
+}
+
+// Controls-sweep B2: void a settled OFFLINE payment. The row moves to the
+// refunded state (not a invented "voided" state) because that is the state
+// the database reversal trigger watches: it restores the charge's paid amount
+// and posts the ledger reversal event. The void reason is appended to notes so
+// the ledger still reads as a void, not a tenant refund. A deposited payment
+// is refused — the bank record must be corrected first — and Stripe payments
+// are never voided here; they go through refundPayment below.
+export async function voidPayment({ authenticated, body, effectiveOwnerId }) {
+  if (typeof body.paymentId !== "string" || !body.paymentId.trim()) return badRequest("paymentId is required.");
+  if (typeof body.reason !== "string" || !body.reason.trim()) return badRequest("A reason is required to void a payment.");
+  if (body.ownerConfirmed !== true) return badRequest("Owner confirmation is required to void a payment.");
+  const paymentId = body.paymentId.trim();
+  const { data: payment, error } = await authenticated.supabaseClient.from("rental_payments")
+    .select("id, provider, status, amount_cents, deposit_state, notes")
+    .eq("owner_id", effectiveOwnerId).eq("id", paymentId).maybeSingle();
+  if (error) throw error;
+  if (!payment) return NextResponse.json({ error: "Payment was not found." }, { status: 404 });
+  if (payment.provider !== "offline") return NextResponse.json({ error: "Only offline payments can be voided here. Refund a Stripe payment instead." }, { status: 409 });
+  if (payment.status !== "succeeded") return NextResponse.json({ error: "Only a settled offline payment can be voided." }, { status: 409 });
+  if (payment.deposit_state === "deposited") return NextResponse.json({ error: "This payment is marked deposited. Mark it as awaiting deposit first, then void it." }, { status: 409 });
+  const notes = [payment.notes, `Voided: ${body.reason.trim()}`].filter(Boolean).join(" ");
+  const { data: updated, error: updateError } = await authenticated.supabaseClient.from("rental_payments")
+    .update({ status: "refunded", refunded_amount_cents: payment.amount_cents, notes, updated_at: new Date().toISOString() })
+    .eq("owner_id", effectiveOwnerId).eq("id", paymentId).eq("status", "succeeded")
+    .select("id, charge_id, status, amount_cents, refunded_amount_cents").maybeSingle();
+  if (updateError) throw updateError;
+  if (!updated) return NextResponse.json({ error: "Payment could not be voided." }, { status: 409 });
+  return NextResponse.json({ success: true, payment: updated });
+}
+
+// Controls-sweep B2: refund a settled STRIPE payment. Refunds the full
+// remaining amount (amount minus any earlier partial refund) on the connected
+// account, then marks the row refunded so the same reversal trigger restores
+// the charge balance. The Stripe call runs before the row update so a failed
+// refund never touches the ledger.
+export async function refundPayment({ authenticated, body, effectiveOwnerId }) {
+  if (typeof body.paymentId !== "string" || !body.paymentId.trim()) return badRequest("paymentId is required.");
+  if (body.ownerConfirmed !== true) return badRequest("Owner confirmation is required to refund a payment.");
+  const paymentId = body.paymentId.trim();
+  const { data: payment, error } = await authenticated.supabaseClient.from("rental_payments")
+    .select("id, provider, provider_mode, provider_payment_id, amount_cents, refunded_amount_cents, status")
+    .eq("owner_id", effectiveOwnerId).eq("id", paymentId).maybeSingle();
+  if (error) throw error;
+  if (!payment) return NextResponse.json({ error: "Payment was not found." }, { status: 404 });
+  if (payment.provider !== "stripe") return NextResponse.json({ error: "Only Stripe payments can be refunded here. Void an offline payment instead." }, { status: 409 });
+  if (!["succeeded", "partially_refunded"].includes(payment.status)) return NextResponse.json({ error: "Only a settled Stripe payment can be refunded." }, { status: 409 });
+  if (typeof payment.provider_payment_id !== "string" || !payment.provider_payment_id.trim()) return NextResponse.json({ error: "This Stripe payment has no payment reference to refund." }, { status: 409 });
+  const remaining = payment.amount_cents - (payment.refunded_amount_cents || 0);
+  if (remaining <= 0) return NextResponse.json({ error: "This payment is already fully refunded." }, { status: 409 });
+  const { data: account, error: accountError } = await authenticated.supabaseClient.from("landlord_payment_accounts")
+    .select("provider_account_id").eq("owner_id", effectiveOwnerId).eq("provider", "stripe").eq("provider_mode", payment.provider_mode).maybeSingle();
+  if (accountError) throw accountError;
+  if (!account) return NextResponse.json({ error: "No connected Stripe account was found for this payment." }, { status: 409 });
+  const provider = createStripeBillingProvider();
+  const refund = await provider.createRefund({ connectedAccountId: account.provider_account_id },
+    { paymentIntentId: payment.provider_payment_id, paymentId: payment.id, amountCents: remaining },
+    `refund:${payment.id}:${remaining}`);
+  const { data: updated, error: updateError } = await authenticated.supabaseClient.from("rental_payments")
+    .update({ status: "refunded", refunded_amount_cents: payment.amount_cents, updated_at: new Date().toISOString() })
+    .eq("owner_id", effectiveOwnerId).eq("id", paymentId)
+    .select("id, charge_id, status, amount_cents, refunded_amount_cents").maybeSingle();
+  if (updateError) throw updateError;
+  if (!updated) return NextResponse.json({ error: "Payment could not be marked refunded after Stripe accepted the refund." }, { status: 409 });
+  return NextResponse.json({ success: true, payment: updated, refund });
 }
 
 // R12: workspace card convenience fee. The UI sends a human percent

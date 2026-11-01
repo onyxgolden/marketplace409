@@ -404,8 +404,10 @@ describe("Rental Manager route", () => {
   });
   it("changes the primary tenant through the workspace-scoped RPC", async () => {
     const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
-    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { rpc } });
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { rpc, from: vi.fn(() => leaseQuery) } });
     const response = await POST(request({ operation: "set-primary-tenant", leaseId: "lease_1", tenantId: "tenant_2" }));
     expect(response.status).toBe(200);
     expect(rpc).toHaveBeenCalledWith("set_rental_primary_tenant", { p_owner_id: "owner_1", p_lease_id: "lease_1", p_tenant_id: "tenant_2" });
