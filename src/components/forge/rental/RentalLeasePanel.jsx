@@ -6,6 +6,7 @@ import RentRollImportPanel from "./RentRollImportPanel";
 import CustomFieldsEditor from "./CustomFieldsEditor";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import PaymentFrequencyPicker, { paymentFrequencyDescription } from "./PaymentFrequencyPicker";
+import { availableCoTenants } from "./RentalTenantPanel";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { useRentalTerminology } from "./rentalTerminologyContext";
@@ -142,6 +143,38 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   const selectedUnitPropertyId = propertyIdForSelectedUnit(setup.units, selectedUnitId);
   function unitLabelForLease(lease) {
     return setup.units.find((item) => item.id === lease.unit_id)?.label || "this unit";
+  }
+  // Controls-sweep G2: lease-side membership actions, mirroring the tenant
+  // record's flows so a landlord working from Leases never has to detour.
+  async function makePrimary(leaseId, tenantId) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "set-primary-tenant", leaseId, tenantId }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to change the primary tenant.");
+      setMessage("Primary tenant updated."); await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  async function addCoTenant(event, leaseId) {
+    event.preventDefault(); setWorking(true); setMessage(""); const form = new FormData(event.currentTarget);
+    const tenantId = form.get("coTenantId");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "add-co-tenant", leaseId, tenantId }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to add the co-tenant.");
+      const added = (setup.tenants || []).find((item) => item.id === tenantId);
+      setMessage(`Co-tenant added: ${added?.display_name || "tenant"}.`); await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  async function removeCoTenant(leaseId, tenant) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "remove-co-tenant", leaseId, tenantId: tenant.id }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to remove the co-tenant.");
+      setMessage(`Co-tenant removed: ${tenant.display_name}. Their tenant record is untouched and can be re-added.`); await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   }
   async function activateLease(lease) {
     const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
@@ -336,7 +369,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("lease", { capitalize: true })} setup</p>
     <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("lease", { plural: true, capitalize: true })} and rent schedules</h2>
     <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn&apos;t import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
-    {message && <p role="status" className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
+    {message && <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-black text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{message}</p>}
     {(loaded || initialSetup) && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved setup.</p> : null}
     {(loaded || initialSetup) && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
     {viewFilter === "expiring" && <RentalViewFilterBanner filterLabel="Leases expiring within 90 days" onClear={() => setViewFilter(null)} />}
@@ -347,7 +380,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
         const leaseMembershipsForLease = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease?.id);
         const depositTenantId = (leaseMembershipsForLease.find((item) => item.occupancy_role === "primary") || leaseMembershipsForLease[0])?.tenant_id || null;
         const existingDeposit = (setup.deposits || []).find((item) => item.lease_id === lease?.id) || null;
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} onEnd={endLease} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} onEnd={endLease} tenants={setup.tenants || []} leaseMemberships={setup.leaseMemberships || []} onMakePrimary={makePrimary} onAddCoTenant={addCoTenant} onRemoveCoTenant={removeCoTenant} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -377,7 +410,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null, onEnd }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null, onEnd, tenants = [], leaseMemberships = [], onMakePrimary, onAddCoTenant, onRemoveCoTenant }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
@@ -399,6 +432,15 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
   const balanceText = leaseBalanceText(balanceCents);
   const dueDayText = lease.rent_due_day ? `Rent due on the ${ordinal(lease.rent_due_day)}` : "Due day not recorded";
   const startText = formatShortDate(lease.start_date) ? `Since ${formatShortDate(lease.start_date)}` : null;
+  // Controls-sweep G2: the lease-side membership path — the same member list,
+  // add, make-primary, and remove the tenant record offers, without detouring
+  // to Tenants. The server enforces the same gates (cancelled lease, primary
+  // required before adding); the UI hides the actions in those states.
+  const leaseMembers = (leaseMemberships || []).filter((item) => item.lease_id === lease.id)
+    .map((item) => ({ membership: item, tenant: (tenants || []).find((candidate) => candidate.id === item.tenant_id) || null }));
+  const hasPrimary = leaseMembers.some((item) => item.membership.role === "primary");
+  const candidates = availableCoTenants(tenants || [], leaseMemberships || [], lease.id);
+  const leaseCancelled = lease.status === "cancelled";
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected lease</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit?.label || lease.unit_id}</h3></div>
@@ -427,6 +469,33 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
         <p className="w-full text-xs text-slate-500 dark:text-slate-400">Recorded for this lease only — it does not create a second deposit if one already exists.</p>
       </form>
     ) : null}
+    <div className="mt-6">
+      <h4 className="text-sm font-black uppercase tracking-wide text-slate-900 dark:text-white">Tenants on this lease</h4>
+      {leaseCancelled && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">This lease is cancelled — membership cannot be changed.</p>}
+      {leaseMembers.length === 0 && !leaseCancelled && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">No tenants on this lease yet. Add the first tenant from the Tenants screen, then manage membership here.</p>}
+      {!hasPrimary && leaseMembers.length > 0 && !leaseCancelled && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">This lease has no primary tenant — make one primary below before adding a co-tenant.</p>}
+      <ul className="mt-3 grid gap-2">
+        {leaseMembers.map(({ membership, tenant }) => (
+          <li key={membership.id || membership.tenant_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+            <span className="text-sm font-bold text-slate-900 dark:text-white">
+              {tenant ? <a className="underline" href={`/forge/rental?section=tenants&recordType=tenant&recordId=${tenant.id}`}>{tenant.display_name || tenant.email}</a> : membership.tenant_id}
+              <span className="ml-2 text-xs font-black capitalize text-slate-500 dark:text-slate-400">{membership.role}</span>
+            </span>
+            {!leaseCancelled && (membership.role !== "primary" || !hasPrimary) && <span className="flex gap-2">
+              <button type="button" disabled={working} onClick={() => onMakePrimary?.(lease.id, membership.tenant_id)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Make primary</button>
+              {membership.role !== "primary" && <button type="button" disabled={working} onClick={() => onRemoveCoTenant?.(lease.id, tenant || { id: membership.tenant_id, display_name: membership.tenant_id })} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Remove co-tenant</button>}
+            </span>}
+          </li>
+        ))}
+      </ul>
+      {!leaseCancelled && hasPrimary && candidates.length > 0 && <form onSubmit={(event) => onAddCoTenant?.(event, lease.id)} className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required className="mt-1 rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
+          {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name || candidate.email}</option>)}
+        </select></label>
+        <button type="submit" disabled={working} className={`rounded-xl px-4 py-2 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button>
+      </form>}
+      {!leaseCancelled && hasPrimary && candidates.length === 0 && leaseMembers.length > 0 && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Every tenant record is already on this lease — create a new tenant record under Tenants to add another person.</p>}
+    </div>
     <CustomFieldsEditor groups={[{ entity: "lease", recordId: lease.id }]} />
     {schedule && lease.status !== "cancelled" && (
       <div className="mt-4">
