@@ -264,6 +264,21 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setDetailError({ leaseId: lease.id, text: error.message }); } finally { setWorking(false); }
   }
+  async function endLease(event, lease) {
+    event.preventDefault(); setWorking(true); setMessage("");
+    const form = new FormData(event.currentTarget);
+    if (form.get("confirm") !== "END") { setMessage("Type END to confirm ending this lease."); setWorking(false); return false; }
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "end-lease", leaseId: lease.id, endDate: form.get("endDate") || null, reason: form.get("reason") || null }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to end the lease.");
+      const unitLabel = setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id;
+      setMessage(`Lease ended: ${unitLabel} — ${result.lease.end_date}. Future charges stopped; open charges stay on the books.`);
+      await refresh();
+      return true;
+    } catch (error) { setMessage(error.message); return false; } finally { setWorking(false); }
+  }
   async function save(event) {
     event.preventDefault(); setMessage(""); setSaveNotice("");
     const form = new FormData(event.currentTarget);
@@ -332,7 +347,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
         const leaseMembershipsForLease = (setup.leaseMemberships || []).filter((item) => item.lease_id === lease?.id);
         const depositTenantId = (leaseMembershipsForLease.find((item) => item.occupancy_role === "primary") || leaseMembershipsForLease[0])?.tenant_id || null;
         const existingDeposit = (setup.deposits || []).find((item) => item.lease_id === lease?.id) || null;
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} balanceCents={leaseBalanceCents(lease.id, { openCharges: setup.openCharges, credits: setup.credits, payments: setup.payments })} working={working} notice={detailNotice?.leaseId === lease.id ? detailNotice.text : ""} detailError={detailError?.leaseId === lease.id ? detailError.text : ""} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} onActivateForgeBilling={activateForgeBilling} existingDeposit={existingDeposit} depositTenantId={depositTenantId} onSaveDeposit={saveLeaseDeposit} onEnd={endLease} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -362,10 +377,11 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null }) {
+export function LeaseDetail({ lease, unit, schedule, balanceCents = null, working, notice, detailError, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms, onActivateForgeBilling, existingDeposit = null, depositTenantId = null, onSaveDeposit = null, onEnd }) {
   const [showEditTerms, setShowEditTerms] = useState(false);
   const [billingNotice, setBillingNotice] = useState("");
   const [billingError, setBillingError] = useState("");
+  const [showEndLease, setShowEndLease] = useState(false);
   async function handleUpdateTerms(event) {
     if (await onUpdateTerms(event, lease, schedule)) setShowEditTerms(false);
   }
@@ -468,6 +484,20 @@ export function LeaseDetail({ lease, unit, schedule, balanceCents = null, workin
       <div className="mt-4 flex items-center gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
         <button type="button" disabled={working} onClick={() => onCancel(lease)} className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">Cancel this lease</button>
         <p className="text-xs text-slate-500 dark:text-slate-400">Only cancel a genuine duplicate or one created in error — this is a real record change.</p>
+      </div>
+    )}
+    {lease.status === "active" && onEnd && (
+      <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <button type="button" disabled={working} onClick={() => setShowEndLease((value) => !value)} className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">{showEndLease ? "Close" : "End this lease"}</button>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Ending stops future charges and lets the unit be archived. Open charges stay on the books — void or refund them separately if needed.</p>
+        {showEndLease && (
+          <form onSubmit={async (event) => { if (await onEnd(event, lease)) setShowEndLease(false); }} className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
+            <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Reason<input name="reason" placeholder="Move-out, term ended, mutual agreement…" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white sm:col-span-2">Type END to confirm<input name="confirm" required placeholder="END" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <button disabled={working} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800 disabled:opacity-50 sm:col-span-2">{working ? "Ending…" : "End this lease"}</button>
+          </form>
+        )}
       </div>
     )}
   </div>;

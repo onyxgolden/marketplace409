@@ -59,6 +59,43 @@ export async function cancelLease({ authenticated, body, effectiveOwnerId, times
   return NextResponse.json({ success: true, lease: data });
 }
 
+export async function endLease({ authenticated, body, effectiveOwnerId, timestamp }) {
+  // End an ACTIVE lease (B1). Ending stops future charge generation and
+  // unblocks archiving the unit (archiveUnit only refuses ACTIVE leases).
+  // Deliberate semantics, documented here so review can hold them:
+  // - The lease row moves to status "ended" with end_date + ended_at set.
+  // - Active rent schedules for the lease move to "ended" too, so the
+  //   charge generator (which requires an active schedule) never creates
+  //   another charge for the ended term.
+  // - Open charges are left exactly as they are: history is preserved and
+  //   any remaining balance stays collectible (void/refund are separate
+  //   actions). Nothing is deleted.
+  if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
+  const leaseId = body.leaseId.trim();
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  const endDate = body.endDate === null || body.endDate === undefined || body.endDate === ""
+    ? new Date().toISOString().slice(0, 10) : String(body.endDate).trim();
+  if (!datePattern.test(endDate)) return badRequest("A valid end date (YYYY-MM-DD) is required.");
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  if (lease.status !== "active") return NextResponse.json({ error: "Only an active lease can be ended." }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rental_leases")
+    .update({ status: "ended", end_date: endDate, ended_at: timestamp, updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("id", leaseId).eq("status", "active")
+    .select("id, status, end_date").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Only an active lease can be ended." }, { status: 409 });
+  const { data: endedSchedules, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+    .update({ status: "ended", updated_at: timestamp })
+    .eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("status", "active")
+    .select("id");
+  if (scheduleError) throw scheduleError;
+  return NextResponse.json({ success: true, lease: data, schedulesEnded: (endedSchedules || []).length, reason: reason || null });
+}
+
 export async function updateLeaseTerms({ authenticated, body, effectiveOwnerId, timestamp }) {
   if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
   const input = body.terms;

@@ -8,7 +8,7 @@ import {
   updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
 } from "./_actions/tenants.js";
 import {
-  saveLease, saveSchedule, cancelLease, updateLeaseTerms, generateCharge, voidCharge,
+  saveLease, saveSchedule, cancelLease, endLease, updateLeaseTerms, generateCharge, voidCharge,
   activateForgeBilling, setBillingEnabled, activateLeaseSchedule, saveLeaseChange,
   approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
 } from "./_actions/leases.js";
@@ -48,6 +48,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-lease": saveLease,
   "save-schedule": saveSchedule,
   "cancel-lease": cancelLease,
+  "end-lease": endLease,
   "update-lease-terms": updateLeaseTerms,
   "generate-charge": generateCharge,
   "void-charge": voidCharge,

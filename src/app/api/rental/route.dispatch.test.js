@@ -67,7 +67,7 @@ const ALL_OPERATIONS = [
   "save-unit", "archive-unit", "delete-archived-unit", "review-animal",
   "save-tenant", "delete-unused-tenant", "update-tenant-email", "send-tenant-invite",
   "update-tenant-profile", "set-primary-tenant",
-  "save-lease", "save-schedule", "cancel-lease", "update-lease-terms",
+  "save-lease", "save-schedule", "cancel-lease", "end-lease", "update-lease-terms",
   "generate-charge", "void-charge", "activate-forge-billing", "set-billing-enabled",
   "save-convenience-fee", "activate-lease-schedule",
   "record-offline-payment", "set-payment-deposit-state", "apply-tenant-credit", "void-tenant-credit",
