@@ -10,7 +10,7 @@ const APPLY_CONFIRM_WORD = "CONFIRM";
 // Open credits auto-apply to the next generated rent charge; this panel covers the
 // manual path (apply to a specific open charge, or void the unapplied remainder)
 // behind the reconciliation human gate (checkbox + typing CONFIRM).
-export default function TenantCreditSection({ credits = [], creditApplications = [], openCharges = [], onChanged }) {
+export default function TenantCreditSection({ credits = [], creditApplications = [], openCharges = [], onChanged, tenantId = null, tenantName = "", tenantLeases = [] }) {
   const [applyFor, setApplyFor] = useState(null);
   const [applyChargeId, setApplyChargeId] = useState("");
   const [applyAmount, setApplyAmount] = useState("");
@@ -20,6 +20,14 @@ export default function TenantCreditSection({ credits = [], creditApplications =
   const [voidReason, setVoidReason] = useState("");
   const [voidChecked, setVoidChecked] = useState(false);
   const [voidTyped, setVoidTyped] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createAmount, setCreateAmount] = useState("");
+  const [createReason, setCreateReason] = useState("");
+  const [createLeaseId, setCreateLeaseId] = useState("");
+  const [createChecked, setCreateChecked] = useState(false);
+  const [createTyped, setCreateTyped] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createdMessage, setCreatedMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -31,7 +39,48 @@ export default function TenantCreditSection({ credits = [], creditApplications =
     applicationsByCredit.get(application.credit_id).push(application);
   }
 
-  if (credits.length === 0) return null;
+  // Legacy behavior preserved: without a tenant context the section stays hidden
+  // when there is nothing to show. With a tenant, the create-credit form renders
+  // even when no credits exist yet — that is the B4 fix (M-03).
+  if (credits.length === 0 && !tenantId) return null;
+
+  // Controls-sweep B4: standalone credit creation (goodwill, concession) with no
+  // overpayment to fabricate. The lease resolves server-side for single-lease
+  // tenants; multi-lease tenants pick one explicitly.
+  async function postCreate() {
+    const cents = Math.round(Number(createAmount) * 100);
+    if (!Number.isSafeInteger(cents) || cents <= 0) { setError("Enter a positive credit amount."); return; }
+    if (!createReason.trim()) { setError("A reason is required to create a credit."); return; }
+    if (tenantLeases.length === 0) { setError("This tenant has no lease to attach this credit to."); return; }
+    if (tenantLeases.length > 1 && !createLeaseId) { setError("Select the lease for this credit."); return; }
+    if (!createChecked || createTyped.trim().toUpperCase() !== APPLY_CONFIRM_WORD) {
+      setError(`Check the confirmation and type ${APPLY_CONFIRM_WORD} to create this credit.`);
+      return;
+    }
+    setCreateBusy(true); setError(""); setCreatedMessage("");
+    try {
+      const response = await fetch("/api/rental", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "create-tenant-credit",
+          credit: {
+            tenantId, leaseId: tenantLeases.length > 1 ? createLeaseId : undefined,
+            amountCents: cents, reason: createReason.trim(), ownerConfirmed: true,
+          },
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to create the credit.");
+      setCreatedMessage(`✓ Credit ${money.format(cents / 100)} recorded for ${tenantName || "this tenant"}.`);
+      setCreateOpen(false); setCreateAmount(""); setCreateReason(""); setCreateLeaseId(""); setCreateChecked(false); setCreateTyped("");
+      onChanged?.();
+    } catch (caught) {
+      setError(caught.message || "Unable to create the credit.");
+    } finally {
+      setCreateBusy(false);
+    }
+  }
 
   async function postApply() {
     const credit = applyFor;
@@ -104,10 +153,14 @@ export default function TenantCreditSection({ credits = [], creditApplications =
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
         Overpayments held on this tenant&apos;s lease. The money was already received and counted in the payment
         history — credits are memo entries, not a second payment. Open credits apply automatically to the next
-        rent charge, oldest first.
+        rent charge, oldest first. A goodwill or concession credit can also be created here without an overpayment.
       </p>
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       {notice ? <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
+      {createdMessage && <p role="status" className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-black text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{createdMessage}</p>}
+      {credits.length === 0 && (
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No credits yet — create one below for a goodwill or concession credit.</p>
+      )}
       <ul className="mt-3 space-y-3">
         {credits.map((credit) => {
           const applications = applicationsByCredit.get(credit.id) || [];
@@ -221,6 +274,63 @@ export default function TenantCreditSection({ credits = [], creditApplications =
           );
         })}
       </ul>
+      {tenantId && (
+        <div className="mt-4 print:hidden">
+          {!createOpen ? (
+            <button type="button" onClick={() => { setCreateOpen(true); setError(""); }}
+              className="rounded-xl border border-sky-600 px-3 py-1.5 text-xs font-black text-sky-700 hover:bg-sky-100 dark:text-sky-300 dark:hover:bg-sky-900/40">
+              Create a credit…
+            </button>
+          ) : (
+            <div className="rounded-xl border-2 border-sky-400 bg-white p-4 dark:border-sky-600 dark:bg-slate-900">
+              <p className="text-sm font-black text-slate-950 dark:text-white">Create a tenant credit</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                A standalone credit — goodwill, concession, or correction. It applies to charges exactly like an
+                overpayment credit. No payment is recorded; this is memo money the tenant does not owe.
+              </p>
+              <label className="mt-2 block text-sm font-bold text-slate-950 dark:text-white">Amount
+                <input value={createAmount} onChange={(event) => setCreateAmount(event.target.value)} inputMode="decimal" placeholder="0.00"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+              </label>
+              <label className="mt-2 block text-sm font-bold text-slate-950 dark:text-white">Reason
+                <input value={createReason} onChange={(event) => setCreateReason(event.target.value)} placeholder="e.g. goodwill concession for late maintenance"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+              </label>
+              {tenantLeases.length > 1 && (
+                <label className="mt-2 block text-sm font-bold text-slate-950 dark:text-white">Lease
+                  <select value={createLeaseId} onChange={(event) => setCreateLeaseId(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
+                    <option value="">Select a lease…</option>
+                    {tenantLeases.map((lease) => (
+                      <option key={lease.id} value={lease.id}>{lease.label || lease.id}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {tenantLeases.length === 0 && (
+                <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                  This tenant has no lease to attach a credit to — create a lease first.
+                </p>
+              )}
+              <label className="mt-3 flex items-start gap-2 text-sm font-bold text-slate-950 dark:text-white">
+                <input type="checkbox" checked={createChecked} onChange={(event) => setCreateChecked(event.target.checked)} className="mt-1 h-4 w-4 accent-sky-600" />
+                I confirm this credit should be recorded for the reason above.
+              </label>
+              <label className="mt-2 block text-sm font-bold text-slate-950 dark:text-white">Type {APPLY_CONFIRM_WORD}
+                <input value={createTyped} onChange={(event) => setCreateTyped(event.target.value)} placeholder={APPLY_CONFIRM_WORD}
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+              </label>
+              <div className="mt-3 flex gap-2">
+                <button type="button" disabled={createBusy || tenantLeases.length === 0} onClick={postCreate}
+                  className={`rounded-xl px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>
+                  {createBusy ? "Creating…" : "Create credit"}
+                </button>
+                <button type="button" onClick={() => setCreateOpen(false)} className="text-sm font-bold text-slate-600 underline dark:text-slate-400">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

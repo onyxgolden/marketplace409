@@ -72,6 +72,7 @@ const ALL_OPERATIONS = [
   "save-convenience-fee", "activate-lease-schedule",
   "record-offline-payment", "set-payment-deposit-state", "apply-tenant-credit", "void-tenant-credit", "void-payment", "refund-payment",
   "pause-autopay", "resume-autopay", "cancel-autopay", "update-autopay",
+  "create-tenant-credit",
   "save-payment-policy", "save-payment-policy-tenant-override",
   "queue-rent-reminder", "cancel-rent-notification", "queue-insurance-renewals",
   "update-maintenance-request", "create-maintenance-work-order", "update-maintenance-work-order",

@@ -87,6 +87,46 @@ export async function voidTenantCredit({ authenticated, body, effectiveOwnerId }
   return NextResponse.json({ success: true, credit: data });
 }
 
+// Controls-sweep B4: create a tenant credit without an overpayment. Requires
+// the 20261031230000 migration (source 'manual', nullable source_payment_id).
+// The lease is explicit when given (and must be one of the tenant's leases);
+// otherwise it resolves from the tenant's memberships, and refuses when the
+// tenant has none or more than one — a manual credit must never land on an
+// ambiguous lease. The reason is stored in notes so the ledger shows why this
+// money exists; manual credits apply to charges exactly like overpayments.
+export async function createTenantCredit({ authenticated, body, effectiveOwnerId }) {
+  const input = body.credit;
+  if (typeof input?.tenantId !== "string" || !input.tenantId.trim()) return badRequest("tenantId is required.");
+  const amountCents = Number(input.amountCents);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive credit amount is required.");
+  if (typeof input.reason !== "string" || !input.reason.trim()) return badRequest("A reason is required to create a credit.");
+  if (input.ownerConfirmed !== true) return badRequest("Owner confirmation is required to create a credit.");
+  const tenantId = input.tenantId.trim();
+  const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+    .select("id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+  if (tenantError) throw tenantError;
+  if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+  const { data: memberships, error: membershipError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("lease_id").eq("owner_id", effectiveOwnerId).eq("tenant_id", tenantId);
+  if (membershipError) throw membershipError;
+  const leaseIds = (memberships || []).map((item) => item.lease_id);
+  let leaseId = typeof input.leaseId === "string" && input.leaseId.trim() ? input.leaseId.trim() : null;
+  if (leaseId) {
+    if (!leaseIds.includes(leaseId)) return NextResponse.json({ error: "Tenant is not on the selected lease." }, { status: 409 });
+  } else {
+    if (leaseIds.length === 0) return NextResponse.json({ error: "Tenant has no lease to attach this credit to." }, { status: 409 });
+    if (leaseIds.length > 1) return NextResponse.json({ error: "Tenant has more than one lease — select the lease for this credit." }, { status: 409 });
+    leaseId = leaseIds[0];
+  }
+  const { data, error } = await authenticated.supabaseClient.from("rental_tenant_credits").insert({
+    owner_id: effectiveOwnerId, id: `rental_credit_${crypto.randomUUID()}`, tenant_id: tenantId, lease_id: leaseId,
+    amount_cents: amountCents, remaining_cents: amountCents, source: "manual", source_payment_id: null,
+    status: "open", notes: `Manual credit: ${input.reason.trim()}`,
+  }).select("id, tenant_id, lease_id, amount_cents, remaining_cents, source, status").single();
+  if (error) throw error;
+  return NextResponse.json({ success: true, credit: data });
+}
+
 // Controls-sweep B2: void a settled OFFLINE payment. The row moves to the
 // refunded state (not a invented "voided" state) because that is the state
 // the database reversal trigger watches: it restores the charge's paid amount

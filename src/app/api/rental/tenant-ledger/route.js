@@ -106,6 +106,14 @@ export async function GET(request) {
       deposits: depositsHistory,
       importedHistory,
       openCharges,
+      // The tenant's leases (id + display label) for the credit-creation form:
+      // a manual credit must land on exactly one lease (controls sweep B4).
+      tenantLeases: leases
+        .filter((lease) => tenantLeaseIds.has(lease.id))
+        .map((lease) => {
+          const unit = units.find((item) => item.id === lease.unit_id);
+          return { id: lease.id, label: unit?.label || unit?.name || lease.id };
+        }),
       // Overpayment credits + their applications, for the ledger's credit section.
       // Additive only — the ledger entries above already carry the memo rows.
       credits,

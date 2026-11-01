@@ -327,3 +327,80 @@ describe("autopay controls (controls sweep B3)", () => {
     expect((await post({ operation: "update-autopay", enrollmentId: "enr_nope", chargeDay: 1, reminderDaysBefore: 3 })).status).toBe(404);
   });
 });
+
+function creditClient(script) {
+  const calls = [];
+  function query(table) {
+    const q = {
+      table,
+      select() { return q; },
+      eq() { return q; },
+      insert(values) { calls.push({ table, values }); return q; },
+      async maybeSingle() {
+        if (table === "rental_tenants") return { data: script.tenant ?? null, error: null };
+        return { data: null, error: null };
+      },
+      async single() {
+        if (table === "rental_tenant_credits") return { data: script.creditInsert ?? null, error: null };
+        return { data: null, error: null };
+      },
+      then(resolve) { resolve({ data: table === "rental_lease_tenants" ? (script.memberships ?? []) : [], error: null }); },
+    };
+    return q;
+  }
+  return { calls, client: { from: (table) => query(table), rpc: async () => ({ data: null, error: null }) } };
+}
+
+function authForCredit(script) {
+  const { calls, client } = creditClient(script);
+  mockedAuth.current = {
+    application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+  };
+  return calls;
+}
+
+describe("create-tenant-credit (controls sweep B4)", () => {
+  it("creates a manual credit on the tenant's single lease with the reason in notes", async () => {
+    const calls = authForCredit({
+      tenant: { id: "t1" },
+      memberships: [{ lease_id: "lease_1" }],
+      creditInsert: { id: "credit_new", tenant_id: "t1", lease_id: "lease_1", amount_cents: 5000, remaining_cents: 5000, source: "manual", status: "open" },
+    });
+    const response = await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 5000, reason: "Goodwill concession", ownerConfirmed: true } });
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.success).toBe(true);
+    expect(json.credit.source).toBe("manual");
+    expect(json.credit.lease_id).toBe("lease_1");
+    const insert = calls.find((call) => call.table === "rental_tenant_credits");
+    expect(insert.values.source).toBe("manual");
+    expect(insert.values.source_payment_id).toBeNull();
+    expect(insert.values.notes).toContain("Goodwill concession");
+  });
+
+  it("uses an explicit lease when given and refuses a lease the tenant is not on", async () => {
+    const calls = authForCredit({
+      tenant: { id: "t1" },
+      memberships: [{ lease_id: "lease_1" }, { lease_id: "lease_2" }],
+      creditInsert: { id: "credit_new", tenant_id: "t1", lease_id: "lease_2", amount_cents: 5000, remaining_cents: 5000, source: "manual", status: "open" },
+    });
+    const response = await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", leaseId: "lease_2", amountCents: 5000, reason: "Concession", ownerConfirmed: true } });
+    expect(response.status).toBe(200);
+    expect(calls.find((call) => call.table === "rental_tenant_credits").values.lease_id).toBe("lease_2");
+    authForCredit({ tenant: { id: "t1" }, memberships: [{ lease_id: "lease_1" }] });
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", leaseId: "lease_9", amountCents: 5000, reason: "x", ownerConfirmed: true } })).status).toBe(409);
+  });
+
+  it("refuses an ambiguous lease and validates amount, reason, and confirmation", async () => {
+    authForCredit({ tenant: { id: "t1" }, memberships: [{ lease_id: "lease_1" }, { lease_id: "lease_2" }] });
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 5000, reason: "x", ownerConfirmed: true } })).status).toBe(409);
+    authForCredit({ tenant: { id: "t1" }, memberships: [] });
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 5000, reason: "x", ownerConfirmed: true } })).status).toBe(409);
+    authForCredit({ tenant: { id: "t1" }, memberships: [{ lease_id: "lease_1" }] });
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 0, reason: "x", ownerConfirmed: true } })).status).toBe(400);
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 5000, ownerConfirmed: true } })).status).toBe(400);
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t1", amountCents: 5000, reason: "x" } })).status).toBe(400);
+    authForCredit({ tenant: null, memberships: [] });
+    expect((await post({ operation: "create-tenant-credit", credit: { tenantId: "t_nope", amountCents: 5000, reason: "x", ownerConfirmed: true } })).status).toBe(404);
+  });
+});
