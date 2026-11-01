@@ -6,7 +6,11 @@ import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit }
 import {
   saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
   updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
+  createAnimal, revokeAnimal,
 } from "./_actions/tenants.js";
+import {
+  recordInsuranceProof, updateInsuranceProof, reopenInsurancePolicy,
+} from "./_actions/insurance.js";
 import {
   saveLease, saveSchedule, cancelLease, restoreLease, endLease, updateLeaseTerms, generateCharge, voidCharge,
   activateForgeBilling, setBillingEnabled, activateLeaseSchedule, setScheduleStatus, setPaymentFrequency, saveLeaseChange,
@@ -42,6 +46,11 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "archive-unit": archiveUnit,
   "delete-archived-unit": deleteArchivedUnit,
   "review-animal": reviewAnimal,
+  "create-animal": createAnimal,
+  "revoke-animal": revokeAnimal,
+  "record-insurance-proof": recordInsuranceProof,
+  "update-insurance-proof": updateInsuranceProof,
+  "reopen-insurance-policy": reopenInsurancePolicy,
   "save-tenant": saveTenant,
   "delete-unused-tenant": deleteUnusedTenant,
   "update-tenant-email": updateTenantEmail,

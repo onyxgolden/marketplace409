@@ -255,5 +255,84 @@ export async function reviewAnimal({ authenticated, body, effectiveOwnerId }) {
     p_monthly_fee_cents: body.monthlyFeeCents ?? null, p_effective_start_date: body.effectiveStartDate || null,
   });
   if (error) throw error;
-  return NextResponse.json({ success: true, review: data });
+  // Controls-sweep follow-up G22 (O-12): the review RPC does not end the
+  // monthly fee when a pet is denied, so a re-deny of an approved pet
+  // would leave an active fee charging. Ending is a no-op for first-time
+  // denies (no fee row exists yet). Fee-end first is the safer order in
+  // revokeAnimal below; here the RPC already committed, so a fee-end
+  // failure is reported, not hidden — the decision stands either way.
+  let feeEndError = null;
+  if (body.decision === "denied") {
+    const { error: feeError } = await authenticated.supabaseClient.from("monthly_pet_fees")
+      .update({ status: "ended", effective_end_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() })
+      .eq("owner_id", effectiveOwnerId).eq("animal_id", body.animalId).eq("status", "active");
+    if (feeError) feeEndError = feeError.message;
+  }
+  return NextResponse.json({ success: true, review: data, ...(feeEndError ? { feeEndError } : {}) });
+}
+
+// Controls-sweep follow-up G22 (O-12): landlord-side animal creation for a
+// phone/paper case. The tenant portal RPC cannot serve it — it resolves
+// the tenant from auth.uid() — so this inserts owner-side against an
+// active lease's household (primary tenant, else first member). Species
+// is dog-only: the schema CHECKs species = 'dog' and the tenant RPC
+// hardcodes it, so the form offers no species choice.
+export async function createAnimal({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot record animals." }, { status: 403 });
+  const input = body.animal || {};
+  if (typeof input.leaseId !== "string" || input.leaseId.trim() === "")
+    return badRequest("A lease is required.");
+  if (typeof input.name !== "string" || input.name.trim() === "")
+    return badRequest("The animal's name is required.");
+  if (typeof input.breedDescription !== "string" || input.breedDescription.trim() === "")
+    return badRequest("A breed description is required.");
+  if (!["pet", "assistance_review_requested"].includes(input.requestType))
+    return badRequest("Request type must be pet or assistance review.");
+  const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", input.leaseId.trim()).maybeSingle();
+  if (leaseError) throw leaseError;
+  if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+  if (lease.status !== "active")
+    return NextResponse.json({ error: "Animals can only be recorded against an active lease." }, { status: 409 });
+  const { data: members, error: memberError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+    .select("tenant_id, occupancy_role").eq("owner_id", effectiveOwnerId).eq("lease_id", lease.id);
+  if (memberError) throw memberError;
+  const tenantId = (members || []).find((row) => row.occupancy_role === "primary")?.tenant_id
+    || (members || [])[0]?.tenant_id;
+  if (!tenantId)
+    return NextResponse.json({ error: "The lease has no tenants to record the animal against." }, { status: 409 });
+  const { data, error } = await authenticated.supabaseClient.from("rental_animals").insert({
+    owner_id: effectiveOwnerId, id: id("rental_animal", input.id), tenant_id: tenantId, lease_id: lease.id,
+    name: input.name.trim(), species: "dog", breed_description: input.breedDescription.trim(),
+    classification: input.requestType, human_review_required: true, approval_status: "requested",
+  }).select("*").single();
+  if (error) throw error;
+  return NextResponse.json({ success: true, animal: data });
+}
+
+// Controls-sweep follow-up G22 (O-12): revoke an approved animal outright
+// (no new evidence needed — the owner is acting on their own record).
+// Fee-end runs FIRST: a denied animal with an active fee would overcharge,
+// while an approved animal with an ended fee is recoverable by re-review.
+export async function revokeAnimal({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot revoke animals." }, { status: 403 });
+  if (!body.animalId) return badRequest("Animal id is required.");
+  const { data: animal, error: loadError } = await authenticated.supabaseClient.from("rental_animals")
+    .select("id, approval_status").eq("owner_id", effectiveOwnerId).eq("id", body.animalId).maybeSingle();
+  if (loadError) throw loadError;
+  if (!animal) return NextResponse.json({ error: "Animal was not found." }, { status: 404 });
+  if (animal.approval_status !== "approved")
+    return NextResponse.json({ error: "Only an approved animal can be revoked." }, { status: 409 });
+  const { error: feeError } = await authenticated.supabaseClient.from("monthly_pet_fees")
+    .update({ status: "ended", effective_end_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() })
+    .eq("owner_id", effectiveOwnerId).eq("animal_id", body.animalId).eq("status", "active");
+  // A fee-end failure aborts before the denial: denied + active fee would
+  // overcharge, while approved + active fee is retryable.
+  if (feeError) throw feeError;
+  const { data, error } = await authenticated.supabaseClient.from("rental_animals")
+    .update({ approval_status: "denied", approved_at: null, approved_by: null, approval_evidence_id: null, updated_at: new Date().toISOString() })
+    .eq("owner_id", effectiveOwnerId).eq("id", body.animalId).select("id, approval_status").maybeSingle();
+  if (error) throw error;
+  if (!data) return NextResponse.json({ error: "Animal was not found." }, { status: 404 });
+  return NextResponse.json({ success: true, animal: data });
 }
