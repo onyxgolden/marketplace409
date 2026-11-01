@@ -26,6 +26,7 @@ import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_ac
 import {
   updateMaintenanceRequest, createMaintenanceRequest, saveContractor, updateContractor,
   deactivateContractor, reactivateContractor, recordContractorPayment, updateSupportCase,
+  createSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
 import { saveSecurityDeposit, updateSecurityDeposit, voidSecurityDeposit, recordSecurityDepositTransaction, voidSecurityDepositTransaction } from "./_actions/deposits.js";
@@ -113,6 +114,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "reactivate-contractor": reactivateContractor,
   "record-contractor-payment": recordContractorPayment,
   "update-support-case": updateSupportCase,
+  "create-support-case": createSupportCase,
   "create-maintenance-work-order": createMaintenanceWorkOrder,
   "update-maintenance-work-order": updateMaintenanceWorkOrder,
   "save-lease-preparation-version": saveLeasePreparationVersion,

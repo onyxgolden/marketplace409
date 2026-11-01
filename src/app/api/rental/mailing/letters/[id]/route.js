@@ -102,6 +102,32 @@ export async function PATCH(request, { params }) {
     const letter = await findLetter(supabaseClient, effectiveOwnerId, params.id);
     if (!letter) return NextResponse.json({ error: "The letter was not found." }, { status: 404 });
 
+    // Controls-sweep follow-up G25 (O-24): queued-letter address
+    // correction. Kept apart from status/tracking so each RPC keeps its
+    // own compare-and-swap contract; combining them in one PATCH is a
+    // 400, not a silent half-apply.
+    if (body.recipientAddress !== undefined) {
+      if (body.status !== undefined || body.trackingNumber !== undefined)
+        return NextResponse.json({ error: "Correct the address separately from status or tracking changes." }, { status: 400 });
+      const nextAddress = String(body.recipientAddress ?? "").trim();
+      if (!nextAddress) return NextResponse.json({ error: "A recipient address is required." }, { status: 400 });
+      const { data: corrected, error: rpcError } = await supabaseClient.rpc("correct_mailing_letter_recipient", {
+        p_owner_id: effectiveOwnerId, p_letter_id: letter.id,
+        p_expected_recipient: letter.recipient_address, p_next_recipient: nextAddress,
+      });
+      if (rpcError) {
+        const code = rpcError.code || "";
+        if (code === "PGRST202")
+          return NextResponse.json({ error: "Letter address correction has not been applied yet — the database change is still pending approval." }, { status: 503 });
+        if (code === "P0001")
+          return NextResponse.json({ error: "The letter changed while you were editing it. Reload and try again." }, { status: 409 });
+        if (code === "42501")
+          return NextResponse.json({ error: "Only the owner or co-owner can update mailings." }, { status: 403 });
+        throw rpcError;
+      }
+      return NextResponse.json({ success: true, letter: rowToLetter(corrected) });
+    }
+
     // Resolve the requested tracking value first: undefined = untouched,
     // null = clear, otherwise the cleaned number.
     let nextTrackingNumber;
@@ -181,5 +207,31 @@ export async function PATCH(request, { params }) {
   } catch (error) {
     console.error("Mailing letter update error", error);
     return NextResponse.json({ error: "Unable to update the letter." }, { status: 500 });
+  }
+}
+
+// Controls-sweep follow-up G25 (O-24): delete a queued letter. Mailed /
+// delivered letters are delivery evidence and cannot be deleted — their
+// audit events cascade with the row, so deleting one would erase the
+// evidence trail itself.
+export async function DELETE(request, { params }) {
+  const authenticated = await createAuthenticatedRentalManagerApplication();
+  if (authenticated.response) return authenticated.response;
+  if (await ownerOnlyWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can update mailings." }, { status: 403 });
+  }
+  try {
+    const { supabaseClient, effectiveOwnerId } = authenticated;
+    const letter = await findLetter(supabaseClient, effectiveOwnerId, params.id);
+    if (!letter) return NextResponse.json({ error: "The letter was not found." }, { status: 404 });
+    if (letter.status !== "queued")
+      return NextResponse.json({ error: "Only a queued letter can be deleted — a mailed letter is delivery evidence." }, { status: 409 });
+    const { error: deleteError } = await supabaseClient.from("rental_mail_letters")
+      .delete().eq("owner_id", effectiveOwnerId).eq("id", letter.id);
+    if (deleteError) throw deleteError;
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Mailing letter delete error", error);
+    return NextResponse.json({ error: "Unable to delete the letter." }, { status: 500 });
   }
 }

@@ -86,6 +86,10 @@ export default function RentalMailingPanel() {
 
   // Tracking editor state (per letter)
   const [trackingInputs, setTrackingInputs] = useState({});
+  // Controls-sweep follow-up G25 (O-24): queued-letter address editor +
+  // two-step delete state (per letter).
+  const [recipientInputs, setRecipientInputs] = useState({});
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState(null);
 
   // Print sheet: render the letters print-only, then print.
   useEffect(() => {
@@ -144,6 +148,7 @@ export default function RentalMailingPanel() {
       if (!response.ok) throw new Error(body.error || "Unable to load the batch.");
       setBatchDetail(body.batch);
       setTrackingInputs(Object.fromEntries((body.batch.letters || []).map((letter) => [letter.id, letter.trackingNumber || ""])));
+      setRecipientInputs(Object.fromEntries((body.batch.letters || []).map((letter) => [letter.id, letter.recipientAddress || ""])));
     } catch (reason) { setError(reason.message); }
     finally { setBusy(false); }
   }
@@ -156,7 +161,21 @@ export default function RentalMailingPanel() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to update the letter.");
-      setMessage(patch.status ? `Letter marked ${STATUS_LABEL[patch.status].toLowerCase()}.` : "Tracking number saved.");
+      setMessage(patch.recipientAddress !== undefined ? "Recipient address corrected." : patch.status ? `Letter marked ${STATUS_LABEL[patch.status].toLowerCase()}.` : "Tracking number saved.");
+      await openBatch(batchDetail.id);
+      await refreshBatches();
+    } catch (reason) { setError(reason.message); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteLetter(letterId) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(`/api/rental/mailing/letters/${encodeURIComponent(letterId)}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to delete the letter.");
+      setMessage("Queued letter deleted.");
+      setConfirmingDeleteId(null);
       await openBatch(batchDetail.id);
       await refreshBatches();
     } catch (reason) { setError(reason.message); }
@@ -350,6 +369,17 @@ export default function RentalMailingPanel() {
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Save</button>
                   </div>
                 </div>
+                {letter.status === "queued" ? <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Recipient address
+                    <textarea value={recipientInputs[letter.id] ?? ""} rows={2}
+                      onChange={(event) => setRecipientInputs((current) => ({ ...current, [letter.id]: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm font-normal dark:border-slate-600 dark:bg-slate-950 dark:text-white" />
+                  </label>
+                  <div className="flex items-end gap-2">
+                    <button type="button" disabled={busy} onClick={() => updateLetter(letter.id, { recipientAddress: recipientInputs[letter.id] || "" })}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Save address</button>
+                  </div>
+                </div> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
                   {letter.status === "queued" ? <button type="button" disabled={busy} onClick={() => updateLetter(letter.id, { status: "mailed", trackingNumber: trackingInputs[letter.id] || "" })}
                     className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">Mark mailed</button> : null}
@@ -363,6 +393,13 @@ export default function RentalMailingPanel() {
                     className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Reopen as mailed</button> : null}
                   <button type="button" onClick={() => setPrintLetters([letter])}
                     className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Print</button>
+                  {letter.status === "queued" ? (confirmingDeleteId === letter.id ? <>
+                    <button type="button" disabled={busy} onClick={() => deleteLetter(letter.id)}
+                      className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">Delete this letter?</button>
+                    <button type="button" onClick={() => setConfirmingDeleteId(null)}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Keep it</button>
+                  </> : <button type="button" onClick={() => setConfirmingDeleteId(letter.id)}
+                    className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-bold text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950">Delete letter</button>) : null}
                 </div>
                 {letter.documentId ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">A copy is saved in the file library (Documents).</p> : null}
               </li>)}

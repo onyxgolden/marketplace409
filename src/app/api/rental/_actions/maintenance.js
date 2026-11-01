@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { badRequest, id } from "./shared.js";
+import { badRequest, id, readOnlyWriteBlocked } from "./shared.js";
 
 export async function updateMaintenanceRequest({ authenticated, body, effectiveOwnerId, timestamp }) {
   if (typeof body.requestId !== "string" || body.requestId.trim() === "") return badRequest("requestId is required.");
@@ -133,6 +133,43 @@ export async function updateSupportCase({ authenticated, body, effectiveOwnerId 
     p_public_note: body.publicNote || null, p_private_note: body.privateNote || null, p_resolution: body.resolution || null,
   });
   if (error) throw error;
+  return NextResponse.json({ success: true, supportCase: data });
+}
+
+// Controls-sweep follow-up G25 (O-20): manual case creation for a
+// tenant-reported issue that never auto-created a case (auto-cases only
+// come from failed/disputed/refunded payments). Tenant is optional — a
+// general issue has no tenant — but when given it must belong to the owner.
+export async function createSupportCase({ authenticated, body, effectiveOwnerId }) {
+  if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot open support cases." }, { status: 403 });
+  const input = body.supportCase || {};
+  if (typeof input.title !== "string" || input.title.trim() === "")
+    return badRequest("A case title is required.");
+  if (!["failed_payment", "refund_request", "payment_dispute", "portal_access", "maintenance_escalation", "other"].includes(input.caseType || "other"))
+    return badRequest("A supported case type is required.");
+  if (!["normal", "high", "urgent"].includes(input.priority || "normal"))
+    return badRequest("A supported priority is required.");
+  if (input.tenantId) {
+    const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+      .select("id").eq("owner_id", effectiveOwnerId).eq("id", input.tenantId).maybeSingle();
+    if (tenantError) throw tenantError;
+    if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+  }
+  const caseId = id("rental_support_case", input.id);
+  const { data, error } = await authenticated.supabaseClient.from("rental_support_cases").insert({
+    owner_id: effectiveOwnerId, id: caseId, tenant_id: input.tenantId || null,
+    lease_id: input.leaseId || null, case_type: input.caseType || "other",
+    priority: input.priority || "normal", status: "open", title: input.title.trim(),
+    tenant_visible_summary: input.summary?.trim() ? input.summary.trim() : null,
+    private_owner_note: input.privateNote?.trim() ? input.privateNote.trim() : null,
+    created_by: authenticated.user.id,
+  }).select("*").single();
+  if (error) throw error;
+  await authenticated.supabaseClient.from("rental_support_case_events").insert({
+    owner_id: effectiveOwnerId, id: id("rental_support_event", null), case_id: caseId,
+    event_type: "opened", public_note: input.summary?.trim() || null,
+    private_note: input.privateNote?.trim() || null, status: "open", recorded_by: authenticated.user.id,
+  });
   return NextResponse.json({ success: true, supportCase: data });
 }
 
