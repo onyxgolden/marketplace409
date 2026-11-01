@@ -25,6 +25,44 @@ export async function saveUnit({ authenticated, body, application, effectiveOwne
   return NextResponse.json({ success: true, unit: await application.saveUnit(unit, effectiveOwnerId) });
 }
 
+export async function setUnitStatus({ authenticated, body, application, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G4 (L-05; Q-09 resolved — no flow ever moved a unit from
+  // preparing to available, so a Setup-created unit could never be listed).
+  // This is the single transition for the three live statuses. Archiving
+  // stays on archive-unit (active-lease guard) and un-archiving on
+  // restore-unit; neither is reachable through this op.
+  if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
+  const nextStatus = body.status;
+  if (!["preparing", "available", "occupied"].includes(nextStatus)) return badRequest("status must be preparing, available, or occupied.");
+  const unitId = body.unitId.trim();
+  const unit = await application.units.findById(unitId, effectiveOwnerId);
+  if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
+  if (unit.status === "inactive") return NextResponse.json({ error: "Restore this archived property/unit before changing its status." }, { status: 409 });
+  if (unit.status === nextStatus) return NextResponse.json({ success: true, unit });
+  const { data: activeLeases, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+    .select("id").eq("owner_id", effectiveOwnerId).eq("unit_id", unitId).eq("status", "active").limit(1);
+  if (leaseError) throw leaseError;
+  const hasActiveLease = (activeLeases || []).length > 0;
+  if (nextStatus === "occupied" && !hasActiveLease) return NextResponse.json({ error: "Only a unit with an active lease can be marked occupied. Activate the lease first, or leave the unit available." }, { status: 409 });
+  if (unit.status === "preparing" && nextStatus === "occupied") return NextResponse.json({ error: "Mark the unit available first, then occupied once its lease is active." }, { status: 409 });
+  if (unit.status === "occupied" && hasActiveLease) return NextResponse.json({ error: "End the active lease before changing this unit's status." }, { status: 409 });
+  const updated = createRentalUnit({ ...unit, status: nextStatus, updatedAt: timestamp });
+  return NextResponse.json({ success: true, unit: await application.saveUnit(updated, effectiveOwnerId) });
+}
+
+export async function restoreUnit({ authenticated, body, application, effectiveOwnerId, timestamp }) {
+  // Controls-sweep G4 (L-06): un-archive. The pre-archive status is not kept,
+  // so a restored unit returns to preparing — it must be reviewed and marked
+  // available before it can be listed again. Permanent delete keeps its
+  // history guard untouched.
+  if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
+  const unit = await application.units.findById(body.unitId.trim(), effectiveOwnerId);
+  if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
+  if (unit.status !== "inactive") return NextResponse.json({ error: "Only an archived property/unit can be restored." }, { status: 409 });
+  const restored = createRentalUnit({ ...unit, status: "preparing", updatedAt: timestamp });
+  return NextResponse.json({ success: true, unit: await application.saveUnit(restored, effectiveOwnerId) });
+}
+
 export async function archiveUnit({ authenticated, body, application, effectiveOwnerId, timestamp }) {
   if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
   const unit = await application.units.findById(body.unitId.trim(), effectiveOwnerId);

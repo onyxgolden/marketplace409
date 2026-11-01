@@ -19,6 +19,7 @@ function scriptedClient(script) {
       _updated: false,
       select() { return q; },
       eq() { return q; },
+      limit() { return q; },
       update(values) { calls.push({ table, values }); q._updated = true; return q; },
       insert() { return q; },
       delete() { return q; },
@@ -28,7 +29,7 @@ function scriptedClient(script) {
         return { data: null, error: null };
       },
       async single() { return { data: null, error: null }; },
-      then(resolve) { resolve({ data: script.scheduleUpdate ?? [], error: null }); },
+      then(resolve) { resolve({ data: table === "rental_leases" && script.leaseRows !== undefined ? script.leaseRows : (script.scheduleUpdate ?? []), error: null }); },
     };
     return q;
   }
@@ -513,5 +514,55 @@ describe("restore-lease (controls sweep G3)", () => {
     const response = await post({ operation: "restore-lease", leaseId: "lease_1" });
     expect(response.status).toBe(409);
     expect((await response.json()).error).toMatch(/Only a cancelled lease can be restored/);
+  });
+});
+
+describe("set-unit-status / restore-unit (controls sweep G4)", () => {
+  function authForUnit(unit, leaseRows = []) {
+    application.units.findById.mockImplementation(async () => unit);
+    application.saveUnit.mockImplementation(async (value) => value);
+    return authFor({ leaseRows });
+  }
+
+  it("moves preparing to available", async () => {
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "preparing" });
+    const response = await post({ operation: "set-unit-status", unitId: "unit_1", status: "available" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).unit.status).toBe("available");
+    expect(application.saveUnit.mock.calls.at(-1)[0].status).toBe("available");
+  });
+
+  it("refuses available to occupied without an active lease, allows it with one", async () => {
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "available" }, []);
+    const refused = await post({ operation: "set-unit-status", unitId: "unit_1", status: "occupied" });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toMatch(/active lease/);
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "available" }, [{ id: "lease_1" }]);
+    const allowed = await post({ operation: "set-unit-status", unitId: "unit_1", status: "occupied" });
+    expect(allowed.status).toBe(200);
+    expect((await allowed.json()).unit.status).toBe("occupied");
+  });
+
+  it("refuses to move an occupied unit with an active lease, and refuses inactive and bad statuses", async () => {
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "occupied" }, [{ id: "lease_1" }]);
+    const blocked = await post({ operation: "set-unit-status", unitId: "unit_1", status: "available" });
+    expect(blocked.status).toBe(409);
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "inactive" }, []);
+    const archived = await post({ operation: "set-unit-status", unitId: "unit_1", status: "available" });
+    expect(archived.status).toBe(409);
+    expect((await archived.json()).error).toMatch(/Restore this archived/);
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "available" }, []);
+    const bad = await post({ operation: "set-unit-status", unitId: "unit_1", status: "inactive" });
+    expect(bad.status).toBe(400);
+  });
+
+  it("restores an archived unit to preparing and refuses a live one", async () => {
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "inactive" });
+    const restored = await post({ operation: "restore-unit", unitId: "unit_1" });
+    expect(restored.status).toBe(200);
+    expect((await restored.json()).unit.status).toBe("preparing");
+    authForUnit({ id: "unit_1", label: "930 Highland Drive", propertyId: "930-highland-drive", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", bedrooms: 3, bathrooms: 2, squareFeet: 1200, availableAt: null, status: "available" });
+    const refused = await post({ operation: "restore-unit", unitId: "unit_1" });
+    expect(refused.status).toBe(409);
   });
 });

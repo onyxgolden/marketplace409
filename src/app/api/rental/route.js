@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { badRequest, now } from "./_actions/shared.js";
-import { saveUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
+import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
 import {
   saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
   updateTenantProfile, setPrimaryTenant, addCoTenant, removeCoTenant, reviewAnimal,
@@ -36,6 +36,8 @@ import {
 // "toString", "__proto__", "hasOwnProperty") must never dispatch to a handler.
 const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-unit": saveUnit,
+  "set-unit-status": setUnitStatus,
+  "restore-unit": restoreUnit,
   "archive-unit": archiveUnit,
   "delete-archived-unit": deleteArchivedUnit,
   "review-animal": reviewAnimal,

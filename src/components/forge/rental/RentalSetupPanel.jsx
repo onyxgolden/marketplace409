@@ -236,6 +236,30 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       await refreshUnits();
     } catch (error) { setError(error.message); } finally { setWorking(false); }
   }
+  // Controls-sweep G4: the unit-status transitions (L-05/L-06). The server
+  // enforces the legitimacy guards (occupied needs an active lease; an
+  // occupied unit with an active lease cannot move); the UI hides the
+  // buttons that cannot succeed and explains why.
+  async function setUnitStatus(unit, status) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "set-unit-status", unitId: unit.id, status }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to change the unit status.");
+      setMessage(`${unit.label} is now ${status}.`);
+      await refreshUnits();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  async function restoreUnit(unit) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "restore-unit", unitId: unit.id }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to restore the unit.");
+      setMessage(`${unit.label} restored to preparing. Mark it available when it is ready to list.`);
+      await refreshUnits();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   return (
     <>
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
@@ -286,7 +310,15 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
             {archiveCandidateId === unit.id ? <div className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="font-black text-red-900 dark:text-red-200">Archive {unit.label}?</p><p className="mt-2 text-sm text-red-800 dark:text-red-300">This removes the property/unit from active lists but preserves its financial, lease, and audit history. A property with an active lease cannot be archived.</p><div className="mt-3 flex gap-2"><button type="button" disabled={working} onClick={() => archiveUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white">Confirm archive</button><button type="button" onClick={() => setArchiveCandidateId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold dark:border-slate-600 dark:text-slate-300">Cancel</button></div></div>
               : editingId===unit.id ? <UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit} addressErrors={addressErrors}/>
-              : <><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Address" value={formatAddress(addressOfUnit(unit)) || "Not recorded"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl><CustomFieldsEditor groups={[{ entity: "property", recordId: unit.property_id, title: "Property custom fields" }, { entity: "unit", recordId: unit.id, title: "Unit custom fields" }]} /></>}
+              : <><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Address" value={formatAddress(addressOfUnit(unit)) || "Not recorded"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {unit.status === "preparing" && (<><button type="button" disabled={working} onClick={() => setUnitStatus(unit, "available")} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">Mark available</button><p className="text-xs text-slate-500 dark:text-slate-400">Available units can be listed.</p></>)}
+                {unit.status === "available" && (<><button type="button" disabled={working} onClick={() => setUnitStatus(unit, "occupied")} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">Mark occupied</button><button type="button" disabled={working} onClick={() => setUnitStatus(unit, "preparing")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Back to preparing</button><p className="text-xs text-slate-500 dark:text-slate-400">Mark occupied once the lease is active.</p></>)}
+                {unit.status === "occupied" && (leases.some((lease) => lease.unit_id === unit.id && lease.status === "active")
+                  ? <p className="text-xs text-slate-500 dark:text-slate-400">End the active lease before changing this unit&apos;s status.</p>
+                  : <><button type="button" disabled={working} onClick={() => setUnitStatus(unit, "available")} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">Mark available</button><button type="button" disabled={working} onClick={() => setUnitStatus(unit, "preparing")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Back to preparing</button></>)}
+              </div>
+              <CustomFieldsEditor groups={[{ entity: "property", recordId: unit.property_id, title: "Property custom fields" }, { entity: "unit", recordId: unit.id, title: "Unit custom fields" }]} /></>}
           </div>;
         })()}
       </RentalRecordBrowser>}
@@ -308,7 +340,10 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Permanent deletion is available only for empty accidental duplicates. Records with lease, maintenance, or inspection history are protected.</p>
         <div className="mt-4 grid gap-3">{units.filter((unit) => unit.status === "inactive").map((unit) => <div key={unit.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
           <div><p className="font-black text-slate-950 dark:text-white">{unit.label}</p><p className="text-xs text-slate-500 dark:text-slate-400">{unit.property_id}</p></div>
-          <button type="button" disabled={working} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
+          <div className="flex gap-2">
+            <button type="button" disabled={working} onClick={() => restoreUnit(unit)} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Restore unit</button>
+            <button type="button" disabled={working} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
+          </div>
         </div>)}</div>
       </div>}
       {!showCreate && error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}
