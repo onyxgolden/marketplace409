@@ -32,6 +32,20 @@ async function fetchTransaction(eventId) {
   return body.event;
 }
 
+// Same cleared endpoint the bank ledger's toggle uses: PATCH
+// /api/rental/financial-event { id, cleared }. Only financial_event rows
+// carry a cleared flag, so only they are toggleable (see below).
+async function setCleared(eventId, cleared) {
+  const response = await fetch("/api/rental/financial-event", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: eventId, cleared }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to update the transaction.");
+  return body;
+}
+
 async function deleteTransaction(eventId) {
   const response = await fetch(`/api/rental/transactions?eventId=${encodeURIComponent(eventId)}`, { method: "DELETE" });
   const body = await response.json();
@@ -64,6 +78,8 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
   const [editingEvent, setEditingEvent] = useState(null);
   const [editError, setEditError] = useState("");
   const [notice, setNotice] = useState("");
+  const [togglingId, setTogglingId] = useState(null);
+  const [toggleError, setToggleError] = useState("");
   // Ledger view controls: transaction filter, date range, and display settings.
   const [kindFilter, setKindFilter] = useState("all");
   const [dateRange, setDateRange] = useState("all");
@@ -93,6 +109,31 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
       refresh();
     } catch (caught) {
       setEditError(caught.message);
+    }
+  }
+
+  // Controls-sweep follow-up G12: the cleared toggle, same rule as the bank
+  // ledger. Only financial_event rows carry a cleared flag — rent-payment
+  // and contractor-payment rows are owned by other records, have no cleared
+  // state and no PATCH target, so they stay read-only ("—") by construction.
+  // Rentec-import financial_event rows toggle exactly like manual ones: the
+  // bank ledger's toggle is ungated by source, and this one matches it.
+  const canToggleCleared = (entry) => typeof entry.cleared === "boolean" && Boolean(entry.sourceId);
+  async function onToggleCleared(entry) {
+    setTogglingId(entry.sourceId);
+    setToggleError("");
+    try {
+      const result = await setCleared(entry.sourceId, !entry.cleared);
+      const cleared = result?.event?.cleared ?? !entry.cleared;
+      setNotice(cleared ? "✓ Transaction marked cleared." : "✓ Transaction marked uncleared.");
+      setDetailEntry((current) => current && current.id === entry.id ? { ...current, cleared } : current);
+      refresh();
+      return true;
+    } catch (caught) {
+      setToggleError(caught.message);
+      return false;
+    } finally {
+      setTogglingId(null);
     }
   }
 
@@ -151,6 +192,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
           </p>
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Ledger</h2>
           {notice ? <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p> : null}
+          {toggleError ? <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{toggleError}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => (onPostIncome ? onPostIncome() : setPostKind("income"))}
@@ -311,7 +353,19 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
                         {money.format(entry.balanceAfterCents / 100)}
                       </td>
                       <td className={`${compactRows ? "py-1.5" : "py-2.5"} pr-3 text-center`}>
-                        {entry.cleared
+                        {canToggleCleared(entry) ? (
+                          <button type="button"
+                            onClick={() => onToggleCleared(entry)}
+                            disabled={togglingId === entry.sourceId}
+                            title={entry.cleared ? `Unclear this transaction${entry.clearedAt ? ` (cleared ${formatDate(entry.clearedAt)})` : ""}` : "Mark this transaction cleared"}
+                            aria-label={`${entry.cleared ? "Unclear" : "Mark cleared"}: ${entry.description}`}
+                            aria-pressed={entry.cleared}
+                            className={`inline-flex h-6 w-6 items-center justify-center rounded-md border text-sm font-black transition disabled:opacity-50 ${entry.cleared
+                              ? "border-emerald-500 bg-emerald-500 text-white"
+                              : "border-slate-300 bg-white text-transparent hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800"}`}>
+                            ✓
+                          </button>
+                        ) : entry.cleared
                           ? <span className="font-black text-emerald-700 dark:text-emerald-400" title="Cleared">✓</span>
                           : <span className="font-normal text-slate-300 dark:text-slate-700" title="Uncleared">—</span>}
                       </td>
@@ -354,6 +408,9 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
           tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
           onClose={() => { setDetailEntry(null); setEditError(""); }}
           canEdit={detailEntry.source === "manual"}
+          canToggleCleared={canToggleCleared(detailEntry)}
+          togglingCleared={togglingId === detailEntry.sourceId}
+          onToggleCleared={() => onToggleCleared(detailEntry)}
           editError={editError}
           onEdit={() => startEdit(detailEntry)}
           onDelete={() => confirmDelete(detailEntry)}
@@ -390,7 +447,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
 // soft-deletes on the server. Manual entries load the full event so the modal
 // mirrors the edit form's sections: Transaction details, Accounts,
 // Attachments, plus split lines and a per-edit history ("View edits").
-function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], onClose, canEdit, editError, onEdit, onDelete }) {
+function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], onClose, canEdit, canToggleCleared = false, togglingCleared = false, onToggleCleared = null, editError, onEdit, onDelete }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [fullEvent, setFullEvent] = useState(null);
   const [eventLoading, setEventLoading] = useState(canEdit);
@@ -465,7 +522,10 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
   const detailRows = [
     ["Date", formatDate(fullEvent?.eventDate || entry.date)],
     ["Amount", `${money.format(amount / 100)} (${amountLabel})`],
-    ["Status", fullEvent ? (fullEvent.cleared ? "Cleared" : "Uncleared") : (entry.cleared ? "Cleared" : "Uncleared")],
+    // Status reads the parent's live entry, not the once-fetched full event:
+    // after a cleared toggle from this modal the parent updates the entry
+    // and this row must show the new state without reopening.
+    ["Status", entry.cleared ? "Cleared" : "Uncleared"],
     ["Payment method", fullEvent?.paymentMethod ? label(fullEvent.paymentMethod) : "—"],
     ["Check #", fullEvent?.checkNumber || entry.checkNumber || "—"],
     ["Display as", fullEvent?.displayAs || "—"],
@@ -537,7 +597,19 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
             {detailRows.map(([term, value]) => (
               <div key={term} className="flex items-baseline justify-between gap-4 border-b border-slate-100 pb-1.5 dark:border-slate-800">
                 <dt className="shrink-0 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{term}</dt>
-                <dd className="text-right font-bold text-slate-950 dark:text-white">{value}</dd>
+                <dd className="text-right font-bold text-slate-950 dark:text-white">
+                  {value}
+                  {term === "Status" && canToggleCleared && (
+                    <button type="button" onClick={onToggleCleared} disabled={togglingCleared}
+                      aria-label={`${entry.cleared ? "Unclear" : "Mark cleared"}: ${entry.description}`}
+                      aria-pressed={entry.cleared}
+                      className={`ml-3 inline-flex h-6 w-6 items-center justify-center rounded-md border text-sm font-black transition disabled:opacity-50 ${entry.cleared
+                        ? "border-emerald-500 bg-emerald-500 text-white"
+                        : "border-slate-300 bg-white text-transparent hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800"}`}>
+                      ✓
+                    </button>
+                  )}
+                </dd>
               </div>
             ))}
           </dl>
