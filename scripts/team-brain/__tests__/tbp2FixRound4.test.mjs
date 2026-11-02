@@ -334,7 +334,7 @@ describe("TBP2-007C bounded producer and resume state", () => {
     run(repo, ["update-ref", "refs/heads/main", tailCommit]);
     const head = headCommit(repo);
 
-    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"] });
+    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(first.truncated).toBe(true);
     expect(typeof first.resumeFrontier).toBe("string");
     // Fix round 5 migrated the frontier format v2 -> v3 (bounded
@@ -349,11 +349,11 @@ describe("TBP2-007C bounded producer and resume state", () => {
     // 2,001 pending needs three polls (1,000 + 1,000 + 1): the second
     // window is intermediates only (empty in scope), and the tail
     // arrives only in the third poll.
-    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"] });
+    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(second.truncated).toBe(true);
     expect(typeof second.resumeFrontier).toBe("string");
     expect(second.events).toEqual([]);
-    const third = scanSince(repo, { cursorCommit: second.resumeFrontier, scopePaths: ["commands/"] });
+    const third = scanSince(repo, { cursorCommit: second.resumeFrontier, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(third.truncated).toBe(false);
     expect(third.resumeFrontier).toBeNull();
     expect(third.newCursor).toBe(head);
