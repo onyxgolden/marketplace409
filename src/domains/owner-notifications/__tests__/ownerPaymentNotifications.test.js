@@ -66,8 +66,9 @@ describe("resolvePaymentNotificationEvent", () => {
       .toBe(OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED);
   });
 
-  it("does not notify when a manual payment enters processing", () => {
-    expect(resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: false })).toBeNull();
+  it("routes an initiated manual payment to payment_initiated (Jason, 2026-11-02)", () => {
+    expect(resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: false }))
+      .toBe(OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED);
   });
 
   it("routes failures to payment_failed regardless of source", () => {
@@ -157,13 +158,27 @@ describe("buildOwnerNotificationEmail", () => {
   it("builds the autopay-debit-started notice", () => {
     const email = buildOwnerNotificationEmail({
       eventType: OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED,
-      facts: { tenantName: TENANT, amountCents: 160000, propertyLabel: "308 Paula" },
+      facts: { tenantName: TENANT, amountCents: 160000, propertyLabel: "308 Paula", isAutopay: true },
     });
     expect(email.subject).toContain("Autopay debit started");
     expect(email.subject).toContain("$1600.00");
     expect(email.subject).toContain(TENANT);
     expect(email.bodyText).toContain("has started");
     expect(email.bodyText).toContain("another email when it completes");
+  });
+
+  it("builds the manual-payment-started notice without autopay wording", () => {
+    const email = buildOwnerNotificationEmail({
+      eventType: OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED,
+      facts: { tenantName: TENANT, amountCents: 160000, propertyLabel: "308 Paula", isAutopay: false },
+    });
+    expect(email.subject).toContain("Payment started");
+    expect(email.subject).not.toContain("Autopay");
+    expect(email.subject).toContain("$1600.00");
+    expect(email.subject).toContain(TENANT);
+    expect(email.bodyText).toContain("started a payment");
+    expect(email.bodyText).not.toContain("automatic");
+    expect(email.bodyText).toContain("another email when it lands");
   });
 
   it("builds the manual-payment notice", () => {

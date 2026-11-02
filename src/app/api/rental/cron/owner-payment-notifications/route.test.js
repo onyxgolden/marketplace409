@@ -148,7 +148,8 @@ beforeEach(() => {
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
   // The owner allow-list fails closed: tests opt in explicitly.
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
-  // The tenant allow-list fails closed too: the fixtures' tenant opts in.
+  // The tenant list is set for completeness; owner confirmations no longer
+  // read it (Jason, 2026-11-02: every tenant of an allow-listed owner).
   process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
   // Activation cutoff: the reconciler only heals terminal payments at/after this.
   process.env.PAYMENT_RECEIPTS_ACTIVATED_AT = "2026-09-01T00:00:00Z";
@@ -954,7 +955,7 @@ describe("owner payment notifications cron", () => {
     );
   });
 
-  it("delivery terminally marks rows for tenants removed from the allow-list", async () => {
+  it("delivery sends rows regardless of the tenant list (Jason, 2026-11-02)", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
     process.env.RENTAL_NOTIFICATION_TENANT_IDS = "someone_else";
     const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
@@ -976,16 +977,16 @@ describe("owner payment notifications cron", () => {
     const response = await GET(authedRequest());
     const body = await response.json();
 
-    expect(body.skippedNotAllowlisted).toBe(1);
-    expect(body.sent).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(body.skippedNotAllowlisted).toBe(0);
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalled();
     expect(outcomeNode.update).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "skipped_not_allowlisted", claim_token: null }),
+      expect.objectContaining({ status: "sent", claim_token: null }),
     );
     delete process.env.RENTAL_NOTIFICATION_TENANT_IDS;
   });
 
-  it("delivery fails closed for rows with no recorded tenant", async () => {
+  it("delivery sends rows with no recorded tenant (no tenant-list gate)", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
     process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
     const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
@@ -1007,9 +1008,12 @@ describe("owner payment notifications cron", () => {
     const response = await GET(authedRequest());
     const body = await response.json();
 
-    expect(body.skippedNotAllowlisted).toBe(1);
-    expect(body.sent).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(body.skippedNotAllowlisted).toBe(0);
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalled();
+    expect(outcomeNode.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "sent", claim_token: null }),
+    );
     delete process.env.RENTAL_NOTIFICATION_TENANT_IDS;
   });
 
@@ -1071,6 +1075,7 @@ describe("owner payment notifications cron", () => {
     });
     const failed = initiatedPaymentRow({
       id: "rental_payment_fl", status: "failed", failure_code: "insufficient_funds",
+      provider_payment_id: "pi_fixture_fl",
       updated_at: "2026-09-28T11:30:00Z",
     });
     const completedId = `opn_${OWNER}_payment_completed_rental_payment_suc`;
@@ -1196,15 +1201,31 @@ describe("owner payment notifications cron", () => {
     expect(orFilter).toContain("succeeded_at.gte.2026-09-01T00:00:00.000Z");
   });
 
-  it("initiated recovery stays silent for manual payments with no autopay attempt", async () => {
+  it("reconciles initiated notices for manual payments with the marker (Jason, 2026-11-02)", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const send = vi.fn().mockResolvedValue({ messageId: "re_init_manual" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    // A manual payment that saw a processing event carries the same durable
+    // initiated_at marker as an autopay debit; the initiated pass heals it
+    // even with no autopay-attempt row. Manual pays that never saw a
+    // processing event get their initiated notice at filing instead.
+    const reconcileUpsert = qb({ data: [{ id: `opn_${OWNER}_payment_initiated_rental_payment_initiated` }], error: null });
+    const manualInitiatedRow = {
+      ...initiatedCandidateRow(),
+      id: `opn_${OWNER}_payment_initiated_rental_payment_initiated`,
+      payload: { tenant_name: "Test Tenant", amount_cents: 160000, is_autopay: false, failure_code: null },
+    };
     const db = sequenceDb({
       ...emptyScanSequences(),
       rental_payments: [qb({ data: [initiatedPaymentRow()], error: null })],
       rental_autopay_attempts: [qb({ data: [], error: null })], // no attempt: manual payment
       rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
       rental_owner_notifications: [
-        qb({ data: [], error: null }), // delivery candidates: nothing queued
+        qb({ data: [], error: null }), // reconciler: no existing notification row
+        reconcileUpsert,
+        qb({ data: [manualInitiatedRow], error: null }), // delivery candidates
+        qb({ data: [{ id: "opn_x" }], error: null }), // claim
+        qb({ data: [{ id: "opn_x" }], error: null }), // outcome
       ],
     });
     createRentalWebhookClient.mockReturnValue(db);
@@ -1212,11 +1233,25 @@ describe("owner payment notifications cron", () => {
     const response = await GET(authedRequest());
     const body = await response.json();
 
-    // A manual payment entering processing notifies on success instead — the
-    // initiated pass is autopay-only, mirroring the webhook path.
-    expect(body.reconciledInitiated).toBe(0);
+    expect(body.reconciledInitiated).toBe(1);
     expect(body.alreadyReconciledInitiated).toBe(0);
-    expect(body.sent).toBe(0);
-    expect(db.from).toHaveBeenCalledWith("rental_owner_notifications");
+    expect(body.reconciled).toBe(0);
+    expect(reconcileUpsert.upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `opn_${OWNER}_payment_initiated_rental_payment_initiated`,
+          event_type: "payment_initiated",
+          status: "queued",
+          payment_id: "rental_payment_initiated",
+        }),
+      ]),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+    // The reconciled manual initiated row is delivered by the same run,
+    // with the manual (not autopay) email copy.
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: expect.stringContaining("Payment started") }),
+    );
   });
 });

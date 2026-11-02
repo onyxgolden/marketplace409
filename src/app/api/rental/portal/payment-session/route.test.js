@@ -10,6 +10,9 @@ const createPaymentSession = vi.fn();
 const provider = { mode: "test", createCustomer, createPaymentSession };
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({ createStripeBillingProvider: () => provider }));
 
+const queueOwnerPaymentInitiatedNotification = vi.fn(async () => ({ queued: true }));
+vi.mock("@/application/rental/queueOwnerPaymentNotification", () => ({ queueOwnerPaymentInitiatedNotification: (...args) => queueOwnerPaymentInitiatedNotification(...args) }));
+
 function single(result) {
   const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
     order: vi.fn(() => node), limit: vi.fn(() => node),
@@ -306,6 +309,48 @@ describe("tenant payment-session route (provider-mode isolation)", () => {
         expect.anything(),
         expect.objectContaining({ paymentMethods: ["us_bank_account", "card"] }),
       );
+    });
+  });
+
+  // Brandy's owner confirmation at intent filing (Jason, 2026-11-02): she
+  // gets an email when the intent is filed, when it lands, and when it
+  // fails — for every tenant. Filing-time queueing lives here, not in a
+  // webhook, because the payment row already exists at this point.
+  describe("owner initiated notification at filing", () => {
+    const readyAccount = { provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true };
+
+    it("queues the initiated owner notice after the session is created", async () => {
+      tables = baseTables(readyAccount, { customer_id: "cus_test_1" });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.clientSecret).toBe("secret");
+      expect(queueOwnerPaymentInitiatedNotification).toHaveBeenCalledTimes(1);
+      expect(queueOwnerPaymentInitiatedNotification).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          owner_id: "owner_1", charge_id: "charge_1", lease_id: "lease_1",
+          tenant_id: "tenant_1", amount_cents: 150000,
+        }),
+      );
+    });
+
+    it("still returns the client secret when the notification queue fails", async () => {
+      tables = baseTables(readyAccount, { customer_id: "cus_test_1" });
+      queueOwnerPaymentInitiatedNotification.mockRejectedValueOnce(new Error("queue down"));
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.clientSecret).toBe("secret");
+    });
+
+    it("does not queue an initiated notice when session creation fails (no intent was filed)", async () => {
+      tables = baseTables(readyAccount, { customer_id: "cus_test_1" });
+      createPaymentSession.mockRejectedValueOnce(new Error("stripe down"));
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(500);
+      expect(queueOwnerPaymentInitiatedNotification).not.toHaveBeenCalled();
     });
   });
 });

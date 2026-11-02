@@ -104,13 +104,14 @@ export function classifyStripePaymentEvent({ stripeEventType, paymentId }) {
 
 // Maps a payment outcome to the owner-notification event. A succeeded payment
 // with an autopay-attempt row is an autopay completion; without one it was a
-// voluntary tenant payment. The initiated notice is autopay-only: a manual
-// payment entering processing resolves to null and notifies on success.
+// voluntary tenant payment. The initiated notice fires for every payment:
+// autopay debits resolve it from the processing webhook, manual portal pays
+// from the payment-session route queueing at intent filing (Jason, 2026-11-02:
+// Brandy gets an email when the intent is filed, when the payment lands, and
+// when it fails — for every tenant, not just allow-listed ones).
 export function resolvePaymentNotificationEvent({ stripeOutcome, hasAutopayAttempt }) {
   if (stripeOutcome === "failed") return OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED;
-  if (stripeOutcome === "initiated") {
-    return hasAutopayAttempt ? OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED : null;
-  }
+  if (stripeOutcome === "initiated") return OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED;
   if (stripeOutcome === "succeeded") {
     return hasAutopayAttempt
       ? OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_COMPLETED
@@ -151,13 +152,22 @@ export function buildOwnerNotificationEmail({ eventType, facts = {} }) {
       };
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED: {
+      if (facts.isAutopay) {
+        return {
+          subject: `Autopay debit started: ${amount} for ${tenant}${propertySuffix}`,
+          bodyText:
+            `An automatic payment of ${amount} for ${tenant}${propertyClause} has started` +
+            `${facts.dueDate ? ` for the charge due ${facts.dueDate}` : ""}. ` +
+            `Bank transfers usually land in 1–2 business days — ` +
+            `you'll get another email when it completes.`,
+        };
+      }
       return {
-        subject: `Autopay debit started: ${amount} for ${tenant}${propertySuffix}`,
+        subject: `Payment started: ${amount} for ${tenant}${propertySuffix}`,
         bodyText:
-          `An automatic payment of ${amount} for ${tenant}${propertyClause} has started` +
+          `${tenant} started a payment of ${amount}${propertyClause}` +
           `${facts.dueDate ? ` for the charge due ${facts.dueDate}` : ""}. ` +
-          `Bank transfers usually land in 1–2 business days — ` +
-          `you'll get another email when it completes.`,
+          `You'll get another email when it lands.`,
       };
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED: {
