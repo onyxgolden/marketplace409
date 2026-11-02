@@ -11,12 +11,13 @@
 // paths identical.
 
 import {
+  OWNER_NOTIFICATION_EVENT_TYPE,
   buildNotificationId,
   buildOwnerNotificationEmail,
   classifyStripePaymentEvent,
   resolvePaymentNotificationEvent,
 } from "@/domains/owner-notifications/ownerPaymentNotifications";
-import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed, resolveRentalNotificationConfig, isTenantNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 
 // Resolves a human property label for a lease: the unit label when the lease
 // names a unit, otherwise the property slug humanized ("308-paula" ->
@@ -118,11 +119,9 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
 ) {
   const config = resolveOwnerNotificationConfig();
   const sendingEnabled = options.sendingEnabled ?? config.enabled;
-  const tenantConfig = resolveRentalNotificationConfig();
   const effectiveConfig = {
     ...config,
     allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds,
-    allowedTenantIds: options.allowedTenantIds ?? tenantConfig.allowedTenantIds,
   };
   try {
     const stripeOutcome = classifyStripePaymentEvent({
@@ -144,16 +143,13 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
     // Owner allow-list: fail closed. A payment belonging to an owner who is
     // not explicitly allow-listed is never queued — this keeps one landlord's
     // tenant/payment details from being emailed to the shared recipient.
+    // There is deliberately NO tenant allow-list here (Jason, 2026-11-02):
+    // Brandy's owner confirmations cover every tenant of an allow-listed
+    // owner, including every new tenant once activated. The tenant list
+    // (RENTAL_NOTIFICATION_TENANT_IDS) gates only emails sent TO tenants
+    // (tenant receipts), never Brandy's owner confirmations.
     if (!isOwnerNotificationAllowed(effectiveConfig, payment.owner_id)) {
       return { queued: false, reason: "owner_not_allowlisted" };
-    }
-
-    // Tenant allow-list (recipient-level rollout restriction, Jason's
-    // 2026-09-29 instruction): fail closed. Only explicitly listed tenants
-    // (initial rollout: Eric Carrillo, 308 Paula) generate notifications —
-    // every other tenant's payments are ignored at detection time.
-    if (!isTenantNotificationAllowed(effectiveConfig, payment.tenant_id)) {
-      return { queued: false, reason: "tenant_not_allowlisted" };
     }
 
     const { data: attempt, error: attemptError } = await db
@@ -235,6 +231,99 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
     // independently), and its terminal pass scans succeeded/failed payments.
     // Neither depends on this path.
     console.error("Owner payment notification queue failed", {
+      name: error?.name || "Error",
+    });
+    return { queued: false, reason: "error" };
+  }
+}
+
+// Queues a Brandy owner notification for a manual portal payment AT INTENT
+// FILING, called from the payment-session route after the PaymentIntent is
+// created — not from a Stripe webhook. The payment row already exists (the
+// route inserts it before creating the intent), so the notification id is
+// the same stable id the webhook and reconciler paths use: a later
+// processing webhook for the same payment upserts the same id with
+// ignoreDuplicates and can never double-notify. Owner allow-list only —
+// never the tenant allow-list (Jason, 2026-11-02: Brandy's owner
+// confirmations cover every tenant of an allow-listed owner). NEVER throws:
+// a queue failure must not break the session response — the tenant still
+// gets their client secret, and the terminal notice still covers the
+// payment when it lands or fails.
+export async function queueOwnerPaymentInitiatedNotification(
+  db,
+  payment,
+  options = {},
+) {
+  const config = resolveOwnerNotificationConfig();
+  const sendingEnabled = options.sendingEnabled ?? config.enabled;
+  const effectiveConfig = {
+    ...config,
+    allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds,
+  };
+  try {
+    if (!payment?.id || !payment?.owner_id) return { queued: false, reason: "missing_payment" };
+    if (!isOwnerNotificationAllowed(effectiveConfig, payment.owner_id)) {
+      return { queued: false, reason: "owner_not_allowlisted" };
+    }
+
+    let tenantName = null;
+    if (payment.tenant_id) {
+      const { data: tenant, error: tenantError } = await db
+        .from("rental_tenants")
+        .select("display_name")
+        .eq("owner_id", payment.owner_id)
+        .eq("id", payment.tenant_id)
+        .maybeSingle();
+      if (tenantError) throw tenantError;
+      tenantName = tenant?.display_name ?? null;
+    }
+
+    const propertyLabel = await resolvePropertyLabel(db, {
+      ownerId: payment.owner_id,
+      leaseId: payment.lease_id,
+    });
+
+    const row = buildTerminalPaymentNotificationRow({
+      payment,
+      tenantName,
+      propertyLabel,
+      eventType: OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED,
+      isAutopay: false,
+      stripeEventType: "payment_intent.created",
+      occurredAt: new Date().toISOString(),
+      sendingEnabled,
+    });
+
+    const { data, error: insertError } = await db
+      .from("rental_owner_notifications")
+      .upsert(row, { onConflict: "owner_id,id", ignoreDuplicates: true })
+      .select("id");
+    if (insertError) throw insertError;
+
+    if (!sendingEnabled && (data || []).length === 1) {
+      const email = buildOwnerNotificationEmail({
+        eventType: row.event_type,
+        facts: buildTerminalNotificationFacts(row.payload),
+      });
+      console.log("Owner payment notification (sending disabled) would send", {
+        to: config.recipientEmail,
+        subject: email.subject,
+        bodyText: email.bodyText,
+      });
+    }
+
+    if (!sendingEnabled) {
+      return {
+        queued: false,
+        reason: "sending_disabled",
+        notificationId: row.id,
+        eventType: row.event_type,
+        status: row.status,
+      };
+    }
+    return { queued: true, notificationId: row.id, eventType: row.event_type, status: row.status };
+  } catch (error) {
+    console.error("Owner payment initiated notification queue failed", {
       name: error?.name || "Error",
     });
     return { queued: false, reason: "error" };

@@ -4,6 +4,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
 import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
+import { queueOwnerPaymentInitiatedNotification } from "@/application/rental/queueOwnerPaymentNotification";
 import { checkFeeAgreement, resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
 function failure(message, status) { return NextResponse.json({ error: message }, { status }); }
@@ -158,6 +159,22 @@ export async function POST(request) {
     const updated = await database.from("rental_payments").update({ provider_payment_id: session.paymentIntentId,
       status: "requires_payment_method", updated_at: new Date().toISOString() }).eq("owner_id", tenant.owner_id).eq("id", paymentId);
     if (updated.error) throw updated.error;
+    // Brandy's owner confirmation, queued at intent filing (Jason, 2026-11-02:
+    // she gets an email when the intent is filed, when it lands, and when it
+    // fails — for every tenant). Best-effort: the helper never throws, and
+    // this guard means even a helper regression can never break the session
+    // response — the terminal notice still covers the payment when it lands
+    // or fails.
+    try {
+      await queueOwnerPaymentInitiatedNotification(database, {
+        owner_id: tenant.owner_id, id: paymentId, charge_id: charge.id, lease_id: charge.lease_id,
+        tenant_id: tenant.id, amount_cents: totalCents, failure_code: null,
+      });
+    } catch (queueError) {
+      console.error("Owner payment initiated notification queue failed", {
+        paymentId, name: queueError?.name || "Error",
+      });
+    }
     return NextResponse.json({ success: true, clientSecret: session.clientSecret,
       connectedAccountId: session.connectedAccountId, paymentId, amountCents: totalCents,
       rentCents: remainingCents, convenienceFeeCents: feeCents, convenienceFeeBps: feeBps,

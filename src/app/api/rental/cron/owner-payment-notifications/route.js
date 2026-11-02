@@ -4,7 +4,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
-import { resolveRentalNotificationConfig, isOwnerNotificationAllowed, isTenantNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveRentalNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 import {
   buildTerminalNotificationFacts,
   buildTerminalPaymentNotificationRow,
@@ -173,14 +173,11 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
   let queued = 0, alreadyQueued = 0, skippedAtDetection = 0, skippedNotAllowlisted = 0;
   for (const pair of pairs) {
     // Owner allow-list: fail closed — nothing is written for an owner who
-    // is not explicitly allow-listed.
+    // is not explicitly allow-listed. There is deliberately NO tenant
+    // allow-list here (Jason, 2026-11-02): Brandy's owner confirmations
+    // cover every tenant of an allow-listed owner, including every new
+    // tenant once activated.
     if (!isOwnerNotificationAllowed(config, pair.enrollment.owner_id)) {
-      skippedNotAllowlisted += 1;
-      continue;
-    }
-    // Tenant allow-list (recipient-level rollout restriction): fail closed —
-    // upcoming-autopay notices go only to explicitly listed tenants.
-    if (!isTenantNotificationAllowed(config, pair.tenantId)) {
       skippedNotAllowlisted += 1;
       continue;
     }
@@ -244,14 +241,16 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
 //   independently of the projection, and it is independent of the mutable
 //   status column — so this pass also finds payments that have already
 //   advanced to succeeded/failed. Scanning current processing rows alone
-//   would miss that case. Initiated is autopay-only: only payments with a
-//   matching autopay-attempt row qualify, mirroring the webhook path's
-//   resolvePaymentNotificationEvent.
+//   would miss that case. Initiated is NOT autopay-only (Jason, 2026-11-02):
+//   any payment with the marker qualifies; manual portal pays get their
+//   initiated notice at filing from the payment-session route, and this
+//   pass heals the ones that also saw a processing event.
 //
-// Both passes share the owner/tenant allow-lists, provider mode, activation
-// cutoff, and detection-time disabled disposition, and both use the stable
-// event-specific notification id — so webhook redeliveries, reconciliations,
-// and overlapping cron runs can never double-notify.
+// Both passes share the owner allow-list only (no tenant allow-list —
+// Jason, 2026-11-02: every tenant of an allow-listed owner), provider mode,
+// activation cutoff, and detection-time disabled disposition, and both use
+// the stable event-specific notification id — so webhook redeliveries,
+// reconciliations, and overlapping cron runs can never double-notify.
 //
 // Activation cutoff (release-safety): payments whose healed transition (or
 // initiation) happened BEFORE the explicit PAYMENT_RECEIPTS_ACTIVATED_AT
@@ -261,12 +260,12 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
 async function reconcilePaymentNotifications(db, providerMode, config) {
   if (!config.activatedAt) {
     console.log("Owner payment notification reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.");
-    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: true };
+    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, reconcileSkipped: true };
   }
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
     db.from("rental_payments")
-      .select("id, owner_id, charge_id, lease_id, tenant_id, amount_cents, failure_code, status, succeeded_at, initiated_at, updated_at")
+      .select("id, owner_id, charge_id, lease_id, tenant_id, amount_cents, failure_code, status, succeeded_at, initiated_at, updated_at, provider_payment_id")
       .eq("provider", "stripe")
       .eq("provider_mode", providerMode)
       // Terminal-transition filter, NOT creation time: a Stripe payment created
@@ -282,28 +281,21 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
       .order("updated_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: false };
+  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, reconcileSkipped: false };
 
   // Owner allow-list: fail closed — payments for non-allow-listed owners are
-  // never turned into notifications.
+  // never turned into notifications. No tenant allow-list (Jason, 2026-11-02):
+  // every tenant of an allow-listed owner notifies.
   const allowlisted = payments.filter((payment) =>
     isOwnerNotificationAllowed(config, payment.owner_id),
   );
   const skippedNotAllowlisted = payments.length - allowlisted.length;
-
-  // Tenant allow-list (recipient-level rollout restriction, Jason's
-  // 2026-09-29 instruction): fail closed — only explicitly listed tenants
-  // (initial rollout: Eric Carrillo, 308 Paula) generate notifications.
-  const tenantAllowlisted = allowlisted.filter((payment) =>
-    isTenantNotificationAllowed(config, payment.tenant_id),
-  );
-  const skippedTenantNotAllowlisted = allowlisted.length - tenantAllowlisted.length;
-  if (tenantAllowlisted.length === 0) {
-    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+  if (allowlisted.length === 0) {
+    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted, reconcileSkipped: false };
   }
 
   const attemptPaymentIds = new Set();
-  for (const chunk of chunkArray(tenantAllowlisted.map((payment) => payment.id), ID_CHUNK_SIZE)) {
+  for (const chunk of chunkArray(allowlisted.map((payment) => payment.id), ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_autopay_attempts")
       .select("payment_id").in("payment_id", chunk);
     if (error) throw error;
@@ -311,7 +303,7 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
   }
 
   const tenantNameById = new Map();
-  const tenantIds = [...new Set(tenantAllowlisted.map((payment) => payment.tenant_id).filter(Boolean))];
+  const tenantIds = [...new Set(allowlisted.map((payment) => payment.tenant_id).filter(Boolean))];
   for (const chunk of chunkArray(tenantIds, ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_tenants")
       .select("id, display_name").in("id", chunk);
@@ -323,7 +315,7 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
 
   // Property labels, resolved once per lease for the batch.
   const propertyLabelByLease = new Map();
-  const leaseKeys = [...new Set(tenantAllowlisted.map((payment) => `${payment.owner_id}:${payment.lease_id}`).filter((key) => !key.endsWith(":null") && !key.endsWith(":undefined")))];
+  const leaseKeys = [...new Set(allowlisted.map((payment) => `${payment.owner_id}:${payment.lease_id}`).filter((key) => !key.endsWith(":null") && !key.endsWith(":undefined")))];
   for (const key of leaseKeys) {
     const [ownerId, leaseId] = key.split(":");
     const label = await resolvePropertyLabel(db, { ownerId, leaseId });
@@ -344,9 +336,11 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
 
   // Terminal pass: only payments in a terminal state. The scan's OR filter
   // can now also return processing payments (via the initiated branch), so
-  // the status partition here is load-bearing, not redundant.
-  const terminalRows = tenantAllowlisted
-    .filter((payment) => payment.status === "succeeded" || payment.status === "failed")
+  // the status partition here is load-bearing, not redundant. A failed row
+  // with no provider_payment_id was never filed at Stripe (session-creation
+  // failure): it is not a failed payment and never produces a failed notice.
+  const terminalRows = allowlisted
+    .filter((payment) => payment.status === "succeeded" || (payment.status === "failed" && payment.provider_payment_id))
     .map((payment) => {
       const hasAutopayAttempt = attemptPaymentIds.has(payment.id);
       return buildRow(
@@ -361,27 +355,24 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
       );
     });
 
-  // Initiated pass: durable initiated_at marker, autopay-only, any current
-  // status — including payments that already completed. The DB filter already
+  // Initiated pass: durable initiated_at marker, any current status —
+  // including payments that already completed. The DB filter already
   // requires initiated_at at/after the activation cutoff; the Date comparison
   // below is belt-and-braces against driver timestamp formatting.
   const activationMs = new Date(config.activatedAt).getTime();
-  const initiatedRows = tenantAllowlisted
+  const initiatedRows = allowlisted
     .filter((payment) => {
-      if (!payment.initiated_at || !attemptPaymentIds.has(payment.id)) return false;
+      if (!payment.initiated_at) return false;
       const initiatedMs = new Date(payment.initiated_at).getTime();
       return Number.isFinite(initiatedMs) && initiatedMs >= activationMs;
     })
     .map((payment) => buildRow(
       payment,
-      resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: true }),
+      resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: attemptPaymentIds.has(payment.id) }),
       "payment_intent.processing",
       payment.initiated_at,
-      true,
-    ))
-    // The resolver returns null only if the autopay-only rule ever changes;
-    // a null row must never reach the outbox.
-    .filter(Boolean);
+      attemptPaymentIds.has(payment.id),
+    ));
 
   const rows = [...terminalRows, ...initiatedRows];
   const initiatedIds = new Set(initiatedRows.map((row) => row.id));
@@ -396,7 +387,7 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
   const missing = rows.filter((row) => !existingIds.has(row.id));
   const missingInitiated = missing.filter((row) => initiatedIds.has(row.id));
   const missingTerminal = missing.length - missingInitiated.length;
-  if (missing.length === 0) return { reconciled: 0, alreadyQueued: terminalRows.length, reconciledInitiated: 0, alreadyReconciledInitiated: initiatedRows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+  if (missing.length === 0) return { reconciled: 0, alreadyQueued: terminalRows.length, reconciledInitiated: 0, alreadyReconciledInitiated: initiatedRows.length, skippedAtDetection: 0, skippedNotAllowlisted, reconcileSkipped: false };
 
   let reconciled = 0, reconciledInitiated = 0, skippedAtDetection = 0;
   for (const chunk of chunkArray(missing, ID_CHUNK_SIZE)) {
@@ -415,7 +406,7 @@ async function reconcilePaymentNotifications(db, providerMode, config) {
       }
     }
   }
-  return { reconciled, alreadyQueued: terminalRows.length - missingTerminal, reconciledInitiated, alreadyReconciledInitiated: initiatedRows.length - missingInitiated.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+  return { reconciled, alreadyQueued: terminalRows.length - missingTerminal, reconciledInitiated, alreadyReconciledInitiated: initiatedRows.length - missingInitiated.length, skippedAtDetection, skippedNotAllowlisted, reconcileSkipped: false };
 }
 
 // Delivery candidates: fresh queue rows, failed rows under the attempt cap,
@@ -577,7 +568,7 @@ export async function GET(request) {
     }
 
     // 2. Reconcile terminal + initiated payments the webhook queue may have lost.
-    let reconciled = 0, alreadyReconciled = 0, reconciledInitiated = 0, alreadyReconciledInitiated = 0, skippedTenantNotAllowlistedReconciled = 0, reconcileSkipped = false;
+    let reconciled = 0, alreadyReconciled = 0, reconciledInitiated = 0, alreadyReconciledInitiated = 0, reconcileSkipped = false;
     if (!dryRun) {
       const healing = await reconcilePaymentNotifications(db, provider.mode, config);
       reconciled = healing.reconciled;
@@ -587,7 +578,6 @@ export async function GET(request) {
       reconcileSkipped = Boolean(healing.reconcileSkipped);
       skippedDisabled += healing.skippedAtDetection;
       skippedNotAllowlisted += healing.skippedNotAllowlisted;
-      skippedTenantNotAllowlistedReconciled = healing.skippedTenantNotAllowlisted;
       wouldSend += healing.skippedAtDetection;
     }
 
@@ -634,16 +624,6 @@ export async function GET(request) {
           // Belt-and-braces: a row queued before the allow-list existed (or
           // for an owner since removed from it) can never be delivered.
           // Terminally marked so it is not retried.
-          if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
-            skippedNotAllowlistedDelivery += 1;
-          }
-          continue;
-        }
-        if (!isTenantNotificationAllowed(config, row.tenant_id)) {
-          // Belt-and-braces: a row queued for a tenant who is not (or is no
-          // longer) on the tenant allow-list can never be delivered.
-          // Terminally marked so it is not retried. Fail-closed: a row with
-          // no recorded tenant cannot be verified and is never sent.
           if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
             skippedNotAllowlistedDelivery += 1;
           }
@@ -710,7 +690,6 @@ export async function GET(request) {
       sent, wouldSend, failed, skippedDisabled, superseded,
       deferredQuietHours,
       skippedNotAllowlisted: skippedNotAllowlisted + skippedNotAllowlistedDelivery,
-      skippedTenantNotAllowlisted: skippedTenantNotAllowlistedReconciled,
     });
   } catch (error) {
     console.error("Owner payment notification cron error", error);
