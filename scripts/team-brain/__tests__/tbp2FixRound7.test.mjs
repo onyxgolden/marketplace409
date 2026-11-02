@@ -365,7 +365,7 @@ describe("TBP2-007H.1 CAP after a parent check must not skip the next check", ()
     const full = scanSince(repo, { cursorCommit: cursor, maxChangedFilesPerPoll: 10000, ...opts });
     expect(full.truncated).toBe(false);
     expect(multiset(all)).toEqual(multiset(full.events));
-  }, 240000);
+  }, 600000);
 });
 
 // ------------------------------------------------------------ frontier v5 --

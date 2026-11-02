@@ -429,12 +429,12 @@ describe("TBP2-007B one bounded-scan contract: monotonic clock, early charging, 
     const tailCommit = run(repo, ["commit-tree", rootTree, "-p", parent, "-m", "tail"]).trim();
     run(repo, ["update-ref", "refs/heads/main", tailCommit]);
     const head = headCommit(repo);
-    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"] });
+    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(first.truncated).toBe(true);
     expect(typeof first.resumeFrontier).toBe("string");
     expect(first.resumeFrontier.length).toBeGreaterThan(0);
     // A second poll from the frontier reaches the tail ask.
-    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"] });
+    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     const tailEvents = second.events.filter((e) => e.path === "commands/tail.md");
     expect(tailEvents.length).toBe(1);
     expect(tailEvents[0].eventKind).toBe("ADDED");

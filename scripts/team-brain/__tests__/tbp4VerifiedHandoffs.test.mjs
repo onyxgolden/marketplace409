@@ -13,6 +13,15 @@
 // consumption, missing provenance, queue receipt mismatch.
 
 import { describe, expect, it, afterEach } from "vitest";
+import { vi } from "vitest";
+
+// File-wide timeout: every test here runs a PGlite backend plus Git
+// fixtures and takes ~4-5s even quiet, against vitest's 5s default.
+// Under parallel load the margin vanishes across the whole file
+// (not just individual tests), so the timeout lives here, not
+// per-test. The two 30s per-test timeouts already in this file
+// match this value.
+vi.setConfig({ testTimeout: 30000 });
 import { createHash } from "node:crypto";
 import { freshBackend, tempDir, cleanupTempDirs } from "./helpers.mjs";
 import { createVerifiedHandoffDriver, createHandoffLedger } from "../service/verifiedHandoff.mjs";

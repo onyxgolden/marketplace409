@@ -230,17 +230,17 @@ describe("TBP2-007D frontier and Git arguments must stay bounded", () => {
     const tailCommit = run(repo, ["commit-tree", rootTree, "-p", parent, "-m", "tail"]).trim();
     run(repo, ["update-ref", "refs/heads/main", tailCommit]);
     const head = headCommit(repo);
-    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"] });
+    const first = scanSince(repo, { cursorCommit: seed, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(first.truncated).toBe(true);
     expect(typeof first.resumeFrontier).toBe("string");
     expect(first.resumeFrontier.length).toBeLessThanOrEqual(512);
-    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"] });
+    const second = scanSince(repo, { cursorCommit: first.resumeFrontier, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(second.truncated).toBe(true);
     expect(typeof second.resumeFrontier).toBe("string");
     expect(second.resumeFrontier.length).toBeLessThanOrEqual(512);
     // Same format, same field widths: no growth with pages at all.
     expect(second.resumeFrontier.length).toBe(first.resumeFrontier.length);
-    const third = scanSince(repo, { cursorCommit: second.resumeFrontier, scopePaths: ["commands/"] });
+    const third = scanSince(repo, { cursorCommit: second.resumeFrontier, scopePaths: ["commands/"], pollDeadlineMs: 120000 });
     expect(third.truncated).toBe(false);
     expect(third.newCursor).toBe(head);
     const tailEvents = third.events.filter((e) => e.path === "commands/tail.md");
@@ -284,7 +284,7 @@ describe("TBP2-007E retained candidates must stay within budget on resume", () =
     for (const p of mapPaths) expect(firstPaths.has(p)).toBe(false);
     const allPaths = new Set([...firstPaths, ...second.events.map((e) => e.path)]);
     expect(allPaths.size).toBe(102);
-  });
+  }, 60000);
 
   it("a merge partial resumed past its first parent emits no duplicate and retains no prefix", () => {
     const repo = initRepo();

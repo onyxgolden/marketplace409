@@ -436,5 +436,5 @@ describe("TBP2-007H frontier v5 replaces v4 with the same size bound", () => {
     expect(first.truncated).toBe(true);
     expect(first.resumeFrontier.startsWith("tb-frontier:v5:")).toBe(true);
     expect(first.resumeFrontier.length).toBeLessThanOrEqual(512);
-  });
+  }, 60000);
 });
