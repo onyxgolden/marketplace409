@@ -13,6 +13,15 @@
 // consumption, missing provenance, queue receipt mismatch.
 
 import { describe, expect, it, afterEach } from "vitest";
+import { vi } from "vitest";
+
+// File-wide timeout: every test here runs a PGlite backend plus Git
+// fixtures and takes ~4-5s even quiet, against vitest's 5s default.
+// Under parallel load the margin vanishes across the whole file
+// (not just individual tests), so the timeout lives here, not
+// per-test. The two 30s per-test timeouts already in this file
+// match this value.
+vi.setConfig({ testTimeout: 30000 });
 import { createHash } from "node:crypto";
 import { freshBackend, tempDir, cleanupTempDirs } from "./helpers.mjs";
 import { createVerifiedHandoffDriver, createHandoffLedger } from "../service/verifiedHandoff.mjs";
@@ -593,7 +602,7 @@ describe("crash after every boundary, recovered by restart + reconcile", () => {
     expect(ctx.git.writeCount()).toBe(uninterrupted.git.writeCount());
     await ctx.db.close();
     await uninterrupted.db.close();
-  }, 30000);
+  });
 
   it("crash after QUEUE_UPDATED, before complete: reconcile reports READY_TO_COMPLETE", async () => {
     const ctx = await setup();
@@ -1216,7 +1225,7 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
     expect(result.tasks[0].ownerAgent).toBe(null);
     expect(c.ledger.queueItems["task:task-1"].status).toBe("CLOSED");
     await c.db.close();
-  }, 30000);
+  });
 
   it("TBP4-003: publishOutcome rejects a replay whose audit identity (actor/time/reason/expectedPriorBlob) differs from the original, instead of accepting it as idempotent", async () => {
     const c = await setup();
@@ -1227,7 +1236,7 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
       CODES.CONFLICTING_REPLAY,
     );
     await c.db.close();
-  }, 30000);
+  });
 
   it("TBP4-003 positive control: an exact publishOutcome replay (identical everything) still returns replayed:true", async () => {
     const c = await setup();
@@ -1250,7 +1259,7 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
       CODES.CONFLICTING_REPLAY,
     );
     await c.db.close();
-  }, 30000);
+  });
 
   it.each([
     ["actor-only", { actor: "different-worker" }],
@@ -1282,5 +1291,5 @@ describe("post-merge audit fix-forward (TBP4-001/002/003)", () => {
     expect(second.replayed).toBe(true);
     expect(second.queueReceipt).toEqual(first.queueReceipt);
     await c.db.close();
-  }, 30000);
+  });
 });
