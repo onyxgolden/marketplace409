@@ -476,7 +476,7 @@ describe("Rental Manager route", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith("update_lease_terms", { p_owner_id: "owner_1", p_lease_id: "lease_1",
       p_monthly_rent_cents: 160000, p_due_day: 5, p_start_date: "2026-09-01", p_end_date: "2027-08-31",
-      p_early_pay_days: 10, p_begin_charges_date: null });
+      p_early_pay_days: 10, p_begin_charges_date: null, p_pet_fee_cents: null });
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.lease.monthly_rent_cents).toBe(160000);

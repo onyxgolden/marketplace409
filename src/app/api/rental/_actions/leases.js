@@ -137,6 +137,16 @@ export async function updateLeaseTerms({ authenticated, body, effectiveOwnerId, 
   if (endDate !== null && endDate < input.startDate) return badRequest("The end date cannot be before the start date.");
   const earlyPayDays = Number(input.earlyPayDays);
   if (!Number.isInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31) return badRequest("Early pay window must be between 0 and 31 days.");
+  // Pet fee: null/omitted keeps the schedule's current value (the RPC's
+  // coalesce pattern, same as begin-charges). A provided value must be a
+  // nonnegative whole-cent amount no larger than the monthly total — the fee
+  // is a portion of the total, never on top of it.
+  const rawPetFee = input.petFeeCents === null || input.petFeeCents === undefined || input.petFeeCents === ""
+    ? null : Number(input.petFeeCents);
+  if (rawPetFee !== null && (!Number.isSafeInteger(rawPetFee) || rawPetFee < 0))
+    return badRequest("Pet fee must be a nonnegative whole-cent amount.");
+  if (rawPetFee !== null && rawPetFee > monthlyRentCents)
+    return badRequest("Pet fee cannot exceed the monthly total.");
   // R10: begin-charges date is optional — omitted/blank keeps the lease's
   // current value (never clobbers), a provided value must be a valid date.
   const rawBeginCharges = input.beginChargesDate === null || input.beginChargesDate === undefined
@@ -187,6 +197,7 @@ export async function updateLeaseTerms({ authenticated, body, effectiveOwnerId, 
     p_end_date: endDate,
     p_early_pay_days: earlyPayDays,
     p_begin_charges_date: beginChargesDate,
+    p_pet_fee_cents: rawPetFee,
   });
   if (termsError) {
     const message = String(termsError.message || "");

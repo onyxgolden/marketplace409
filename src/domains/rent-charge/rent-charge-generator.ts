@@ -1,5 +1,5 @@
 import { createRentCharge } from "./rent-charge.types";
-import type { RentCharge } from "./rent-charge.types";
+import type { RentCharge, RentChargeType } from "./rent-charge.types";
 import type { RentSchedule } from "../rent-schedule";
 import { paymentFrequencyOf, paymentAnchorDate, periodAmountCents, occurrenceIndexForDueDate } from "../rent-schedule";
 
@@ -77,9 +77,35 @@ export function generateRentCharge({
   // rent in whole cents (see periodAmountCents for the rounding rule).
   let dueDate: string;
   let amountCents: number;
+  let chargeType: RentChargeType = "rent";
+  let notes: string | null = null;
+  // Begin-month proration replaces the -28 overlap proxy with a month-end test
+  // (see below); null for every other case.
+  let beginMonthLastDay: string | null = null;
   if (frequency === "monthly") {
     dueDate = monthlyPeriodDate(period, schedule.dueDay);
     amountCents = schedule.amountCents;
+    // First-period proration (standing rent rule): when the period being
+    // generated contains the lease's begin-charges date and that date is
+    // mid-month, the charge covers only the occupied days (begin date through
+    // month end, inclusive), due on the begin-charges date itself, typed
+    // 'proration' like the manual "Prorated rent" charge. Sub-monthly
+    // schedules keep their occurrence-share math — an occurrence IS its
+    // period, so there is nothing to prorate. The monthly total already
+    // includes any pet fee, so the prorated total includes it too.
+    const begin = schedule.beginChargesDate;
+    if (begin && begin.slice(0, 7) === period) {
+      const beginDay = Number(begin.slice(8, 10));
+      if (beginDay > 1) {
+        const [year, month] = period.split("-").map(Number);
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        beginMonthLastDay = `${period}-${String(daysInMonth).padStart(2, "0")}`;
+        dueDate = begin;
+        amountCents = Math.round((schedule.amountCents * (daysInMonth - beginDay + 1)) / daysInMonth);
+        chargeType = "proration";
+        notes = "Prorated first-month rent";
+      }
+    }
   } else {
     dueDate = subMonthlyPeriodDate(period);
     const occurrenceIndex = occurrenceIndexForDueDate({ anchorDate: paymentAnchorDate(schedule), dueDate, frequency });
@@ -89,8 +115,12 @@ export function generateRentCharge({
   }
   // Monthly keeps the original overlap check (any part of the month on/after the
   // start date generates); sub-monthly periods are single dates, so the due
-  // date itself must be on/after the start date.
-  const effectiveOverlap = frequency === "monthly" ? `${period}-28` >= schedule.effectiveStartDate : dueDate >= schedule.effectiveStartDate;
+  // date itself must be on/after the start date. The begin month uses the
+  // month's last day instead of the -28 proxy: a move-in on the 29th-31st
+  // still occupies days of the begin month, and the prorated charge must
+  // generate for them.
+  const effectiveOverlap = beginMonthLastDay !== null ? beginMonthLastDay >= schedule.effectiveStartDate
+    : frequency === "monthly" ? `${period}-28` >= schedule.effectiveStartDate : dueDate >= schedule.effectiveStartDate;
   if (!effectiveOverlap || (schedule.effectiveEndDate !== null && dueDate > schedule.effectiveEndDate)) return null;
   // Rentec-parity R10: no charge with a due date before the lease's
   // begin-charges date — this is what prevents the bogus past-due balance when
@@ -115,6 +145,7 @@ export function generateRentCharge({
     createdAt: now,
     updatedAt: now,
     voidedAt: null,
-    notes: null,
+    notes,
+    chargeType,
   });
 }

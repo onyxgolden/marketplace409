@@ -98,7 +98,7 @@ describe("RentalLeasePanel edit terms", () => {
     expect(posted[0]).toEqual({ operation: "update-lease-terms", terms: {
       leaseId: "lease_1", monthlyRentCents: 160000, rentDueDay: 5,
       startDate: "2026-09-01", endDate: "2027-08-31", beginChargesDate: "2026-09-15", earlyPayDays: 10,
-      paymentFrequency: "monthly" } });
+      petFeeCents: 0, paymentFrequency: "monthly" } });
     expect(container.textContent).toContain("Lease terms updated");
   });
   it("surfaces an API error without closing the form", async () => {

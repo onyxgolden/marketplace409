@@ -53,6 +53,13 @@ export type RentSchedule = Readonly<{
   // in payment-frequency.ts). Reset to the change date whenever the frequency itself
   // changes, so a mid-lease switch never backfills weeks of "missed" charges.
   paymentAnchorDate?: string | null;
+  // Monthly pet fee in cents. Optional on input — defaults to 0, so every
+  // schedule created before this field (and every caller that doesn't pass it)
+  // behaves exactly as before. This is the portion of amountCents (which stays
+  // the TOTAL monthly obligation) attributable to pets, for display breakdown
+  // only — there is no separate monthly pet-fee charge, and the generator
+  // needs no amount change.
+  petFeeCents?: number;
 }>;
 
 function required(value: string, field: string): string {
@@ -109,11 +116,16 @@ export function createRentSchedule(schedule: RentSchedule): RentSchedule {
     throw new Error("Rent schedule payment frequency must be weekly, biweekly, or monthly.");
   const paymentAnchorDate = schedule.paymentAnchorDate ?? null;
   if (paymentAnchorDate !== null) date(paymentAnchorDate, "paymentAnchorDate");
+  const petFeeCents = schedule.petFeeCents ?? 0;
+  if (!Number.isSafeInteger(petFeeCents) || petFeeCents < 0)
+    throw new Error("Rent schedule pet fee must be a nonnegative whole-cent amount.");
+  if (petFeeCents > schedule.amountCents)
+    throw new Error("Rent schedule pet fee cannot exceed the monthly total.");
   return Object.freeze({ ...schedule, id: required(schedule.id, "an id"), leaseId: required(schedule.leaseId, "a lease id"),
     amountCents: schedule.amountCents, currencyCode, effectiveStartDate, effectiveEndDate,
     createdAt: timestamp(schedule.createdAt, "createdAt"), updatedAt: timestamp(schedule.updatedAt, "updatedAt"),
     collectionMode, collectionProvider, forgeCutoverDate: forgeCutoverDate === null ? null : date(forgeCutoverDate, "forgeCutoverDate"),
-    earlyPayDays, beginChargesDate, paymentFrequency, paymentAnchorDate });
+    earlyPayDays, beginChargesDate, paymentFrequency, paymentAnchorDate, petFeeCents });
 }
 
 // Pure, single source of truth for "is this schedule allowed to generate/collect a FORGE charge
