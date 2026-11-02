@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
-import RentalSetupPanel, { activeBalanceCentsForUnit, tenantLabelForUnit } from "./RentalSetupPanel";
+import RentalSetupPanel, { activeBalanceCentsForUnit, countUnitsForStatusBar, filterUnitsForStatusBar, tenantLabelForUnit } from "./RentalSetupPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -43,6 +43,65 @@ describe("activeBalanceCentsForUnit", () => {
   });
   it("returns null when the unit has no active lease", () => {
     expect(activeBalanceCentsForUnit({ id: "unit_2" }, leases, [])).toBeNull();
+  });
+});
+
+describe("filterUnitsForStatusBar", () => {
+  const statusUnits = [
+    { id: "unit_1", status: "occupied" },
+    { id: "unit_2", status: "preparing" },
+    { id: "unit_3", status: "available" },
+    { id: "unit_4", status: "occupied", property_id: "archived" },
+    { id: "unit_5", status: "inactive" },
+  ];
+  // unit_1 has the active lease (not vacant); unit_2's lease ended and unit_3
+  // and unit_4 have none (all vacant); unit_5 is inactive so it never appears.
+  const byId = (units) => units.map((unit) => unit.id);
+  it("shows every active unit with no filter", () => {
+    expect(byId(filterUnitsForStatusBar(statusUnits, null, leases, leaseMemberships, tenants)))
+      .toEqual(["unit_1", "unit_2", "unit_3", "unit_4"]);
+  });
+  it("filters by unit status", () => {
+    expect(byId(filterUnitsForStatusBar(statusUnits, "preparing", leases, leaseMemberships, tenants))).toEqual(["unit_2"]);
+    expect(byId(filterUnitsForStatusBar(statusUnits, "available", leases, leaseMemberships, tenants))).toEqual(["unit_3"]);
+    expect(byId(filterUnitsForStatusBar(statusUnits, "occupied", leases, leaseMemberships, tenants))).toEqual(["unit_1", "unit_4"]);
+  });
+  it("treats vacant as no active lease, not the occupied status", () => {
+    expect(byId(filterUnitsForStatusBar(statusUnits, "vacant", leases, leaseMemberships, tenants))).toEqual(["unit_2", "unit_3", "unit_4"]);
+  });
+  it("never shows archived units in any filtered view", () => {
+    expect(byId(filterUnitsForStatusBar(statusUnits, "vacant", leases, leaseMemberships, tenants))).not.toContain("unit_5");
+    expect(byId(filterUnitsForStatusBar(statusUnits, null, leases, leaseMemberships, tenants))).not.toContain("unit_5");
+  });
+});
+
+describe("countUnitsForStatusBar", () => {
+  it("counts active units per chip and excludes archived units", () => {
+    const units = [
+      { id: "unit_1", status: "occupied" },
+      { id: "unit_2", status: "preparing" },
+      { id: "unit_3", status: "available" },
+      { id: "unit_5", status: "inactive" },
+    ];
+    expect(countUnitsForStatusBar(units, leases, leaseMemberships, tenants)).toEqual({
+      all: 3, preparing: 1, available: 1, occupied: 1, vacant: 2,
+    });
+  });
+});
+
+describe("RentalSetupPanel status bar", () => {
+  it("renders one chip per status with the matching unit count", () => {
+    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[
+      { id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "preparing" },
+      { id: "unit_2", label: "308 Paula", property_id: "308-paula", status: "available" },
+      { id: "unit_3", label: "4225 Barnhill", property_id: "4225-barnhill", status: "occupied" },
+    ]} />);
+    // No leases in the seed, so every unit counts as vacant.
+    expect(markup).toContain("All (3)");
+    expect(markup).toContain("Preparing (1)");
+    expect(markup).toContain("Available (1)");
+    expect(markup).toContain("Occupied (1)");
+    expect(markup).toContain("Vacant (3)");
   });
 });
 
