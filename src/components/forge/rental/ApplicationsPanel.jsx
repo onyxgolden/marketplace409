@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import ScreeningPanel from "./ScreeningPanel";
 
 // Rentec parity R21 — the application review queue. Applications submitted
 // through the public form land here as pending (this queue IS the in-app
@@ -284,6 +285,9 @@ export default function ApplicationsPanel() {
                 ))}
               </div>
             ) : null}
+            <div className="mt-4">
+              <ScreeningPanel applicationId={detail.application.id} applicantName={applicantName(detail.application.answers)} />
+            </div>
             {detail.application.status === "pending" ? (
               <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
                 <p className="text-sm font-black text-slate-950 dark:text-white">Approve — draft lease terms</p>
