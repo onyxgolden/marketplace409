@@ -13,6 +13,13 @@
 # testing
 /coverage
 
+# playwright e2e smoke suite (run state + reports are local-only)
+e2e/.e2e-run.json
+/test-results/
+/playwright-report/
+e2e/test-results/
+e2e/playwright-report/
+
 # next.js
 /.next/
 /out/
