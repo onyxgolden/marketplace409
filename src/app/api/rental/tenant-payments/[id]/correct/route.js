@@ -68,6 +68,56 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "The request body must be JSON." }, { status: 400 });
     }
 
+    // Notes-only correction for payments that have not completed (Jason,
+    // 2026-11-02): the RPC below refuses non-succeeded payments by design —
+    // it moves money, charge balances, and mirrors together. This branch runs
+    // BEFORE validation (the validator rejects non-succeeded payments) and
+    // never calls the RPC. Only notes + receipt reference move, via a direct
+    // owner-scoped UPDATE plus the same audit-row shape, so the change is
+    // still trailed in the correction history. No money field can pass here.
+    if (payment.status !== "succeeded") {
+      const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+      if (!reason) return NextResponse.json({ error: "A reason is required to correct a payment." }, { status: 400 });
+      const moneyFields = ["amountCents", "receivedAt", "paymentMethod", "depositState", "depositAmountCents", "chargeId"];
+      const blocked = moneyFields.filter((field) => body?.[field] !== undefined);
+      if (blocked.length > 0) {
+        return NextResponse.json({ error: "This payment has not completed, so its amount, date, method, and charge cannot be changed — only notes and the receipt reference." }, { status: 400 });
+      }
+      const patch = {};
+      const changes = {};
+      if (body?.receiptReference !== undefined) {
+        const ref = typeof body.receiptReference === "string" ? body.receiptReference.trim() || null : null;
+        if (ref !== (payment.receipt_reference || null)) {
+          patch.receipt_reference = ref;
+          changes.receipt_reference = { from: payment.receipt_reference || null, to: ref };
+        }
+      }
+      if (body?.notes !== undefined) {
+        const notes = typeof body.notes === "string" ? body.notes.trim() || null : null;
+        if (notes !== (payment.notes || null)) {
+          patch.notes = notes;
+          changes.notes = { from: payment.notes || null, to: notes };
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return NextResponse.json({ error: "Nothing to correct — change at least one field." }, { status: 400 });
+      }
+      const { error: updateError } = await supabaseClient.from("rental_payments")
+        .update(patch).eq("owner_id", effectiveOwnerId).eq("id", payment.id);
+      if (updateError) throw updateError;
+      const { data: auditRow, error: auditError } = await supabaseClient.from("rental_payment_corrections")
+        .insert({ owner_id: effectiveOwnerId, payment_id: payment.id, corrected_by: authenticated.user.id, reason, changes })
+        .select("id, payment_id, corrected_at, corrected_by, reason, changes, balance_delta_cents, reconciled_warning")
+        .single();
+      if (auditError) throw auditError;
+      return NextResponse.json({
+        success: true,
+        correction: serializePaymentCorrection(auditRow),
+        reconciledWarning: false,
+        balanceDeltaCents: 0,
+      });
+    }
+
     const check = validatePaymentCorrection(body, payment);
     if (!check.valid) {
       const status = check.errors.some((e) => e.includes("Only completed payments"))

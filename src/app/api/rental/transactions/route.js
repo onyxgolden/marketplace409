@@ -189,7 +189,9 @@ export async function POST(request) {
 }
 
 // GET /api/rental/transactions?eventId= — full editable field set for one owned
-// manual event, for edit prefill. Imported events are not editable here.
+// event, for edit prefill. Any source is prefillable here; the PATCH handler
+// is the enforcement boundary (payment mirrors are refused there, because
+// they are edited through the tenant payment correction flow instead).
 export async function GET(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
@@ -203,7 +205,6 @@ export async function GET(request) {
       .select("id, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, property_id, cleared, cleared_at, display_as, ref_number, payee_mailing_address, assigned_to, is_recurring, recurrence_rule, depreciate, metadata")
       .eq("owner_id", authenticated.effectiveOwnerId)
       .eq("id", eventId)
-      .eq("source_system", "manual")
       .eq("is_deleted", false)
       .limit(1);
     if (error) throw error;
@@ -250,6 +251,24 @@ async function ownManualEvent(supabaseClient, effectiveOwnerId, eventId) {
     .eq("owner_id", effectiveOwnerId)
     .eq("id", eventId)
     .eq("source_system", "manual")
+    .eq("is_deleted", false)
+    .limit(1);
+  if (error) throw error;
+  return (data || [])[0] || null;
+}
+
+// Same ownership read as ownManualEvent, but for editing: any source is
+// editable through PATCH (imported rows included — fixing an imported
+// mistake is the point), except live payment mirrors, which the PATCH
+// handler refuses so they can only move through the payment correction
+// flow. DELETE keeps using ownManualEvent: deleting an imported row
+// stays out of scope.
+async function ownEvent(supabaseClient, effectiveOwnerId, eventId) {
+  const { data, error } = await supabaseClient
+    .from("financial_events")
+    .select("id, cleared, cleared_at, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, property_id, display_as, ref_number, payee_mailing_address, assigned_to, is_recurring, recurrence_rule, depreciate, transfer_group_id, source_system, metadata")
+    .eq("owner_id", effectiveOwnerId)
+    .eq("id", eventId)
     .eq("is_deleted", false)
     .limit(1);
   if (error) throw error;
@@ -326,10 +345,14 @@ function diffEditableFields(before, value) {
   return changes;
 }
 
-// PATCH /api/rental/transactions — edit a manual transaction.
+// PATCH /api/rental/transactions — edit a transaction, any source.
 // Body: { eventId, ...same full field set as POST }. The form always sends the
 // complete field set, so validation is identical to create. Imported events
-// (source_system != manual) cannot be edited here.
+// are editable here (fixing an imported mistake is the point) with the full
+// audit trail the RPC writes. Live payment mirrors (source_system
+// forge_rental_payment*) are refused: the payment row, the charge balance,
+// and the mirror move together only through the tenant payment correction
+// flow, so rewriting the mirror alone would strand them.
 export async function PATCH(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
@@ -360,8 +383,15 @@ export async function PATCH(request) {
       return NextResponse.json({ error: "A tenant charge cannot be changed by editing the transaction. Void the charge in Rent & payments instead." }, { status: 400 });
     }
 
-    const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
+    const existing = await ownEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
     if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
+
+    // A live payment mirror is owned by its payment record: the payment row,
+    // the charge balance, and this mirror move together through the tenant
+    // payment correction flow. Rewriting the mirror alone would strand them.
+    if (String(existing.source_system || "").startsWith("forge_rental_payment")) {
+      return NextResponse.json({ error: "This transaction mirrors a tenant payment. Correct the payment from the tenant ledger instead of editing the mirror." }, { status: 400 });
+    }
 
     // A transfer is a linked pair: amount, direction, and account are shared
     // by both legs. Editing one leg alone would leave the pair unbalanced,

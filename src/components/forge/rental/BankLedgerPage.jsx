@@ -6,6 +6,7 @@ import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { validateFundTransferInput } from "@/application/rental/fundTransfers";
 import BankReconciliationPanel from "./BankReconciliationPanel";
 import TransactionForm from "./TransactionForm";
+import CorrectPaymentDialog from "./CorrectPaymentDialog";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -229,6 +230,7 @@ export default function BankLedgerPage({ onNavigate = null }) {
   const [postKind, setPostKind] = useState(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
+  const [correctPaymentId, setCorrectPaymentId] = useState(null);
   const [editError, setEditError] = useState("");
   const [notice, setNotice] = useState("");
   // Controls-sweep follow-up G14: the empty state used to dead-end. The
@@ -290,6 +292,17 @@ export default function BankLedgerPage({ onNavigate = null }) {
       setTogglingId(null);
     }
   }
+
+  // Every row is editable (Jason, 2026-11-02). Live payment mirrors open
+  // the tenant payment correction flow instead of the transaction form —
+  // the mirror itself is never rewritten directly.
+  const editBankEntry = (entry) => {
+    if (String(entry.sourceSystem || "").startsWith("forge_rental_payment") && entry.paymentId) {
+      setCorrectPaymentId(entry.paymentId);
+    } else {
+      startEdit(entry);
+    }
+  };
 
   async function startEdit(entry) {
     setEditError("");
@@ -588,7 +601,7 @@ export default function BankLedgerPage({ onNavigate = null }) {
                         const counterpartAccount = entry.counterpartAccountId
                           ? accounts.find((item) => item.id === entry.counterpartAccountId)
                           : null;
-                        const canEdit = entry.sourceSystem === "manual";
+                        const canDelete = entry.sourceSystem === "manual";
                         const cellPad = compactRows ? "py-1.5" : "py-2.5";
                         return (
                           <tr key={entry.id} data-ledger-entry={entry.status} className={`border-b border-slate-100 dark:border-slate-800 ${entryIndex % 2 === 1 ? "bg-slate-100/70 dark:bg-slate-800/40" : ""}`}>
@@ -659,24 +672,22 @@ export default function BankLedgerPage({ onNavigate = null }) {
                               </button>
                             </td>
                             <td className={`${cellPad} text-center`}>
-                              {canEdit ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <button type="button" onClick={() => startEdit(entry)}
-                                    title={`Edit ${entry.description}`}
-                                    aria-label={`Edit: ${entry.description}`}
-                                    className="rounded-md border border-slate-300 px-2 py-1 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
-                                    ✎
-                                  </button>
+                              <span className="inline-flex items-center gap-1">
+                                <button type="button" onClick={() => editBankEntry(entry)}
+                                  title={`Edit ${entry.description}`}
+                                  aria-label={`Edit: ${entry.description}`}
+                                  className="rounded-md border border-slate-300 px-2 py-1 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                                  ✎
+                                </button>
+                                {canDelete && (
                                   <button type="button" onClick={() => confirmDelete(entry)}
                                     title={`Delete ${entry.description}`}
                                     aria-label={`Delete: ${entry.description}`}
                                     className="rounded-md border border-slate-300 px-2 py-1 text-xs font-black text-red-700 hover:bg-red-50 dark:border-slate-600 dark:text-red-400 dark:hover:bg-red-950/40">
                                     🗑
                                   </button>
-                                </span>
-                              ) : (
-                                <span className="text-xs text-slate-300 dark:text-slate-700" title="Imported transactions are read-only here">—</span>
-                              )}
+                                )}
+                              </span>
                             </td>
                           </tr>
                         );
@@ -712,6 +723,9 @@ export default function BankLedgerPage({ onNavigate = null }) {
         </Modal>
       )}
 
+      {correctPaymentId && (
+        <CorrectPaymentDialog paymentId={correctPaymentId} onClose={() => setCorrectPaymentId(null)} onDone={() => refresh()} />
+      )}
       {editingEvent && (
         <Modal title="Edit transaction" onClose={() => setEditingEvent(null)} wide>
           {editingEvent.transfer_group_id && (

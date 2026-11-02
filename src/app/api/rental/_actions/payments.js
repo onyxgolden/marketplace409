@@ -87,6 +87,45 @@ export async function voidTenantCredit({ authenticated, body, effectiveOwnerId }
   return NextResponse.json({ success: true, credit: data });
 }
 
+// Edit an open tenant credit (Jason, 2026-11-02: every ledger entry must be
+// editable). Amount + notes only. The amount can never drop below what has
+// already been applied — lowering it would rewrite applied history — and the
+// remaining balance is recomputed (new amount minus applied), so the next
+// apply still sees the true remainder. Applications themselves are untouched,
+// the credit stays open, and voided/fully-applied credits are not edited.
+export async function editTenantCredit({ authenticated, body, effectiveOwnerId }) {
+  const input = body.credit;
+  if (typeof input?.creditId !== "string" || !input.creditId.trim()) return badRequest("creditId is required.");
+  const amountCents = input.amountCents !== undefined ? Number(input.amountCents) : undefined;
+  if (amountCents !== undefined && (!Number.isSafeInteger(amountCents) || amountCents <= 0)) return badRequest("A positive credit amount is required.");
+  if (input.ownerConfirmed !== true) return badRequest("Owner confirmation is required to edit a credit.");
+  const creditId = input.creditId.trim();
+  const { data: credit, error } = await authenticated.supabaseClient.from("rental_tenant_credits")
+    .select("id, amount_cents, remaining_cents, status, notes")
+    .eq("owner_id", effectiveOwnerId).eq("id", creditId).maybeSingle();
+  if (error) throw error;
+  if (!credit) return NextResponse.json({ error: "Credit was not found." }, { status: 404 });
+  if (credit.status !== "open") return NextResponse.json({ error: "Only an open credit can be edited." }, { status: 409 });
+  const appliedCents = Number(credit.amount_cents || 0) - Number(credit.remaining_cents || 0);
+  const patch = {};
+  if (amountCents !== undefined) {
+    if (amountCents < appliedCents) {
+      return NextResponse.json({ error: `This credit has ${(appliedCents / 100).toFixed(2)} already applied — the amount cannot go below applied credits.` }, { status: 409 });
+    }
+    patch.amount_cents = amountCents;
+    patch.remaining_cents = amountCents - appliedCents;
+  }
+  if (typeof input.notes === "string") patch.notes = input.notes.trim() || null;
+  if (Object.keys(patch).length === 0) return badRequest("Nothing to update.");
+  patch.updated_at = new Date().toISOString();
+  const { data: updated, error: updateError } = await authenticated.supabaseClient.from("rental_tenant_credits")
+    .update(patch).eq("owner_id", effectiveOwnerId).eq("id", creditId).eq("status", "open")
+    .select("id, tenant_id, lease_id, amount_cents, remaining_cents, source, status, notes").single();
+  if (updateError) throw updateError;
+  if (!updated) return NextResponse.json({ error: "Credit could not be edited." }, { status: 409 });
+  return NextResponse.json({ success: true, credit: updated });
+}
+
 // Controls-sweep B4: create a tenant credit without an overpayment. Requires
 // the 20261031230000 migration (source 'manual', nullable source_payment_id).
 // The lease is explicit when given (and must be one of the tenant's leases);

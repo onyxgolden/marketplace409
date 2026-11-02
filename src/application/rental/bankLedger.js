@@ -53,6 +53,9 @@ export function buildBankLedger({ financialEvents = [], accountName = null } = {
       counterpartAccountName: event.metadata?.counterpart_account_name || null,
       counterpartEventId: event.metadata?.counterpart_event_id || null,
       memo: event.metadata?.memo || null,
+      // Payment mirrors carry their payment id so the ledger can open the
+      // payment correction flow instead of the transaction form.
+      paymentId: event.metadata?.payment_id || null,
       cleared: event.cleared === true,
       clearedAt: event.cleared_at || null,
       status: event.status || "active",

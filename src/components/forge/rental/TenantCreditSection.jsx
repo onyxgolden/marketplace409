@@ -20,6 +20,11 @@ export default function TenantCreditSection({ credits = [], creditApplications =
   const [voidReason, setVoidReason] = useState("");
   const [voidChecked, setVoidChecked] = useState(false);
   const [voidTyped, setVoidTyped] = useState("");
+  const [editFor, setEditFor] = useState(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editChecked, setEditChecked] = useState(false);
+  const [editTyped, setEditTyped] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createAmount, setCreateAmount] = useState("");
   const [createReason, setCreateReason] = useState("");
@@ -147,6 +152,38 @@ export default function TenantCreditSection({ credits = [], creditApplications =
     }
   }
 
+  async function postEdit() {
+    const credit = editFor;
+    const cents = Math.round(Number(editAmount) * 100);
+    if (!Number.isSafeInteger(cents) || cents <= 0) { setError("Enter a positive credit amount."); return; }
+    const appliedCents = Number(credit.amount_cents || 0) - Number(credit.remaining_cents || 0);
+    if (cents < appliedCents) { setError(`This credit has ${(appliedCents / 100).toFixed(2)} already applied — the amount cannot go below applied credits.`); return; }
+    if (!editChecked || editTyped.trim().toUpperCase() !== APPLY_CONFIRM_WORD) {
+      setError(`Check the confirmation and type ${APPLY_CONFIRM_WORD} to edit this credit.`);
+      return;
+    }
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/rental", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "edit-tenant-credit",
+          credit: { creditId: credit.id, amountCents: cents, notes: editNotes, ownerConfirmed: true },
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to edit the credit.");
+      setNotice("✓ Credit updated.");
+      setEditFor(null); setEditAmount(""); setEditNotes(""); setEditChecked(false); setEditTyped("");
+      onChanged?.();
+    } catch (caught) {
+      setError(caught.message || "Unable to edit the credit.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="mt-6 rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:border-sky-900 dark:bg-sky-950/30" data-tenant-credits>
       <h4 className="text-lg font-black text-slate-950 dark:text-white">Tenant credits</h4>
@@ -206,6 +243,10 @@ export default function TenantCreditSection({ credits = [], creditApplications =
                   <button type="button" onClick={() => { setVoidFor(credit); setVoidReason(""); setVoidChecked(false); setVoidTyped(""); setError(""); }}
                     className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800">
                     Void remaining…
+                  </button>
+                  <button type="button" onClick={() => { setEditFor(credit); setEditAmount((Number(credit.amount_cents) / 100).toFixed(2)); setEditNotes(credit.notes || ""); setEditChecked(false); setEditTyped(""); setError(""); }}
+                    className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800">
+                    Edit…
                   </button>
                 </div>
               )}
@@ -270,6 +311,37 @@ export default function TenantCreditSection({ credits = [], creditApplications =
                       {busy ? "Voiding…" : "Void credit"}
                     </button>
                     <button type="button" onClick={() => setVoidFor(null)} className="text-sm font-bold text-red-800 underline dark:text-red-300">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {editFor?.id === credit.id && (
+                <div className="mt-3 rounded-xl border-2 border-sky-400 bg-sky-50 p-4 dark:border-sky-600 dark:bg-sky-950/30">
+                  <p className="text-sm font-black text-sky-900 dark:text-sky-200">Edit this credit</p>
+                  <p className="mt-1 text-xs text-sky-800 dark:text-sky-300">
+                    Amounts already applied stay as history — the new amount cannot go below what has been applied, and the remaining balance is recomputed.
+                  </p>
+                  <label className="mt-2 block text-sm font-bold text-sky-900 dark:text-sky-200">Amount
+                    <input value={editAmount} onChange={(event) => setEditAmount(event.target.value)} inputMode="decimal" placeholder="0.00"
+                      className="mt-1 w-full rounded-xl border border-sky-400 bg-white px-3 py-2 dark:border-sky-600 dark:bg-slate-900 dark:text-white" />
+                  </label>
+                  <label className="mt-2 block text-sm font-bold text-sky-900 dark:text-sky-200">Notes
+                    <input value={editNotes} onChange={(event) => setEditNotes(event.target.value)} placeholder="Why this credit exists"
+                      className="mt-1 w-full rounded-xl border border-sky-400 bg-white px-3 py-2 dark:border-sky-600 dark:bg-slate-900 dark:text-white" />
+                  </label>
+                  <label className="mt-3 flex items-start gap-2 text-sm font-bold text-sky-900 dark:text-sky-200">
+                    <input type="checkbox" checked={editChecked} onChange={(event) => setEditChecked(event.target.checked)} className="mt-1 h-4 w-4 accent-sky-600" />
+                    I confirm this credit should be updated to the values above.
+                  </label>
+                  <label className="mt-2 block text-sm font-bold text-sky-900 dark:text-sky-200">Type {APPLY_CONFIRM_WORD}
+                    <input value={editTyped} onChange={(event) => setEditTyped(event.target.value)} placeholder={APPLY_CONFIRM_WORD}
+                      className="mt-1 w-full rounded-xl border border-sky-400 bg-white px-3 py-2 dark:border-sky-600 dark:bg-slate-900 dark:text-white" />
+                  </label>
+                  <div className="mt-3 flex gap-2">
+                    <button type="button" disabled={busy} onClick={postEdit}
+                      className={`rounded-xl px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>
+                      {busy ? "Saving…" : "Save credit"}
+                    </button>
+                    <button type="button" onClick={() => setEditFor(null)} className="text-sm font-bold text-sky-800 underline dark:text-sky-300">Cancel</button>
                   </div>
                 </div>
               )}

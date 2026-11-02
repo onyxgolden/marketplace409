@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import PropertyLedgerPage from "./PropertyLedgerPage";
+import PropertyLedgerPage, { ledgerEditTarget } from "./PropertyLedgerPage";
 import { clearSWRCache } from "../../../hooks/swrCache";
 
 const ledgerPayload = {
@@ -267,11 +267,17 @@ describe("PropertyLedgerPage edit and delete", () => {
     expect(ledgerCalls).toBeGreaterThan(1);
   });
 
-  it("shows no edit or delete controls for imported entries", async () => {
+  it("shows edit but no delete controls for imported entries", async () => {
     const importedEntry = { ...manualEntry, source: "rentec_import", sourceLabel: "Rentec import" };
     stubFetch(async (url) => {
       if (url === "/api/rental/property-ledger?propertyId=prop-1") {
         return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [importedEntry], entryCount: 1 } }) };
+      }
+      if (url === "/api/rental/transactions?eventId=evt-1") {
+        return { ok: true, json: async () => ({ success: true, event: fullEvent }) };
+      }
+      if (url === "/api/rental/bank-accounts") {
+        return { ok: true, json: async () => ({ accounts: [] }) };
       }
       throw new Error(`unexpected fetch ${url}`);
     });
@@ -284,8 +290,39 @@ describe("PropertyLedgerPage edit and delete", () => {
     act(() => { descriptionButton.click(); });
     expect(container.textContent).toMatch(/Transaction detail/);
     const buttons = Array.from(container.querySelectorAll("button")).map((el) => el.textContent);
-    expect(buttons).not.toContain("Edit");
+    expect(buttons).toContain("Edit");
     expect(buttons).not.toContain("Delete");
+    // And the Edit button actually opens the transaction form for the
+    // imported row — edit is no longer manual-only.
+    const editButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "Edit");
+    await act(async () => { editButton.click(); });
+    const dialogTitle = container.querySelector('[role="dialog"] h3');
+    expect(dialogTitle?.textContent).toBe("Edit transaction");
+  });
+
+  it("opens the payment correction dialog for a payment-mirror row", async () => {
+    const mirrorEntry = { ...manualEntry, source: "forge_rental_payment", sourceLabel: "Tenant payment", paymentId: "pay-1" };
+    stubFetch(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [mirrorEntry], entryCount: 1 } }) };
+      }
+      if (url === "/api/rental/tenant-payments/pay-1") {
+        return { ok: true, json: async () => ({ payment: { id: "pay-1", amountCents: 113387, receivedAt: "2026-11-01", paymentMethod: "card", depositState: "received", depositAmountCents: 0, chargeId: "charge-1", receiptReference: "", notes: "", correctable: true, moneyFieldsCorrectable: false }, corrections: [], availableCharges: [] }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[data-ledger-entry="forge_rental_payment"]')) break;
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    const editButton = container.querySelector('[data-ledger-entry="forge_rental_payment"] button[aria-label="Edit Water heater replacement"]');
+    await act(async () => { editButton.click(); });
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[role="dialog"][aria-label="Correct payment"]')) break;
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    expect(container.querySelector('[role="dialog"][aria-label="Correct payment"]')).not.toBeNull();
   });
 });
 
@@ -395,5 +432,76 @@ describe("PropertyLedgerPage work packages section (Slice 2)", () => {
     const { container } = renderPage();
     await act(async () => {});
     expect(section(container).textContent).toMatch(/Work packages could not be loaded/);
+  });
+});
+
+describe("ledgerEditTarget", () => {
+  it("routes rent-payment rows to the payment correction flow", () => {
+    expect(ledgerEditTarget({ source: "rental_payment", sourceId: "pay-1" })).toEqual({ type: "payment", paymentId: "pay-1" });
+  });
+  it("routes payment mirrors to the payment correction flow by metadata payment id", () => {
+    expect(ledgerEditTarget({ source: "forge_rental_payment", paymentId: "pay-1" })).toEqual({ type: "payment", paymentId: "pay-1" });
+    expect(ledgerEditTarget({ source: "forge_rental_payment_adjustment", paymentId: "pay-2" })).toEqual({ type: "payment", paymentId: "pay-2" });
+  });
+  it("routes financial rows of any source to the transaction form", () => {
+    expect(ledgerEditTarget({ source: "manual" })).toEqual({ type: "transaction", paymentId: null });
+    expect(ledgerEditTarget({ source: "rentec" })).toEqual({ type: "transaction", paymentId: null });
+    expect(ledgerEditTarget({ source: "quicken_simplifi_csv" })).toEqual({ type: "transaction", paymentId: null });
+  });
+  it("routes contractor rows to their own edit path", () => {
+    expect(ledgerEditTarget({ source: "contractor_payment" })).toEqual({ type: "contractor", paymentId: null });
+  });
+});
+
+describe("PropertyLedgerPage contractor edit", () => {
+  it("opens the contractor edit form from a contractor row and saves through the edit op", async () => {
+    const contractorEntry = {
+      ...manualEntry,
+      id: "contractor:cp-1",
+      sourceId: "cp-1",
+      source: "contractor_payment",
+      sourceLabel: "Contractor payment",
+      description: "Gulf Coast Plumbing",
+      debitCents: 45000,
+      date: "2026-09-26",
+      method: "check",
+      paymentReference: "CHK-9",
+      invoiceReference: "INV-9",
+      notes: "Water heater",
+    };
+    const posts = [];
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [contractorEntry], entryCount: 1 } }) };
+      }
+      if (url === "/api/rental" && options?.method === "POST") {
+        posts.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ success: true, payment: { id: "cp-1" } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[data-ledger-entry="contractor_payment"]')) break;
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    const editButton = container.querySelector('[data-ledger-entry="contractor_payment"] button[aria-label="Edit Gulf Coast Plumbing"]');
+    await act(async () => { editButton.click(); });
+    const dialog = container.querySelector('[role="dialog"][aria-label="Edit contractor payment"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.querySelector('input[type="date"]')?.value).toBe("2026-09-26");
+    const amount = [...dialog.querySelectorAll("input")].find((input) => input.value === "450.00");
+    expect(amount).not.toBeUndefined();
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      setter.call(amount, "500.00");
+      amount.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector('button[type="submit"]').click();
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0].operation).toBe("edit-contractor-payment");
+    expect(posts[0].payment).toMatchObject({ paymentId: "cp-1", amountCents: 50000, paidAt: "2026-09-26" });
   });
 });

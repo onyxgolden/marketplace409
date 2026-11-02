@@ -134,11 +134,14 @@ describe("POST /api/rental/tenant-payments/[id]/correct", () => {
     expect(client.rpc).not.toHaveBeenCalled();
   });
 
-  it("409s when the payment is not completed", async () => {
+  it("refuses money changes (400, not a 409) when the payment is not completed", async () => {
+    // Notes-only corrections on open payments succeed (see the notes-only
+    // describe below); only money changes are refused, before any DB write.
     const client = clientFor({ paymentRow: { ...payment, status: "failed" } });
     authAs(client);
-    const response = await post({ notes: "x", reason: "y" });
-    expect(response.status).toBe(409);
+    const response = await post({ amountCents: 150000, reason: "y" });
+    expect(response.status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
   it("maps the RPC reconciliation guard to 409", async () => {
@@ -208,5 +211,68 @@ describe("POST /api/rental/tenant-payments/[id]/correct", () => {
     expect(shrunk.status).toBe(400);
     expect((await shrunk.json()).error).toMatch(/cannot exceed the payment amount/i);
     expect(withDeposit.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/rental/tenant-payments/[id]/correct — notes-only for open payments", () => {
+  const openPayment = { ...payment, status: "processing", notes: "old note", receipt_reference: null };
+  const noteAuditRow = {
+    id: "corr_2", payment_id: "rental_payment_1", corrected_at: "2026-10-02T00:00:00Z",
+    corrected_by: "user_1", reason: "fixed note",
+    changes: { notes: { from: "old note", to: "new note" } },
+    balance_delta_cents: 0, reconciled_warning: false,
+  };
+  function noteClient() {
+    const calls = { updates: [], inserts: [] };
+    const paymentsChain = {
+      select() { return paymentsChain; },
+      eq() { return paymentsChain; },
+      maybeSingle() { return Promise.resolve({ data: openPayment, error: null }); },
+      update(patch) { calls.updates.push(patch); return paymentsChain; },
+      then(resolve) { resolve({ data: [], error: null }); },
+    };
+    const correctionsChain = {
+      insert(row) { calls.inserts.push(row); return correctionsChain; },
+      select() { return correctionsChain; },
+      single() { return Promise.resolve({ data: noteAuditRow, error: null }); },
+    };
+    const client = {
+      rpc: vi.fn(),
+      from: vi.fn((table) => (table === "rental_payments" ? paymentsChain : correctionsChain)),
+    };
+    return { client, calls };
+  }
+
+  it("corrects notes on a payment still open without calling the money-moving RPC", async () => {
+    const { client, calls } = noteClient();
+    authAs(client);
+    const response = await post({ notes: "new note", reason: "fixed note" });
+    expect(response.status).toBe(200);
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(calls.updates).toEqual([{ notes: "new note" }]);
+    expect(calls.inserts[0]).toMatchObject({ payment_id: "rental_payment_1", reason: "fixed note" });
+    expect(calls.inserts[0].changes).toEqual({ notes: { from: "old note", to: "new note" } });
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.balanceDeltaCents).toBe(0);
+    expect(body.correction.changes).toEqual([{ field: "notes", label: "Notes", from: "old note", to: "new note" }]);
+  });
+
+  it("refuses money changes on a payment still open", async () => {
+    const { client, calls } = noteClient();
+    authAs(client);
+    const response = await post({ amountCents: 150000, reason: "trying" });
+    expect(response.status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(calls.updates).toHaveLength(0);
+    expect(calls.inserts).toHaveLength(0);
+  });
+
+  it("requires a reason and an actual change for a notes-only correction", async () => {
+    const { client } = noteClient();
+    authAs(client);
+    expect((await post({ notes: "new note" })).status).toBe(400);
+    expect((await post({ notes: "old note", reason: "no-op" })).status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 });

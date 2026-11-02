@@ -25,7 +25,7 @@ function denyGate() {
   });
 }
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
-import { DELETE, PATCH, POST } from "./route";
+import { DELETE, GET, PATCH, POST } from "./route";
 
 const validBody = {
   eventDate: "2026-09-26",
@@ -532,5 +532,65 @@ describe("R17 permission gating", () => {
     }));
     expect(response.status).toBe(403);
     expect(db.client.from).not.toHaveBeenCalledWith("financial_events");
+  });
+});
+
+describe("ledger edit: any source (Jason, 2026-11-02)", () => {
+  function authed(db) {
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+  }
+  function getRequest(eventId) {
+    return new Request(`https://test/api/rental/transactions?eventId=${encodeURIComponent(eventId)}`, { method: "GET" });
+  }
+
+  it("PATCH updates an owned imported (rentec) event through the same RPC — no manual-only lookup", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-9", source_system: "rentec", cleared: false, cleared_at: null }], error: null },
+    });
+    authed(db);
+    const response = await PATCH(patchRequest({ eventId: "evt-9", ...validBody }));
+    expect(response.status).toBe(200);
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("update_transaction_with_history");
+    const lookup = db.queries.find((q) => q.table === "financial_events");
+    expect(lookup.query.eq).not.toHaveBeenCalledWith("source_system", "manual");
+  });
+
+  it("PATCH refuses a live payment mirror and points at the tenant payment correction", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-9", source_system: "forge_rental_payment", cleared: false, cleared_at: null }], error: null },
+    });
+    authed(db);
+    const response = await PATCH(patchRequest({ eventId: "evt-9", ...validBody }));
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/tenant ledger/);
+    expect(db.rpcCalls).toHaveLength(0);
+  });
+
+  it("GET prefills an imported event — the prefill lookup is not manual-only", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-9", event_date: "2026-09-26", description: "Rentec water bill", amount: 120, transaction_kind: "expense", normalized_category: "utilities", payee: "City water", check_number: "", bank_account_id: "", property_id: "prop-1", cleared: false, cleared_at: null, display_as: "", ref_number: "", payee_mailing_address: "", assigned_to: "", is_recurring: false, recurrence_rule: "", depreciate: false, metadata: {} }], error: null },
+    });
+    authed(db);
+    const response = await GET(getRequest("evt-9"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.event.description).toBe("Rentec water bill");
+    const lookup = db.queries.find((q) => q.table === "financial_events");
+    expect(lookup.query.eq).not.toHaveBeenCalledWith("source_system", "manual");
+  });
+
+  it("DELETE still scopes its lookup to manual events — deleting an imported row stays out of scope", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", cleared: false, cleared_at: null }], error: null },
+    });
+    authed(db);
+    const response = await DELETE(deleteRequest("evt-1"));
+    expect(response.status).toBe(200);
+    const lookup = db.queries.find((q) => q.table === "financial_events");
+    expect(lookup.query.eq).toHaveBeenCalledWith("source_system", "manual");
   });
 });

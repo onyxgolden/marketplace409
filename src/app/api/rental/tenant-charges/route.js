@@ -63,11 +63,14 @@ export async function GET(request) {
 // Body: { chargeId, dueDate?, chargeType?, amountCents?, notes? }.
 // Payment-history safety: the invoiced amount can never drop below what has
 // already been applied to the charge — lowering it would silently rewrite
-// payment history. Paid charges are amount-final; voided charges are immutable.
+// payment history. Paid charges are amount-final. Voided charges ARE editable
+// (Jason, 2026-11-02): a void charge carries no balance — the tenant-ledger
+// balance math excludes void charges — so editing one cannot move money or
+// rewrite payment history, and the edit leaves the charge void.
 // The status and paid-balance guards are enforced TWICE: once against the
 // initial read (for specific, helpful error messages) and again atomically in
-// the UPDATE's WHERE clause, so a payment applied — or a paid/void transition
-// — between the read and the write cannot slip through. When the write-time
+// the UPDATE's WHERE clause, so a payment applied — or a paid transition —
+// between the read and the write cannot slip through. When the write-time
 // guards fail, the update touches zero rows and the client gets a 409 asking
 // to review the latest state and retry.
 // Owner-scoped; read-only members get a 403.
@@ -84,9 +87,6 @@ export async function PATCH(request) {
 
     const charge = await findOwnedCharge(authenticated.supabaseClient, authenticated.effectiveOwnerId, chargeId);
     if (!charge) return NextResponse.json({ error: "Charge was not found." }, { status: 404 });
-    if (charge.status === "void") {
-      return NextResponse.json({ error: "Voided charges cannot be edited." }, { status: 409 });
-    }
 
     const paidCents = Number(charge.paid_amount_cents || 0);
     const patch = {};
@@ -132,11 +132,11 @@ export async function PATCH(request) {
 
     // Write-time guards: re-check status and the paid balance against the
     // CURRENT row inside the UPDATE itself, so a concurrent payment (or a
-    // paid/void transition) between our read and this write blocks the edit
+    // paid transition) between our read and this write blocks the edit
     // instead of being silently overwritten. Zero updated rows => 409 below.
+    // (No void guard: void charges are editable and stay void — see above.)
     let write = authenticated.supabaseClient.from("rent_charges")
-      .update(patch).eq("owner_id", authenticated.effectiveOwnerId).eq("id", chargeId)
-      .neq("status", "void");
+      .update(patch).eq("owner_id", authenticated.effectiveOwnerId).eq("id", chargeId);
     if (patch.amount_cents !== undefined) {
       const newAmountCents = patch.amount_cents;
       write = write

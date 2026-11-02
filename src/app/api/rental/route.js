@@ -17,7 +17,7 @@ import {
   approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
 } from "./_actions/leases.js";
 import {
-  recordOfflinePayment, setPaymentDepositState, applyTenantCredit, voidTenantCredit,
+  recordOfflinePayment, setPaymentDepositState, applyTenantCredit, voidTenantCredit, editTenantCredit,
   voidPayment, refundPayment, createTenantCredit,
   saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
 } from "./_actions/payments.js";
@@ -25,7 +25,7 @@ import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals, retr
 import { pauseAutopay, resumeAutopay, cancelAutopay, updateAutopay } from "./_actions/autopay.js";
 import {
   updateMaintenanceRequest, createMaintenanceRequest, saveContractor, updateContractor,
-  deactivateContractor, reactivateContractor, recordContractorPayment, updateSupportCase,
+  deactivateContractor, reactivateContractor, recordContractorPayment, editContractorPayment, updateSupportCase,
   createSupportCase,
   createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
 } from "./_actions/maintenance.js";
@@ -78,6 +78,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "set-payment-deposit-state": setPaymentDepositState,
   "apply-tenant-credit": applyTenantCredit,
   "void-tenant-credit": voidTenantCredit,
+  "edit-tenant-credit": editTenantCredit,
   "void-payment": voidPayment,
   "refund-payment": refundPayment,
   "create-tenant-credit": createTenantCredit,
@@ -113,6 +114,7 @@ const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "deactivate-contractor": deactivateContractor,
   "reactivate-contractor": reactivateContractor,
   "record-contractor-payment": recordContractorPayment,
+  "edit-contractor-payment": editContractorPayment,
   "update-support-case": updateSupportCase,
   "create-support-case": createSupportCase,
   "create-maintenance-work-order": createMaintenanceWorkOrder,

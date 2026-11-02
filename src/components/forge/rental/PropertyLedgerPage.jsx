@@ -4,6 +4,22 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import TransactionForm from "./TransactionForm";
+import CorrectPaymentDialog from "./CorrectPaymentDialog";
+
+// Every ledger row has an edit path (Jason, 2026-11-02: any transaction on
+// any ledger must be editable). Financial-event rows edit through the
+// transaction form; rent-payment rows and live payment mirrors edit through
+// the tenant payment correction flow (the payment row, the charge balance,
+// and the mirror move together there — the mirror itself is never rewritten
+// directly). Contractor rows route to their own edit form (see
+// startContractorEdit); rows with no edit target yet report "none".
+export function ledgerEditTarget(entry) {
+  if (!entry) return { type: "none", paymentId: null };
+  if (entry.source === "rental_payment") return { type: "payment", paymentId: entry.sourceId || null };
+  if (String(entry.source || "").startsWith("forge_rental_payment")) return { type: "payment", paymentId: entry.paymentId || null };
+  if (entry.source === "contractor_payment") return { type: "contractor", paymentId: null };
+  return { type: "transaction", paymentId: null };
+}
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -74,6 +90,8 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
   );
   const ledger = data?.ledger || null;
   const [detailEntry, setDetailEntry] = useState(null);
+  const [correctPaymentId, setCorrectPaymentId] = useState(null);
+  const [editingContractor, setEditingContractor] = useState(null);
   const [postKind, setPostKind] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
   const [editError, setEditError] = useState("");
@@ -99,6 +117,22 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
       setEditError(caught.message);
     }
   }
+
+  // Routes a row to its edit path: payment rows and payment mirrors open
+  // the correction dialog; contractor rows open the contractor edit form;
+  // financial rows open the transaction form.
+  const editEntry = (entry) => {
+    const target = ledgerEditTarget(entry);
+    if (target.type === "payment" && target.paymentId) {
+      setDetailEntry(null);
+      setCorrectPaymentId(target.paymentId);
+    } else if (target.type === "contractor") {
+      setDetailEntry(null);
+      setEditingContractor(entry);
+    } else {
+      startEdit(entry);
+    }
+  };
 
   async function confirmDelete(entry) {
     setEditError("");
@@ -375,14 +409,10 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
                           : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
                       </td>
                       <td className={`${compactRows ? "py-1.5" : "py-2.5"}`}>
-                        {entry.source === "manual" ? (
-                          <button type="button" onClick={() => startEdit(entry)} title="Edit transaction" aria-label={`Edit ${entry.description}`}
-                            className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
-                            ✎
-                          </button>
-                        ) : (
-                          <span className="font-normal text-slate-300 dark:text-slate-700" title="Imported transactions are read-only here">—</span>
-                        )}
+                        <button type="button" onClick={() => editEntry(entry)} title="Edit transaction" aria-label={`Edit ${entry.description}`}
+                          className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                          ✎
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -407,14 +437,24 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
           properties={(properties || []).map((property) => ({ id: property.id, label: property.label }))}
           tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
           onClose={() => { setDetailEntry(null); setEditError(""); }}
-          canEdit={detailEntry.source === "manual"}
+          canEdit={true}
+          canDelete={detailEntry.source === "manual"}
           canToggleCleared={canToggleCleared(detailEntry)}
           togglingCleared={togglingId === detailEntry.sourceId}
           onToggleCleared={() => onToggleCleared(detailEntry)}
           editError={editError}
-          onEdit={() => startEdit(detailEntry)}
+          onEdit={() => editEntry(detailEntry)}
           onDelete={() => confirmDelete(detailEntry)}
         />
+      )}
+
+      {correctPaymentId && (
+        <CorrectPaymentDialog paymentId={correctPaymentId} onClose={() => setCorrectPaymentId(null)} onDone={() => refresh()} />
+      )}
+
+      {editingContractor && (
+        <ContractorPaymentEditForm entry={editingContractor} onClose={() => setEditingContractor(null)}
+          onSaved={() => { setEditingContractor(null); setNotice("✓ Contractor payment updated."); refresh(); }} />
       )}
 
       {editingEvent && (
@@ -447,22 +487,111 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
 // soft-deletes on the server. Manual entries load the full event so the modal
 // mirrors the edit form's sections: Transaction details, Accounts,
 // Attachments, plus split lines and a per-edit history ("View edits").
-function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], onClose, canEdit, canToggleCleared = false, togglingCleared = false, onToggleCleared = null, editError, onEdit, onDelete }) {
+// Compact edit form for contractor-payment rows: amount, paid date, method,
+// references, notes. The contractor, property, and work order are the row's
+// identity and never change here.
+function ContractorPaymentEditForm({ entry, onClose, onSaved }) {
+  const [amount, setAmount] = useState(((entry.debitCents || 0) / 100).toFixed(2));
+  const [paidAt, setPaidAt] = useState(entry.date || "");
+  const [method, setMethod] = useState(entry.method || "");
+  const [reference, setReference] = useState(entry.paymentReference || "");
+  const [invoiceReference, setInvoiceReference] = useState(entry.invoiceReference || "");
+  const [notes, setNotes] = useState(entry.notes || "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    const cents = Math.round(Number(amount) * 100);
+    if (!Number.isSafeInteger(cents) || cents <= 0) { setError("Enter a positive amount."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidAt)) { setError("Enter a valid payment date."); return; }
+    if (!method.trim()) { setError("Enter a payment method."); return; }
+    setSaving(true);
+    try {
+      const response = await fetch("/api/rental", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "edit-contractor-payment",
+          payment: { paymentId: entry.sourceId, amountCents: cents, paidAt, paymentMethod: method.trim(), reference, invoiceReference, notes },
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Unable to update the contractor payment.");
+      onSaved();
+    } catch (caught) {
+      setError(caught.message || "Unable to update the contractor payment.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass = "mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white";
+  const labelClass = "block text-sm font-bold text-slate-900 dark:text-white";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={onClose} role="presentation">
+      <div role="dialog" aria-modal="true" aria-label="Edit contractor payment"
+        onClick={(event) => event.stopPropagation()}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-xl font-black text-slate-950 dark:text-white">Edit contractor payment</h3>
+          <button type="button" onClick={onClose} aria-label="Close contractor payment edit"
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">✕</button>
+        </div>
+        <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-400">{entry.description}</p>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <label className={labelClass}>Amount
+              <input className={inputClass} value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" />
+            </label>
+            <label className={labelClass}>Paid date
+              <input type="date" className={inputClass} value={paidAt} onChange={(event) => setPaidAt(event.target.value)} />
+            </label>
+          </div>
+          <label className={labelClass}>Payment method
+            <input className={inputClass} value={method} onChange={(event) => setMethod(event.target.value)} placeholder="check, cash, card, …" />
+          </label>
+          <label className={labelClass}>Reference
+            <input className={inputClass} value={reference} onChange={(event) => setReference(event.target.value)} />
+          </label>
+          <label className={labelClass}>Invoice reference
+            <input className={inputClass} value={invoiceReference} onChange={(event) => setInvoiceReference(event.target.value)} />
+          </label>
+          <label className={labelClass}>Notes
+            <textarea className={inputClass} value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} />
+          </label>
+          {error && <p role="alert" className="text-sm font-bold text-red-600">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+            <button type="submit" disabled={saving} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? "Saving…" : "Save payment"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], onClose, canEdit, canDelete = false, canToggleCleared = false, togglingCleared = false, onToggleCleared = null, editError, onEdit, onDelete }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [fullEvent, setFullEvent] = useState(null);
-  const [eventLoading, setEventLoading] = useState(canEdit);
+  // Only financial-event rows have a backing event to load (splits,
+  // attachments, edit history). Rent-payment and contractor rows are owned
+  // by other records — their detail shows the row itself, and their edit
+  // path opens from the Edit button, not from these loads.
+  const isFinancialRow = entry.source !== "rental_payment" && entry.source !== "contractor_payment";
+  const [eventLoading, setEventLoading] = useState(isFinancialRow);
   const [splits, setSplits] = useState([]);
-  const [splitsLoading, setSplitsLoading] = useState(canEdit);
+  const [splitsLoading, setSplitsLoading] = useState(isFinancialRow);
   const [attachments, setAttachments] = useState([]);
-  const [attachmentsLoading, setAttachmentsLoading] = useState(canEdit);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(isFinancialRow);
   const [showEdits, setShowEdits] = useState(false);
   const [edits, setEdits] = useState(null);
   const [detailError, setDetailError] = useState("");
 
-  // Full event + splits + attachments for manual entries — fetched once when
+  // Full event + splits + attachments for financial rows — fetched once when
   // the detail opens.
   useEffect(() => {
-    if (!canEdit) return undefined;
+    if (!isFinancialRow) return undefined;
     let cancelled = false;
     fetchTransaction(entry.sourceId).then(
       (event) => { if (!cancelled) { setFullEvent(event); setEventLoading(false); } },
@@ -483,11 +612,11 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
       .catch(() => { if (!cancelled) setAttachments([]); })
       .finally(() => { if (!cancelled) setAttachmentsLoading(false); });
     return () => { cancelled = true; };
-  }, [canEdit, entry.sourceId]);
+  }, [isFinancialRow, entry.sourceId]);
 
   // Edit history loads on demand behind the "View edits" toggle.
   useEffect(() => {
-    if (!showEdits || !canEdit) return undefined;
+    if (!showEdits || !isFinancialRow) return undefined;
     let cancelled = false;
     fetch(`/api/rental/transaction-edits?eventId=${encodeURIComponent(entry.sourceId)}`)
       .then(async (response) => {
@@ -498,7 +627,7 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
       })
       .catch((caught) => { if (!cancelled) setDetailError(caught.message); });
     return () => { cancelled = true; };
-  }, [showEdits, canEdit, entry.sourceId]);
+  }, [showEdits, isFinancialRow, entry.sourceId]);
 
   async function downloadAttachment(attachmentId) {
     setDetailError("");
@@ -556,17 +685,21 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">✕</button>
         </div>
 
-        {canEdit && (
+        {(canEdit || canDelete) && (
           <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4 dark:border-slate-800">
-            <button type="button" onClick={onEdit}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
-              Edit
-            </button>
-            <button type="button" onClick={() => setShowEdits((show) => !show)} aria-expanded={showEdits}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
-              {showEdits ? "Hide edits" : "View edits"}
-            </button>
-            {confirmingDelete ? (
+            {canEdit && (
+              <button type="button" onClick={onEdit}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                Edit
+              </button>
+            )}
+            {canEdit && isFinancialRow && (
+              <button type="button" onClick={() => setShowEdits((show) => !show)} aria-expanded={showEdits}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                {showEdits ? "Hide edits" : "View edits"}
+              </button>
+            )}
+            {canDelete && (confirmingDelete ? (
               <>
                 <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Delete this transaction?</span>
                 <button type="button" onClick={onDelete}
@@ -583,14 +716,11 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
                 className="rounded-xl border border-red-300 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40">
                 Delete
               </button>
-            )}
+            ))}
           </div>
         )}
-        {!canEdit && (
-          <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">Imported transactions are read-only here.</p>
-        )}
 
-        {eventLoading && canEdit && (
+        {eventLoading && isFinancialRow && (
           <p className="mt-4 text-sm font-bold text-slate-400">Loading transaction details…</p>
         )}
 
@@ -624,7 +754,7 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
           )}
         </div>
 
-        {canEdit && (
+        {isFinancialRow && (
           <div className="mt-5">
             <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Accounts</p>
             <dl className="mt-2 space-y-2 text-sm">
@@ -638,7 +768,7 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
           </div>
         )}
 
-        {canEdit && !attachmentsLoading && attachments.length > 0 && (
+        {isFinancialRow && !attachmentsLoading && attachments.length > 0 && (
           <div className="mt-5">
             <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Attachments</p>
             <ul className="mt-2 space-y-1.5">
@@ -660,7 +790,7 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
             Flagged as a possible duplicate — another source recorded the same amount on the same date.
           </p>
         )}
-        {canEdit && !splitsLoading && splits.length > 0 && (
+        {isFinancialRow && !splitsLoading && splits.length > 0 && (
           <div className="mt-5">
             <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Split lines</p>
             <ul className="mt-2 space-y-1.5">
@@ -677,7 +807,7 @@ function PropertyTransactionDetailModal({ entry, properties = [], tenants = [], 
           </div>
         )}
 
-        {canEdit && showEdits && (
+        {isFinancialRow && showEdits && (
           <div className="mt-5">
             <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Edit history</p>
             {edits === null ? (

@@ -65,6 +65,10 @@ function serializePayment(payment) {
     notes: payment.notes || null,
     correctable: eligibility.ok,
     correctableReason: eligibility.reason,
+    // Payments that have not completed cannot use the money-moving RPC, but
+    // their notes + receipt reference are still correctable (Jason,
+    // 2026-11-02) — the dialog offers that surface instead of a dead end.
+    noteCorrectable: payment.status !== "succeeded",
     // Amount/date/method corrections are offline-only; provider payments
     // moved real money — their correctable surface is notes + reference.
     moneyFieldsCorrectable: eligibility.ok && isOffline && Number(payment.refunded_amount_cents || 0) === 0,

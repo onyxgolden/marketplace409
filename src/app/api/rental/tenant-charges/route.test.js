@@ -13,7 +13,7 @@ const baseCharge = {
 
 // The mock evaluates the chained write-time conditions against the CURRENT
 // row — which a test may replace with a "concurrent" row simulating a payment
-// applied (or a paid/void transition) between the route's initial read and its
+// applied (or a paid transition) between the route's initial read and its
 // UPDATE. That is how the race tests prove the guards hold at write time.
 function mockClient(charge = baseCharge, { concurrentCharge = null } = {}) {
   const state = { charge, patch: null, conditions: [] };
@@ -115,11 +115,16 @@ describe("tenant-charges PATCH", () => {
     expect((await patch({ chargeId: "c1", notes: "x" })).status).toBe(404);
   });
 
-  it("keeps voided charges immutable", async () => {
-    authAs(mockClient({ ...baseCharge, status: "void" }).client);
-    const res = await patch({ chargeId: "c1", notes: "x" });
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/voided/i);
+  it("edits a voided charge and leaves it void", async () => {
+    const { client, state } = mockClient({ ...baseCharge, status: "void" });
+    authAs(client);
+    const res = await patch({ chargeId: "c1", notes: "corrected note on a void charge" });
+    expect(res.status).toBe(200);
+    expect(state.patch.notes).toBe("corrected note on a void charge");
+    expect(state.patch.status).toBeUndefined();
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.charge.status).toBe("void");
   });
 
   it("keeps paid charges amount-final", async () => {
@@ -194,19 +199,22 @@ describe("tenant-charges PATCH concurrent-payment race", () => {
     expect((await res.json()).error).toMatch(/changed while you were editing/i);
   });
 
-  it("refuses any edit on a charge that was voided after the read", async () => {
-    const { client } = mockClient(baseCharge, {
+  it("still succeeds when the charge was voided after the read", async () => {
+    // Void charges are editable and stay void (Jason, 2026-11-02) — a void
+    // transition between read and write is not a guard failure.
+    const { client, state } = mockClient(baseCharge, {
       concurrentCharge: { ...baseCharge, status: "void" },
     });
     authAs(client);
     const res = await patch({ chargeId: "c1", notes: "late edit" });
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/changed while you were editing/i);
+    expect(res.status).toBe(200);
+    expect(state.patch.notes).toBe("late edit");
+    expect((await res.json()).charge.status).toBe("void");
   });
 
   it("still succeeds when a concurrent payment does not break the guards", async () => {
     // Paid moves 50,000 -> 60,000, but the raised amount (130,000) still
-    // covers it and the charge is not paid/void — the write must go through.
+    // covers it and the charge is not paid — the write must go through.
     const { client, state } = mockClient(baseCharge, {
       concurrentCharge: { ...baseCharge, paid_amount_cents: 60000, status: "partially_paid" },
     });
