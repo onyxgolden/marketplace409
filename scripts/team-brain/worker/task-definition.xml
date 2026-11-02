@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!-- Team Brain P7 — Windows Task Scheduler definition (TEMPLATE).
+  Placeholders {{WORKER_USER}}, {{NODE_PATH}}, {{WORKER_SCRIPT}},
+  {{CONFIG_PATH}}, {{WORKING_DIR}} are replaced by
+  register-worker-task.ps1 at registration time. This file contains
+  NO credentials: the task runs as a dedicated OS account under S4U
+  logon (no password in the definition), and database credentials
+  arrive via vault-provided environment variables (see vault-recipe.md).
+  The task registers DISABLED (Settings/Enabled=false, and the
+  registration script additionally runs schtasks /Change /Disable).
+  Enabling it requires separate Jason authorization (P8 territory).
+  MultipleInstancesPolicy IgnoreNew: a trigger while a cycle runs is
+  ignored — no overlapping instances, at the scheduler level as well
+  as the engine lease level.
+  ExecutionTimeLimit PT4H matches the RTO 4h backup target: a cycle
+  that cannot finish in 4 hours is killed, not left running. -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Team Brain disabled worker: one consolidation cycle per trigger (03:00 America/Chicago). DISABLED until activation is separately authorized.</Description>
+    <Author>FORGE</Author>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-11-02T03:00:00</StartBoundary>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="TeamBrainWorker">
+      <UserId>{{WORKER_USER}}</UserId>
+      <LogonType>S4U</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>false</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="TeamBrainWorker">
+    <Exec>
+      <Command>{{NODE_PATH}}</Command>
+      <Arguments>{{WORKER_SCRIPT}} --config {{CONFIG_PATH}} --once</Arguments>
+      <WorkingDirectory>{{WORKING_DIR}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
