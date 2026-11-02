@@ -107,3 +107,25 @@ describe("RentalSetupPanel tenant action", () => {
     expect(payload.addressZip).toBe("77630");
   });
 });
+
+describe("RentalSetupPanel status bar", () => {
+  let container; let root;
+  afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); clearSWRCache(); });
+
+  it("narrows the property list to the tapped status", async () => {
+    const statusUnits = [
+      { id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "preparing" },
+      { id: "unit_2", label: "308 Paula", property_id: "308-paula", status: "available" },
+      { id: "unit_3", label: "4225 Barnhill", property_id: "4225-barnhill", status: "occupied" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ units: statusUnits, leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) })));
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => { root.render(<RentalSetupPanel initialUnits={statusUnits} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelectorAll("[data-rental-record-browser] tbody tr")).toHaveLength(3);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Available (1)").click());
+    expect(container.querySelectorAll("[data-rental-record-browser] tbody tr")).toHaveLength(1);
+    expect(container.textContent).toContain("308 Paula");
+    expect(container.textContent).not.toContain("930 Highland Drive");
+    expect(container.textContent).not.toContain("4225 Barnhill");
+  });
+});

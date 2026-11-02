@@ -57,6 +57,29 @@ export function isUnitVacant(unit, leases, leaseMemberships, tenants) {
   return tenantLabelForUnit(unit, leases, leaseMemberships, tenants) === null;
 }
 
+// Status-bar filter (Jason, 2026-11-02): one filter value drives the unit
+// queue — null shows everything, a status shows units in that status, and
+// "vacant" shows units with no active lease (the dashboard deep-link's
+// filter, now also a chip). Inactive (archived) units never appear in any
+// filtered view; they live in the archived section below.
+export function filterUnitsForStatusBar(units, filter, leases = [], leaseMemberships = [], tenants = []) {
+  const active = (units || []).filter((unit) => unit.status !== "inactive");
+  if (!filter) return active;
+  if (filter === "vacant") return active.filter((unit) => isUnitVacant(unit, leases, leaseMemberships, tenants));
+  return active.filter((unit) => unit.status === filter);
+}
+
+export function countUnitsForStatusBar(units, leases = [], leaseMemberships = [], tenants = []) {
+  const active = (units || []).filter((unit) => unit.status !== "inactive");
+  return {
+    all: active.length,
+    preparing: active.filter((unit) => unit.status === "preparing").length,
+    available: active.filter((unit) => unit.status === "available").length,
+    occupied: active.filter((unit) => unit.status === "occupied").length,
+    vacant: active.filter((unit) => isUnitVacant(unit, leases, leaseMemberships, tenants)).length,
+  };
+}
+
 export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate, initialViewFilter = null, recordContext = null }) {
   // Rental units: stale-while-revalidate. The cached units render instantly on
   // return visits and refresh in the background — the last good data never
@@ -117,9 +140,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       const nextLeases = loaded.leases || [];
       const nextMemberships = loaded.leaseMemberships || [];
       const nextTenants = loaded.tenants || [];
-      const pool = viewFilter === "vacant"
-        ? nextUnits.filter((unit) => unit.status !== "inactive" && isUnitVacant(unit, nextLeases, nextMemberships, nextTenants))
-        : nextUnits.filter((unit) => unit.status !== "inactive");
+      const pool = filterUnitsForStatusBar(nextUnits, viewFilter, nextLeases, nextMemberships, nextTenants);
       setSelectedId((current) => pool.some((item) => item.id === current) ? current : pool[0]?.id || null);
       setShowCreate(nextUnits.every((item) => item.status === "inactive"));
     });
@@ -177,12 +198,19 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     });
     return () => { cancelled = true; };
   }, [recordContext, loaded, initialUnits]);
-  // The filtered view narrows the queue the record browser shows: the "vacant"
-  // deep-link from the dashboard's vacancy alert box lists only units with no
-  // active lease, so the queue behind the count is exactly what the box showed.
-  const visibleUnits = viewFilter === "vacant"
-    ? units.filter((unit) => unit.status !== "inactive" && isUnitVacant(unit, leases, leaseMemberships, tenants))
-    : units.filter((unit) => unit.status !== "inactive");
+  // The filtered view narrows the queue the record browser shows: the status
+  // bar (and the dashboard's "vacant" deep-link, which now just selects the
+  // Vacant chip) filters the queue, so the count above the list is exactly
+  // what the bar showed.
+  const visibleUnits = filterUnitsForStatusBar(units, viewFilter, leases, leaseMemberships, tenants);
+  const statusCounts = countUnitsForStatusBar(units, leases, leaseMemberships, tenants);
+  const statusBarOptions = [
+    { key: null, label: "All", count: statusCounts.all },
+    { key: "preparing", label: "Preparing", count: statusCounts.preparing },
+    { key: "available", label: "Available", count: statusCounts.available },
+    { key: "occupied", label: "Occupied", count: statusCounts.occupied },
+    { key: "vacant", label: "Vacant", count: statusCounts.vacant },
+  ];
   const refreshUnits = refresh;
   // The panel eyebrow follows the currently selected unit instead of naming a
   // hardcoded sample property -- the old "Kent Avenue setup" text shipped from
@@ -290,7 +318,16 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       {viewFilter === "vacant" && <RentalViewFilterBanner filterLabel="Vacant units only" onClear={() => setViewFilter(null)} />}
       {result && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved units.</p> : null}
       {result && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
-      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); setDetailNotice(""); setDetailError(""); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
+      {units.length > 0 && !showCreate && <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter rental units by status">
+        <span className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Status:</span>
+        {statusBarOptions.map((option) => {
+          const isActive = viewFilter === option.key;
+          return <button key={option.label} type="button" aria-pressed={isActive} onClick={() => setViewFilter(option.key)}
+            className={`rounded-xl px-4 py-2 text-sm font-bold transition ${isActive ? "bg-slate-950 text-white dark:bg-amber-400 dark:text-slate-950" : "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+            {option.label} ({option.count})</button>;
+        })}
+      </div>}
+      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); setDetailNotice(""); setDetailError(""); }} getThumbnail={(unit) => unit.photo_url} listSize="wide" emptyMessage="No units match this filter."
         onRowContextMenu={(event, unit) => onContextMenu(event, unitMenuItems(unit))}
         columns={[
           // One-line spreadsheet rows (same as the tenant index): every cell is a
