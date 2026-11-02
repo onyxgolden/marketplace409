@@ -278,3 +278,40 @@ describe("BankLedgerPage", () => {
     });
   });
 });
+
+describe("BankLedgerPage edit and delete", () => {
+  let container;
+  let root;
+
+  beforeEach(() => { clearSWRCache(); });
+
+  afterEach(() => {
+    if (root) act(() => root.unmount());
+    if (container) container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows edit on every row but delete only on manual rows", async () => {
+    const imported = {
+      id: "event:r", sourceId: "r", date: "2026-09-04", description: "Rentec water bill", payee: null, checkNumber: null,
+      debitCents: 12000, creditCents: 0, category: "utilities", propertyId: "p1", propertyLabel: "308 Paula",
+      cleared: false, clearedAt: null, status: "active", sourceSystem: "rentec", balanceAfterCents: 123000,
+    };
+    const ledger = {
+      ...ledgerPayload,
+      ledger: { ...ledgerPayload.ledger, entries: [ledgerPayload.ledger.entries[1], imported], entryCount: 2 },
+    };
+    stubFetch(async (url) => {
+      if (String(url).includes("/api/rental/bank-accounts")) return { ok: true, json: async () => ({ accounts: singleAccountPayload }) };
+      if (String(url).includes("/api/rental/bank-ledger")) return { ok: true, json: async () => ledger };
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    ({ container, root } = renderPage());
+    await act(async () => { root.render(<BankLedgerPage />); });
+    await flushUntilSettled(container);
+    expect(container.querySelector('button[aria-label="Edit: Plumber"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Delete: Plumber"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Edit: Rentec water bill"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Delete: Rentec water bill"]')).toBeNull();
+  });
+});

@@ -132,6 +132,10 @@ export function buildPropertyLedger({
       creditCents: 0,
       category: contractor?.trade ? `Contractor — ${contractor.trade}` : "Contractor payment",
       reference: payment.invoice_reference || payment.reference || null,
+      // The edit form needs both references separately — the display field
+      // above merges them, so the split values ride alongside it.
+      paymentReference: payment.reference || null,
+      invoiceReference: payment.invoice_reference || null,
       method: payment.payment_method || null,
       status: "paid",
       notes: payment.notes || null,
@@ -184,6 +188,10 @@ export function buildPropertyLedger({
       hasAttachment: attachmentEventIds instanceof Set ? attachmentEventIds.has(event.id) : false,
       payee: event.payee || null,
       memo: event.metadata?.memo || null,
+      // Payment mirrors carry their payment id so the ledger can open the
+      // payment correction flow instead of the transaction form (the mirror
+      // itself is never rewritten directly).
+      paymentId: event.metadata?.payment_id || null,
       notes: linked && !amountsMatch ? "Possible linked mismatch — review source records" : null,
       possibleDuplicate: Boolean(linked) && !amountsMatch,
     });

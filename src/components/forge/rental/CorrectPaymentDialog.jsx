@@ -224,16 +224,23 @@ export default function CorrectPaymentDialog({ paymentId, onDone, onClose }) {
 
         {!loading && !loadError && payment && !doneSummary && (
           <>
-            {!payment.correctable && (
+            {!payment.correctable && payment.noteCorrectable === true && (
+              <p role="alert" className="mt-4 rounded-xl bg-sky-50 p-3 text-sm font-bold text-sky-800 dark:bg-sky-950/40 dark:text-sky-300">
+                This payment hasn&apos;t completed, so the amount, date, and method stay locked — but the receipt reference and notes can still be corrected.
+              </p>
+            )}
+            {!payment.correctable && payment.noteCorrectable !== true && (
               <p role="alert" className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                 {payment.correctableReason || "This payment cannot be corrected."}
               </p>
             )}
-            {payment.correctable && (
+            {(payment.correctable || payment.noteCorrectable === true) && (
               <form onSubmit={submit} className="mt-4 space-y-3">
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  The original values stay on the books as a correction record — nothing is rewritten without a trail.
-                  {payment.moneyFieldsCorrectable !== true && " This payment settled through a provider, so only the receipt reference and notes can be corrected."}
+                  {payment.noteCorrectable === true && !payment.correctable
+                    ? "Notes and the receipt reference can be corrected while the payment is still open — every change is recorded in the correction history."
+                    : "The original values stay on the books as a correction record — nothing is rewritten without a trail."}
+                  {payment.correctable && payment.moneyFieldsCorrectable !== true && " This payment settled through a provider, so only the receipt reference and notes can be corrected."}
                 </p>
                 {payment.moneyFieldsCorrectable === true && (
                   <>

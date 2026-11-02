@@ -147,7 +147,7 @@ describe("TenantLedgerPage", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("opens the transaction detail on double-click when the entry cannot be edited (Rentec parity)", async () => {
+  it("opens the Correct payment editor on double-click for a payment still open (Rentec parity)", async () => {
     const payload = {
       ...ledgerPayload,
       ledger: {
@@ -164,11 +164,10 @@ describe("TenantLedgerPage", () => {
     await act(async () => {
       paymentRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = container.querySelector('[aria-label="Correct payment"]');
     expect(dialog).not.toBeNull();
-    expect(dialog.textContent).toContain("Transaction detail");
-    await act(async () => dialog.querySelector('button[aria-label="Close transaction detail"]').click());
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => dialog.querySelector('button[aria-label="Close correct payment"]').click());
+    expect(container.querySelector('[aria-label="Correct payment"]')).toBeNull();
   });
 
   it("toggles the Post Income form from the toolbar", async () => {
@@ -304,6 +303,25 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
     expect(refInput).not.toBeUndefined();
     await act(async () => dialog.querySelector('button[aria-label="Close correct payment"]').click());
     expect(container.querySelector('[aria-label="Correct payment"]')).toBeNull();
+  });
+
+  it("double-clicking a payment still open opens the Correct payment editor", async () => {
+    const payload = {
+      ...ledgerPayload,
+      ledger: {
+        ...ledgerPayload.ledger,
+        entries: [
+          ledgerPayload.ledger.entries[0],
+          { ...ledgerPayload.ledger.entries[1], sourceId: "p1", status: "processing" },
+        ],
+      },
+    };
+    await renderLedger({}, payload);
+    const paymentRow = container.querySelectorAll("[data-ledger-table] tbody tr")[1];
+    await act(async () => {
+      paymentRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(container.querySelector('[aria-label="Correct payment"]')).not.toBeNull();
   });
 
   it("shows the breadcrumb, Ledger heading, and the Post Income / Post Charge / On Deposit actions", async () => {
@@ -466,7 +484,7 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
     expect(editor.textContent).toContain("Invoice saved");
   });
 
-  it("hides the edit affordance on voided charges", async () => {
+  it("shows the edit affordance on voided charges", async () => {
     const payload = {
       ...ledgerPayload,
       ledger: {
@@ -475,7 +493,7 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
       },
     };
     await renderLedger({}, payload);
-    expect(container.querySelector('button[aria-label^="Edit invoice"]')).toBeNull();
+    expect(container.querySelector('button[aria-label^="Edit invoice"]')).not.toBeNull();
   });
 
   it("opens the property ledger cross-link with the property key", async () => {

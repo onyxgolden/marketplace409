@@ -135,6 +135,30 @@ describe("CorrectPaymentDialog edit fields", () => {
     await act(async () => { root.unmount(); });
   });
 
+  it("offers notes + receipt reference only for a payment that has not completed", async () => {
+    const { container, root, posts } = await mountDialog({
+      paymentRow: { ...payment, status: "processing", correctable: false, correctableReason: "Only completed payments can be corrected.", moneyFieldsCorrectable: false, noteCorrectable: true },
+    });
+    expect(container.textContent).toContain("hasn't completed");
+    expect(container.textContent).toContain("Receipt reference");
+    expect(container.querySelector("textarea")).not.toBeNull();
+    expect(container.textContent).not.toContain("Deposit state");
+    expect(container.textContent).not.toContain("Applies to");
+    // Correcting the notes posts notes + reason only — no money fields.
+    const notes = container.querySelector("textarea");
+    const notesSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    await act(async () => {
+      notesSetter.call(notes, "waiting on the bank");
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const submit = submitForm(container);
+    await act(async () => { submit.click(); });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ notes: "waiting on the bank", reason: "bank run + wrong month" });
+    expect(posts[0].amountCents).toBeUndefined();
+    await act(async () => { root.unmount(); });
+  });
+
   it("previews deposit + charge changes and sends them on submit", async () => {
     const { container, root, posts } = await mountDialog();
     await act(async () => {

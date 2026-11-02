@@ -139,7 +139,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const propertyLine = headerContext ? `${headerContext.unitLabel || ""}` : (unitLabel || "");
 
   const openInvoice = (entry) => {
-    if (entry.kind !== "charge" || entry.status === "void") return;
+    if (entry.kind !== "charge") return;
     setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label, tenantEmail: data?.tenant?.email || "" });
   };
 
@@ -392,28 +392,29 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                     const isPayment = entry.kind === "payment";
                     const isCreditMemo = entry.kind === "credit" || entry.kind === "credit_application";
                     const deposited = isPayment && entry.depositState === DEPOSIT_STATE_DEPOSITED;
-                    const editable = isCharge && entry.status !== "void";
+                    const editable = isCharge;
                     const rowPad = compactRows ? "py-1" : "py-2.5";
                     return (
                       <tr key={entry.id} data-ledger-entry={entry.kind}
                         // Rentec parity: double-clicking a transaction edits it --
                         // the invoice editor for charges, the Correct payment
-                        // dialog for succeeded payments (amount, date, method,
-                        // reference, notes -- corrections post compensating
-                        // entries, the original is never rewritten). Anything
-                        // else opens the read-only detail dialog.
+                        // dialog for payments of any status (succeeded payments
+                        // correct amount/date/method/reference/notes through
+                        // compensating entries; payments still open correct
+                        // notes + reference only — money fields stay locked).
+                        // Anything else opens the read-only detail dialog.
                         onDoubleClick={() => {
                           if (isCharge && editable) openInvoice(entry);
-                          else if (isPayment && entry.status === "succeeded") setCorrectEntry(entry);
+                          else if (isPayment) setCorrectEntry(entry);
                           else setDetailEntry(entry);
                         }}
-                        title={isCharge && editable ? "Double-click to edit this charge" : isPayment && entry.status === "succeeded" ? "Double-click to correct this payment" : "Double-click to view transaction detail"}
+                        title={isCharge && editable ? "Double-click to edit this charge" : isPayment ? "Double-click to correct this payment" : "Double-click to view transaction detail"}
                         className={`border-b border-slate-100 dark:border-slate-800 ${entryIndex % 2 === 1 ? "bg-slate-100/70 dark:bg-slate-800/40" : ""}`}>
                         <td className={`${rowPad} pr-3 font-bold text-slate-700 dark:text-slate-300`}>{formatDate(entry.date)}</td>
                         <td className={`${rowPad} pr-3`}>
                           {isCharge ? (
                             <button type="button" onClick={() => openInvoice(entry)} disabled={!editable}
-                              title={editable ? "Edit invoice" : "Voided charges cannot be edited"}
+                              title="Edit invoice"
                               className={`text-left font-bold ${editable
                                 ? "text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300"
                                 : "text-slate-500 dark:text-slate-400"}`}>
@@ -592,10 +593,11 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
 function TransactionDetailModal({ entry, onClose, onCorrected }) {
   const [showCorrect, setShowCorrect] = useState(false);
   const isPayment = entry.kind === "payment";
-  // R18: correction is offered on completed payments. The dialog loads the
-  // authoritative correctable state (offline vs provider, reconciled, …)
-  // and the API enforces owner/co-owner — a 403 reads as plain English.
-  const canOfferCorrection = isPayment && entry.status === "succeeded";
+  // R18: correction is offered on payments of any status. Succeeded payments
+  // correct through the money-moving RPC; payments still open correct notes
+  // + reference only (the dialog loads the authoritative correctable state
+  // and the API enforces owner/co-owner — a 403 reads as plain English).
+  const canOfferCorrection = isPayment;
   const postedTo = ["Tenant payment ledger"];
   if (entry.kind === "charge") postedTo.push("Rent charge record");
   if (entry.chargeId) postedTo.push("Applied to rent charge");

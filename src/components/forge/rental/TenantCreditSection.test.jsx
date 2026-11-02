@@ -156,3 +156,46 @@ describe("TenantCreditSection", () => {
     expect(container.querySelector("[data-tenant-credits]").textContent).toContain("Voided on 2026-09-10: Recorded in error");
   });
 });
+
+describe("TenantCreditSection edit", () => {
+  it("edits an open credit behind checkbox + CONFIRM and posts with owner confirmation", async () => {
+    const post = vi.fn(async () => ({ ok: true, json: async () => ({ credit: { id: "credit_1" } }) }));
+    vi.stubGlobal("fetch", post);
+    const onChanged = vi.fn();
+    const { container, root } = renderSection({ onChanged });
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      container.querySelectorAll("button").forEach((button) => {
+        if (button.textContent === "Edit…") button.dispatchEvent(new Event("click", { bubbles: true }));
+      });
+    });
+    expect(container.textContent).toContain("Edit this credit");
+    const amount = container.querySelector('input[placeholder="0.00"]');
+    await act(async () => {
+      nativeSetter.call(amount, "50");
+      amount.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const checkbox = container.querySelector('input[type="checkbox"]');
+    const checkSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
+    await act(async () => {
+      checkSetter.call(checkbox, true);
+      checkbox.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    const confirm = container.querySelector('input[placeholder="CONFIRM"]');
+    await act(async () => {
+      nativeSetter.call(confirm, "CONFIRM");
+      confirm.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Save credit")
+        .dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    expect(post).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(post.mock.calls[0][1].body);
+    expect(body.operation).toBe("edit-tenant-credit");
+    expect(body.credit).toMatchObject({ creditId: "credit_1", amountCents: 5000, ownerConfirmed: true });
+    expect(onChanged).toHaveBeenCalled();
+    expect(container.textContent).toContain("Credit updated");
+    await act(async () => { root.unmount(); });
+  });
+});

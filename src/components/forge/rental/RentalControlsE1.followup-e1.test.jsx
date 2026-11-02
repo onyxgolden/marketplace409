@@ -142,7 +142,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
     expect(markup).toContain("Nothing to apply to yet — this credit will auto-apply to the next charge.");
   });
 
-  it("M-28: imported ledger rows carry the read-only title and modal note", async () => {
+  it("M-28: imported ledger rows are editable, not read-only", async () => {
     const importedEntry = {
       id: "event:evt-9", sourceId: "evt-9", source: "rentec", sourceLabel: "Rentec import",
       date: "2026-09-26", description: "Imported rent", debitCents: 0, creditCents: 130000,
@@ -151,11 +151,12 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
     vi.stubGlobal("fetch", vi.fn(async () => response({ success: true, ledger: { propertyName: "308 Paula", entries: [importedEntry], incomeCents: 130000, expenseCents: 0, balanceCents: 130000, entryCount: 1 } })));
     const container = mount(<PropertyLedgerPage propertyId="prop-1" propertyLabel="308 Paula" properties={[{ id: "prop-1", label: "308 Paula" }]} tenants={[]} onClose={() => {}} />);
     await flush();
-    const readOnlyCell = container.querySelector("[title='Imported transactions are read-only here']");
-    expect(readOnlyCell).not.toBeNull();
+    expect(container.querySelector("[title='Imported transactions are read-only here']")).toBeNull();
+    expect(container.querySelector("[aria-label='Edit Imported rent']")).not.toBeNull();
     await click([...container.querySelectorAll("button")].find((b) => b.textContent === "Imported rent"));
     await flush();
-    expect(container.textContent).toContain("Imported transactions are read-only here.");
+    expect(container.textContent).not.toContain("Imported transactions are read-only here.");
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Edit")).toBe(true);
   });
 
   it("M-29: only the latest reconciliation offers Undo; older active rows explain why", async () => {

@@ -123,6 +123,52 @@ export async function recordContractorPayment({ authenticated, body, effectiveOw
   return NextResponse.json({ success: true, payment: data });
 }
 
+// Edit a recorded contractor payment (Jason, 2026-11-02: every ledger entry
+// must be editable). Amount, paid date, method, references, and notes move;
+// the contractor, property, and work order do NOT — they are the row's
+// identity and its 1099 attribution. The property ledger reads this table
+// live, so the ledger debit follows the edit. Paid date regenerates the
+// tax_year column automatically; a year change also drops a 1099 review
+// marker for the new year (the old year's marker stays as history — the
+// marker regenerates on the next record in that year either way, so a
+// failed marker insert never fails a good edit).
+export async function editContractorPayment({ authenticated, body, effectiveOwnerId }) {
+  const input = body.payment;
+  if (typeof input?.paymentId !== "string" || !input.paymentId.trim()) return badRequest("paymentId is required.");
+  const amount = input.amountCents !== undefined ? Number(input.amountCents) : undefined;
+  if (amount !== undefined && (!Number.isSafeInteger(amount) || amount <= 0)) return badRequest("A positive amount is required.");
+  if (input.paidAt !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(input.paidAt))) return badRequest("Payment date must be a valid date (YYYY-MM-DD).");
+  if (input.paymentMethod !== undefined && (typeof input.paymentMethod !== "string" || !input.paymentMethod.trim())) return badRequest("A payment method is required.");
+  const paymentId = input.paymentId.trim();
+  const { data: existing, error: loadError } = await authenticated.supabaseClient.from("rental_contractor_payments")
+    .select("id, contractor_id, paid_at").eq("owner_id", effectiveOwnerId).eq("id", paymentId).maybeSingle();
+  if (loadError) throw loadError;
+  if (!existing) return NextResponse.json({ error: "Contractor payment was not found." }, { status: 404 });
+  const patch = {};
+  if (amount !== undefined) patch.amount_cents = amount;
+  if (input.paidAt !== undefined) patch.paid_at = input.paidAt;
+  if (input.paymentMethod !== undefined) patch.payment_method = input.paymentMethod.trim();
+  if (input.reference !== undefined) patch.reference = typeof input.reference === "string" ? input.reference.trim() || null : null;
+  if (input.invoiceReference !== undefined) patch.invoice_reference = typeof input.invoiceReference === "string" ? input.invoiceReference.trim() || null : null;
+  if (input.notes !== undefined) patch.notes = typeof input.notes === "string" ? input.notes.trim() || null : null;
+  if (Object.keys(patch).length === 0) return badRequest("Nothing to update.");
+  const { data: updated, error: updateError } = await authenticated.supabaseClient.from("rental_contractor_payments")
+    .update(patch).eq("owner_id", effectiveOwnerId).eq("id", paymentId)
+    .select("id, contractor_id, work_order_id, property_id, paid_at, amount_cents, payment_method, reference, invoice_reference, notes").single();
+  if (updateError) throw updateError;
+  if (!updated) return NextResponse.json({ error: "Contractor payment could not be edited." }, { status: 409 });
+  if (patch.paid_at !== undefined && patch.paid_at !== existing.paid_at) {
+    // Best-effort marker for the new tax year; never fails the edit.
+    try {
+      await authenticated.supabaseClient.from("rental_1099_reviews").upsert({
+        owner_id: effectiveOwnerId, id: `rental_1099_review_${crypto.randomUUID()}`,
+        contractor_id: existing.contractor_id, tax_year: Number(String(patch.paid_at).slice(0, 4)),
+      }, { onConflict: "owner_id,contractor_id,tax_year", ignoreDuplicates: true });
+    } catch { /* marker only — see above */ }
+  }
+  return NextResponse.json({ success: true, payment: updated });
+}
+
 export async function updateSupportCase({ authenticated, body, effectiveOwnerId }) {
   if (!body.caseId || !["open", "investigating", "waiting_on_tenant", "waiting_on_provider", "resolved", "closed"].includes(body.status))
     return badRequest("Case and supported status are required.");

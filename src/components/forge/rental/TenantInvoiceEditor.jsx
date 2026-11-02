@@ -30,8 +30,9 @@ async function fetchCharge(chargeId) {
 // Delete Invoice. New lines post as separate charges on the same lease — the
 // tenant's balance is identical either way, and each line stays individually
 // voidable. Payment-history safety: a line's amount can never drop below what
-// has already been applied to the charge; paid charges are amount-final and
-// voided charges are immutable (the API enforces all of this too).
+// has already been applied to the charge; paid charges are amount-final.
+// Voided charges are editable too (Jason, 2026-11-02): a void charge carries
+// no balance, so editing it cannot move money — the edit leaves it void.
 export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, tenantEmail, onClose, onSaved, onDeleted }) {
   const [charge, setCharge] = useState(null);
   const [loadError, setLoadError] = useState("");
