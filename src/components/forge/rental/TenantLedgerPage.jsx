@@ -10,6 +10,7 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { DEPOSIT_STATE_DEPOSITED, DEPOSIT_STATE_RECEIVED, MONEY_MOVED_STATUSES } from "@/application/rental/paymentDepositState";
+import { ColumnFilterInput, ColumnFilterTitle, useColumnFilters } from "./ColumnFilter";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -18,6 +19,24 @@ const formatDate = (value) => {
   const date = new Date(value.length === 10 ? `${value}T12:00:00` : value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
 };
+
+// Column-title filters: filter text mirrors what each column shows. The
+// cleared/deposited flag column carries no searchable text, so its title
+// stays plain.
+const TENANT_LEDGER_COLUMNS = [
+  { key: "date", label: "Date", filterText: (entry) => formatDate(entry.date) },
+  { key: "description", label: "Description", filterText: (entry) => [entry.label, entry.period, entry.method ? label(entry.method) : null, entry.status ? label(entry.status) : null].filter(Boolean).join(" ") },
+  { key: "check", label: "Check #", filterText: (entry) => entry.reference || "" },
+  { key: "debit", label: "Debit", filterText: (entry) => (entry.kind === "charge" ? money.format(entry.amountCents / 100) : "") },
+  { key: "credit", label: "Credit", filterText: (entry) => (entry.kind === "payment" ? money.format(entry.amountCents / 100) : "") },
+  { key: "balance", label: "Balance", filterText: (entry) => money.format(entry.balanceAfterCents / 100) },
+];
+const IMPORTED_HISTORY_COLUMNS = [
+  { key: "date", label: "Date", filterText: (row) => formatDate(row.eventDate) },
+  { key: "description", label: "Description", filterText: (row) => row.description || "" },
+  { key: "category", label: "Category", filterText: (row) => label(row.category) },
+  { key: "amount", label: "Amount", filterText: (row) => money.format(row.amountCents / 100) },
+];
 // Tenant convention: a positive balance is money the tenant still owes (red);
 // zero or a credit balance is green.
 const balanceClass = (cents) => cents > 0
@@ -131,6 +150,14 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       return true;
     });
   }, [ledger, kindFilter, dateRange, customStart, customEnd]);
+
+  // Column-title filters layer on top of the kind/date filters above. The
+  // imported-history table gets its own instance so its filters never leak
+  // into the main ledger.
+  const columnFilters = useColumnFilters();
+  const displayEntries = columnFilters.apply(filteredEntries, TENANT_LEDGER_COLUMNS);
+  const historyFilters = useColumnFilters();
+  const displayHistoryRows = historyFilters.apply(importedHistory?.rows || [], IMPORTED_HISTORY_COLUMNS);
   const filtersActive = kindFilter !== "all" || dateRange !== "all";
 
   const headerContext = ledger?.entries?.[0];
@@ -364,30 +391,45 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
               <span className="ml-3 font-normal text-sky-700 dark:text-sky-400">Available credit: <strong>{money.format(availableCreditCents / 100)}</strong></span>
             )}
           </p>
-          {filtersActive && (
+          {(filtersActive || columnFilters.activeCount > 0) && (
             <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-              Showing {filteredEntries.length} of {ledger.entries.length} entries.
+              Showing {displayEntries.length} of {ledger.entries.length} entries.
+              {columnFilters.activeCount > 0 && <> <button type="button" onClick={columnFilters.clearAll} className="font-black text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Clear column filters</button></>}
             </p>
           )}
 
-          {filteredEntries.length === 0
-            ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No charges or payments on record for this tenant yet.</p>
+          {displayEntries.length === 0
+            ? <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 dark:border-slate-700">
+              <p className="text-sm text-slate-500 dark:text-slate-400">{columnFilters.activeCount > 0 ? "No charges or payments match these column filters." : "No charges or payments on record for this tenant yet."}</p>
+              {columnFilters.activeCount > 0 && <button type="button" onClick={columnFilters.clearAll} className="mt-2 text-sm font-black text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Clear column filters</button>}
+            </div>
             : <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[820px] text-left text-sm" data-ledger-table>
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                    <th className="py-2 pr-3 font-black">Date</th>
-                    <th className="py-2 pr-3 font-black">Description</th>
-                    <th className="py-2 pr-3 font-black">Check #</th>
-                    <th className="py-2 pr-3 text-right font-black">Debit</th>
-                    <th className="py-2 pr-3 text-right font-black">Credit</th>
-                    <th className="py-2 pr-3 text-right font-black">Balance</th>
+                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Date" active={String(columnFilters.filters.date ?? "").trim() !== ""} open={columnFilters.openKey === "date"} onToggle={() => columnFilters.toggle("date")} /></th>
+                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Description" active={String(columnFilters.filters.description ?? "").trim() !== ""} open={columnFilters.openKey === "description"} onToggle={() => columnFilters.toggle("description")} /></th>
+                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Check #" active={String(columnFilters.filters.check ?? "").trim() !== ""} open={columnFilters.openKey === "check"} onToggle={() => columnFilters.toggle("check")} /></th>
+                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Debit" active={String(columnFilters.filters.debit ?? "").trim() !== ""} open={columnFilters.openKey === "debit"} onToggle={() => columnFilters.toggle("debit")} /></th>
+                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Credit" active={String(columnFilters.filters.credit ?? "").trim() !== ""} open={columnFilters.openKey === "credit"} onToggle={() => columnFilters.toggle("credit")} /></th>
+                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Balance" active={String(columnFilters.filters.balance ?? "").trim() !== ""} open={columnFilters.openKey === "balance"} onToggle={() => columnFilters.toggle("balance")} /></th>
                     <th className="py-2 pr-3 text-center font-black" title="Cleared / deposited">C</th>
                     <th className="py-2 text-center font-black"><span className="sr-only">Edit</span></th>
                   </tr>
+                  {columnFilters.openKey && (
+                    <tr>
+                      {TENANT_LEDGER_COLUMNS.map((column) => (
+                        <td key={column.key} className="py-1 pr-3">
+                          {column.key === columnFilters.openKey ? <ColumnFilterInput label={column.label} value={columnFilters.filters[column.key] ?? ""} onChange={(value) => columnFilters.setFilter(column.key, value)} onClear={() => columnFilters.clearFilter(column.key)} /> : null}
+                        </td>
+                      ))}
+                      <td className="py-1 pr-3" />
+                      <td className="py-1" />
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {filteredEntries.map((entry, entryIndex) => {
+                  {displayEntries.map((entry, entryIndex) => {
                     const isCharge = entry.kind === "charge";
                     const isPayment = entry.kind === "payment";
                     const isCreditMemo = entry.kind === "credit" || entry.kind === "credit_application";
@@ -516,14 +558,23 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                 <table className="w-full min-w-[560px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                      <th className="py-2 pr-3 font-black">Date</th>
-                      <th className="py-2 pr-3 font-black">Description</th>
-                      <th className="py-2 pr-3 font-black">Category</th>
-                      <th className="py-2 text-right font-black">Amount</th>
+                      <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Date" active={String(historyFilters.filters.date ?? "").trim() !== ""} open={historyFilters.openKey === "date"} onToggle={() => historyFilters.toggle("date")} /></th>
+                      <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Description" active={String(historyFilters.filters.description ?? "").trim() !== ""} open={historyFilters.openKey === "description"} onToggle={() => historyFilters.toggle("description")} /></th>
+                      <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Category" active={String(historyFilters.filters.category ?? "").trim() !== ""} open={historyFilters.openKey === "category"} onToggle={() => historyFilters.toggle("category")} /></th>
+                      <th className="py-2 text-right font-black"><ColumnFilterTitle label="Amount" active={String(historyFilters.filters.amount ?? "").trim() !== ""} open={historyFilters.openKey === "amount"} onToggle={() => historyFilters.toggle("amount")} /></th>
                     </tr>
+                    {historyFilters.openKey && (
+                      <tr>
+                        {IMPORTED_HISTORY_COLUMNS.map((column) => (
+                          <td key={column.key} className="py-1 pr-3">
+                            {column.key === historyFilters.openKey ? <ColumnFilterInput label={column.label} value={historyFilters.filters[column.key] ?? ""} onChange={(value) => historyFilters.setFilter(column.key, value)} onClear={() => historyFilters.clearFilter(column.key)} /> : null}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
                   </thead>
                   <tbody>
-                    {importedHistory.rows.map((row) => (
+                    {displayHistoryRows.map((row) => (
                       <tr key={row.id} className="border-b border-slate-100 dark:border-slate-800">
                         <td className="py-2 pr-3 font-bold text-slate-700 dark:text-slate-300">{formatDate(row.eventDate)}</td>
                         <td className="py-2 pr-3 font-bold text-slate-950 dark:text-white">{row.description || "—"}</td>
@@ -534,9 +585,12 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                   </tbody>
                 </table>
               </div>
-              <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-                {importedHistory.rows.length} transaction{importedHistory.rows.length === 1 ? "" : "s"} · total {money.format(importedHistory.totalCents / 100)} · source: Rentec import
-              </p>
+              {displayHistoryRows.length === 0
+                ? <div className="mt-2"><p className="text-xs font-bold text-slate-500 dark:text-slate-400">No imported transactions match these column filters.</p><button type="button" onClick={historyFilters.clearAll} className="mt-1 text-xs font-black text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Clear column filters</button></div>
+                : <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                  {historyFilters.activeCount > 0 ? `${displayHistoryRows.length} of ${importedHistory.rows.length} transactions` : `${importedHistory.rows.length} transaction${importedHistory.rows.length === 1 ? "" : "s"}`} · total {money.format(importedHistory.totalCents / 100)} · source: Rentec import
+                  {historyFilters.activeCount > 0 && <> <button type="button" onClick={historyFilters.clearAll} className="font-black text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Clear column filters</button></>}
+                </p>}
             </div>
           )}
 

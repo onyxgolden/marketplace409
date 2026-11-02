@@ -7,6 +7,7 @@ import { validateFundTransferInput } from "@/application/rental/fundTransfers";
 import BankReconciliationPanel from "./BankReconciliationPanel";
 import TransactionForm from "./TransactionForm";
 import CorrectPaymentDialog from "./CorrectPaymentDialog";
+import { ColumnFilterInput, ColumnFilterTitle, useColumnFilters } from "./ColumnFilter";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -15,6 +16,17 @@ const formatDate = (value) => {
   const date = new Date(value.length === 10 ? `${value}T12:00:00` : value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
 };
+
+// Column-title filters: filter text mirrors what each column shows. The
+// cleared flag column carries no searchable text, so its title stays plain.
+const LEDGER_COLUMNS = [
+  { key: "date", label: "Date", filterText: (entry) => formatDate(entry.date) },
+  { key: "description", label: "Description", filterText: (entry) => [entry.description, entry.payee, entry.category && entry.category !== "—" ? label(entry.category) : null, entry.tenantLabel, entry.memo, entry.sourceSystem ? label(entry.sourceSystem) : null].filter(Boolean).join(" ") },
+  { key: "check", label: "Check #", filterText: (entry) => entry.checkNumber || "" },
+  { key: "debit", label: "Debit", filterText: (entry) => (entry.debitCents > 0 ? money.format(entry.debitCents / 100) : "") },
+  { key: "credit", label: "Credit", filterText: (entry) => (entry.creditCents > 0 ? money.format(entry.creditCents / 100) : "") },
+  { key: "balance", label: "Balance", filterText: (entry) => money.format(entry.balanceAfterCents / 100) },
+];
 const todayIso = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -368,6 +380,10 @@ export default function BankLedgerPage({ onNavigate = null }) {
     });
   }, [ledger, kindFilter, dateRange, customStart, customEnd]);
 
+  // Column-title filters layer on top of the kind/date filters above.
+  const columnFilters = useColumnFilters();
+  const displayEntries = columnFilters.apply(filteredEntries, LEDGER_COLUMNS);
+
   const actionButtonClass = "rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-50";
 
   return (
@@ -578,26 +594,40 @@ export default function BankLedgerPage({ onNavigate = null }) {
                 )}
               </div>
 
-              {filteredEntries.length === 0
-                ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                  {ledger.entries.length === 0 ? "No transactions on this account yet." : "No transactions match this filter."}
-                </p>
+              {displayEntries.length === 0
+                ? <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 dark:border-slate-700">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {ledger.entries.length === 0 ? "No transactions on this account yet." : columnFilters.activeCount > 0 ? "No transactions match these column filters." : "No transactions match this filter."}
+                  </p>
+                  {columnFilters.activeCount > 0 && <button type="button" onClick={columnFilters.clearAll} className="mt-2 text-sm font-black text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Clear column filters</button>}
+                </div>
                 : <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[900px] text-left text-sm" data-ledger-table>
                     <thead>
                       <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                        <th className="py-2 pr-3 font-black">Date</th>
-                        <th className="py-2 pr-3 font-black">Description</th>
-                        <th className="py-2 pr-3 font-black">Check #</th>
-                        <th className="py-2 pr-3 text-right font-black">Debit</th>
-                        <th className="py-2 pr-3 text-right font-black">Credit</th>
-                        <th className="py-2 pr-3 text-right font-black">Balance</th>
+                        <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Date" active={String(columnFilters.filters.date ?? "").trim() !== ""} open={columnFilters.openKey === "date"} onToggle={() => columnFilters.toggle("date")} /></th>
+                        <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Description" active={String(columnFilters.filters.description ?? "").trim() !== ""} open={columnFilters.openKey === "description"} onToggle={() => columnFilters.toggle("description")} /></th>
+                        <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Check #" active={String(columnFilters.filters.check ?? "").trim() !== ""} open={columnFilters.openKey === "check"} onToggle={() => columnFilters.toggle("check")} /></th>
+                        <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Debit" active={String(columnFilters.filters.debit ?? "").trim() !== ""} open={columnFilters.openKey === "debit"} onToggle={() => columnFilters.toggle("debit")} /></th>
+                        <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Credit" active={String(columnFilters.filters.credit ?? "").trim() !== ""} open={columnFilters.openKey === "credit"} onToggle={() => columnFilters.toggle("credit")} /></th>
+                        <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Balance" active={String(columnFilters.filters.balance ?? "").trim() !== ""} open={columnFilters.openKey === "balance"} onToggle={() => columnFilters.toggle("balance")} /></th>
                         <th className="py-2 pr-3 text-center font-black">C</th>
                         <th className="py-2 text-center font-black"><span className="sr-only">Edit</span></th>
                       </tr>
+                      {columnFilters.openKey && (
+                        <tr>
+                          {LEDGER_COLUMNS.map((column) => (
+                            <td key={column.key} className="py-1 pr-3">
+                              {column.key === columnFilters.openKey ? <ColumnFilterInput label={column.label} value={columnFilters.filters[column.key] ?? ""} onChange={(value) => columnFilters.setFilter(column.key, value)} onClear={() => columnFilters.clearFilter(column.key)} /> : null}
+                            </td>
+                          ))}
+                          <td className="py-1 pr-3" />
+                          <td className="py-1" />
+                        </tr>
+                      )}
                     </thead>
                     <tbody>
-                      {filteredEntries.map((entry, entryIndex) => {
+                      {displayEntries.map((entry, entryIndex) => {
                         const counterpartAccount = entry.counterpartAccountId
                           ? accounts.find((item) => item.id === entry.counterpartAccountId)
                           : null;

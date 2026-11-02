@@ -332,13 +332,13 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         columns={[
           // One-line spreadsheet rows (same as the tenant index): every cell is a
           // single truncated line; full text rides on title for hover.
-          { header: "Property", width: "200px", render: (unit) => <strong className="block truncate text-sm text-slate-950 dark:text-white" title={unit.label}>{unit.label}</strong> },
-          { header: "Address", render: (unit) => { const structured = formatAddress(addressOfUnit(unit)); return <span className="block truncate text-xs text-slate-500 dark:text-slate-400" title={structured || ""}>{structured || "—"}</span>; } },
-          { header: "Tenant", width: "200px", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel
+          { header: "Property", width: "200px", filterText: (unit) => unit.label, render: (unit) => <strong className="block truncate text-sm text-slate-950 dark:text-white" title={unit.label}>{unit.label}</strong> },
+          { header: "Address", filterText: (unit) => formatAddress(addressOfUnit(unit)), render: (unit) => { const structured = formatAddress(addressOfUnit(unit)); return <span className="block truncate text-xs text-slate-500 dark:text-slate-400" title={structured || ""}>{structured || "—"}</span>; } },
+          { header: "Tenant", width: "200px", filterText: (unit) => tenantLabelForUnit(unit, leases, leaseMemberships, tenants) || "Add tenant", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel
             ? <span className="block truncate font-bold text-slate-700 dark:text-slate-300" title={tenantLabel}>{tenantLabel}</span>
             : <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate?.("tenants", { recordType: "unit", recordId: unit.id, propertyId: unit.property_id, openCreateTenant: true }); }} title={`Add a tenant to ${unit.label}`} className="block truncate text-left font-black text-sky-700 underline decoration-2 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Add tenant</button>; } },
-          { header: "Status", width: "110px", render: (unit) => <span className="block truncate text-xs font-bold text-slate-500 dark:text-slate-400" title={unit.status || "Status not set"}>{unit.status || "Status not set"}</span> },
-          { header: "Active balance", width: "130px", align: "right", render: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null
+          { header: "Status", width: "110px", filterText: (unit) => unit.status || "Status not set", render: (unit) => <span className="block truncate text-xs font-bold text-slate-500 dark:text-slate-400" title={unit.status || "Status not set"}>{unit.status || "Status not set"}</span> },
+          { header: "Active balance", width: "130px", align: "right", filterText: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null ? "" : money.format(balanceCents / 100); }, render: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null
             ? <span className="text-slate-500 dark:text-slate-400">—</span>
             : <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>; } },
         ]}>
