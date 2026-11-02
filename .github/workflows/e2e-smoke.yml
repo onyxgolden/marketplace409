@@ -1,0 +1,49 @@
+name: E2E Smoke
+
+# Tenant-portal Playwright smoke suite (e2e/). Runs on every PR and every
+# push to main, against a preview deployment + scratch Supabase + Stripe
+# test keys — never production, never real money, never real tenants.
+#
+# NON-BLOCKING BY DESIGN: this job is intentionally NOT a required status
+# check. It fails honestly when the suite fails (no continue-on-error —
+# that would make "green" meaningless), but branch protection must NOT list
+# it as required until Jason says so after 10 consecutive green runs. The
+# promotion rule lives in e2e/docs/e2e-smoke-run.md.
+#
+# When the target is not provisioned (secrets missing), global setup aborts
+# fast with a provisioning message and the job fails — that is the honest
+# NOT-RUNNABLE signal, not a suite failure. Do not "fix" it by pointing
+# the job at production or by inventing credentials.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    env:
+      E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+      E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+      E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+      E2E_STRIPE_SECRET_KEY: ${{ secrets.E2E_STRIPE_SECRET_KEY }}
+      E2E_STRIPE_PUBLISHABLE_KEY: ${{ secrets.E2E_STRIPE_PUBLISHABLE_KEY }}
+      E2E_STRIPE_CONNECTED_ACCOUNT_ID: ${{ secrets.E2E_STRIPE_CONNECTED_ACCOUNT_ID }}
+      E2E_STRIPE_WEBHOOK_SECRET: ${{ secrets.E2E_STRIPE_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:smoke
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-smoke-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

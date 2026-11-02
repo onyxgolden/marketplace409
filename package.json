@@ -28,7 +28,8 @@
     "forge:brain:validate-manifest": "node scripts/engineering-brain/validateProductionManifest.mjs",
     "forge:brain:acceptance-report": "node scripts/engineering-brain/renderAcceptanceReport.mjs",
     "forge:team-brain:fixture": "node scripts/team-brain/runFixtureReport.mjs",
-    "forge:team-brain:eng-memory": "node scripts/team-brain/eng-memory/runBattery.mjs"
+    "forge:team-brain:eng-memory": "node scripts/team-brain/eng-memory/runBattery.mjs",
+    "test:e2e:smoke": "playwright test --config=e2e/playwright.config.js"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.7",
@@ -54,16 +55,20 @@
     "utif": "^3.1.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@electric-sql/pglite": "^0.5.8",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "^4.1.9",
+    "chrome-launcher": "^1.2.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "globals": "^17.12.0",
     "jsdom": "^29.1.1",
+    "lighthouse": "^13.6.0",
     "playwright": "^1.62.1",
     "prettier": "^3.8.3",
     "tailwindcss": "^4",
