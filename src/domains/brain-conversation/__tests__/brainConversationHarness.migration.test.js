@@ -14,7 +14,7 @@ const TABLES = [
   "brain_episodes",
   "brain_episode_corrections",
   "brain_procedures",
-  "brain_preferences",
+  "brain_conversation_preferences",
   "brain_consolidation_flags",
 ];
 

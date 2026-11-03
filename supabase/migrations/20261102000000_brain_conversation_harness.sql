@@ -75,7 +75,7 @@ create table if not exists brain_procedures (
   primary key (owner_id, id)
 );
 
-create table if not exists brain_preferences (
+create table if not exists brain_conversation_preferences (
   owner_id text not null,
   preference_key text not null check (preference_key in ('inferred_decay_days', 'brain_icon_position')),
   preference_value jsonb not null,
@@ -119,8 +119,8 @@ alter table brain_episode_corrections enable row level security;
 alter table brain_episode_corrections force row level security;
 alter table brain_procedures enable row level security;
 alter table brain_procedures force row level security;
-alter table brain_preferences enable row level security;
-alter table brain_preferences force row level security;
+alter table brain_conversation_preferences enable row level security;
+alter table brain_conversation_preferences force row level security;
 alter table brain_consolidation_flags enable row level security;
 alter table brain_consolidation_flags force row level security;
 
@@ -176,17 +176,17 @@ drop policy if exists "brain_procedures_owner_delete" on brain_procedures;
 create policy "brain_procedures_owner_delete" on brain_procedures for delete to authenticated
   using (has_workspace_access(owner_id));
 
-drop policy if exists "brain_preferences_owner_select" on brain_preferences;
-create policy "brain_preferences_owner_select" on brain_preferences for select to authenticated
+drop policy if exists "brain_conversation_preferences_owner_select" on brain_conversation_preferences;
+create policy "brain_conversation_preferences_owner_select" on brain_conversation_preferences for select to authenticated
   using (has_workspace_access(owner_id));
-drop policy if exists "brain_preferences_owner_insert" on brain_preferences;
-create policy "brain_preferences_owner_insert" on brain_preferences for insert to authenticated
+drop policy if exists "brain_conversation_preferences_owner_insert" on brain_conversation_preferences;
+create policy "brain_conversation_preferences_owner_insert" on brain_conversation_preferences for insert to authenticated
   with check (has_workspace_access(owner_id));
-drop policy if exists "brain_preferences_owner_update" on brain_preferences;
-create policy "brain_preferences_owner_update" on brain_preferences for update to authenticated
+drop policy if exists "brain_conversation_preferences_owner_update" on brain_conversation_preferences;
+create policy "brain_conversation_preferences_owner_update" on brain_conversation_preferences for update to authenticated
   using (has_workspace_access(owner_id)) with check (has_workspace_access(owner_id));
-drop policy if exists "brain_preferences_owner_delete" on brain_preferences;
-create policy "brain_preferences_owner_delete" on brain_preferences for delete to authenticated
+drop policy if exists "brain_conversation_preferences_owner_delete" on brain_conversation_preferences;
+create policy "brain_conversation_preferences_owner_delete" on brain_conversation_preferences for delete to authenticated
   using (has_workspace_access(owner_id));
 
 drop policy if exists "brain_consolidation_flags_owner_select" on brain_consolidation_flags;
@@ -210,7 +210,7 @@ revoke all on brain_episode_corrections from anon, authenticated;
 grant select, insert, update, delete on brain_episode_corrections to authenticated;
 revoke all on brain_procedures from anon, authenticated;
 grant select, insert, update, delete on brain_procedures to authenticated;
-revoke all on brain_preferences from anon, authenticated;
-grant select, insert, update, delete on brain_preferences to authenticated;
+revoke all on brain_conversation_preferences from anon, authenticated;
+grant select, insert, update, delete on brain_conversation_preferences to authenticated;
 revoke all on brain_consolidation_flags from anon, authenticated;
 grant select, insert, update, delete on brain_consolidation_flags to authenticated;

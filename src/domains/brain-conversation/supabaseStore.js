@@ -267,7 +267,7 @@ export function createSupabaseBrainStore(supabase) {
 
     async getPreference(ownerId, key) {
       const { data, error } = await supabase
-        .from("brain_preferences")
+        .from("brain_conversation_preferences")
         .select("preference_value")
         .eq("owner_id", ownerId)
         .eq("preference_key", key)
@@ -278,7 +278,7 @@ export function createSupabaseBrainStore(supabase) {
 
     async setPreference(ownerId, key, value) {
       const { data, error } = await supabase
-        .from("brain_preferences")
+        .from("brain_conversation_preferences")
         .upsert(
           { owner_id: ownerId, preference_key: key, preference_value: value },
           { onConflict: "owner_id,preference_key" },
