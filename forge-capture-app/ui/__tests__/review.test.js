@@ -76,6 +76,36 @@ describe("renderReviewPanel", () => {
     expect(text).not.toMatch(/\bsafe\b|\bverified\b|detection completed/i);
   });
 
+  it("an unknown-disposition candidate is visibly shown with no action, not silently counted and never rendered", async () => {
+    // Muse review 2026-11-02 (fix-before-merge): a candidate with a
+    // disposition this app version doesn't recognize must still appear
+    // somewhere, with an explicit error and no action button — it must
+    // never be counted in the loaded total while rendering no row at all.
+    const invoke = vi.fn(async () =>
+      snapshot({
+        candidates: [
+          { candidateId: "c1", detectorId: "det.ssn", reasonCode: "SSN_SHAPE", disposition: "DELETE_FOREVER", originalBox: [0, 0, 1, 1], expandedBox: [0, 0, 1, 1] },
+        ],
+      }),
+    );
+    renderReviewPanel(container, { invoke });
+    await loadContext(container);
+
+    expect(container.querySelector("#review-status").textContent).toContain("Loaded 1 candidate");
+    const unknownSection = container.querySelector("#review-unknown-section");
+    expect(unknownSection.hidden).toBe(false);
+    expect(unknownSection.textContent).toContain("c1");
+    expect(unknownSection.textContent).toMatch(/unrecognized|error/i);
+    expect(unknownSection.querySelector("button[data-action]")).toBeNull();
+  });
+
+  it("hides the unknown-disposition section entirely when every candidate has a recognized disposition", async () => {
+    const invoke = vi.fn(async () => snapshot());
+    renderReviewPanel(container, { invoke });
+    await loadContext(container);
+    expect(container.querySelector("#review-unknown-section").hidden).toBe(true);
+  });
+
   it("renders a hostile candidateId/reasonCode as inert text, never as markup", async () => {
     const hostile = "<img src=x onerror=window.__pwned=true>";
     const invoke = vi.fn(async () =>

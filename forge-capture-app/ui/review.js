@@ -124,7 +124,21 @@ export function renderReviewPanel(container, deps = {}) {
     PENDING: el("ul", { class: "review-candidate-list", "aria-label": "Pending candidates" }),
     REDACT: el("ul", { class: "review-candidate-list", "aria-label": "Redacted candidates" }),
     MARK_NON_SENSITIVE: el("ul", { class: "review-candidate-list", "aria-label": "Marked not sensitive candidates" }),
+    UNKNOWN: el("ul", { class: "review-candidate-list", "aria-label": "Candidates with an unrecognized disposition" }),
   };
+  // Muse review 2026-11-02 (fix-before-merge): groupCandidatesByDisposition
+  // parks an unrecognized disposition in its own UNKNOWN bucket rather than
+  // silently sorting it into a real one — but that bucket must actually be
+  // rendered, or such a candidate is counted in "Loaded N candidate(s)" and
+  // then vanishes from every list with no row and no error. This section
+  // stays hidden whenever there is nothing in it.
+  const unknownSection = el(
+    "div",
+    { id: "review-unknown-section", hidden: true },
+    el("h3", {}, "Unrecognized disposition — action disabled"),
+    el("p", { class: "status error", role: "status" }, "This app version does not recognize this candidate's disposition. No action is available; reload after updating."),
+    groupsEl.UNKNOWN,
+  );
   const listWrap = el(
     "div",
     { id: "review-candidates" },
@@ -134,6 +148,7 @@ export function renderReviewPanel(container, deps = {}) {
     groupsEl.REDACT,
     el("h3", {}, "Marked not sensitive"),
     groupsEl.MARK_NON_SENSITIVE,
+    unknownSection,
   );
   section.append(listWrap);
 
@@ -248,12 +263,22 @@ export function renderReviewPanel(container, deps = {}) {
       return;
     }
     const groups = groupCandidatesByDisposition(view.candidates);
-    for (const key of Object.keys(groupsEl)) {
+    for (const key of ["PENDING", "REDACT", "MARK_NON_SENSITIVE"]) {
       if (groups[key].length === 0) {
         groupsEl[key].append(el("li", { class: "hint" }, "None."));
       } else {
         for (const c of groups[key]) groupsEl[key].append(renderCandidateRow(c));
       }
+    }
+    // Muse review 2026-11-02 (fix-before-merge): the UNKNOWN group is
+    // only ever shown — never silently included in the loaded count with
+    // nothing to show for it — when it actually has something in it; the
+    // backend's Disposition enum is closed, so this cannot happen with
+    // today's sessions, but a future app build talking to an older one
+    // (or vice versa) must still make this visible rather than disappear.
+    unknownSection.hidden = groups.UNKNOWN.length === 0;
+    if (groups.UNKNOWN.length > 0) {
+      for (const c of groups.UNKNOWN) groupsEl.UNKNOWN.append(renderCandidateRow(c));
     }
     renderDiagram();
   }

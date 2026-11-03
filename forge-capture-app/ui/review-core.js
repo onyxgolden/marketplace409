@@ -28,12 +28,16 @@ export class ReviewError extends Error {
  * Groups a snapshot's candidates by disposition, preserving each
  * disposition's original order — grouping is purely a presentation
  * concern, never a reinterpretation of what the backend returned.
- * Returns `{ PENDING: [...], REDACT: [...], MARK_NON_SENSITIVE: [...] }`,
- * always all three keys present (possibly empty), so a caller never has
- * to guess which groups exist.
+ * Returns `{ PENDING: [...], REDACT: [...], MARK_NON_SENSITIVE: [...],
+ * UNKNOWN: [...] }`, always all four keys present (possibly empty), so a
+ * caller never has to guess which groups exist or guard against a
+ * missing `UNKNOWN` key when none happened to land there (Muse review
+ * 2026-11-02, fix-before-merge: a caller that iterated these keys
+ * unconditionally would throw on `undefined.length` the moment it also
+ * started looking at `UNKNOWN` — now a no-op empty array instead).
  */
 export function groupCandidatesByDisposition(candidates) {
-  const groups = { PENDING: [], REDACT: [], MARK_NON_SENSITIVE: [] };
+  const groups = { PENDING: [], REDACT: [], MARK_NON_SENSITIVE: [], UNKNOWN: [] };
   for (const c of candidates || []) {
     if (groups[c.disposition]) {
       groups[c.disposition].push(c);
@@ -41,7 +45,7 @@ export function groupCandidatesByDisposition(candidates) {
       // An unrecognized disposition is never silently sorted into a
       // bucket it doesn't belong in — scope review: "Unknown
       // dispositions ... disable actions and show an error."
-      (groups.UNKNOWN ||= []).push(c);
+      groups.UNKNOWN.push(c);
     }
   }
   return groups;

@@ -43,7 +43,7 @@ function snapshot(overrides = {}) {
 }
 
 describe("groupCandidatesByDisposition", () => {
-  it("groups into all three buckets, preserving order, even when one is empty", () => {
+  it("groups into all four buckets, preserving order, even when some are empty", () => {
     const c1 = candidate("c1", DISPOSITIONS.PENDING);
     const c2 = candidate("c2", DISPOSITIONS.REDACT);
     const c3 = candidate("c3", DISPOSITIONS.PENDING);
@@ -51,6 +51,7 @@ describe("groupCandidatesByDisposition", () => {
     expect(groups.PENDING).toEqual([c1, c3]);
     expect(groups.REDACT).toEqual([c2]);
     expect(groups.MARK_NON_SENSITIVE).toEqual([]);
+    expect(groups.UNKNOWN).toEqual([]);
   });
 
   it("sorts an unrecognized disposition into its own UNKNOWN bucket, never a real one", () => {
@@ -60,9 +61,10 @@ describe("groupCandidatesByDisposition", () => {
     expect(groups.UNKNOWN).toEqual([weird]);
   });
 
-  it("handles an empty/undefined list without throwing", () => {
-    expect(groupCandidatesByDisposition([])).toEqual({ PENDING: [], REDACT: [], MARK_NON_SENSITIVE: [] });
-    expect(groupCandidatesByDisposition(undefined)).toEqual({ PENDING: [], REDACT: [], MARK_NON_SENSITIVE: [] });
+  it("handles an empty/undefined list without throwing, UNKNOWN always present and empty", () => {
+    const empty = { PENDING: [], REDACT: [], MARK_NON_SENSITIVE: [], UNKNOWN: [] };
+    expect(groupCandidatesByDisposition([])).toEqual(empty);
+    expect(groupCandidatesByDisposition(undefined)).toEqual(empty);
   });
 });
 
