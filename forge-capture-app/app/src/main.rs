@@ -43,6 +43,7 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 mod session_store;
+mod sop_review;
 mod sop_workspace;
 /// C2-P2 scaffolding (brief §2.1 runtime boundary): spawns and talks to
 /// the real `forge-capture-ai-sidecar` process over length-prefixed
@@ -6283,6 +6284,7 @@ fn main() {
             session_store::forge_session_get,
             session_store::forge_session_set,
             session_store::forge_session_clear,
+            sop_review::review_disposition_change,
             get_capture_upload_payload,
             get_capture_preview_payload,
             copy_text_to_clipboard,
