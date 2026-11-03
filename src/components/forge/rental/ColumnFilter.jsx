@@ -31,12 +31,82 @@ export function applyColumnFilters(rows, columns, filters) {
   }));
 }
 
+// Sorting for the same columns that carry filters. A column's sortValue
+// returns the typed value its column sorts by: text columns need no
+// sortValue and fall back to their filter text, money columns return cents,
+// and date columns return a timestamp — so money and dates sort by value,
+// never by their formatted text. A null, undefined, or "" sort value means
+// "blank cell" and always sorts last, in both directions, so blank cells
+// never jump to the top when the direction flips.
+export function dateSortValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const text = String(value);
+  const time = Date.parse(text.length === 10 ? `${text}T12:00:00` : text);
+  return Number.isNaN(time) ? null : time;
+}
+
+// Check numbers are identifiers, not quantities — but a run of pure digits
+// still reads smallest-first ("99" before "1042"), while anything with
+// letters or dashes ("CHK-101") sorts as text.
+export function checkSortValue(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (text === "") return null;
+  return /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : text;
+}
+
+function isBlankSortValue(value) {
+  return value === null || value === undefined || value === "";
+}
+
+// Direction-free comparison: blanks always last, numbers numeric, anything
+// else case-insensitive text. The caller applies the direction, so a
+// descending sort reverses values but never the blank rule.
+export function compareSortValues(a, b) {
+  if (isBlankSortValue(a) && isBlankSortValue(b)) return 0;
+  if (isBlankSortValue(a)) return 1;
+  if (isBlankSortValue(b)) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  const aText = String(a).toLowerCase();
+  const bText = String(b).toLowerCase();
+  return aText < bText ? -1 : aText > bText ? 1 : 0;
+}
+
+export function columnSortValue(column, row) {
+  if (column.sortValue) return column.sortValue(row);
+  if (column.filterText) return column.filterText(row);
+  return null;
+}
+
+// Pure row sort: sorting never mutates the input (a copy is sorted), and
+// with no sort (or an unknown key) the rows pass through untouched, so a
+// table's original order is always recoverable. Equal keys keep their
+// input order (stable sort), and sorting applies after filtering — the
+// caller filters first, then sorts the filtered rows.
+export function applyColumnSort(rows, columns, sort) {
+  if (!sort) return rows;
+  const keyOf = (column) => column.key ?? column.header;
+  const column = columns.find((item) => keyOf(item) === sort.key);
+  if (!column || (!column.filterText && !column.sortValue)) return rows;
+  return [...rows].sort((rowA, rowB) => {
+    const a = columnSortValue(column, rowA);
+    const b = columnSortValue(column, rowB);
+    if (isBlankSortValue(a) || isBlankSortValue(b)) return compareSortValues(a, b);
+    const compared = compareSortValues(a, b);
+    return sort.direction === "desc" ? -compared : compared;
+  });
+}
+
 // Owns one table's column filters: the filter string per column key, which
 // column's filter input is open, and the apply step. Each table gets its own
-// instance, so filters on one table never leak into another.
+// instance, so filters on one table never leak into another. It also owns
+// that table's sort (one column at a time): apply filters first, then
+// sorts the filtered rows, so the two compose.
 export function useColumnFilters() {
   const [filters, setFilters] = useState({});
   const [openKey, setOpenKey] = useState(null);
+  const [sort, setSort] = useState(null);
   const activeCount = useMemo(
     () => Object.values(filters).filter((query) => String(query ?? "").trim() !== "").length,
     [filters],
@@ -49,8 +119,16 @@ export function useColumnFilters() {
   });
   const clearAll = () => setFilters({});
   const toggle = (key) => setOpenKey((prev) => (prev === key ? null : key));
-  const apply = (rows, columns) => applyColumnFilters(rows, columns, filters);
-  return { filters, openKey, activeCount, setFilter, clearFilter, clearAll, toggle, apply };
+  // Click cycles: unsorted -> ascending -> descending -> unsorted again,
+  // so the table's original order is always one more click away.
+  const toggleSort = (key) => setSort((prev) => {
+    if (!prev || prev.key !== key) return { key, direction: "asc" };
+    if (prev.direction === "asc") return { key, direction: "desc" };
+    return null;
+  });
+  const clearSort = () => setSort(null);
+  const apply = (rows, columns) => applyColumnSort(applyColumnFilters(rows, columns, filters), columns, sort);
+  return { filters, openKey, activeCount, setFilter, clearFilter, clearAll, toggle, apply, sort, toggleSort, clearSort };
 }
 
 // The clickable column title. A dot marks a column with an active filter;
@@ -66,6 +144,23 @@ export function ColumnFilterTitle({ label, active, open, onToggle }) {
       className="cursor-pointer hover:underline"
     >
       {label}{active ? " ●" : ""}
+    </button>
+  );
+}
+
+// The sort control beside a filterable column's title, in the same visual
+// language as the filter title (a small button that underlines on hover).
+// The arrow shows the state: ↕ unsorted, ↑ ascending, ↓ descending.
+export function ColumnSortButton({ label, direction, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={direction ? `Sort ${label} ${direction} (active)` : `Sort ${label}`}
+      title={direction === "asc" ? `Sorted by ${label}, ascending — click for descending` : direction === "desc" ? `Sorted by ${label}, descending — click to clear sort` : `Sort by ${label}`}
+      className="cursor-pointer hover:underline"
+    >
+      {direction === "asc" ? "↑" : direction === "desc" ? "↓" : "↕"}
     </button>
   );
 }

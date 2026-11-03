@@ -77,7 +77,7 @@ describe("TenantLedgerPage", () => {
     ({ container, root } = renderPage());
     await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
     const headers = [...container.querySelectorAll("[data-ledger-table] thead th")].map((th) => th.textContent);
-    expect(headers).toEqual(["Date", "Description", "Check #", "Debit", "Credit", "Balance", "C", "Edit"]);
+    expect(headers).toEqual(["Date↕", "Description↕", "Check #↕", "Debit↕", "Credit↕", "Balance↕", "C", "Edit"]);
     const rows = container.querySelectorAll("[data-ledger-table] tbody tr");
     expect(rows).toHaveLength(2);
     // Charge row: amount in the Debit column, dash in Credit.

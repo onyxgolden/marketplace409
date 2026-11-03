@@ -69,3 +69,63 @@ describe("RentalRecordBrowser column filters", () => {
     expect(container.textContent).toContain("Property");
   });
 });
+
+describe("RentalRecordBrowser column sorts", () => {
+  const sortRecords = [
+    { id: "z", name: "Zebra", balance: 5000 },
+    { id: "a", name: "apple", balance: null },
+    { id: "m", name: "Mango", balance: 120000 },
+  ];
+  const sortColumns = [
+    { header: "Property", filterText: (item) => item.name, render: (item) => item.name },
+    { header: "Balance", filterText: (item) => (item.balance === null ? "" : `$${(item.balance / 100).toFixed(2)}`), sortValue: (item) => item.balance, render: (item) => (item.balance === null ? "—" : `$${(item.balance / 100).toFixed(2)}`) },
+  ];
+  function sortBrowser() {
+    return mount(<RentalRecordBrowser title="Rental units" records={sortRecords} selectedId="z" onSelect={() => {}} columns={sortColumns}><p>Detail</p></RentalRecordBrowser>);
+  }
+  function rowOrder(container) {
+    return [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
+  }
+
+  it("cycles text sort ascending, descending, then back to original order", async () => {
+    const container = sortBrowser();
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Zebra", "apple", "Mango"]);
+    await click(container.querySelector("button[aria-label='Sort Property']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["apple", "Mango", "Zebra"]);
+    await click(container.querySelector("button[aria-label='Sort Property asc (active)']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Zebra", "Mango", "apple"]);
+    await click(container.querySelector("button[aria-label='Sort Property desc (active)']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Zebra", "apple", "Mango"]);
+  });
+  it("sorts money by value with blanks last in both directions", async () => {
+    const container = sortBrowser();
+    await flush();
+    await click(container.querySelector("button[aria-label='Sort Balance']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Zebra", "Mango", "apple"]);
+    await click(container.querySelector("button[aria-label='Sort Balance asc (active)']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Mango", "Zebra", "apple"]);
+  });
+  it("sorts the filtered rows, not the full list", async () => {
+    const container = sortBrowser();
+    await flush();
+    await click(container.querySelector("button[aria-label='Filter Property']"));
+    type(container.querySelector("input[aria-label='Filter Property']"), "e");
+    await flush();
+    expect(container.textContent).toContain("2 of 3 records");
+    await click(container.querySelector("button[aria-label='Sort Balance']"));
+    await flush();
+    expect(rowOrder(container).map((text) => text.slice(0, 5))).toEqual(["Zebra", "apple"]);
+  });
+  it("leaves titles without filter text without a sort control", async () => {
+    const container = mount(<RentalRecordBrowser title="Rental units" records={sortRecords} selectedId="z" onSelect={() => {}}
+      columns={[{ header: "Property", render: (item) => item.name }]}><p>Detail</p></RentalRecordBrowser>);
+    await flush();
+    expect(container.querySelector("[aria-label='Sort Property']")).toBeNull();
+  });
+});
