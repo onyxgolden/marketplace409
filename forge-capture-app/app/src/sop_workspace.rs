@@ -1221,6 +1221,152 @@ pub enum ApplyReviewActionError {
     Io(String),
 }
 
+/// C2-P6A frontend review UI: the upper bound a session document's raw
+/// bytes must fit under before [`read_review_candidates_snapshot`] will
+/// even attempt to parse it. Session files hold structural metadata only
+/// — raw pixels live in the separately-vaulted frame rasters/derivatives,
+/// OCR text in its own sidecar capped at
+/// [`forge_capture_core::sop_session::MAX_OCR_JSON_BYTES_PER_SESSION`]
+/// (10 MiB) — so this is deliberately far under
+/// [`forge_capture_core::artifact::MAX_ARTIFACT_BYTES`] (128 MiB, for raw
+/// artifact bytes), while still generous for
+/// [`forge_capture_core::sop_session::MAX_FRAMES_PER_SESSION`] (50) worth
+/// of frame/candidate/event metadata. A file over this bound is refused
+/// before a single byte of it is read into memory.
+const MAX_SESSION_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// C2-P6A frontend review UI: one candidate, projected down to exactly
+/// the fields a review panel needs to render and highlight it — never
+/// `source_token_ids`, `score`, or anything that could carry OCR text or
+/// a matched sensitive value across IPC. `disposition` reuses
+/// [`forge_capture_core::sop_session::Disposition`]'s own derived
+/// `SCREAMING_SNAKE_CASE` wire representation, the same one
+/// [`crate::sop_review::review_disposition_change`] already speaks.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCandidateView {
+    pub candidate_id: String,
+    pub detector_id: String,
+    pub reason_code: String,
+    pub disposition: forge_capture_core::sop_session::Disposition,
+    pub original_box: (i64, i64, u64, u64),
+    pub expanded_box: (i64, i64, u64, u64),
+}
+
+/// C2-P6A frontend review UI: one frame's candidates plus every value
+/// [`crate::sop_review::review_disposition_change`]'s own
+/// `expectedSessionRevision`/`expectedPolicyVersion`/
+/// `expectedModelManifestSha256` preconditions require — sourced from
+/// the exact same validated read, so the panel never has to guess them
+/// or combine them from an unbound second call. `frame_width`/
+/// `frame_height` are returned so a highlight can be drawn without the
+/// frontend needing to load the raster itself.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCandidatesSnapshot {
+    pub session_revision: u64,
+    pub policy_version: String,
+    pub model_manifest_sha256: Option<String>,
+    pub frame_id: String,
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub candidates: Vec<ReviewCandidateView>,
+}
+
+#[derive(Debug)]
+pub enum ReadReviewCandidatesError {
+    SessionNotFound,
+    /// The file on disk exceeds [`MAX_SESSION_FILE_BYTES`] — refused
+    /// before being read into memory.
+    Oversized { found_bytes: u64, max_bytes: u64 },
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    FrameNotFound(String),
+    Io(String),
+}
+
+/// Reads and validates the current session, then projects exactly one
+/// frame's candidates plus its revision/policy/model binding into a
+/// [`ReviewCandidatesSnapshot`] — the guarded read counterpart to
+/// [`apply_review_action_if_current`]. Reads through `confined.path()`
+/// the same way `apply_review_action_if_current` reads for the write
+/// path (plain `fs::read`, trusting the confinement/no-follow guarantees
+/// [`resolve_confined_path`] already proved when it built this exact
+/// `ConfinedPath`) — this function is not held to a stricter boundary
+/// model than the write path it mirrors.
+///
+/// Takes the same in-process (`session_lock`) and cross-process
+/// (`CrossProcessSessionLock`) locks that guard every write, for the
+/// same reason `apply_review_action_if_current` loads the authority key
+/// under them (GS-C6 fix-round-8, P1 #2): [`ConfinedPath::lock_path`] is
+/// derived solely from the *workspace root's* own stable identity, so
+/// this read and any concurrent write (to this or another session file
+/// in the same workspace) always serialize against each other. That is
+/// what actually rules out a torn/mixed read of a file
+/// [`ConfinedPath::atomic_write_with_fsync`] is mid-replacing — not an
+/// argument about rename semantics this function would otherwise have
+/// to make and keep proving true as the write path evolves.
+///
+/// [`forge_capture_core::sop_session::parse_session`] already runs the
+/// session's full structural/integrity validation
+/// ([`forge_capture_core::sop_session::validate_session`]) as part of
+/// parsing — there is no separate validation step to add here.
+pub fn read_review_candidates_snapshot(confined: &ConfinedPath<'_>, frame_id: &str) -> Result<ReviewCandidatesSnapshot, ReadReviewCandidatesError> {
+    use forge_capture_core::sop_session::parse_session;
+
+    let lock = session_lock(confined.lock_path());
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _cross_process_guard =
+        CrossProcessSessionLock::acquire(confined.lock_path()).map_err(ReadReviewCandidatesError::Io)?;
+
+    match fs::metadata(confined.path()) {
+        Ok(meta) if meta.len() > MAX_SESSION_FILE_BYTES => {
+            return Err(ReadReviewCandidatesError::Oversized { found_bytes: meta.len(), max_bytes: MAX_SESSION_FILE_BYTES });
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ReadReviewCandidatesError::SessionNotFound),
+        Err(e) => return Err(ReadReviewCandidatesError::Io(format!("cannot stat session file: {e}"))),
+    }
+
+    let bytes = match fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ReadReviewCandidatesError::SessionNotFound),
+        Err(e) => return Err(ReadReviewCandidatesError::Io(format!("cannot read session file: {e}"))),
+    };
+    let session = parse_session(&bytes).map_err(ReadReviewCandidatesError::SessionParse)?;
+
+    let frame = session
+        .source_frames
+        .iter()
+        .find(|f| f.frame_id == frame_id)
+        .ok_or_else(|| ReadReviewCandidatesError::FrameNotFound(frame_id.to_string()))?;
+
+    // Candidate order preserved exactly as the validated frame stored
+    // it — grouping by disposition is a presentation concern for the
+    // frontend, not something this projection does.
+    let candidates = frame
+        .redaction_candidates
+        .iter()
+        .map(|c| ReviewCandidateView {
+            candidate_id: c.candidate_id.clone(),
+            detector_id: c.detector_id.clone(),
+            reason_code: c.reason_code.clone(),
+            disposition: c.disposition,
+            original_box: c.original_box,
+            expanded_box: c.expanded_box,
+        })
+        .collect();
+
+    Ok(ReviewCandidatesSnapshot {
+        session_revision: session.revision,
+        policy_version: session.policy_version.clone(),
+        model_manifest_sha256: session.model_manifest_sha256.clone(),
+        frame_id: frame.frame_id.clone(),
+        frame_width: frame.width,
+        frame_height: frame.height,
+        candidates,
+    })
+}
+
 /// Field names [`redact_log_fields`] blanks out before a value is ever
 /// formatted for a log line — brief §4: "No key, raw pixels, OCR text, or
 /// detected sensitive value is written to logs."
@@ -3409,6 +3555,248 @@ mod tests {
 
         drop(confined_a);
         drop(confined_b);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- read_review_candidates_snapshot (C2-P6A frontend review UI) ---
+
+    #[test]
+    fn read_review_candidates_snapshot_returns_exact_session_policy_model_frame_and_candidate_fields() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let mut c1 = review_candidate("c1", Disposition::Pending);
+        c1.detector_id = "det.ssn".to_string();
+        c1.reason_code = "SSN_SHAPE".to_string();
+        c1.original_box = (1, 2, 3, 4);
+        c1.expanded_box = (0, 1, 4, 5);
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![c1])]));
+
+        let snapshot = read_review_candidates_snapshot(&confined, "f1").expect("a valid session/frame must snapshot cleanly");
+        assert_eq!(snapshot.session_revision, 0);
+        assert_eq!(snapshot.policy_version, "policy-v1");
+        assert_eq!(snapshot.model_manifest_sha256, Some("model-manifest-v1".to_string()));
+        assert_eq!(snapshot.frame_id, "f1");
+        assert_eq!(snapshot.frame_width, 100);
+        assert_eq!(snapshot.frame_height, 100);
+        assert_eq!(snapshot.candidates.len(), 1);
+        let v = &snapshot.candidates[0];
+        assert_eq!(v.candidate_id, "c1");
+        assert_eq!(v.detector_id, "det.ssn");
+        assert_eq!(v.reason_code, "SSN_SHAPE");
+        assert_eq!(v.disposition, Disposition::Pending);
+        assert_eq!(v.original_box, (1, 2, 3, 4));
+        assert_eq!(v.expanded_box, (0, 1, 4, 5));
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_never_leaks_source_token_ids_source_path_window_title_or_raster_sha256() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let mut c1 = review_candidate("c1", Disposition::Pending);
+        // A distinctive marker in every field this projection must never
+        // carry, so its absence from the serialized output is a direct,
+        // positive proof rather than an assumption from the struct shape
+        // alone.
+        c1.source_token_ids = vec!["SECRET-TOKEN-MARKER".to_string()];
+        c1.score = Some(0.987654);
+        let mut frame = review_frame("f1", vec![c1]);
+        frame.source_relative_path = "frames/SECRET-PATH-MARKER.png".to_string();
+        // Must stay valid SHA-256 hex (`validate_session` enforces the
+        // shape), so the marker is a distinctive hex run rather than
+        // literal text — still something that would only appear in the
+        // serialized output if `raster_sha256` leaked through.
+        frame.raster_sha256 = "deadbeef".repeat(8);
+        frame.window_title = Some("SECRET-WINDOW-TITLE-MARKER".to_string());
+        write_review_session(&confined, &review_session(vec![frame]));
+
+        let snapshot = read_review_candidates_snapshot(&confined, "f1").unwrap();
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        for marker in ["SECRET-TOKEN-MARKER", "SECRET-PATH-MARKER", "deadbeef", "SECRET-WINDOW-TITLE-MARKER", "987654"] {
+            assert!(!serialized.contains(marker), "serialized snapshot must never contain {marker}: {serialized}");
+        }
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        assert!(matches!(read_review_candidates_snapshot(&confined, "f1"), Err(ReadReviewCandidatesError::SessionNotFound)));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_malformed_json() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        confined.atomic_write_with_fsync(b"{ not valid json at all").unwrap();
+        assert!(matches!(read_review_candidates_snapshot(&confined, "f1"), Err(ReadReviewCandidatesError::SessionParse(_))));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_a_file_over_the_byte_bound() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let oversized = vec![b' '; MAX_SESSION_FILE_BYTES as usize + 1];
+        confined.atomic_write_with_fsync(&oversized).unwrap();
+        match read_review_candidates_snapshot(&confined, "f1") {
+            Err(ReadReviewCandidatesError::Oversized { found_bytes, max_bytes }) => {
+                assert_eq!(found_bytes, MAX_SESSION_FILE_BYTES + 1);
+                assert_eq!(max_bytes, MAX_SESSION_FILE_BYTES);
+            }
+            other => panic!("expected Oversized, got {other:?}"),
+        }
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_a_structurally_invalid_session() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        // Two frames sharing the same frame_id: a structural violation
+        // `validate_session` (run inside `parse_session`) catches, not a
+        // JSON-syntax problem.
+        let mut session = review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]);
+        session.source_frames.push(review_frame("f1", vec![review_candidate("c2", Disposition::Pending)]));
+        write_review_session(&confined, &session);
+
+        assert!(matches!(read_review_candidates_snapshot(&confined, "f1"), Err(ReadReviewCandidatesError::SessionParse(_))));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_an_unknown_frame_id() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        match read_review_candidates_snapshot(&confined, "does-not-exist") {
+            Err(ReadReviewCandidatesError::FrameNotFound(id)) => assert_eq!(id, "does-not-exist"),
+            other => panic!("expected FrameNotFound, got {other:?}"),
+        }
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_disposition_serializes_to_the_stable_wire_code() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(
+            &confined,
+            &review_session(vec![review_frame(
+                "f1",
+                vec![review_candidate("c1", Disposition::Pending), review_candidate("c2", Disposition::Redact), review_candidate("c3", Disposition::MarkNonSensitive)],
+            )]),
+        );
+
+        let snapshot = read_review_candidates_snapshot(&confined, "f1").unwrap();
+        let serialized = serde_json::to_value(&snapshot).unwrap();
+        let dispositions: Vec<&str> = serialized["candidates"].as_array().unwrap().iter().map(|c| c["disposition"].as_str().unwrap()).collect();
+        assert_eq!(dispositions, vec!["PENDING", "REDACT", "MARK_NON_SENSITIVE"]);
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn get_review_candidates_confinement_defeats_a_junction_escaping_the_root() {
+        // The confinement/reparse boundary this read goes through is
+        // `resolve_confined_path` itself (same as every other caller in
+        // this module) — proven once there, not re-proven inside
+        // `read_review_candidates_snapshot`, which trusts the
+        // `ConfinedPath` it's handed exactly as
+        // `apply_review_action_if_current` already does.
+        let root = temp_root();
+        let outside = temp_root();
+        let ws = workspace_root(&root);
+        let link_path = root.join("escape_link");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &link_path.to_string_lossy(), &outside.to_string_lossy()])
+            .status();
+        if let Ok(status) = status {
+            if status.success() {
+                let err = resolve_confined_path(&ws, "escape_link/session.json").unwrap_err();
+                assert_eq!(err, WorkspacePathError::EscapesRoot);
+            }
+        }
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_never_observes_a_torn_or_mixed_file_while_a_write_races_it() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let root_for_writer = root.clone();
+        let writer = std::thread::spawn(move || {
+            let ws2 = workspace_root(&root_for_writer);
+            let confined2 = confine_session(&ws2, "session.json");
+            for i in 0..20 {
+                let current_revision = match fs::read(confined2.path()) {
+                    Ok(bytes) => parse_session(&bytes).unwrap().revision,
+                    Err(_) => 0,
+                };
+                let _ = apply_review_action_if_current(
+                    &confined2,
+                    "f1",
+                    "c1",
+                    Disposition::Redact,
+                    "",
+                    false,
+                    current_revision,
+                    "policy-v1",
+                    Some("model-manifest-v1"),
+                    format!("evt-{i}"),
+                    "2026-10-29T12:05:00Z".to_string(),
+                );
+            }
+        });
+
+        // Every one of these reads, racing the writer above under the
+        // same shared workspace lock, must either fully succeed with a
+        // self-consistent snapshot or fail for an ordinary, already-
+        // typed reason (e.g. a momentarily-missing temp-file artifact
+        // race on the writer's own side) — never a parse failure caused
+        // by observing a partially-written file, which the shared lock
+        // rules out by construction.
+        for _ in 0..200 {
+            match read_review_candidates_snapshot(&confined, "f1") {
+                Ok(snapshot) => {
+                    assert_eq!(snapshot.frame_id, "f1");
+                    assert_eq!(snapshot.candidates.len(), 1);
+                }
+                Err(ReadReviewCandidatesError::SessionParse(e)) => {
+                    panic!("must never observe a torn/invalid session mid-write: {e:?}");
+                }
+                Err(_) => {} // SessionNotFound/Io are not the property under test here.
+            }
+        }
+
+        writer.join().unwrap();
+        drop(confined);
         fs::remove_dir_all(&root).ok();
     }
 }
