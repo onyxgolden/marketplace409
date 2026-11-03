@@ -134,3 +134,126 @@ describe("ledger column filters", () => {
     expect(history.textContent).toContain("1 of 2 transactions");
   });
 });
+
+describe("ledger column sorts", () => {
+  function tableOrder(table) {
+    return [...table.querySelectorAll("tbody tr")].map((row) => row.textContent);
+  }
+  function orderedBefore(texts, first, second) {
+    const joined = texts.join("|");
+    return joined.indexOf(first) !== -1 && joined.indexOf(second) !== -1 && joined.indexOf(first) < joined.indexOf(second);
+  }
+
+  it("property ledger: cycles date sort ascending, descending, then original order", async () => {
+    const entries = [
+      { id: "event:evt-1", sourceId: "evt-1", source: "manual", sourceLabel: "Manual entry", date: "2026-10-01", description: "October rent", debitCents: 0, creditCents: 160000, category: "Rent", status: "active", balanceAfterCents: 160000 },
+      { id: "event:evt-2", sourceId: "evt-2", source: "manual", sourceLabel: "Manual entry", date: "2026-09-26", description: "Water heater replacement", debitCents: 45000, creditCents: 0, category: "Repairs", status: "active", balanceAfterCents: 115500 },
+      { id: "event:evt-3", sourceId: "evt-3", source: "manual", sourceLabel: "Manual entry", date: "2026-11-05", description: "November rent", debitCents: 0, creditCents: 160000, category: "Rent", status: "active", balanceAfterCents: 275500 },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") return { ok: true, json: async () => ({ success: true, ledger: { propertyName: "308 Paula", entries, incomeCents: 320000, expenseCents: 45000, balanceCents: 275500, entryCount: 3 } }) };
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    ({ container, root } = mount(<PropertyLedgerPage propertyId="prop-1" propertyLabel="308 Paula" properties={[{ id: "prop-1", label: "308 Paula" }]} tenants={[]} onClose={() => {}} />));
+    await flush();
+    const table = container.querySelector("[data-ledger-table]");
+    expect(tableOrder(table).length).toBe(3);
+    await click(table.querySelector("button[aria-label='Sort Date']"));
+    await flush();
+    expect(orderedBefore(tableOrder(table), "Water heater replacement", "October rent")).toBe(true);
+    expect(orderedBefore(tableOrder(table), "October rent", "November rent")).toBe(true);
+    await click(table.querySelector("button[aria-label='Sort Date asc (active)']"));
+    await flush();
+    expect(orderedBefore(tableOrder(table), "November rent", "October rent")).toBe(true);
+    expect(orderedBefore(tableOrder(table), "October rent", "Water heater replacement")).toBe(true);
+    await click(table.querySelector("button[aria-label='Sort Date desc (active)']"));
+    await flush();
+    expect(orderedBefore(tableOrder(table), "October rent", "Water heater replacement")).toBe(true);
+    expect(orderedBefore(tableOrder(table), "Water heater replacement", "November rent")).toBe(true);
+  });
+
+  it("property ledger: sorts the filtered rows by date", async () => {
+    const entries = [
+      { id: "event:evt-1", sourceId: "evt-1", source: "manual", sourceLabel: "Manual entry", date: "2026-10-01", description: "October rent", debitCents: 0, creditCents: 160000, category: "Rent", status: "active", balanceAfterCents: 160000 },
+      { id: "event:evt-2", sourceId: "evt-2", source: "manual", sourceLabel: "Manual entry", date: "2026-09-01", description: "September rent", debitCents: 0, creditCents: 160000, category: "Rent", status: "active", balanceAfterCents: 320000 },
+      { id: "event:evt-3", sourceId: "evt-3", source: "manual", sourceLabel: "Manual entry", date: "2026-09-26", description: "Water heater replacement", debitCents: 45000, creditCents: 0, category: "Repairs", status: "active", balanceAfterCents: 275000 },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") return { ok: true, json: async () => ({ success: true, ledger: { propertyName: "308 Paula", entries, incomeCents: 320000, expenseCents: 45000, balanceCents: 275000, entryCount: 3 } }) };
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    ({ container, root } = mount(<PropertyLedgerPage propertyId="prop-1" propertyLabel="308 Paula" properties={[{ id: "prop-1", label: "308 Paula" }]} tenants={[]} onClose={() => {}} />));
+    await flush();
+    const table = container.querySelector("[data-ledger-table]");
+    await click(table.querySelector("button[aria-label='Filter Description']"));
+    type(table.querySelector("input[aria-label='Filter Description']"), "rent");
+    await flush();
+    expect(tableOrder(table).length).toBe(2);
+    await click(table.querySelector("button[aria-label='Sort Date']"));
+    await flush();
+    expect(orderedBefore(tableOrder(table), "September rent", "October rent")).toBe(true);
+  });
+
+  it("bank ledger: sorts debit money by value with blanks last", async () => {
+    const accounts = [{ id: "acct-1", name: "Business Checking", official_name: "Chase Business Checking", type: "depository" }];
+    const ledger = {
+      success: true,
+      account: { id: "acct-1", name: "Business Checking", officialName: "Chase Business Checking", type: "depository", active: true },
+      ledger: {
+        accountName: "Chase Business Checking",
+        entries: [
+          { id: "event:a", sourceId: "a", date: "2026-09-01", description: "Big repair", payee: null, checkNumber: null, debitCents: 100000, creditCents: 0, category: "repairs", cleared: true, status: "active", sourceSystem: "manual", balanceAfterCents: 100000 },
+          { id: "event:b", sourceId: "b", date: "2026-09-03", description: "Small repair", payee: null, checkNumber: "1042", debitCents: 25000, creditCents: 0, category: "repairs", cleared: false, status: "active", sourceSystem: "manual", balanceAfterCents: 125000 },
+          { id: "event:c", sourceId: "c", date: "2026-09-02", description: "Rent received", payee: null, checkNumber: null, debitCents: 0, creditCents: 160000, category: "rental income", cleared: true, status: "active", sourceSystem: "manual", balanceAfterCents: 35000 },
+        ],
+        balanceCents: 35000, clearedBalanceCents: 35000, unclearedCount: 1, entryCount: 3,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/bank-accounts")) return { ok: true, json: async () => ({ accounts }) };
+      if (String(url).includes("/api/rental/bank-ledger")) return { ok: true, json: async () => ledger };
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    ({ container, root } = mount(<BankLedgerPage onNavigate={null} />));
+    await flush(12);
+    const table = container.querySelector("[data-ledger-table]");
+    expect(tableOrder(table).length).toBe(3);
+    await click(table.querySelector("button[aria-label='Sort Debit']"));
+    await flush();
+    const asc = tableOrder(table);
+    expect(orderedBefore(asc, "Small repair", "Big repair")).toBe(true);
+    expect(orderedBefore(asc, "Big repair", "Rent received")).toBe(true);
+    await click(table.querySelector("button[aria-label='Sort Debit asc (active)']"));
+    await flush();
+    const desc = tableOrder(table);
+    expect(orderedBefore(desc, "Big repair", "Small repair")).toBe(true);
+    expect(orderedBefore(desc, "Small repair", "Rent received")).toBe(true);
+  });
+
+  it("tenant ledger: sorts imported history by amount", async () => {
+    const payload = {
+      ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 },
+      deposits: { entries: [], heldCents: 0, requiredCents: 0 },
+      importedHistory: {
+        renterId: "1754498",
+        rows: [
+          { id: "evt-1", eventDate: "2026-08-05", amountCents: 127500, description: "Rent payment", category: "rent", propertyId: "prop-1", rentecTransactionId: "txn-1", source: "rentec", affectsBalance: false, attribution: "rentec_renter_id_match" },
+          { id: "evt-2", eventDate: "2026-08-06", amountCents: 5000, description: "Pet fee", category: "fee", propertyId: "prop-1", rentecTransactionId: "txn-2", source: "rentec", affectsBalance: false, attribution: "rentec_renter_id_match" },
+        ],
+        totalCents: 132500,
+      },
+      openCharges: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => payload })));
+    ({ container, root } = mount(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
+    await flush();
+    const history = container.querySelector("[data-imported-rentec-transactions]");
+    expect(tableOrder(history).length).toBe(2);
+    await click(history.querySelector("button[aria-label='Sort Amount']"));
+    await flush();
+    expect(orderedBefore(tableOrder(history), "Pet fee", "Rent payment")).toBe(true);
+    await click(history.querySelector("button[aria-label='Sort Amount asc (active)']"));
+    await flush();
+    expect(orderedBefore(tableOrder(history), "Rent payment", "Pet fee")).toBe(true);
+  });
+});

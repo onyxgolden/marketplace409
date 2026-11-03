@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ColumnFilterInput, ColumnFilterTitle, useColumnFilters } from "./ColumnFilter";
+import { ColumnFilterInput, ColumnFilterTitle, ColumnSortButton, checkSortValue, dateSortValue, useColumnFilters } from "./ColumnFilter";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -39,12 +39,12 @@ const balanceClass = (cents) => cents < 0
 // cleared flag and attachments columns carry no searchable text, so their
 // titles stay plain.
 const LEDGER_COLUMNS = [
-  { key: "date", label: "Date", filterText: (entry) => formatDate(entry.date) },
+  { key: "date", label: "Date", filterText: (entry) => formatDate(entry.date), sortValue: (entry) => dateSortValue(entry.date) },
   { key: "description", label: "Description", filterText: (entry) => [entry.description, entry.sourceLabel, entry.payee, entry.category ? label(entry.category) : null, entry.method ? label(entry.method) : null, entry.reference, entry.memo].filter(Boolean).join(" ") },
-  { key: "check", label: "Check #", filterText: (entry) => entry.checkNumber || "" },
-  { key: "debit", label: "Debit", filterText: (entry) => (entry.debitCents > 0 ? money.format(entry.debitCents / 100) : "") },
-  { key: "credit", label: "Credit", filterText: (entry) => (entry.creditCents > 0 ? money.format(entry.creditCents / 100) : "") },
-  { key: "balance", label: "Balance", filterText: (entry) => money.format(entry.balanceAfterCents / 100) },
+  { key: "check", label: "Check #", filterText: (entry) => entry.checkNumber || "", sortValue: (entry) => checkSortValue(entry.checkNumber) },
+  { key: "debit", label: "Debit", filterText: (entry) => (entry.debitCents > 0 ? money.format(entry.debitCents / 100) : ""), sortValue: (entry) => (entry.debitCents > 0 ? entry.debitCents : null) },
+  { key: "credit", label: "Credit", filterText: (entry) => (entry.creditCents > 0 ? money.format(entry.creditCents / 100) : ""), sortValue: (entry) => (entry.creditCents > 0 ? entry.creditCents : null) },
+  { key: "balance", label: "Balance", filterText: (entry) => money.format(entry.balanceAfterCents / 100), sortValue: (entry) => (entry.balanceAfterCents ?? null) },
 ];
 
 async function fetchPropertyLedger(propertyId) {
@@ -366,12 +366,12 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
               <table className="w-full min-w-[860px] text-left text-sm" data-ledger-table>
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Date" active={String(columnFilters.filters.date ?? "").trim() !== ""} open={columnFilters.openKey === "date"} onToggle={() => columnFilters.toggle("date")} /></th>
-                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Description" active={String(columnFilters.filters.description ?? "").trim() !== ""} open={columnFilters.openKey === "description"} onToggle={() => columnFilters.toggle("description")} /></th>
-                    <th className="py-2 pr-3 font-black"><ColumnFilterTitle label="Check #" active={String(columnFilters.filters.check ?? "").trim() !== ""} open={columnFilters.openKey === "check"} onToggle={() => columnFilters.toggle("check")} /></th>
-                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Debit" active={String(columnFilters.filters.debit ?? "").trim() !== ""} open={columnFilters.openKey === "debit"} onToggle={() => columnFilters.toggle("debit")} /></th>
-                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Credit" active={String(columnFilters.filters.credit ?? "").trim() !== ""} open={columnFilters.openKey === "credit"} onToggle={() => columnFilters.toggle("credit")} /></th>
-                    <th className="py-2 pr-3 text-right font-black"><ColumnFilterTitle label="Balance" active={String(columnFilters.filters.balance ?? "").trim() !== ""} open={columnFilters.openKey === "balance"} onToggle={() => columnFilters.toggle("balance")} /></th>
+                    <th className="py-2 pr-3 font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Date" active={String(columnFilters.filters.date ?? "").trim() !== ""} open={columnFilters.openKey === "date"} onToggle={() => columnFilters.toggle("date")} /><ColumnSortButton label="Date" direction={columnFilters.sort?.key === "date" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("date")} /></span></th>
+                    <th className="py-2 pr-3 font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Description" active={String(columnFilters.filters.description ?? "").trim() !== ""} open={columnFilters.openKey === "description"} onToggle={() => columnFilters.toggle("description")} /><ColumnSortButton label="Description" direction={columnFilters.sort?.key === "description" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("description")} /></span></th>
+                    <th className="py-2 pr-3 font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Check #" active={String(columnFilters.filters.check ?? "").trim() !== ""} open={columnFilters.openKey === "check"} onToggle={() => columnFilters.toggle("check")} /><ColumnSortButton label="Check #" direction={columnFilters.sort?.key === "check" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("check")} /></span></th>
+                    <th className="py-2 pr-3 text-right font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Debit" active={String(columnFilters.filters.debit ?? "").trim() !== ""} open={columnFilters.openKey === "debit"} onToggle={() => columnFilters.toggle("debit")} /><ColumnSortButton label="Debit" direction={columnFilters.sort?.key === "debit" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("debit")} /></span></th>
+                    <th className="py-2 pr-3 text-right font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Credit" active={String(columnFilters.filters.credit ?? "").trim() !== ""} open={columnFilters.openKey === "credit"} onToggle={() => columnFilters.toggle("credit")} /><ColumnSortButton label="Credit" direction={columnFilters.sort?.key === "credit" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("credit")} /></span></th>
+                    <th className="py-2 pr-3 text-right font-black"><span className="inline-flex items-center gap-1"><ColumnFilterTitle label="Balance" active={String(columnFilters.filters.balance ?? "").trim() !== ""} open={columnFilters.openKey === "balance"} onToggle={() => columnFilters.toggle("balance")} /><ColumnSortButton label="Balance" direction={columnFilters.sort?.key === "balance" ? columnFilters.sort.direction : null} onToggle={() => columnFilters.toggleSort("balance")} /></span></th>
                     <th className="py-2 pr-3 text-center font-black" title="Cleared">C</th>
                     <th className="py-2 pr-3 text-center font-black"><span className="sr-only">Attachments</span>📎</th>
                     <th className="py-2 font-black"><span className="sr-only">Edit</span></th>
