@@ -1235,6 +1235,22 @@ pub enum ApplyReviewActionError {
 /// before a single byte of it is read into memory.
 const MAX_SESSION_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// C2-P6A frontend review UI, scope review 2026-10-30: a UI/read-surface
+/// resource limit on how many candidates one [`ReviewCandidatesSnapshot`]
+/// will ever enumerate for a single frame — never a change to what a
+/// valid core session schema may contain (nothing in
+/// [`forge_capture_core::sop_session::validate_session`] bounds candidates
+/// per frame). Checked against the *requested frame's* own count before
+/// any projection happens, never against the whole session.
+const MAX_REVIEW_CANDIDATES_PER_FRAME: usize = 5_000;
+
+/// C2-P6A frontend review UI, scope review 2026-10-30: the upper bound on
+/// [`ReviewCandidatesSnapshot`]'s own serialized JSON size. Enforced while
+/// projecting candidates one at a time (summing each one's own serialized
+/// size as it's added), not after accumulating an unbounded `Vec` and
+/// measuring once at the end.
+const MAX_REVIEW_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
 /// C2-P6A frontend review UI: one candidate, projected down to exactly
 /// the fields a review panel needs to render and highlight it — never
 /// `source_token_ids`, `score`, or anything that could carry OCR text or
@@ -1281,6 +1297,14 @@ pub enum ReadReviewCandidatesError {
     Oversized { found_bytes: u64, max_bytes: u64 },
     SessionParse(forge_capture_core::sop_session::SessionError),
     FrameNotFound(String),
+    /// The requested frame has more candidates than
+    /// [`MAX_REVIEW_CANDIDATES_PER_FRAME`] — a UI/read-surface limit, not
+    /// a claim the session itself is invalid.
+    TooManyCandidates { found: usize, max: usize },
+    /// Projecting this frame's candidates would exceed
+    /// [`MAX_REVIEW_RESPONSE_BYTES`] — caught while accumulating, before
+    /// the oversized response is ever fully built or returned.
+    ResponseTooLarge { max_bytes: usize },
     Io(String),
 }
 
@@ -1340,21 +1364,37 @@ pub fn read_review_candidates_snapshot(confined: &ConfinedPath<'_>, frame_id: &s
         .find(|f| f.frame_id == frame_id)
         .ok_or_else(|| ReadReviewCandidatesError::FrameNotFound(frame_id.to_string()))?;
 
+    if frame.redaction_candidates.len() > MAX_REVIEW_CANDIDATES_PER_FRAME {
+        return Err(ReadReviewCandidatesError::TooManyCandidates {
+            found: frame.redaction_candidates.len(),
+            max: MAX_REVIEW_CANDIDATES_PER_FRAME,
+        });
+    }
+
     // Candidate order preserved exactly as the validated frame stored
     // it — grouping by disposition is a presentation concern for the
-    // frontend, not something this projection does.
-    let candidates = frame
-        .redaction_candidates
-        .iter()
-        .map(|c| ReviewCandidateView {
+    // frontend, not something this projection does. The response-size
+    // bound is enforced here, one candidate at a time, as each is
+    // projected and its own serialized size added to a running total —
+    // never by accumulating the whole (potentially oversized) `Vec`
+    // first and measuring once at the end.
+    let mut candidates = Vec::with_capacity(frame.redaction_candidates.len());
+    let mut running_bytes = 0usize;
+    for c in &frame.redaction_candidates {
+        let view = ReviewCandidateView {
             candidate_id: c.candidate_id.clone(),
             detector_id: c.detector_id.clone(),
             reason_code: c.reason_code.clone(),
             disposition: c.disposition,
             original_box: c.original_box,
             expanded_box: c.expanded_box,
-        })
-        .collect();
+        };
+        running_bytes += serde_json::to_vec(&view).map(|b| b.len()).unwrap_or(0);
+        if running_bytes > MAX_REVIEW_RESPONSE_BYTES {
+            return Err(ReadReviewCandidatesError::ResponseTooLarge { max_bytes: MAX_REVIEW_RESPONSE_BYTES });
+        }
+        candidates.push(view);
+    }
 
     Ok(ReviewCandidatesSnapshot {
         session_revision: session.revision,
@@ -3659,6 +3699,116 @@ mod tests {
             }
             other => panic!("expected Oversized, got {other:?}"),
         }
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_accepts_exactly_the_candidate_count_bound() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let candidates: Vec<RedactionCandidate> =
+            (0..MAX_REVIEW_CANDIDATES_PER_FRAME).map(|i| review_candidate(&format!("c{i}"), Disposition::Pending)).collect();
+        write_review_session(&confined, &review_session(vec![review_frame("f1", candidates)]));
+
+        let snapshot = read_review_candidates_snapshot(&confined, "f1").expect("exactly the bound must be accepted");
+        assert_eq!(snapshot.candidates.len(), MAX_REVIEW_CANDIDATES_PER_FRAME);
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_one_candidate_over_the_count_bound() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let candidates: Vec<RedactionCandidate> =
+            (0..MAX_REVIEW_CANDIDATES_PER_FRAME + 1).map(|i| review_candidate(&format!("c{i}"), Disposition::Pending)).collect();
+        write_review_session(&confined, &review_session(vec![review_frame("f1", candidates)]));
+
+        match read_review_candidates_snapshot(&confined, "f1") {
+            Err(ReadReviewCandidatesError::TooManyCandidates { found, max }) => {
+                assert_eq!(found, MAX_REVIEW_CANDIDATES_PER_FRAME + 1);
+                assert_eq!(max, MAX_REVIEW_CANDIDATES_PER_FRAME);
+            }
+            other => panic!("expected TooManyCandidates, got {other:?}"),
+        }
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Builds `count` candidates, each `c0`, `c1`, ... with `detector_id`
+    /// `"det.ssn"` and `reason_code` padded with `'x'` so every one of
+    /// them, serialized alone via [`ReviewCandidateView`] (exactly what
+    /// `read_review_candidates_snapshot`'s own running-total check sums),
+    /// is exactly `per_candidate_bytes` bytes — letting the two tests
+    /// below hit [`MAX_REVIEW_RESPONSE_BYTES`] at an exact, computed
+    /// boundary rather than an approximate one.
+    fn candidates_sized_to_exactly(count: usize, per_candidate_bytes: usize) -> Vec<RedactionCandidate> {
+        // Measure the fixed overhead of one candidate's serialized
+        // `ReviewCandidateView` with an empty `reason_code` — every
+        // further ASCII `'x'` appended to `reason_code` adds exactly one
+        // byte to that serialization (plain ASCII needs no JSON escaping),
+        // so the relationship between `reason_code`'s length and the
+        // serialized size is a precise, computed affine one, not a guess.
+        let probe = ReviewCandidateView {
+            candidate_id: "c0".to_string(),
+            detector_id: "det.ssn".to_string(),
+            reason_code: String::new(),
+            disposition: Disposition::Pending,
+            original_box: (0, 0, 5, 5),
+            expanded_box: (0, 0, 5, 5),
+        };
+        let base_bytes = serde_json::to_vec(&probe).unwrap().len();
+        assert!(per_candidate_bytes >= base_bytes, "requested size must be reachable by padding reason_code upward only");
+        let padding = per_candidate_bytes - base_bytes;
+        (0..count)
+            .map(|i| {
+                let mut c = review_candidate(&format!("c{i}"), Disposition::Pending);
+                c.detector_id = "det.ssn".to_string();
+                c.reason_code = "x".repeat(padding);
+                c
+            })
+            .collect()
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_accepts_a_response_at_exactly_the_byte_bound() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        // One candidate whose own serialized size is exactly
+        // MAX_REVIEW_RESPONSE_BYTES — the same quantity
+        // `read_review_candidates_snapshot` itself sums.
+        write_review_session(&confined, &review_session(vec![review_frame("f1", candidates_sized_to_exactly(1, MAX_REVIEW_RESPONSE_BYTES))]));
+
+        let snapshot = read_review_candidates_snapshot(&confined, "f1").expect("exactly the response-byte bound must be accepted");
+        assert_eq!(snapshot.candidates.len(), 1);
+
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_review_candidates_snapshot_refuses_a_response_one_byte_over_the_byte_bound() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        // One candidate whose own serialized size is exactly
+        // MAX_REVIEW_RESPONSE_BYTES + 1 — the running total crosses the
+        // bound by exactly one byte on this, the only candidate.
+        write_review_session(&confined, &review_session(vec![review_frame("f1", candidates_sized_to_exactly(1, MAX_REVIEW_RESPONSE_BYTES + 1))]));
+
+        match read_review_candidates_snapshot(&confined, "f1") {
+            Err(ReadReviewCandidatesError::ResponseTooLarge { max_bytes }) => {
+                assert_eq!(max_bytes, MAX_REVIEW_RESPONSE_BYTES);
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
+
         drop(confined);
         fs::remove_dir_all(&root).ok();
     }

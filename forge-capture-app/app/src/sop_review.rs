@@ -137,6 +137,12 @@ fn get_review_candidates_error_to_string(err: ReadReviewCandidatesError) -> Stri
         }
         ReadReviewCandidatesError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
         ReadReviewCandidatesError::FrameNotFound(id) => format!("no frame with id {id} in this session"),
+        ReadReviewCandidatesError::TooManyCandidates { found, max } => {
+            format!("review-limit refused: this frame has too many candidates to review here ({found}, max {max})")
+        }
+        ReadReviewCandidatesError::ResponseTooLarge { max_bytes } => {
+            format!("review-limit refused: this frame's candidates are too large to return in one review response (max {max_bytes} bytes)")
+        }
         ReadReviewCandidatesError::Io(msg) => msg,
     }
 }
