@@ -105,7 +105,7 @@ describe("PropertyLedgerPage ledger table", () => {
     expect(row).not.toBeNull();
     // Column headers for the new columns.
     const headers = Array.from(container.querySelectorAll("th")).map((th) => th.textContent);
-    expect(headers).toContain("Check #");
+    expect(headers).toContain("Check #↕");
     expect(headers).toContain("C");
     // Check number cell, cleared toggle (G12: the C cell is a button now,
     // not text — the old title="Cleared" span is superseded), attachment pin.
