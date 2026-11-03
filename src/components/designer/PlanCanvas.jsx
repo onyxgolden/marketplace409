@@ -25,6 +25,8 @@ import {
   PHONE_AUTO_FIT_BREAKPOINT_PX,
   fitViewToBounds,
   underlayContainsPoint,
+  underlayDisplaySizeIn,
+  underlayRotationDeg,
   wallLength,
   zoomToFitRect,
 } from "@/domains/roomDesigner/designerGeometry";
@@ -2464,13 +2466,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   // ---- Background underlay: drawn beneath the grid and the plan,
   // scaling/panning with the canvas transform ----
+  // H1/G5: hidden means drawn nowhere (not deleted); a quarter-turn
+  // rotation renders about the image center, matching the plan-space
+  // registration the calibration helpers use.
   const renderUnderlay = () => {
     const u = design.underlay;
-    if (!u) return null;
+    if (!u || u.visible === false) return null;
+    const deg = underlayRotationDeg(u);
+    const { widthIn, heightIn } = underlayDisplaySizeIn(u);
     const topLeft = toScreen({ x: u.x, y: u.y });
-    const w = (u.widthPx / u.pxPerIn) * view.scale;
-    const h = (u.heightPx / u.pxPerIn) * view.scale;
+    const w = widthIn * view.scale;
+    const h = heightIn * view.scale;
     if (!(w > 0) || !(h > 0)) return null;
+    const transform = deg === 0 ? undefined : `rotate(${deg} ${topLeft.x + w / 2} ${topLeft.y + h / 2})`;
     return (
       <image
         href={u.dataUrl}
@@ -2480,6 +2488,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         height={h}
         opacity={u.opacity}
         preserveAspectRatio="none"
+        transform={transform}
       />
     );
   };

@@ -33,6 +33,14 @@ function useViewport() {
 
 export default function PrintSheetOverlay({ design, sheets, initialSheetId, onClose }) {
   const [sheetId, setSheetId] = useState(initialSheetId || sheets[0]?.id);
+  // H1/G5 §5.4: the print preview FREEZES the underlay choice. This
+  // snapshot is taken once, when the preview opens; screen toggles after
+  // that (show/hide, print on/off, opacity, position, rotation, scale)
+  // cannot silently alter what this preview prints. Closing and reopening
+  // takes a fresh snapshot.
+  const [frozenUnderlay] = useState(() =>
+    design.underlay ? { ...design.underlay } : null,
+  );
   const vp = useViewport();
   const sheet = (sheets || []).find((s) => s.id === sheetId) || sheets[0];
 
@@ -160,7 +168,7 @@ export default function PrintSheetOverlay({ design, sheets, initialSheetId, onCl
       </div>
       <div style={{ display: "flex", justifyContent: "center" }}>
         <div style={{ zoom, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
-          <SheetPrintView design={design} sheet={sheet} />
+          <SheetPrintView design={design} sheet={sheet} underlaySnapshot={frozenUnderlay} />
         </div>
       </div>
     </div>,

@@ -79,9 +79,13 @@ import {
   DEFAULT_UNDERLAY_WIDTH_IN,
   isFiniteNumber,
   isValidPoint,
+  normalizeUnderlayRotationDeg,
   polygonArea,
   rotatedFootprintCorners,
   snapScalar,
+  underlayAnchorForPixel,
+  underlayPixelForPlanPoint,
+  underlayRotationDeg,
   wallLength,
 } from "./designerGeometry";
 import {
@@ -1805,9 +1809,31 @@ export function totalRoomAreaSqFt(design) {
  * page, which carries its true paper size) may pass `pxPerIn` to skip that
  * arbitrary default and land true to scale immediately.
  */
-export function buildUnderlayRecord({ name, mimeType, dataUrl, widthPx, heightPx, pxPerIn }) {
-  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
-    throw new Error("Underlay must be a PNG/JPEG data URL.");
+/**
+ * Raster MIME types an underlay data URL may carry. SVG/HTML are never
+ * accepted here: an uploaded SVG/HTML file must never become active
+ * content rendered from a design document.
+ */
+const UNDERLAY_DATA_URL_MIMES = Object.freeze(["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"]);
+
+export function buildUnderlayRecord({
+  name,
+  mimeType,
+  dataUrl,
+  widthPx,
+  heightPx,
+  pxPerIn,
+  locked,
+  rotationDeg,
+  visible,
+  printInclude,
+}) {
+  if (typeof dataUrl !== "string") {
+    throw new Error("Underlay must be a PNG/JPEG/WebP/GIF/BMP image.");
+  }
+  const dataMime = dataUrl.slice("data:".length).split(/[;,]/)[0];
+  if (!UNDERLAY_DATA_URL_MIMES.includes(dataMime)) {
+    throw new Error("Underlay must be a PNG/JPEG/WebP/GIF/BMP image — SVG and HTML are never rendered as underlays.");
   }
   if (!(widthPx > 0) || !(heightPx > 0)) throw new Error("Underlay image dimensions must be positive.");
   if (pxPerIn !== undefined && !(pxPerIn > 0)) {
@@ -1821,7 +1847,24 @@ export function buildUnderlayRecord({ name, mimeType, dataUrl, widthPx, heightPx
     widthPx,
     heightPx,
     opacity: DEFAULT_UNDERLAY_OPACITY,
-    locked: false,
+    // H1/G5: a home-plan import commits locked (the caller passes
+    // locked: true); the legacy default stays unlocked so the existing
+    // industrial trace-over workflow is untouched.
+    locked: locked !== undefined ? Boolean(locked) : false,
+    // Quarter-turn rotation (0/90/180/270); retained through calibration
+    // and print. Legacy records without the field read as 0.
+    rotationDeg: normalizeUnderlayRotationDeg(rotationDeg === undefined ? 0 : rotationDeg),
+    // Show/hide is view state on the record, not deletion: hidden means
+    // drawn on neither canvas nor print, but the record (and its data)
+    // stays in the design and can be shown again.
+    visible: visible !== undefined ? Boolean(visible) : true,
+    // Explicit print inclusion (H1/G5): the print preview freezes this
+    // choice, so screen toggles opened after the preview cannot alter it.
+    printInclude: printInclude !== undefined ? Boolean(printInclude) : true,
+    // Second-check record (H1/G5), or null: { checkLengthIn,
+    // impliedLengthIn, differencePct, warning } — recorded, never a
+    // scale change.
+    scaleCheck: null,
     x: 0,
     y: 0,
     pxPerIn: pxPerIn > 0 ? pxPerIn : widthPx / DEFAULT_UNDERLAY_WIDTH_IN,
@@ -1840,13 +1883,31 @@ function clamp01(value) {
   return value;
 }
 
-/** Patch underlay display settings: opacity (0..1, clamped), locked, x/y, pxPerIn. */
+/** Patch underlay display settings: opacity (0..1, clamped), locked, x/y, pxPerIn, rotation, visibility, print inclusion, scale check. */
 export function updateUnderlay(design, patch) {
   assertDesign(design);
   if (!design.underlay) throw new Error("Design has no background underlay.");
   const u = { ...design.underlay };
   if (patch.opacity !== undefined) u.opacity = clamp01(Number(patch.opacity));
   if (patch.locked !== undefined) u.locked = Boolean(patch.locked);
+  if (patch.visible !== undefined) u.visible = Boolean(patch.visible);
+  if (patch.printInclude !== undefined) u.printInclude = Boolean(patch.printInclude);
+  if (patch.rotationDeg !== undefined) u.rotationDeg = normalizeUnderlayRotationDeg(patch.rotationDeg);
+  if (patch.scaleCheck !== undefined) {
+    if (patch.scaleCheck === null) {
+      u.scaleCheck = null;
+    } else if (
+      typeof patch.scaleCheck === "object" &&
+      Number.isFinite(patch.scaleCheck.checkLengthIn) &&
+      Number.isFinite(patch.scaleCheck.impliedLengthIn) &&
+      Number.isFinite(patch.scaleCheck.differencePct) &&
+      (patch.scaleCheck.warning === null || typeof patch.scaleCheck.warning === "string")
+    ) {
+      u.scaleCheck = { ...patch.scaleCheck };
+    } else {
+      throw new Error("Underlay scale check must carry finite lengths and a warning string or null.");
+    }
+  }
   if (patch.x !== undefined || patch.y !== undefined) {
     const x = patch.x !== undefined ? Number(patch.x) : u.x;
     const y = patch.y !== undefined ? Number(patch.y) : u.y;
@@ -1885,10 +1946,23 @@ export function calibrateUnderlay(design, clickA, clickB, realDistanceIn) {
   if (!design.underlay) throw new Error("Design has no background underlay.");
   const u = design.underlay;
   const pxPerIn = calibrateUnderlayScale(u, clickA, clickB, realDistanceIn);
-  const scaleRatio = u.pxPerIn / pxPerIn;
-  const x = clickA.x - (clickA.x - u.x) * scaleRatio;
-  const y = clickA.y - (clickA.y - u.y) * scaleRatio;
-  return updateUnderlay(design, { pxPerIn, x, y });
+  // Rotation 0 keeps the legacy anchor formula BIT-EXACTLY (the pinned
+  // reducer fixture asserts the last float bit): clickA minus the
+  // rescaled offset from the corner. The general pixel-registration
+  // formula below is mathematically identical for rotation 0 but
+  // reassociates the floats, so it runs only for quarter-turned images,
+  // where the legacy formula cannot express the registration at all.
+  if (underlayRotationDeg(u) === 0) {
+    const scaleRatio = u.pxPerIn / pxPerIn;
+    const x = clickA.x - (clickA.x - u.x) * scaleRatio;
+    const y = clickA.y - (clickA.y - u.y) * scaleRatio;
+    return updateUnderlay(design, { pxPerIn, x, y });
+  }
+  // Rotation-aware registration: the first calibration point keeps
+  // pointing at the same image pixel after the scale changes.
+  const pixelA = underlayPixelForPlanPoint(u, clickA);
+  const anchor = underlayAnchorForPixel({ ...u, pxPerIn }, pixelA.px, pixelA.py, clickA);
+  return updateUnderlay(design, { pxPerIn, x: anchor.x, y: anchor.y });
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import {
   Hand,
   HelpCircle,
   Home,
+  ImagePlus,
   Lock,
   LockOpen,
   Maximize,
@@ -40,9 +41,21 @@ import {
   ZoomIn,
 } from "lucide-react";
 import PdfImportPanel from "./PdfImportPanel";
+import HomePlanImportPanel from "./HomePlanImportPanel";
 import DesignerCanvasArea from "./DesignerCanvasArea";
 import PrintSheetOverlay from "./PrintSheetOverlay";
-import { decodeUnderlayFile, UNDERLAY_ACCEPT, UNDERLAY_ACCEPT_LABEL } from "./underlayImage";
+import {
+  ACTIVE_CONTENT_REFUSAL,
+  decodeUnderlayFile,
+  isActiveContentFile,
+  UNDERLAY_ACCEPT,
+  UNDERLAY_ACCEPT_LABEL,
+} from "./underlayImage";
+import {
+  checkUnderlayScale,
+  UNDERLAY_SCALE_CHECK_WARNING,
+  underlayRotationDeg,
+} from "@/domains/roomDesigner/designerGeometry";
 import HousePlansPanel from "./HousePlansPanel";
 import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
@@ -452,6 +465,8 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // Printable sheets: overlay state for the single print flow.
   const [printOpen, setPrintOpen] = useState(false);
   const [printSheetId, setPrintSheetId] = useState(null);
+  // H1/G5: the prominent home-mode "Import existing plan" action.
+  const [homeImportOpen, setHomeImportOpen] = useState(false);
   const openPrint = (sheetId) => {
     setPrintSheetId(sheetId || null);
     setPrintOpen(true);
@@ -878,6 +893,18 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             designRevision,
             underlayOmitted: result.underlayOmitted,
           });
+        } else {
+          // H1/G5 §5.5: a failed save must NEVER be silent. A draft that
+          // cannot be written (e.g. browser storage quota) surfaces as a
+          // visible named error instead of a supposedly saved plan that
+          // quietly lost its reference image.
+          setStatus({
+            kind: "error",
+            message:
+              result.error === "quota"
+                ? "Local autosave failed: browser storage limit reached — the reference image may be missing after recovery. Save to the server or re-import the plan."
+                : "Local autosave failed — your latest edits may not be recoverable after a crash. Save to the server.",
+          });
         }
       } catch {
         // Autosave must never break the editor.
@@ -1049,6 +1076,15 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           >
             <Redo2 size={15} />
           </button>
+          {designMode === "home" && (
+            <button
+              onClick={() => setHomeImportOpen(true)}
+              title="Import an existing home plan as a calibrated reference image — it stays reference artwork, never editable walls"
+              className="flex items-center gap-1 rounded bg-emerald-700 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-600"
+            >
+              <ImagePlus size={15} /> Import existing plan
+            </button>
+          )}
           <button
             onClick={() => openPrint(selection?.kind === "sheet" ? selection.id : null)}
             disabled={(design.sheets || []).length === 0}
@@ -1112,6 +1148,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
       )}
       {status.kind === "error" && (
         <div className="bg-red-900/60 px-4 py-2 text-sm text-red-200">{status.message}</div>
+      )}
+      {draftInfo?.underlayOmitted && (
+        <div className="bg-amber-900/60 px-4 py-2 text-sm text-amber-200">
+          Autosave notice: the reference image was omitted from the local autosave (browser storage
+          limit). The plan itself is saved, but the image is not in this draft — re-import the
+          reference plan if it is missing after recovery.
+        </div>
       )}
       {status.kind === "saved" && (
         <div className="bg-emerald-900/60 px-4 py-1 text-sm text-emerald-200">{status.message}</div>
@@ -1242,10 +1285,10 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               drawer's copy below ever receives pendingDropFile, even though
               both are mounted simultaneously whenever the drawer is open —
               see its own doc comment above RightPanel for why that matters. */}
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "aside")} onDropFileHandled={onDropFileHandled} mode={designMode} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "aside")} onDropFileHandled={onDropFileHandled} mode={designMode} onOpenHomeImport={() => setHomeImportOpen(true)} />
         </aside>
         <MobileDrawer open={mobileDrawer === "panel"} onClose={() => setMobileDrawer(null)} label="Design panels">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "drawer")} onDropFileHandled={onDropFileHandled} mode={designMode} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "drawer")} onDropFileHandled={onDropFileHandled} mode={designMode} onOpenHomeImport={() => setHomeImportOpen(true)} />
         </MobileDrawer>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -1276,6 +1319,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           sheets={design.sheets}
           initialSheetId={printSheetId}
           onClose={() => setPrintOpen(false)}
+        />
+      )}
+      {homeImportOpen && designMode === "home" && (
+        <HomePlanImportPanel
+          design={design}
+          dispatch={dispatch}
+          onClose={() => setHomeImportOpen(false)}
         />
       )}
       {/* HOME DESIGNER slice 4: the printable remodel proposal. */}
@@ -1383,12 +1433,12 @@ export function dropFileForPanel(pendingDropFile, mobileDrawer, panel) {
   return thisPanelIsVisible ? pendingDropFile : null;
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null, pendingDropFile = null, onDropFileHandled = null, mode = "home" }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null, pendingDropFile = null, onDropFileHandled = null, mode = "home", onOpenHomeImport = null }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
   if (tool === "calibrate") {
-    return <CalibrationPanel state={state} dispatch={dispatch} />;
+    return <CalibrationPanel state={state} dispatch={dispatch} mode={mode} />;
   }
 
   // Phase 2: piping mode — run defaults, symbol palette, ortho + layers.
@@ -1597,7 +1647,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         externalFile={pendingDropFile?.kind === "pdf" ? pendingDropFile.file : null}
         onExternalFileHandled={onDropFileHandled}
       />
-      <UnderlaySection design={design} dispatch={dispatch} />
+      <UnderlaySection design={design} dispatch={dispatch} mode={mode} onOpenHomeImport={onOpenHomeImport} />
     </div>
   );
 }
@@ -2090,12 +2140,24 @@ function SheetHeaderFooterEditor({ design, sheet, onPatch }) {
 }
 
 
-function UnderlaySection({ design, dispatch }) {
+// Background underlay: import a PNG/JPG/WebP/GIF/TIFF/BMP plot plan as a trace-over image,
+// with opacity, lock, scale calibration, and removal. Stored in the design
+// document. H1/G5 home-mode additions (industrial rendering untouched):
+// home imports commit LOCKED by default, and home controls add show/hide,
+// an explicit print-inclusion toggle, and quarter-turn rotation. The
+// imported plan stays reference artwork in every mode: it never becomes
+// editable walls/rooms and nothing is computed from it.
+function UnderlaySection({ design, dispatch, mode = "home", onOpenHomeImport = null }) {
   const u = design.underlay;  const [importError, setImportError] = useState(null);
+  const isHome = mode === "home";
 
   const onFile = async (file) => {
     setImportError(null);
     if (!file) return;
+    if (isActiveContentFile(file)) {
+      setImportError(ACTIVE_CONTENT_REFUSAL);
+      return;
+    }
     if (!file.type.startsWith("image/")) {
       setImportError("Please choose an image file (PNG, JPG, WebP, GIF, TIFF, or BMP).");
       return;
@@ -2106,28 +2168,48 @@ function UnderlaySection({ design, dispatch }) {
       const decoded = await decodeUnderlayFile(file);
       dispatch({
         type: "SET_UNDERLAY",
-        underlay: { name: file.name, ...decoded },
+        // H1/G5: a home import starts locked; the industrial default
+        // (unlocked, draggable at once) is unchanged.
+        underlay: isHome ? { name: file.name, ...decoded, locked: true } : { name: file.name, ...decoded },
       });
     } catch (err) {
       setImportError(err?.message || "Could not read that image.");
     }
   };
 
+  const rotation = u ? underlayRotationDeg(u) : 0;
+
   return (
     <div className="mt-4 border-t border-gray-800 pt-3">
       <h2 className="mb-2 text-sm font-semibold text-white">Background underlay</h2>
+      {isHome && (
+        <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
+          Reference artwork only — a plan imported here stays a picture. It never becomes editable
+          FORGE walls or rooms, and no area or dimension is computed from it.
+        </p>
+      )}
       {!u ? (
         <div>
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-700">
-            <Upload size={14} />
-            Import background
-            <input
-              type="file"
-              accept={UNDERLAY_ACCEPT}
-              className="hidden"
-              onChange={(e) => onFile(e.target.files?.[0])}
-            />
-          </label>
+          {isHome && onOpenHomeImport ? (
+            <button
+              onClick={onOpenHomeImport}
+              className="inline-flex items-center gap-2 rounded bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600"
+            >
+              <ImagePlus size={14} />
+              Import existing plan
+            </button>
+          ) : (
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-700">
+              <Upload size={14} />
+              Import background
+              <input
+                type="file"
+                accept={UNDERLAY_ACCEPT}
+                className="hidden"
+                onChange={(e) => onFile(e.target.files?.[0])}
+              />
+            </label>
+          )}
           <p className="mt-1 text-[11px] text-gray-500">
             {UNDERLAY_ACCEPT_LABEL} plot plan to trace over (screen-capture exports included).
             Calibrate its scale after importing.
@@ -2138,12 +2220,15 @@ function UnderlaySection({ design, dispatch }) {
           <p className="truncate text-xs text-gray-300" title={u.name}>{u.name}</p>
           <p className="text-[11px] text-gray-500">
             {u.widthPx} × {u.heightPx} px · {feetInchesLabel(u.widthPx / u.pxPerIn)} wide on the plan
+            {rotation !== 0 && ` · rotated ${rotation}°`}
+            {u.visible === false && " · hidden"}
+            {u.printInclude === false && " · excluded from print"}
           </p>
           <label className="block text-xs text-gray-400">
             Opacity
             <input
               type="range"
-              min={10}
+              min={isHome ? 0 : 10}
               max={100}
               value={Math.round(u.opacity * 100)}
               onChange={(e) => dispatch({ type: "UPDATE_UNDERLAY", patch: { opacity: Number(e.target.value) / 100 } })}
@@ -2159,6 +2244,24 @@ function UnderlaySection({ design, dispatch }) {
               {u.locked ? <Lock size={14} /> : <LockOpen size={14} />}
               {u.locked ? "Locked" : "Unlocked"}
             </button>
+            {isHome && (
+              <button
+                onClick={() => dispatch({ type: "UPDATE_UNDERLAY", patch: { visible: u.visible === false } })}
+                title={u.visible === false ? "Show the reference image again" : "Hide the reference image (it is not deleted)"}
+                className="inline-flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
+              >
+                {u.visible === false ? "Show" : "Hide"}
+              </button>
+            )}
+            {isHome && (
+              <button
+                onClick={() => dispatch({ type: "UPDATE_UNDERLAY", patch: { printInclude: u.printInclude === false } })}
+                title="Whether this reference image appears on printed sheets"
+                className="inline-flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
+              >
+                {u.printInclude === false ? "Print: off" : "Print: on"}
+              </button>
+            )}
             <button
               onClick={() => dispatch({ type: "SET_TOOL", tool: "calibrate" })}
               className="inline-flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
@@ -2174,8 +2277,26 @@ function UnderlaySection({ design, dispatch }) {
               Remove
             </button>
           </div>
+          {isHome && (
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-gray-500">Rotate:</span>
+              {[0, 90, 180, 270].map((deg) => (
+                <button
+                  key={deg}
+                  onClick={() => dispatch({ type: "UPDATE_UNDERLAY", patch: { rotationDeg: deg } })}
+                  title={`Rotate the reference image ${deg}° (quarter turns only; the image rotates about its center)`}
+                  className={`rounded px-2 py-1 text-[11px] ${rotation === deg ? "bg-emerald-700 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+                >
+                  {deg}°
+                </button>
+              ))}
+            </div>
+          )}
           {!u.locked && (
             <p className="text-[11px] text-gray-500">Tip: drag the image on the plan to position it, then lock it.</p>
+          )}
+          {isHome && u.visible === false && (
+            <p className="text-[11px] text-gray-500">Hidden: the image shows on neither the canvas nor the print preview. It is not deleted — press Show to bring it back.</p>
           )}
         </div>
       )}
@@ -2988,11 +3109,17 @@ export function VsdxImportSection({ dispatch, externalFile = null, onExternalFil
 // Scale calibration: with an underlay present, click two points on the
 // image and enter the real-world distance between them. The canvas scale
 // factor updates so walls drawn over the image measure correctly.
-function CalibrationPanel({ state, dispatch }) {
+// H1/G5 home-mode addition: a second independent check length for the
+// same two points. Disagreement above 1% warns WITHOUT changing the
+// scale; the result is recorded on the underlay, never applied.
+function CalibrationPanel({ state, dispatch, mode = "home" }) {
   const { calibration, design } = state;
   const [distance, setDistance] = useState("");
+  const [checkDistance, setCheckDistance] = useState("");
+  const [checkResult, setCheckResult] = useState(null);
   const [error, setError] = useState(null);
   const points = [calibration?.a, calibration?.b].filter(Boolean);
+  const isHome = mode === "home";
 
   const apply = () => {
     const inches = parseDimensionInput(distance);
@@ -3001,8 +3128,32 @@ function CalibrationPanel({ state, dispatch }) {
       return;
     }
     setError(null);
-    dispatch({ type: "APPLY_CALIBRATION", realDistanceIn: inches });
+    try {
+      dispatch({ type: "APPLY_CALIBRATION", realDistanceIn: inches });
+    } catch (err) {
+      // Named refusals (zero-distance, nonfinite, oversized) surface here
+      // instead of throwing out of the click handler.
+      setError(err?.message || "That distance could not be applied.");
+    }
   };
+
+  const runCheck = () => {
+    const inches = parseDimensionInput(checkDistance);
+    if (!(inches > 0) || points.length < 2 || !design.underlay) {
+      setError("Pick two points and enter a second, independently sourced length to check.");
+      return;
+    }
+    try {
+      const result = checkUnderlayScale(design.underlay, calibration.a, calibration.b, inches);
+      setCheckResult(result);
+      setError(null);
+      dispatch({ type: "UPDATE_UNDERLAY", patch: { scaleCheck: result } });
+    } catch (err) {
+      setError(err?.message || "That check length could not be used.");
+    }
+  };
+
+  const recordedCheck = design.underlay?.scaleCheck || null;
 
   return (
     <div>
@@ -3044,6 +3195,49 @@ function CalibrationPanel({ state, dispatch }) {
           Cancel
         </button>
       </div>
+      {isHome && design.underlay && (
+        <div className="mt-4 border-t border-gray-800 pt-3">
+          <h3 className="mb-1 text-xs font-semibold text-white">Second check (optional)</h3>
+          <p className="mb-2 text-[11px] text-gray-500">
+            Enter a second, independently sourced length for the same two points. If it disagrees
+            with the calibrated scale by more than 1%, you get a warning and the scale stays
+            exactly as it is — a check never re-scales the plan.
+          </p>
+          <label className="block text-xs text-gray-400">
+            Second length for these points
+            <input
+              value={checkDistance}
+              onChange={(e) => setCheckDistance(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") runCheck(); }}
+              placeholder="e.g. 52' 4 7/8&quot;"
+              className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
+            />
+          </label>
+          <button
+            onClick={runCheck}
+            disabled={points.length < 2}
+            className="mt-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-700 disabled:opacity-40"
+          >
+            Record check
+          </button>
+          {(checkResult || recordedCheck) && (
+            <div className="mt-2 text-[11px] text-gray-400">
+              <p>
+                Check length {feetInchesLabel((checkResult || recordedCheck).checkLengthIn)} vs
+                calibrated span {feetInchesLabel((checkResult || recordedCheck).impliedLengthIn)}
+                {" "}({(checkResult || recordedCheck).differencePct.toFixed(2)}% apart).
+              </p>
+              {(checkResult || recordedCheck).warning ? (
+                <p className="mt-1 font-semibold text-amber-300">
+                  {UNDERLAY_SCALE_CHECK_WARNING}
+                </p>
+              ) : (
+                <p className="mt-1 text-emerald-300">Check agrees within 1% — scale unchanged.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

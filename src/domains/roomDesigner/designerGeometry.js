@@ -476,14 +476,128 @@ export const DEFAULT_UNDERLAY_WIDTH_IN = 600;
 export const DEFAULT_UNDERLAY_OPACITY = 0.5;
 
 /**
+ * Largest calibration length the UI accepts, in inches (100,000″ ≈ 1.6
+ * miles). Anything larger is an oversized input, refused with a named
+ * error rather than silently producing a microscopic scale.
+ */
+export const MAX_CALIBRATION_LENGTH_IN = 100000;
+
+/**
+ * Second-check tolerance (H1/G5): when a second, independently sourced
+ * length for the same two points disagrees with the calibrated scale by
+ * more than this percentage, the UI warns WITHOUT changing the scale.
+ * A diagnostic threshold, not measurement certification.
+ */
+export const UNDERLAY_SCALE_CHECK_TOLERANCE_PCT = 1;
+
+/** The exact H1/G5 second-check warning string — never paraphrased. */
+export const UNDERLAY_SCALE_CHECK_WARNING = "reference scale differs—verify measurements";
+
+/** Quarter-turn rotations an underlay may carry (H1/G5). No free angles. */
+export const UNDERLAY_QUARTER_TURNS = Object.freeze([0, 90, 180, 270]);
+
+/**
+ * Normalize a rotation to a quarter turn, or throw a named error. Used on
+ * write paths (record build / patch); read paths use
+ * underlayRotationDeg, which fails soft to 0 for legacy records.
+ */
+export function normalizeUnderlayRotationDeg(value) {
+  const deg = ((Number(value) % 360) + 360) % 360;
+  if (!UNDERLAY_QUARTER_TURNS.includes(deg)) {
+    throw new Error("Underlay rotation must be a quarter turn (0, 90, 180, or 270 degrees).");
+  }
+  return deg;
+}
+
+/** Rotation of an underlay record in degrees; legacy records read as 0. */
+export function underlayRotationDeg(underlay) {
+  if (!underlay || underlay.rotationDeg === undefined || underlay.rotationDeg === null) return 0;
+  const deg = ((Number(underlay.rotationDeg) % 360) + 360) % 360;
+  return UNDERLAY_QUARTER_TURNS.includes(deg) ? deg : 0;
+}
+
+/** Unrotated image size in plan inches. */
+export function underlayImageSizeIn(underlay) {
+  return { widthIn: underlay.widthPx / underlay.pxPerIn, heightIn: underlay.heightPx / underlay.pxPerIn };
+}
+
+/** Displayed (post-rotation) image size in plan inches. */
+export function underlayDisplaySizeIn(underlay) {
+  const { widthIn, heightIn } = underlayImageSizeIn(underlay);
+  return underlayRotationDeg(underlay) % 180 === 0
+    ? { widthIn, heightIn }
+    : { widthIn: heightIn, heightIn: widthIn };
+}
+
+// Rotate a vector clockwise as seen on screen (plan y grows downward):
+// east (1,0) -> south (0,1) for a 90-degree turn.
+function rotateQuarterTurnVector(dx, dy, deg) {
+  if (deg === 90) return { x: -dy, y: dx };
+  if (deg === 180) return { x: -dx, y: -dy };
+  if (deg === 270) return { x: dy, y: -dx };
+  return { x: dx, y: dy };
+}
+
+/**
+ * Plan point of an image pixel, for a rotation-aware underlay. The record's
+ * (x, y) is the top-left of the ROTATED bounding box; the image rotates
+ * about its own center, so rotating never slides the plan position. For
+ * rotation 0 this reduces exactly to (x + px/pxPerIn, y + py/pxPerIn).
+ */
+export function underlayPlanPointForPixel(underlay, px, py) {
+  const deg = underlayRotationDeg(underlay);
+  const { widthIn, heightIn } = underlayImageSizeIn(underlay);
+  const { widthIn: dispW, heightIn: dispH } = underlayDisplaySizeIn(underlay);
+  const centered = rotateQuarterTurnVector(px / underlay.pxPerIn - widthIn / 2, py / underlay.pxPerIn - heightIn / 2, deg);
+  return { x: underlay.x + dispW / 2 + centered.x, y: underlay.y + dispH / 2 + centered.y };
+}
+
+/** Inverse of underlayPlanPointForPixel: plan point -> image pixel, or null. */
+export function underlayPixelForPlanPoint(underlay, point) {
+  if (!isValidPoint(point)) return null;
+  const deg = underlayRotationDeg(underlay);
+  const { widthIn, heightIn } = underlayImageSizeIn(underlay);
+  const { widthIn: dispW, heightIn: dispH } = underlayDisplaySizeIn(underlay);
+  const centered = rotateQuarterTurnVector(
+    point.x - (underlay.x + dispW / 2),
+    point.y - (underlay.y + dispH / 2),
+    (360 - deg) % 360,
+  );
+  return {
+    px: (centered.x + widthIn / 2) * underlay.pxPerIn,
+    py: (centered.y + heightIn / 2) * underlay.pxPerIn,
+  };
+}
+
+/**
+ * Top-left anchor (of the rotated bounding box) that would place image
+ * pixel (px, py) exactly on plan point `target`. The rotation-aware
+ * registration used by calibrateUnderlay: the first calibration point
+ * keeps pointing at the same image pixel after the scale changes.
+ */
+export function underlayAnchorForPixel(underlay, px, py, target) {
+  const deg = underlayRotationDeg(underlay);
+  const { widthIn, heightIn } = underlayImageSizeIn(underlay);
+  const { widthIn: dispW, heightIn: dispH } = underlayDisplaySizeIn(underlay);
+  const centered = rotateQuarterTurnVector(px / underlay.pxPerIn - widthIn / 2, py / underlay.pxPerIn - heightIn / 2, deg);
+  return { x: target.x - dispW / 2 - centered.x, y: target.y - dispH / 2 - centered.y };
+}
+
+/**
  * New pixels-per-inch for an underlay after scale calibration: the user
  * clicked two points on the image that are `realDistanceIn` inches apart
- * in the real world. Pure.
+ * in the real world. Pure. Refusals are named: zero-distance points,
+ * nonfinite/negative/zero lengths, and oversized lengths.
  */
 export function calibrateUnderlayScale(underlay, clickA, clickB, realDistanceIn) {
   if (!underlay || !(underlay.pxPerIn > 0)) throw new Error("Underlay has no scale to calibrate.");
   if (!isValidPoint(clickA) || !isValidPoint(clickB)) throw new Error("Calibration points must be valid.");
-  if (!(realDistanceIn > 0)) throw new Error("Real-world distance must be positive.");
+  if (!Number.isFinite(realDistanceIn) || !(realDistanceIn > 0)) {
+    throw new Error("Calibration length must be a finite positive number.");
+  }
+  if (realDistanceIn > MAX_CALIBRATION_LENGTH_IN) {
+    throw new Error(`Calibration length is too large — enter a length under ${MAX_CALIBRATION_LENGTH_IN} inches.`);
+  }
   const planDist = Math.hypot(clickB.x - clickA.x, clickB.y - clickA.y);
   if (!(planDist > 0)) throw new Error("Calibration points must be distinct.");
   const pixelDist = planDist * underlay.pxPerIn;
@@ -491,8 +605,41 @@ export function calibrateUnderlayScale(underlay, clickA, clickB, realDistanceIn)
 }
 
 /**
+ * Second independent check (H1/G5): given the two calibration points and a
+ * second, independently sourced real length for the same span, compare it
+ * against what the current scale implies. Never mutates anything; the
+ * caller records the result and shows `warning` (exact string) when the
+ * disagreement exceeds 1%, leaving the scale unchanged.
+ */
+export function checkUnderlayScale(underlay, clickA, clickB, checkLengthIn) {
+  if (!underlay || !(underlay.pxPerIn > 0)) throw new Error("Underlay has no scale to check.");
+  if (!isValidPoint(clickA) || !isValidPoint(clickB)) throw new Error("Calibration points must be valid.");
+  if (!Number.isFinite(checkLengthIn) || !(checkLengthIn > 0)) {
+    throw new Error("Check length must be a finite positive number.");
+  }
+  if (checkLengthIn > MAX_CALIBRATION_LENGTH_IN) {
+    throw new Error(`Check length is too large — enter a length under ${MAX_CALIBRATION_LENGTH_IN} inches.`);
+  }
+  const pixelA = underlayPixelForPlanPoint(underlay, clickA);
+  const pixelB = underlayPixelForPlanPoint(underlay, clickB);
+  const pixelDist = Math.hypot(pixelB.px - pixelA.px, pixelB.py - pixelA.py);
+  if (!(pixelDist > 0)) throw new Error("Calibration points must be distinct.");
+  const impliedLengthIn = pixelDist / underlay.pxPerIn;
+  const differencePct = (Math.abs(impliedLengthIn - checkLengthIn) / checkLengthIn) * 100;
+  const exceedsTolerance = differencePct > UNDERLAY_SCALE_CHECK_TOLERANCE_PCT;
+  return {
+    impliedLengthIn,
+    checkLengthIn,
+    differencePct,
+    exceedsTolerance,
+    warning: exceedsTolerance ? UNDERLAY_SCALE_CHECK_WARNING : null,
+  };
+}
+
+/**
  * Plan-space bounding box of an underlay image, or null when invalid.
- * The image top-left sits at (underlay.x, underlay.y) plan inches.
+ * The image top-left sits at (underlay.x, underlay.y) plan inches; for a
+ * quarter-turned image the box is the rotated box (width/height swapped).
  */
 export function underlayBounds(underlay) {
   if (
@@ -505,19 +652,20 @@ export function underlayBounds(underlay) {
   ) {
     return null;
   }
+  const { widthIn, heightIn } = underlayDisplaySizeIn(underlay);
   return {
     minX: underlay.x,
     minY: underlay.y,
-    maxX: underlay.x + underlay.widthPx / underlay.pxPerIn,
-    maxY: underlay.y + underlay.heightPx / underlay.pxPerIn,
+    maxX: underlay.x + widthIn,
+    maxY: underlay.y + heightIn,
   };
 }
 
-/** True when a plan point falls inside the underlay image bounds. */
+/** True when a plan point falls inside the underlay image (rotation-aware). */
 export function underlayContainsPoint(underlay, point) {
-  const box = underlayBounds(underlay);
-  if (!box || !isValidPoint(point)) return false;
-  return point.x >= box.minX && point.x <= box.maxX && point.y >= box.minY && point.y <= box.maxY;
+  const pixel = underlay && isValidPoint(point) ? underlayPixelForPlanPoint(underlay, point) : null;
+  if (!pixel) return false;
+  return pixel.px >= 0 && pixel.px <= underlay.widthPx && pixel.py >= 0 && pixel.py <= underlay.heightPx;
 }
 
 /**
@@ -529,11 +677,29 @@ export function parseDimensionInput(input) {
   if (typeof input !== "string") return NaN;
   const s = input.trim().toLowerCase();
   if (s === "") return NaN;
-  const m = s.match(/^(?:(\d+(?:\.\d+)?)\s*(?:'|ft|feet))?\s*(?:(\d+(?:\.\d+)?)\s*(?:"|in|inch|inches)?)?\s*$/);
-  if (!m || (m[1] === undefined && m[2] === undefined)) return NaN;
-  const feet = m[1] !== undefined ? parseFloat(m[1]) : 0;
-  const inches = m[2] !== undefined ? parseFloat(m[2]) : 0;
-  return feet * 12 + inches;
+  // Feet part, e.g. 12' or 12.5 ft; whatever follows is the inches part.
+  let feet = 0;
+  let rest = s;
+  const feetMatch = rest.match(/^(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(.*)$/);
+  if (feetMatch) {
+    feet = parseFloat(feetMatch[1]);
+    rest = feetMatch[2].trim();
+  }
+  if (rest === "") return feet * 12;
+  // Inches part: a whole + fraction ("4 7/8") or a bare fraction ("7/8"),
+  // each optionally followed by an inches unit. Fractions matter here
+  // because printed plan dimensions use them (e.g. 52' 4 7/8").
+  const fractionMatch = rest.match(/^(?:(\d+(?:\.\d+)?)\s+)?(\d+)\s*\/\s*(\d+)\s*(?:"|in|inch|inches)?$/);
+  if (fractionMatch) {
+    const whole = fractionMatch[1] !== undefined ? parseFloat(fractionMatch[1]) : 0;
+    const numerator = parseInt(fractionMatch[2], 10);
+    const denominator = parseInt(fractionMatch[3], 10);
+    if (denominator === 0) return NaN;
+    return feet * 12 + whole + numerator / denominator;
+  }
+  const plainMatch = rest.match(/^(\d+(?:\.\d+)?)\s*(?:"|in|inch|inches)?$/);
+  if (!plainMatch) return NaN;
+  return feet * 12 + parseFloat(plainMatch[1]);
 }
 
 /**
