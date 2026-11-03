@@ -5,6 +5,7 @@ import ImpactSiteVerificationMeta from "./ImpactSiteVerificationMeta";
 import ThemeProvider from "@/components/theme/ThemeProvider";
 import PrivacySafeAnalyticsProvider from "@/components/analytics/PrivacySafeAnalyticsProvider";
 import SWRIdentityBridge from "@/components/SWRIdentityBridge";
+import BrainPanel from "@/components/brain/BrainPanel";
 import { buildNoFlashThemeScript } from "@/lib/theme/noFlashThemeScript";
 import { createClient } from "@/lib/supabase/server";
 
@@ -81,6 +82,7 @@ export default async function RootLayout({ children }) {
         <PrivacySafeAnalyticsProvider>
           <ThemeProvider>{children}</ThemeProvider>
         </PrivacySafeAnalyticsProvider>
+        <BrainPanel enabled={process.env.BRAIN_CONVERSATION_HARNESS_ENABLED === "true"} />
       </body>
     </html>
   );
