@@ -43,7 +43,7 @@ function setStatus(text, kind) {
 // ---------------------------------------------------------------------------
 
 function selectTab(which) {
-  for (const name of ["image", "video", "meeting", "training"]) {
+  for (const name of ["image", "video", "meeting", "training", "review"]) {
     const on = which === name;
     $(`tab-${name}`).classList.toggle("active", on);
     $(`tab-${name}`).setAttribute("aria-selected", String(on));
@@ -759,6 +759,7 @@ async function init() {
   $("tab-video").addEventListener("click", () => selectTab("video"));
   $("tab-meeting").addEventListener("click", () => selectTab("meeting"));
   $("tab-training").addEventListener("click", () => selectTab("training"));
+  $("tab-review").addEventListener("click", () => selectTab("review"));
   document.querySelectorAll("#mode-chips .chip").forEach((chip) => {
     chip.addEventListener("click", () => selectMode(chip.dataset.mode));
   });

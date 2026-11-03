@@ -552,3 +552,50 @@ input[type="search"] {
   font-size: 12px;
   padding: 0 4px;
 }
+
+/* C2-P6A candidate-only review panel */
+.review-diagram {
+  position: relative;
+  border: 1px solid var(--border);
+  background: var(--card);
+  max-width: 100%;
+  overflow: auto;
+}
+.review-diagram-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(217, 154, 61, 0.15);
+  pointer-events: none;
+}
+.review-candidate-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.review-candidate-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.review-candidate-id {
+  font-family: monospace;
+}
+.review-candidate-meta,
+.review-candidate-disposition {
+  color: var(--muted);
+}
+.review-reason-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.review-reason-row input[type="text"] {
+  flex: 1 1 200px;
+  min-width: 0;
+}
