@@ -4332,6 +4332,64 @@ mod dxgi2_tests {
     }
 
     #[test]
+    fn final_poll_grant_is_not_reset_by_stale_topology_retry() {
+        // DXGI2-002 remainder: the final-poll grant is owned by the
+        // whole REQUEST, not by one acquisition pass. Pass 1 spends
+        // it on a 0ms poll that returns AccessLost (Stale); the
+        // single retry must NOT grant a second final poll, so pass 2
+        // ends Retryable with its scripted frame unconsumed. Under
+        // the old per-pass reset, pass 2 would poll, take the frame,
+        // and the request would proceed past output 1.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits {
+            total_deadline_ms: 10,
+            ..DxgiLimits::default()
+        };
+        // Scripted clock: every read lands in the sub-millisecond
+        // remainder (remaining < 1ms, still before the deadline), so
+        // every first attempt is a final-poll-or-nothing decision —
+        // exactly the boundary the request-wide grant governs.
+        let mut times: VecDeque<Duration> =
+            [Duration::from_micros(9500), Duration::from_micros(9600)].into();
+        let clock = move || times.pop_front().unwrap_or(Duration::from_micros(9900));
+        let outcome = capture_multi_output_with_clock(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &limits,
+            clock,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        // Exactly one retry happened: the stale pass plus one retry.
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        // The retried pass never polled output 1: its scripted frame
+        // is still queued. Under the old per-pass reset it would be
+        // gone, consumed by a second final poll.
+        assert_eq!(mock.steps.get("\\\\.\\DISPLAY1").map(|q| q.len()), Some(1));
+    }
+
+    #[test]
     fn rebuild_all_or_nothing_keeps_old_set_when_later_rebuild_fails() {
         // DXGI2-001: the helper the Windows session's `recreate_all`
         // delegates to — a failure on a later context must leave the
@@ -5324,6 +5382,11 @@ pub fn capture_multi_output_with_clock<B: MultiOutputBackend, F: FnMut() -> Dura
 ) -> DxgiMultiOutputOutcome {
     let mut snapshot = snapshot.clone();
     let mut retried = false;
+    // DXGI2-002 remainder: the final-poll grant is owned by the
+    // whole request, not by one acquisition pass. It is passed into
+    // each pass so the single stale-topology retry cannot reset it
+    // and grant a second final poll.
+    let mut final_poll_done = false;
     loop {
         let plan = match plan_composition(&snapshot, rect, limits) {
             Ok(plan) => plan,
@@ -5333,7 +5396,7 @@ pub fn capture_multi_output_with_clock<B: MultiOutputBackend, F: FnMut() -> Dura
                 ))
             }
         };
-        match acquire_all_outputs(backend, &plan, limits, &mut elapsed) {
+        match acquire_all_outputs(backend, &plan, limits, &mut elapsed, &mut final_poll_done) {
             MultiPass::Ready(frames) => {
                 // A generation change during acquisition invalidates
                 // the plan even though every acquire succeeded.
@@ -5448,14 +5511,16 @@ fn acquire_all_outputs<B: MultiOutputBackend, F: FnMut() -> Duration>(
     plan: &CompositionPlan,
     limits: &DxgiLimits,
     elapsed: &mut F,
+    final_poll_done: &mut bool,
 ) -> MultiPass {
     let mut frames = Vec::new();
     // DXGI2-002: the final-poll grant is shared across the whole
-    // request, not reset per output. At most one final nonblocking
-    // 0ms poll per REQUEST (DXGI1-005A), however many outputs the
-    // request covers: once any output spends it, later outputs get
-    // no final poll of their own.
-    let mut final_poll_done = false;
+    // request, not reset per output and not reset by the single
+    // stale-topology retry. At most one final nonblocking 0ms poll
+    // per REQUEST (DXGI1-005A), however many outputs the request
+    // covers and however many passes it takes: the flag is owned by
+    // the caller, so once any output spends it, later outputs — in
+    // this pass or the retry pass — get no final poll of their own.
     for contribution in &plan.contributions {
         let acquired = loop {
             // Same deadline rule as DXGI-1: an attempt never blocks
@@ -5468,8 +5533,8 @@ fn acquire_all_outputs<B: MultiOutputBackend, F: FnMut() -> Duration>(
                 Some(t) => t,
                 None => {
                     let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
-                    if !final_poll_done && e < deadline {
-                        final_poll_done = true;
+                    if !*final_poll_done && e < deadline {
+                        *final_poll_done = true;
                         0
                     } else {
                         break None;
