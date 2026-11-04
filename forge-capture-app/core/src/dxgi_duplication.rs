@@ -2212,10 +2212,28 @@ mod win_backend {
         }
 
         fn recreate_all(&mut self) -> Result<(), DxgiAcquireError> {
-            for ctx in self.contexts.iter_mut() {
-                <DxgiCaptureContext as super::DuplicationBackend>::recreate(ctx)?;
-            }
-            Ok(())
+            // DXGI2-001: all-or-nothing, mirroring `refresh_snapshot`'s
+            // build-then-swap shape. Each fresh context is built with
+            // the same `for_output` construction `enumerate` uses, and
+            // its device name must match the context it replaces — a
+            // topology shift mid-rebuild is an error, not a misbound
+            // context. Any failure leaves the old set (and the old
+            // snapshot) completely intact, so no later request can
+            // mix generations; the old contexts drop only after the
+            // fresh set is fully built.
+            super::rebuild_all_or_nothing(&mut self.contexts, |index, old| {
+                let ctx = DxgiCaptureContext::for_output(index)
+                    .map_err(|e| DxgiAcquireError::Other(e.to_string()))?;
+                if ctx.output_info().device_name != old.output_info().device_name {
+                    return Err(DxgiAcquireError::Other(format!(
+                        "DXGI-2 session: recreate index {index} bound {} but the old \
+                         context served {}",
+                        ctx.output_info().device_name,
+                        old.output_info().device_name
+                    )));
+                }
+                Ok(ctx)
+            })
         }
 
         fn refresh_snapshot(&mut self) -> Result<TopologySnapshot, String> {
@@ -4264,6 +4282,81 @@ mod dxgi2_tests {
     }
 
     #[test]
+    fn final_poll_grant_is_shared_across_outputs_not_per_output() {
+        // DXGI2-002: one final 0ms poll per REQUEST. Output 1 spends
+        // it (sub-millisecond remainder, already-ready frame); output
+        // 2 must then get no final poll of its own, so the request
+        // ends Retryable with output 2's scripted frame unconsumed.
+        // Under the old per-output reset, output 2 would poll, take
+        // its frame, and the request would wrongly return Frame.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits {
+            total_deadline_ms: 10,
+            ..DxgiLimits::default()
+        };
+        // Scripted clock: both reads land in the sub-millisecond
+        // remainder (remaining < 1ms, still before the deadline), so
+        // each output's first attempt is a final-poll-or-nothing
+        // decision — exactly the boundary the shared grant governs.
+        let mut times: VecDeque<Duration> =
+            [Duration::from_micros(9500), Duration::from_micros(9600)].into();
+        let clock = move || times.pop_front().unwrap_or(Duration::from_micros(9900));
+        let outcome = capture_multi_output_with_clock(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &limits,
+            clock,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        // Output 2 was never polled: its scripted frame is still queued.
+        assert_eq!(mock.steps.get("\\\\.\\DISPLAY2").map(|q| q.len()), Some(1));
+    }
+
+    #[test]
+    fn rebuild_all_or_nothing_keeps_old_set_when_later_rebuild_fails() {
+        // DXGI2-001: the helper the Windows session's `recreate_all`
+        // delegates to — a failure on a later context must leave the
+        // original set completely intact, never partially rebuilt.
+        let mut contexts = vec![10, 20, 30];
+        let err = rebuild_all_or_nothing(&mut contexts, |index, old| {
+            if index == 1 {
+                Err("second rebuild failed")
+            } else {
+                Ok(old + 100)
+            }
+        })
+        .unwrap_err();
+        assert_eq!(err, "second rebuild failed");
+        assert_eq!(contexts, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn rebuild_all_or_nothing_swaps_complete_set_on_success() {
+        let mut contexts = vec![10, 20, 30];
+        rebuild_all_or_nothing(&mut contexts, |_, old| Ok::<_, &str>(old + 100)).unwrap();
+        assert_eq!(contexts, vec![110, 120, 130]);
+    }
+
+    #[test]
     fn multi_output_protected_on_one_output_is_explicit_not_partial() {
         let snapshot = left_snapshot();
         let mut mock = MultiMock::new(
@@ -5137,6 +5230,31 @@ pub enum DxgiMultiOutputOutcome {
 
 /// The multi-output acquisition backend behind [`capture_multi_output`].
 ///
+/// All-or-nothing rebuild of a context set (DXGI2-001): build a
+/// complete fresh set with `rebuild` before swapping it in. On any
+/// failure the original set is untouched — a caller can never observe
+/// a mixed-generation set — and the error propagates. `rebuild` gets
+/// the context's index plus its old value, so index-bound rebuilds
+/// (like the Windows session's `for_output`) keep their alignment.
+/// The Windows-only session delegates its `recreate_all` here; the
+/// helper itself is platform-independent, so the invariant is covered
+/// by Linux tests below (the session type itself is `#[cfg(windows)]`
+/// and its execution proof stays owed on Windows hardware). The
+/// helper exists only where it has a caller — Windows production code
+/// or any test build — so non-Windows library builds stay warning-free.
+#[cfg(any(windows, test))]
+fn rebuild_all_or_nothing<T, E, F>(current: &mut Vec<T>, mut rebuild: F) -> Result<(), E>
+where
+    F: FnMut(usize, &T) -> Result<T, E>,
+{
+    let mut fresh = Vec::with_capacity(current.len());
+    for (index, old) in current.iter().enumerate() {
+        fresh.push(rebuild(index, old)?);
+    }
+    *current = fresh;
+    Ok(())
+}
+
 /// The real backend is `DxgiMultiOutputSession` (Windows only); tests
 /// use a scripted mock. `acquire_output` returns the FULL output frame
 /// (the loop crops it); its guard is dropped by the loop immediately
@@ -5332,19 +5450,19 @@ fn acquire_all_outputs<B: MultiOutputBackend, F: FnMut() -> Duration>(
     elapsed: &mut F,
 ) -> MultiPass {
     let mut frames = Vec::new();
+    // DXGI2-002: the final-poll grant is shared across the whole
+    // request, not reset per output. At most one final nonblocking
+    // 0ms poll per REQUEST (DXGI1-005A), however many outputs the
+    // request covers: once any output spends it, later outputs get
+    // no final poll of their own.
+    let mut final_poll_done = false;
     for contribution in &plan.contributions {
-        let mut final_poll_done = false;
         let acquired = loop {
             // Same deadline rule as DXGI-1: an attempt never blocks
             // past the total request deadline; at most one final
-            // nonblocking 0ms poll per REQUEST (shared across outputs
-            // through this flag's per-output reset — see note below).
-            //
-            // NOTE: the final-poll grant resets per output, so a
-            // multi-output request can issue one 0ms poll per output.
-            // A 0ms poll never blocks, so the hard total bound still
-            // holds exactly; the per-request (not per-output) reading
-            // of DXGI1-005A is preserved in the blocking dimension.
+            // nonblocking 0ms poll per REQUEST (DXGI1-005A, shared
+            // across outputs via the flag above). A 0ms poll never
+            // blocks, so the hard total bound still holds exactly.
             let e = elapsed();
             let timeout_ms = match attempt_timeout_ms(limits, e) {
                 Some(t) => t,
