@@ -135,6 +135,35 @@ describe("P7 role boundary (roles.sql)", () => {
     ]);
   });
 
+  it60("owner handle reads all twenty team-brain tables, holds no role membership", async () => {
+    // Regression for the P8 Step A NOT QUALIFIED gap: roles.sql
+    // revoked team_brain_schema_version from PUBLIC and granted it
+    // to nobody, so no handle could read it at all. The owner read
+    // set must cover all twenty tables, not just the six the probes
+    // SELECT from: migrationCatalog lists tables through
+    // information_schema.tables, which hides tables the handle holds
+    // no privilege on.
+    const { rows } = await db.query(
+      `SELECT table_name FROM information_schema.role_table_grants
+       WHERE grantee = 'tb_admin' AND privilege_type = 'SELECT' AND table_schema = 'public'
+       ORDER BY table_name`,
+    );
+    const tables = rows.map((r) => r.table_name);
+    for (const t of ALL_TABLES) {
+      expect(tables, `tb_admin missing SELECT on ${t}`).toContain(t);
+    }
+    // No membership in the worker/reader roles: membership WITH
+    // INHERIT (the default) would confer consolidator writes, and
+    // membership WITH INHERIT FALSE hides grants from the
+    // effectiveGrants probe. tb_admin holds neither, by design.
+    const members = await db.query(
+      `SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+       JOIN pg_roles member ON member.oid = m.member
+       WHERE member.rolname = 'tb_admin' AND r.rolname IN ('tb_consolidator', 'tb_reader')`,
+    );
+    expect(members.rows).toEqual([]);
+  });
+
   it60("consolidator engine positive performs only contract §4 effects", async () => {
     await seedPublicEpisodes(db, 2);
     const before = await tableCounts(db, ALL_TABLES);

@@ -16,8 +16,14 @@ credential, an episode body, or a callback payload.
 
 ## 1. Install (disabled)
 
-1. Copy the package (`scripts/team-brain/worker/` +
-   `scripts/team-brain/postgres/`) to the qualified Windows host.
+1. Copy the WHOLE package tree (`scripts/team-brain/`) to the
+   qualified Windows host. `worker/` + `postgres/` alone does NOT
+   run: `worker/worker.mjs` imports `../consolidation/engine.mjs`
+   and `../consolidation/scheduling.mjs`, and `worker/backup.mjs`
+   imports `../report/stableStringify.mjs` — staging only those two
+   directories fails immediately with `ERR_MODULE_NOT_FOUND`
+   (found in P8 Step A qualification, 2026-11-03). Do not
+   cherry-pick directories; stage the full tree.
 2. Register the task DISABLED (never enabled by this step):
    `register-worker-task.ps1 -TaskName "Team Brain Worker" -WorkerUser "NT SERVICE\TeamBrainWorker" -NodePath "C:\Program Files\nodejs\node.exe" -WorkerScript "C:\team-brain\worker\run.mjs" -ConfigPath "C:\team-brain\worker-config.json" -WorkingDir "C:\team-brain" -XmlTemplate "C:\team-brain\task-definition.xml"`
 3. Verify: `schtasks /Query /TN "Team Brain Worker" /FO LIST /V`

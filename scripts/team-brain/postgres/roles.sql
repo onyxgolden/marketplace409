@@ -94,6 +94,54 @@ GRANT SELECT ON tb_worker_heartbeats TO tb_reader;
 GRANT SELECT ON team_brain_handoffs TO tb_reader;
 GRANT SELECT ON team_brain_obligations TO tb_reader;
 
+-- Owner (tb_admin): read-only visibility for the --check health
+-- probes, and nothing else. The probes run with the owner handle
+-- (run.mjs --check --owner-user tb_admin) and directly SELECT from
+-- six tables:
+--   migrationCatalog: team_brain_schema_version + tb_consolidation_lease
+--   backlogWatermark / projectionRevision: tb_retrieval_revisions,
+--     tb_consolidation_runs, tb_episodes
+--   pendingUnknownDeliveries: tb_consolidation_runs, team_brain_handoffs
+-- But migrationCatalog ALSO lists tables through
+-- information_schema.tables, which only shows tables the handle holds
+-- a privilege on — so six grants leave fourteen tables "missing"
+-- and the probe FAILs (proven: granting only the six still failed
+-- migrationCatalog with 14 missing). The owner read set must
+-- therefore cover all twenty team-brain tables, SELECT only.
+-- tb_admin gets NO write anywhere and NO membership in
+-- tb_consolidator / tb_reader, on purpose: membership WITH INHERIT
+-- (the default) would let tb_admin inherit consolidator writes
+-- (proven: INSERT into tb_consolidation_runs succeeds), and
+-- membership WITH INHERIT FALSE loses the role_table_grants
+-- visibility it was meant to provide (proven: 0 visible rows).
+-- Consequence, stated plainly: the effectiveGrants probe stays
+-- NOT_VISIBLE from tb_admin by design (PARTIAL, not FAIL); full
+-- grant verification needs a superuser/DBA handle, which the
+-- runbook already anticipates ("re-run --check with an owner
+-- handle"). Before this block, team_brain_schema_version had a
+-- PUBLIC revoke and no grant to any role, so no handle could read
+-- it at all (P8 Step A NOT QUALIFIED).
+GRANT SELECT ON team_brain_schema_version TO tb_admin;
+GRANT SELECT ON team_brain_obligations TO tb_admin;
+GRANT SELECT ON team_brain_obligation_dependencies TO tb_admin;
+GRANT SELECT ON team_brain_obligation_events TO tb_admin;
+GRANT SELECT ON team_brain_handoffs TO tb_admin;
+GRANT SELECT ON team_brain_handoff_events TO tb_admin;
+GRANT SELECT ON tb_retrieval_revisions TO tb_admin;
+GRANT SELECT ON tb_episodes TO tb_admin;
+GRANT SELECT ON tb_episode_grants TO tb_admin;
+GRANT SELECT ON tb_pins TO tb_admin;
+GRANT SELECT ON tb_working_set TO tb_admin;
+GRANT SELECT ON tb_episode_events TO tb_admin;
+GRANT SELECT ON tb_consolidation_runs TO tb_admin;
+GRANT SELECT ON tb_consolidation_lease TO tb_admin;
+GRANT SELECT ON tb_consolidated_facts TO tb_admin;
+GRANT SELECT ON tb_consolidation_proposals TO tb_admin;
+GRANT SELECT ON tb_consolidation_checkpoints TO tb_admin;
+GRANT SELECT ON tb_consolidation_run_bindings TO tb_admin;
+GRANT SELECT ON tb_consolidation_audit TO tb_admin;
+GRANT SELECT ON tb_worker_heartbeats TO tb_admin;
+
 -- Explicit PUBLIC revokes on every team-brain table named above.
 REVOKE ALL ON tb_episodes FROM PUBLIC;
 REVOKE ALL ON tb_episode_grants FROM PUBLIC;
