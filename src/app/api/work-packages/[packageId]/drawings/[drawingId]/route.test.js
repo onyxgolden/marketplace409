@@ -22,7 +22,7 @@ describe("DELETE /api/work-packages/[packageId]/drawings/[drawingId]", () => {
     deleteDrawing.mockResolvedValue({ ok: true });
     const response = await DELETE(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(200);
-    expect(deleteDrawing).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", drawingId: "dwg_1" });
+    expect(deleteDrawing).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", drawingId: "dwg_1" });
   });
 
   it("maps a conflict (children/lines still attached) to 409", async () => {

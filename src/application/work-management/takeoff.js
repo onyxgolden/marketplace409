@@ -51,6 +51,20 @@ function toCamelLine(row) {
   };
 }
 
+/**
+ * WPP1-003: proves the drawing belongs to the package named in the URL
+ * before any caller reads, mutates, or deletes through it. Returns the
+ * drawing row, or null when the chain does not hold (missing drawing,
+ * or a drawing from another package addressed through this package's URL).
+ */
+async function requireDrawingInPackage(db, { ownerId, packageId, drawingId }) {
+  const { data, error } = await db.from("forge_work_drawings")
+    .select("id, package_id").eq("owner_id", ownerId).eq("id", drawingId).maybeSingle();
+  if (error) throw error;
+  if (!data || data.package_id !== packageId) return null;
+  return data;
+}
+
 /** Creates one drawing sheet (P&ID, cut sheet, or isometric) in a work package. */
 export async function createDrawing(db, { ownerId, actor, input }) {
   const validation = validateDrawingInput(input);
@@ -62,10 +76,15 @@ export async function createDrawing(db, { ownerId, actor, input }) {
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
 
   if (input.drawingType !== "p_id") {
+    // WPP1-002: the P&ID must live in THIS package — looking it up by
+    // owner+id+type alone let a child in package A roll up to a P&ID
+    // in package B. The schema's composite FK now enforces the same
+    // rule; this lookup enforces it at the application boundary too.
     const { data: pidDrawing, error: pidError } = await db.from("forge_work_drawings")
-      .select("id, drawing_type").eq("owner_id", ownerId).eq("id", input.pIdDrawingId).maybeSingle();
+      .select("id, drawing_type, package_id").eq("owner_id", ownerId).eq("id", input.pIdDrawingId)
+      .eq("package_id", input.packageId).maybeSingle();
     if (pidError) throw pidError;
-    if (!pidDrawing) return { ok: false, httpStatus: 400, error: "pIdDrawingId does not name an existing drawing." };
+    if (!pidDrawing) return { ok: false, httpStatus: 400, error: "pIdDrawingId does not name an existing drawing in this package." };
     if (pidDrawing.drawing_type !== "p_id") {
       return { ok: false, httpStatus: 400, error: "pIdDrawingId must name a drawing whose drawingType is p_id." };
     }
@@ -101,8 +120,10 @@ export async function listDrawingsForPackage(db, { ownerId, packageId }) {
   return { ok: true, drawings: (data || []).map(toCamelDrawing) };
 }
 
-/** Deletes a drawing sheet. Refuses if any other drawing still rolls up to it, or it still has takeoff lines — both would be orphaned data, not a cascading convenience delete. */
-export async function deleteDrawing(db, { ownerId, drawingId }) {
+/** Deletes a drawing sheet. Proves the drawing is in the named package first (WPP1-003). Refuses if any other drawing still rolls up to it, or it still has takeoff lines — both would be orphaned data, not a cascading convenience delete. */
+export async function deleteDrawing(db, { ownerId, packageId, drawingId }) {
+  const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId });
+  if (!drawing) return { ok: false, httpStatus: 404, error: "Drawing not found in this package." };
   const { data: children, error: childError } = await db.from("forge_work_drawings")
     .select("id").eq("owner_id", ownerId).eq("p_id_drawing_id", drawingId).limit(1);
   if (childError) throw childError;
@@ -115,13 +136,16 @@ export async function deleteDrawing(db, { ownerId, drawingId }) {
   if (lines && lines.length > 0) {
     return { ok: false, httpStatus: 409, error: "This drawing still has takeoff lines — remove those first." };
   }
-  const { error } = await db.from("forge_work_drawings").delete().eq("owner_id", ownerId).eq("id", drawingId);
+  const { error } = await db.from("forge_work_drawings").delete()
+    .eq("owner_id", ownerId).eq("id", drawingId).eq("package_id", packageId);
   if (error) throw error;
   return { ok: true };
 }
 
-/** Lists every takeoff line on exactly one drawing, in line-number order. */
-export async function listTakeoffLinesForDrawing(db, { ownerId, drawingId }) {
+/** Lists every takeoff line on exactly one drawing, in line-number order. Proves the drawing is in the named package first (WPP1-003). */
+export async function listTakeoffLinesForDrawing(db, { ownerId, packageId, drawingId }) {
+  const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId });
+  if (!drawing) return { ok: false, httpStatus: 404, error: "Drawing not found in this package." };
   const { data, error } = await db.from("forge_work_takeoff_lines")
     .select("*").eq("owner_id", ownerId).eq("drawing_id", drawingId)
     .order("line_no", { ascending: true });
@@ -129,12 +153,10 @@ export async function listTakeoffLinesForDrawing(db, { ownerId, drawingId }) {
   return { ok: true, lines: (data || []).map(toCamelLine) };
 }
 
-/** Creates one takeoff line on a drawing. lineNo is assigned as one past the current max for that drawing unless the caller supplies it explicitly. */
-export async function createTakeoffLine(db, { ownerId, actor, input }) {
-  const { data: drawing, error: drawingError } = await db.from("forge_work_drawings")
-    .select("id").eq("owner_id", ownerId).eq("id", input?.drawingId).maybeSingle();
-  if (drawingError) throw drawingError;
-  if (!drawing) return { ok: false, httpStatus: 404, error: "Drawing not found." };
+/** Creates one takeoff line on a drawing. Proves the drawing is in the named package first (WPP1-003). lineNo is assigned as one past the current max for that drawing unless the caller supplies it explicitly. */
+export async function createTakeoffLine(db, { ownerId, packageId, actor, input }) {
+  const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId: input?.drawingId });
+  if (!drawing) return { ok: false, httpStatus: 404, error: "Drawing not found in this package." };
 
   let lineNo = input.lineNo;
   if (lineNo == null) {
@@ -176,8 +198,8 @@ export async function createTakeoffLine(db, { ownerId, actor, input }) {
   return { ok: true, line: toCamelLine(data) };
 }
 
-/** Updates one takeoff line in place (everything editable, per the slice's standing constraints). */
-export async function updateTakeoffLine(db, { ownerId, lineId, patch }) {
+/** Updates one takeoff line in place (everything editable, per the slice's standing constraints). Proves the full parent chain first (WPP1-003): the line must sit on the drawing named in the URL, and that drawing must sit in the package named in the URL. */
+export async function updateTakeoffLine(db, { ownerId, packageId, drawingId, lineId, patch }) {
   const merged = { ...patch, drawingId: patch.drawingId ?? "unused-for-validation-only", lineNo: patch.lineNo ?? 1 };
   // Only fields the caller actually sent are validated/written — a
   // partial-patch update must not require re-sending every field.
@@ -213,6 +235,13 @@ export async function updateTakeoffLine(db, { ownerId, lineId, patch }) {
   });
   if (!validation.ok) return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
 
+  // WPP1-003: prove the full parent chain before mutating.
+  if (current.drawing_id !== drawingId) {
+    return { ok: false, httpStatus: 404, error: "Takeoff line not found in this drawing." };
+  }
+  const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId });
+  if (!drawing) return { ok: false, httpStatus: 404, error: "Takeoff line not found in this package." };
+
   writable.updated_at = new Date().toISOString();
   const { data, error } = await db.from("forge_work_takeoff_lines")
     .update(writable).eq("owner_id", ownerId).eq("id", lineId).select().single();
@@ -220,8 +249,18 @@ export async function updateTakeoffLine(db, { ownerId, lineId, patch }) {
   return { ok: true, line: toCamelLine(data) };
 }
 
-export async function deleteTakeoffLine(db, { ownerId, lineId }) {
-  const { error } = await db.from("forge_work_takeoff_lines").delete().eq("owner_id", ownerId).eq("id", lineId);
+/** Deletes one takeoff line. Proves the full parent chain first (WPP1-003) — a line from another drawing or package addressed through this URL is a 404, not a delete. */
+export async function deleteTakeoffLine(db, { ownerId, packageId, drawingId, lineId }) {
+  const { data: line, error: lineError } = await db.from("forge_work_takeoff_lines")
+    .select("id, drawing_id").eq("owner_id", ownerId).eq("id", lineId).maybeSingle();
+  if (lineError) throw lineError;
+  if (!line || line.drawing_id !== drawingId) {
+    return { ok: false, httpStatus: 404, error: "Takeoff line not found in this drawing." };
+  }
+  const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId });
+  if (!drawing) return { ok: false, httpStatus: 404, error: "Takeoff line not found in this package." };
+  const { error } = await db.from("forge_work_takeoff_lines").delete()
+    .eq("owner_id", ownerId).eq("id", lineId).eq("drawing_id", drawingId);
   if (error) throw error;
   return { ok: true };
 }
@@ -231,17 +270,23 @@ export async function deleteTakeoffLine(db, { ownerId, lineId }) {
  * the P&ID's own takeoff lines plus every drawing whose pIdDrawingId
  * points at it, then hands the combined set to the pure summary builder.
  */
-export async function getPidTakeoffSummary(db, { ownerId, pIdDrawingId }) {
+export async function getPidTakeoffSummary(db, { ownerId, packageId, pIdDrawingId }) {
   const { data: pidDrawing, error: pidError } = await db.from("forge_work_drawings")
     .select("id, drawing_type, package_id").eq("owner_id", ownerId).eq("id", pIdDrawingId).maybeSingle();
   if (pidError) throw pidError;
   if (!pidDrawing) return { ok: false, httpStatus: 404, error: "P&ID drawing not found." };
+  // WPP1-003: a P&ID from another package addressed through this
+  // package's URL is a 404, not a summary of the wrong package.
+  if (pidDrawing.package_id !== packageId) {
+    return { ok: false, httpStatus: 404, error: "P&ID drawing not found in this package." };
+  }
   if (pidDrawing.drawing_type !== "p_id") {
     return { ok: false, httpStatus: 400, error: "This drawing is not a P&ID — summaries are built per P&ID." };
   }
 
   const { data: childDrawings, error: childError } = await db.from("forge_work_drawings")
-    .select("id").eq("owner_id", ownerId).eq("p_id_drawing_id", pIdDrawingId);
+    .select("id").eq("owner_id", ownerId).eq("p_id_drawing_id", pIdDrawingId)
+    .eq("package_id", pidDrawing.package_id);
   if (childError) throw childError;
   const drawingIds = [pIdDrawingId, ...(childDrawings || []).map((d) => d.id)];
 

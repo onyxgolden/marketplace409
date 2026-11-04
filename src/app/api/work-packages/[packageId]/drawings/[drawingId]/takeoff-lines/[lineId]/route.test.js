@@ -26,7 +26,7 @@ describe("PATCH .../takeoff-lines/[lineId]", () => {
       { params: params() },
     );
     expect(response.status).toBe(200);
-    expect(updateTakeoffLine).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", lineId: "line_1", patch: { quantity: 55 } });
+    expect(updateTakeoffLine).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: { quantity: 55 } });
   });
 });
 
@@ -35,6 +35,6 @@ describe("DELETE .../takeoff-lines/[lineId]", () => {
     deleteTakeoffLine.mockResolvedValue({ ok: true });
     const response = await DELETE(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(200);
-    expect(deleteTakeoffLine).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", lineId: "line_1" });
+    expect(deleteTakeoffLine).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
   });
 });

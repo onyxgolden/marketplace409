@@ -24,7 +24,7 @@ describe("GET .../drawings/[drawingId]/takeoff-lines", () => {
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(200);
     expect((await response.json()).lines).toHaveLength(1);
-    expect(listTakeoffLinesForDrawing).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", drawingId: "dwg_1" });
+    expect(listTakeoffLinesForDrawing).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", drawingId: "dwg_1" });
   });
 });
 
@@ -37,7 +37,7 @@ describe("POST .../drawings/[drawingId]/takeoff-lines", () => {
     );
     expect(response.status).toBe(201);
     expect(createTakeoffLine).toHaveBeenCalledWith(AUTH.db, {
-      ownerId: "owner_1", actor: "user_9",
+      ownerId: "owner_1", packageId: "pkg_1", actor: "user_9",
       input: { description: "pipe", quantity: 10, unit: "ft", category: "pipe", fabLocation: "shop", drawingId: "dwg_1" },
     });
   });

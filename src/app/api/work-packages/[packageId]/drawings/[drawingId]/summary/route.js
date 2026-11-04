@@ -5,8 +5,8 @@ export async function GET(request, { params }) {
   const auth = await workAuth();
   if (auth.error) return auth.error;
   try {
-    const { drawingId } = await params;
-    const result = await getPidTakeoffSummary(auth.db, { ownerId: auth.ownerId, pIdDrawingId: drawingId });
+    const { packageId, drawingId } = await params;
+    const result = await getPidTakeoffSummary(auth.db, { ownerId: auth.ownerId, packageId, pIdDrawingId: drawingId });
     if (!result.ok) return fail(result);
     return ok({ summary: result.summary });
   } catch (error) {

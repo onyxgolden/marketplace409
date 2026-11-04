@@ -23,7 +23,7 @@ describe("GET .../drawings/[drawingId]/summary", () => {
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(200);
     expect((await response.json()).summary.totals.lineCount).toBe(2);
-    expect(getPidTakeoffSummary).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", pIdDrawingId: "dwg_pid1" });
+    expect(getPidTakeoffSummary).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", pIdDrawingId: "dwg_pid1" });
   });
 
   it("maps 'not a P&ID' to 400", async () => {

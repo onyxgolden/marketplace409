@@ -37,8 +37,14 @@ create table if not exists forge_work_drawings (
   updated_at timestamptz not null default now(),
   primary key (owner_id, id),
   unique (owner_id, package_id, drawing_number),
+  -- Same-package parentage (WPP1-002): a child drawing's P&ID must live
+  -- in the SAME package. The referenced column set must be unique, so
+  -- the (owner_id, package_id, id) unique key exists only to back this
+  -- composite foreign key — it is implied by the primary key.
+  unique (owner_id, package_id, id),
   foreign key (owner_id, package_id) references forge_work_packages (owner_id, id),
-  foreign key (owner_id, p_id_drawing_id) references forge_work_drawings (owner_id, id),
+  foreign key (owner_id, package_id, p_id_drawing_id)
+    references forge_work_drawings (owner_id, package_id, id),
   check (
     (drawing_type = 'p_id' and p_id_drawing_id is null)
     or (drawing_type <> 'p_id' and p_id_drawing_id is not null)
@@ -81,7 +87,14 @@ create table if not exists forge_work_takeoff_lines (
 create index if not exists idx_forge_work_takeoff_lines_owner_drawing
   on forge_work_takeoff_lines (owner_id, drawing_id, line_no);
 
-grant select, insert, update, delete on forge_work_drawings to authenticated;
+-- Controlled-document rule (WPP1-001): planner drawings are NOT
+-- editable in-tool — DELETE is the only drawing mutation. The grant
+-- below deliberately omits UPDATE, and there is deliberately NO
+-- forge_work_drawings UPDATE policy: with FORCE ROW LEVEL SECURITY an
+-- authenticated UPDATE is denied even for a same-workspace principal.
+-- Takeoff LINES keep their UPDATE grant/policy (line editing is
+-- separate from drawing editing).
+grant select, insert, delete on forge_work_drawings to authenticated;
 grant select, insert, update, delete on forge_work_takeoff_lines to authenticated;
 
 alter table forge_work_drawings enable row level security;
@@ -93,9 +106,6 @@ create policy forge_work_drawings_workspace_select on forge_work_drawings
   for select to authenticated using (has_workspace_access(owner_id));
 create policy forge_work_drawings_workspace_insert on forge_work_drawings
   for insert to authenticated with check (has_workspace_access(owner_id));
-create policy forge_work_drawings_workspace_update on forge_work_drawings
-  for update to authenticated
-  using (has_workspace_access(owner_id)) with check (has_workspace_access(owner_id));
 create policy forge_work_drawings_workspace_delete on forge_work_drawings
   for delete to authenticated using (has_workspace_access(owner_id));
 

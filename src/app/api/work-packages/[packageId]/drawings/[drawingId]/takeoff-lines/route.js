@@ -5,8 +5,8 @@ export async function GET(request, { params }) {
   const auth = await workAuth();
   if (auth.error) return auth.error;
   try {
-    const { drawingId } = await params;
-    const result = await listTakeoffLinesForDrawing(auth.db, { ownerId: auth.ownerId, drawingId });
+    const { packageId, drawingId } = await params;
+    const result = await listTakeoffLinesForDrawing(auth.db, { ownerId: auth.ownerId, packageId, drawingId });
     if (!result.ok) return fail(result);
     return ok({ lines: result.lines });
   } catch (error) {
@@ -18,10 +18,11 @@ export async function POST(request, { params }) {
   const auth = await workAuth();
   if (auth.error) return auth.error;
   try {
-    const { drawingId } = await params;
+    const { packageId, drawingId } = await params;
     const body = await readJson(request);
     const result = await createTakeoffLine(auth.db, {
       ownerId: auth.ownerId,
+      packageId,
       actor: auth.actor,
       input: { ...body, drawingId },
     });

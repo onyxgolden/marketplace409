@@ -76,6 +76,19 @@ describe("createDrawing", () => {
     expect(result.error).toMatch(/drawingType is p_id/);
   });
 
+  it("WPP1-002: a child in package A cannot roll up to a P&ID in package B", async () => {
+    const isoInput = { packageId: "pkg_1", drawingNumber: "ISO-001", drawingType: "isometric", pIdDrawingId: "dwg_other_pkg_pid" };
+    const pkgChain = chain({ data: { id: "pkg_1" }, error: null });
+    // Package-scoped lookup finds nothing: the P&ID lives in pkg_2, not pkg_1.
+    const pidLookupChain = chain({ data: null, error: null });
+    const db = mockDb([pkgChain, pidLookupChain]);
+    const result = await createDrawing(db, { ownerId: OWNER, actor: ACTOR, input: isoInput });
+    expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(result.error).toMatch(/in this package/);
+    expect(pidLookupChain.eq).toHaveBeenCalledWith("package_id", "pkg_1");
+    expect(db.from).toHaveBeenCalledTimes(2);
+  });
+
   it("maps a unique-violation into a clear 409, not a raw DB error", async () => {
     const pkgChain = chain({ data: { id: "pkg_1" }, error: null });
     const insertChain = chain({ data: null, error: { code: "23505", message: "duplicate key" } });
@@ -102,10 +115,12 @@ describe("listDrawingsForPackage", () => {
 });
 
 describe("deleteDrawing", () => {
+  const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
+
   it("refuses to delete a P&ID that still has child drawings rolled up to it", async () => {
     const childrenChain = chain({ data: [{ id: "dwg_child" }], error: null });
-    const db = mockDb([childrenChain]);
-    const result = await deleteDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1" });
+    const db = mockDb([drawingChain, childrenChain]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_pid1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
     expect(result.error).toMatch(/rolled up/);
   });
@@ -113,8 +128,8 @@ describe("deleteDrawing", () => {
   it("refuses to delete a drawing that still has takeoff lines", async () => {
     const childrenChain = chain({ data: [], error: null });
     const linesChain = chain({ data: [{ id: "line_1" }], error: null });
-    const db = mockDb([childrenChain, linesChain]);
-    const result = await deleteDrawing(db, { ownerId: OWNER, drawingId: "dwg_1" });
+    const db = mockDb([drawingChain, childrenChain, linesChain]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
     expect(result.error).toMatch(/takeoff lines/);
   });
@@ -123,9 +138,18 @@ describe("deleteDrawing", () => {
     const childrenChain = chain({ data: [], error: null });
     const linesChain = chain({ data: [], error: null });
     const deleteChain = chain({ data: null, error: null });
-    const db = mockDb([childrenChain, linesChain, deleteChain]);
-    const result = await deleteDrawing(db, { ownerId: OWNER, drawingId: "dwg_1" });
+    const db = mockDb([drawingChain, childrenChain, linesChain, deleteChain]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result).toEqual({ ok: true });
+  });
+
+  it("WPP1-003: 404s when the drawing lives in another package than the URL names", async () => {
+    const otherPkgChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
+    const db = mockDb([otherPkgChain]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this package/);
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -136,7 +160,7 @@ describe("createTakeoffLine", () => {
   };
 
   it("auto-assigns the next lineNo when none is supplied", async () => {
-    const drawingChain = chain({ data: { id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const maxLineChain = chain({ data: [{ line_no: 3 }], error: null });
     const insertChain = chain({
       data: {
@@ -149,14 +173,14 @@ describe("createTakeoffLine", () => {
       error: null,
     });
     const db = mockDb([drawingChain, maxLineChain, insertChain]);
-    const result = await createTakeoffLine(db, { ownerId: OWNER, actor: ACTOR, input });
+    const result = await createTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
     expect(result.ok).toBe(true);
     expect(result.line.lineNo).toBe(4);
     expect(result.line.quantity).toBe(40);
   });
 
   it("starts at lineNo 1 for a drawing with no existing lines", async () => {
-    const drawingChain = chain({ data: { id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const maxLineChain = chain({ data: [], error: null });
     const insertChain = chain({
       data: {
@@ -168,7 +192,7 @@ describe("createTakeoffLine", () => {
     });
     const db = mockDb([drawingChain, maxLineChain, insertChain]);
     const result = await createTakeoffLine(db, {
-      ownerId: OWNER, actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1", actor: ACTOR,
       input: { drawingId: "dwg_1", description: "x", quantity: 1, unit: "ea", category: "other", fabLocation: "field" },
     });
     expect(result.line.lineNo).toBe(1);
@@ -176,31 +200,49 @@ describe("createTakeoffLine", () => {
 
   it("404s on a missing drawing", async () => {
     const db = mockDb([chain({ data: null, error: null })]);
-    const result = await createTakeoffLine(db, { ownerId: OWNER, actor: ACTOR, input });
+    const result = await createTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
   });
 
+  it("WPP1-003: 404s when the drawing lives in another package than the URL names, without inserting", async () => {
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
+    const db = mockDb([drawingChain]);
+    const result = await createTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this package/);
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an invalid line (e.g. bad category) without inserting", async () => {
-    const drawingChain = chain({ data: { id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const maxLineChain = chain({ data: [], error: null });
     const db = mockDb([drawingChain, maxLineChain]);
-    const result = await createTakeoffLine(db, { ownerId: OWNER, actor: ACTOR, input: { ...input, category: "bogus" } });
+    const result = await createTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input: { ...input, category: "bogus" } });
     expect(result).toMatchObject({ ok: false, httpStatus: 400 });
   });
 });
 
 describe("listTakeoffLinesForDrawing", () => {
   it("returns every line on a drawing, camelCased, in line-number order", async () => {
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const rows = [{
       id: "line_1", owner_id: OWNER, drawing_id: "dwg_1", line_no: 1, description: "pipe",
       quantity: "10", unit: "ft", category: "pipe", fab_location: "shop",
       field_weld_count: 0, requires_field_fit: false, created_at: "t1", updated_at: "t1",
     }];
-    const db = mockDb([chain({ data: rows, error: null })]);
-    const result = await listTakeoffLinesForDrawing(db, { ownerId: OWNER, drawingId: "dwg_1" });
+    const db = mockDb([drawingChain, chain({ data: rows, error: null })]);
+    const result = await listTakeoffLinesForDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result.ok).toBe(true);
     expect(result.lines).toHaveLength(1);
     expect(result.lines[0]).toMatchObject({ id: "line_1", lineNo: 1, quantity: 10 });
+  });
+
+  it("WPP1-003: 404s when the drawing lives in another package than the URL names", async () => {
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
+    const db = mockDb([drawingChain]);
+    const result = await listTakeoffLinesForDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -215,9 +257,10 @@ describe("updateTakeoffLine", () => {
 
   it("updates only the supplied fields and re-validates the merged result", async () => {
     const currentChain = chain({ data: CURRENT, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const updateChain = chain({ data: { ...CURRENT, quantity: "55", updated_at: "t2" }, error: null });
-    const db = mockDb([currentChain, updateChain]);
-    const result = await updateTakeoffLine(db, { ownerId: OWNER, lineId: "line_1", patch: { quantity: 55 } });
+    const db = mockDb([currentChain, drawingChain, updateChain]);
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: { quantity: 55 } });
     expect(result.ok).toBe(true);
     expect(result.line.quantity).toBe(55);
     expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({ quantity: 55 }));
@@ -226,42 +269,89 @@ describe("updateTakeoffLine", () => {
   it("rejects an update that would make the line invalid (e.g. negative quantity)", async () => {
     const currentChain = chain({ data: CURRENT, error: null });
     const db = mockDb([currentChain]);
-    const result = await updateTakeoffLine(db, { ownerId: OWNER, lineId: "line_1", patch: { quantity: -5 } });
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: { quantity: -5 } });
     expect(result).toMatchObject({ ok: false, httpStatus: 400 });
   });
 
   it("refuses a no-op patch with no editable fields", async () => {
     const db = mockDb([]);
-    const result = await updateTakeoffLine(db, { ownerId: OWNER, lineId: "line_1", patch: {} });
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: {} });
     expect(result).toMatchObject({ ok: false, httpStatus: 400 });
     expect(db.from).not.toHaveBeenCalled();
   });
 
   it("404s on a missing line", async () => {
     const db = mockDb([chain({ data: null, error: null })]);
-    const result = await updateTakeoffLine(db, { ownerId: OWNER, lineId: "missing", patch: { quantity: 1 } });
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "missing", patch: { quantity: 1 } });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+  });
+
+  it("WPP1-003: 404s when the line sits on a different drawing than the URL names, without updating", async () => {
+    const currentChain = chain({ data: { ...CURRENT, drawing_id: "dwg_9" }, error: null });
+    const db = mockDb([currentChain]);
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: { quantity: 55 } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this drawing/);
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("WPP1-003: 404s when the line's drawing lives in another package than the URL names, without updating", async () => {
+    const currentChain = chain({ data: CURRENT, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
+    const db = mockDb([currentChain, drawingChain]);
+    const result = await updateTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1", patch: { quantity: 55 } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this package/);
+    expect(db.from).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("deleteTakeoffLine", () => {
   it("deletes the line", async () => {
-    const db = mockDb([chain({ data: null, error: null })]);
-    const result = await deleteTakeoffLine(db, { ownerId: OWNER, lineId: "line_1" });
+    const lineChain = chain({ data: { id: "line_1", drawing_id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
+    const deleteChain = chain({ data: null, error: null });
+    const db = mockDb([lineChain, drawingChain, deleteChain]);
+    const result = await deleteTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
     expect(result).toEqual({ ok: true });
+  });
+
+  it("WPP1-003: 404s when the line sits on a different drawing than the URL names, without deleting", async () => {
+    const lineChain = chain({ data: { id: "line_1", drawing_id: "dwg_9" }, error: null });
+    const db = mockDb([lineChain]);
+    const result = await deleteTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("WPP1-003: 404s when the line's drawing lives in another package than the URL names, without deleting", async () => {
+    const lineChain = chain({ data: { id: "line_1", drawing_id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
+    const db = mockDb([lineChain, drawingChain]);
+    const result = await deleteTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(db.from).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("getPidTakeoffSummary", () => {
   it("404s on a missing drawing", async () => {
     const db = mockDb([chain({ data: null, error: null })]);
-    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, pIdDrawingId: "missing" });
+    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, packageId: "pkg_1", pIdDrawingId: "missing" });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+  });
+
+  it("WPP1-003: 404s when the P&ID lives in another package than the URL names", async () => {
+    const db = mockDb([chain({ data: { id: "dwg_pid1", drawing_type: "p_id", package_id: "pkg_2" }, error: null })]);
+    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, packageId: "pkg_1", pIdDrawingId: "dwg_pid1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this package/);
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
 
   it("refuses to summarize a non-p_id drawing as if it were a P&ID", async () => {
     const db = mockDb([chain({ data: { id: "dwg_1", drawing_type: "isometric", package_id: "pkg_1" }, error: null })]);
-    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, pIdDrawingId: "dwg_1" });
+    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, packageId: "pkg_1", pIdDrawingId: "dwg_1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 400 });
   });
 
@@ -284,7 +374,7 @@ describe("getPidTakeoffSummary", () => {
       error: null,
     });
     const db = mockDb([pidChain, childrenChain, linesChain]);
-    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, pIdDrawingId: "dwg_pid1" });
+    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, packageId: "pkg_1", pIdDrawingId: "dwg_pid1" });
     expect(result.ok).toBe(true);
     expect(result.summary.packageId).toBe("pkg_1");
     expect(result.summary.totals.lineCount).toBe(2);
@@ -295,6 +385,7 @@ describe("getPidTakeoffSummary", () => {
     expect(result.summary.fwFfw.suggestedFfwCount).toBe(1);
     // Confirms the children query was correctly scoped to this P&ID.
     expect(childrenChain.eq).toHaveBeenCalledWith("p_id_drawing_id", "dwg_pid1");
+    expect(childrenChain.eq).toHaveBeenCalledWith("package_id", "pkg_1");
   });
 
   it("a P&ID with no child drawings yet still summarizes its own lines", async () => {
@@ -302,7 +393,7 @@ describe("getPidTakeoffSummary", () => {
     const childrenChain = chain({ data: [], error: null });
     const linesChain = chain({ data: [], error: null });
     const db = mockDb([pidChain, childrenChain, linesChain]);
-    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, pIdDrawingId: "dwg_pid1" });
+    const result = await getPidTakeoffSummary(db, { ownerId: OWNER, packageId: "pkg_1", pIdDrawingId: "dwg_pid1" });
     expect(result.ok).toBe(true);
     expect(result.summary.totals.lineCount).toBe(0);
   });

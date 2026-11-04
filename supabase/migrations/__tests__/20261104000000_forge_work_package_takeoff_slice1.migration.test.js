@@ -196,4 +196,46 @@ describe("forge_work_package_takeoff_slice1 migration", () => {
     );
     await asActor("owner_1", "owner_1");
   });
+
+  it("WPP1-002 counterexample: a child in package B cannot roll up to a P&ID in package A", async () => {
+    // dwg_pid1 is a P&ID in pkg_1; pkg_2 exists from the uniqueness test.
+    await expectRejected(
+      exec(`
+        insert into forge_work_drawings (owner_id, id, package_id, drawing_number, drawing_type, p_id_drawing_id)
+        values ('owner_1', 'dwg_cross_pkg', 'pkg_2', 'ISO-999', 'isometric', 'dwg_pid1')
+      `),
+      /foreign key/i,
+    );
+  });
+
+  it("WPP1-001: no UPDATE policy exists on drawings, direct UPDATE is rejected, DELETE still allowed", async () => {
+    const updatePolicies = await query(`
+      select policyname from pg_policies
+      where schemaname = 'public' and tablename = 'forge_work_drawings' and cmd = 'UPDATE'
+    `);
+    expect(updatePolicies).toEqual([]);
+
+    await exec(`insert into forge_work_packages (owner_id, id) values ('owner_1', 'pkg_3')`);
+    await exec(`
+      insert into forge_work_drawings (owner_id, id, package_id, drawing_number, drawing_type)
+      values ('owner_1', 'dwg_upd', 'pkg_3', 'P-301', 'p_id')
+    `);
+    // Same-workspace principal, own drawing — UPDATE must still be denied:
+    // drawings are controlled documents, DELETE-only.
+    await expectRejected(
+      exec(`
+        update forge_work_drawings set drawing_number = 'P-302' where id = 'dwg_upd'
+      `),
+      /permission denied|row-level security|policy/i,
+    );
+    await expectRejected(
+      exec(`
+        update forge_work_drawings set title = 'renamed' where id = 'dwg_upd'
+      `),
+      /permission denied|row-level security|policy/i,
+    );
+    await exec(`delete from forge_work_drawings where id = 'dwg_upd'`);
+    const rows = await query(`select id from forge_work_drawings where id = 'dwg_upd'`);
+    expect(rows).toEqual([]);
+  });
 });

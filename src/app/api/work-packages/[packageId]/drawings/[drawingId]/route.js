@@ -5,8 +5,8 @@ export async function DELETE(request, { params }) {
   const auth = await workAuth();
   if (auth.error) return auth.error;
   try {
-    const { drawingId } = await params;
-    const result = await deleteDrawing(auth.db, { ownerId: auth.ownerId, drawingId });
+    const { packageId, drawingId } = await params;
+    const result = await deleteDrawing(auth.db, { ownerId: auth.ownerId, packageId, drawingId });
     if (!result.ok) return fail(result);
     return ok({ deleted: true });
   } catch (error) {
