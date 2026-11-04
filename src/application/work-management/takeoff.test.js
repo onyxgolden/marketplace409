@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createDrawing, listDrawingsForPackage, deleteDrawing,
+  createDrawing, listDrawingsForPackage, updateDrawing, deleteDrawing,
   createTakeoffLine, listTakeoffLinesForDrawing, updateTakeoffLine, deleteTakeoffLine,
   getPidTakeoffSummary,
 } from "./takeoff.js";
@@ -126,6 +126,85 @@ describe("deleteDrawing", () => {
     const db = mockDb([childrenChain, linesChain, deleteChain]);
     const result = await deleteDrawing(db, { ownerId: OWNER, drawingId: "dwg_1" });
     expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("updateDrawing", () => {
+  const CURRENT_PID = {
+    id: "dwg_pid1", owner_id: OWNER, package_id: "pkg_1", drawing_number: "P-101",
+    drawing_type: "p_id", title: null, p_id_drawing_id: null,
+    created_at: "t1", updated_at: "t1",
+  };
+  const CURRENT_CUT = {
+    id: "dwg_cut1", owner_id: OWNER, package_id: "pkg_1", drawing_number: "CS-001",
+    drawing_type: "cut_sheet", title: "Cut sheet", p_id_drawing_id: "dwg_pid1",
+    created_at: "t1", updated_at: "t1",
+  };
+
+  it("updates only the supplied fields and re-validates the merged result", async () => {
+    const currentChain = chain({ data: CURRENT_PID, error: null });
+    const updateChain = chain({ data: { ...CURRENT_PID, drawing_number: "P-102", updated_at: "t2" }, error: null });
+    const db = mockDb([currentChain, updateChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1", patch: { drawingNumber: "P-102" } });
+    expect(result.ok).toBe(true);
+    expect(result.drawing.drawingNumber).toBe("P-102");
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({ drawing_number: "P-102" }));
+  });
+
+  it("rejects an update that would make the drawing invalid (e.g. blank number)", async () => {
+    const currentChain = chain({ data: CURRENT_PID, error: null });
+    const db = mockDb([currentChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1", patch: { drawingNumber: "  " } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+  });
+
+  it("refuses a no-op patch with no editable fields", async () => {
+    const db = mockDb([]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1", patch: { drawingType: "cut_sheet" } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("404s on a missing drawing", async () => {
+    const db = mockDb([chain({ data: null, error: null })]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "missing", patch: { title: "New title" } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+  });
+
+  it("re-points a cut sheet to another P&ID after confirming the target is a p_id", async () => {
+    const currentChain = chain({ data: CURRENT_CUT, error: null });
+    const pidLookupChain = chain({ data: { id: "dwg_pid2", drawing_type: "p_id" }, error: null });
+    const updateChain = chain({ data: { ...CURRENT_CUT, p_id_drawing_id: "dwg_pid2", updated_at: "t2" }, error: null });
+    const db = mockDb([currentChain, pidLookupChain, updateChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_cut1", patch: { pIdDrawingId: "dwg_pid2" } });
+    expect(result.ok).toBe(true);
+    expect(result.drawing.pIdDrawingId).toBe("dwg_pid2");
+  });
+
+  it("refuses to re-point a cut sheet to a drawing that is not a p_id", async () => {
+    const currentChain = chain({ data: CURRENT_CUT, error: null });
+    const pidLookupChain = chain({ data: { id: "dwg_other", drawing_type: "isometric" }, error: null });
+    const db = mockDb([currentChain, pidLookupChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_cut1", patch: { pIdDrawingId: "dwg_other" } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(result.error).toMatch(/drawingType is p_id/);
+  });
+
+  it("refuses to set a rollup target on a p_id drawing", async () => {
+    const currentChain = chain({ data: CURRENT_PID, error: null });
+    const db = mockDb([currentChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1", patch: { pIdDrawingId: "dwg_pid2" } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(result.error).toMatch(/must not be set on a p_id/);
+  });
+
+  it("maps a unique-violation into a clear 409, not a raw DB error", async () => {
+    const currentChain = chain({ data: CURRENT_PID, error: null });
+    const updateChain = chain({ data: null, error: { code: "23505", message: "duplicate key" } });
+    const db = mockDb([currentChain, updateChain]);
+    const result = await updateDrawing(db, { ownerId: OWNER, drawingId: "dwg_pid1", patch: { drawingNumber: "P-999" } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+    expect(result.error).toMatch(/already exists/);
   });
 });
 

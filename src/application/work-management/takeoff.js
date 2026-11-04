@@ -101,6 +101,53 @@ export async function listDrawingsForPackage(db, { ownerId, packageId }) {
   return { ok: true, drawings: (data || []).map(toCamelDrawing) };
 }
 
+/** Updates one drawing sheet in place (everything editable, per the slice's standing constraints). Only the number, title, and — for cut sheets/isometrics — the P&ID it rolls up to are editable: the drawing's type never changes here, since a type change would move the drawing to a different rollup graph. A type correction is a delete plus a re-add. */
+export async function updateDrawing(db, { ownerId, drawingId, patch }) {
+  // Only fields the caller actually sent are validated/written — a
+  // partial-patch update must not require re-sending every field.
+  // drawingType is deliberately not writable (see above).
+  const writable = {};
+  if (patch.drawingNumber !== undefined) writable.drawing_number = patch.drawingNumber;
+  if (patch.title !== undefined) writable.title = patch.title || null;
+  if (patch.pIdDrawingId !== undefined) writable.p_id_drawing_id = patch.pIdDrawingId;
+
+  if (Object.keys(writable).length === 0) return { ok: false, httpStatus: 400, error: "No editable fields were supplied." };
+
+  const { data: current, error: currentError } = await db.from("forge_work_drawings")
+    .select("*").eq("owner_id", ownerId).eq("id", drawingId).maybeSingle();
+  if (currentError) throw currentError;
+  if (!current) return { ok: false, httpStatus: 404, error: "Drawing not found." };
+
+  const merged = {
+    packageId: current.package_id,
+    drawingNumber: patch.drawingNumber !== undefined ? patch.drawingNumber : current.drawing_number,
+    drawingType: current.drawing_type,
+    title: patch.title !== undefined ? (patch.title || null) : current.title,
+    pIdDrawingId: patch.pIdDrawingId !== undefined ? patch.pIdDrawingId : current.p_id_drawing_id,
+  };
+  const validation = validateDrawingInput(merged);
+  if (!validation.ok) return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
+
+  if (merged.drawingType !== "p_id" && patch.pIdDrawingId !== undefined) {
+    const { data: pidDrawing, error: pidError } = await db.from("forge_work_drawings")
+      .select("id, drawing_type").eq("owner_id", ownerId).eq("id", merged.pIdDrawingId).maybeSingle();
+    if (pidError) throw pidError;
+    if (!pidDrawing) return { ok: false, httpStatus: 400, error: "pIdDrawingId does not name an existing drawing." };
+    if (pidDrawing.drawing_type !== "p_id") {
+      return { ok: false, httpStatus: 400, error: "pIdDrawingId must name a drawing whose drawingType is p_id." };
+    }
+  }
+
+  writable.updated_at = new Date().toISOString();
+  const { data, error } = await db.from("forge_work_drawings")
+    .update(writable).eq("owner_id", ownerId).eq("id", drawingId).select().single();
+  if (error) {
+    if (error.code === "23505") return { ok: false, httpStatus: 409, error: `A drawing numbered "${merged.drawingNumber}" already exists in this package.` };
+    throw error;
+  }
+  return { ok: true, drawing: toCamelDrawing(data) };
+}
+
 /** Deletes a drawing sheet. Refuses if any other drawing still rolls up to it, or it still has takeoff lines — both would be orphaned data, not a cascading convenience delete. */
 export async function deleteDrawing(db, { ownerId, drawingId }) {
   const { data: children, error: childError } = await db.from("forge_work_drawings")

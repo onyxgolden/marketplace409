@@ -377,8 +377,12 @@ function LinesTable({ packageId, drawingId, lines, onChanged, onDeleted }) {
   );
 }
 
-function DrawingPanel({ packageId, drawing }) {
+function DrawingPanel({ packageId, drawing, pIdDrawings, onDrawingUpdated, onDrawingDeleted }) {
   const [confirmation, setConfirmation] = useState("");
+  const [drawingEditing, setDrawingEditing] = useState(false);
+  const [drawingDraft, setDrawingDraft] = useState(drawing);
+  const [drawingBusy, setDrawingBusy] = useState(false);
+  const [drawingError, setDrawingError] = useState("");
   // Bumped only to re-key the leaf PidSummaryPanel below (a small,
   // self-contained refetch flash there is fine); the lines list itself
   // uses a stable key + refresh() so this panel's own form/confirmation
@@ -410,6 +414,42 @@ function DrawingPanel({ packageId, drawing }) {
     bump();
   }
 
+  function startDrawingEdit() {
+    setDrawingDraft(drawing);
+    setDrawingEditing(true);
+    setDrawingError("");
+  }
+
+  async function onDrawingSave() {
+    setDrawingBusy(true);
+    setDrawingError("");
+    try {
+      const body = { drawingNumber: drawingDraft.drawingNumber, title: drawingDraft.title || undefined };
+      if (drawing.drawingType !== "p_id") body.pIdDrawingId = drawingDraft.pIdDrawingId;
+      const { drawing: updated } = await api(`/api/work-packages/${packageId}/drawings/${drawing.id}`, {
+        method: "PATCH", body: JSON.stringify(body),
+      });
+      setDrawingEditing(false);
+      onDrawingUpdated(updated, `Saved — ${DRAWING_TYPE_LABELS[updated.drawingType]} "${updated.drawingNumber}" updated.`);
+    } catch (err) {
+      setDrawingError(err.message);
+    } finally {
+      setDrawingBusy(false);
+    }
+  }
+
+  async function onDrawingDelete() {
+    setDrawingBusy(true);
+    setDrawingError("");
+    try {
+      await api(`/api/work-packages/${packageId}/drawings/${drawing.id}`, { method: "DELETE" });
+      onDrawingDeleted(drawing);
+    } catch (err) {
+      setDrawingError(err.message);
+      setDrawingBusy(false);
+    }
+  }
+
   return (
     <div className={forgeTheme.cardCompact}>
       <div className="flex items-center justify-between">
@@ -417,7 +457,45 @@ function DrawingPanel({ packageId, drawing }) {
           <p className={forgeTheme.labelSmall}>{DRAWING_TYPE_LABELS[drawing.drawingType]}</p>
           <p className="text-lg font-black">{drawing.drawingNumber}{drawing.title ? ` — ${drawing.title}` : ""}</p>
         </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={startDrawingEdit} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-700">Edit</button>
+          <button type="button" onClick={onDrawingDelete} disabled={drawingBusy}
+            className="rounded-lg border border-red-300 px-2.5 py-1 text-xs font-bold text-red-700 disabled:opacity-50">
+            {drawingBusy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </div>
+      {drawingEditing && (
+        <div className="mt-3 rounded-xl bg-amber-50 p-3 dark:bg-amber-900/20">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className={forgeTheme.labelSmall}>Drawing number</span>
+              <input value={drawingDraft.drawingNumber} onChange={(e) => setDrawingDraft({ ...drawingDraft, drawingNumber: e.target.value })} required
+                placeholder="Drawing number" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            </label>
+            <label className="text-sm">
+              <span className={forgeTheme.labelSmall}>Title (optional)</span>
+              <input value={drawingDraft.title || ""} onChange={(e) => setDrawingDraft({ ...drawingDraft, title: e.target.value })}
+                placeholder="Title" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            </label>
+            {drawing.drawingType !== "p_id" && (
+              <label className="text-sm sm:col-span-2">
+                <span className={forgeTheme.labelSmall}>Which P&ID does this roll up to?</span>
+                <select value={drawingDraft.pIdDrawingId || ""} onChange={(e) => setDrawingDraft({ ...drawingDraft, pIdDrawingId: e.target.value })} required
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+                  <option value="">Select a P&ID…</option>
+                  {pIdDrawings.map((d) => (
+                    <option key={d.id} value={d.id}>{d.drawingNumber}{d.title ? ` — ${d.title}` : ""}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <button type="button" onClick={onDrawingSave} disabled={drawingBusy} className="mt-3 rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{drawingBusy ? "Saving…" : "Save"}</button>
+          <button type="button" onClick={() => setDrawingEditing(false)} className="ml-2 text-xs font-bold text-slate-600">Cancel</button>
+        </div>
+      )}
+      <ErrorNote message={drawingError} />
 
       <div className="mt-4">
         <NewLineForm packageId={packageId} drawingId={drawing.id} onCreated={onLineCreated} />
@@ -444,6 +522,7 @@ function DrawingPanel({ packageId, drawing }) {
 
 export default function WorkPackageTakeoffScreen({ packageId }) {
   const [activeDrawingId, setActiveDrawingId] = useState(null);
+  const [drawingConfirmation, setDrawingConfirmation] = useState("");
   // Stable key, never rotated: a mutation calls refresh() (stale-while-
   // revalidate, old data stays on screen) rather than changing the key,
   // which would otherwise cold-start this fetch and show the full-page
@@ -462,6 +541,17 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
   const activeDrawing = (drawings || []).find((d) => d.id === activeDrawingId)
     || (drawings && drawings.length > 0 ? drawings[0] : null);
 
+  function onDrawingUpdated(updatedDrawing, message) {
+    setDrawingConfirmation(message);
+    refresh();
+  }
+
+  function onDrawingDeleted(drawing) {
+    setDrawingConfirmation(`Deleted — ${DRAWING_TYPE_LABELS[drawing.drawingType]} "${drawing.drawingNumber}" was removed.`);
+    setActiveDrawingId(null);
+    refresh();
+  }
+
   return (
     <section className={forgeTheme.card}>
       <p className={forgeTheme.labelSmall}>Work Package Planner</p>
@@ -475,6 +565,7 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
       <div className="mt-5">
         <NewDrawingForm packageId={packageId} pIdDrawings={pIdDrawings} onCreated={() => refresh()} />
       </div>
+      <Confirmation message={drawingConfirmation} />
 
       {(drawings || []).length === 0 ? (
         <div className="mt-5">
@@ -492,7 +583,8 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
           </nav>
           <div>
             {activeDrawing && (
-              <DrawingPanel key={activeDrawing.id} packageId={packageId} drawing={activeDrawing} />
+              <DrawingPanel key={activeDrawing.id} packageId={packageId} drawing={activeDrawing}
+                pIdDrawings={pIdDrawings} onDrawingUpdated={onDrawingUpdated} onDrawingDeleted={onDrawingDeleted} />
             )}
           </div>
         </div>
