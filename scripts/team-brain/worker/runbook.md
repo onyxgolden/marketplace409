@@ -16,8 +16,14 @@ credential, an episode body, or a callback payload.
 
 ## 1. Install (disabled)
 
-1. Copy the package (`scripts/team-brain/worker/` +
-   `scripts/team-brain/postgres/`) to the qualified Windows host.
+1. Copy the WHOLE package tree (`scripts/team-brain/`) to the
+   qualified Windows host. `worker/` + `postgres/` alone does NOT
+   run: `worker/worker.mjs` imports `../consolidation/engine.mjs`
+   and `../consolidation/scheduling.mjs`, and `worker/backup.mjs`
+   imports `../report/stableStringify.mjs` — staging only those two
+   directories fails immediately with `ERR_MODULE_NOT_FOUND`
+   (found in P8 Step A qualification, 2026-11-03). Do not
+   cherry-pick directories; stage the full tree.
 2. Register the task DISABLED (never enabled by this step):
    `register-worker-task.ps1 -TaskName "Team Brain Worker" -WorkerUser "NT SERVICE\TeamBrainWorker" -NodePath "C:\Program Files\nodejs\node.exe" -WorkerScript "C:\team-brain\worker\run.mjs" -ConfigPath "C:\team-brain\worker-config.json" -WorkingDir "C:\team-brain" -XmlTemplate "C:\team-brain\task-definition.xml"`
 3. Verify: `schtasks /Query /TN "Team Brain Worker" /FO LIST /V`
@@ -87,11 +93,19 @@ Two halves, both safe at any time:
 
 ## 6. Backup and isolated restore
 
-- Backup (read-only, observer connection):
-  `node scripts/team-brain/worker/run.mjs --config <path> --backup <file.json>`
+- Backup (read-only, OWNER handle — never the observer connection):
+  `node scripts/team-brain/worker/run.mjs --config <path> --backup <file.json> --owner-user tb_admin --owner-password-env <NAME>`
   The document carries per-table rows plus counts and digests.
   Surrogate sequence values are excluded by design (they regenerate
   on restore); content parity is what the manifest proves.
+  The owner handle is required because the backup covers all 20
+  team-brain tables and the observer/reader handle holds SELECT on
+  only 12 of them by design — it deliberately lacks the other 8
+  (incl. tb_episode_grants), so a reader export fails 42501.
+  Do NOT work around that by widening the reader: pass the owner
+  handle (tb_admin holds the full 20-table read set and no writes).
+  The owner credentials arrive via the named environment variable,
+  never via the config file.
 - Restore (isolated database ONLY):
   `node scripts/team-brain/worker/run.mjs --config <path> --restore <file.json> --restore-user <owner> --restore-password-env <NAME>`
   with `TB_RESTORE_DATABASE` naming the isolated target database.
