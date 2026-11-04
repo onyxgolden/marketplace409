@@ -1221,6 +1221,151 @@ pub enum ApplyReviewActionError {
     Io(String),
 }
 
+/// C4A-002: [`forge_capture_core::sop_redaction::detect_and_bind_all_candidates`]
+/// had no non-test call site before this function existed — the detectors
+/// and binders were fully built and tested (C4A-001/002/003), but nothing
+/// in the app actually ran them against a real frame's OCR tokens and
+/// persisted the result into a real session. This is that missing
+/// production path: given one frame's already-computed OCR tokens (OCR
+/// model execution itself is a separate, Jason-gated dependency/download
+/// decision — `results/claude/capture-c2-p2-authorization-needed-2026-10-27.md`
+/// in forge-ai-drop — and is never performed here; this function's job
+/// starts *after* tokens exist, from wherever they come from), runs
+/// detection+binding and writes the resulting candidates onto that
+/// frame's `redaction_candidates`.
+///
+/// Takes the same [`session_lock`]/[`CrossProcessSessionLock`] pair every
+/// other guarded session mutation does, for the same reason: reading the
+/// frame's current state and persisting the ingested candidates must be
+/// one atomic span, not two steps a concurrent writer (another ingest
+/// call, or a reviewer's own `apply_review_action_if_current`) could land
+/// between.
+///
+/// **Ingestion, not an edit.** Candidate population happens once, before
+/// any human review of this frame has started — it is not a
+/// [`forge_capture_core::sop_session::EditOperation`] variant, and does
+/// not append an [`forge_capture_core::sop_session::EditEvent`] or
+/// advance `session.revision`: revision is strictly tied to the edit
+/// chain's length ([`forge_capture_core::sop_session::validate_edit_chain`]
+/// requires the chain's own end to equal `session.revision` exactly), and
+/// there is no edit here to record. `expected_session_revision` still
+/// guards against a concurrent writer: it is checked against the real
+/// current revision under the lock, the same staleness contract every
+/// other guarded write gives a caller, even though a successful call
+/// here leaves that revision unchanged.
+///
+/// Refuses (without writing anything) if the frame already has any
+/// candidates — ingestion is a one-time, pre-review step; silently
+/// replacing an already-populated frame's candidates could discard real
+/// review decisions a human already made against the old set. A frame
+/// that genuinely needs re-detection (OCR corrected, model upgraded) is a
+/// deliberate, separately designed operation, not an implicit side
+/// effect of calling this again.
+///
+/// `unbound_matches` in the returned [`IngestedReviewCandidates`] is
+/// never silently dropped — see
+/// [`forge_capture_core::sop_redaction::BindingResult`]'s own doc
+/// comment: a real detection that could not be safely bound to a region
+/// must be surfaced to the caller as blocking, never treated as an
+/// absent detection.
+pub fn populate_review_candidates_if_current(
+    confined: &ConfinedPath<'_>,
+    frame_id: &str,
+    ocr_tokens: &[forge_capture_core::sop_session::OcrToken],
+    expected_session_revision: u64,
+) -> Result<IngestedReviewCandidates, PopulateReviewCandidatesError> {
+    use forge_capture_core::sop_redaction::detect_and_bind_all_candidates;
+    use forge_capture_core::sop_session::parse_session;
+
+    let lock = session_lock(confined.lock_path());
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _cross_process_guard =
+        CrossProcessSessionLock::acquire(confined.lock_path()).map_err(PopulateReviewCandidatesError::Io)?;
+
+    let bytes = match fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(PopulateReviewCandidatesError::SessionNotFound),
+        Err(e) => return Err(PopulateReviewCandidatesError::Io(format!("cannot read session file: {e}"))),
+    };
+    let mut session = parse_session(&bytes).map_err(PopulateReviewCandidatesError::SessionParse)?;
+
+    if session.revision != expected_session_revision {
+        return Err(PopulateReviewCandidatesError::StaleSessionRevision {
+            expected: expected_session_revision,
+            current: session.revision,
+        });
+    }
+
+    let frame = session
+        .source_frames
+        .iter_mut()
+        .find(|f| f.frame_id == frame_id)
+        .ok_or_else(|| PopulateReviewCandidatesError::FrameNotFound(frame_id.to_string()))?;
+
+    if !frame.redaction_candidates.is_empty() {
+        return Err(PopulateReviewCandidatesError::AlreadyPopulated {
+            frame_id: frame_id.to_string(),
+            existing_count: frame.redaction_candidates.len(),
+        });
+    }
+
+    let binding = detect_and_bind_all_candidates(ocr_tokens, frame.width, frame.height, frame_id)
+        .map_err(PopulateReviewCandidatesError::Binding)?;
+
+    let candidate_count = binding.candidates.len();
+    let unbound_count = binding.unbound_matches.len();
+    frame.redaction_candidates = binding.candidates;
+
+    // Defense in depth, same as apply_review_action_if_current: the exact
+    // document this function is about to make durable must itself be
+    // structurally valid, not just "the inputs looked fine." Nothing is
+    // written if this fails. Ingestion never changes `revision` or
+    // `edit_events`, so this is the fuller `validate_session` (which also
+    // re-checks every candidate's own shape/box-bounds), not just the
+    // edit-chain check `apply_review_action_if_current` additionally
+    // needs for its own revision bump.
+    forge_capture_core::sop_session::validate_session(&session)
+        .map_err(PopulateReviewCandidatesError::PostMutationInvalid)?;
+
+    let bytes =
+        serde_json::to_vec(&session).map_err(|e| PopulateReviewCandidatesError::Io(format!("cannot serialize session: {e}")))?;
+
+    cleanup_orphaned_temp_files(confined.path());
+    confined.atomic_write_with_fsync(&bytes).map_err(PopulateReviewCandidatesError::Io)?;
+
+    Ok(IngestedReviewCandidates { candidate_count, unbound_count })
+}
+
+/// [`populate_review_candidates_if_current`]'s success value — counts
+/// only (never the candidates/matches themselves, which could carry OCR
+/// text or a matched sensitive value; a caller that needs the candidates
+/// back reads them the same guarded way every other reader does, via
+/// [`read_review_candidates_snapshot`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestedReviewCandidates {
+    pub candidate_count: usize,
+    /// See [`populate_review_candidates_if_current`]'s own doc comment —
+    /// never a reason to treat this call as failed, but never to be
+    /// silently dropped by a caller either.
+    pub unbound_count: usize,
+}
+
+#[derive(Debug)]
+pub enum PopulateReviewCandidatesError {
+    SessionNotFound,
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    FrameNotFound(String),
+    StaleSessionRevision { expected: u64, current: u64 },
+    /// The named frame already has one or more candidates — see this
+    /// function's own doc comment for why ingestion refuses rather than
+    /// replacing them.
+    AlreadyPopulated { frame_id: String, existing_count: usize },
+    Binding(forge_capture_core::sop_redaction::BindMatchesError),
+    PostMutationInvalid(forge_capture_core::sop_session::SessionError),
+    Io(String),
+}
+
 /// C2-P6A frontend review UI: the upper bound a session document's raw
 /// bytes must fit under before [`read_review_candidates_snapshot`] will
 /// even attempt to parse it. Session files hold structural metadata only
@@ -3596,6 +3741,127 @@ mod tests {
         drop(confined_a);
         drop(confined_b);
         fs::remove_dir_all(&root).ok();
+    }
+
+    // --- populate_review_candidates_if_current (C4A-002: the real,
+    // non-test OCR-tokens-to-session production path) ---
+
+    use forge_capture_core::sop_session::OcrToken;
+
+    fn ocr_token(id: &str, text: &str, line_id: &str, box_: (i64, i64, u64, u64)) -> OcrToken {
+        OcrToken {
+            token_id: id.to_string(),
+            text: text.to_string(),
+            box_x: box_.0,
+            box_y: box_.1,
+            box_w: box_.2,
+            box_h: box_.3,
+            line_id: line_id.to_string(),
+            language: "en".to_string(),
+            confidence: 0.99,
+            engine_identity: "test-engine".to_string(),
+        }
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_detects_and_persists_real_candidates_from_ocr_tokens() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0).expect("ingestion must succeed on a fresh, unpopulated frame");
+        assert_eq!(result.candidate_count, 1);
+        assert_eq!(result.unbound_count, 0);
+
+        // Persisted for real — a second, independent read sees the exact
+        // candidate this call reported, not just an in-memory value this
+        // function happened to return.
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        let frame = &on_disk.source_frames[0];
+        assert_eq!(frame.redaction_candidates.len(), 1);
+        assert_eq!(frame.redaction_candidates[0].detector_id, "det.phone_number");
+        assert_eq!(frame.redaction_candidates[0].disposition, Disposition::Pending);
+
+        // Ingestion is not an edit: no edit event, revision unchanged.
+        assert!(on_disk.edit_events.is_empty());
+        assert_eq!(on_disk.revision, 0);
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_refuses_a_frame_that_already_has_candidates() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        let tokens = vec![ocr_token("t1", "555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0);
+        assert!(
+            matches!(result, Err(PopulateReviewCandidatesError::AlreadyPopulated { existing_count: 1, .. })),
+            "{result:?}"
+        );
+
+        // Refusal must not have touched the file — the original candidate
+        // is still exactly what was there, not silently replaced.
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.source_frames[0].redaction_candidates.len(), 1);
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].candidate_id, "c1");
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_refuses_an_unknown_frame() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "does-not-exist", &tokens, 0);
+        assert!(matches!(result, Err(PopulateReviewCandidatesError::FrameNotFound(id)) if id == "does-not-exist"));
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_refuses_a_stale_expected_revision_and_writes_nothing() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 99);
+        assert!(
+            matches!(result, Err(PopulateReviewCandidatesError::StaleSessionRevision { expected: 99, current: 0 })),
+            "{result:?}"
+        );
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert!(on_disk.source_frames[0].redaction_candidates.is_empty(), "a stale call must write nothing");
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+
+        let tokens = vec![ocr_token("t1", "555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0);
+        assert!(matches!(result, Err(PopulateReviewCandidatesError::SessionNotFound)));
+    }
+
+    #[test]
+    fn populate_review_candidates_if_current_accepts_a_frame_with_nothing_detected_as_zero_candidates_not_an_error() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "nothing sensitive here", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0).expect("a clean frame is success, not an error");
+        assert_eq!(result.candidate_count, 0);
+        assert_eq!(result.unbound_count, 0);
     }
 
     // --- read_review_candidates_snapshot (C2-P6A frontend review UI) ---

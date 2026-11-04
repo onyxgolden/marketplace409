@@ -33,8 +33,9 @@ use tauri::AppHandle;
 use forge_capture_core::sop_session::Disposition;
 
 use crate::sop_workspace::{
-    apply_review_action_if_current, read_review_candidates_snapshot, resolve_confined_path, ApplyReviewActionError, ReadReviewCandidatesError,
-    ReviewCandidatesSnapshot, WorkspaceRoot,
+    apply_review_action_if_current, populate_review_candidates_if_current, read_review_candidates_snapshot, resolve_confined_path,
+    ApplyReviewActionError, IngestedReviewCandidates, PopulateReviewCandidatesError, ReadReviewCandidatesError, ReviewCandidatesSnapshot,
+    WorkspaceRoot,
 };
 
 /// Parses a [`Disposition`]'s stable wire code (`"PENDING"`, `"REDACT"`,
@@ -174,6 +175,63 @@ fn get_review_candidates_impl(workspace_root: &std::path::Path, session_relative
 #[allow(non_snake_case)]
 pub fn get_review_candidates(workspaceRoot: String, sessionRelativePath: String, frameId: String) -> Result<ReviewCandidatesSnapshot, String> {
     get_review_candidates_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId)
+}
+
+fn populate_review_candidates_error_to_string(err: PopulateReviewCandidatesError) -> String {
+    match err {
+        PopulateReviewCandidatesError::SessionNotFound => "no session exists yet at that path".to_string(),
+        PopulateReviewCandidatesError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
+        PopulateReviewCandidatesError::FrameNotFound(id) => format!("no frame with id {id} in this session"),
+        PopulateReviewCandidatesError::StaleSessionRevision { expected, current } => {
+            format!("stale: expected revision {expected}, session is actually at {current} — reload and try again")
+        }
+        PopulateReviewCandidatesError::AlreadyPopulated { frame_id, existing_count } => {
+            format!("frame {frame_id} already has {existing_count} candidate(s) — ingestion only runs once per frame")
+        }
+        PopulateReviewCandidatesError::Binding(e) => format!("could not bind detected candidates to OCR tokens: {e:?}"),
+        PopulateReviewCandidatesError::PostMutationInvalid(e) => format!("internal error: candidate ingestion produced an invalid session: {e:?}"),
+        PopulateReviewCandidatesError::Io(msg) => msg,
+    }
+}
+
+/// The real work behind [`ingest_review_candidates`], factored out the
+/// same way [`get_review_candidates_impl`] is.
+fn ingest_review_candidates_impl(
+    workspace_root: &std::path::Path,
+    session_relative_path: &str,
+    frame_id: &str,
+    ocr_tokens: &[forge_capture_core::sop_session::OcrToken],
+    expected_session_revision: u64,
+) -> Result<IngestedReviewCandidates, String> {
+    let root = WorkspaceRoot::open(workspace_root).map_err(|e| format!("cannot open workspace root: {e:?}"))?;
+    let confined = resolve_confined_path(&root, session_relative_path).map_err(|e| format!("cannot resolve session path: {e:?}"))?;
+    populate_review_candidates_if_current(&confined, frame_id, ocr_tokens, expected_session_revision)
+        .map_err(populate_review_candidates_error_to_string)
+}
+
+/// Tauri command (C4A-002): the real, non-test production path from one
+/// frame's already-computed OCR tokens to persisted review candidates —
+/// see [`crate::sop_workspace::populate_review_candidates_if_current`]'s
+/// own doc comment for why this is "ingestion," not an edit, and why it
+/// refuses rather than replaces when the frame already has candidates.
+/// OCR model execution itself is not performed by this command or
+/// anything it calls — it is a separate, not-yet-authorized dependency
+/// decision; this command's job starts from tokens the caller already
+/// has.
+///
+/// Tauri matches invoke argument names to Rust parameter names exactly
+/// (no case conversion), so these are camelCase to match what a JS
+/// caller sends — see [`get_review_candidates`] for the same convention.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn ingest_review_candidates(
+    workspaceRoot: String,
+    sessionRelativePath: String,
+    frameId: String,
+    ocrTokens: Vec<forge_capture_core::sop_session::OcrToken>,
+    expectedSessionRevision: u64,
+) -> Result<IngestedReviewCandidates, String> {
+    ingest_review_candidates_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId, &ocrTokens, expectedSessionRevision)
 }
 
 /// Tauri command: apply a single reviewer disposition change to a SOP
