@@ -14,7 +14,15 @@
 //                       verification; without them, grant/pending
 //                       probes report NOT_VISIBLE (overall PARTIAL).
 //   --observer          Observer freshness report (read-only).
-//   --backup <file>     Export a backup document (read-only).
+//   --backup <file>     Export a backup document (read-only) through
+//                       an OWNER handle (--owner-user +
+//                       --owner-password-env, e.g. tb_admin). The
+//                       observer/reader handle cannot export by
+//                       design: it holds SELECT on only 12 of the 20
+//                       backup tables and deliberately lacks the
+//                       other 8 (incl. tb_episode_grants), so a
+//                       reader export fails 42501. Backup never
+//                       widens the reader to work around that.
 //   --restore <file>    Restore into an ISOLATED database (owner
 //                       credentials via --restore-user +
 //                       --restore-password-env; refuses worker/reader
@@ -52,7 +60,7 @@ Commands:
   --once
   --check [--owner-user <user> --owner-password-env <NAME>]
   --observer
-  --backup <file>
+  --backup <file> --owner-user <user> --owner-password-env <NAME>
   --restore <file> --restore-user <user> --restore-password-env <NAME>
   --reconcile
   --help`;
@@ -167,7 +175,18 @@ async function main(argv) {
 
     if (args.command === "backup") {
       if (args.backupFile == null) throw new Error("--backup requires a file path");
-      const backup = await exportBackup(observerPool);
+      if (args.ownerUser == null || args.ownerPasswordEnv == null) {
+        throw new Error("--backup requires --owner-user and --owner-password-env (owner handle with the full 20-table read set, e.g. tb_admin; the observer/reader handle cannot export by design)");
+      }
+      if (args.ownerUser === CONSOLIDATOR_ROLE || args.ownerUser === READER_ROLE) {
+        throw new Error(`--backup refuses worker/reader user ${args.ownerUser}: backup needs the owner handle (full read set), never the observer handle`);
+      }
+      const ownerPool = createTrustedPool(
+        { ...config.database, user: args.ownerUser, passwordEnv: args.ownerPasswordEnv },
+        { expectedRole: args.ownerUser, createPool: (opts) => new Pool(opts) },
+      );
+      pools.push(ownerPool);
+      const backup = await exportBackup(ownerPool);
       writeFileSync(args.backupFile, JSON.stringify(backup, null, 2));
       const counts = Object.fromEntries(Object.entries(backup.tables).map(([t, v]) => [t, v.count]));
       console.log(JSON.stringify({ file: args.backupFile, version: backup.version, tables: counts }));

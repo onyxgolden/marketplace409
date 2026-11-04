@@ -25,6 +25,7 @@ import { createRepository } from "../ledger/repository.mjs";
 import { migrate as migrateP5, createRetrievalRepository } from "../retrieval/repository.mjs";
 import { createConsolidationEngine, migrateP6 } from "../consolidation/engine.mjs";
 import { migrateWorker } from "../worker/worker.mjs";
+import { exportBackup, BACKUP_TABLES } from "../worker/backup.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const it60 = (name, fn) => it(name, fn, 60000);
@@ -246,6 +247,43 @@ describe("P7 role boundary (roles.sql)", () => {
     await db.exec(loadRolesSql());
     await db.query("SET ROLE tb_reader");
     await expect(db.query("INSERT INTO tb_consolidated_facts (fact_id, episode_id, fact_type, fact_key, fact_value, promoted_revision, promoted_run_date) VALUES ('f1', 'e1', 'EPISODE_RECORDED', 'k', 'v', 1, '2026-11-02')")).rejects.toThrow(/permission denied/);
+  });
+
+  it60("backup export succeeds as tb_admin while tb_reader still lacks the 8 tables", async () => {
+    // Regression for the P8 Step A --backup 42501 gap: the export
+    // covers all 20 tables, but tb_reader holds SELECT on only 12
+    // by design. The fix routes --backup through the owner handle
+    // (tb_admin: full 20-table read set, no writes) instead of
+    // widening the reader — this test pins both halves: the reader
+    // still cannot export, and the owner handle can, with the
+    // reader's grant set unchanged.
+    await seedPublicEpisodes(db, 1);
+    await db.query("SET ROLE tb_reader");
+    await expect(exportBackup(db)).rejects.toThrow(/permission denied/);
+    await db.query("RESET ROLE");
+    const readerTables = (
+      await db.query(
+        `SELECT table_name FROM information_schema.role_table_grants
+         WHERE grantee = 'tb_reader' AND privilege_type = 'SELECT' AND table_schema = 'public'`,
+      )
+    ).rows.map((r) => r.table_name);
+    const readerMissing = ALL_TABLES.filter((t) => !readerTables.includes(t));
+    expect(readerMissing.sort()).toEqual([
+      "tb_episode_events",
+      "tb_episode_grants",
+      "tb_pins",
+      "tb_working_set",
+      "team_brain_handoff_events",
+      "team_brain_obligation_dependencies",
+      "team_brain_obligation_events",
+      "team_brain_schema_version",
+    ]);
+    await db.query("SET ROLE tb_admin");
+    const backup = await exportBackup(db);
+    await db.query("RESET ROLE");
+    expect(backup.version).toBe("p7-backup-1");
+    expect(Object.keys(backup.tables).sort()).toEqual([...BACKUP_TABLES].sort());
+    expect(backup.tables.tb_episodes.count).toBe(1);
   });
 
   it60("sequence privilege: consolidator uses the audit + heartbeat sequences, reader cannot", async () => {
