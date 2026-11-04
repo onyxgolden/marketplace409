@@ -42,6 +42,7 @@ body {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 8px 16px 0;
 }
@@ -598,4 +599,19 @@ input[type="search"] {
 .review-reason-row input[type="text"] {
   flex: 1 1 200px;
   min-width: 0;
+}
+
+/* Narrow windows: stack the context-row fields instead of letting them push
+   the page into horizontal overflow (found during the C2-P6A packaged-
+   Windows walkthrough, 2026-11-04 — at ~420px the row never wrapped because
+   each <input> kept its default intrinsic width instead of shrinking). */
+@media (max-width: 640px) {
+  #panel-review .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  #panel-review .row .field,
+  #panel-review .row input {
+    width: 100%;
+  }
 }
