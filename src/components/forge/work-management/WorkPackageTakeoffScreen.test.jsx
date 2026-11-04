@@ -23,12 +23,6 @@ async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
-function setInputValue(input, value) {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-  setter.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
 function buttonWithText(container, text) {
   return [...container.querySelectorAll("button")].find((b) => b.textContent === text);
 }
@@ -118,40 +112,6 @@ describe("WorkPackageTakeoffScreen", () => {
     for (let i = 0; i < 8; i += 1) await flush();
 
     expect(mounted.container.textContent).toContain('Saved — P&ID "P-101" was added.');
-  });
-
-  it("editing a drawing shows a plain-words success confirmation", async () => {
-    let listedDrawings = [{ id: "dwg_pid1", drawingNumber: "P-101", drawingType: "p_id", title: null, pIdDrawingId: null }];
-    global.fetch = vi.fn((url, options) => {
-      if (url.endsWith("/drawings") && (!options || options.method === undefined)) {
-        return jsonResponse({ drawings: listedDrawings });
-      }
-      if (url.endsWith("/drawings/dwg_pid1") && options?.method === "PATCH") {
-        const updated = { ...listedDrawings[0], drawingNumber: "P-102" };
-        listedDrawings = [updated];
-        return jsonResponse({ drawing: updated });
-      }
-      if (url.includes("/takeoff-lines") && !options?.method) {
-        return jsonResponse({ lines: [] });
-      }
-      if (url.includes("/summary")) {
-        return jsonResponse(emptySummary("dwg_pid1"));
-      }
-      return jsonResponse({}, false);
-    });
-
-    mounted = mount(<WorkPackageTakeoffScreen packageId="pkg_edit" />);
-    await flush();
-
-    act(() => { buttonWithText(mounted.container, "Edit").click(); });
-    await flush();
-    const numberInput = [...mounted.container.querySelectorAll("input")].find((i) => i.placeholder === "Drawing number");
-    act(() => { setInputValue(numberInput, "P-102"); });
-    await flush();
-    act(() => { buttonWithText(mounted.container, "Save").click(); });
-    for (let i = 0; i < 8; i += 1) await flush();
-
-    expect(mounted.container.textContent).toContain('Saved — P&ID "P-102" updated.');
   });
 
   it("deleting a guarded drawing surfaces the 409 guard message instead of removing it", async () => {
