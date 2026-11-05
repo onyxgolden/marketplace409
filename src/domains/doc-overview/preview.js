@@ -40,13 +40,23 @@ function formatLocator(citation) {
   return citation.locatorLabel ?? citation.locator?.type ?? "unknown location";
 }
 
-/** Markdown export of an explainer artifact's content. */
-export function renderExplainerMarkdown(content) {
+/**
+ * Markdown export of an explainer artifact's content. Status-aware:
+ * approved/kept exports carry no draft labeling (the export gate only
+ * runs on approved/kept artifacts, so an unconditional "Draft"
+ * line would contradict the review state); draft/needs_review
+ * renderings keep the draft line. Callers pass the artifact status;
+ * omitting it keeps the draft wording (the previous behavior).
+ */
+export function renderExplainerMarkdown(content, { status } = {}) {
   const index = referenceIndex(content.references);
   const lines = [];
   lines.push(`# ${content.title ?? "Untitled overview"}`);
   lines.push("");
-  lines.push(`> Draft explainer generated locally from admitted source ranges. Every claim cites its source passage; see References.`);
+  const approved = status === "approved" || status === "kept";
+  lines.push(approved
+    ? `> Approved explainer generated locally from admitted source ranges. Every claim cites its source passage; see References.`
+    : `> Draft explainer generated locally from admitted source ranges. Every claim cites its source passage; see References.`);
   lines.push("");
   lines.push("## Summary");
   lines.push("");

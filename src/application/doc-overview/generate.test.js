@@ -293,6 +293,190 @@ describe("review flow", () => {
   });
 });
 
+describe("fix round 1: export status rendering + strict edit contract", () => {
+  const actor = "curator-1";
+
+  function approve(store, artifactId) {
+    expect(reviewArtifact({ store, artifactId, action: "submit", actor }).ok).toBe(true);
+    const approved = reviewArtifact({ store, artifactId, action: "approve", actor });
+    expect(approved.ok).toBe(true);
+    return approved;
+  }
+
+  it("P1-1: draft infographic preview is marked, approved export is unmarked and keeps citations", () => {
+    const { store, manifest, texts } = setup();
+    const [, infographic] = generate(store, manifest, texts);
+    const draftPreview = getArtifactPreview({ store, artifactId: infographic.id });
+    expect(draftPreview.html).toContain("DRAFT — NOT VERIFIED");
+    approve(store, infographic.id);
+    const exported = exportArtifact({ store, artifactId: infographic.id });
+    expect(exported.ok).toBe(true);
+    expect(exported.content).toContain("<svg");
+    expect(exported.content).not.toContain("DRAFT — NOT VERIFIED");
+    expect(exported.content).not.toContain("DRAFT");
+    // Citations and the legend survive the export re-render.
+    expect(exported.content).toContain("Sources");
+    expect(exported.content).toMatch(/\[1\]/);
+    expect(exported.content).not.toContain("<script");
+    // The approved preview is unmarked too (same status/rendering fix).
+    expect(getArtifactPreview({ store, artifactId: infographic.id }).html).not.toContain("DRAFT — NOT VERIFIED");
+  });
+
+  it("P1-1: stale infographic export is refused", () => {
+    const { store, manifest, texts } = setup();
+    const [, infographic] = generate(store, manifest, texts);
+    approve(store, infographic.id);
+    const changed = {
+      ...manifest,
+      documents: manifest.documents.map((d, i) => (i === 0 ? { ...d, contentHash: "b".repeat(64) } : d)),
+    };
+    changed.sourceSetHash = computeSourceSetHash(changed.documents);
+    store.saveSourceSet(changed);
+    const exported = exportArtifact({ store, artifactId: infographic.id });
+    expect(exported.ok).toBe(false);
+    expect(exported.error.code).toBe("STALE_SOURCE");
+  });
+
+  it("P1-4: approved explainer export carries no draft labeling", () => {
+    const { store, manifest, texts } = setup();
+    const [explainer] = generate(store, manifest, texts);
+    approve(store, explainer.id);
+    const exported = exportArtifact({ store, artifactId: explainer.id });
+    expect(exported.ok).toBe(true);
+    expect(exported.content).not.toContain("Draft explainer");
+    expect(exported.content).not.toContain("DRAFT — NOT VERIFIED");
+    expect(exported.content).toContain("Approved explainer");
+    expect(exported.content).toContain("## References");
+  });
+
+  it("P1-3: an edit emptying infographic findings is refused and stores nothing", () => {
+    const { store, manifest, texts } = setup();
+    const [, infographic] = generate(store, manifest, texts);
+    const before = store.getDraft(infographic.id);
+    const result = reviewArtifact({
+      store, artifactId: infographic.id, action: "edit", actor,
+      editedContent: { kind: "infographic", findings: [] },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("INVALID_EDIT");
+    const after = store.getDraft(infographic.id);
+    expect(after.version).toBe(before.version);
+    expect(after.contentHash).toBe(before.contentHash);
+    expect(after.content.findings).toHaveLength(before.content.findings.length);
+  });
+
+  it("P1-3: an edit emptying every explainer section is refused and stores nothing", () => {
+    const { store, manifest, texts } = setup();
+    const [explainer] = generate(store, manifest, texts);
+    const before = store.getDraft(explainer.id);
+    const result = reviewArtifact({
+      store, artifactId: explainer.id, action: "edit", actor,
+      editedContent: { kind: "explainer", summary: [], keyConcepts: [], context: [], glossary: [] },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("INVALID_EDIT");
+    const after = store.getDraft(explainer.id);
+    expect(after.version).toBe(before.version);
+    expect(after.contentHash).toBe(before.contentHash);
+  });
+
+  it("P1-3: edits with a citation-less finding, or non-string text, are refused", () => {
+    const { store, manifest, texts } = setup();
+    const [, infographic] = generate(store, manifest, texts);
+    const draft = store.getDraft(infographic.id);
+    const rest = draft.content.findings.slice(1, 3);
+    expect(rest).toHaveLength(2);
+
+    const noCitation = reviewArtifact({
+      store, artifactId: infographic.id, action: "edit", actor,
+      editedContent: {
+        kind: "infographic",
+        findings: [{ text: draft.content.findings[0].text, citations: [] }, ...rest],
+      },
+    });
+    expect(noCitation.ok).toBe(false);
+    expect(noCitation.error.code).toBe("INVALID_EDIT");
+
+    const nonString = reviewArtifact({
+      store, artifactId: infographic.id, action: "edit", actor,
+      editedContent: {
+        kind: "infographic",
+        findings: [{ text: 42, citations: draft.content.findings[0].citations }, ...rest],
+      },
+    });
+    expect(nonString.ok).toBe(false);
+    expect(nonString.error.code).toBe("INVALID_EDIT");
+    expect(store.getDraft(infographic.id).version).toBe(1);
+  });
+
+  it("P1-3: a valid constrained infographic edit passes", () => {
+    const { store, manifest, texts } = setup();
+    const [, infographic] = generate(store, manifest, texts);
+    const draft = store.getDraft(infographic.id);
+    expect(draft.content.findings.length).toBeGreaterThanOrEqual(3);
+    const result = reviewArtifact({
+      store, artifactId: infographic.id, action: "edit", actor,
+      editedContent: { kind: "infographic", findings: draft.content.findings.slice(0, 3) },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.artifact.version).toBe(2);
+    expect(store.getDraft(infographic.id).content.findings).toHaveLength(3);
+  });
+
+  it("P1-3: thinning an explainer recomputes NEEDS REVIEW from the edited content", () => {
+    const { store, manifest, texts } = setup();
+    const [explainer] = generate(store, manifest, texts);
+    const draft = store.getDraft(explainer.id);
+    expect(draft.content.needsReview).toEqual([]);
+    const result = reviewArtifact({
+      store, artifactId: explainer.id, action: "edit", actor,
+      editedContent: {
+        kind: "explainer",
+        summary: [draft.content.summary[0]],
+        keyConcepts: [],
+        context: [],
+        glossary: [],
+      },
+    });
+    expect(result.ok).toBe(true);
+    const stored = store.getDraft(explainer.id);
+    expect(stored.content.needsReview.some((item) => item.code === "THIN_GROUNDED_MATERIAL")).toBe(true);
+    expect(stored.content.needsReview.some((item) => item.code === "NO_SUMMARY")).toBe(false);
+  });
+
+  it("P1-2: a glossary edit with an unsupported term is refused; a sourced term passes", () => {
+    const { store, manifest, texts } = setup();
+    const [explainer] = generate(store, manifest, texts);
+    const draft = store.getDraft(explainer.id);
+    expect(draft.content.glossary.length).toBeGreaterThan(0);
+    const entry = draft.content.glossary[0];
+    const before = store.getDraft(explainer.id);
+
+    const unsupported = reviewArtifact({
+      store, artifactId: explainer.id, action: "edit", actor,
+      editedContent: {
+        kind: "explainer",
+        glossary: [{ ...entry, term: "Treatment X cures disease Y" }],
+      },
+    });
+    expect(unsupported.ok).toBe(false);
+    expect(unsupported.error.code).toBe("CITATION_AUDIT_FAILED");
+    expect(store.getDraft(explainer.id).version).toBe(before.version);
+
+    // A term taken verbatim from its cited definition passes.
+    const sourcedTerm = entry.definition.split(" ").slice(0, 2).join(" ");
+    expect(entry.definition.toLowerCase()).toContain(sourcedTerm.toLowerCase());
+    const sourced = reviewArtifact({
+      store, artifactId: explainer.id, action: "edit", actor,
+      editedContent: {
+        kind: "explainer",
+        glossary: [{ ...entry, term: sourcedTerm }],
+      },
+    });
+    expect(sourced.ok).toBe(true);
+  });
+});
+
 describe("preview and listing", () => {
   it("previews a draft watermarked, and un-watermarked once approved", () => {
     const { store, manifest, texts } = setup();

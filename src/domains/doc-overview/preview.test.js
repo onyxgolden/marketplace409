@@ -68,6 +68,20 @@ describe("renderExplainerMarkdown", () => {
     expect(md).toContain("sha256 ");
     expect(md).toContain(content.references[0].checksum);
   });
+
+  it("labels approved/kept exports as approved, and keeps the draft line otherwise (P1-4)", () => {
+    const { manifest, extracts } = fixture();
+    const content = generateExplainer({ manifest, extracts });
+    const approved = renderExplainerMarkdown(content, { status: "approved" });
+    expect(approved).not.toContain("Draft explainer");
+    expect(approved).not.toContain("DRAFT — NOT VERIFIED");
+    expect(approved).toContain("Approved explainer");
+    const kept = renderExplainerMarkdown(content, { status: "kept" });
+    expect(kept).not.toContain("Draft explainer");
+    expect(kept).toContain("Approved explainer");
+    // No status (the old call shape) keeps the draft wording.
+    expect(renderExplainerMarkdown(content)).toContain("Draft explainer");
+  });
 });
 
 describe("renderExplainerHtml", () => {

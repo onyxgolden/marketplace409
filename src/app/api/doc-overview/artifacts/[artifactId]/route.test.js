@@ -167,6 +167,66 @@ describe("doc-overview single-artifact routes", () => {
     expect((await res.json()).code).toBe("CITATION_AUDIT_FAILED");
   });
 
+  it("refuses malformed edits at the route with 400 INVALID_EDIT (P1-3)", async () => {
+    const { store, explainer, infographic } = await setupGenerated();
+    const infoUrl = `http://localhost/api/doc-overview/artifacts/${infographic.id}/review`;
+    const exUrl = `http://localhost/api/doc-overview/artifacts/${explainer.id}/review`;
+    const draft = store.getDraft(infographic.id);
+    const rest = draft.content.findings.slice(1, 3);
+    expect(rest).toHaveLength(2);
+
+    // Empty findings: the edit would make the citation audit pass
+    // vacuously, so the schema refuses it before any audit or store.
+    const empty = await review(postJson(infoUrl, {
+      action: "edit", editedContent: { kind: "infographic", findings: [] },
+    }), params(infographic.id));
+    expect(empty.status).toBe(400);
+    expect((await empty.json()).code).toBe("INVALID_EDIT");
+
+    // A finding without citations.
+    const noCitation = await review(postJson(infoUrl, {
+      action: "edit",
+      editedContent: {
+        kind: "infographic",
+        findings: [{ text: draft.content.findings[0].text, citations: [] }, ...rest],
+      },
+    }), params(infographic.id));
+    expect(noCitation.status).toBe(400);
+    expect((await noCitation.json()).code).toBe("INVALID_EDIT");
+
+    // Non-string assertion text.
+    const nonString = await review(postJson(infoUrl, {
+      action: "edit",
+      editedContent: {
+        kind: "infographic",
+        findings: [{ text: 42, citations: draft.content.findings[0].citations }, ...rest],
+      },
+    }), params(infographic.id));
+    expect(nonString.status).toBe(400);
+    expect((await nonString.json()).code).toBe("INVALID_EDIT");
+
+    // Every explainer section emptied at once.
+    const emptied = await review(postJson(exUrl, {
+      action: "edit",
+      editedContent: { kind: "explainer", summary: [], keyConcepts: [], context: [], glossary: [] },
+    }), params(explainer.id));
+    expect(emptied.status).toBe(400);
+    expect((await emptied.json()).code).toBe("INVALID_EDIT");
+
+    // Nothing was stored by any refused edit.
+    expect(store.getDraft(infographic.id).version).toBe(1);
+    expect(store.getDraft(explainer.id).version).toBe(1);
+
+    // A valid constrained edit (3 findings, all cited) passes.
+    const valid = await review(postJson(infoUrl, {
+      action: "edit",
+      editedContent: { kind: "infographic", findings: draft.content.findings.slice(0, 3) },
+    }), params(infographic.id));
+    expect(valid.status).toBe(200);
+    expect((await valid.json()).artifact.version).toBe(2);
+    expect(store.getDraft(infographic.id).content.findings).toHaveLength(3);
+  });
+
   it("rejects unknown actions and bad ids with 400", async () => {
     const { explainer } = await setupGenerated();
     const badAction = await review(

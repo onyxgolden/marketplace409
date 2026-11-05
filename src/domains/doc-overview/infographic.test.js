@@ -54,6 +54,25 @@ describe("renderInfographicSvg", () => {
     expect(svg).toContain("DRAFT — NOT VERIFIED");
   });
 
+  it("renders a citation-less finding without throwing and without a citation number", () => {
+    // REFERENCES is deliberately non-empty: the pre-fix code
+    // dereferenced finding.citations[0] inside the legend lookup,
+    // which throws as soon as any reference exists to look up.
+    const svg = renderInfographicSvg({
+      title: "Energy in cells",
+      findings: [
+        { text: "Photosynthesis is the process by which green plants make food.", citations: [] },
+        { text: "The Calvin cycle fixes carbon dioxide into sugar molecules." },
+      ],
+      references: REFERENCES,
+      watermark: false,
+    });
+    expect(svg).toContain("Photosynthesis is the process by which green plants make food.");
+    expect(svg).toContain("The Calvin cycle fixes carbon dioxide into sugar molecules.");
+    expect(svg).not.toContain("make food. [1]");
+    expect(svg).not.toContain("molecules. [1]");
+  });
+
   it("never emits markup smuggled in through source text", () => {
     const hostile = finding("<script>alert(\"pwned\")</script> Plants make food from sunlight and water.");
     const svg = renderInfographicSvg({

@@ -179,6 +179,29 @@ describe("doc-overview loopback (real HTTP on 127.0.0.1)", () => {
     const infographicExportRes = await fetch(`${baseUrl}/api/doc-overview/artifacts/${infographic.id}/export`);
     expect(infographicExportRes.status).toBe(409);
 
+    // The infographic exports unmarked once approved (fix round 1,
+    // P1-1): the delivered SVG is rendered from the approved content
+    // with the watermark off, not the stored draft rendering.
+    const infoSubmitRes = await fetch(`${baseUrl}/api/doc-overview/artifacts/${infographic.id}/review`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "submit" }),
+    });
+    expect(infoSubmitRes.status).toBe(200);
+    const infoApproveRes = await fetch(`${baseUrl}/api/doc-overview/artifacts/${infographic.id}/review`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "approve" }),
+    });
+    expect(infoApproveRes.status).toBe(200);
+    const infoExportRes = await fetch(`${baseUrl}/api/doc-overview/artifacts/${infographic.id}/export`);
+    expect(infoExportRes.status).toBe(200);
+    expect(infoExportRes.headers.get("content-type")).toContain("image/svg+xml");
+    const svg = await infoExportRes.text();
+    expect(svg).toContain("<svg");
+    expect(svg).not.toContain("DRAFT — NOT VERIFIED");
+    expect(svg).toContain("Sources");
+
     // The store on disk holds the approved artifact after the HTTP flow.
     const reloaded = store.getDraft(explainer.id);
     expect(reloaded.status).toBe("approved");

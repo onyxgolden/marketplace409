@@ -115,11 +115,18 @@ export function renderInfographicSvg({ title, findings, references, watermark })
     lines.forEach((line, j) => {
       // The citation number is the index of the reference for this
       // finding's own passage (quote included): several findings can
-      // share one document+locator.
-      const refIndex = (references ?? []).findIndex((r) => r.documentId === finding.citations[0].documentId
-        && JSON.stringify(r.locator) === JSON.stringify(finding.citations[0].locator)
-        && r.quote === finding.citations[0].quote);
-      const ref = j === lines.length - 1 && finding.citations?.length > 0 && refIndex >= 0 ? ` [${refIndex + 1}]` : "";
+      // share one document+locator. A finding without citations
+      // renders without a number instead of throwing: the edit schema
+      // refuses citation-less findings before they can be stored, and
+      // this guard keeps a malformed stored draft from turning a
+      // render into a 500.
+      const firstCitation = finding.citations?.[0];
+      const refIndex = firstCitation
+        ? (references ?? []).findIndex((r) => r.documentId === firstCitation.documentId
+          && JSON.stringify(r.locator) === JSON.stringify(firstCitation.locator)
+          && r.quote === firstCitation.quote)
+        : -1;
+      const ref = j === lines.length - 1 && refIndex >= 0 ? ` [${refIndex + 1}]` : "";
       parts.push(
         `<text x="${MARGIN + 48}" y="${top + 6 + j * LINE_HEIGHT}" font-family="sans-serif" font-size="${FINDING_SIZE}" fill="#1e293b">${escapeHtml(line)}${ref ? escapeHtml(ref) : ""}</text>`,
       );

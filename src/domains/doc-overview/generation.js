@@ -386,6 +386,26 @@ export function auditCitations({ content, manifest, extracts, citationIndex }) {
     sections.push(...(content.summary ?? []), ...(content.keyConcepts ?? []), ...(content.context ?? []));
     for (const entry of content.glossary ?? []) {
       sections.push({ text: entry.definition ?? "", citations: entry.citations ?? [] });
+      // P1-2: the displayed term is itself a claim. The definition
+      // may be a correctly quoted, cited sentence while the term is
+      // an arbitrary curator-supplied assertion ("Treatment X cures
+      // disease Y") — the audit must not let the term inherit the
+      // definition's valid citation. Auditable rule: the term must
+      // appear verbatim (case-insensitive) in at least one of the
+      // entry's cited passages. Generation derives terms from the
+      // definitional sentence itself, so generated terms pass.
+      const term = typeof entry.term === "string" ? entry.term.trim() : "";
+      const quotes = (entry.citations ?? [])
+        .map((c) => c?.quote)
+        .filter((q) => typeof q === "string");
+      const termGrounded = term.length >= 2
+        && quotes.some((quote) => quote.toLowerCase().includes(term.toLowerCase()));
+      if (!termGrounded) {
+        issues.push({
+          code: "GLOSSARY_TERM_UNSOURCED",
+          message: `glossary term "${term}" does not appear in any of its cited source passages; a term must be taken verbatim from the cited text, not supplied as a new claim.`,
+        });
+      }
     }
   } else if (content?.kind === "infographic") {
     sections.push(...(content.findings ?? []));

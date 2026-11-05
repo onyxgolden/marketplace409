@@ -264,6 +264,30 @@ describe("auditCitations", () => {
     expect(audit.issues.some((i) => i.code === "MISSING_REFERENCE")).toBe(true);
   });
 
+  it("fails when a glossary term is not in its cited passage (P1-2)", () => {
+    const content = auditedContent();
+    expect(content.glossary.length).toBeGreaterThan(0);
+    const entry = content.glossary[0];
+    // The definition stays a correctly quoted, cited sentence; only
+    // the displayed term is replaced with an unsupported claim.
+    const edited = {
+      ...content,
+      glossary: [{ ...entry, term: "Treatment X cures disease Y" }],
+    };
+    const audit = auditCitations({ content: edited, manifest: manifestFor(), extracts: allExtracts() });
+    expect(audit.ok).toBe(false);
+    expect(audit.issues.some((i) => i.code === "GLOSSARY_TERM_UNSOURCED")).toBe(true);
+  });
+
+  it("accepts glossary terms taken verbatim from their cited passage (P1-2)", () => {
+    const content = auditedContent();
+    for (const entry of content.glossary) {
+      expect(entry.citations.some((c) => c.quote.toLowerCase().includes(entry.term.toLowerCase()))).toBe(true);
+    }
+    const audit = auditCitations({ content, manifest: manifestFor(), extracts: allExtracts() });
+    expect(audit.ok).toBe(true);
+  });
+
   it("audits edited content against the recorded citation index", () => {
     const content = auditedContent();
     const index = content.references;

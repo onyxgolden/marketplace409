@@ -62,7 +62,7 @@ import {
   invalidateIfStale,
   transitionArtifact,
 } from "@/domains/doc-overview/artifacts.js";
-import { MAX_CONTENT_CHARS, MAX_EDIT_CHARS, MAX_TOTAL_CHARS } from "@/domains/doc-overview/limits.js";
+import { MAX_CONTENT_CHARS, MAX_EDIT_CHARS, MAX_TOTAL_CHARS, MAX_FINDINGS_PER_INFOGRAPHIC, MIN_FINDINGS_PER_INFOGRAPHIC } from "@/domains/doc-overview/limits.js";
 
 /** Store root: env override, else the repo's gitignored data/ directory. */
 export function resolveDocOverviewRoot() {
@@ -194,6 +194,23 @@ export function listArtifacts({ store }) {
 }
 
 /**
+ * Renders an infographic SVG from content with the given watermark
+ * state, instead of trusting the stored `content.svg`. The stored SVG
+ * is the draft rendering (watermarked at generation/edit time); the
+ * watermark must follow the artifact's CURRENT status — draft previews
+ * marked, approved/kept exports unmarked — so every render site
+ * goes through here with an explicit watermark flag.
+ */
+function renderInfographicSvgFor(content, watermark) {
+  return renderInfographicSvg({
+    title: content.title,
+    findings: content.findings ?? [],
+    references: content.references ?? [],
+    watermark,
+  });
+}
+
+/**
  * Returns one draft with its watermarked preview HTML. Freshness is
  * reported, not hidden: a stale draft previews with a STALE banner.
  */
@@ -204,10 +221,17 @@ export function getArtifactPreview({ store, artifactId }) {
   const manifest = store.getSourceSet(artifact.sourceSetId);
   const { fresh } = manifest ? checkFreshness(artifact, manifest) : { fresh: false };
   const watermark = artifact.status === "draft" || artifact.status === "needs_review";
+  // An infographic preview renders the SVG fresh with the status
+  // watermark: the stored SVG is the draft rendering, so showing it
+  // for an approved artifact would keep a DRAFT banner inside the
+  // preview after approval. The stored record is untouched.
+  const previewArtifact = artifact.type === "infographic"
+    ? { ...artifact, content: { ...artifact.content, svg: renderInfographicSvgFor(artifact.content, watermark) } }
+    : artifact;
   const html = artifact.type === "explainer"
     ? renderExplainerHtml(artifact.content, { watermark, stale: !fresh })
-    : renderInfographicHtml(artifact.content, { watermark, stale: !fresh });
-  return { ok: true, artifact: publicArtifact(artifact), stale: !fresh, html };
+    : renderInfographicHtml(previewArtifact.content, { watermark, stale: !fresh });
+  return { ok: true, artifact: publicArtifact(previewArtifact), stale: !fresh, html };
 }
 
 function rebuildReferences(content) {
@@ -230,6 +254,74 @@ function rebuildReferences(content) {
   return references;
 }
 
+function isValidCitation(citation) {
+  return citation !== null && typeof citation === "object"
+    && isNonEmptyString(citation.documentId)
+    && citation.locator !== null && typeof citation.locator === "object"
+    && isNonEmptyString(citation.locator.type)
+    && isNonEmptyString(citation.checksum)
+    && isNonEmptyString(citation.quote);
+}
+
+function validateAssertion(assertion, where, errors) {
+  if (!assertion || typeof assertion !== "object") {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must be an assertion object with text and citations.` });
+    return;
+  }
+  if (!isNonEmptyString(assertion.text)) {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must carry non-empty assertion text.` });
+  }
+  if (!Array.isArray(assertion.citations) || assertion.citations.length === 0) {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must carry at least one citation.` });
+  } else {
+    for (const citation of assertion.citations) {
+      if (!isValidCitation(citation)) {
+        errors.push({
+          code: "INVALID_EDIT",
+          message: `${where} carries a malformed citation (documentId, locator, checksum and quote are all required).`,
+        });
+        break;
+      }
+    }
+  }
+}
+
+function validateGlossaryEntry(entry, where, errors) {
+  if (!entry || typeof entry !== "object") {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must be a glossary entry with term, definition and citations.` });
+    return;
+  }
+  if (!isNonEmptyString(entry.term)) {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must carry a non-empty glossary term.` });
+  }
+  if (!isNonEmptyString(entry.definition)) {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must carry a non-empty glossary definition.` });
+  }
+  if (!Array.isArray(entry.citations) || entry.citations.length === 0) {
+    errors.push({ code: "INVALID_EDIT", message: `${where} must carry at least one citation.` });
+  } else {
+    for (const citation of entry.citations) {
+      if (!isValidCitation(citation)) {
+        errors.push({
+          code: "INVALID_EDIT",
+          message: `${where} carries a malformed citation (documentId, locator, checksum and quote are all required).`,
+        });
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Strict nested edit schema, checked BEFORE any render or audit (P1-3).
+ * An edit may only replace section arrays with well-formed assertions:
+ * non-empty string text, a non-empty array of well-formed citations,
+ * glossary entries with a non-empty term and definition. Infographic
+ * findings supplied by an edit must already satisfy the 3–7 contract.
+ * Sections the edit omits keep their current values (validated later
+ * against the merged content). Any violation fails closed: the caller
+ * stores nothing.
+ */
 function validateEditedContent(edited, artifact) {
   const errors = [];
   if (!edited || typeof edited !== "object") {
@@ -238,12 +330,36 @@ function validateEditedContent(edited, artifact) {
   if (edited.kind !== artifact.type) {
     errors.push({ code: "INVALID_EDIT", message: `editedContent.kind must be ${artifact.type}.` });
   }
-  const sections = edited.kind === "explainer"
-    ? ["summary", "keyConcepts", "context", "glossary"]
-    : ["findings"];
-  for (const section of sections) {
-    if (edited[section] !== undefined && !Array.isArray(edited[section])) {
-      errors.push({ code: "INVALID_EDIT", message: `editedContent.${section} must be an array.` });
+  if (artifact.type === "explainer") {
+    for (const section of ["summary", "keyConcepts", "context"]) {
+      if (edited[section] === undefined) continue;
+      if (!Array.isArray(edited[section])) {
+        errors.push({ code: "INVALID_EDIT", message: `editedContent.${section} must be an array.` });
+        continue;
+      }
+      edited[section].forEach((assertion, i) => validateAssertion(assertion, `editedContent.${section}[${i}]`, errors));
+    }
+    if (edited.glossary !== undefined) {
+      if (!Array.isArray(edited.glossary)) {
+        errors.push({ code: "INVALID_EDIT", message: "editedContent.glossary must be an array." });
+      } else {
+        edited.glossary.forEach((entry, i) => validateGlossaryEntry(entry, `editedContent.glossary[${i}]`, errors));
+      }
+    }
+  } else {
+    if (edited.findings !== undefined) {
+      if (!Array.isArray(edited.findings)) {
+        errors.push({ code: "INVALID_EDIT", message: "editedContent.findings must be an array." });
+      } else {
+        if (edited.findings.length < MIN_FINDINGS_PER_INFOGRAPHIC
+          || edited.findings.length > MAX_FINDINGS_PER_INFOGRAPHIC) {
+          errors.push({
+            code: "INVALID_EDIT",
+            message: `editedContent.findings must hold ${MIN_FINDINGS_PER_INFOGRAPHIC}–${MAX_FINDINGS_PER_INFOGRAPHIC} findings (got ${edited.findings.length}).`,
+          });
+        }
+        edited.findings.forEach((finding, i) => validateAssertion(finding, `editedContent.findings[${i}]`, errors));
+      }
     }
   }
   if (edited.title !== undefined && typeof edited.title !== "string") {
@@ -255,6 +371,77 @@ function validateEditedContent(edited, artifact) {
   return errors;
 }
 
+/**
+ * Output-contract check on MERGED content (after applyEdit, before
+ * audit/store). Closes the vacuous-audit hole: an edit that empties
+ * the content must not reach the audit with nothing to check. An
+ * explainer must keep at least one grounded assertion; an infographic
+ * must keep 3–7 findings. Returns [] when the contract holds.
+ */
+function validateContentContract(content) {
+  if (content?.kind === "explainer") {
+    const total = (content.summary ?? []).length + (content.keyConcepts ?? []).length
+      + (content.context ?? []).length + (content.glossary ?? []).length;
+    if (total === 0) {
+      return [{ code: "INVALID_EDIT", message: "edited explainer carries no grounded assertions; an explainer must keep at least one cited assertion." }];
+    }
+    return [];
+  }
+  if (content?.kind === "infographic") {
+    const count = (content.findings ?? []).length;
+    if (count < MIN_FINDINGS_PER_INFOGRAPHIC || count > MAX_FINDINGS_PER_INFOGRAPHIC) {
+      return [{ code: "INVALID_EDIT", message: `edited infographic must hold ${MIN_FINDINGS_PER_INFOGRAPHIC}–${MAX_FINDINGS_PER_INFOGRAPHIC} findings (got ${count}).` }];
+    }
+    return [];
+  }
+  return [{ code: "INVALID_EDIT", message: "edited content has an unknown kind." }];
+}
+
+// NEEDS REVIEW codes that describe the CONTENT itself (thin/insufficient
+// material, missing summary). They are recomputed from the edited
+// content on every edit; anything else (e.g. NO_EXTRACTS, which
+// describes the extracts, not the content) is carried unchanged.
+const CONTENT_DERIVED_NEEDS_REVIEW = new Set([
+  "INSUFFICIENT_GROUNDED_MATERIAL",
+  "THIN_GROUNDED_MATERIAL",
+  "NO_SUMMARY",
+]);
+
+function recomputeNeedsReview(content) {
+  const kept = (content.needsReview ?? []).filter((item) => !CONTENT_DERIVED_NEEDS_REVIEW.has(item.code));
+  const derived = [];
+  if (content.kind === "explainer") {
+    const total = (content.summary ?? []).length + (content.keyConcepts ?? []).length
+      + (content.context ?? []).length + (content.glossary ?? []).length;
+    if (total === 0) {
+      derived.push({
+        code: "INSUFFICIENT_GROUNDED_MATERIAL",
+        message: "No usable source sentences remain in the edited content; the explainer cannot state anything grounded.",
+      });
+    } else if (total < 3) {
+      derived.push({
+        code: "THIN_GROUNDED_MATERIAL",
+        message: `Only ${total} grounded assertion(s) remain in the edited content; the explainer is thin and should be reviewed before approval.`,
+      });
+    }
+    if ((content.summary ?? []).length === 0 && total > 0) {
+      derived.push({
+        code: "NO_SUMMARY",
+        message: "No opening sentence remains for the summary; the summary section is empty.",
+      });
+    }
+  } else if (content.kind === "infographic") {
+    const count = (content.findings ?? []).length;
+    if (count < MIN_FINDINGS_PER_INFOGRAPHIC) {
+      derived.push({
+        code: "INSUFFICIENT_GROUNDED_MATERIAL",
+        message: `Only ${count} concise grounded finding(s) remain in the edited content (3–7 required); the infographic is incomplete and must not be approved as a full overview.`,
+      });
+    }
+  }
+  return [...kept, ...derived];
+}
+
 function applyEdit(artifact, edited, { actor, now }) {
   // Whitelist the editable fields: an edit can change the words and
   // their citations, never the provenance, status, or identity.
@@ -264,7 +451,6 @@ function applyEdit(artifact, edited, { actor, now }) {
     kind: artifact.type,
     title: typeof edited.title === "string" && edited.title.trim() !== "" ? edited.title.trim() : current.title,
     sourceSetHash: current.sourceSetHash,
-    needsReview: current.needsReview ?? [],
     excludedSentences: current.excludedSentences ?? [],
   };
   if (artifact.type === "explainer") {
@@ -275,15 +461,18 @@ function applyEdit(artifact, edited, { actor, now }) {
     next.caveats = current.caveats ?? [];
   } else {
     next.findings = edited.findings ?? current.findings ?? [];
-    next.svg = renderInfographicSvg({
-      title: next.title,
-      findings: next.findings,
-      references: rebuildReferences(next),
-      watermark: true,
-    });
+    // References are rebuilt before the SVG is rendered: the SVG's
+    // citation legend must describe the findings now in the draft.
+    next.references = rebuildReferences(next);
+    next.svg = renderInfographicSvgFor(next, true);
     next.altText = describeInfographic(next);
   }
   next.references = rebuildReferences(next);
+  // Thin-material state is recomputed from the EDITED content, never
+  // carried from generation time: an edit that thins the draft must
+  // surface as NEEDS REVIEW, and an edit that restores material must
+  // clear the stale thin-material flag.
+  next.needsReview = recomputeNeedsReview(next);
   return {
     ...artifact,
     content: next,
@@ -329,6 +518,12 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
       base = revised.artifact;
     }
     const edited = applyEdit(base, editedContent, { actor, now });
+    // The output contract is checked on the MERGED content before
+    // the audit runs: an edit that empties the draft must fail here,
+    // not sail through an audit that has nothing left to check. The
+    // stored draft is untouched on failure (nothing is saved yet).
+    const contractErrors = validateContentContract(edited.content);
+    if (contractErrors.length > 0) return { ok: false, error: contractErrors[0] };
     const audit = auditCitations({
       content: edited.content,
       manifest,
@@ -427,13 +622,18 @@ export function exportArtifact({ store, artifactId }, options = {}) {
       ok: true,
       filename: `${artifact.id}.md`,
       mimeType: "text/markdown; charset=utf-8",
-      content: renderExplainerMarkdown(artifact.content),
+      content: renderExplainerMarkdown(artifact.content, { status: artifact.status }),
     };
   }
+  // The export SVG is rendered fresh from the approved, audited
+  // content with the watermark OFF: the stored SVG is the draft
+  // rendering and would keep its DRAFT — NOT VERIFIED banner after
+  // approval. Citations and sanitization are unchanged — the same
+  // renderer, the same content, only the watermark flag differs.
   return {
     ok: true,
     filename: `${artifact.id}.svg`,
     mimeType: "image/svg+xml; charset=utf-8",
-    content: artifact.content.svg,
+    content: renderInfographicSvgFor(artifact.content, false),
   };
 }
