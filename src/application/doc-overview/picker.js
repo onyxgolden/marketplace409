@@ -89,15 +89,19 @@ export function pickSources(input, options = {}) {
     }
     if (classified.decision === "hold") {
       const human = decisions.get(doc.documentId);
-      if (human?.decision === "admit" && typeof human.classifier === "string" && human.classifier.trim() !== "" && typeof human.reason === "string" && human.reason.trim() !== "") {
+      const attributed = human && typeof human.classifier === "string" && human.classifier.trim() !== ""
+        && typeof human.reason === "string" && human.reason.trim() !== "";
+      if (human?.decision === "admit" && attributed) {
         admitted.push(doc);
         heldDocIds.add(doc.documentId);
         continue;
       }
-      if (human?.decision === "reject") {
+      if (human?.decision === "reject" && attributed) {
         rejections.push({ documentId: doc.documentId, code: "HUMAN_REJECTED", message: `Human classification rejected this document: ${human.reason}` });
         continue;
       }
+      // No usable human decision: the hold stands. An unattributed
+      // decision (either direction) never resolves a hold on its own.
       holds.push({ documentId: doc.documentId, reasons: classified.reasons });
       continue;
     }
