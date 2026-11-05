@@ -35,7 +35,7 @@ describe("POST /api/work-packages/[packageId]/progress/[entryId]/void", () => {
     );
     expect(response.status).toBe(200);
     expect(voidProgressEntry).toHaveBeenCalledWith(AUTH.db, {
-      ownerId: "owner_1", actor: "user_9", packageId: "pkg_1", entryId: "forge_wprg_1",
+      ownerId: "owner_1", packageId: "pkg_1", entryId: "forge_wprg_1",
       expectedVersion: 1, reason: "duplicate day",
     });
   });

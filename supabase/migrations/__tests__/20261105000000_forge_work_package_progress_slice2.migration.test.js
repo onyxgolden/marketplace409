@@ -237,7 +237,7 @@ describe("forge_work_package_progress_slice2 migration", () => {
     expect(rows).toEqual([]);
     await expectRejected(
       exec(`
-        select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 5, null, 'user_2')
+        select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 5, null)
       `),
       /WPP2_WORKSPACE_FORBIDDEN/,
     );
@@ -246,7 +246,7 @@ describe("forge_work_package_progress_slice2 migration", () => {
 
   it("RPC create writes the entry and its create revision in one transaction", async () => {
     const created = await query(`
-      select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 10, 'first day', 'user_1')
+      select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 10, 'first day')
     `);
     expect(created).toHaveLength(1);
     const entry = created[0];
@@ -254,15 +254,19 @@ describe("forge_work_package_progress_slice2 migration", () => {
     expect(entry.version).toBe(1);
     expect(entry.voided_at).toBeNull();
     expect(Number(entry.installed_quantity)).toBe(10);
+    // The actor is the authenticated caller (test.actor), not a parameter.
+    expect(entry.created_by).toBe("owner_1");
+    expect(entry.updated_by).toBe("owner_1");
 
     const revisions = await query(`
-      select action, version, old_quantity, new_quantity, old_work_date, new_work_date, reason
+      select action, version, actor_id, old_quantity, new_quantity, old_work_date, new_work_date, reason
       from forge_work_progress_revisions where entry_id = '${entry.id}' order by version
     `);
     expect(revisions).toHaveLength(1);
     expect(revisions[0]).toMatchObject({
       action: "create",
       version: 1,
+      actor_id: "owner_1",
       old_quantity: null,
       reason: null,
     });
@@ -277,19 +281,19 @@ describe("forge_work_package_progress_slice2 migration", () => {
   it("RPC create rejects cross-package lines, future dates, and bad quantities", async () => {
     // line_3 lives in pkg_2; addressing it through pkg_1 must fail.
     await expectRejected(
-      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_3', '2026-11-01', 5, null, 'user_1')`),
+      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_3', '2026-11-01', 5, null)`),
       /WPP2_LINE_NOT_IN_PACKAGE/,
     );
     await expectRejected(
-      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2999-01-01', 5, null, 'user_1')`),
+      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2999-01-01', 5, null)`),
       /WPP2_FUTURE_DATE/,
     );
     await expectRejected(
-      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', -5, null, 'user_1')`),
+      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', -5, null)`),
       /WPP2_INVALID_QUANTITY/,
     );
     await expectRejected(
-      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 1.23456, null, 'user_1')`),
+      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 1.23456, null)`),
       /WPP2_INVALID_QUANTITY/,
     );
   });
@@ -299,14 +303,14 @@ describe("forge_work_package_progress_slice2 migration", () => {
     const entryId = marker[0].id;
 
     const corrected = await query(`
-      select * from forge_work_progress_correct('owner_1', '${entryId}', 1, 15, '2026-11-02', 'recount', 'field recount', 'user_1')
+      select * from forge_work_progress_correct('owner_1', '${entryId}', 1, 15, '2026-11-02', 'recount', 'field recount')
     `);
     expect(corrected[0].version).toBe(2);
     expect(Number(corrected[0].installed_quantity)).toBe(15);
 
     // Stale version: the entry must be untouched and no revision added.
     await expectRejected(
-      exec(`select * from forge_work_progress_correct('owner_1', '${entryId}', 1, 99, null, null, 'stale', 'user_1')`),
+      exec(`select * from forge_work_progress_correct('owner_1', '${entryId}', 1, 99, null, null, 'stale')`),
       /WPP2_VERSION_CONFLICT/,
     );
     const after = await query(`select version, installed_quantity from forge_work_progress_entries where id = '${entryId}'`);
@@ -329,17 +333,17 @@ describe("forge_work_package_progress_slice2 migration", () => {
     const entryId = marker[0].id;
 
     const voided = await query(`
-      select * from forge_work_progress_void('owner_1', '${entryId}', 2, 'duplicate day', 'user_1')
+      select * from forge_work_progress_void('owner_1', '${entryId}', 2, 'duplicate day')
     `);
     expect(voided[0].version).toBe(3);
     expect(voided[0].voided_at).not.toBeNull();
 
     await expectRejected(
-      exec(`select * from forge_work_progress_correct('owner_1', '${entryId}', 3, 20, null, null, 'too late', 'user_1')`),
+      exec(`select * from forge_work_progress_correct('owner_1', '${entryId}', 3, 20, null, null, 'too late')`),
       /WPP2_VOIDED/,
     );
     await expectRejected(
-      exec(`select * from forge_work_progress_void('owner_1', '${entryId}', 3, 'again', 'user_1')`),
+      exec(`select * from forge_work_progress_void('owner_1', '${entryId}', 3, 'again')`),
       /WPP2_VOIDED/,
     );
     const revisions = await query(`
@@ -390,10 +394,74 @@ describe("forge_work_package_progress_slice2 migration", () => {
     const before = await query(`
       select drawing_number, title, updated_at from forge_work_drawings where id = 'dwg_pid1'
     `);
-    await exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_2', '2026-11-03', 4, null, 'user_1')`);
+    await exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_2', '2026-11-03', 4, null)`);
     const after = await query(`
       select drawing_number, title, updated_at from forge_work_drawings where id = 'dwg_pid1'
     `);
     expect(after).toEqual(before);
+  });
+
+  it("RPCs derive the actor from auth.uid(): no caller-supplied actor exists to forge", async () => {
+    // The three RPC signatures carry no p_actor parameter at all, so a
+    // direct caller cannot record another actor's audit history — the
+    // recorded actor is always the authenticated caller.
+    for (const [name, expected] of [
+      ["forge_work_progress_create", ["p_owner_id", "p_package_id", "p_line_id", "p_work_date", "p_quantity", "p_note"]],
+      ["forge_work_progress_correct", ["p_owner_id", "p_entry_id", "p_expected_version", "p_quantity", "p_work_date", "p_note", "p_reason"]],
+      ["forge_work_progress_void", ["p_owner_id", "p_entry_id", "p_expected_version", "p_reason"]],
+    ]) {
+      const rows = await query(`
+        select parameter_name from information_schema.parameters
+        where specific_schema = 'public' and specific_name = (
+          select specific_name from information_schema.routines
+          where routine_schema = 'public' and routine_name = '${name}'
+        ) order by ordinal_position
+      `);
+      expect(rows.map((r) => r.parameter_name)).toEqual(expected);
+    }
+
+    await asActor("user_1", "owner_1");
+    const created = await query(`
+      select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_2', '2026-11-03', 6, 'actor proof')
+    `);
+    expect(created).toHaveLength(1);
+    expect(created[0].created_by).toBe("user_1");
+    expect(created[0].updated_by).toBe("user_1");
+    const entryId = created[0].id;
+    const createRev = await query(`
+      select actor_id from forge_work_progress_revisions where entry_id = '${entryId}' and action = 'create'
+    `);
+    expect(createRev).toHaveLength(1);
+    expect(createRev[0].actor_id).toBe("user_1");
+
+    const corrected = await query(`
+      select * from forge_work_progress_correct('owner_1', '${entryId}', 1, 7, null, null, 'recount')
+    `);
+    expect(corrected[0].updated_by).toBe("user_1");
+    const updateRev = await query(`
+      select actor_id from forge_work_progress_revisions where entry_id = '${entryId}' and action = 'update'
+    `);
+    expect(updateRev).toHaveLength(1);
+    expect(updateRev[0].actor_id).toBe("user_1");
+
+    const voided = await query(`
+      select * from forge_work_progress_void('owner_1', '${entryId}', 2, 'actor proof void')
+    `);
+    expect(voided[0].updated_by).toBe("user_1");
+    const voidRev = await query(`
+      select actor_id from forge_work_progress_revisions where entry_id = '${entryId}' and action = 'void'
+    `);
+    expect(voidRev).toHaveLength(1);
+    expect(voidRev[0].actor_id).toBe("user_1");
+    await asActor("owner_1", "owner_1");
+  });
+
+  it("RPCs reject a missing auth identity instead of recording a blank actor", async () => {
+    await asActor("", "owner_1");
+    await expectRejected(
+      exec(`select * from forge_work_progress_create('owner_1', 'pkg_1', 'line_1', '2026-11-01', 5, null)`),
+      /WPP2_INVALID_ACTOR/,
+    );
+    await asActor("owner_1", "owner_1");
   });
 });

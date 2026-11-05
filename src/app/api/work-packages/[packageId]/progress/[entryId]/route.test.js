@@ -35,7 +35,7 @@ describe("PATCH /api/work-packages/[packageId]/progress/[entryId]", () => {
     );
     expect(response.status).toBe(200);
     expect(correctProgressEntry).toHaveBeenCalledWith(AUTH.db, {
-      ownerId: "owner_1", actor: "user_9", packageId: "pkg_1", entryId: "forge_wprg_1",
+      ownerId: "owner_1", packageId: "pkg_1", entryId: "forge_wprg_1",
       patch: { expectedVersion: 1, installedQuantity: 15, reason: "recount" },
     });
   });

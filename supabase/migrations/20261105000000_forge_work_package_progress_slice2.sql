@@ -142,18 +142,30 @@ revoke all on forge_work_progress_revisions from anon;
 -- parentage, field validation, and the optimistic version guard — then
 -- performs the entry mutation AND the revision insert in this one
 -- transaction, so a failed revision insert rolls the mutation back.
+-- The audit actor is derived inside each RPC from auth.uid() — there
+-- is deliberately NO caller-supplied actor parameter, so no caller can
+-- forge another actor's audit history by invoking the RPC directly
+-- (Nov 5 review finding P1). The route's server-derived actor is the
+-- same authenticated user id, so legitimate callers see no change.
 -- search_path is emptied and every reference is schema-qualified, so a
 -- caller cannot redirect resolution; row_security is off so the RPC is
 -- not gated by the FORCE RLS policies it is deliberately bypassing
 -- (its own checks above are the gate instead).
+--
+-- Signature change (Nov 5 fix round): the pre-fix signatures took a
+-- caller-supplied p_actor. Any database that ran the pre-fix file
+-- still carries those forgeable functions, so drop them first; on a
+-- fresh database these drops are no-ops.
+drop function if exists public.forge_work_progress_create(text, text, text, date, numeric, text, text);
+drop function if exists public.forge_work_progress_correct(text, text, integer, numeric, date, text, text, text);
+drop function if exists public.forge_work_progress_void(text, text, integer, text, text);
 create or replace function public.forge_work_progress_create(
   p_owner_id text,
   p_package_id text,
   p_line_id text,
   p_work_date date,
   p_quantity numeric,
-  p_note text,
-  p_actor text
+  p_note text
 )
 returns public.forge_work_progress_entries
 language plpgsql
@@ -165,9 +177,15 @@ declare
   v_line public.forge_work_takeoff_lines%rowtype;
   v_drawing public.forge_work_drawings%rowtype;
   v_entry public.forge_work_progress_entries%rowtype;
+  v_actor text;
 begin
   if not public.has_workspace_access(p_owner_id) then
     raise exception 'WPP2_WORKSPACE_FORBIDDEN';
+  end if;
+  -- The audit actor is the authenticated caller, never a parameter.
+  v_actor := auth.uid()::text;
+  if v_actor is null or btrim(v_actor) = '' then
+    raise exception 'WPP2_INVALID_ACTOR';
   end if;
   if not exists (select 1 from public.forge_work_packages
                  where owner_id = p_owner_id and id = p_package_id) then
@@ -195,9 +213,6 @@ begin
   if p_note is not null and char_length(p_note) > 2000 then
     raise exception 'WPP2_NOTE_TOO_LONG';
   end if;
-  if p_actor is null or btrim(p_actor) = '' then
-    raise exception 'WPP2_INVALID_ACTOR';
-  end if;
 
   insert into public.forge_work_progress_entries
     (owner_id, id, work_package_id, takeoff_line_id, work_date,
@@ -206,14 +221,14 @@ begin
   values
     (p_owner_id, 'forge_wprg_' || gen_random_uuid(), p_package_id, p_line_id, p_work_date,
      p_quantity, p_note, 1, null,
-     p_actor, p_actor, now(), now())
+     v_actor, v_actor, now(), now())
   returning * into v_entry;
 
   insert into public.forge_work_progress_revisions
     (owner_id, id, entry_id, version, actor_id, action,
      old_quantity, new_quantity, old_work_date, new_work_date, reason, recorded_at)
   values
-    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, 1, p_actor, 'create',
+    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, 1, v_actor, 'create',
      null, p_quantity, null, p_work_date, null, now());
 
   return v_entry;
@@ -227,8 +242,7 @@ create or replace function public.forge_work_progress_correct(
   p_quantity numeric,
   p_work_date date,
   p_note text,
-  p_reason text,
-  p_actor text
+  p_reason text
 )
 returns public.forge_work_progress_entries
 language plpgsql
@@ -239,9 +253,15 @@ as $$
 declare
   v_old public.forge_work_progress_entries%rowtype;
   v_entry public.forge_work_progress_entries%rowtype;
+  v_actor text;
 begin
   if not public.has_workspace_access(p_owner_id) then
     raise exception 'WPP2_WORKSPACE_FORBIDDEN';
+  end if;
+  -- The audit actor is the authenticated caller, never a parameter.
+  v_actor := auth.uid()::text;
+  if v_actor is null or btrim(v_actor) = '' then
+    raise exception 'WPP2_INVALID_ACTOR';
   end if;
   -- Row lock: concurrent corrections serialize here, so the second one
   -- sees the bumped version and fails the guard below instead of
@@ -270,16 +290,13 @@ begin
   if p_reason is not null and char_length(p_reason) > 2000 then
     raise exception 'WPP2_REASON_TOO_LONG';
   end if;
-  if p_actor is null or btrim(p_actor) = '' then
-    raise exception 'WPP2_INVALID_ACTOR';
-  end if;
 
   update public.forge_work_progress_entries
     set installed_quantity = coalesce(p_quantity, installed_quantity),
         work_date = coalesce(p_work_date, work_date),
         note = coalesce(p_note, note),
         version = version + 1,
-        updated_by = p_actor,
+        updated_by = v_actor,
         updated_at = now()
     where owner_id = p_owner_id and id = p_entry_id
     returning * into v_entry;
@@ -288,7 +305,7 @@ begin
     (owner_id, id, entry_id, version, actor_id, action,
      old_quantity, new_quantity, old_work_date, new_work_date, reason, recorded_at)
   values
-    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, v_entry.version, p_actor, 'update',
+    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, v_entry.version, v_actor, 'update',
      v_old.installed_quantity, v_entry.installed_quantity,
      v_old.work_date, v_entry.work_date, p_reason, now());
 
@@ -300,8 +317,7 @@ create or replace function public.forge_work_progress_void(
   p_owner_id text,
   p_entry_id text,
   p_expected_version integer,
-  p_reason text,
-  p_actor text
+  p_reason text
 )
 returns public.forge_work_progress_entries
 language plpgsql
@@ -312,9 +328,15 @@ as $$
 declare
   v_old public.forge_work_progress_entries%rowtype;
   v_entry public.forge_work_progress_entries%rowtype;
+  v_actor text;
 begin
   if not public.has_workspace_access(p_owner_id) then
     raise exception 'WPP2_WORKSPACE_FORBIDDEN';
+  end if;
+  -- The audit actor is the authenticated caller, never a parameter.
+  v_actor := auth.uid()::text;
+  if v_actor is null or btrim(v_actor) = '' then
+    raise exception 'WPP2_INVALID_ACTOR';
   end if;
   select * into v_old from public.forge_work_progress_entries
     where owner_id = p_owner_id and id = p_entry_id for update;
@@ -330,14 +352,11 @@ begin
   if p_reason is not null and char_length(p_reason) > 2000 then
     raise exception 'WPP2_REASON_TOO_LONG';
   end if;
-  if p_actor is null or btrim(p_actor) = '' then
-    raise exception 'WPP2_INVALID_ACTOR';
-  end if;
 
   update public.forge_work_progress_entries
     set voided_at = now(),
         version = version + 1,
-        updated_by = p_actor,
+        updated_by = v_actor,
         updated_at = now()
     where owner_id = p_owner_id and id = p_entry_id
     returning * into v_entry;
@@ -346,7 +365,7 @@ begin
     (owner_id, id, entry_id, version, actor_id, action,
      old_quantity, new_quantity, old_work_date, new_work_date, reason, recorded_at)
   values
-    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, v_entry.version, p_actor, 'void',
+    (p_owner_id, 'forge_wprv_' || gen_random_uuid(), v_entry.id, v_entry.version, v_actor, 'void',
      v_old.installed_quantity, v_old.installed_quantity,
      v_old.work_date, v_old.work_date, p_reason, now());
 
@@ -359,12 +378,12 @@ $$;
 -- role. Service role does not need EXECUTE here (the application path
 -- is the authenticated client); direct table access by service role
 -- remains a separate, server-side concern.
-revoke all on function public.forge_work_progress_create(text, text, text, date, numeric, text, text) from public;
-revoke all on function public.forge_work_progress_correct(text, text, integer, numeric, date, text, text, text) from public;
-revoke all on function public.forge_work_progress_void(text, text, integer, text, text) from public;
-grant execute on function public.forge_work_progress_create(text, text, text, date, numeric, text, text) to authenticated;
-grant execute on function public.forge_work_progress_correct(text, text, integer, numeric, date, text, text, text) to authenticated;
-grant execute on function public.forge_work_progress_void(text, text, integer, text, text) to authenticated;
+revoke all on function public.forge_work_progress_create(text, text, text, date, numeric, text) from public;
+revoke all on function public.forge_work_progress_correct(text, text, integer, numeric, date, text, text) from public;
+revoke all on function public.forge_work_progress_void(text, text, integer, text) from public;
+grant execute on function public.forge_work_progress_create(text, text, text, date, numeric, text) to authenticated;
+grant execute on function public.forge_work_progress_correct(text, text, integer, numeric, date, text, text) to authenticated;
+grant execute on function public.forge_work_progress_void(text, text, integer, text) to authenticated;
 
 -- No updated_at trigger: this codebase sets updated_at = now() explicitly
 -- in each write path (see slice 1's migration header), and the RPCs

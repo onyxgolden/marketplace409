@@ -190,7 +190,7 @@ function rpcRow(data) {
 }
 
 /** Creates one daily progress entry. Domain validation runs before any database call. */
-export async function createProgressEntry(db, { ownerId, packageId, actor, input }) {
+export async function createProgressEntry(db, { ownerId, packageId, input }) {
   const validation = validateProgressEntryInput(input);
   if (!validation.ok) return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   const proof = await requireLineInPackage(db, { ownerId, packageId, lineId: input.lineId });
@@ -203,14 +203,13 @@ export async function createProgressEntry(db, { ownerId, packageId, actor, input
     p_work_date: input.workDate,
     p_quantity: input.installedQuantity,
     p_note: input.note ?? null,
-    p_actor: actor,
   });
   if (error) return mapRpcError(error);
   return { ok: true, entry: toCamelEntry(rpcRow(data)) };
 }
 
 /** Corrects one entry's quantity, work date, and/or note, guarded by the caller's expected version. */
-export async function correctProgressEntry(db, { ownerId, packageId, entryId, actor, patch }) {
+export async function correctProgressEntry(db, { ownerId, packageId, entryId, patch }) {
   const validation = validateProgressCorrectionInput(patch);
   if (!validation.ok) return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   const proof = await requireEntryInPackage(db, { ownerId, packageId, entryId });
@@ -224,14 +223,13 @@ export async function correctProgressEntry(db, { ownerId, packageId, entryId, ac
     p_work_date: patch.workDate ?? null,
     p_note: patch.note ?? null,
     p_reason: patch.reason ?? null,
-    p_actor: actor,
   });
   if (error) return mapRpcError(error);
   return { ok: true, entry: toCamelEntry(rpcRow(data)) };
 }
 
 /** Voids one entry (excluded from totals, kept in history), guarded by the caller's expected version. */
-export async function voidProgressEntry(db, { ownerId, packageId, entryId, actor, expectedVersion, reason }) {
+export async function voidProgressEntry(db, { ownerId, packageId, entryId, expectedVersion, reason }) {
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
     return { ok: false, httpStatus: 400, error: "expectedVersion is required and must be a positive whole number." };
   }
@@ -246,7 +244,6 @@ export async function voidProgressEntry(db, { ownerId, packageId, entryId, actor
     p_entry_id: entryId,
     p_expected_version: expectedVersion,
     p_reason: reason ?? null,
-    p_actor: actor,
   });
   if (error) return mapRpcError(error);
   return { ok: true, entry: toCamelEntry(rpcRow(data)) };
@@ -284,6 +281,31 @@ export async function listProgressRevisions(db, { ownerId, packageId, entryId })
     .order("version", { ascending: true });
   if (error) throw error;
   return { ok: true, entry: toCamelEntry(proof.entry), revisions: (data || []).map(toCamelRevision) };
+}
+
+/**
+ * PostgREST caps an un-ranged select at 1000 rows. Summary and daily
+ * views must scan the complete eligible entry population — a package's
+ * whole history, not just the first page — so entry fetches page
+ * through .range() until a short page ends the scan. buildQuery
+ * receives the page offset and returns the awaitable query chain for
+ * that page (a fresh db.from() chain per page, so each page is its
+ * own request).
+ */
+const ENTRY_PAGE_SIZE = 1000;
+
+async function fetchAllEntryRows(buildQuery) {
+  const rows = [];
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await buildQuery(offset);
+    if (error) throw error;
+    const page = data || [];
+    rows.push(...page);
+    if (page.length < ENTRY_PAGE_SIZE) break;
+    offset += ENTRY_PAGE_SIZE;
+  }
+  return rows;
 }
 
 /**
@@ -328,11 +350,11 @@ export async function getProgressSummary(db, { ownerId, packageId, asOf, lineId 
     lineRows = data || [];
   }
 
-  const { data: entryRows, error: entriesError } = await db.from("forge_work_progress_entries")
+  const entryRows = await fetchAllEntryRows((offset) => db.from("forge_work_progress_entries")
     .select("takeoff_line_id, work_date, installed_quantity, voided_at")
     .eq("owner_id", ownerId).eq("work_package_id", packageId)
-    .lte("work_date", asOfDate).order("work_date", { ascending: true });
-  if (entriesError) throw entriesError;
+    .lte("work_date", asOfDate).order("work_date", { ascending: true })
+    .range(offset, offset + ENTRY_PAGE_SIZE - 1));
   const entriesByLine = new Map();
   for (const row of entryRows || []) {
     const list = entriesByLine.get(row.takeoff_line_id) || [];
@@ -392,13 +414,19 @@ export async function getDailyProgressTotals(db, { ownerId, packageId, lineId, f
     const proof = await requireLineInPackage(db, { ownerId, packageId, lineId });
     if (!proof) return { ok: false, httpStatus: 404, error: "Takeoff line not found in this package." };
   }
-  let query = db.from("forge_work_progress_entries")
-    .select("takeoff_line_id, work_date, installed_quantity, voided_at")
-    .eq("owner_id", ownerId).eq("work_package_id", packageId)
-    .gte("work_date", window.from).lte("work_date", window.to);
-  if (lineId != null) query = query.eq("takeoff_line_id", lineId);
-  const { data, error } = await query.order("work_date", { ascending: true });
-  if (error) throw error;
+  // Same complete-population rule as the summary: page the whole
+  // window, never just PostgREST's first 1000 rows. Each page builds
+  // a fresh chain — reusing one builder across pages would stack
+  // duplicate order clauses on the real client.
+  const data = await fetchAllEntryRows((offset) => {
+    let pageQuery = db.from("forge_work_progress_entries")
+      .select("takeoff_line_id, work_date, installed_quantity, voided_at")
+      .eq("owner_id", ownerId).eq("work_package_id", packageId)
+      .gte("work_date", window.from).lte("work_date", window.to);
+    if (lineId != null) pageQuery = pageQuery.eq("takeoff_line_id", lineId);
+    return pageQuery.order("work_date", { ascending: true })
+      .range(offset, offset + ENTRY_PAGE_SIZE - 1);
+  });
 
   const byLine = new Map();
   for (const row of data || []) {

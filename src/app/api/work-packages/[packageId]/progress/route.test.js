@@ -58,7 +58,7 @@ describe("POST /api/work-packages/[packageId]/progress", () => {
     );
     expect(response.status).toBe(201);
     expect(createProgressEntry).toHaveBeenCalledWith(AUTH.db, {
-      ownerId: "owner_1", actor: "user_9", packageId: "pkg_1",
+      ownerId: "owner_1", packageId: "pkg_1",
       input: { lineId: "line_1", workDate: "2026-11-01", installedQuantity: 10 },
     });
   });

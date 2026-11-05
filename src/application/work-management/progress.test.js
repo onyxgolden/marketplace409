@@ -66,7 +66,7 @@ describe("createProgressEntry", () => {
   it("rejects invalid input before ever querying the database", async () => {
     const db = mockDb([], []);
     const result = await createProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1",
       input: { lineId: "line_1", workDate: "2026-11-01", installedQuantity: -1 },
     });
     expect(result.ok).toBe(false);
@@ -77,32 +77,32 @@ describe("createProgressEntry", () => {
 
   it("404s on a missing line without calling the RPC", async () => {
     const db = mockDb([chain({ data: null, error: null })], []);
-    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
+    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", input });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
   it("404s when the line's drawing lives in another package (never trusts the URL package)", async () => {
     const db = mockDb(lineInPackageChains(LINE_ROW, { ...DRAWING_ROW, package_id: "pkg_2" }), []);
-    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
+    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", input });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
   it("creates through the RPC and returns the camelCased entry", async () => {
     const db = mockDb(lineInPackageChains(LINE_ROW, DRAWING_ROW), [{ data: ENTRY_ROW, error: null }]);
-    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
+    const result = await createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", input });
     expect(result.ok).toBe(true);
     expect(result.entry).toMatchObject({ id: "forge_wprg_1", workDate: "2026-11-01", installedQuantity: 10, version: 1 });
     expect(db.rpc).toHaveBeenCalledWith("forge_work_progress_create", {
       p_owner_id: OWNER, p_package_id: "pkg_1", p_line_id: "line_1",
-      p_work_date: "2026-11-01", p_quantity: 10, p_note: null, p_actor: ACTOR,
+      p_work_date: "2026-11-01", p_quantity: 10, p_note: null,
     });
   });
 
   it("maps an unknown RPC failure by throwing, never by guessing a status", async () => {
     const db = mockDb(lineInPackageChains(LINE_ROW, DRAWING_ROW), [{ data: null, error: { message: "boom" } }]);
-    await expect(createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input }))
+    await expect(createProgressEntry(db, { ownerId: OWNER, packageId: "pkg_1", input }))
       .rejects.toThrow("boom");
   });
 });
@@ -113,12 +113,12 @@ describe("correctProgressEntry", () => {
   it("requires expectedVersion and at least one change before querying", async () => {
     const db = mockDb([], []);
     const noVersion = await correctProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1",
       patch: { installedQuantity: 15 },
     });
     expect(noVersion).toMatchObject({ ok: false, httpStatus: 400 });
     const noChange = await correctProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1",
       patch: { expectedVersion: 1 },
     });
     expect(noChange).toMatchObject({ ok: false, httpStatus: 400 });
@@ -132,7 +132,7 @@ describe("correctProgressEntry", () => {
       [{ data: null, error: { message: "WPP2_VERSION_CONFLICT" } }],
     );
     const result = await correctProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR, patch,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", patch,
     });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
     expect(result.error).toMatch(/changed by someone else/);
@@ -145,7 +145,7 @@ describe("correctProgressEntry", () => {
       [{ data: [updated], error: null }],
     );
     const result = await correctProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR, patch,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", patch,
     });
     expect(result.ok).toBe(true);
     expect(result.entry).toMatchObject({ installedQuantity: 15, version: 2 });
@@ -160,14 +160,14 @@ describe("voidProgressEntry", () => {
       [{ data: voided, error: null }],
     );
     const result = await voidProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1",
       expectedVersion: 1, reason: "duplicate day",
     });
     expect(result.ok).toBe(true);
     expect(result.entry.voidedAt).not.toBeNull();
     expect(db.rpc).toHaveBeenCalledWith("forge_work_progress_void", {
       p_owner_id: OWNER, p_entry_id: "forge_wprg_1", p_expected_version: 1,
-      p_reason: "duplicate day", p_actor: ACTOR,
+      p_reason: "duplicate day",
     });
   });
 
@@ -177,7 +177,7 @@ describe("voidProgressEntry", () => {
       [{ data: null, error: { message: "WPP2_VOIDED" } }],
     );
     const result = await voidProgressEntry(db, {
-      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1", actor: ACTOR,
+      ownerId: OWNER, packageId: "pkg_1", entryId: "forge_wprg_1",
       expectedVersion: 1, reason: "again",
     });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
@@ -336,5 +336,87 @@ describe("getDailyProgressTotals", () => {
       { lineId: "line_1", workDate: "2026-11-01", installed: 14 },
       { lineId: "line_2", workDate: "2026-11-02", installed: 3 },
     ]);
+  });
+});
+
+describe("getProgressSummary paging (Nov 5 fix round)", () => {
+  // A chain whose .range() actually slices, unlike the shared chain()
+  // mock (which ignores range and always returns the whole fixture).
+  function pagingEntriesChain(allRows) {
+    let from = 0;
+    let to = 0;
+    const node = {
+      select: () => node, eq: () => node, order: () => node,
+      lte: () => node, gte: () => node,
+      range: (f, t) => { from = f; to = t; return node; },
+      then: (resolve) => resolve({ data: allRows.slice(from, to + 1), error: null }),
+    };
+    return node;
+  }
+  const pkgChain = () => chain({ data: { id: "pkg_1" }, error: null });
+  const drawingsChain = () => chain({
+    data: [{ id: "dwg_pid1", drawing_type: "p_id", p_id_drawing_id: null }],
+    error: null,
+  });
+  const linesChain = () => chain({
+    data: [{ id: "line_1", drawing_id: "dwg_pid1", line_no: 1, description: "6in pipe", quantity: 100000, unit: "ft" }],
+    error: null,
+  });
+
+  it("pages past PostgREST's 1000-row cap: 1001 entries all count", async () => {
+    const rows = Array.from({ length: 1001 }, () => ({
+      takeoff_line_id: "line_1", work_date: "2026-11-01", installed_quantity: 1, voided_at: null,
+    }));
+    const db = mockDb(
+      [pkgChain(), drawingsChain(), linesChain(), pagingEntriesChain(rows), pagingEntriesChain(rows)],
+      [],
+    );
+    const result = await getProgressSummary(db, { ownerId: OWNER, packageId: "pkg_1", asOf: "2026-11-05" });
+    expect(result.ok).toBe(true);
+    expect(result.summary.lines).toHaveLength(1);
+    expect(result.summary.lines[0].installed).toBe(1001);
+    // pkg + drawings + lines + two entry pages, not one truncated fetch.
+    expect(db.from).toHaveBeenCalledTimes(5);
+  });
+
+  it("includes backfilled history older than the 90-day list window", async () => {
+    const entriesChain = () => chain({
+      data: [
+        { takeoff_line_id: "line_1", work_date: "2025-01-15", installed_quantity: 8, voided_at: null },
+        { takeoff_line_id: "line_1", work_date: "2026-11-01", installed_quantity: 10, voided_at: null },
+      ],
+      error: null,
+    });
+    const db = mockDb([pkgChain(), drawingsChain(), linesChain(), entriesChain()], []);
+    const result = await getProgressSummary(db, { ownerId: OWNER, packageId: "pkg_1", asOf: "2026-11-05" });
+    expect(result.ok).toBe(true);
+    expect(result.summary.lines[0].installed).toBe(18);
+  });
+});
+
+describe("getDailyProgressTotals paging (Nov 5 fix round)", () => {
+  function pagingEntriesChain(allRows) {
+    let from = 0;
+    let to = 0;
+    const node = {
+      select: () => node, eq: () => node, order: () => node,
+      lte: () => node, gte: () => node,
+      range: (f, t) => { from = f; to = t; return node; },
+      then: (resolve) => resolve({ data: allRows.slice(from, to + 1), error: null }),
+    };
+    return node;
+  }
+
+  it("pages the whole window: 1001 same-day entries total once", async () => {
+    const rows = Array.from({ length: 1001 }, () => ({
+      takeoff_line_id: "line_1", work_date: "2026-11-01", installed_quantity: 1, voided_at: null,
+    }));
+    const db = mockDb([pagingEntriesChain(rows), pagingEntriesChain(rows)], []);
+    const result = await getDailyProgressTotals(db, {
+      ownerId: OWNER, packageId: "pkg_1", from: "2026-11-01", to: "2026-11-30",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.days).toEqual([{ lineId: "line_1", workDate: "2026-11-01", installed: 1001 }]);
+    expect(db.from).toHaveBeenCalledTimes(2);
   });
 });

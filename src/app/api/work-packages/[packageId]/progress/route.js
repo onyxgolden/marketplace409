@@ -33,7 +33,6 @@ export async function POST(request, { params }) {
     const body = await readJson(request);
     const result = await createProgressEntry(auth.db, {
       ownerId: auth.ownerId,
-      actor: auth.actor,
       packageId,
       input: body,
     });

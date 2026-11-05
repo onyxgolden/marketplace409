@@ -9,7 +9,6 @@ export async function POST(request, { params }) {
     const body = await readJson(request);
     const result = await voidProgressEntry(auth.db, {
       ownerId: auth.ownerId,
-      actor: auth.actor,
       packageId,
       entryId,
       expectedVersion: body.expectedVersion,

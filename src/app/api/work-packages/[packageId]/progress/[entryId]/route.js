@@ -9,7 +9,6 @@ export async function PATCH(request, { params }) {
     const body = await readJson(request);
     const result = await correctProgressEntry(auth.db, {
       ownerId: auth.ownerId,
-      actor: auth.actor,
       packageId,
       entryId,
       patch: body,
