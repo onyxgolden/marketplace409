@@ -179,6 +179,23 @@ describe("createTakeoffLine", () => {
     expect(result.line.quantity).toBe(40);
   });
 
+  it("slice 2: stamps the proven package on the new line (package_id is NOT NULL after the slice-2 migration)", async () => {
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
+    const maxLineChain = chain({ data: [], error: null });
+    const insertChain = chain({
+      data: {
+        id: "forge_wtol_1", owner_id: OWNER, drawing_id: "dwg_1", line_no: 1,
+        description: "6in CS pipe", quantity: "40", unit: "ft", category: "pipe", fab_location: "shop",
+        created_at: "t1", updated_at: "t1",
+      },
+      error: null,
+    });
+    const db = mockDb([drawingChain, maxLineChain, insertChain]);
+    const result = await createTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", actor: ACTOR, input });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ package_id: "pkg_1" }));
+  });
+
   it("starts at lineNo 1 for a drawing with no existing lines", async () => {
     const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
     const maxLineChain = chain({ data: [], error: null });
@@ -331,6 +348,16 @@ describe("deleteTakeoffLine", () => {
     const result = await deleteTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
     expect(db.from).toHaveBeenCalledTimes(2);
+  });
+
+  it("slice 2: a line with progress history is RESTRICT-blocked into a 409, not a raw FK error", async () => {
+    const lineChain = chain({ data: { id: "line_1", drawing_id: "dwg_1" }, error: null });
+    const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
+    const deleteChain = chain({ data: null, error: { code: "23503", message: "violates foreign key" } });
+    const db = mockDb([lineChain, drawingChain, deleteChain]);
+    const result = await deleteTakeoffLine(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1", lineId: "line_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+    expect(result.error).toMatch(/progress records/);
   });
 });
 
