@@ -3,7 +3,7 @@
 // The store is identity-bound: tests construct it with a principal
 // ({ ownerId }) and never pass an ownerId per call.
 
-import { mkdtempSync, statSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { chmodSync, mkdtempSync, statSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -208,5 +208,45 @@ describe("createDraftStore", () => {
     const updated = { ...artifact, status: "approved" };
     store.saveDraft(updated);
     expect(store.getDraft("artifact_1")).toEqual(updated);
+  });
+
+  it("refuses to publish when the owner directory is adversarially writable", () => {
+    const root = tempRoot();
+    const ownerDir = path.join(root, "owner-1");
+    mkdirSync(ownerDir, { mode: 0o700 });
+    chmodSync(ownerDir, 0o770);
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    expect(() => store.saveDraft(artifact)).toThrow(/adversarially mutable/);
+    // No record bytes anywhere: the write refused before temp creation.
+    expect(() => statSync(path.join(ownerDir, "drafts", "artifact_1.json"))).toThrow(/ENOENT/);
+  });
+
+  it("refuses to construct a store under an adversarially writable parent", () => {
+    const base = tempRoot();
+    const parent = path.join(base, "parent");
+    mkdirSync(parent, { mode: 0o700 });
+    chmodSync(parent, 0o770);
+    expect(() => createDraftStore(path.join(parent, "store"), { ownerId: "owner-1" })).toThrow(
+      /adversarially mutable/,
+    );
+  });
+
+  it("allows saves under a sticky other-writable parent", () => {
+    const base = tempRoot();
+    const sticky = path.join(base, "sticky");
+    mkdirSync(sticky, { mode: 0o700 });
+    chmodSync(sticky, 0o1777);
+    const store = createDraftStore(path.join(sticky, "store"), { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    expect(store.getDraft("artifact_1")).toEqual(artifact);
+  });
+
+  it("creates a fresh store root 0700, satisfying its own boundary under any umask", () => {
+    const base = tempRoot();
+    const root = path.join(base, "fresh-root");
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    expect(statSync(root).mode & 0o777).toBe(0o700);
+    expect(store.getDraft("artifact_1")).toEqual(artifact);
   });
 });

@@ -40,13 +40,31 @@
 // - Writes are atomic (fresh temp file with O_EXCL + rename inside the
 //   verified kind directory), so a crash cannot leave a half-written
 //   manifest or draft behind. The rename replaces the destination
-//   entry, as before, but both names resolve through the held
+//   entry, as before, and both names resolve through the held
 //   directory descriptor, so the publish cannot land in another tree
-//   by path swap — and the publish asserts the held directory is
-//   still at its authorized path immediately before renaming, so a
-//   directory relocated out of the owner tree after verification is
-//   refused before any bytes move (descriptor pinning alone preserves
-//   inode identity, not authorized path containment).
+//   by path swap. CONTAINMENT INVARIANT (the actual guarantee, not
+//   a check): the store refuses to operate unless the whole
+//   ancestry — every directory from the filesystem root down to the
+//   kind directory — is rename-safe, meaning no untrusted principal
+//   can rename any entry on the chain. Rename-safe means: for a
+//   sticky parent, both the parent's and the entry's owners are the
+//   process user or root; for a non-sticky parent, no group/other
+//   write and owner-write only by the process user or root. The
+//   boundary is verified at store construction and re-verified on
+//   every write-path chain build, and it fails closed on any
+//   adversarially mutable link. Because only the owning user or
+//   root can change ownership or permissions, and only a party with
+//   write on a parent can rename, a boundary that holds at
+//   verification cannot be invalidated by an untrusted principal
+//   before the rename — so the check-before-rename window the
+//   previous rounds chased does not exist for untrusted actors.
+//   The publish still asserts the held directory is at its
+//   authorized path immediately before renaming, but that assert is
+//   defense-in-depth only: it is NOT the containment invariant,
+//   and a second check or a closer check would not be. The store
+//   root itself is created 0700, like every directory the store
+//   creates, so a store-created tree satisfies its own boundary
+//   under any umask.
 // - Platform: descriptor verification needs Linux /proc/self/fd (see
 //   verifiedFs.js). Without it the store fails closed, loudly, rather
 //   than operating unverified.
@@ -64,6 +82,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isSafePathSegment } from "@/domains/doc-overview/sanitize.js";
 import {
+  assertAncestryBoundary,
   canonicalRootFor,
   createVerifiedTemp,
   ensureRoot,
@@ -192,6 +211,12 @@ export function createDraftStore(root, principal) {
   }
   const resolvedRoot = path.resolve(root);
   const boundOwner = principal.ownerId;
+  // Construction-time containment gate: the ancestry above the root
+  // must already be rename-safe (see verifiedFs.js). Managed levels
+  // below the root are re-verified from descriptor-pinned stats on
+  // every write; a misconfigured deployment fails here, before any
+  // record is written, rather than at first publish.
+  assertAncestryBoundary(canonicalRootFor(resolvedRoot));
 
   function checkStoredOwner(record) {
     if (record !== null && record.ownerId !== undefined && record.ownerId !== boundOwner) {

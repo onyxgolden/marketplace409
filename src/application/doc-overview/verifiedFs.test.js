@@ -9,6 +9,7 @@
 // path spellings.
 
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   mkdtempSync,
@@ -23,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertAncestryBoundary,
   createVerifiedTemp,
   ensureVerifiedDirChain,
   fdPath,
@@ -204,5 +206,45 @@ describe("verifiedFs", () => {
     } finally {
       closeSync(dirFd);
     }
+  });
+});
+
+describe("ancestry boundary", () => {
+  it("refuses a group-writable parent", () => {
+    const root = tempRoot();
+    const parent = path.join(root, "parent");
+    mkdirSync(parent, { mode: 0o700 });
+    chmodSync(parent, 0o770);
+    expect(() => assertAncestryBoundary(path.join(parent, "store"))).toThrow(/adversarially mutable/);
+  });
+
+  it("refuses an other-writable non-sticky parent", () => {
+    const root = tempRoot();
+    const parent = path.join(root, "parent");
+    mkdirSync(parent, { mode: 0o700 });
+    chmodSync(parent, 0o777);
+    expect(() => assertAncestryBoundary(path.join(parent, "store"))).toThrow(/adversarially mutable/);
+  });
+
+  it("allows a sticky other-writable parent (tmp-style)", () => {
+    const root = tempRoot();
+    const parent = path.join(root, "sticky");
+    mkdirSync(parent, { mode: 0o700 });
+    chmodSync(parent, 0o1777);
+    expect(() => assertAncestryBoundary(path.join(parent, "store"))).not.toThrow();
+  });
+
+  it("allows the normal mkdtemp ancestry", () => {
+    const root = tempRoot();
+    expect(() => assertAncestryBoundary(path.join(root, "store"))).not.toThrow();
+  });
+
+  it("honors an operator symlink above the root (resolved, not mistaken for an attack)", () => {
+    const root = tempRoot();
+    const real = path.join(root, "real");
+    mkdirSync(real, { mode: 0o700 });
+    const link = path.join(root, "link");
+    symlinkSync(real, link, "dir");
+    expect(() => assertAncestryBoundary(path.join(link, "store"))).not.toThrow();
   });
 });

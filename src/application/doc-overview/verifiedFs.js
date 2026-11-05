@@ -26,14 +26,35 @@
 //   (/proc/self/fd/<fd>), and temp-file creation plus the publish
 //   rename resolve both names through the held kind-directory
 //   descriptor, so neither step can be redirected by a path swap after
-//   the directory was verified. The publish rename additionally
-//   asserts, immediately before renaming, that the held directory is
-//   still at its authorized path: descriptor pinning preserves inode
-//   identity, not path containment, so a directory renamed out of the
-//   owner tree after verification would otherwise publish record
-//   bytes into the relocated directory. That relocation is refused
-//   before any bytes move; the post-rename landing check cannot undo
-//   a publication, so it is belt-and-braces only.
+//   the directory was verified.
+// - CONTAINMENT INVARIANT (the actual guarantee for publication).
+//   The publish rename additionally asserts, immediately before
+//   renaming, that the held directory is still at its authorized
+//   path — but that assert is defense-in-depth ONLY, not the
+//   guarantee: it is one syscall before a separate rename syscall,
+//   so a relocation interleaved between the two would still slip
+//   through under an attacker-writable ancestry. A second check, or
+//   a check moved closer to the rename, cannot close that window.
+//   The guarantee is instead an enforced non-adversarial ancestry
+//   boundary: every directory from the filesystem root down to the
+//   kind directory must be rename-safe, meaning no untrusted
+//   principal can rename any entry on the chain. Rename-safe for a
+//   (parent, entry) pair means: if the parent is sticky, both the
+//   parent's and the entry's owners are the process user or root;
+//   if it is not sticky, the parent has no group/other write and
+//   owner-write only by the process user or root. The boundary is
+//   verified at store construction and re-verified on every
+//   write-path chain build (managed levels from descriptor-pinned
+//   stats, the ancestry above the root from a fresh walk), and it
+//   fails closed on any adversarially mutable link. The boundary is
+//   stable across the authorization-to-publication window because
+//   only the owning user or root can change ownership or
+//   permissions, and only a party with write on a parent can rename
+//   — both ruled out for untrusted principals by the check itself.
+//   With the boundary enforced, the check-before-rename window is
+//   unreachable by an untrusted actor; without it, no check timing
+//   would suffice. The post-rename landing check cannot undo a
+//   publication, so it is belt-and-braces only.
 // - The one residual: ensureVerifiedDirChain can create an empty
 //   directory in the wrong tree if a parent component is swapped
 //   between its verification and the mkdir. The follow-up verification
@@ -212,6 +233,126 @@ export function assertHeldDirAtPath(dirFd, intendedDirPath) {
   }
 }
 
+// The process owner, from the kernel. Unavailable (non-POSIX) means
+// the boundary below cannot be evaluated, so every operation that
+// needs it fails closed rather than operating unverified.
+function processEuid() {
+  if (typeof process.geteuid !== "function") {
+    fail("cannot determine the process owner (geteuid unavailable); refusing rather than operating unverified.");
+  }
+  return process.geteuid();
+}
+
+// A uid is trusted for boundary purposes when it is the process user
+// or root. Root can rename anything regardless of permissions, so it
+// is trusted by definition; every other uid must be the process user.
+function trustedUid(uid) {
+  const euid = processEuid();
+  return uid === euid || uid === 0;
+}
+
+const S_ISVTX = 0o1000;
+
+// Whether an untrusted principal could rename `entry` inside `parent`.
+// This is the kernel's rule, not an approximation:
+// - Sticky parent: only the entry's owner, the directory's owner, or
+//   root can rename. Safe exactly when both owners are trusted; the
+//   write bits are irrelevant to renaming (they gate creation, and a
+//   sticky parent like /tmp is therefore safe for trusted-owned
+//   entries despite being world-writable).
+// - Non-sticky parent: anyone with write on the directory can rename,
+//   so safety needs no group/other write and owner-write only by a
+//   trusted owner.
+function renameSafePair(parentMode, parentUid, entryUid) {
+  const mode = parentMode & 0o7777;
+  if (mode & S_ISVTX) {
+    return trustedUid(entryUid) && trustedUid(parentUid);
+  }
+  if (mode & 0o020) return false;
+  if (mode & 0o002) return false;
+  if (mode & 0o200 && !trustedUid(parentUid)) return false;
+  return true;
+}
+
+function assertRenameSafePair(parentStat, entryStat, parentPath, entryPath) {
+  if (!renameSafePair(parentStat.mode, parentStat.uid, entryStat.uid)) {
+    fail(
+      `refused adversarially mutable ancestry: ${parentPath} is writable by untrusted principals, so ${entryPath} could be renamed out of the authorized tree (rename containment not enforced); refusing rather than publishing through a relocatable directory.`,
+    );
+  }
+}
+
+// Enforces the containment invariant for a store root: every
+// (parent, entry) pair on the path from the filesystem root down to
+// the target must be rename-safe (see renameSafePair), or the
+// operation fails closed. The target itself may not exist yet: a
+// not-yet-created trailing component is evaluated as a future
+// directory owned by the process user (which is what the store
+// creates: mode 0700), and its creation is gated by the pair above
+// it. Symlinked components fail closed. The existing prefix is
+// resolved to its real path first, so an operator symlink above the
+// root is honored, not mistaken for an attack — but a symlink that
+// appears mid-walk (a swap during the check) still fails closed.
+// This check is what makes the authorization-to-publication window
+// safe: once it passes, no untrusted principal holds rename rights
+// anywhere on the chain, and only the owning user or root could
+// change that — so no interleaving rename by an attacker is
+// possible before the publish, regardless of how close any other
+// check sits to the rename.
+export function assertAncestryBoundary(targetPath) {
+  const euid = processEuid();
+  // Resolve the existing prefix to its real path; keep the
+  // not-yet-created suffix literal.
+  let base = path.resolve(targetPath);
+  const suffix = [];
+  for (;;) {
+    try {
+      base = realpathSync(base);
+      break;
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+      const parent = path.dirname(base);
+      if (parent === base) {
+        fail(`cannot resolve a store ancestry with no existing ancestor at ${targetPath}.`);
+      }
+      suffix.unshift(path.basename(base));
+      base = parent;
+    }
+  }
+  const canonical = suffix.length > 0 ? path.join(base, ...suffix) : base;
+  const segments = canonical.split(path.sep).filter((part) => part.length > 0);
+  const chain = [path.sep];
+  for (const part of segments) chain.push(path.join(chain[chain.length - 1], part));
+  for (let i = 1; i < chain.length; i++) {
+    const parentPath = chain[i - 1];
+    const entryPath = chain[i];
+    let parentStat = null;
+    try {
+      parentStat = lstatSync(parentPath);
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+      // Parent does not exist yet: its own creation is gated by the
+      // pair above it, evaluated with the future entry owned by the
+      // process user. Skip this pair; do not treat absence as safe.
+      continue;
+    }
+    if (parentStat.isSymbolicLink()) {
+      fail(`refused symlinked ancestor ${parentPath} in the store ancestry; refusing rather than operating through an unverified path.`);
+    }
+    let entryStat = null;
+    try {
+      entryStat = lstatSync(entryPath);
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
+    if (entryStat !== null && entryStat.isSymbolicLink()) {
+      fail(`refused symlinked ancestor ${entryPath} in the store ancestry; refusing rather than operating through an unverified path.`);
+    }
+    const entryUid = entryStat !== null ? entryStat.uid : euid;
+    assertRenameSafePair(parentStat, { uid: entryUid }, parentPath, entryPath);
+  }
+}
+
 // Renames inside one verified directory, with both names resolved
 // through the held descriptor: the rename cannot land in another tree
 // no matter what happens to the directory's path spelling afterwards.
@@ -256,10 +397,13 @@ export function canonicalRootFor(resolvedRoot) {
 
 // Creates the operator root if missing, then returns its resolved
 // spelling. Writes use this so the chain below it is always addressed
-// canonically.
+// canonically. A newly created root is mode 0700, like every other
+// directory the store creates: under a permissive umask a default
+// mkdir would leave it group/other-writable and the store's own
+// ancestry boundary would (correctly) refuse to publish under it.
 export function ensureRoot(resolvedRoot) {
   try {
-    mkdirSync(resolvedRoot);
+    mkdirSync(resolvedRoot, { mode: 0o700 });
   } catch (error) {
     if (!error || error.code !== "EEXIST") throw error;
   }
@@ -275,7 +419,28 @@ export function ensureRoot(resolvedRoot) {
 // caller cover any later swap. A swap between a level's verification
 // and its mkdir can strand an empty 0700 directory in the wrong tree;
 // the follow-up verification refuses the operation, so it holds no data.
+//
+// Containment is enforced here, on the write path, before any record
+// bytes are created: the ancestry above the root must be rename-safe
+// (assertAncestryBoundary), and every managed (parent, entry) pair
+// must be rename-safe from descriptor-pinned stats — the root's stat
+// from its own verified descriptor, each level's stat from the
+// descriptor that was just verified at its intended path. A pair
+// failure refuses the write with no temp file and no publication.
+// This is the invariant that closes the check-before-rename window:
+// with every link rename-safe, no untrusted principal can relocate
+// the held directory between this enforcement and the publish.
 export function ensureVerifiedDirChain(canonicalRoot, parts) {
+  assertAncestryBoundary(canonicalRoot);
+  let rootFd = null;
+  let parentStat = null;
+  let parentPath = canonicalRoot;
+  try {
+    rootFd = openVerifiedDir(canonicalRoot);
+    parentStat = fstatSync(rootFd);
+  } finally {
+    if (rootFd !== null) closeSync(rootFd);
+  }
   let cur = canonicalRoot;
   for (let i = 0; i < parts.length; i++) {
     const next = path.join(cur, parts[i]);
@@ -295,7 +460,16 @@ export function ensureVerifiedDirChain(canonicalRoot, parts) {
         throw error;
       }
     }
-    if (isLast) return { dirFd: fd, dirPath: next };
+    try {
+      const levelStat = fstatSync(fd);
+      assertRenameSafePair(parentStat, levelStat, parentPath, next);
+      if (isLast) return { dirFd: fd, dirPath: next };
+      parentStat = levelStat;
+      parentPath = next;
+    } catch (error) {
+      closeSync(fd);
+      throw error;
+    }
     closeSync(fd);
     cur = next;
   }
