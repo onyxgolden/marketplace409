@@ -30,6 +30,13 @@
  * - Every decision re-reads the stored item and its digest through
  *   the transport, so a decision on a refreshed preview refuses
  *   STALE_DIGEST instead of silently landing on the new run.
+ * - The decide route binds the decision to the URL job: the stored
+ *   run's immutable created_from.job_id must equal the route job,
+ *   checked through transport.getItem BEFORE any mutation. The
+ *   transport authorizes operator/workspace, not the route's job
+ *   identity — without this check a decision posted through one
+ *   job's route could land in another job's run and the handler
+ *   would render the first job's page, masking it.
  */
 
 import { randomBytes } from "node:crypto";
@@ -42,6 +49,7 @@ const STATUS_BY_CODE = Object.freeze({
   NOT_FOUND: 404,
   UNKNOWN_ITEM: 404,
   FORBIDDEN: 403,
+  JOB_MISMATCH: 403,
   PRINCIPAL_MISMATCH: 403,
   METHOD_NOT_ALLOWED: 405,
   BAD_REQUEST: 400,
@@ -225,6 +233,18 @@ export function createResearchWorkbenchHost({
     if (job === undefined) refuse(CODES.NOT_FOUND, `no research job '${jobId}'`);
     if (typeof body.itemId !== "string" || body.itemId.length === 0) {
       refuse(CODES.BAD_REQUEST, "itemId is required");
+    }
+    // Bind the decision to the route job BEFORE any mutation: the
+    // stored run's immutable created_from.job_id must equal the URL
+    // job. The transport checks operator/workspace, not the route's
+    // job identity, so this is the check that stops a decision
+    // posted through job A's route from landing in job B's run.
+    // A missing run refuses NOT_FOUND; a foreign-principal run
+    // refuses PRINCIPAL_MISMATCH from the transport, unchanged.
+    const stored = await transport.getItem(body.itemId);
+    if (stored === null) refuse(CODES.NOT_FOUND, `no stored run '${body.itemId}'`);
+    if (stored.created_from?.job_id !== jobId) {
+      refuse(CODES.JOB_MISMATCH, "the run does not belong to this research job");
     }
     const decisionBody = {
       itemId: body.itemId,

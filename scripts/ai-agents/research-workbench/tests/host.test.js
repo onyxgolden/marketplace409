@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { hostFor, JOB_ID, CORPUS_ID, formBody, runPreview, decisionFormFields, NOW } from "./helpers.js";
+import { generacDemoDefinition } from "../src/jobs.js";
 
 async function get(host, path) {
   return host.handleRequest({ method: "GET", path });
@@ -135,6 +136,40 @@ test("a decision against a refreshed preview refuses STALE_DIGEST", async () => 
   });
   assert.equal(stale.status, 409);
   assert.match(stale.body, /STALE_DIGEST/);
+});
+
+test("a decision posted through job A's route with job B's run refuses JOB_MISMATCH and leaves B's history unchanged", async () => {
+  const jobA = generacDemoDefinition();
+  const jobB = { ...jobA, job_id: "research-monthly-brief@1" };
+  const { host, transport } = hostFor({ jobs: [jobA, jobB] });
+  // Both jobs share the principal, so the transport's
+  // operator/workspace check passes for both runs — only the
+  // route's job-identity check can stop the cross-job mutation.
+  const previewA = await runPreview(host, { jobId: jobA.job_id, invocationId: "inv-cross-a" });
+  assert.equal(previewA.status, 200);
+  const previewB = await runPreview(host, { jobId: jobB.job_id, invocationId: "inv-cross-b" });
+  assert.equal(previewB.status, 200);
+  const fieldsB = decisionFormFields(previewB.body);
+  assert.equal(fieldsB.rowIds.length, 8);
+  // B's valid decision material, posted through A's decide endpoint.
+  const refused = await post(host, `/research/jobs/${jobA.job_id}/decide`, {
+    itemId: fieldsB.itemId, reportDigest: fieldsB.reportDigest, rowId: fieldsB.rowIds[0], decision: "accept",
+  });
+  assert.equal(refused.status, 403);
+  assert.match(refused.body, /JOB_MISMATCH/);
+  // No decision landed anywhere: B's history is empty, and A's run
+  // is untouched too.
+  const decisionsB = await transport.getDecisions(fieldsB.itemId);
+  assert.equal((decisionsB?.revisions ?? []).length, 0);
+  const fieldsA = decisionFormFields(previewA.body);
+  const decisionsA = await transport.getDecisions(fieldsA.itemId);
+  assert.equal((decisionsA?.revisions ?? []).length, 0);
+  // B's own route still decides normally afterwards.
+  const ok = await post(host, `/research/jobs/${jobB.job_id}/decide`, {
+    itemId: fieldsB.itemId, reportDigest: fieldsB.reportDigest, rowId: fieldsB.rowIds[0], decision: "accept",
+  });
+  assert.equal(ok.status, 200);
+  assert.match(ok.body, /Decision recorded: revision 1/);
 });
 
 test("foreign-principal host sees no rows and cannot read or decide them", async () => {

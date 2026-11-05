@@ -11,6 +11,8 @@ export const CODES = Object.freeze({
   NOT_FOUND: "NOT_FOUND",
   METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
   FORBIDDEN: "FORBIDDEN",
+  /** A decision names a run whose stored job identity is not the route job's. */
+  JOB_MISMATCH: "JOB_MISMATCH",
   CONFLICT: "CONFLICT",
   STORE_UNAVAILABLE: "STORE_UNAVAILABLE",
   JOB_DEFINITIONS_UNAVAILABLE: "JOB_DEFINITIONS_UNAVAILABLE",
