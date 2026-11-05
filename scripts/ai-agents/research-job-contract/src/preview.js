@@ -15,6 +15,15 @@
  *   consumed in order, and the first item that would exceed the item
  *   or byte cap refuses the whole preview (no partial receipt, no
  *   totals from a partially consumed corpus, no touch of the tail).
+ *   Admission is bounded and per-index: each item is descriptor-gated,
+ *   validated, then budget-checked before the next index is read, so
+ *   items past a refusal point are never read, hashed, or validated.
+ *   The fixture-set hash is computed AFTER the loop from the admitted
+ *   normalized items only — never from the raw corpus.
+ * - Corpus and item validation is descriptor-safe: Proxies, accessors,
+ *   and custom prototypes refuse with a named JobRefusal instead of
+ *   invoking a trap, so untrusted fixture input cannot execute code
+ *   or throw a non-refusal error through the preview path.
  * - The job stays DISABLED: the receipt carries job_status DISABLED
  *   and invocation mode SYNTHETIC_PREVIEW as separate fields. A
  *   preview never converts a job to scheduled or live.
@@ -30,6 +39,7 @@
  * Pure Node 24 ESM, zero deps.
  */
 
+import { types } from "node:util";
 import { canonicalStringify, sha256Hex, sha256Bytes } from "./canonical.js";
 import { CODES, refuse } from "./errors.js";
 import { validateJobDefinition } from "./jobDefinition.js";
@@ -46,8 +56,52 @@ function isPlainObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * Trap-free plain-data gate, SHALLOW by design: checks this object's own
+ * shape (Proxy, prototype, accessors, function/symbol values, symbol
+ * keys) without recursing into property values, so gating a container
+ * never reads the values it contains. The corpus wrapper is gated this
+ * way; the items array gets only its Proxy/prototype checks up front
+ * and a per-index descriptor gate inside the loop, so a forbidden tail
+ * is never even enumerated. Individual items are gated here before any
+ * field is read. Descriptor reads never invoke getters: a Proxy is
+ * refused before any descriptor is read, and on a non-proxy object a
+ * descriptor read is trap-free.
+ */
+function assertPlainDataShallow(value, where, code) {
+  if (value === null || typeof value !== "object") return;
+  if (types.isProxy(value)) refuse(code, `native Proxy at '${where}' is not plain data`);
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) {
+    refuse(code, `unsupported prototype at '${where}'`);
+  }
+  for (const k of Object.getOwnPropertyNames(value)) {
+    const desc = Object.getOwnPropertyDescriptor(value, k);
+    if (!desc) continue;
+    if (typeof desc.get === "function" || typeof desc.set === "function") {
+      refuse(code, `accessor property '${where}.${k}' is not plain data`);
+    }
+    if (typeof desc.value === "function" || typeof desc.value === "symbol") {
+      refuse(code, `non-data property '${where}.${k}' is not plain data`);
+    }
+  }
+  for (const s of Object.getOwnPropertySymbols(value)) {
+    refuse(code, `symbol-keyed property at '${where}' is not plain data`);
+  }
+}
+
+/** Descriptor read: never invokes a getter (accessors refuse outright). */
+function fieldValue(obj, key, where) {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (desc === undefined) return undefined;
+  if (typeof desc.get === "function" || typeof desc.set === "function") {
+    refuse(CODES.BAD_CORPUS, `accessor property '${where}.${key}' is not plain data`);
+  }
+  return desc.value;
+}
+
 function reqText(obj, key, where, { maxBytes, allowEmpty = false }) {
-  const v = obj[key];
+  const v = fieldValue(obj, key, where);
   if (typeof v !== "string" || (!allowEmpty && v.length === 0)) {
     refuse(CODES.BAD_CORPUS, `'${where}.${key}' must be a ${allowEmpty ? "" : "non-empty "}string`);
   }
@@ -58,12 +112,14 @@ function reqText(obj, key, where, { maxBytes, allowEmpty = false }) {
 }
 
 function optText(obj, key, where, maxBytes) {
-  if (!(key in obj) || obj[key] === undefined) return "";
+  const v = fieldValue(obj, key, where);
+  if (v === undefined) return "";
   return reqText(obj, key, where, { maxBytes, allowEmpty: true });
 }
 
 /** Validate one fixture item's shape. Returns normalized fields. */
 export function validateFixtureItem(raw, where) {
+  assertPlainDataShallow(raw, where, CODES.BAD_CORPUS);
   if (!isPlainObject(raw)) refuse(CODES.BAD_CORPUS, `${where} must be an object`);
   for (const k of Object.keys(raw)) {
     if (!["claim", "evidence_excerpt", "kind", "uncertainty", "limitations", "recommendation", "proposed_action"].includes(k)) {
@@ -115,11 +171,16 @@ export function buildPreview({ definition, invocation_id, actor, corpus, now }) 
     refuse(CODES.BAD_INVOCATION, "now must be an explicit UTC instant (Zulu)");
   }
 
+  // Corpus admission is bounded and descriptor-safe: the wrapper is
+  // shallow-gated (no value reads), the id and items are read via
+  // descriptors, and the items array is Proxy/prototype-gated before
+  // the loop. Nothing here serializes or traverses the raw corpus.
+  assertPlainDataShallow(corpus, "corpus", CODES.BAD_CORPUS);
   if (!isPlainObject(corpus)) refuse(CODES.BAD_CORPUS, "corpus must be an object");
   for (const k of Object.keys(corpus)) {
     if (k !== "corpus_id" && k !== "items") refuse(CODES.BAD_CORPUS, `unknown corpus property '${k}'`);
   }
-  const corpusId = corpus.corpus_id;
+  const corpusId = fieldValue(corpus, "corpus_id", "corpus");
   if (typeof corpusId !== "string" || !CORPUS_ID_RE.test(corpusId)) {
     refuse(CODES.BAD_CORPUS, "corpus.corpus_id must be a slug");
   }
@@ -129,19 +190,35 @@ export function buildPreview({ definition, invocation_id, actor, corpus, now }) 
   if (def.exclusions.includes(corpusId)) {
     refuse(CODES.EXCLUDED_CORPUS, `corpus '${corpusId}' is named in the job's exclusions`);
   }
-  if (!Array.isArray(corpus.items)) refuse(CODES.BAD_CORPUS, "corpus.items must be an array");
+  const itemsValue = fieldValue(corpus, "items", "corpus");
+  if (types.isProxy(itemsValue)) refuse(CODES.BAD_CORPUS, "native Proxy at 'corpus.items' is not plain data");
+  if (!Array.isArray(itemsValue)) refuse(CODES.BAD_CORPUS, "corpus.items must be an array");
+  const itemsProto = Object.getPrototypeOf(itemsValue);
+  if (itemsProto !== Array.prototype && itemsProto !== null) {
+    refuse(CODES.BAD_CORPUS, "unsupported prototype at 'corpus.items'");
+  }
 
   const defHash = definitionHash(def);
   const runId = deriveRunId(defHash, invocation_id);
-  const fixtureSetHash = sha256Hex(canonicalStringify(corpus));
   const budget = new RunBudget(def.budget);
 
   // Consume in order; the first item that would exceed a cap refuses
   // the whole preview BEFORE that item is included or counted. Items
-  // past the refusal point are never validated or touched.
+  // past the refusal point are never read: each index is descriptor-
+  // gated, then validated, then budget-checked, and the loop throws
+  // before the next index is touched.
   const items = [];
-  for (let i = 0; i < corpus.items.length; i++) {
-    const raw = corpus.items[i];
+  const admitted = [];
+  for (let i = 0; i < itemsValue.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(itemsValue, String(i));
+    if (desc === undefined) refuse(CODES.BAD_CORPUS, `corpus.items[${i}] is missing`);
+    if (typeof desc.get === "function" || typeof desc.set === "function") {
+      refuse(CODES.BAD_CORPUS, `accessor property 'corpus.items[${i}]' is not plain data`);
+    }
+    if (typeof desc.value === "function" || typeof desc.value === "symbol") {
+      refuse(CODES.BAD_CORPUS, `non-data property 'corpus.items[${i}]' is not plain data`);
+    }
+    const raw = itemsValue[i];
     const item = validateFixtureItem(raw, `corpus.items[${i}]`);
     const bytes = itemByteSize(item);
     if (!budget.fits("items", 1) || !budget.fits("bytes", bytes)) {
@@ -149,6 +226,7 @@ export function buildPreview({ definition, invocation_id, actor, corpus, now }) 
     }
     budget.consumeItem();
     budget.consumeBytes(bytes);
+    admitted.push(item);
     const evidenceSha = sha256Bytes(Buffer.from(item.evidence_excerpt, "utf8"));
     items.push({
       item_key: itemKey({ job_id: def.job_id, run_id: runId, claim: item.claim, evidence_sha256: evidenceSha }),
@@ -164,6 +242,13 @@ export function buildPreview({ definition, invocation_id, actor, corpus, now }) 
       decision_status: "PENDING",
     });
   }
+
+  // Admitted-only fixture-set hash: corpus id + normalized admitted
+  // items, computed after the loop. It is invocation-independent (the
+  // same fixture set hashes the same under any invocation) and
+  // tail-independent (a refused run produces no receipt at all, and
+  // items past a refusal point never reach this hash).
+  const fixtureSetHash = sha256Hex(canonicalStringify({ corpus_id: corpusId, items: admitted }));
 
   const receipt = {
     run_id: runId,

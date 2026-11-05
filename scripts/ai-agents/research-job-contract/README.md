@@ -36,7 +36,11 @@ contract and nothing else.
   identity, kind (`fact` | `inference` | `proposal`), uncertainty,
   limitations, recommendation, proposed action, and initial decision
   status `PENDING`. Empty corpora yield a meaningful empty claim and
-  zero items — never invented items.
+  zero items — never invented items. Admission is bounded and
+  descriptor-safe: items are gated, validated, then budget-checked one
+  index at a time, so items past a refusal point are never read, and
+  the receipt's fixture-set hash covers the corpus id + admitted
+  normalized items only (invocation-independent).
 - `fixtures/` — synthetic-only corpora: the 8-item replay, a 3-item
   corpus for budget tests, and an empty corpus. All values are
   invented; nothing here is a real product specification.
