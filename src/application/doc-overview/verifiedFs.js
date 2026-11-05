@@ -26,7 +26,14 @@
 //   (/proc/self/fd/<fd>), and temp-file creation plus the publish
 //   rename resolve both names through the held kind-directory
 //   descriptor, so neither step can be redirected by a path swap after
-//   the directory was verified.
+//   the directory was verified. The publish rename additionally
+//   asserts, immediately before renaming, that the held directory is
+//   still at its authorized path: descriptor pinning preserves inode
+//   identity, not path containment, so a directory renamed out of the
+//   owner tree after verification would otherwise publish record
+//   bytes into the relocated directory. That relocation is refused
+//   before any bytes move; the post-rename landing check cannot undo
+//   a publication, so it is belt-and-braces only.
 // - The one residual: ensureVerifiedDirChain can create an empty
 //   directory in the wrong tree if a parent component is swapped
 //   between its verification and the mkdir. The follow-up verification
@@ -185,16 +192,40 @@ export function createVerifiedTemp(dirFd, dirPath, tmpName) {
   return fd;
 }
 
+// The held directory must still be at its authorized location. A
+// descriptor names an inode, not a path: descriptor pinning preserves
+// inode identity, NOT authorized path containment. If the directory
+// was renamed out of the owner tree after verification, every
+// descriptor-relative step below would still operate on that inode —
+// and a rename through it would publish record bytes into the
+// relocated directory. This check reads what the descriptor actually
+// names, from the kernel, and refuses on any mismatch. Callers must
+// invoke it at the publish boundary, immediately before the rename,
+// so a relocation is refused BEFORE any bytes move: a post-rename
+// check cannot undo a publication.
+export function assertHeldDirAtPath(dirFd, intendedDirPath) {
+  const actual = fdPath(dirFd);
+  if (actual !== intendedDirPath) {
+    fail(
+      `refused publish: held directory is no longer at its authorized location (possible relocation): intended ${intendedDirPath}, resolved ${actual}.`,
+    );
+  }
+}
+
 // Renames inside one verified directory, with both names resolved
 // through the held descriptor: the rename cannot land in another tree
 // no matter what happens to the directory's path spelling afterwards.
 // Replaces the destination, as rename does; both endpoints are pinned.
-export function renameWithinDir(dirFd, fromName, toName) {
+// Before renaming, the held directory must still be at its intended
+// (authorized) path: a directory renamed out of the owner tree after
+// verification is refused here, before any bytes move.
+export function renameWithinDir(dirFd, dirPath, fromName, toName) {
   for (const name of [fromName, toName]) {
     if (name.includes(path.sep) || name === "." || name === "..") {
       fail(`rename name must be a single path segment, got ${JSON.stringify(name)}.`);
     }
   }
+  assertHeldDirAtPath(dirFd, dirPath);
   renameSync(`/proc/self/fd/${dirFd}/${fromName}`, `/proc/self/fd/${dirFd}/${toName}`);
 }
 

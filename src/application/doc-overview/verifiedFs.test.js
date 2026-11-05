@@ -123,7 +123,14 @@ describe("verifiedFs", () => {
       const tmpFd = createVerifiedTemp(dirFd, path.join(root, "real.bak"), ".tmp-1");
       writeFileSync(tmpFd, "DATA", "utf8");
       closeSync(tmpFd);
-      renameWithinDir(dirFd, ".tmp-1", "final.json");
+      // Primitive-level note: this test passes the directory's CURRENT
+      // location as the intended path, so the publish boundary's
+      // containment assertion passes and the rename lands in that
+      // directory (the inode's directory), never in the victim tree.
+      // The store always passes the path fixed at verification time,
+      // so a store publish after a relocation refuses instead — see
+      // the next test.
+      renameWithinDir(dirFd, path.join(root, "real.bak"), ".tmp-1", "final.json");
       expect(readFileSync(path.join(root, "real.bak", "final.json"), "utf8")).toBe("DATA");
       expect(readdirVerifiedDir(dirFd).sort()).toEqual(["final.json"]);
     } finally {
@@ -132,6 +139,39 @@ describe("verifiedFs", () => {
     // The victim tree is untouched: no temp, no renamed file.
     expect(() => statSync(path.join(victimDir, "final.json"))).toThrow(/ENOENT/);
     expect(() => statSync(path.join(victimDir, ".tmp-1"))).toThrow(/ENOENT/);
+  });
+
+  it("refuses to publish through a directory relocated after verification", () => {
+    const root = tempRoot();
+    const { dirFd, dirPath } = ensureVerifiedDirChain(root, ["owner-1", "drafts"]);
+    try {
+      // Verify, then create and fill the temp file while the
+      // directory is still at its authorized path.
+      const tmpFd = createVerifiedTemp(dirFd, dirPath, ".tmp-1");
+      writeFileSync(tmpFd, "RECORD-BYTES", "utf8");
+      closeSync(tmpFd);
+      // Adversary relocates the verified directory outside the
+      // authorized owner tree AFTER verification and temp creation
+      // but BEFORE the publish rename. This is the exact sequence the
+      // store performs in atomicWriteJson, with no timing window:
+      // the relocation has already happened when publish is attempted.
+      const relocated = path.join(root, "outside");
+      renameSync(dirPath, relocated);
+      // The publish boundary must refuse BEFORE any bytes move.
+      expect(() => renameWithinDir(dirFd, dirPath, ".tmp-1", "final.json")).toThrow(
+        /no longer at its authorized location/,
+      );
+      // No record bytes published anywhere: not in the relocated
+      // directory, not at the original (now vacant) path.
+      expect(() => statSync(path.join(relocated, "final.json"))).toThrow(/ENOENT/);
+      expect(() => statSync(path.join(dirPath, "final.json"))).toThrow(/ENOENT/);
+      // The unpublished temp file remains only a temp name in the
+      // relocated directory; it is never served as a record.
+      expect(readFileSync(path.join(relocated, ".tmp-1"), "utf8")).toBe("RECORD-BYTES");
+      expect(readdirVerifiedDir(dirFd).sort()).toEqual([".tmp-1"]);
+    } finally {
+      closeSync(dirFd);
+    }
   });
 
   it("ensureVerifiedDirChain creates missing levels 0700 and refuses symlinked components", () => {

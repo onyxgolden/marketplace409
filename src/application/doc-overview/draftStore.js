@@ -41,7 +41,12 @@
 //   verified kind directory), so a crash cannot leave a half-written
 //   manifest or draft behind. The rename replaces the destination
 //   entry, as before, but both names resolve through the held
-//   directory descriptor, so the publish cannot land in another tree.
+//   directory descriptor, so the publish cannot land in another tree
+//   by path swap — and the publish asserts the held directory is
+//   still at its authorized path immediately before renaming, so a
+//   directory relocated out of the owner tree after verification is
+//   refused before any bytes move (descriptor pinning alone preserves
+//   inode identity, not authorized path containment).
 // - Platform: descriptor verification needs Linux /proc/self/fd (see
 //   verifiedFs.js). Without it the store fails closed, loudly, rather
 //   than operating unverified.
@@ -98,7 +103,7 @@ function atomicWriteJson(resolvedRoot, parts, fileName, value) {
     }
     closeSync(tmpFd);
     try {
-      renameWithinDir(dirFd, tmpName, fileName);
+      renameWithinDir(dirFd, dirPath, tmpName, fileName);
     } catch (error) {
       unlinkWithinDirQuiet(dirFd, tmpName);
       throw error;
