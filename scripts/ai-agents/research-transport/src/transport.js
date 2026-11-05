@@ -14,6 +14,21 @@
  *   A definition whose operator scope does not match the principal
  *   refuses — cross-workspace and cross-operator publishes are
  *   denied before any preview is built.
+ * - Every item read or mutation is authorized against the stored
+ *   item's embedded job scope BEFORE any item bytes or decisions
+ *   are returned: getItem, getDecisions, decide, and closedLoop
+ *   refuse a foreign item (PRINCIPAL_MISMATCH, no contents
+ *   disclosed), and listItems silently shows only the caller's own
+ *   rows. The private store's namespace is flat and enforces no
+ *   caller principal itself, so this adapter is the enforcement
+ *   point — never delegate an unauthenticated read to it.
+ * - The decision actor is the server-derived session identity the
+ *   host passes as `actor` — never a body field (decisionFromBody
+ *   rejects a body actor). Host routes MUST bind `actor` to the
+ *   authenticated session identity at the route boundary; this
+ *   adapter has no session capability and cannot do that binding
+ *   itself, so a route that forwards a request-supplied actor
+ *   breaks the gate.
  * - The preview path is P1-A buildPreview, unchanged: validated
  *   definition + synthetic fixture corpus → receipt + items. The
  *   adapter adds no live source, no network, and no execution.
@@ -61,6 +76,41 @@ function assertPrincipal(principal) {
   return principal;
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * True iff the stored item's embedded job scope matches the transport
+ * principal. The scope is the validated definition's operator_scope,
+ * embedded by serializeResearchItem at publish time; it is immutable
+ * for the item's life. Anything else — missing scope, malformed refs,
+ * a non-Research item sharing the flat store — is NOT authorized:
+ * never treat an unscopable item as readable. This predicate never
+ * throws and never reveals item contents; callers decide the denial
+ * shape (silent filter for lists, refusal for single-item paths).
+ */
+function itemScopeMatches(stored, principal) {
+  if (!isPlainObject(stored)) return false;
+  const scope = stored.job_definition?.operator_scope;
+  if (!isPlainObject(scope)) return false;
+  if (typeof scope.operator_ref !== "string" || scope.operator_ref.length === 0
+    || typeof scope.workspace_ref !== "string" || scope.workspace_ref.length === 0) return false;
+  return scope.operator_ref === principal.operator_ref && scope.workspace_ref === principal.workspace_ref;
+}
+
+/**
+ * Authorize one stored item against the transport principal, before
+ * any read or mutation of it. The refusal detail is deliberately
+ * generic: it names no item field, title, digest, or scope value, so
+ * a denied caller learns nothing about a foreign item's contents.
+ */
+function assertItemScope(stored, principal) {
+  if (!itemScopeMatches(stored, principal)) {
+    refuse(CODES.PRINCIPAL_MISMATCH, "stored item scope does not match the host principal");
+  }
+}
+
 /**
  * Create the transport bound to one host principal and one private
  * store. `clock.nowIso()` (when supplied) stamps decision times in
@@ -101,18 +151,40 @@ export function createResearchTransport({ store, principal, clock } = {}) {
     async decide({ itemId, body, actor, at }) {
       const stored = await store.getItem(itemId);
       if (stored === null) refuse(CODES.UNKNOWN_ITEM, `no stored item '${String(itemId)}'`);
+      assertItemScope(stored, principal);
       const decision = decisionFromBody(stored, body, at ?? nowIso(), actor);
       return store.appendDecision(stored, decision, validateResearchDecision);
     },
 
-    /** Read helpers for the P1-C surface (delegates; the store owns the bytes). */
+    /**
+     * Read helpers for the P1-C surface. Every read is authorized
+     * against the stored item's embedded job scope BEFORE any item
+     * bytes or decisions are returned: a foreign item refuses
+     * (PRINCIPAL_MISMATCH, no contents disclosed), and listItems
+     * silently shows only the caller's own rows. The store's list
+     * projection carries no scope, so listItems retrieves each
+     * candidate item and authorizes it — one extra read per listed
+     * row, acceptable for a private Workbench store.
+     */
     async getItem(itemId) {
-      return store.getItem(itemId);
+      const stored = await store.getItem(itemId);
+      if (stored !== null) assertItemScope(stored, principal);
+      return stored;
     },
     async listItems() {
-      return store.listItems();
+      const rows = await store.listItems();
+      const visible = [];
+      for (const row of rows) {
+        if (!isPlainObject(row) || typeof row.item_id !== "string") continue;
+        const full = await store.getItem(row.item_id);
+        if (full === null) continue;
+        if (itemScopeMatches(full, principal)) visible.push(row);
+      }
+      return visible;
     },
     async getDecisions(itemId) {
+      const stored = await store.getItem(itemId);
+      if (stored !== null) assertItemScope(stored, principal);
       return store.getDecisions(itemId);
     },
 
@@ -124,6 +196,7 @@ export function createResearchTransport({ store, principal, clock } = {}) {
     async closedLoop(itemId) {
       const item = await store.getItem(itemId);
       if (item === null) refuse(CODES.UNKNOWN_ITEM, `no stored item '${String(itemId)}'`);
+      assertItemScope(item, principal);
       const record = await store.getDecisions(itemId);
       const decided = new Set((record?.revisions ?? []).map((revision) => revision.row_id));
       const pendingRows = item.row_ids.filter((rowId) => !decided.has(rowId));

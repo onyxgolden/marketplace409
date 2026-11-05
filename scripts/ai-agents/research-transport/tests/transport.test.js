@@ -260,3 +260,87 @@ test("no scheduler, timer, network, or filesystem surface in the adapter sources
     }
   }
 });
+
+const PRINCIPAL_B = Object.freeze({ operator_ref: "op-2", workspace_ref: "ws-2" });
+
+async function publishAs(store, principal, invocation_id) {
+  const transport = transportFor(store, principal);
+  return transport.publishPreview({
+    definition: validDefinition({
+      operator_scope: { operator_ref: principal.operator_ref, workspace_ref: principal.workspace_ref },
+      provenance: { created_by: principal.operator_ref, created_at: NOW },
+    }),
+    invocation_id,
+    actor: principal.operator_ref,
+    corpus: loadFixture("small-corpus.json"),
+    now: NOW,
+  });
+}
+
+test("cross-principal isolation: two principals cannot read, list, decide, or close each other's items", async () => {
+  const store = createStoreDouble();
+  const a = await publishAs(store, PRINCIPAL, "inv-a");
+  const b = await publishAs(store, PRINCIPAL_B, "inv-b");
+  const transportA = transportFor(store, PRINCIPAL);
+  const transportB = transportFor(store, PRINCIPAL_B);
+
+  // Positive control: each principal reads its own item.
+  assert.equal((await transportA.getItem(a.item.item_id)).item_id, a.item.item_id);
+  assert.equal((await transportB.getItem(b.item.item_id)).item_id, b.item.item_id);
+
+  // Cross reads refuse without disclosing foreign contents.
+  const denied = await expectCode(() => transportB.getItem(a.item.item_id), "PRINCIPAL_MISMATCH");
+  assert.equal(denied.detail.includes(a.item.title), false);
+  assert.equal(denied.detail.includes(a.item.report_digest), false);
+  await expectCode(() => transportA.getItem(b.item.item_id), "PRINCIPAL_MISMATCH");
+  await expectCode(() => transportB.getDecisions(a.item.item_id), "PRINCIPAL_MISMATCH");
+  await expectCode(() => transportB.closedLoop(a.item.item_id), "PRINCIPAL_MISMATCH");
+
+  // Cross decide refuses and appends nothing.
+  await expectCode(
+    () => transportB.decide({
+      itemId: a.item.item_id,
+      body: {
+        itemId: a.item.item_id,
+        reportDigest: a.item.report_digest,
+        rowId: a.item.row_ids[0],
+        decision: "accept",
+        decisionId: "x-1",
+      },
+      actor: "op-2",
+    }),
+    "PRINCIPAL_MISMATCH",
+  );
+  assert.equal(await transportA.getDecisions(a.item.item_id), null);
+
+  // Lists show only the caller's own rows.
+  assert.deepEqual((await transportA.listItems()).map((row) => row.item_id), [a.item.item_id]);
+  assert.deepEqual((await transportB.listItems()).map((row) => row.item_id), [b.item.item_id]);
+});
+
+test("single-ref scope mismatch denies: same operator other workspace, other operator same workspace", async () => {
+  const store = createStoreDouble();
+  const { item } = await publishSmall(store);
+  const wsOther = transportFor(store, { operator_ref: "op-1", workspace_ref: "ws-2" });
+  const opOther = transportFor(store, { operator_ref: "op-2", workspace_ref: "ws-1" });
+  await expectCode(() => wsOther.getItem(item.item_id), "PRINCIPAL_MISMATCH");
+  await expectCode(() => opOther.getItem(item.item_id), "PRINCIPAL_MISMATCH");
+  assert.deepEqual(await wsOther.listItems(), []);
+  assert.deepEqual(await opOther.listItems(), []);
+});
+
+test("items without an embedded Research scope are not readable through the transport", async () => {
+  const store = createStoreDouble();
+  await store.putItem({
+    item_id: "foreign-1",
+    agent: "other",
+    kind: "other",
+    title: "Not research",
+    synthetic: false,
+    published_at: NOW,
+    report_digest: "0".repeat(64),
+  });
+  const transport = transportFor(store);
+  await expectCode(() => transport.getItem("foreign-1"), "PRINCIPAL_MISMATCH");
+  assert.deepEqual(await transport.listItems(), []);
+});

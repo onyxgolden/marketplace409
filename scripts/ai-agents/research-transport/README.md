@@ -60,6 +60,25 @@ Jason-only decision, not granted by merge, publish, or decision.
   principal, or the publish refuses (`PRINCIPAL_MISMATCH`) before
   any preview is built. Cross-workspace and cross-operator
   publishes are denied.
+- Every item read or mutation is authorized against the stored
+  item's embedded job scope BEFORE any item bytes or decisions are
+  returned: `getItem`, `getDecisions`, `decide`, and `closedLoop`
+  refuse a foreign item (`PRINCIPAL_MISMATCH`, with a generic
+  detail that discloses no item contents), and `listItems`
+  silently shows only the caller's own rows. The private store's
+  namespace is flat and enforces no caller principal itself, so
+  this adapter is the enforcement point. Items with no embedded
+  Research scope (foreign items sharing the store) are likewise
+  denied, never treated as readable. The store's list projection
+  carries no scope, so `listItems` retrieves each candidate item
+  and authorizes it (one extra read per listed row).
+- The decision actor is the server-derived session identity the
+  host passes as `actor` — never a body field (`decisionFromBody`
+  rejects a body `actor`). Host routes MUST bind `actor` to the
+  authenticated session identity at the route boundary; this
+  adapter has no session capability and cannot do that binding
+  itself, so a route that forwards a request-supplied actor breaks
+  the gate.
 - Duplicate invocation with identical inputs is idempotent in the
   store (same run id + same bytes → no-op). A changed retry under
   the same invocation conflicts (`REPUBLISH_CONFLICT`) instead of
@@ -116,7 +135,10 @@ node tests/run-tests.js   # or: npm test (in this directory)
 Pure Node 24, zero dependencies. Tests use `node:test` directly
 against an in-memory double of the private store's publish/decision
 contract (`tests/storeDouble.js`) — no filesystem, no network.
-Suites: serializer (7), decision (6), transport (11, including the
+Suites: serializer (7), decision (6), transport (14, including the
 8-item Generac synthetic replay with eight distinct decisions and
-a closed loop, and a static guard against scheduler/timer/network/
-filesystem surface in the adapter sources).
+a closed loop, a static guard against scheduler/timer/network/
+filesystem surface in the adapter sources, and cross-principal
+isolation: two principals attempting to read, list, decide, and
+close each other's items, plus single-ref scope mismatches and
+scopeless foreign items).
