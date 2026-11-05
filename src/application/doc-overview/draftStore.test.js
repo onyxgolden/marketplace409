@@ -3,7 +3,7 @@
 // The store is identity-bound: tests construct it with a principal
 // ({ ownerId }) and never pass an ownerId per call.
 
-import { mkdtempSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { mkdtempSync, statSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -146,5 +146,67 @@ describe("createDraftStore", () => {
     symlinkSync(outside, ownerDir, "dir");
     expect(() => store.listDrafts()).toThrow(/symlink/);
     expect(() => store.saveDraft(artifact)).toThrow(/symlink/);
+  });
+
+  it("never serves another owner's record when the kind directory is swapped for a symlink", () => {
+    const root = tempRoot();
+    const victimRoot = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    // Victim tree holding a same-id record with planted content,
+    // placed where the swapped path spelling resolves: the drafts
+    // directory itself is the symlink target.
+    const planted = { ...artifact, planted: true };
+    writeFileSync(path.join(victimRoot, "artifact_1.json"), `${JSON.stringify(planted, null, 2)}\n`, "utf8");
+    // Swap the kind directory for a symlink to the victim tree.
+    const draftsDir = path.join(root, "owner-1", "drafts");
+    renameSync(draftsDir, path.join(victimRoot, "drafts-real"));
+    symlinkSync(victimRoot, draftsDir, "dir");
+    // No operation may serve the planted record or write into the
+    // victim tree: reads and lists refuse, saves refuse.
+    expect(() => store.getDraft("artifact_1")).toThrow(/symlink/);
+    expect(() => store.listDrafts()).toThrow(/symlink/);
+    expect(() => store.saveDraft({ ...artifact, id: "artifact_2" })).toThrow(/symlink/);
+  });
+
+  it("a swapped owner directory cannot redirect a save", () => {
+    const root = tempRoot();
+    const victimRoot = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    mkdirSync(path.join(victimRoot, "drafts"), { recursive: true });
+    const ownerDir = path.join(root, "owner-1");
+    renameSync(ownerDir, path.join(victimRoot, "owner-1-real"));
+    symlinkSync(victimRoot, ownerDir, "dir");
+    expect(() => store.saveDraft({ ...artifact, id: "artifact_2" })).toThrow(/symlink/);
+    // The victim tree gained nothing.
+    expect(() => statSync(path.join(victimRoot, "drafts", "artifact_2.json"))).toThrow(/ENOENT/);
+  });
+
+  it("a missing record under a swapped directory reads as absent, never victim data", () => {
+    const root = tempRoot();
+    const victimRoot = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    // Victim tree holds a DIFFERENT id only, placed where the swapped
+    // path spelling resolves (directly under the symlink target); the
+    // requested id is absent in both trees, so the read must be null,
+    // not victim content.
+    writeFileSync(path.join(victimRoot, "other.json"), `${JSON.stringify({ id: "other" }, null, 2)}\n`, "utf8");
+    const draftsDir = path.join(root, "owner-1", "drafts");
+    renameSync(draftsDir, path.join(victimRoot, "drafts-real"));
+    symlinkSync(victimRoot, draftsDir, "dir");
+    expect(store.getDraft("missing-id")).toBeNull();
+    // ...while an id that DOES exist in the victim tree still refuses.
+    expect(() => store.getDraft("other")).toThrow(/symlink/);
+  });
+
+  it("upsert still replaces its own record (rename-publish semantics preserved)", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const updated = { ...artifact, status: "approved" };
+    store.saveDraft(updated);
+    expect(store.getDraft("artifact_1")).toEqual(updated);
   });
 });

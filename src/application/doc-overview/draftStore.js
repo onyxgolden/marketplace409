@@ -21,183 +21,157 @@
 //   is refused on save. On read, a record whose stored ownerId differs
 //   from the bound owner returns null, exactly like a missing record
 //   (non-disclosing).
-// - SYMLINK REFUSAL. Owner directories are attacker-writable in the
-//   threat model (a malicious owner probing for other owners' records),
-//   so every path component below the root is lstat-checked: a symlink
-//   anywhere in the chain, or a symlinked record file, is refused
-//   before any read, write, or listing follows it. path.resolve/prefix
-//   checks alone do NOT stop this — resolve() normalizes the spelling
-//   but the filesystem still follows the link.
-// - Owner/kind directories the store creates get mode 0700.
-// - Writes are atomic (fresh temp file with 'wx' + rename), so a crash
-//   cannot leave a half-written manifest or draft behind. Rename
-//   replaces the destination entry itself; a symlinked destination is
-//   refused before the rename rather than silently replaced.
+// - RACE-RESISTANT PATHS (verifiedFs.js). Owner directories are
+//   attacker-writable in the threat model, so no operation trusts a
+//   path spelling that was checked a moment ago: every file and
+//   directory is opened with O_NOFOLLOW and the open descriptor is
+//   verified against its intended absolute path via /proc/self/fd.
+//   A component swapped for a symlink at any point before the open
+//   makes the descriptor's true location differ from the intended one
+//   and the operation is refused; a swap after the open cannot
+//   redirect the descriptor. Listings read through the held directory
+//   descriptor and the publish rename resolves both names through it,
+//   so neither step follows a swapped path. A record that exists
+//   anywhere but its intended location is never served; a missing
+//   record under a swapped directory reads as absent (null), which
+//   discloses nothing.
+// - Owner/kind directories the store creates get mode 0700; temp files
+//   get mode 0600.
+// - Writes are atomic (fresh temp file with O_EXCL + rename inside the
+//   verified kind directory), so a crash cannot leave a half-written
+//   manifest or draft behind. The rename replaces the destination
+//   entry, as before, but both names resolve through the held
+//   directory descriptor, so the publish cannot land in another tree.
+// - Platform: descriptor verification needs Linux /proc/self/fd (see
+//   verifiedFs.js). Without it the store fails closed, loudly, rather
+//   than operating unverified.
 // - No network, no memory/knowledge store, no external service: this
 //   store only ever touches the local directory it was given.
 
 import {
-  lstatSync,
-  mkdirSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
   readFileSync,
-  renameSync,
-  readdirSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isSafePathSegment } from "@/domains/doc-overview/sanitize.js";
+import {
+  canonicalRootFor,
+  createVerifiedTemp,
+  ensureRoot,
+  ensureVerifiedDirChain,
+  openVerifiedDir,
+  openVerifiedFd,
+  openVerifiedFile,
+  readdirVerifiedDir,
+  renameWithinDir,
+  unlinkWithinDirQuiet,
+} from "./verifiedFs.js";
+
+const { O_RDONLY } = fsConstants;
 
 function fail(message) {
   throw new Error(`draftStore: ${message}`);
 }
 
-function recordPath(ownerDir, kind, recordId) {
+function assertRecordId(recordId) {
   if (!isSafePathSegment(recordId)) {
     fail(`record id must be a safe path segment, got ${JSON.stringify(recordId)}.`);
   }
-  const dir = path.resolve(ownerDir, kind);
-  const file = path.resolve(dir, `${recordId}.json`);
-  // Containment: the resolved file must stay inside its kind directory
-  // even if root or an ID contained something unexpected.
-  if (!file.startsWith(`${dir}${path.sep}`)) {
-    fail("resolved path escaped its owner directory.");
-  }
-  return { dir, file };
 }
 
-// Walks the path from root to dir, one component at a time. Any
-// component that exists as a symlink, or as a non-directory, is refused.
-// Missing components end the walk (the caller creates them with
-// ensureDir, or treats the record as absent).
-function assertChainNoSymlinks(root, dir) {
-  const rel = path.relative(root, dir);
-  if (rel.startsWith(`..${path.sep}`) || rel === ".." || path.isAbsolute(rel)) {
-    fail("resolved path escaped its root directory.");
-  }
-  let cur = root;
-  for (const part of rel.split(path.sep).filter((p) => p.length > 0)) {
-    const next = path.join(cur, part);
-    let stat;
+function atomicWriteJson(resolvedRoot, parts, fileName, value) {
+  const canonical = ensureRoot(resolvedRoot);
+  const { dirFd, dirPath } = ensureVerifiedDirChain(canonical, parts);
+  try {
+    const tmpName = `.tmp-${process.pid}-${randomUUID()}`;
+    const tmpFd = createVerifiedTemp(dirFd, dirPath, tmpName);
     try {
-      stat = lstatSync(next);
+      writeFileSync(tmpFd, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     } catch (error) {
-      if (error && error.code === "ENOENT") return;
+      closeSync(tmpFd);
+      unlinkWithinDirQuiet(dirFd, tmpName);
       throw error;
     }
-    if (stat.isSymbolicLink()) {
-      fail(`refused symlinked path component at ${next}.`);
-    }
-    if (!stat.isDirectory()) {
-      fail(`path component at ${next} is not a directory.`);
-    }
-    cur = next;
-  }
-}
-
-// Creates dir level by level (never mkdir -p through an unchecked
-// chain): each existing component must be a real directory, never a
-// symlink; each missing component is created mode 0700. The root
-// itself is operator configuration (a symlink there is the operator's
-// choice, not an owner escape), so it is created if missing.
-function ensureDir(root, dir) {
-  try {
-    mkdirSync(root);
-  } catch (error) {
-    if (!error || error.code !== "EEXIST") throw error;
-  }
-  const rel = path.relative(root, dir);
-  if (rel.startsWith(`..${path.sep}`) || rel === ".." || path.isAbsolute(rel)) {
-    fail("resolved path escaped its root directory.");
-  }
-  let cur = root;
-  for (const part of rel.split(path.sep).filter((p) => p.length > 0)) {
-    const next = path.join(cur, part);
-    let stat = null;
+    closeSync(tmpFd);
     try {
-      stat = lstatSync(next);
+      renameWithinDir(dirFd, tmpName, fileName);
     } catch (error) {
-      if (!error || error.code !== "ENOENT") throw error;
+      unlinkWithinDirQuiet(dirFd, tmpName);
+      throw error;
     }
-    if (stat === null) {
-      mkdirSync(next, { mode: 0o700 });
-    } else {
-      if (stat.isSymbolicLink()) {
-        fail(`refused symlinked path component at ${next}.`);
-      }
-      if (!stat.isDirectory()) {
-        fail(`path component at ${next} is not a directory.`);
-      }
-    }
-    cur = next;
+    // Post-rename landing check: the destination, opened fresh, must be
+    // exactly the intended record path. The rename already resolved
+    // through the held directory descriptor, so this cannot misland;
+    // it is belt-and-braces against any future refactor that reopens
+    // the rename by path.
+    const destFd = openVerifiedFile(path.join(dirPath, fileName), O_RDONLY);
+    closeSync(destFd);
+  } finally {
+    closeSync(dirFd);
   }
 }
 
-// A record file that exists must be a regular file, never a symlink
-// (a read or rename through it would escape the owner directory).
-// Missing is fine — the caller treats it as absent.
-function assertRecordFileUsable(file) {
-  let stat = null;
+function readJson(resolvedRoot, parts, fileName) {
+  const canonical = canonicalRootFor(resolvedRoot);
+  const dirPath = path.join(canonical, ...parts);
+  const filePath = path.join(dirPath, fileName);
+  let fd;
   try {
-    stat = lstatSync(file);
-  } catch (error) {
-    if (error && error.code === "ENOENT") return;
-    throw error;
-  }
-  if (stat.isSymbolicLink()) {
-    fail(`refused symlinked record file at ${file}.`);
-  }
-  if (!stat.isFile()) {
-    fail(`record path at ${file} is not a regular file.`);
-  }
-}
-
-function atomicWriteJson(root, file, dir, value) {
-  ensureDir(root, dir);
-  assertRecordFileUsable(file);
-  const tmp = path.join(dir, `.tmp-${process.pid}-${randomUUID()}`);
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  renameSync(tmp, file);
-}
-
-function readJson(root, file, dir) {
-  assertChainNoSymlinks(root, dir);
-  assertRecordFileUsable(file);
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    fd = openVerifiedFile(filePath, O_RDONLY);
   } catch (error) {
     if (error && error.code === "ENOENT") return null;
-    throw new Error(`draftStore: unreadable record at ${file}: ${error.message}`);
+    throw error;
+  }
+  try {
+    return JSON.parse(readFileSync(fd, "utf8"));
+  } catch (error) {
+    throw new Error(`draftStore: unreadable record at ${filePath}: ${error.message}`);
+  } finally {
+    closeSync(fd);
   }
 }
 
-function listIds(root, dir) {
-  assertChainNoSymlinks(root, dir);
-  let names;
+function listIds(resolvedRoot, parts) {
+  const canonical = canonicalRootFor(resolvedRoot);
+  const dirPath = path.join(canonical, ...parts);
+  let dirFd;
   try {
-    names = readdirSync(dir);
+    dirFd = openVerifiedDir(dirPath);
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;
   }
-  const ids = [];
-  for (const name of names) {
-    if (!name.endsWith(".json") || name.startsWith(".")) continue;
-    const entryPath = path.join(dir, name);
-    let stat;
-    try {
-      stat = lstatSync(entryPath);
-    } catch (error) {
-      if (error && error.code === "ENOENT") continue;
-      throw error;
+  try {
+    const names = readdirVerifiedDir(dirFd);
+    const ids = [];
+    for (const name of names) {
+      if (!name.endsWith(".json") || name.startsWith(".")) continue;
+      const entryPath = path.join(dirPath, name);
+      let fd;
+      try {
+        fd = openVerifiedFd(entryPath, O_RDONLY);
+      } catch (error) {
+        if (error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      try {
+        // A symlinked entry is refused by openVerifiedFd (ELOOP) or
+        // by the descriptor-path check; a non-file entry is skipped,
+        // as before.
+        if (!fstatSync(fd).isFile()) continue;
+      } finally {
+        closeSync(fd);
+      }
+      ids.push(name.slice(0, -".json".length));
     }
-    if (stat.isSymbolicLink()) {
-      fail(`refused symlinked record file at ${entryPath}.`);
-    }
-    if (!stat.isFile()) continue;
-    ids.push(name.slice(0, -".json".length));
+    return ids.sort();
+  } finally {
+    closeSync(dirFd);
   }
-  return ids.sort();
 }
 
 // Creates an identity-bound store. `principal` is the authenticated
@@ -213,7 +187,6 @@ export function createDraftStore(root, principal) {
   }
   const resolvedRoot = path.resolve(root);
   const boundOwner = principal.ownerId;
-  const ownerDirPath = path.resolve(resolvedRoot, boundOwner);
 
   function checkStoredOwner(record) {
     if (record !== null && record.ownerId !== undefined && record.ownerId !== boundOwner) {
@@ -233,33 +206,31 @@ export function createDraftStore(root, principal) {
       if (!manifest || manifest.ownerId !== boundOwner) {
         fail("manifest.ownerId must equal the bound owner.");
       }
-      const { dir, file } = recordPath(ownerDirPath, "source-sets", manifest.id);
-      atomicWriteJson(resolvedRoot, file, dir, manifest);
+      assertRecordId(manifest.id);
+      atomicWriteJson(resolvedRoot, [boundOwner, "source-sets"], `${manifest.id}.json`, manifest);
       return manifest;
     },
     getSourceSet(manifestId) {
-      const { dir, file } = recordPath(ownerDirPath, "source-sets", manifestId);
-      return checkStoredOwner(readJson(resolvedRoot, file, dir));
+      assertRecordId(manifestId);
+      return checkStoredOwner(readJson(resolvedRoot, [boundOwner, "source-sets"], `${manifestId}.json`));
     },
     listSourceSets() {
-      const dir = path.resolve(ownerDirPath, "source-sets");
-      return listIds(resolvedRoot, dir);
+      return listIds(resolvedRoot, [boundOwner, "source-sets"]);
     },
     saveDraft(artifact) {
       if (!artifact || (artifact.ownerId !== undefined && artifact.ownerId !== boundOwner)) {
         fail("artifact.ownerId, when present, must equal the bound owner.");
       }
-      const { dir, file } = recordPath(ownerDirPath, "drafts", artifact.id);
-      atomicWriteJson(resolvedRoot, file, dir, artifact);
+      assertRecordId(artifact.id);
+      atomicWriteJson(resolvedRoot, [boundOwner, "drafts"], `${artifact.id}.json`, artifact);
       return artifact;
     },
     getDraft(artifactId) {
-      const { dir, file } = recordPath(ownerDirPath, "drafts", artifactId);
-      return checkStoredOwner(readJson(resolvedRoot, file, dir));
+      assertRecordId(artifactId);
+      return checkStoredOwner(readJson(resolvedRoot, [boundOwner, "drafts"], `${artifactId}.json`));
     },
     listDrafts() {
-      const dir = path.resolve(ownerDirPath, "drafts");
-      return listIds(resolvedRoot, dir);
+      return listIds(resolvedRoot, [boundOwner, "drafts"]);
     },
   };
 }
