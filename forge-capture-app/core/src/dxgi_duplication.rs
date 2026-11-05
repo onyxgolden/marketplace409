@@ -973,7 +973,9 @@ pub fn capture_single_output_with_clock<B: DuplicationBackend, F: FnMut() -> Dur
 // caveat as `native.rs`'s Windows path).
 // ---------------------------------------------------------------------------
 #[cfg(windows)]
-pub use win_backend::{DxgiCaptureContext, DxgiStagedResult, DxgiStagedVariant};
+pub use win_backend::{
+    DxgiCaptureContext, DxgiMultiOutputSession, DxgiStagedResult, DxgiStagedVariant,
+};
 
 #[cfg(windows)]
 mod win_backend {
@@ -982,7 +984,8 @@ mod win_backend {
         diagnostic_for_acquire_error, protected_from_frame_info, validate_limits, AcquiredPixels,
         DxgiAcquireClassification, DxgiAcquireDiagnostic, DxgiAcquireProvenance,
         DxgiAcquireStage, DxgiAcquireError, DxgiCaptureOutcome, DxgiDiagnosticLog, DxgiFrameMetadata,
-        DxgiLimits, DxgiRotation, E_INVALIDARG, FrameGuard, OutputInfo,
+        DxgiLimits, DxgiMultiOutputOutcome, DxgiRotation, E_INVALIDARG, FrameGuard, OutputInfo,
+        TopologySnapshot,
     };
     use crate::coords::RectI;
     use crate::result::CaptureError;
@@ -2123,6 +2126,134 @@ mod win_backend {
         }
     }
 
+    /// DXGI-2 multi-output session: one [`DxgiCaptureContext`] per
+    /// attached output, plus the [`TopologySnapshot`] they were built
+    /// from.
+    ///
+    /// The session is the real [`MultiOutputBackend`]: the pure
+    /// [`capture_multi_output`](super::capture_multi_output) loop drives
+    /// it, so rotation/crop/composition/retry behavior is identical
+    /// between the mock tests and real hardware. Dispatch is still NOT
+    /// wired: nothing calls this session from production code yet
+    /// (DXGI-3 owns dispatch). Only tests and harnesses construct it.
+    ///
+    /// Topology refresh rebuilds ALL contexts wholesale: stale
+    /// duplication objects, staging textures, and devices never survive
+    /// a reconfiguration, and the old contexts drop (releasing their
+    /// resources) only after the fresh set is fully built.
+    pub struct DxgiMultiOutputSession {
+        contexts: Vec<DxgiCaptureContext>,
+        snapshot: TopologySnapshot,
+    }
+
+    impl DxgiMultiOutputSession {
+        /// Enumerate attached outputs and bind one context per output.
+        ///
+        /// Index alignment between `enumerate_outputs` and `for_output`
+        /// is VERIFIED by device name, not assumed: a mismatch is an
+        /// error, because a misbound context would capture the wrong
+        /// monitor while claiming the right identity.
+        pub fn enumerate() -> Result<Self, CaptureError> {
+            let outputs = DxgiCaptureContext::enumerate_outputs()?;
+            let mut contexts = Vec::new();
+            for (index, info) in outputs.iter().enumerate() {
+                let ctx = DxgiCaptureContext::for_output(index)?;
+                if ctx.output_info().device_name != info.device_name {
+                    return Err(CaptureError::NativeApi(format!(
+                        "DXGI-2 session: enumeration index {index} maps to \
+                         {} but the context bound {}",
+                        info.device_name,
+                        ctx.output_info().device_name
+                    )));
+                }
+                contexts.push(ctx);
+            }
+            let snapshot = TopologySnapshot::from_outputs(outputs).map_err(|e| {
+                CaptureError::NativeApi(format!("DXGI-2 topology: {e}"))
+            })?;
+            Ok(Self { contexts, snapshot })
+        }
+
+        pub fn snapshot(&self) -> &TopologySnapshot {
+            &self.snapshot
+        }
+
+        /// Capture `rect` across every intersecting output in this
+        /// session's snapshot (DXGI-2 path; production dispatch still
+        /// owns which rects reach here — DXGI-3).
+        pub fn capture_rect(
+            &mut self,
+            rect: RectI,
+            limits: &DxgiLimits,
+        ) -> DxgiMultiOutputOutcome {
+            let snapshot = self.snapshot.clone();
+            super::capture_multi_output(self, &snapshot, rect, limits)
+        }
+    }
+
+    impl super::MultiOutputBackend for DxgiMultiOutputSession {
+        fn acquire_output(
+            &mut self,
+            output: &OutputInfo,
+            timeout_ms: u32,
+            limits: &DxgiLimits,
+        ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+            let ctx = self
+                .contexts
+                .iter_mut()
+                .find(|c| c.output_info().device_name == output.device_name)
+                .ok_or_else(|| {
+                    DxgiAcquireError::Unavailable(format!(
+                        "no DXGI context for output {}",
+                        output.device_name
+                    ))
+                })?;
+            <DxgiCaptureContext as super::DuplicationBackend>::acquire(ctx, timeout_ms, limits)
+        }
+
+        fn recreate_all(&mut self) -> Result<(), DxgiAcquireError> {
+            // DXGI2-001: all-or-nothing, mirroring `refresh_snapshot`'s
+            // build-then-swap shape. Each fresh context is built with
+            // the same `for_output` construction `enumerate` uses, and
+            // its device name must match the context it replaces — a
+            // topology shift mid-rebuild is an error, not a misbound
+            // context. Any failure leaves the old set (and the old
+            // snapshot) completely intact, so no later request can
+            // mix generations; the old contexts drop only after the
+            // fresh set is fully built.
+            super::rebuild_all_or_nothing(&mut self.contexts, |index, old| {
+                let ctx = DxgiCaptureContext::for_output(index)
+                    .map_err(|e| DxgiAcquireError::Other(e.to_string()))?;
+                if ctx.output_info().device_name != old.output_info().device_name {
+                    return Err(DxgiAcquireError::Other(format!(
+                        "DXGI-2 session: recreate index {index} bound {} but the old \
+                         context served {}",
+                        ctx.output_info().device_name,
+                        old.output_info().device_name
+                    )));
+                }
+                Ok(ctx)
+            })
+        }
+
+        fn refresh_snapshot(&mut self) -> Result<TopologySnapshot, String> {
+            // Build the fresh set completely before replacing anything:
+            // a failed re-enumeration leaves the old session intact.
+            let fresh = Self::enumerate().map_err(|e| e.to_string())?;
+            let next = self
+                .snapshot
+                .refresh(fresh.snapshot.outputs)
+                .map_err(|e| e.to_string())?;
+            self.contexts = fresh.contexts;
+            self.snapshot = next.clone();
+            Ok(next)
+        }
+
+        fn snapshot_generation(&self) -> u64 {
+            self.snapshot.generation
+        }
+    }
+
     // (No HRESULT import needed: classification works on the raw i32 code.)
 
     #[test]
@@ -2140,6 +2271,102 @@ mod win_backend {
         assert_eq!(
             super::DXGI_ERROR_DEVICE_REMOVED,
             DXGI_ERROR_DEVICE_REMOVED.0 as u32
+        );
+    }
+
+    /// DXGI-2 hardware acceptance (IGNORED by default): real two-output
+    /// capture on Windows hardware. Run ONLY on a machine with at least
+    /// two attached outputs, per `docs/DXGI2_HARDWARE_TEST_PROCEDURE.md`:
+    ///
+    /// ```powershell
+    /// cargo test -p forge-capture-core --lib dxgi2_two_output_hardware_capture -- --ignored --nocapture
+    /// ```
+    ///
+    /// The test captures the whole virtual desktop, asserts the
+    /// composite dimensions equal the virtual bounds, logs every
+    /// output's rect/rotation/acquisition metadata and the
+    /// present-time tick skew, and writes a PNG (path from
+    /// `DXGI2_HARDWARE_PNG_PATH`, default `dxgi2-two-output.png`) for
+    /// the visual orientation check the procedure requires — dimensions
+    /// alone cannot distinguish a clockwise from a counter-clockwise
+    /// rotation. It is NOT run by the default suite and is NOT claimed
+    /// anywhere until it has actually run on hardware.
+    #[test]
+    #[ignore = "requires real Windows multi-output hardware (see DXGI2_HARDWARE_TEST_PROCEDURE.md)"]
+    fn dxgi2_two_output_hardware_capture() {
+        let mut session =
+            DxgiMultiOutputSession::enumerate().expect("enumerate DXGI outputs");
+        let snapshot = session.snapshot().clone();
+        eprintln!(
+            "DXGI-2 hardware: {} outputs, generation {}",
+            snapshot.outputs.len(),
+            snapshot.generation
+        );
+        for output in &snapshot.outputs {
+            eprintln!(
+                "  {} rect=({},{}) {}x{} rotation={:?} luid={:?}",
+                output.device_name,
+                output.rect.x,
+                output.rect.y,
+                output.rect.w,
+                output.rect.h,
+                output.rotation,
+                output.adapter_luid
+            );
+        }
+        assert!(
+            snapshot.outputs.len() >= 2,
+            "DXGI-2 hardware test requires at least two attached outputs; found {}",
+            snapshot.outputs.len()
+        );
+        let bounds = snapshot.virtual_bounds().expect("virtual bounds");
+        let composite = match session.capture_rect(bounds, &DxgiLimits::default()) {
+            DxgiMultiOutputOutcome::Frame(composite) => composite,
+            other => panic!("expected Frame, got {other:?}"),
+        };
+        assert_eq!(
+            (
+                composite.frame.width as u64,
+                composite.frame.height as u64
+            ),
+            (bounds.w, bounds.h),
+            "composite dimensions must equal the virtual desktop bounds"
+        );
+        assert_eq!(
+            composite.per_output.len(),
+            snapshot.outputs.len(),
+            "every attached output intersects the virtual bounds"
+        );
+        assert!(
+            !composite.frame.rgba.is_empty(),
+            "composite raster must not be empty"
+        );
+        for record in &composite.per_output {
+            eprintln!(
+                "  acquired #{} {} last_present_time={} accumulated_frames={}",
+                record.sequence,
+                record.device_name,
+                record.frame_info.last_present_time,
+                record.frame_info.accumulated_frames
+            );
+        }
+        if let Some(skew) = super::present_time_skew_ticks(&composite.per_output) {
+            eprintln!("  present-time skew: {skew} QueryPerformanceCounter ticks");
+        } else {
+            eprintln!("  present-time skew: unknown (fewer than two outputs or a zero present time)");
+        }
+        let png = crate::png::encode_rgba(
+            composite.frame.width,
+            composite.frame.height,
+            &composite.frame.rgba,
+        )
+        .expect("encode composite PNG");
+        let path = std::env::var("DXGI2_HARDWARE_PNG_PATH")
+            .unwrap_or_else(|_| "dxgi2-two-output.png".to_string());
+        std::fs::write(&path, &png).expect("write composite PNG");
+        eprintln!(
+            "  wrote {path} ({} bytes) — inspect visually for orientation/mirroring",
+            png.len()
         );
     }
 
@@ -3195,3 +3422,2224 @@ mod tests {
         assert_eq!(orders.len(), 6);
     }
 }
+
+#[cfg(test)]
+mod dxgi2_tests {
+    use super::*;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn out(
+        name: &str,
+        x: i64,
+        y: i64,
+        w: u64,
+        h: u64,
+        rotation: DxgiRotation,
+    ) -> OutputInfo {
+        OutputInfo {
+            index: 0,
+            device_name: name.to_string(),
+            adapter_luid: (0, 0),
+            rect: RectI { x, y, w, h },
+            rotation,
+        }
+    }
+
+    /// Primary at the origin + a secondary to its LEFT (negative origin).
+    fn left_snapshot() -> TopologySnapshot {
+        TopologySnapshot::from_outputs(vec![
+            out("\\\\.\\DISPLAY1", 0, 0, 4, 2, DxgiRotation::Identity),
+            out("\\\\.\\DISPLAY2", -4, 0, 4, 2, DxgiRotation::Identity),
+        ])
+        .unwrap()
+    }
+
+    /// Primary at the origin + a secondary to its RIGHT.
+    fn right_snapshot() -> TopologySnapshot {
+        TopologySnapshot::from_outputs(vec![
+            out("\\\\.\\DISPLAY1", 0, 0, 4, 2, DxgiRotation::Identity),
+            out("\\\\.\\DISPLAY2", 4, 0, 4, 2, DxgiRotation::Identity),
+        ])
+        .unwrap()
+    }
+
+    /// Solid BGRA frame (payload pitch, no padding) for one output.
+    fn solid_pixels(width: u32, height: u32, bgra: [u8; 4]) -> AcquiredPixels {
+        let mut bgra_bytes = Vec::new();
+        for _ in 0..width * height {
+            bgra_bytes.extend_from_slice(&bgra);
+        }
+        AcquiredPixels {
+            width,
+            height,
+            row_pitch: width as usize * 4,
+            bgra: bgra_bytes,
+            frame_info: DxgiFrameMetadata::default(),
+        }
+    }
+
+    fn solid_pixels_with_present(
+        width: u32,
+        height: u32,
+        bgra: [u8; 4],
+        last_present_time: i64,
+    ) -> AcquiredPixels {
+        let mut pixels = solid_pixels(width, height, bgra);
+        pixels.frame_info.last_present_time = last_present_time;
+        pixels
+    }
+
+    /// Gradient BGRA frame: R channel = local_x * 10 + local_y, so any
+    /// crop offset is visible in the output values. (BGRA order: the
+    /// R value sits at byte 2 of each pixel; conversion flips it to
+    /// byte 0 of the RGBA output.)
+    fn gradient_pixels(width: u32, height: u32) -> AcquiredPixels {
+        let mut bgra_bytes = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let r = (x * 10 + y) as u8;
+                bgra_bytes.extend_from_slice(&[0, 0, r, 0]);
+            }
+        }
+        AcquiredPixels {
+            width,
+            height,
+            row_pitch: width as usize * 4,
+            bgra: bgra_bytes,
+            frame_info: DxgiFrameMetadata::default(),
+        }
+    }
+
+    /// R channel of every pixel in a composited RGBA frame, row-major.
+    fn reds(frame: &DxgiFrame) -> Vec<u8> {
+        frame
+            .rgba
+            .chunks_exact(4)
+            .map(|px| px[0])
+            .collect()
+    }
+
+    #[derive(Clone)]
+    enum MStep {
+        Ok(AcquiredPixels),
+        Err(DxgiAcquireError),
+    }
+
+    struct MultiMock {
+        steps: HashMap<String, VecDeque<MStep>>,
+        /// Outputs the mock serves after a refresh (mode-change /
+        /// unplug simulation). `None` means "same outputs as before".
+        refresh_outputs: Option<Vec<OutputInfo>>,
+        snapshot: TopologySnapshot,
+        releases: Arc<AtomicUsize>,
+        recreates: Arc<AtomicUsize>,
+        refresh_calls: Arc<AtomicUsize>,
+        acquire_calls: Arc<AtomicUsize>,
+        /// Fire a generation-only change after this many total
+        /// acquires (external-change simulation); fires once.
+        flip_after: Option<usize>,
+    }
+
+    impl MultiMock {
+        fn new(snapshot: TopologySnapshot, steps: Vec<(String, Vec<MStep>)>) -> Self {
+            Self {
+                steps: steps
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
+                refresh_outputs: None,
+                snapshot,
+                releases: Arc::new(AtomicUsize::new(0)),
+                recreates: Arc::new(AtomicUsize::new(0)),
+                refresh_calls: Arc::new(AtomicUsize::new(0)),
+                acquire_calls: Arc::new(AtomicUsize::new(0)),
+                flip_after: None,
+            }
+        }
+    }
+
+    impl MultiOutputBackend for MultiMock {
+        fn acquire_output(
+            &mut self,
+            output: &OutputInfo,
+            _timeout_ms: u32,
+            _limits: &DxgiLimits,
+        ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError> {
+            let calls = self.acquire_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(at) = self.flip_after {
+                if calls >= at {
+                    self.flip_after = None;
+                    self.snapshot.generation =
+                        self.snapshot.generation.saturating_add(1);
+                }
+            }
+            match self.steps.get_mut(&output.device_name).and_then(|q| q.pop_front()) {
+                Some(MStep::Ok(pixels)) => {
+                    let releases = Arc::clone(&self.releases);
+                    Ok((
+                        FrameGuard::new(move || {
+                            releases.fetch_add(1, Ordering::SeqCst);
+                        }),
+                        pixels,
+                    ))
+                }
+                Some(MStep::Err(e)) => Err(e),
+                None => Err(DxgiAcquireError::Other("mock script exhausted".into())),
+            }
+        }
+
+        fn recreate_all(&mut self) -> Result<(), DxgiAcquireError> {
+            self.recreates.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn refresh_snapshot(&mut self) -> Result<TopologySnapshot, String> {
+            self.refresh_calls.fetch_add(1, Ordering::SeqCst);
+            let outputs = self
+                .refresh_outputs
+                .clone()
+                .unwrap_or_else(|| self.snapshot.outputs.clone());
+            self.snapshot = self
+                .snapshot
+                .refresh(outputs)
+                .map_err(|e| e.to_string())?;
+            Ok(self.snapshot.clone())
+        }
+
+        fn snapshot_generation(&self) -> u64 {
+            self.snapshot.generation
+        }
+    }
+
+    fn frame_of(outcome: DxgiMultiOutputOutcome) -> DxgiCompositeFrame {
+        match outcome {
+            DxgiMultiOutputOutcome::Frame(composite) => composite,
+            other => panic!("expected Frame, got {other:?}"),
+        }
+    }
+
+    // --- Rotation fixtures: 2 wide x 3 high, R channel identifies
+    // each pixel (a=10, b=20, c=30, d=40, e=50, f=60):
+    //   rows: [a b; c d; e f]
+    fn asymmetric_frame() -> DxgiFrame {
+        let mut rgba = Vec::new();
+        for r in [10u8, 20, 30, 40, 50, 60] {
+            rgba.extend_from_slice(&[r, 0, 0, 255]);
+        }
+        DxgiFrame {
+            width: 2,
+            height: 3,
+            rgba,
+            frame_info: DxgiFrameMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn rotation_identity_is_unchanged() {
+        let frame = asymmetric_frame();
+        let rotated = rotate_frame(&frame, DxgiRotation::Identity).unwrap();
+        assert_eq!(rotated, frame);
+        assert_eq!(
+            rotated_dimensions(2, 3, DxgiRotation::Identity),
+            Some((2, 3))
+        );
+    }
+
+    #[test]
+    fn rotation_90_is_clockwise() {
+        // CW: rows [e c a; f d b].
+        let rotated = rotate_frame(&asymmetric_frame(), DxgiRotation::Rotate90).unwrap();
+        assert_eq!((rotated.width, rotated.height), (3, 2));
+        assert_eq!(reds(&rotated), vec![50, 30, 10, 60, 40, 20]);
+        assert_eq!(
+            rotated_dimensions(2, 3, DxgiRotation::Rotate90),
+            Some((3, 2))
+        );
+    }
+
+    #[test]
+    fn rotation_270_is_counter_clockwise() {
+        // CCW: rows [b d f; a c e].
+        let rotated = rotate_frame(&asymmetric_frame(), DxgiRotation::Rotate270).unwrap();
+        assert_eq!((rotated.width, rotated.height), (3, 2));
+        assert_eq!(reds(&rotated), vec![20, 40, 60, 10, 30, 50]);
+    }
+
+    #[test]
+    fn rotation_180_reverses_both_axes() {
+        // rows [f e; d c; b a].
+        let rotated = rotate_frame(&asymmetric_frame(), DxgiRotation::Rotate180).unwrap();
+        assert_eq!((rotated.width, rotated.height), (2, 3));
+        assert_eq!(reds(&rotated), vec![60, 50, 40, 30, 20, 10]);
+    }
+
+    #[test]
+    fn rotation_unspecified_is_refused_not_guessed() {
+        assert_eq!(
+            rotate_frame(&asymmetric_frame(), DxgiRotation::Unspecified),
+            None
+        );
+        assert_eq!(
+            rotated_dimensions(2, 3, DxgiRotation::Unspecified),
+            None
+        );
+    }
+
+    #[test]
+    fn rotation_round_trips() {
+        // 90 then 270 returns the original pixels exactly.
+        let frame = asymmetric_frame();
+        let once = rotate_frame(&frame, DxgiRotation::Rotate90).unwrap();
+        let back = rotate_frame(&once, DxgiRotation::Rotate270).unwrap();
+        assert_eq!(back, frame);
+        let twice = rotate_frame(
+            &rotate_frame(&frame, DxgiRotation::Rotate180).unwrap(),
+            DxgiRotation::Rotate180,
+        )
+        .unwrap();
+        assert_eq!(twice, frame);
+    }
+
+    #[test]
+    fn pitched_conversion_then_rotation_honors_padding() {
+        // 2x2 BGRA with row pitch 12 (8 payload + 4 padding per row).
+        let src = [
+            1, 2, 3, 0, 4, 5, 6, 0, 99, 99, 99, 99, // row 0 + padding
+            7, 8, 9, 0, 10, 11, 12, 0, 99, 99, 99, 99, // row 1 + padding
+        ];
+        let rgba = convert_bgra_to_rgba_pitched(&src, 2, 2, 12).unwrap();
+        let frame = DxgiFrame {
+            width: 2,
+            height: 2,
+            rgba,
+            frame_info: DxgiFrameMetadata::default(),
+        };
+        let rotated = rotate_frame(&frame, DxgiRotation::Rotate90).unwrap();
+        // Converted rows: [3,2,1 | 6,5,4] / [9,8,7 | 12,11,10] (R first).
+        // CW: rows [9,8,7 | 3,2,1] / [12,11,10 | 6,5,4].
+        assert_eq!(
+            rotated.rgba,
+            vec![
+                9, 8, 7, 255, 3, 2, 1, 255, 12, 11, 10, 255, 6, 5, 4, 255
+            ]
+        );
+    }
+
+    // --- Topology snapshots ---
+
+    #[test]
+    fn snapshot_rejects_empty_duplicate_and_empty_rect() {
+        assert_eq!(
+            TopologySnapshot::from_outputs(vec![]),
+            Err(TopologyError::Empty)
+        );
+        assert!(matches!(
+            TopologySnapshot::from_outputs(vec![
+                out("\\\\.\\DISPLAY1", 0, 0, 4, 2, DxgiRotation::Identity),
+                out("\\\\.\\DISPLAY1", 4, 0, 4, 2, DxgiRotation::Identity),
+            ]),
+            Err(TopologyError::DuplicateDeviceName(_))
+        ));
+        assert!(matches!(
+            TopologySnapshot::from_outputs(vec![out(
+                "\\\\.\\DISPLAY1",
+                0,
+                0,
+                0,
+                2,
+                DxgiRotation::Identity
+            )]),
+            Err(TopologyError::EmptyOutputRect(_))
+        ));
+    }
+
+    #[test]
+    fn snapshot_resolves_by_device_name_not_index() {
+        let snapshot = left_snapshot();
+        // Deliberately scrambled index fields must not matter: identity
+        // is the device name.
+        let mut scrambled = snapshot.clone();
+        scrambled.outputs[0].index = 99;
+        scrambled.outputs[1].index = 0;
+        assert_eq!(
+            scrambled
+                .output_for_device_name("\\\\.\\DISPLAY2")
+                .unwrap()
+                .rect
+                .x,
+            -4
+        );
+        assert!(scrambled.output_for_device_name("\\\\.\\DISPLAY9").is_none());
+    }
+
+    #[test]
+    fn snapshot_point_lookup_honors_negative_origins() {
+        let snapshot = left_snapshot();
+        assert_eq!(
+            snapshot
+                .output_at_point(-1, 1)
+                .unwrap()
+                .device_name,
+            "\\\\.\\DISPLAY2"
+        );
+        assert_eq!(
+            snapshot.output_at_point(0, 0).unwrap().device_name,
+            "\\\\.\\DISPLAY1"
+        );
+        assert!(snapshot.output_at_point(-5, 1).is_none());
+        assert!(snapshot.output_at_point(4, 0).is_none());
+    }
+
+    #[test]
+    fn virtual_bounds_include_negative_origins() {
+        assert_eq!(
+            left_snapshot().virtual_bounds().unwrap(),
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2
+            }
+        );
+    }
+
+    #[test]
+    fn virtual_bounds_and_intersection_refuse_extreme_coords_without_panicking() {
+        // An output rect whose right edge overflows i64: checked
+        // arithmetic must fail cleanly, never saturate or panic.
+        let extreme = TopologySnapshot::from_outputs(vec![out(
+            "\\\\.\\DISPLAY1",
+            i64::MAX - 10,
+            0,
+            20,
+            2,
+            DxgiRotation::Identity,
+        )])
+        .unwrap();
+        assert_eq!(
+            extreme.virtual_bounds(),
+            Err(TopologyError::ArithmeticOverflow)
+        );
+        // The same rect never intersects a normal request rect, and
+        // planning that request fails cleanly (no intersection), not
+        // with a wrapped-around bogus overlap.
+        let plan = plan_composition(
+            &extreme,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        );
+        assert_eq!(plan, Err(TopologyError::NoIntersection));
+    }
+
+    #[test]
+    fn refresh_bumps_generation() {
+        let snapshot = left_snapshot();
+        let refreshed = snapshot.refresh(snapshot.outputs.clone()).unwrap();
+        assert_eq!(refreshed.generation, 1);
+        assert_eq!(refreshed.outputs, snapshot.outputs);
+    }
+
+    // --- Composition plans ---
+
+    #[test]
+    fn plan_spanning_negative_origin_rect() {
+        let plan = plan_composition(
+            &left_snapshot(),
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        )
+        .unwrap();
+        assert_eq!((plan.dest_width, plan.dest_height), (8, 2));
+        assert_eq!(plan.contributions.len(), 2);
+        // Enumeration order: primary first, then the negative-origin
+        // secondary — but destination offsets follow coordinates.
+        let primary = &plan.contributions[0];
+        assert_eq!(primary.output.device_name, "\\\\.\\DISPLAY1");
+        assert_eq!((primary.dest_x, primary.dest_y), (4, 0));
+        assert_eq!((primary.width, primary.height), (4, 2));
+        let secondary = &plan.contributions[1];
+        assert_eq!(secondary.output.device_name, "\\\\.\\DISPLAY2");
+        assert_eq!((secondary.dest_x, secondary.dest_y), (0, 0));
+    }
+
+    #[test]
+    fn plan_rect_fully_inside_negative_output() {
+        let plan = plan_composition(
+            &left_snapshot(),
+            RectI {
+                x: -4,
+                y: 0,
+                w: 2,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        )
+        .unwrap();
+        assert_eq!((plan.dest_width, plan.dest_height), (2, 2));
+        assert_eq!(plan.contributions.len(), 1);
+        assert_eq!(
+            plan.contributions[0].output.device_name,
+            "\\\\.\\DISPLAY2"
+        );
+        assert_eq!(
+            (plan.contributions[0].dest_x, plan.contributions[0].dest_y),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn plan_mid_span_rect_clips_to_both_outputs() {
+        let plan = plan_composition(
+            &right_snapshot(),
+            RectI {
+                x: 2,
+                y: 0,
+                w: 4,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        )
+        .unwrap();
+        assert_eq!((plan.dest_width, plan.dest_height), (4, 2));
+        assert_eq!(plan.contributions.len(), 2);
+        assert_eq!(
+            (plan.contributions[0].crop.x, plan.contributions[0].width),
+            (2, 2)
+        );
+        assert_eq!(
+            (plan.contributions[1].crop.x, plan.contributions[1].width),
+            (4, 2)
+        );
+        assert_eq!(
+            (plan.contributions[1].dest_x, plan.contributions[1].dest_y),
+            (2, 0)
+        );
+    }
+
+    #[test]
+    fn plan_refuses_no_intersection_uncovered_and_unspecified() {
+        let limits = DxgiLimits::default();
+        assert_eq!(
+            plan_composition(
+                &left_snapshot(),
+                RectI {
+                    x: 100,
+                    y: 100,
+                    w: 4,
+                    h: 2
+                },
+                &limits
+            ),
+            Err(TopologyError::NoIntersection)
+        );
+        // Straddles the desktop edge into void: refused, never a
+        // raster with a black hole.
+        assert_eq!(
+            plan_composition(
+                &left_snapshot(),
+                RectI {
+                    x: -6,
+                    y: 0,
+                    w: 4,
+                    h: 2
+                },
+                &limits
+            ),
+            Err(TopologyError::UncoveredRegion)
+        );
+        let unspecified = TopologySnapshot::from_outputs(vec![out(
+            "\\\\.\\DISPLAY1",
+            0,
+            0,
+            4,
+            2,
+            DxgiRotation::Unspecified,
+        )])
+        .unwrap();
+        assert!(matches!(
+            plan_composition(
+                &unspecified,
+                RectI {
+                    x: 0,
+                    y: 0,
+                    w: 4,
+                    h: 2
+                },
+                &limits
+            ),
+            Err(TopologyError::UnspecifiedRotation(_))
+        ));
+    }
+
+    #[test]
+    fn plan_oversize_and_overflow_fail_before_any_acquire() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 0, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 0, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits::default();
+        // Side over the 16,384 limit.
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 16_385,
+                h: 2,
+            },
+            &limits,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Unavailable(_)));
+        // Raster over the 128 MiB limit (16,384 x 16,384 x 4 = 1 GiB).
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 16_384,
+                h: 16_384,
+            },
+            &limits,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Unavailable(_)));
+        // Side that does not even fit u32.
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: u32::MAX as u64 + 1,
+                h: 2,
+            },
+            &limits,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Unavailable(_)));
+        // Empty request.
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 2,
+            },
+            &limits,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Unavailable(_)));
+        // No acquire happened for any of these refusals.
+        assert_eq!(mock.acquire_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn plan_clone_overlap_pastes_in_enumeration_order() {
+        // Mirrored outputs share coordinates; the plan allows the
+        // overlap and the later output wins the shared region
+        // (documented last-wins behavior — mirrored outputs show the
+        // same content, so the choice is unobservable in practice).
+        let snapshot = TopologySnapshot::from_outputs(vec![
+            out("\\\\.\\DISPLAY1", 0, 0, 4, 2, DxgiRotation::Identity),
+            out("\\\\.\\DISPLAY2", 0, 0, 4, 2, DxgiRotation::Identity),
+        ])
+        .unwrap();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 200, 0]))],
+                ),
+            ],
+        );
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert_eq!(reds(&composite.frame), vec![200; 8]);
+    }
+
+    // --- Multi-output capture ---
+
+    #[test]
+    fn multi_output_spanning_capture_composites_negative_origin() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels_with_present(
+                        4,
+                        2,
+                        [0, 0, 100, 0],
+                        1500,
+                    ))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(gradient_pixels(4, 2))],
+                ),
+            ],
+        );
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert_eq!((composite.frame.width, composite.frame.height), (8, 2));
+        // Secondary gradient block, then solid primary block.
+        assert_eq!(
+            reds(&composite.frame),
+            vec![0, 10, 20, 30, 100, 100, 100, 100, 1, 11, 21, 31, 100, 100, 100, 100]
+        );
+        assert_eq!(composite.per_output.len(), 2);
+        assert_eq!(
+            composite.per_output[0].device_name,
+            "\\\\.\\DISPLAY1".to_string()
+        );
+        assert_eq!(composite.per_output[0].sequence, 0);
+        assert_eq!(
+            composite.per_output[1].frame_info.last_present_time, 0
+        );
+        // Skew: only one nonzero present time here (the gradient mock
+        // carries 0 = unknown), so the tick delta is unknown, not 0.
+        assert_eq!(present_time_skew_ticks(&composite.per_output), None);
+        assert_eq!(mock.releases.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn multi_output_rotated_output_is_rotated_before_cropping() {
+        // Rotated output: desktop rect 2x3, panel-native texture 3x2.
+        // Identity output to its right: desktop rect 2x3.
+        let snapshot = TopologySnapshot::from_outputs(vec![
+            out("\\\\.\\DISPLAY1", 0, 0, 2, 3, DxgiRotation::Rotate90),
+            out("\\\\.\\DISPLAY2", 2, 0, 2, 3, DxgiRotation::Identity),
+        ])
+        .unwrap();
+        // Panel-native 3x2 texture with distinct R values per pixel:
+        // rows (R): [10 20 30; 40 50 60] in BGRA source order.
+        let mut bgra = Vec::new();
+        for r in [10u8, 20, 30, 40, 50, 60] {
+            bgra.extend_from_slice(&[0, 0, r, 0]);
+        }
+        let rotated_pixels = AcquiredPixels {
+            width: 3,
+            height: 2,
+            row_pitch: 12,
+            bgra,
+            frame_info: DxgiFrameMetadata::default(),
+        };
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(rotated_pixels)],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(2, 3, [0, 0, 100, 0]))],
+                ),
+            ],
+        );
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 3,
+            },
+            &DxgiLimits::default(),
+        ));
+        // Rotated block (CW of [10 20 30; 40 50 60]) is
+        // rows [40 10; 50 20; 60 30]; identity block is solid 100.
+        assert_eq!(
+            reds(&composite.frame),
+            vec![40, 10, 100, 100, 50, 20, 100, 100, 60, 30, 100, 100]
+        );
+    }
+
+    #[test]
+    fn multi_output_wait_timeout_then_frame_is_not_a_failure() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::WaitTimeout),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert_eq!((composite.frame.width, composite.frame.height), (8, 2));
+    }
+
+    #[test]
+    fn multi_output_wait_timeout_past_deadline_is_retryable_not_partial() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Err(DxgiAcquireError::WaitTimeout); 8],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits {
+            total_deadline_ms: 1,
+            ..DxgiLimits::default()
+        };
+        // Scripted clock: first iteration inside the deadline, then
+        // past it — deterministic, no wall-clock flakiness.
+        let mut times: VecDeque<Duration> = [
+            Duration::from_millis(0),
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+        ]
+        .into();
+        let clock = move || times.pop_front().unwrap_or(Duration::from_millis(5));
+        let outcome = capture_multi_output_with_clock(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &limits,
+            clock,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+    }
+
+    #[test]
+    fn final_poll_grant_is_shared_across_outputs_not_per_output() {
+        // DXGI2-002: one final 0ms poll per REQUEST. Output 1 spends
+        // it (sub-millisecond remainder, already-ready frame); output
+        // 2 must then get no final poll of its own, so the request
+        // ends Retryable with output 2's scripted frame unconsumed.
+        // Under the old per-output reset, output 2 would poll, take
+        // its frame, and the request would wrongly return Frame.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits {
+            total_deadline_ms: 10,
+            ..DxgiLimits::default()
+        };
+        // Scripted clock: both reads land in the sub-millisecond
+        // remainder (remaining < 1ms, still before the deadline), so
+        // each output's first attempt is a final-poll-or-nothing
+        // decision — exactly the boundary the shared grant governs.
+        let mut times: VecDeque<Duration> =
+            [Duration::from_micros(9500), Duration::from_micros(9600)].into();
+        let clock = move || times.pop_front().unwrap_or(Duration::from_micros(9900));
+        let outcome = capture_multi_output_with_clock(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &limits,
+            clock,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        // Output 2 was never polled: its scripted frame is still queued.
+        assert_eq!(mock.steps.get("\\\\.\\DISPLAY2").map(|q| q.len()), Some(1));
+    }
+
+    #[test]
+    fn final_poll_grant_is_not_reset_by_stale_topology_retry() {
+        // DXGI2-002 remainder: the final-poll grant is owned by the
+        // whole REQUEST, not by one acquisition pass. Pass 1 spends
+        // it on a 0ms poll that returns AccessLost (Stale); the
+        // single retry must NOT grant a second final poll, so pass 2
+        // ends Retryable with its scripted frame unconsumed. Under
+        // the old per-pass reset, pass 2 would poll, take the frame,
+        // and the request would proceed past output 1.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let limits = DxgiLimits {
+            total_deadline_ms: 10,
+            ..DxgiLimits::default()
+        };
+        // Scripted clock: every read lands in the sub-millisecond
+        // remainder (remaining < 1ms, still before the deadline), so
+        // every first attempt is a final-poll-or-nothing decision —
+        // exactly the boundary the request-wide grant governs.
+        let mut times: VecDeque<Duration> =
+            [Duration::from_micros(9500), Duration::from_micros(9600)].into();
+        let clock = move || times.pop_front().unwrap_or(Duration::from_micros(9900));
+        let outcome = capture_multi_output_with_clock(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &limits,
+            clock,
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        // Exactly one retry happened: the stale pass plus one retry.
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        // The retried pass never polled output 1: its scripted frame
+        // is still queued. Under the old per-pass reset it would be
+        // gone, consumed by a second final poll.
+        assert_eq!(mock.steps.get("\\\\.\\DISPLAY1").map(|q| q.len()), Some(1));
+    }
+
+    #[test]
+    fn rebuild_all_or_nothing_keeps_old_set_when_later_rebuild_fails() {
+        // DXGI2-001: the helper the Windows session's `recreate_all`
+        // delegates to — a failure on a later context must leave the
+        // original set completely intact, never partially rebuilt.
+        let mut contexts = vec![10, 20, 30];
+        let err = rebuild_all_or_nothing(&mut contexts, |index, old| {
+            if index == 1 {
+                Err("second rebuild failed")
+            } else {
+                Ok(old + 100)
+            }
+        })
+        .unwrap_err();
+        assert_eq!(err, "second rebuild failed");
+        assert_eq!(contexts, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn rebuild_all_or_nothing_swaps_complete_set_on_success() {
+        let mut contexts = vec![10, 20, 30];
+        rebuild_all_or_nothing(&mut contexts, |_, old| Ok::<_, &str>(old + 100)).unwrap();
+        assert_eq!(contexts, vec![110, 120, 130]);
+    }
+
+    #[test]
+    fn multi_output_protected_on_one_output_is_explicit_not_partial() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Err(DxgiAcquireError::Protected)],
+                ),
+            ],
+        );
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(
+            outcome,
+            DxgiMultiOutputOutcome::ProtectedOrSecure(_)
+        ));
+        // The primary's acquired frame was still released exactly once.
+        assert_eq!(mock.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn unplug_simulation_discards_partial_and_retries_once() {
+        // First attempt: primary succeeds (stale color 11), secondary
+        // reports ACCESS_LOST (unplug/mode change). The loop discards
+        // the primary partial, recreates once, refreshes (same
+        // topology), and retries: both succeed with fresh colors.
+        // The final image must contain ONLY second-attempt pixels.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 11, 0])),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 22, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 33, 0])),
+                    ],
+                ),
+            ],
+        );
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert!(!reds(&composite.frame).contains(&11));
+        assert_eq!(
+            reds(&composite.frame),
+            vec![33, 33, 33, 33, 22, 22, 22, 22, 33, 33, 33, 33, 22, 22, 22, 22]
+        );
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.refresh_calls.load(Ordering::SeqCst), 1);
+        // Every acquired frame released exactly once (3 acquires).
+        assert_eq!(mock.releases.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn mode_change_simulation_retries_from_the_fresh_snapshot() {
+        // First attempt: primary ACCESS_LOST. The refresh reports a
+        // WIDER primary (resolution change, 4 -> 6 px wide). The retry
+        // plans against the fresh snapshot: the 6-wide frame passes
+        // the rotated-dims check against the new rect, and the
+        // requested 4-wide crop succeeds from it.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                        MStep::Ok(solid_pixels(6, 2, [0, 0, 77, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        mock.refresh_outputs = Some(vec![
+            out("\\\\.\\DISPLAY1", 0, 0, 6, 2, DxgiRotation::Identity),
+            out("\\\\.\\DISPLAY2", -4, 0, 4, 2, DxgiRotation::Identity),
+        ]);
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert_eq!((composite.frame.width, composite.frame.height), (4, 2));
+        assert_eq!(reds(&composite.frame), vec![77; 8]);
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn unplug_removing_an_output_is_unavailable_not_partial() {
+        // First attempt: primary succeeds, secondary ACCESS_LOST.
+        // The refresh reports the secondary GONE. The retried plan no
+        // longer covers the spanning request, so the outcome is
+        // Unavailable — never a primary-only image relabeled as the
+        // spanning request.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 100, 0]))],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Err(DxgiAcquireError::AccessLost)],
+                ),
+            ],
+        );
+        mock.refresh_outputs = Some(vec![out(
+            "\\\\.\\DISPLAY1",
+            0,
+            0,
+            4,
+            2,
+            DxgiRotation::Identity,
+        )]);
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Unavailable(_)));
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        // The first attempt's primary frame was released; the retry
+        // never acquired (its plan failed first).
+        assert_eq!(mock.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.acquire_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn second_access_lost_is_terminal_after_one_recreate() {
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                        MStep::Err(DxgiAcquireError::AccessLost),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0]))],
+                ),
+            ],
+        );
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn generation_change_mid_request_discards_and_reacquires_all() {
+        // Both outputs acquire, then the backend reports a new
+        // generation (topology changed under the request). The loop
+        // discards both frames and re-acquires everything once.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 11, 0])),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 22, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 33, 0])),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 44, 0])),
+                    ],
+                ),
+            ],
+        );
+        mock.flip_after = Some(2);
+        let composite = frame_of(capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        ));
+        assert_eq!(
+            reds(&composite.frame),
+            vec![44, 44, 44, 44, 22, 22, 22, 22, 44, 44, 44, 44, 22, 22, 22, 22]
+        );
+        assert_eq!(mock.acquire_calls.load(Ordering::SeqCst), 4);
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.refresh_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.releases.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn rotated_frame_size_mismatch_is_stale_then_terminal() {
+        // The backend returns a 6-wide texture for a 4-wide output
+        // rect on both attempts: a mode change the refresh does not
+        // explain. First pass goes stale, the single retry goes stale
+        // again, and the request ends Retryable — never a wrongly
+        // cropped image.
+        let snapshot = left_snapshot();
+        let mut mock = MultiMock::new(
+            snapshot.clone(),
+            vec![
+                (
+                    "\\\\.\\DISPLAY1".to_string(),
+                    vec![
+                        MStep::Ok(solid_pixels(6, 2, [0, 0, 100, 0])),
+                        MStep::Ok(solid_pixels(6, 2, [0, 0, 100, 0])),
+                    ],
+                ),
+                (
+                    "\\\\.\\DISPLAY2".to_string(),
+                    vec![
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0])),
+                        MStep::Ok(solid_pixels(4, 2, [0, 0, 50, 0])),
+                    ],
+                ),
+            ],
+        );
+        let outcome = capture_multi_output(
+            &mut mock,
+            &snapshot,
+            RectI {
+                x: -4,
+                y: 0,
+                w: 8,
+                h: 2,
+            },
+            &DxgiLimits::default(),
+        );
+        assert!(matches!(outcome, DxgiMultiOutputOutcome::Retryable(_)));
+        assert_eq!(mock.recreates.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn present_time_skew_ticks_uses_max_minus_min() {
+        let records = vec![
+            DxgiOutputAcquisition {
+                device_name: "\\\\.\\DISPLAY1".to_string(),
+                adapter_luid: (0, 0),
+                frame_info: DxgiFrameMetadata {
+                    last_present_time: 1000,
+                    ..DxgiFrameMetadata::default()
+                },
+                sequence: 0,
+            },
+            DxgiOutputAcquisition {
+                device_name: "\\\\.\\DISPLAY2".to_string(),
+                adapter_luid: (0, 0),
+                frame_info: DxgiFrameMetadata {
+                    last_present_time: 1500,
+                    ..DxgiFrameMetadata::default()
+                },
+                sequence: 1,
+            },
+        ];
+        assert_eq!(present_time_skew_ticks(&records), Some(500));
+        // Zero means "no present since last acquire": unknown, not 0.
+        let mut unknown = records.clone();
+        unknown[0].frame_info.last_present_time = 0;
+        assert_eq!(present_time_skew_ticks(&unknown), None);
+        assert_eq!(present_time_skew_ticks(&records[..1]), None);
+        assert_eq!(present_time_skew_ticks(&[]), None);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DXGI-2 — Topology, rotation, and multi-output composition.
+//
+// Pure, platform-neutral logic (this section compiles and tests on any
+// host); the Windows session that feeds it real outputs lives in
+// `win_backend::DxgiMultiOutputSession` below. Nothing here changes
+// production dispatch: `native.rs` still owns dispatch, and DXGI-3 wires
+// Region/Window/Monitor capture to this path.
+//
+// Pipeline (brief, "Topology and request mapping"):
+//
+// 1. `TopologySnapshot` maps stable app monitor identity (the OS device
+//    name, NEVER the enumeration index) to adapter LUID + physical
+//    desktop rectangle + rotation, and carries a generation token.
+// 2. `plan_composition` turns a request rect into a checked destination
+//    raster plus one crop per intersecting output, in physical desktop
+//    coordinates (negative origins included). The plan is computed —
+//    and the destination limits are enforced — BEFORE any acquisition
+//    or allocation, so oversize and checked-arithmetic cases fail
+//    without touching the GPU or the heap.
+// 3. `capture_multi_output` acquires every intersecting output, rotates
+//    each frame from panel-native texture orientation into desktop
+//    orientation, crops the intersection, and pastes into one raster.
+//    On ANY failure or topology change mid-request, all partial pixels
+//    are discarded and the whole request is retried exactly once from a
+//    fresh snapshot. A partial multi-monitor image is never returned.
+// 4. Cross-output atomicity is NOT claimed: Desktop Duplication cannot
+//    promise simultaneous presentation across independent outputs. Each
+//    output's acquisition is recorded (`DxgiOutputAcquisition`, with the
+//    raw `LastPresentTime` ticks), and the skew bound is documented
+//    below instead of hidden.
+//
+// Rotation mapping (panel-native texture -> desktop orientation).
+// DXGI reports the rotation the compositor applies to the panel; the
+// duplicated texture is in panel-native orientation, so the frame must
+// be rotated back into desktop coordinates before cropping against the
+// output's desktop rect (whose dimensions already reflect the rotation):
+//
+// - `Rotate90`:  90 degrees clockwise.  dst(x', y') = src(y', H-1-x').
+// - `Rotate270`: 90 degrees counter-clockwise. dst(x', y') = src(W-1-y', x').
+// - `Rotate180`: dst(x', y') = src(W-1-x', H-1-y').
+// - `Unspecified`: never guessed. The plan refuses the request rather
+//   than silently treating an unknown rotation as identity.
+//
+// DIRECTION ASSUMPTION, flagged for hardware confirmation: the mapping
+// above assumes ROTATE90 means "rotate the texture 90 degrees clockwise
+// to reach desktop orientation." Dimensions alone cannot distinguish
+// clockwise from counter-clockwise (both swap width/height), so the
+// Windows hardware procedure (`docs/DXGI2_HARDWARE_TEST_PROCEDURE.md`)
+// includes an orientation-marker check on a real rotated output. If
+// hardware shows the opposite direction, only this mapping (plus its
+// fixtures) changes — the plan/compose/retry machinery is unaffected.
+//
+// Cross-output skew bound: every output acquire in one request runs
+// under the SAME total request deadline (`DxgiLimits::total_deadline_ms`,
+// default 2000 ms), and the deadline loop bounds AcquireNextFrame waits
+// only (same scope caveat as DXGI-1: copy/map/conversion are not
+// deadline-metered). The first-to-last output frame skew is therefore
+// bounded by the total deadline in the wait dimension, and typically by
+// one per-attempt timeout when the desktop is updating. The hardware
+// test logs per-output `LastPresentTime` ticks so real skew can be
+// measured (ticks convert to time only with QueryPerformanceFrequency;
+// the pure helper `present_time_skew_ticks` returns the tick delta and
+// never labels it milliseconds).
+//
+// Resource discipline (brief): every acquired frame is released via its
+// `FrameGuard` before conversion (same order as DXGI-1); partial frames
+// are plain `Vec`s dropped on the discard path; the Windows session
+// drops whole contexts (duplication object, staging texture, device)
+// when a topology refresh rebuilds it. No frame is ever cached across
+// requests: a `WAIT_TIMEOUT` past the deadline is terminal, not stale.
+// ---------------------------------------------------------------------------
+
+/// Error building or using a topology snapshot or composition plan.
+///
+/// All variants are refusals BEFORE allocation or acquisition where the
+/// plan stage produces them; the capture loop maps them to
+/// [`DxgiMultiOutputOutcome::Unavailable`], never to a partial image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TopologyError {
+    /// No outputs at all (empty snapshot or empty request).
+    Empty,
+    /// Two outputs share one OS device name, so device-name identity —
+    /// the only identity DXGI-2 trusts — is ambiguous.
+    DuplicateDeviceName(String),
+    /// An enumerated output has an empty desktop rect.
+    EmptyOutputRect(String),
+    /// Checked desktop-coordinate arithmetic overflowed (extreme rects).
+    ArithmeticOverflow,
+    /// The request rect intersects no output.
+    NoIntersection,
+    /// Part of the request rect is covered by no output (virtual-desktop
+    /// void). DXGI-2 refuses rather than returning a raster with a
+    /// silently black uncovered region; callers clip to the virtual
+    /// desktop first when that is what they want.
+    UncoveredRegion,
+    /// An intersecting output reports an unknown rotation.
+    UnspecifiedRotation(String),
+    /// Destination raster violates the shared artifact limits.
+    Limit(DxgiLimitError),
+    /// Destination side exceeds the pixel-per-side limit but does not
+    /// fit `u32`, so it cannot be expressed as a `DxgiLimitError`.
+    SideTooLarge { side: u64, max: u32 },
+}
+
+impl std::fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TopologyError::Empty => write!(f, "topology is empty"),
+            TopologyError::DuplicateDeviceName(name) => {
+                write!(f, "duplicate output device name {name}")
+            }
+            TopologyError::EmptyOutputRect(name) => {
+                write!(f, "output {name} has an empty desktop rect")
+            }
+            TopologyError::ArithmeticOverflow => {
+                write!(f, "desktop-coordinate arithmetic overflowed")
+            }
+            TopologyError::NoIntersection => {
+                write!(f, "capture rect intersects no output")
+            }
+            TopologyError::UncoveredRegion => {
+                write!(f, "capture rect extends beyond the covered desktop")
+            }
+            TopologyError::UnspecifiedRotation(name) => {
+                write!(f, "output {name} reports an unspecified rotation")
+            }
+            TopologyError::Limit(e) => write!(f, "destination violates limits: {e}"),
+            TopologyError::SideTooLarge { side, max } => {
+                write!(f, "destination side {side}px exceeds the {max}px limit")
+            }
+        }
+    }
+}
+
+/// Checked right edge of a rect: `None` when the width does not fit
+/// `i64` or the addition overflows. `RectI::right` saturates, which
+/// would silently merge distinct extreme rects; the plan path never
+/// uses it.
+fn checked_right(rect: RectI) -> Option<i64> {
+    let w = i64::try_from(rect.w).ok()?;
+    rect.x.checked_add(w)
+}
+
+/// Checked bottom edge of a rect (see [`checked_right`]).
+fn checked_bottom(rect: RectI) -> Option<i64> {
+    let h = i64::try_from(rect.h).ok()?;
+    rect.y.checked_add(h)
+}
+
+/// Checked intersection of two rects; `None` on overflow or no overlap.
+/// Uses `i128` differences so the width/height conversion cannot wrap
+/// for extreme coordinates (two `i64` edges can differ by up to 2^64-1,
+/// which fits `u64` exactly but not `i64`).
+fn checked_intersect(a: RectI, b: RectI) -> Option<RectI> {
+    let ax2 = checked_right(a)?;
+    let ay2 = checked_bottom(a)?;
+    let bx2 = checked_right(b)?;
+    let by2 = checked_bottom(b)?;
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let r = ax2.min(bx2);
+    let bot = ay2.min(by2);
+    if r > x && bot > y {
+        Some(RectI {
+            x,
+            y,
+            w: (r as i128 - x as i128) as u64,
+            h: (bot as i128 - y as i128) as u64,
+        })
+    } else {
+        None
+    }
+}
+
+/// Subtract `cut` from `rect`: the pieces of `rect` not covered by
+/// `cut` (up to four strips, each non-empty). Used by the plan's
+/// coverage check so a rect straddling virtual-desktop void is refused
+/// instead of composited with a black hole.
+fn subtract_rect(rect: RectI, cut: RectI) -> Vec<RectI> {
+    let Some(inter) = checked_intersect(rect, cut) else {
+        return vec![rect];
+    };
+    let mut out = Vec::new();
+    // All edges below are within `rect`, so differences fit.
+    let rx2 = checked_right(rect).expect("subtract: rect right edge is checked");
+    let ry2 = checked_bottom(rect).expect("subtract: rect bottom edge is checked");
+    let ix2 = checked_right(inter).expect("subtract: intersection right edge is checked");
+    let iy2 = checked_bottom(inter).expect("subtract: intersection bottom edge is checked");
+    if inter.x > rect.x {
+        out.push(RectI {
+            x: rect.x,
+            y: rect.y,
+            w: (inter.x as i128 - rect.x as i128) as u64,
+            h: rect.h,
+        });
+    }
+    if ix2 < rx2 {
+        out.push(RectI {
+            x: ix2,
+            y: rect.y,
+            w: (rx2 as i128 - ix2 as i128) as u64,
+            h: rect.h,
+        });
+    }
+    if inter.y > rect.y {
+        out.push(RectI {
+            x: inter.x,
+            y: rect.y,
+            w: inter.w,
+            h: (inter.y as i128 - rect.y as i128) as u64,
+        });
+    }
+    if iy2 < ry2 {
+        out.push(RectI {
+            x: inter.x,
+            y: iy2,
+            w: inter.w,
+            h: (ry2 as i128 - iy2 as i128) as u64,
+        });
+    }
+    out
+}
+
+/// A snapshot of the attached-desktop topology at one moment.
+///
+/// Identity is the OS device name plus adapter LUID — never the
+/// enumeration index (brief: "Do not equate enumeration index with
+/// monitor identity"). The generation token starts at 0 and increments
+/// on every refresh; the capture loop treats any generation change
+/// between plan and completion as stale topology and retries once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopologySnapshot {
+    pub generation: u64,
+    pub outputs: Vec<OutputInfo>,
+}
+
+impl TopologySnapshot {
+    /// Build a generation-0 snapshot, validating identity and rects.
+    pub fn from_outputs(outputs: Vec<OutputInfo>) -> Result<Self, TopologyError> {
+        if outputs.is_empty() {
+            return Err(TopologyError::Empty);
+        }
+        for (i, output) in outputs.iter().enumerate() {
+            if output.rect.is_empty() {
+                return Err(TopologyError::EmptyOutputRect(
+                    output.device_name.clone(),
+                ));
+            }
+            if outputs[..i]
+                .iter()
+                .any(|o| o.device_name == output.device_name)
+            {
+                return Err(TopologyError::DuplicateDeviceName(
+                    output.device_name.clone(),
+                ));
+            }
+        }
+        Ok(Self {
+            generation: 0,
+            outputs,
+        })
+    }
+
+    /// Rebuild from freshly enumerated outputs, bumping the generation.
+    /// The generation saturates rather than wrapping: a wrap would make
+    /// a new topology compare equal to an ancient one.
+    pub fn refresh(&self, outputs: Vec<OutputInfo>) -> Result<Self, TopologyError> {
+        let mut next = Self::from_outputs(outputs)?;
+        next.generation = self.generation.saturating_add(1);
+        Ok(next)
+    }
+
+    /// Resolve by stable identity: OS device name, not index.
+    pub fn output_for_device_name(&self, name: &str) -> Option<&OutputInfo> {
+        self.outputs.iter().find(|o| o.device_name == name)
+    }
+
+    /// First output (enumeration order) containing the desktop point.
+    pub fn output_at_point(&self, x: i64, y: i64) -> Option<&OutputInfo> {
+        self.outputs.iter().find(|o| {
+            let (Some(r), Some(b)) = (checked_right(o.rect), checked_bottom(o.rect)) else {
+                return false;
+            };
+            x >= o.rect.x && x < r && y >= o.rect.y && y < b
+        })
+    }
+
+    /// Bounding box of all outputs (the virtual desktop), including
+    /// negative origins. Checked: extreme rects fail instead of
+    /// saturating into a wrong box.
+    pub fn virtual_bounds(&self) -> Result<RectI, TopologyError> {
+        let mut acc: Option<RectI> = None;
+        for output in &self.outputs {
+            let r = checked_right(output.rect).ok_or(TopologyError::ArithmeticOverflow)?;
+            let b = checked_bottom(output.rect).ok_or(TopologyError::ArithmeticOverflow)?;
+            acc = Some(match acc {
+                None => output.rect,
+                Some(a) => {
+                    let ar = checked_right(a).ok_or(TopologyError::ArithmeticOverflow)?;
+                    let ab = checked_bottom(a).ok_or(TopologyError::ArithmeticOverflow)?;
+                    let x = a.x.min(output.rect.x);
+                    let y = a.y.min(output.rect.y);
+                    let r2 = ar.max(r);
+                    let b2 = ab.max(b);
+                    RectI {
+                        x,
+                        y,
+                        w: (r2 as i128 - x as i128) as u64,
+                        h: (b2 as i128 - y as i128) as u64,
+                    }
+                }
+            });
+        }
+        acc.ok_or(TopologyError::Empty)
+    }
+
+    /// Every output intersecting `rect`, with the intersection in
+    /// physical desktop coordinates.
+    pub fn intersecting(&self, rect: RectI) -> Vec<(OutputInfo, RectI)> {
+        self.outputs
+            .iter()
+            .filter_map(|o| checked_intersect(rect, o.rect).map(|inter| (o.clone(), inter)))
+            .collect()
+    }
+}
+
+/// One output's share of a composition: which desktop crop goes where
+/// in the destination raster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputContribution {
+    /// The output this crop comes from (identity: device name).
+    pub output: OutputInfo,
+    /// Intersection of the request rect with the output, in physical
+    /// desktop coordinates (may have a negative origin).
+    pub crop: RectI,
+    /// Top-left of this crop inside the destination raster.
+    pub dest_x: u32,
+    pub dest_y: u32,
+    /// Crop size, equal to its destination footprint.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A fully checked multi-output plan: destination size plus one
+/// contribution per intersecting output. Built before any acquisition
+/// or allocation, so every refusal below is cheap and side-effect-free.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositionPlan {
+    pub dest_width: u32,
+    pub dest_height: u32,
+    pub contributions: Vec<OutputContribution>,
+}
+
+/// Plan a multi-output capture. Order of refusals (all before any
+/// acquire or allocation): empty request, destination limits
+/// (checked, including the `u32` fit), no intersection, uncovered
+/// region, unspecified rotation on an intersecting output.
+pub fn plan_composition(
+    snapshot: &TopologySnapshot,
+    rect: RectI,
+    limits: &DxgiLimits,
+) -> Result<CompositionPlan, TopologyError> {
+    if rect.is_empty() {
+        return Err(TopologyError::Empty);
+    }
+    let dest_width = u32::try_from(rect.w).map_err(|_| TopologyError::SideTooLarge {
+        side: rect.w,
+        max: limits.max_side_px,
+    })?;
+    let dest_height = u32::try_from(rect.h).map_err(|_| TopologyError::SideTooLarge {
+        side: rect.h,
+        max: limits.max_side_px,
+    })?;
+    validate_limits(dest_width, dest_height, limits).map_err(TopologyError::Limit)?;
+
+    let mut contributions = Vec::new();
+    for (output, inter) in snapshot.intersecting(rect) {
+        // `inter` lies inside both `rect` and the output, so both
+        // differences are non-negative and bounded by the destination
+        // size (already validated to fit `u32`).
+        let dest_x = u32::try_from((inter.x as i128 - rect.x as i128) as u64)
+            .map_err(|_| TopologyError::ArithmeticOverflow)?;
+        let dest_y = u32::try_from((inter.y as i128 - rect.y as i128) as u64)
+            .map_err(|_| TopologyError::ArithmeticOverflow)?;
+        let width = u32::try_from(inter.w).map_err(|_| TopologyError::ArithmeticOverflow)?;
+        let height = u32::try_from(inter.h).map_err(|_| TopologyError::ArithmeticOverflow)?;
+        contributions.push(OutputContribution {
+            output,
+            crop: inter,
+            dest_x,
+            dest_y,
+            width,
+            height,
+        });
+    }
+    if contributions.is_empty() {
+        return Err(TopologyError::NoIntersection);
+    }
+    // Coverage: subtract every intersection from the request; any
+    // remainder is virtual-desktop void and the request is refused
+    // rather than composited with a black hole.
+    let mut remainder = vec![rect];
+    for contribution in &contributions {
+        remainder = remainder
+            .into_iter()
+            .flat_map(|r| subtract_rect(r, contribution.crop))
+            .collect();
+        if remainder.is_empty() {
+            break;
+        }
+    }
+    if !remainder.is_empty() {
+        return Err(TopologyError::UncoveredRegion);
+    }
+    for contribution in &contributions {
+        if contribution.output.rotation == DxgiRotation::Unspecified {
+            return Err(TopologyError::UnspecifiedRotation(
+                contribution.output.device_name.clone(),
+            ));
+        }
+    }
+    Ok(CompositionPlan {
+        dest_width,
+        dest_height,
+        contributions,
+    })
+}
+
+/// Dimensions of a frame after rotation into desktop orientation.
+/// `None` for `Unspecified`: an unknown rotation is never assumed to be
+/// identity.
+pub fn rotated_dimensions(
+    width: u32,
+    height: u32,
+    rotation: DxgiRotation,
+) -> Option<(u32, u32)> {
+    match rotation {
+        DxgiRotation::Identity | DxgiRotation::Rotate180 => Some((width, height)),
+        DxgiRotation::Rotate90 | DxgiRotation::Rotate270 => Some((height, width)),
+        DxgiRotation::Unspecified => None,
+    }
+}
+
+/// Rotate a packed-RGBA frame from panel-native texture orientation
+/// into desktop orientation (mapping documented in the section header).
+/// Returns `None` for `Unspecified` rotation, a malformed frame buffer,
+/// or overflowing destination arithmetic — never a partial frame.
+///
+/// The rotation direction (Rotate90 = clockwise) is the documented
+/// assumption flagged for hardware confirmation in the DXGI-2 hardware
+/// procedure; see the section header.
+pub fn rotate_frame(frame: &DxgiFrame, rotation: DxgiRotation) -> Option<DxgiFrame> {
+    if rotation == DxgiRotation::Identity {
+        return Some(frame.clone());
+    }
+    let (dw, dh) = rotated_dimensions(frame.width, frame.height, rotation)?;
+    let src_stride = frame.width as usize * 4;
+    if frame.rgba.len() != src_stride.checked_mul(frame.height as usize)? {
+        return None;
+    }
+    let dst_len = (dw as usize)
+        .checked_mul(dh as usize)?
+        .checked_mul(4)?;
+    let mut rgba = vec![0u8; dst_len];
+    let (sw, sh) = (frame.width as usize, frame.height as usize);
+    let dst_stride = dw as usize * 4;
+    for dy in 0..dh as usize {
+        for dx in 0..dw as usize {
+            let (sx, sy) = match rotation {
+                DxgiRotation::Rotate90 => (dy, sh - 1 - dx),
+                DxgiRotation::Rotate270 => (sw - 1 - dy, dx),
+                DxgiRotation::Rotate180 => (sw - 1 - dx, sh - 1 - dy),
+                _ => unreachable!("Identity and Unspecified handled above"),
+            };
+            let s = (sy * src_stride) + sx * 4;
+            let d = (dy * dst_stride) + dx * 4;
+            rgba[d..d + 4].copy_from_slice(&frame.rgba[s..s + 4]);
+        }
+    }
+    Some(DxgiFrame {
+        width: dw,
+        height: dh,
+        rgba,
+        frame_info: frame.frame_info,
+    })
+}
+
+/// One output's acquisition record in a composite frame. Metadata only:
+/// never pixels. `sequence` is acquisition order within the request, so
+/// a harness can reconstruct which output was acquired when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DxgiOutputAcquisition {
+    pub device_name: String,
+    pub adapter_luid: (u32, i32),
+    pub frame_info: DxgiFrameMetadata,
+    pub sequence: usize,
+}
+
+/// A composited multi-output frame: one raster plus the per-output
+/// acquisition records that bound its cross-output skew.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DxgiCompositeFrame {
+    pub frame: DxgiFrame,
+    pub per_output: Vec<DxgiOutputAcquisition>,
+}
+
+/// Tick delta between the earliest and latest per-output
+/// `LastPresentTime` in a composite frame. `None` when fewer than two
+/// outputs were acquired or any output reports 0 ("no present since the
+/// last acquire" — unknown, not zero skew). The result is in
+/// QueryPerformanceCounter ticks, NOT milliseconds: only the Windows
+/// harness, which knows the counter frequency, may convert it.
+pub fn present_time_skew_ticks(per_output: &[DxgiOutputAcquisition]) -> Option<i64> {
+    if per_output.len() < 2 {
+        return None;
+    }
+    let mut min: Option<i64> = None;
+    let mut max: Option<i64> = None;
+    for record in per_output {
+        let t = record.frame_info.last_present_time;
+        if t == 0 {
+            return None;
+        }
+        min = Some(min.map_or(t, |m: i64| m.min(t)));
+        max = Some(max.map_or(t, |m: i64| m.max(t)));
+    }
+    Some(max? - min?)
+}
+
+/// Typed result of one multi-output capture (same shape as
+/// [`DxgiCaptureOutcome`], but a `Frame` carries per-output records).
+#[derive(Debug)]
+pub enum DxgiMultiOutputOutcome {
+    Frame(DxgiCompositeFrame),
+    Unavailable(String),
+    Retryable(String),
+    ProtectedOrSecure(String),
+}
+
+/// The multi-output acquisition backend behind [`capture_multi_output`].
+///
+/// All-or-nothing rebuild of a context set (DXGI2-001): build a
+/// complete fresh set with `rebuild` before swapping it in. On any
+/// failure the original set is untouched — a caller can never observe
+/// a mixed-generation set — and the error propagates. `rebuild` gets
+/// the context's index plus its old value, so index-bound rebuilds
+/// (like the Windows session's `for_output`) keep their alignment.
+/// The Windows-only session delegates its `recreate_all` here; the
+/// helper itself is platform-independent, so the invariant is covered
+/// by Linux tests below (the session type itself is `#[cfg(windows)]`
+/// and its execution proof stays owed on Windows hardware). The
+/// helper exists only where it has a caller — Windows production code
+/// or any test build — so non-Windows library builds stay warning-free.
+#[cfg(any(windows, test))]
+fn rebuild_all_or_nothing<T, E, F>(current: &mut Vec<T>, mut rebuild: F) -> Result<(), E>
+where
+    F: FnMut(usize, &T) -> Result<T, E>,
+{
+    let mut fresh = Vec::with_capacity(current.len());
+    for (index, old) in current.iter().enumerate() {
+        fresh.push(rebuild(index, old)?);
+    }
+    *current = fresh;
+    Ok(())
+}
+
+/// The real backend is `DxgiMultiOutputSession` (Windows only); tests
+/// use a scripted mock. `acquire_output` returns the FULL output frame
+/// (the loop crops it); its guard is dropped by the loop immediately
+/// after acquisition, before conversion — the brief's release order.
+/// `refresh_snapshot` re-enumerates and bumps the generation; the loop
+/// calls it only on the single retry, after `recreate_all`.
+pub trait MultiOutputBackend {
+    fn acquire_output(
+        &mut self,
+        output: &OutputInfo,
+        timeout_ms: u32,
+        limits: &DxgiLimits,
+    ) -> Result<(FrameGuard, AcquiredPixels), DxgiAcquireError>;
+    /// Rebuild every output's device-dependent resource set (same
+    /// bounded budget as DXGI-1's per-output recreate: at most once per
+    /// request, driven by the loop).
+    fn recreate_all(&mut self) -> Result<(), DxgiAcquireError>;
+    /// Re-enumerate the topology and return the new snapshot (generation
+    /// bumped). The loop adopts it for the single retry.
+    fn refresh_snapshot(&mut self) -> Result<TopologySnapshot, String>;
+    /// Generation of the snapshot this backend currently serves.
+    fn snapshot_generation(&self) -> u64;
+}
+
+/// Internal result of one whole-request acquisition pass.
+enum MultiPass {
+    /// All outputs acquired, rotated, cropped, and ready to paste.
+    Ready(Vec<(OutputContribution, DxgiFrame, DxgiFrameMetadata)>),
+    /// Topology went stale mid-request (loss, size mismatch, or a
+    /// generation change): discard everything, retry once.
+    Stale,
+    /// Terminal outcome: discard everything, do not retry.
+    Terminal(DxgiMultiOutputOutcome),
+}
+
+/// Capture `rect` across every intersecting output in `snapshot`.
+///
+/// Real-clock entry point: elapsed time comes from `Instant::now()`.
+/// See [`capture_multi_output_with_clock`] for the deterministic
+/// deadline source used by tests.
+pub fn capture_multi_output<B: MultiOutputBackend>(
+    backend: &mut B,
+    snapshot: &TopologySnapshot,
+    rect: RectI,
+    limits: &DxgiLimits,
+) -> DxgiMultiOutputOutcome {
+    let start = Instant::now();
+    capture_multi_output_with_clock(backend, snapshot, rect, limits, move || start.elapsed())
+}
+
+/// Multi-output capture with an injected elapsed-time source.
+///
+/// The whole request — every output's acquires — shares ONE total
+/// deadline (the DXGI-1 `attempt_timeout_ms` rule, including the single
+/// final nonblocking 0ms poll per request). On any stale signal the
+/// loop discards all partial frames, recreates all outputs, refreshes
+/// the snapshot, and retries the ENTIRE request exactly once; a second
+/// stale signal is terminal. Protected/unavailable/terminal errors on
+/// any output end the request immediately with partials discarded —
+/// never a partial composite.
+pub fn capture_multi_output_with_clock<B: MultiOutputBackend, F: FnMut() -> Duration>(
+    backend: &mut B,
+    snapshot: &TopologySnapshot,
+    rect: RectI,
+    limits: &DxgiLimits,
+    mut elapsed: F,
+) -> DxgiMultiOutputOutcome {
+    let mut snapshot = snapshot.clone();
+    let mut retried = false;
+    // DXGI2-002 remainder: the final-poll grant is owned by the
+    // whole request, not by one acquisition pass. It is passed into
+    // each pass so the single stale-topology retry cannot reset it
+    // and grant a second final poll.
+    let mut final_poll_done = false;
+    loop {
+        let plan = match plan_composition(&snapshot, rect, limits) {
+            Ok(plan) => plan,
+            Err(e) => {
+                return DxgiMultiOutputOutcome::Unavailable(format!(
+                    "composition plan failed: {e}"
+                ))
+            }
+        };
+        match acquire_all_outputs(backend, &plan, limits, &mut elapsed, &mut final_poll_done) {
+            MultiPass::Ready(frames) => {
+                // A generation change during acquisition invalidates
+                // the plan even though every acquire succeeded.
+                if backend.snapshot_generation() != snapshot.generation {
+                    drop(frames);
+                    if retried {
+                        return DxgiMultiOutputOutcome::Retryable(
+                            "topology changed again after one retry".into(),
+                        );
+                    }
+                    match retry_from_fresh_snapshot(backend) {
+                        Ok(fresh) => {
+                            snapshot = fresh;
+                            retried = true;
+                            continue;
+                        }
+                        Err(outcome) => return outcome,
+                    }
+                }
+                // Destination size was validated by the plan, so this
+                // allocation cannot exceed the raster budget.
+                let dest_len = plan.dest_width as usize
+                    * plan.dest_height as usize
+                    * 4;
+                let mut rgba = vec![0u8; dest_len];
+                let mut per_output = Vec::new();
+                let dest_stride = plan.dest_width as usize * 4;
+                for (sequence, (contribution, cropped, info)) in
+                    frames.into_iter().enumerate()
+                {
+                    // Defensive bounds check: the plan guarantees the
+                    // paste fits, but a paste must never write outside
+                    // the destination on a logic slip.
+                    let src_stride = contribution.width as usize * 4;
+                    let fits = cropped.width == contribution.width
+                        && cropped.height == contribution.height
+                        && cropped.rgba.len() == src_stride * contribution.height as usize
+                        && (contribution.dest_x as usize) + (contribution.width as usize)
+                            <= plan.dest_width as usize
+                        && (contribution.dest_y as usize) + (contribution.height as usize)
+                            <= plan.dest_height as usize;
+                    if !fits {
+                        drop(rgba);
+                        return DxgiMultiOutputOutcome::Retryable(
+                            "composite paste out of bounds".into(),
+                        );
+                    }
+                    for row in 0..contribution.height as usize {
+                        let dst_off = ((contribution.dest_y as usize + row) * dest_stride)
+                            + contribution.dest_x as usize * 4;
+                        let src_off = row * src_stride;
+                        rgba[dst_off..dst_off + src_stride]
+                            .copy_from_slice(&cropped.rgba[src_off..src_off + src_stride]);
+                    }
+                    per_output.push(DxgiOutputAcquisition {
+                        device_name: contribution.output.device_name.clone(),
+                        adapter_luid: contribution.output.adapter_luid,
+                        frame_info: info,
+                        sequence,
+                    });
+                }
+                return DxgiMultiOutputOutcome::Frame(DxgiCompositeFrame {
+                    frame: DxgiFrame {
+                        width: plan.dest_width,
+                        height: plan.dest_height,
+                        rgba,
+                        frame_info: DxgiFrameMetadata::default(),
+                    },
+                    per_output,
+                });
+            }
+            MultiPass::Stale => {
+                if retried {
+                    return DxgiMultiOutputOutcome::Retryable(
+                        "topology changed again after one retry".into(),
+                    );
+                }
+                match retry_from_fresh_snapshot(backend) {
+                    Ok(fresh) => {
+                        snapshot = fresh;
+                        retried = true;
+                        continue;
+                    }
+                    Err(outcome) => return outcome,
+                }
+            }
+            MultiPass::Terminal(outcome) => return outcome,
+        }
+    }
+}
+
+/// Recreate all outputs, then refresh the snapshot. Either failure is
+/// terminal: the loop must not retry from a half-rebuilt backend.
+fn retry_from_fresh_snapshot<B: MultiOutputBackend>(
+    backend: &mut B,
+) -> Result<TopologySnapshot, DxgiMultiOutputOutcome> {
+    if let Err(e) = backend.recreate_all() {
+        return Err(DxgiMultiOutputOutcome::Retryable(format!(
+            "multi-output recreate failed: {e:?}"
+        )));
+    }
+    backend.refresh_snapshot().map_err(|e| {
+        DxgiMultiOutputOutcome::Retryable(format!("topology refresh failed: {e}"))
+    })
+}
+
+/// One acquisition pass over a plan's contributions. Every guard is
+/// dropped immediately after its acquire (before conversion); every
+/// partial frame is dropped by the caller on `Stale`/`Terminal`.
+fn acquire_all_outputs<B: MultiOutputBackend, F: FnMut() -> Duration>(
+    backend: &mut B,
+    plan: &CompositionPlan,
+    limits: &DxgiLimits,
+    elapsed: &mut F,
+    final_poll_done: &mut bool,
+) -> MultiPass {
+    let mut frames = Vec::new();
+    // DXGI2-002: the final-poll grant is shared across the whole
+    // request, not reset per output and not reset by the single
+    // stale-topology retry. At most one final nonblocking 0ms poll
+    // per REQUEST (DXGI1-005A), however many outputs the request
+    // covers and however many passes it takes: the flag is owned by
+    // the caller, so once any output spends it, later outputs — in
+    // this pass or the retry pass — get no final poll of their own.
+    for contribution in &plan.contributions {
+        let acquired = loop {
+            // Same deadline rule as DXGI-1: an attempt never blocks
+            // past the total request deadline; at most one final
+            // nonblocking 0ms poll per REQUEST (DXGI1-005A, shared
+            // across outputs via the flag above). A 0ms poll never
+            // blocks, so the hard total bound still holds exactly.
+            let e = elapsed();
+            let timeout_ms = match attempt_timeout_ms(limits, e) {
+                Some(t) => t,
+                None => {
+                    let deadline = Duration::from_millis(limits.total_deadline_ms as u64);
+                    if !*final_poll_done && e < deadline {
+                        *final_poll_done = true;
+                        0
+                    } else {
+                        break None;
+                    }
+                }
+            };
+            match backend.acquire_output(&contribution.output, timeout_ms, limits) {
+                Ok((guard, pixels)) => {
+                    // Release before any CPU conversion work.
+                    drop(guard);
+                    break Some(pixels);
+                }
+                Err(DxgiAcquireError::WaitTimeout) => {
+                    // Stable unchanged desktop: retry until the
+                    // loop-top deadline check stops us.
+                }
+                Err(DxgiAcquireError::AccessLost)
+                | Err(DxgiAcquireError::DeviceRemoved)
+                | Err(DxgiAcquireError::StageFailed(_)) => {
+                    drop(frames);
+                    return MultiPass::Stale;
+                }
+                Err(DxgiAcquireError::Protected) => {
+                    drop(frames);
+                    return MultiPass::Terminal(DxgiMultiOutputOutcome::ProtectedOrSecure(
+                        "protected or secure content on an output".into(),
+                    ));
+                }
+                Err(DxgiAcquireError::SessionDisconnected) => {
+                    drop(frames);
+                    return MultiPass::Terminal(DxgiMultiOutputOutcome::Unavailable(
+                        "session disconnected".into(),
+                    ));
+                }
+                Err(DxgiAcquireError::Unavailable(reason)) => {
+                    drop(frames);
+                    return MultiPass::Terminal(DxgiMultiOutputOutcome::Unavailable(reason));
+                }
+                Err(DxgiAcquireError::Other(msg)) => {
+                    drop(frames);
+                    return MultiPass::Terminal(DxgiMultiOutputOutcome::Retryable(msg));
+                }
+            }
+        };
+        let Some(pixels) = acquired else {
+            drop(frames);
+            return MultiPass::Terminal(DxgiMultiOutputOutcome::Retryable(
+                "no new desktop frame within the total request deadline".into(),
+            ));
+        };
+        // Caller-side limit check, mirroring DXGI-1: an oversize
+        // acquired frame is refused, never allocated around.
+        if let Err(e) = validate_limits(pixels.width, pixels.height, limits) {
+            drop(frames);
+            return MultiPass::Terminal(DxgiMultiOutputOutcome::Unavailable(format!(
+                "acquired frame violates limits: {e}"
+            )));
+        }
+        let Some(rgba) =
+            convert_bgra_to_rgba_pitched(&pixels.bgra, pixels.width, pixels.height, pixels.row_pitch)
+        else {
+            drop(frames);
+            return MultiPass::Terminal(DxgiMultiOutputOutcome::Retryable(
+                "staging buffer too short or row pitch invalid".into(),
+            ));
+        };
+        let full = DxgiFrame {
+            width: pixels.width,
+            height: pixels.height,
+            rgba,
+            frame_info: pixels.frame_info,
+        };
+        let Some(rotated) = rotate_frame(&full, contribution.output.rotation) else {
+            drop(frames);
+            return MultiPass::Terminal(DxgiMultiOutputOutcome::Unavailable(format!(
+                "output rotation {:?} cannot be applied",
+                contribution.output.rotation
+            )));
+        };
+        // The rotated frame must match the output's desktop rect
+        // exactly; anything else means the topology moved under us
+        // (mode/rotation change) — discard and retry once.
+        if rotated.width as u64 != contribution.output.rect.w
+            || rotated.height as u64 != contribution.output.rect.h
+        {
+            drop(frames);
+            return MultiPass::Stale;
+        }
+        // Crop offsets: the crop lies inside the output rect, so the
+        // differences are non-negative and bounded by the rotated
+        // frame (checked just above).
+        let ox = (contribution.crop.x - contribution.output.rect.x) as u32;
+        let oy = (contribution.crop.y - contribution.output.rect.y) as u32;
+        let Some(cropped) = crop_frame(
+            &rotated,
+            ox,
+            oy,
+            contribution.width,
+            contribution.height,
+        ) else {
+            drop(frames);
+            return MultiPass::Stale;
+        };
+        frames.push((contribution.clone(), cropped, pixels.frame_info));
+    }
+    MultiPass::Ready(frames)
+}
+
