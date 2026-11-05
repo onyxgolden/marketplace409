@@ -19,6 +19,30 @@ export function isTiffFile({ name, type } = {}) {
 }
 
 /**
+ * True when a file is active content (SVG/HTML), never a flat raster.
+ * SVG can carry script and foreign objects, and HTML is executable by
+ * definition; neither may ever become an underlay, even though browsers
+ * would happily render them inside an <img>. Checked by MIME type AND
+ * extension, before any bytes are read.
+ */
+export function isActiveContentFile({ name, type } = {}) {
+  const mime = String(type || "").toLowerCase();
+  const lowerName = String(name || "").toLowerCase();
+  return (
+    mime === "image/svg+xml" ||
+    mime === "text/html" ||
+    mime === "application/xhtml+xml" ||
+    lowerName.endsWith(".svg") ||
+    lowerName.endsWith(".html") ||
+    lowerName.endsWith(".htm")
+  );
+}
+
+/** Named refusal for active-content uploads (H1/G5 §5.6). */
+export const ACTIVE_CONTENT_REFUSAL =
+  "SVG and HTML files are never used as underlays — export the plan as PNG or JPEG and import that.";
+
+/**
  * Pure TIFF decode: file bytes -> { rgba, width, height }. Runs in Node and
  * browsers (no DOM needed), so the pixel round trip is unit-testable.
  */
@@ -53,6 +77,7 @@ export function rgbaToPngDataUrl(rgba, width, height) {
  */
 export async function decodeUnderlayFile(file) {
   if (!file) throw new Error("No file selected.");
+  if (isActiveContentFile(file)) throw new Error(ACTIVE_CONTENT_REFUSAL);
   if (isTiffFile(file)) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const { rgba, width, height } = decodeTiffRgba(bytes);

@@ -34,6 +34,8 @@ import {
   dimensionGeometry,
   feetInchesLabel,
   rotatedFootprintCorners,
+  underlayDisplaySizeIn,
+  underlayRotationDeg,
   wallLength,
 } from "@/domains/roomDesigner/designerGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
@@ -62,20 +64,41 @@ const centroidOf = (list) => ({
   y: list.reduce((s, p) => s + p.y, 0) / list.length,
 });
 
-function PrintUnderlay({ design }) {
-  const u = design.underlay;
-  if (!u) return null;
+/**
+ * Printable underlay (H1/G5). Renders only when the underlay exists, is
+ * visible, and is explicitly included in print. `underlaySnapshot`, when
+ * provided by the print overlay, is the choice FROZEN when the preview
+ * opened: screen toggles after that cannot silently alter the print.
+ * A quarter-turn rotation renders about the image center, matching the
+ * canvas. Legacy records without visible/printInclude/rotationDeg read
+ * as visible / included / 0.
+ */
+function PrintUnderlay({ design, underlaySnapshot }) {
+  const u = underlaySnapshot !== undefined ? underlaySnapshot : design.underlay;
+  if (!u || u.visible === false || u.printInclude === false) return null;
+  const deg = underlayRotationDeg(u);
+  const { widthIn, heightIn } = underlayDisplaySizeIn(u);
+  const transform = deg === 0
+    ? undefined
+    : `rotate(${deg} ${u.x + widthIn / 2} ${u.y + heightIn / 2})`;
   return (
     <image
       href={u.dataUrl}
       x={u.x}
       y={u.y}
-      width={u.widthPx / u.pxPerIn}
-      height={u.heightPx / u.pxPerIn}
+      width={widthIn}
+      height={heightIn}
       preserveAspectRatio="none"
       opacity={u.opacity}
+      transform={transform}
     />
   );
+}
+
+/** True when the printed sheet will actually show the underlay. */
+export function sheetShowsUnderlay(design, underlaySnapshot) {
+  const u = underlaySnapshot !== undefined ? underlaySnapshot : design.underlay;
+  return Boolean(u && u.visible !== false && u.printInclude !== false);
 }
 
 function PrintRooms({ design }) {
@@ -508,7 +531,7 @@ function PrintSystemsLegend({ design }) {
   );
 }
 
-export default function SheetPrintView({ design, sheet, dateLabel }) {
+export default function SheetPrintView({ design, sheet, dateLabel, underlaySnapshot }) {
   const dims = sheetDimensions(sheet.sizeId, sheet.orientation);
   const bounds = sheetPlanBounds(sheet);
   const clipId = `forge-print-clip-${sheet.id}`;
@@ -540,7 +563,7 @@ export default function SheetPrintView({ design, sheet, dateLabel }) {
         </defs>
         {/* Fixed frame: content outside the sheet's plan region never prints. */}
         <g clipPath={`url(#${clipId})`}>
-          <PrintUnderlay design={design} />
+          <PrintUnderlay design={design} underlaySnapshot={underlaySnapshot} />
           <PrintRooms design={design} />
           <PrintWalls design={design} />
           <PrintOpenings design={design} />
@@ -551,6 +574,23 @@ export default function SheetPrintView({ design, sheet, dateLabel }) {
         </g>
       </svg>
       <PrintSystemsLegend design={design} />
+      {/* H1/G5 §6.2: when the reference image prints, the sheet itself says
+          so — printed dimensions on it are the source plan's own artwork,
+          and no FORGE dimension is generated for the reference building. */}
+      {sheetShowsUnderlay(design, underlaySnapshot) && (
+        <div
+          style={{
+            position: "absolute",
+            left: "0.5in",
+            bottom: "0.25in",
+            fontSize: "8pt",
+            color: HAIRLINE,
+          }}
+        >
+          Reference artwork: dimensions printed on the reference image are the source plan&apos;s
+          own, not FORGE measurements.
+        </div>
+      )}
       {/* Header lives in the top margin: physical units, never scaled. */}
       {hasHeader && <PrintSheetHeader header={header} />}
       {/* Footer strip: custom three-column labels when set, else the legacy strip. */}
