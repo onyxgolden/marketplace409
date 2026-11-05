@@ -34,6 +34,10 @@ function toCamelLine(row) {
   return {
     id: row.id,
     drawingId: row.drawing_id,
+    // packageId exists only after the slice-2 migration backfills it;
+    // rows read before that migration applies report null, never a
+    // fabricated package.
+    packageId: row.package_id ?? null,
     lineNo: row.line_no,
     description: row.description,
     materialSpec: row.material_spec ?? null,
@@ -176,6 +180,10 @@ export async function createTakeoffLine(db, { ownerId, packageId, actor, input }
     owner_id: ownerId,
     id,
     drawing_id: input.drawingId,
+    // Slice 2 backfills package_id as NOT NULL: new lines must carry
+    // the package the drawing was already proven to belong to, or the
+    // insert fails the NOT NULL constraint after the migration lands.
+    package_id: packageId,
     line_no: lineNo,
     description: input.description,
     material_spec: input.materialSpec || null,
@@ -261,7 +269,15 @@ export async function deleteTakeoffLine(db, { ownerId, packageId, drawingId, lin
   if (!drawing) return { ok: false, httpStatus: 404, error: "Takeoff line not found in this package." };
   const { error } = await db.from("forge_work_takeoff_lines").delete()
     .eq("owner_id", ownerId).eq("id", lineId).eq("drawing_id", drawingId);
-  if (error) throw error;
+  if (error) {
+    // Slice 2: progress history RESTRICTs the delete at the database
+    // level — a line with progress records (even voided ones) cannot
+    // be removed without orphaning the audit ledger.
+    if (error.code === "23503") {
+      return { ok: false, httpStatus: 409, error: "This takeoff line still has progress records and cannot be removed." };
+    }
+    throw error;
+  }
   return { ok: true };
 }
 

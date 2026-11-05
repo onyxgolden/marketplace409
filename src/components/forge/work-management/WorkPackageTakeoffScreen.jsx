@@ -463,6 +463,338 @@ function DrawingPanel({ packageId, drawing, onDrawingDeleted }) {
   );
 }
 
+function EntryHistoryList({ packageId, entryId }) {
+  const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
+    `work-packages:progress:${entryId}:revisions`,
+    () => api(`/api/work-packages/${packageId}/progress/${entryId}/revisions`).then((b) => b.revisions),
+    { ttlMs: 10_000 },
+  );
+  if (isLoading) return <ForgeLoadingState label="Loading entry history…" />;
+  if (error) return <ForgeErrorState title="Unable to load entry history" detail={error} onRetry={refresh} />;
+  if (!data || data.length === 0) return <p className={`mt-2 text-xs ${forgeTheme.muted}`}>No history yet.</p>;
+  const actionLabel = { create: "Recorded", update: "Corrected", void: "Voided" };
+  return (
+    <ul className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-400">
+      {data.map((revision) => (
+        <li key={revision.id}>
+          Version {revision.version} — {actionLabel[revision.action] || revision.action}
+          {revision.oldQuantity != null || revision.newQuantity != null
+            ? `: ${revision.oldQuantity ?? "—"} → ${revision.newQuantity ?? "—"}`
+            : ""}
+          {revision.oldWorkDate !== revision.newWorkDate && revision.oldWorkDate != null
+            ? `, date ${revision.oldWorkDate} → ${revision.newWorkDate}`
+            : ""}
+          {revision.reason ? ` — ${revision.reason}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProgressEntryRow({ packageId, entry, lineLabel, onChanged }) {
+  const [mode, setMode] = useState(null);
+  const [quantity, setQuantity] = useState(String(entry.installedQuantity));
+  const [workDate, setWorkDate] = useState(entry.workDate);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+
+  async function onSaveCorrect() {
+    setBusy(true);
+    setError("");
+    try {
+      const { entry: updated } = await api(`/api/work-packages/${packageId}/progress/${entry.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expectedVersion: entry.version,
+          installedQuantity: Number(quantity),
+          workDate,
+          reason: reason || undefined,
+        }),
+      });
+      setMode(null);
+      onChanged(`Saved — the ${updated.workDate} entry for "${lineLabel}" was corrected (version ${updated.version}).`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onConfirmVoid() {
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/work-packages/${packageId}/progress/${entry.id}/void`, {
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: entry.version, reason: reason || undefined }),
+      });
+      setMode(null);
+      onChanged(`Voided — the ${entry.workDate} entry for "${lineLabel}" no longer counts toward totals, and stays in history.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <tr className="border-b border-slate-200 text-sm dark:border-slate-800">
+      <td className="py-2 pr-3">{entry.workDate}</td>
+      <td className="py-2 pr-3">{lineLabel}</td>
+      <td className="py-2 pr-3">{entry.installedQuantity}</td>
+      <td className="py-2 pr-3">{entry.voidedAt ? "Voided" : `Version ${entry.version}`}</td>
+      <td className="py-2">
+        {mode === null && !entry.voidedAt && (
+          <>
+            <button type="button" onClick={() => { setMode("correct"); setError(""); }}
+              className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-700">Correct</button>
+            <button type="button" onClick={() => { setMode("void"); setError(""); }}
+              className="ml-2 rounded-lg border border-red-300 px-2.5 py-1 text-xs font-bold text-red-700">Void</button>
+          </>
+        )}
+        {mode === "correct" && (
+          <span className="flex flex-wrap items-center gap-2">
+            <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" step="any" min="0"
+              className="w-20 rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+            <input value={workDate} onChange={(e) => setWorkDate(e.target.value)} type="date"
+              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)"
+              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+            <button type="button" onClick={onSaveCorrect} disabled={busy}
+              className="rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
+            <button type="button" onClick={() => setMode(null)} className="text-xs font-bold text-slate-600">Cancel</button>
+          </span>
+        )}
+        {mode === "void" && (
+          <span className="flex flex-wrap items-center gap-2">
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)"
+              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+            <button type="button" onClick={onConfirmVoid} disabled={busy}
+              className="rounded-lg bg-red-700 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{busy ? "Voiding…" : "Confirm void"}</button>
+            <button type="button" onClick={() => setMode(null)} className="text-xs font-bold text-slate-600">Cancel</button>
+          </span>
+        )}
+        <button type="button" onClick={() => setShowHistory((v) => !v)}
+          className="ml-2 text-xs font-bold text-slate-600">{showHistory ? "Hide history" : "History"}</button>
+        {error && <div role="alert" className="mt-1 text-xs font-bold text-red-700">{error}</div>}
+        {showHistory && <EntryHistoryList packageId={packageId} entryId={entry.id} />}
+      </td>
+    </tr>
+  );
+}
+
+function NewProgressForm({ packageId, lines, onCreated }) {
+  const [lineId, setLineId] = useState(lines.length > 0 ? lines[0].lineId : "");
+  const [workDate, setWorkDate] = useState(new Date().toISOString().slice(0, 10));
+  const [quantity, setQuantity] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setConfirmation("");
+    try {
+      const { entry } = await api(`/api/work-packages/${packageId}/progress`, {
+        method: "POST",
+        body: JSON.stringify({ lineId, workDate, installedQuantity: Number(quantity), note: note || undefined }),
+      });
+      const line = lines.find((l) => l.lineId === lineId);
+      setQuantity("");
+      setNote("");
+      setConfirmation(`Saved — ${entry.installedQuantity} ${line ? line.baselineUnit : ""} installed on ${entry.workDate} for "${line ? line.description : lineId}".`);
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (lines.length === 0) {
+    return <p className={`mt-3 ${forgeTheme.muted}`}>No takeoff lines yet — add lines above first.</p>;
+  }
+
+  return (
+    <form onSubmit={onSubmit} className={forgeTheme.panelSoft}>
+      <p className={forgeTheme.labelSmall}>Record daily progress</p>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+        <label className="text-sm">
+          <span className={forgeTheme.labelSmall}>Takeoff line</span>
+          <select value={lineId} onChange={(e) => setLineId(e.target.value)} required
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+            {lines.map((line) => (
+              <option key={line.lineId} value={line.lineId}>{line.description} ({line.baselineQuantity} {line.baselineUnit})</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm">
+          <span className={forgeTheme.labelSmall}>Work date</span>
+          <input value={workDate} onChange={(e) => setWorkDate(e.target.value)} type="date" required
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+        </label>
+        <label className="text-sm">
+          <span className={forgeTheme.labelSmall}>Installed quantity</span>
+          <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" step="any" min="0" required
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+        </label>
+        <label className="text-sm">
+          <span className={forgeTheme.labelSmall}>Note (optional)</span>
+          <input value={note} onChange={(e) => setNote(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+        </label>
+      </div>
+      <button type="submit" disabled={busy}
+        className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+        {busy ? "Saving…" : "Record progress"}
+      </button>
+      <Confirmation message={confirmation} />
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
+function ProgressSectionBody({ packageId }) {
+  const [confirmation, setConfirmation] = useState("");
+  const { data: summary, error: summaryError, isLoading: summaryLoading, refresh: refreshSummary } = useStaleWhileRevalidate(
+    `work-packages:${packageId}:progress-summary`,
+    () => api(`/api/work-packages/${packageId}/progress/summary`).then((b) => b.summary),
+    { ttlMs: 10_000 },
+  );
+  const { data: entries, error: entriesError, isLoading: entriesLoading, refresh: refreshEntries } = useStaleWhileRevalidate(
+    `work-packages:${packageId}:progress-entries`,
+    () => api(`/api/work-packages/${packageId}/progress`).then((b) => b.entries),
+    { ttlMs: 10_000 },
+  );
+
+  function bump(message) {
+    if (message) setConfirmation(message);
+    refreshSummary();
+    refreshEntries();
+  }
+
+  const linesById = new Map((summary?.lines || []).map((line) => [line.lineId, line]));
+
+  return (
+    <div className={forgeTheme.panel}>
+      <p className={forgeTheme.labelSmall}>Daily progress — cumulative totals are computed from daily entries, never stored</p>
+      {summaryLoading && <ForgeLoadingState label="Loading progress summary…" />}
+      {summaryError && <ForgeErrorState title="Unable to load progress summary" detail={summaryError} onRetry={refreshSummary} />}
+      {!summaryLoading && !summaryError && summary && (
+        <>
+          <div className="mt-3">
+            <p className={forgeTheme.labelSmall}>Progress by takeoff line</p>
+            {summary.lines.length === 0 ? (
+              <p className={`mt-1 ${forgeTheme.muted}`}>No takeoff lines yet.</p>
+            ) : (
+              <table className="mt-2 w-full text-left text-sm">
+                <thead>
+                  <tr className={forgeTheme.labelSmall}>
+                    <th className="pb-1 pr-3">Line</th>
+                    <th className="pb-1 pr-3">Baseline</th>
+                    <th className="pb-1 pr-3">Installed</th>
+                    <th className="pb-1 pr-3">Remaining</th>
+                    <th className="pb-1 pr-3">Complete</th>
+                    <th className="pb-1">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.lines.map((line) => (
+                    <tr key={line.lineId} className="border-b border-slate-200 dark:border-slate-800">
+                      <td className="py-2 pr-3">{line.description}</td>
+                      <td className="py-2 pr-3">{line.baselineQuantity} {line.baselineUnit}</td>
+                      <td className="py-2 pr-3">{line.installed} {line.baselineUnit}</td>
+                      <td className="py-2 pr-3">{line.remaining == null ? "—" : `${line.remaining} ${line.baselineUnit}`}</td>
+                      <td className="py-2 pr-3">{line.percentComplete == null ? "N/A" : `${line.percentComplete}%`}</td>
+                      <td className="py-2">{line.overrun ? <strong className="text-red-700">Overrun</strong> : line.percentComplete === 100 ? "Complete" : "In progress"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="mt-3 text-sm">
+            <p>
+              <span className={forgeTheme.labelSmall}>Package total:</span>{" "}
+              {summary.package.aggregatePercent == null
+                ? "N/A — mixed units or a zero baseline; see the per-unit breakdown below."
+                : `${summary.package.aggregatePercent}% complete (capped: ${summary.package.cappedAggregateCompletion}%)`}
+            </p>
+            <ul className="mt-1 text-sm">
+              {summary.package.unitGroups.map((group) => (
+                <li key={group.unit}>{group.installed} of {group.baseline} {group.unit} across {group.lineCount} line{group.lineCount === 1 ? "" : "s"}</li>
+              ))}
+            </ul>
+            {summary.package.overrunLineCount > 0 && (
+              <p className="mt-1 font-bold text-red-700">{summary.package.overrunLineCount} line{summary.package.overrunLineCount === 1 ? "" : "s"} over baseline.</p>
+            )}
+          </div>
+          <div className="mt-4">
+            <NewProgressForm packageId={packageId} lines={summary.lines} onCreated={() => bump()} />
+          </div>
+        </>
+      )}
+
+      <div className="mt-4">
+        <p className={forgeTheme.labelSmall}>Daily history (voided entries stay visible, but stop counting)</p>
+        {entriesLoading && <ForgeLoadingState label="Loading daily history…" />}
+        {entriesError && <ForgeErrorState title="Unable to load daily history" detail={entriesError} onRetry={refreshEntries} />}
+        {!entriesLoading && !entriesError && entries && (
+          entries.length === 0 ? (
+            <p className={`mt-1 ${forgeTheme.muted}`}>No progress entries yet.</p>
+          ) : (
+            <table className="mt-2 w-full text-left">
+              <thead>
+                <tr className={forgeTheme.labelSmall}>
+                  <th className="pb-1 pr-3">Work date</th>
+                  <th className="pb-1 pr-3">Line</th>
+                  <th className="pb-1 pr-3">Installed</th>
+                  <th className="pb-1 pr-3">State</th>
+                  <th className="pb-1">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((entry) => {
+                  const line = linesById.get(entry.takeoffLineId);
+                  return (
+                    <ProgressEntryRow key={entry.id} packageId={packageId} entry={entry}
+                      lineLabel={line ? line.description : entry.takeoffLineId}
+                      onChanged={(message) => bump(message)} />
+                  );
+                })}
+              </tbody>
+            </table>
+          )
+        )}
+        <Confirmation message={confirmation} />
+      </div>
+      <p className="mt-3 text-xs text-slate-500">Progress entries are never hard-deleted: a wrong entry is corrected or voided, and every change stays in its history.</p>
+    </div>
+  );
+}
+
+function ProgressSection({ packageId }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-5">
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-800">
+        {open ? "Hide daily progress" : "Daily progress"}
+      </button>
+      {open && (
+        <div className="mt-3">
+          <ProgressSectionBody packageId={packageId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkPackageTakeoffScreen({ packageId }) {
   const [activeDrawingId, setActiveDrawingId] = useState(null);
   const [drawingConfirmation, setDrawingConfirmation] = useState("");
@@ -497,7 +829,8 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
       <p className={`mt-2 ${forgeTheme.textSmall}`}>
         Bring in P&amp;IDs, cut sheets, and isometrics; enter their takeoff lines; get one
         quantity summary per P&amp;ID with a shop/field estimate split and suggested
-        FW/FFW counts.
+        FW/FFW counts. Record daily installed quantities per line to track cumulative
+        progress.
       </p>
 
       <div className="mt-5">
@@ -527,6 +860,7 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
           </div>
         </div>
       )}
+      <ProgressSection packageId={packageId} />
     </section>
   );
 }
