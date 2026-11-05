@@ -12,9 +12,10 @@
 // module validates shape and computes hashes; it never decides admission.
 //
 // Hashing: SHA-256 over UTF-8 bytes. The source-set hash covers exactly
-// the document identities, content hashes and allowed ranges, so a changed
-// source (or a changed range) changes the hash and invalidates any
-// artifact built on the manifest (see artifacts.js).
+// the document identities, content hashes, allowed ranges, and page
+// hashes, so a changed source (or a changed range, or a changed page
+// binding) changes the hash and invalidates any artifact built on the
+// manifest (see artifacts.js).
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -63,16 +64,35 @@ export function computeDocumentHash(content) {
 }
 
 /**
- * Source-set hash: covers document identities, content hashes and allowed
- * ranges only. Permission basis, titles and curator notes do not change
- * it — a changed source (or range) must change the hash, a reworded
- * permission note must not.
+ * One SHA-256 hash per page, in page order. The picker records these on
+ * the manifest entry at pick time; extraction re-verifies supplied pages
+ * against them, so page content is cryptographically bound to the
+ * manifest and cannot be swapped independently of the document text.
+ */
+export function computePageHashes(pages) {
+  if (!Array.isArray(pages)) {
+    throw new Error("computePageHashes: pages must be an array.");
+  }
+  return pages.map((page) => {
+    if (typeof page !== "string") {
+      throw new Error("computePageHashes: every page must be a string.");
+    }
+    return sha256Hex(page);
+  });
+}
+
+/**
+ * Source-set hash: covers document identities, content hashes, allowed
+ * ranges, and page hashes only. Permission basis, titles and curator
+ * notes do not change it — a changed source (or range, or page binding)
+ * must change the hash, a reworded permission note must not.
  */
 export function computeSourceSetHash(documents) {
   const covered = documents.map((d) => ({
     documentId: d.documentId,
     contentHash: d.contentHash,
     ranges: d.ranges,
+    pageHashes: d.pageHashes ?? null,
   }));
   return sha256Hex(canonicalJson(covered));
 }
@@ -137,6 +157,27 @@ export function validateDocumentEntry(entry, pageCount) {
     const pageRanges = entry.ranges.filter((r) => r?.type === "page");
     if (pageRanges.length > 0 && pageCount == null) {
       errors.push({ code: "INVALID_RANGE", message: `${label}: pageCount is required when page ranges are used.` });
+    } else if (pageRanges.length > 0) {
+      // Page ranges are only meaningful with a cryptographic binding of
+      // the page content: one SHA-256 hash per page, recorded at pick
+      // time. Without it, extraction-time pages would be independently
+      // mutable (same document text, swapped pages).
+      const hashesOk =
+        Array.isArray(entry.pageHashes) &&
+        entry.pageHashes.length === pageCount &&
+        entry.pageHashes.every((h) => SHA256_HEX.test(h ?? ""));
+      if (!hashesOk) {
+        errors.push({ code: "INVALID_PAGE_HASHES", message: `${label}: page ranges require pageHashes — one SHA-256 hash per page (${pageCount} pages).` });
+      }
+    } else if (entry.pageHashes != null) {
+      // Section-only entries may still carry recorded page hashes (pages
+      // supplied at pick time); when present they must be well-formed.
+      const hashesOk =
+        Array.isArray(entry.pageHashes) &&
+        entry.pageHashes.every((h) => SHA256_HEX.test(h ?? ""));
+      if (!hashesOk) {
+        errors.push({ code: "INVALID_PAGE_HASHES", message: `${label}: pageHashes must be an array of SHA-256 hex digests.` });
+      }
     }
     for (const range of entry.ranges) validateRange(range, pageCount, errors, label);
     // Overlapping page ranges would make extraction ambiguous (the same
@@ -197,6 +238,7 @@ export function createSourceSetManifest(input, options = {}) {
     sourceType: d.sourceType,
     contentHash: d.contentHash,
     ranges: d.ranges,
+    pageHashes: d.pageHashes ?? null,
     permission: { granted: true, basis: d.permission.basis },
     pageCount: d.pageCount ?? null,
     charCount: d.charCount ?? null,

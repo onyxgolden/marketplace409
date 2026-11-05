@@ -169,4 +169,61 @@ describe("extractForManifest", () => {
     expect(extracted.ok).toBe(false);
     expect(extracted.error.code).toBe("MISSING_SOURCE");
   });
+
+  it("binds page content to the manifest at pick time", () => {
+    const pages = ["Page one words.", "Page two words."];
+    const picked = pickSources(pickerInput({
+      documents: [refDoc({
+        ranges: [{ type: "page", start: 1, end: 2 }],
+        pages,
+      })],
+    }), { now: "2026-11-04T12:00:00.000Z", uuid: "u" });
+    expect(picked.ok).toBe(true);
+    expect(picked.manifest.documents[0].pageHashes).toEqual([sha256Hex(pages[0]), sha256Hex(pages[1])]);
+    expect(picked.manifest.documents[0].pageCount).toBe(2);
+    const good = extractForManifest(picked.manifest, {
+      "doc-1": { text: "## Intro\nSunlight drives photosynthesis in leaves.", pages },
+    });
+    expect(good.ok).toBe(true);
+    expect(good.extracts).toHaveLength(2);
+  });
+
+  it("refuses extraction when pages were swapped but the text is unchanged", () => {
+    const pages = ["Page one words.", "Page two words."];
+    const picked = pickSources(pickerInput({
+      documents: [refDoc({
+        ranges: [{ type: "page", start: 1, end: 2 }],
+        pages,
+      })],
+    }), { now: "2026-11-04T12:00:00.000Z", uuid: "u" });
+    expect(picked.ok).toBe(true);
+    // Same document text (so the text hash still matches) but a swapped
+    // second page: the old code extracted the substituted page silently.
+    const swapped = extractForManifest(picked.manifest, {
+      "doc-1": { text: "## Intro\nSunlight drives photosynthesis in leaves.", pages: ["Page one words.", "Substituted words."] },
+    });
+    expect(swapped.ok).toBe(false);
+    expect(swapped.error.code).toBe("PAGE_CONTENT_MISMATCH");
+    expect(swapped.extracts).toEqual([]);
+    const missing = extractForManifest(picked.manifest, {
+      "doc-1": { text: "## Intro\nSunlight drives photosynthesis in leaves." },
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.error.code).toBe("PAGE_CONTENT_MISMATCH");
+  });
+
+  it("refuses page extraction from a manifest with no recorded page binding", () => {
+    const picked = pickSources(pickerInput(), { now: "2026-11-04T12:00:00.000Z", uuid: "u" });
+    expect(picked.ok).toBe(true);
+    // Forge a pre-fix manifest: page ranges, but the binding stripped.
+    const legacy = {
+      ...picked.manifest,
+      documents: [{ ...picked.manifest.documents[0], ranges: [{ type: "page", start: 1, end: 1 }], pageHashes: undefined }],
+    };
+    const extracted = extractForManifest(legacy, {
+      "doc-1": { text: "## Intro\nSunlight drives photosynthesis in leaves.", pages: ["Page one words."] },
+    });
+    expect(extracted.ok).toBe(false);
+    expect(extracted.error.code).toBe("PAGE_BINDING_MISSING");
+  });
 });

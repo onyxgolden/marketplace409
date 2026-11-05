@@ -94,6 +94,45 @@ describe("createSourceSetManifest", () => {
     expect(validateDocumentEntry(entry({ permission: { granted: true, basis: "" } }), null).ok).toBe(false);
     expect(validateDocumentEntry(entry({ contentHash: "not-a-hash" }), null).ok).toBe(false);
   });
+
+  it("binds page content to the manifest: page ranges require page hashes", () => {
+    const pageHashes = [sha256Hex("page one"), sha256Hex("page two")];
+    const bound = validateDocumentEntry(
+      entry({ ranges: [{ type: "page", start: 1, end: 2 }], pageHashes }),
+      2,
+    );
+    expect(bound.ok).toBe(true);
+    const unbound = validateDocumentEntry(
+      entry({ ranges: [{ type: "page", start: 1, end: 2 }] }),
+      2,
+    );
+    expect(unbound.errors.some((e) => e.code === "INVALID_PAGE_HASHES")).toBe(true);
+    const wrongLength = validateDocumentEntry(
+      entry({ ranges: [{ type: "page", start: 1, end: 2 }], pageHashes: [sha256Hex("page one")] }),
+      2,
+    );
+    expect(wrongLength.errors.some((e) => e.code === "INVALID_PAGE_HASHES")).toBe(true);
+    const nonHex = validateDocumentEntry(
+      entry({ ranges: [{ type: "page", start: 1, end: 2 }], pageHashes: ["not-a-hash", "also-not"] }),
+      2,
+    );
+    expect(nonHex.errors.some((e) => e.code === "INVALID_PAGE_HASHES")).toBe(true);
+  });
+
+  it("records page hashes on the manifest and covers them in the source-set hash", () => {
+    const pageHashes = [sha256Hex("page one"), sha256Hex("page two")];
+    const base = createSourceSetManifest(
+      manifestInput({ documents: [entry({ ranges: [{ type: "page", start: 1, end: 2 }], pageHashes, pageCount: 2 })] }),
+      { now: NOW, uuid: "u" },
+    );
+    expect(base.ok).toBe(true);
+    expect(base.manifest.documents[0].pageHashes).toEqual(pageHashes);
+    const changedPages = createSourceSetManifest(
+      manifestInput({ documents: [entry({ ranges: [{ type: "page", start: 1, end: 2 }], pageHashes: [sha256Hex("page ONE"), sha256Hex("page two")], pageCount: 2 })] }),
+      { now: NOW, uuid: "u" },
+    );
+    expect(changedPages.manifest.sourceSetHash).not.toBe(base.manifest.sourceSetHash);
+  });
 });
 
 describe("sha256 / canonical JSON", () => {

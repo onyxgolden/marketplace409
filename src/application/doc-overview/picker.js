@@ -26,8 +26,10 @@ import {
 } from "@/domains/doc-overview/classification.js";
 import {
   computeDocumentHash,
+  computePageHashes,
   createSourceSetManifest,
   recordHumanClassification,
+  sha256Hex,
 } from "@/domains/doc-overview/sourceSets.js";
 import {
   extractBounded,
@@ -127,6 +129,11 @@ export function pickSources(input, options = {}) {
         sourceType: doc.sourceType,
         contentHash: computeDocumentHash(doc.text),
         ranges: doc.ranges,
+        // Page content is bound to the manifest here, not at extraction:
+        // one hash per page, in order. Extraction re-verifies supplied
+        // pages against these hashes, so pages cannot be swapped while
+        // the document text (and its hash) stays the same.
+        pageHashes: doc.pages ? computePageHashes(doc.pages) : null,
         permission: { granted: true, basis: doc.permissionBasis },
         pageCount: doc.pages ? doc.pages.length : (doc.pageCount ?? null),
         charCount: doc.text.length,
@@ -167,7 +174,11 @@ export function pickSources(input, options = {}) {
  * `textsById`: { [documentId]: { text, pages? } }. Each text's hash is
  * verified against the manifest first: a changed source fails with
  * STALE_SOURCE and extracts nothing, so citations can never point at
- * words that are no longer in the source.
+ * words that are no longer in the source. Page ranges additionally
+ * verify every supplied page against the manifest's recorded page
+ * hashes: swapped pages fail with PAGE_CONTENT_MISMATCH even when the
+ * document text itself is unchanged, and a manifest with page ranges
+ * but no recorded page binding fails with PAGE_BINDING_MISSING.
  */
 export function extractForManifest(manifest, textsById) {
   const allExtracts = [];
@@ -178,6 +189,18 @@ export function extractForManifest(manifest, textsById) {
     }
     if (computeDocumentHash(supplied.text) !== entry.contentHash) {
       return { ok: false, extracts: [], error: { code: "STALE_SOURCE", message: `source ${entry.documentId} changed since the manifest was created; re-create the manifest before extracting.` } };
+    }
+    if (entry.ranges?.some((r) => r?.type === "page")) {
+      if (!Array.isArray(entry.pageHashes)) {
+        return { ok: false, extracts: [], error: { code: "PAGE_BINDING_MISSING", message: `source ${entry.documentId} uses page ranges but carries no recorded page binding; re-create the manifest before extracting.` } };
+      }
+      const pagesOk =
+        Array.isArray(supplied.pages) &&
+        supplied.pages.length === entry.pageHashes.length &&
+        supplied.pages.every((page, i) => typeof page === "string" && sha256Hex(page) === entry.pageHashes[i]);
+      if (!pagesOk) {
+        return { ok: false, extracts: [], error: { code: "PAGE_CONTENT_MISMATCH", message: `source ${entry.documentId} pages changed since the manifest was created; re-create the manifest before extracting.` } };
+      }
     }
     const extracted = extractBounded({
       document: { id: entry.documentId, text: supplied.text, pages: supplied.pages },
