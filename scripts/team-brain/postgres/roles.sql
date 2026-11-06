@@ -94,33 +94,40 @@ GRANT SELECT ON tb_worker_heartbeats TO tb_reader;
 GRANT SELECT ON team_brain_handoffs TO tb_reader;
 GRANT SELECT ON team_brain_obligations TO tb_reader;
 
--- Owner (tb_admin): read-only visibility for the --check health
--- probes, and nothing else. The probes run with the owner handle
--- (run.mjs --check --owner-user tb_admin) and directly SELECT from
--- six tables:
+-- Owner (tb_admin): the health-probe and backup/restore handle.
+-- Holds SELECT on all twenty team-brain tables (needed for --check
+-- and --backup — see below), plus the narrowly scoped restore writes
+-- added further down. It still has NO membership in tb_consolidator
+-- / tb_reader, and still cannot DELETE or TRUNCATE anything: this is
+-- not a general write role, it is SELECT everywhere plus exactly the
+-- two conflict shapes importRestore ever issues.
+--
+-- SELECT scope: --check (run.mjs --check --owner-user tb_admin)
+-- directly SELECTs from six tables —
 --   migrationCatalog: team_brain_schema_version + tb_consolidation_lease
 --   backlogWatermark / projectionRevision: tb_retrieval_revisions,
 --     tb_consolidation_runs, tb_episodes
 --   pendingUnknownDeliveries: tb_consolidation_runs, team_brain_handoffs
--- But migrationCatalog ALSO lists tables through
+-- but migrationCatalog ALSO lists tables through
 -- information_schema.tables, which only shows tables the handle holds
--- a privilege on — so six grants leave fourteen tables "missing"
--- and the probe FAILs (proven: granting only the six still failed
+-- a privilege on — so six grants leave fourteen tables "missing" and
+-- the probe FAILs (proven: granting only the six still failed
 -- migrationCatalog with 14 missing). The owner read set must
--- therefore cover all twenty team-brain tables, SELECT only.
--- tb_admin gets NO write anywhere and NO membership in
--- tb_consolidator / tb_reader, on purpose: membership WITH INHERIT
--- (the default) would let tb_admin inherit consolidator writes
--- (proven: INSERT into tb_consolidation_runs succeeds), and
--- membership WITH INHERIT FALSE loses the role_table_grants
--- visibility it was meant to provide (proven: 0 visible rows).
--- Consequence, stated plainly: the effectiveGrants probe stays
--- NOT_VISIBLE from tb_admin by design (PARTIAL, not FAIL); full
--- grant verification needs a superuser/DBA handle, which the
--- runbook already anticipates ("re-run --check with an owner
--- handle"). Before this block, team_brain_schema_version had a
--- PUBLIC revoke and no grant to any role, so no handle could read
--- it at all (P8 Step A NOT QUALIFIED).
+-- therefore cover all twenty team-brain tables. --backup
+-- (worker/backup.mjs exportBackup) reads the same twenty tables in
+-- full, which this SELECT set also covers.
+--
+-- No role membership, on purpose: membership WITH INHERIT (the
+-- default) would let tb_admin inherit consolidator writes (proven:
+-- INSERT into tb_consolidation_runs succeeds), and membership WITH
+-- INHERIT FALSE loses the role_table_grants visibility it was meant
+-- to provide (proven: 0 visible rows). Consequence, stated plainly:
+-- the effectiveGrants probe stays NOT_VISIBLE from tb_admin by design
+-- (PARTIAL, not FAIL); full grant verification needs a
+-- superuser/DBA handle, which the runbook already anticipates
+-- ("re-run --check with an owner handle"). Before this block,
+-- team_brain_schema_version had a PUBLIC revoke and no grant to any
+-- role, so no handle could read it at all (P8 Step A NOT QUALIFIED).
 GRANT SELECT ON team_brain_schema_version TO tb_admin;
 GRANT SELECT ON team_brain_obligations TO tb_admin;
 GRANT SELECT ON team_brain_obligation_dependencies TO tb_admin;
@@ -143,19 +150,55 @@ GRANT SELECT ON tb_consolidation_audit TO tb_admin;
 GRANT SELECT ON tb_worker_heartbeats TO tb_admin;
 
 -- Owner (tb_admin): restore rights, added 2026-11-05 (P8 Step A
--- re-qualification finding; Jason's decision 2026-11-05 ~16:57 CST).
--- importRestore (worker/backup.mjs) does INSERT ... ON CONFLICT DO
--- UPDATE / DO NOTHING only — never DELETE or TRUNCATE — so the owner
--- handle needs INSERT + UPDATE on the same twenty tables it already
--- reads, and nothing more. Proven by reading importRestore itself:
--- its only statement shape is the INSERT above; no DELETE/TRUNCATE
--- appears anywhere in the restore path.
---
+-- re-qualification finding; Jason's decision 2026-11-05 ~16:57 CST;
+-- narrowed 2026-11-05 on ChatGPT's NEEDS CHANGES review of the first
+-- cut, which over-granted — see the two corrections below).
+-- importRestore (worker/backup.mjs) issues exactly two statement
+-- shapes, both via insertRows: INSERT ... ON CONFLICT DO NOTHING for
+-- seventeen tables, and INSERT ... ON CONFLICT (id) DO UPDATE SET ...
+-- for exactly three — the SINGLETON_UPSERT tables
+-- (team_brain_schema_version, tb_retrieval_revisions,
+-- tb_consolidation_lease), which already hold a seeded row in a
+-- fresh target. DO NOTHING never executes an UPDATE, so it needs
+-- INSERT only; it is only the three singleton tables whose conflict
+-- path updates an existing row. Never DELETE or TRUNCATE anywhere in
+-- the restore path.
+GRANT INSERT ON team_brain_schema_version TO tb_admin;
+GRANT INSERT ON team_brain_obligations TO tb_admin;
+GRANT INSERT ON team_brain_obligation_dependencies TO tb_admin;
+GRANT INSERT ON team_brain_obligation_events TO tb_admin;
+GRANT INSERT ON team_brain_handoffs TO tb_admin;
+GRANT INSERT ON team_brain_handoff_events TO tb_admin;
+GRANT INSERT ON tb_retrieval_revisions TO tb_admin;
+GRANT INSERT ON tb_episodes TO tb_admin;
+GRANT INSERT ON tb_episode_grants TO tb_admin;
+GRANT INSERT ON tb_pins TO tb_admin;
+GRANT INSERT ON tb_working_set TO tb_admin;
+GRANT INSERT ON tb_episode_events TO tb_admin;
+GRANT INSERT ON tb_consolidation_runs TO tb_admin;
+GRANT INSERT ON tb_consolidation_lease TO tb_admin;
+GRANT INSERT ON tb_consolidated_facts TO tb_admin;
+GRANT INSERT ON tb_consolidation_proposals TO tb_admin;
+GRANT INSERT ON tb_consolidation_checkpoints TO tb_admin;
+GRANT INSERT ON tb_consolidation_run_bindings TO tb_admin;
+GRANT INSERT ON tb_consolidation_audit TO tb_admin;
+GRANT INSERT ON tb_worker_heartbeats TO tb_admin;
+
+-- UPDATE limited to exactly the three SINGLETON_UPSERT tables (see
+-- above) — the only tables whose restore conflict path updates an
+-- existing row. Every other table restores into an empty target, so
+-- DO NOTHING is exact there and needs no UPDATE grant.
+GRANT UPDATE ON team_brain_schema_version TO tb_admin;
+GRANT UPDATE ON tb_retrieval_revisions TO tb_admin;
+GRANT UPDATE ON tb_consolidation_lease TO tb_admin;
+
 -- Five tables restore rows whose surrogate id column was stripped
 -- from the backup (SURROGATE_COLUMNS in backup.mjs) and is left for
--- the database to regenerate on INSERT, so the owner handle also
--- needs USAGE on the five backing sequences. Two already exist for
--- tb_consolidator (tb_consolidation_audit_seq_seq,
+-- the database to regenerate via the column's own DEFAULT
+-- nextval(...) expression, which needs USAGE on the sequence only —
+-- restore never reads sequence state (no currval/lastval, no SELECT
+-- on the sequence relation), so SELECT is not granted. Two sequences
+-- already exist for tb_consolidator (tb_consolidation_audit_seq_seq,
 -- tb_worker_heartbeats_id_seq); the other three were previously
 -- ungranted to anyone and are added here:
 -- team_brain_obligation_events_seq_seq, team_brain_handoff_events_seq_seq
@@ -167,31 +210,11 @@ GRANT SELECT ON tb_worker_heartbeats TO tb_admin;
 -- This does not touch tb_consolidator or tb_reader, and does not
 -- grant DELETE/TRUNCATE to tb_admin: a restore run proved it doesn't
 -- need them (see the PR's verification evidence).
-GRANT INSERT, UPDATE ON team_brain_schema_version TO tb_admin;
-GRANT INSERT, UPDATE ON team_brain_obligations TO tb_admin;
-GRANT INSERT, UPDATE ON team_brain_obligation_dependencies TO tb_admin;
-GRANT INSERT, UPDATE ON team_brain_obligation_events TO tb_admin;
-GRANT INSERT, UPDATE ON team_brain_handoffs TO tb_admin;
-GRANT INSERT, UPDATE ON team_brain_handoff_events TO tb_admin;
-GRANT INSERT, UPDATE ON tb_retrieval_revisions TO tb_admin;
-GRANT INSERT, UPDATE ON tb_episodes TO tb_admin;
-GRANT INSERT, UPDATE ON tb_episode_grants TO tb_admin;
-GRANT INSERT, UPDATE ON tb_pins TO tb_admin;
-GRANT INSERT, UPDATE ON tb_working_set TO tb_admin;
-GRANT INSERT, UPDATE ON tb_episode_events TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_runs TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_lease TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidated_facts TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_proposals TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_checkpoints TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_run_bindings TO tb_admin;
-GRANT INSERT, UPDATE ON tb_consolidation_audit TO tb_admin;
-GRANT INSERT, UPDATE ON tb_worker_heartbeats TO tb_admin;
-GRANT USAGE, SELECT ON SEQUENCE team_brain_obligation_events_seq_seq TO tb_admin;
-GRANT USAGE, SELECT ON SEQUENCE team_brain_handoff_events_seq_seq TO tb_admin;
-GRANT USAGE, SELECT ON SEQUENCE tb_episode_events_event_id_seq TO tb_admin;
-GRANT USAGE, SELECT ON SEQUENCE tb_consolidation_audit_seq_seq TO tb_admin;
-GRANT USAGE, SELECT ON SEQUENCE tb_worker_heartbeats_id_seq TO tb_admin;
+GRANT USAGE ON SEQUENCE team_brain_obligation_events_seq_seq TO tb_admin;
+GRANT USAGE ON SEQUENCE team_brain_handoff_events_seq_seq TO tb_admin;
+GRANT USAGE ON SEQUENCE tb_episode_events_event_id_seq TO tb_admin;
+GRANT USAGE ON SEQUENCE tb_consolidation_audit_seq_seq TO tb_admin;
+GRANT USAGE ON SEQUENCE tb_worker_heartbeats_id_seq TO tb_admin;
 
 -- Explicit PUBLIC revokes on every team-brain table named above.
 REVOKE ALL ON tb_episodes FROM PUBLIC;
