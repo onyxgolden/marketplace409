@@ -290,18 +290,22 @@ pub fn text_within_charset(text: &str, allowed: &HashSet<char>) -> bool {
 // --- box coordinate mapping (scale / crop / rotation) ------------------
 
 /// How the image region the det/rec models actually ran on relates to
-/// the source frame's own pixel space: a uniform `resize_ratio` (det
-/// preprocessing resizes the whole region so its longer side fits a
-/// limit, preserving aspect ratio before padding to a stride multiple),
-/// the pre-resize pixel dimensions of that region (`region_w`/`region_h`
-/// — the crop's or, in full-frame mode, the whole frame's own
-/// dimensions, needed to invert a rotation), the region's own top-left
-/// offset within the source frame (`(0,0)` for full-frame mode), and a
-/// 0/90/180/270 clockwise rotation needed to bring the region's own
-/// orientation into the source frame's orientation.
+/// the source frame's own pixel space. `resize_ratio_x`/`resize_ratio_y`
+/// are independent (PP-OCR's own det preprocessing rounds each resized
+/// dimension to the nearest multiple of 32 *after* applying one scalar
+/// ratio, which recomputes to two slightly different per-axis ratios —
+/// an isotropic single ratio would misplace boxes by a few pixels on
+/// exactly the frame sizes this program captures most often). The
+/// pre-resize pixel dimensions of the region (`region_w`/`region_h` — the
+/// crop's or, in full-frame mode, the whole frame's own dimensions,
+/// needed to invert a rotation), the region's own top-left offset within
+/// the source frame (`(0,0)` for full-frame mode), and a 0/90/180/270
+/// clockwise rotation needed to bring the region's own orientation into
+/// the source frame's orientation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegionMapping {
-    pub resize_ratio: f64,
+    pub resize_ratio_x: f64,
+    pub resize_ratio_y: f64,
     pub region_w: f64,
     pub region_h: f64,
     pub region_origin_x: i64,
@@ -332,12 +336,13 @@ fn rotate_point_cw(x: f64, y: f64, w: f64, h: f64, rotation_deg: u16) -> (f64, f
 /// angle would not preserve that and is out of this slice's scope (see
 /// this module's doc comment).
 pub fn map_region_box_to_source(region_box: RectI, mapping: &RegionMapping) -> RectI {
-    let ratio = if mapping.resize_ratio > 0.0 { mapping.resize_ratio } else { 1.0 };
+    let ratio_x = if mapping.resize_ratio_x > 0.0 { mapping.resize_ratio_x } else { 1.0 };
+    let ratio_y = if mapping.resize_ratio_y > 0.0 { mapping.resize_ratio_y } else { 1.0 };
 
-    let x1 = region_box.x as f64 / ratio;
-    let y1 = region_box.y as f64 / ratio;
-    let x2 = (region_box.x + region_box.w as i64) as f64 / ratio;
-    let y2 = (region_box.y + region_box.h as i64) as f64 / ratio;
+    let x1 = region_box.x as f64 / ratio_x;
+    let y1 = region_box.y as f64 / ratio_y;
+    let x2 = (region_box.x + region_box.w as i64) as f64 / ratio_x;
+    let y2 = (region_box.y + region_box.h as i64) as f64 / ratio_y;
 
     let p1 = rotate_point_cw(x1, y1, mapping.region_w, mapping.region_h, mapping.rotation_deg);
     let p2 = rotate_point_cw(x2, y2, mapping.region_w, mapping.region_h, mapping.rotation_deg);
@@ -633,7 +638,15 @@ mod tests {
     // --- map_region_box_to_source ---
 
     fn identity_mapping() -> RegionMapping {
-        RegionMapping { resize_ratio: 1.0, region_w: 1000.0, region_h: 1000.0, region_origin_x: 0, region_origin_y: 0, rotation_deg: 0 }
+        RegionMapping {
+            resize_ratio_x: 1.0,
+            resize_ratio_y: 1.0,
+            region_w: 1000.0,
+            region_h: 1000.0,
+            region_origin_x: 0,
+            region_origin_y: 0,
+            rotation_deg: 0,
+        }
     }
 
     #[test]
@@ -646,12 +659,26 @@ mod tests {
     #[test]
     fn map_region_box_to_source_divides_out_the_resize_ratio() {
         let mut mapping = identity_mapping();
-        mapping.resize_ratio = 2.0;
+        mapping.resize_ratio_x = 2.0;
+        mapping.resize_ratio_y = 2.0;
         // Detected at 2x scale (model saw a 2x-upscaled region); box in
         // model space (20,40,60,80) should map back to (10,20,30,40).
         let region_box = RectI { x: 20, y: 40, w: 60, h: 80 };
         let mapped = map_region_box_to_source(region_box, &mapping);
         assert_eq!(mapped, RectI { x: 10, y: 20, w: 30, h: 40 });
+    }
+
+    #[test]
+    fn map_region_box_to_source_handles_independent_x_and_y_ratios() {
+        // PP-OCR's own round-to-32 det preprocessing step produces
+        // slightly different per-axis ratios in practice - this is the
+        // case an isotropic single ratio would get wrong.
+        let mut mapping = identity_mapping();
+        mapping.resize_ratio_x = 0.96;
+        mapping.resize_ratio_y = 1.0666666666666667;
+        let region_box = RectI { x: 0, y: 49, w: 384, h: 22 };
+        let mapped = map_region_box_to_source(region_box, &mapping);
+        assert_eq!(mapped, RectI { x: 0, y: 46, w: 400, h: 21 });
     }
 
     #[test]
@@ -667,7 +694,8 @@ mod tests {
     #[test]
     fn map_region_box_to_source_composes_ratio_and_crop_origin_together() {
         let mut mapping = identity_mapping();
-        mapping.resize_ratio = 2.0;
+        mapping.resize_ratio_x = 2.0;
+        mapping.resize_ratio_y = 2.0;
         mapping.region_origin_x = 100;
         mapping.region_origin_y = 50;
         let region_box = RectI { x: 20, y: 40, w: 60, h: 80 };
@@ -723,7 +751,8 @@ mod tests {
     #[test]
     fn map_region_box_to_source_zero_resize_ratio_falls_back_to_one_rather_than_dividing_by_zero() {
         let mut mapping = identity_mapping();
-        mapping.resize_ratio = 0.0;
+        mapping.resize_ratio_x = 0.0;
+        mapping.resize_ratio_y = 0.0;
         let region_box = RectI { x: 10, y: 20, w: 30, h: 40 };
         let mapped = map_region_box_to_source(region_box, &mapping);
         assert_eq!(mapped, region_box);
