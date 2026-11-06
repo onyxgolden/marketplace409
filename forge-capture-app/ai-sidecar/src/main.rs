@@ -25,12 +25,191 @@
 //! a later slice to add is the actual inference dispatch inside
 //! [`handle_request`].
 
-use std::io::{self, Read, Write};
+mod ocr_engine;
 
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+
+use forge_capture_core::model_pack::{self, ModelManifest};
 use forge_capture_core::sop_ipc::{
     decode_framed, encode_framed, validate_request, FrameDecodeError, IpcRequest, IpcResponse,
-    IpcResult, SIDECAR_PROTOCOL_VERSION,
+    IpcResult, SidecarOperation, SIDECAR_PROTOCOL_VERSION,
 };
+use forge_capture_core::sop_ocr_ipc::{RecognitionOutcome, UNDETERMINED_LANGUAGE, UNKNOWN_TEXT_SENTINEL};
+use forge_capture_core::sop_session::sha256_hex;
+use ocr_engine::OcrRegionResult;
+
+/// Stable identity string stamped on every `OcrToken.engineIdentity` this
+/// build produces — brief §4's `OcrToken.engine_identity` field.
+const OCR_ENGINE_IDENTITY: &str = "forge-capture-ppocr-en-latin-v1";
+
+/// Loaded, verified OCR runtime: both ONNX sessions, the decoded
+/// character table, and the exact manifest digest they were verified
+/// against (so a later request naming a *different* manifest digest
+/// forces a fresh reload-and-reverify rather than silently reusing a
+/// stale pack — see [`load_ocr_runtime`]'s caller in [`handle_ocr_request`]).
+struct OcrRuntime {
+    det_session: ort::session::Session,
+    rec_session: ort::session::Session,
+    character_table: Vec<Option<String>>,
+    manifest_sha256: String,
+    #[allow(dead_code)] // kept for future NER/caption slices' own pack reuse
+    manifest: ModelManifest,
+}
+
+/// The model pack directory this build reads from. A real installed
+/// build's packaging/location policy is C2-P7's job (brief §6 row); this
+/// is the pack's known-on-disk location in this repository and dev/CI
+/// checkout, the same division `include_bytes!("../model-pack/en_dict.txt")`
+/// in `ocr_engine`'s own tests already relies on.
+fn model_pack_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("model-pack")
+}
+
+fn load_ocr_runtime(expected_manifest_sha256: &str) -> Result<OcrRuntime, String> {
+    let dir = model_pack_dir();
+    let manifest = model_pack::verify_model_pack(&dir, expected_manifest_sha256, SIDECAR_PROTOCOL_VERSION).map_err(|e| format!("{e:?}"))?;
+
+    let det_path = model_pack::resolve_asset_path(&dir, &manifest, "det_en_ppocrv3_mobile.onnx")
+        .ok_or_else(|| "manifest does not declare det_en_ppocrv3_mobile.onnx".to_string())?;
+    let rec_path = model_pack::resolve_asset_path(&dir, &manifest, "rec_en_ppocrv4_mobile.onnx")
+        .ok_or_else(|| "manifest does not declare rec_en_ppocrv4_mobile.onnx".to_string())?;
+    let dict_path =
+        model_pack::resolve_asset_path(&dir, &manifest, "en_dict.txt").ok_or_else(|| "manifest does not declare en_dict.txt".to_string())?;
+
+    let det_session = ocr_engine::load_session(&det_path).map_err(|e| format!("{e:?}"))?;
+    let rec_session = ocr_engine::load_session(&rec_path).map_err(|e| format!("{e:?}"))?;
+    let dict_bytes = std::fs::read(&dict_path).map_err(|e| e.to_string())?;
+    let character_table = ocr_engine::load_character_table(&dict_bytes).map_err(|e| format!("{e:?}"))?;
+
+    Ok(OcrRuntime { det_session, rec_session, character_table, manifest_sha256: expected_manifest_sha256.to_string(), manifest })
+}
+
+fn region_results_to_json(results: Vec<OcrRegionResult>, line_prefix: &str) -> Vec<serde_json::Value> {
+    results
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let (text, language, confidence) = match r.outcome {
+                RecognitionOutcome::Recognized { text, confidence, language } => (text, language, confidence),
+                RecognitionOutcome::Unknown { confidence } => (UNKNOWN_TEXT_SENTINEL.to_string(), UNDETERMINED_LANGUAGE.to_string(), confidence),
+            };
+            serde_json::json!({
+                "tokenId": format!("{line_prefix}-{i}"),
+                "text": text,
+                "boxX": r.source_box.x,
+                "boxY": r.source_box.y,
+                "boxW": r.source_box.w,
+                "boxH": r.source_box.h,
+                "lineId": format!("{line_prefix}-{i}"),
+                "language": language,
+                "confidence": confidence,
+                "engineIdentity": OCR_ENGINE_IDENTITY,
+            })
+        })
+        .collect()
+}
+
+/// The real OCR dispatch (brief §6, C2-P2 row): reads the full frame
+/// named by the request's first bounded path under `session_root`,
+/// verifies its digest, verifies/loads the model pack (caching the
+/// loaded runtime across requests in this one process, but reverifying
+/// from scratch whenever a request names a different manifest digest
+/// than what's currently loaded), runs full-frame OCR, and — when
+/// `click_crop_box` is present — a second OCR pass scoped to that crop.
+/// Every failure mode (missing session root, missing/mismatched frame,
+/// invalid/corrupt model pack, image decode failure, inference failure)
+/// returns a typed `IpcResult::Err`, never a panic and never a silent
+/// empty-tokens success.
+fn handle_ocr_request(req: &IpcRequest, session_root: Option<&Path>, runtime_cache: &mut Option<OcrRuntime>) -> IpcResponse {
+    let err = |code: &str, message: String| IpcResponse {
+        request_id: req.request_id.clone(),
+        schema_version: SIDECAR_PROTOCOL_VERSION,
+        echoed_input_digests_sha256: req.input_digests_sha256.clone(),
+        result: IpcResult::Err { code: code.to_string(), message },
+    };
+
+    let Some(session_root) = session_root else {
+        return err("NO_SESSION_ROOT", "sidecar was not launched with a session root; cannot resolve bounded paths".to_string());
+    };
+    let Some(bounded_path) = req.bounded_paths.first() else {
+        return err("MISSING_BOUNDED_PATH", "an OCR request requires at least one bounded path naming the frame to read".to_string());
+    };
+
+    let frame_path = session_root.join(bounded_path.as_str());
+    let frame_bytes = match std::fs::read(&frame_path) {
+        Ok(b) => b,
+        Err(e) => return err("FRAME_IO", format!("cannot read frame at {frame_path:?}: {e}")),
+    };
+
+    if let Some(expected_digest) = req.input_digests_sha256.first() {
+        let found = sha256_hex(&frame_bytes);
+        if !found.eq_ignore_ascii_case(expected_digest) {
+            return err("FRAME_DIGEST_MISMATCH", format!("frame on disk does not match the declared digest (expected {expected_digest}, found {found})"));
+        }
+    }
+
+    let need_reload = match runtime_cache {
+        Some(rt) => rt.manifest_sha256 != req.model_manifest_sha256,
+        None => true,
+    };
+    if need_reload {
+        match load_ocr_runtime(&req.model_manifest_sha256) {
+            Ok(rt) => *runtime_cache = Some(rt),
+            Err(e) => return err("MODEL_PACK_INVALID", e),
+        }
+    }
+    let runtime = runtime_cache.as_mut().expect("just loaded or already present");
+
+    let (frame_w, frame_h, frame_rgb) = match ocr_engine::decode_image_rgb8(&frame_bytes) {
+        Ok(v) => v,
+        Err(e) => return err("IMAGE_DECODE_FAILED", format!("{e:?}")),
+    };
+
+    let full_results = match ocr_engine::run_ocr_on_region(
+        &mut runtime.det_session,
+        &mut runtime.rec_session,
+        &runtime.character_table,
+        &frame_rgb,
+        frame_w,
+        frame_h,
+        (0, 0),
+    ) {
+        Ok(r) => r,
+        Err(e) => return err("INFERENCE_FAILED", format!("full-frame OCR failed: {e:?}")),
+    };
+
+    let crop_results = match req.click_crop_box {
+        None => None,
+        Some((cx, cy, cw, ch)) => match ocr_engine::crop_rgb8(&frame_rgb, frame_w, frame_h, cx, cy, cw, ch) {
+            None => Some(Vec::new()),
+            Some((crop_w, crop_h, crop_rgb)) => match ocr_engine::run_ocr_on_region(
+                &mut runtime.det_session,
+                &mut runtime.rec_session,
+                &runtime.character_table,
+                &crop_rgb,
+                crop_w,
+                crop_h,
+                (cx, cy),
+            ) {
+                Ok(r) => Some(r),
+                Err(e) => return err("INFERENCE_FAILED", format!("click-crop OCR failed: {e:?}")),
+            },
+        },
+    };
+
+    let payload = serde_json::json!({
+        "tokens": region_results_to_json(full_results, "tok"),
+        "cropTokens": crop_results.map(|r| region_results_to_json(r, "crop")),
+    });
+
+    IpcResponse {
+        request_id: req.request_id.clone(),
+        schema_version: SIDECAR_PROTOCOL_VERSION,
+        echoed_input_digests_sha256: req.input_digests_sha256.clone(),
+        result: IpcResult::Ok { payload },
+    }
+}
 
 /// Reads from `reader` into `buf`, consuming already-buffered bytes
 /// first, until one complete length-prefixed frame is available. Returns
@@ -69,23 +248,26 @@ fn read_one_frame<R: Read>(mut reader: R, buf: &mut Vec<u8>) -> io::Result<Optio
     }
 }
 
-/// The one response this scaffolding slice can give for any
-/// protocol-valid request: a typed, structured "not implemented" error.
-/// Still echoes the request's own identity fields exactly as every other
+/// Dispatches a protocol-valid request to its operation handler.
+/// [`SidecarOperation::Ocr`] now runs the real PP-OCR pipeline
+/// ([`handle_ocr_request`]) — NER/caption remain the typed
+/// `OPERATION_NOT_IMPLEMENTED` stub response until their own separately
+/// authorized slices (C2-P4/C2-P5) add a runtime for them. Every branch
+/// still echoes the request's own identity fields exactly as every other
 /// response must (brief §2.1) — a stub answer is not an excuse to break
 /// the echo contract a real caller's [`forge_capture_core::sop_ipc::validate_response`]
 /// depends on.
-fn handle_request(req: &IpcRequest) -> IpcResponse {
-    IpcResponse {
-        request_id: req.request_id.clone(),
-        schema_version: SIDECAR_PROTOCOL_VERSION,
-        echoed_input_digests_sha256: req.input_digests_sha256.clone(),
-        result: IpcResult::Err {
-            code: "OPERATION_NOT_IMPLEMENTED".to_string(),
-            message: format!(
-                "{:?} is not implemented in this build — C2-P2 scaffolding carries no inference runtime",
-                req.operation
-            ),
+fn handle_request(req: &IpcRequest, session_root: Option<&Path>, ocr_runtime: &mut Option<OcrRuntime>) -> IpcResponse {
+    match req.operation {
+        SidecarOperation::Ocr => handle_ocr_request(req, session_root, ocr_runtime),
+        SidecarOperation::Ner | SidecarOperation::Caption => IpcResponse {
+            request_id: req.request_id.clone(),
+            schema_version: SIDECAR_PROTOCOL_VERSION,
+            echoed_input_digests_sha256: req.input_digests_sha256.clone(),
+            result: IpcResult::Err {
+                code: "OPERATION_NOT_IMPLEMENTED".to_string(),
+                message: format!("{:?} is not implemented in this build — only OCR has a runtime so far", req.operation),
+            },
         },
     }
 }
@@ -129,6 +311,15 @@ fn main() {
             written += line.len() + 1;
         }
     }
+
+    // Set by the client at spawn time (brief §2.1's "bounded paths under
+    // the session root" need an absolute root to resolve against; the
+    // IPC protocol itself only ever carries the relative half). Absent
+    // in every scaffolding-only test that never issues a real OCR
+    // request - those are unaffected, since `handle_ocr_request` only
+    // reads this when it actually needs to resolve a path.
+    let session_root: Option<PathBuf> = std::env::var("FORGE_SIDECAR_SESSION_ROOT").ok().map(PathBuf::from);
+    let mut ocr_runtime: Option<OcrRuntime> = None;
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -178,7 +369,7 @@ fn main() {
 
         let response = match serde_json::from_slice::<IpcRequest>(&frame) {
             Ok(req) => match validate_request(&req) {
-                Ok(()) => handle_request(&req),
+                Ok(()) => handle_request(&req, session_root.as_deref(), &mut ocr_runtime),
                 Err(e) => invalid_request_response(&req, format!("{e:?}")),
             },
             Err(e) => {

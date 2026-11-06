@@ -28,10 +28,14 @@
 //! module, or the one it calls into, that accepts a digest value from
 //! JS.
 
+use std::path::{Path, PathBuf};
+
 use tauri::AppHandle;
 
-use forge_capture_core::sop_session::Disposition;
+use forge_capture_core::sop_ipc::{BoundedPath, IpcRequest, IpcResult, SidecarOperation, SIDECAR_PROTOCOL_VERSION};
+use forge_capture_core::sop_session::{sha256_hex, Disposition, OcrToken};
 
+use crate::ai_sidecar_client::SidecarSession;
 use crate::sop_workspace::{
     apply_review_action_if_current, populate_review_candidates_if_current, read_review_candidates_snapshot, resolve_confined_path,
     ApplyReviewActionError, IngestedReviewCandidates, PopulateReviewCandidatesError, ReadReviewCandidatesError, ReviewCandidatesSnapshot,
@@ -232,6 +236,166 @@ pub fn ingest_review_candidates(
     expectedSessionRevision: u64,
 ) -> Result<IngestedReviewCandidates, String> {
     ingest_review_candidates_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId, &ocrTokens, expectedSessionRevision)
+}
+
+/// Resolves the sidecar binary's real production location: alongside
+/// this app's own executable. Tauri sidecar/`externalBin` packaging
+/// registration (so the bundled installer actually places the binary
+/// there) is a packaging decision — brief §6's C2-P7 row — out of this
+/// slice's scope; this is the resolution a packaged build needs once
+/// that registration exists, and is exactly what a dev build's own
+/// `target/<profile>/` layout already satisfies (the app and sidecar
+/// binaries are siblings there too), so it needs no `#[cfg]` split.
+fn production_sidecar_exe_path() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot resolve this app's own executable path: {e}"))?;
+    let dir = exe.parent().ok_or_else(|| "this app's executable path has no parent directory".to_string())?;
+    let name = if cfg!(windows) { "forge-capture-ai-sidecar.exe" } else { "forge-capture-ai-sidecar" };
+    Ok(dir.join(name))
+}
+
+/// Builds the one [`IpcRequest`] a full-frame-plus-optional-click-crop
+/// OCR call needs for `frame`, already bound to `frame`'s own
+/// `click_box` (brief §6, "full-frame + click crop") and the session's
+/// `model_manifest_sha256` the sidecar must verify the on-disk model
+/// pack against.
+fn build_ocr_request(frame: &forge_capture_core::sop_session::SourceFrame, frame_digest: &str, model_manifest_sha256: &str, request_id: String) -> Result<IpcRequest, String> {
+    let bounded_path = BoundedPath::new(&frame.source_relative_path).map_err(|e| format!("frame source path is not a valid bounded path: {e:?}"))?;
+    Ok(IpcRequest {
+        request_id,
+        schema_version: SIDECAR_PROTOCOL_VERSION,
+        operation: SidecarOperation::Ocr,
+        input_digests_sha256: vec![frame_digest.to_string()],
+        bounded_paths: vec![bounded_path],
+        timeout_ms: 30_000,
+        model_manifest_sha256: model_manifest_sha256.to_string(),
+        click_crop_box: frame.click_box,
+    })
+}
+
+#[derive(Debug)]
+enum RunOcrError {
+    SessionNotFound,
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    FrameNotFound(String),
+    NoModelManifestConfigured,
+    FrameIo(String),
+    FrameDigestMismatch { expected: String, found: String },
+    RequestBuild(String),
+    SidecarSpawn(String),
+    SidecarRequest(String),
+    OcrFailed { code: String, message: String },
+    MalformedOcrResponse(String),
+    Ingest(PopulateReviewCandidatesError),
+}
+
+fn run_ocr_error_to_string(err: RunOcrError) -> String {
+    match err {
+        RunOcrError::SessionNotFound => "no session exists yet at that path".to_string(),
+        RunOcrError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
+        RunOcrError::FrameNotFound(id) => format!("no frame with id {id} in this session"),
+        RunOcrError::NoModelManifestConfigured => "session has no model_manifest_sha256 configured; cannot run OCR without a verified model pack".to_string(),
+        RunOcrError::FrameIo(msg) => format!("cannot read the frame's source file: {msg}"),
+        RunOcrError::FrameDigestMismatch { expected, found } => {
+            format!("frame file on disk no longer matches its recorded digest (expected {expected}, found {found}) - refusing to run OCR on it")
+        }
+        RunOcrError::RequestBuild(msg) => format!("cannot build the OCR request: {msg}"),
+        RunOcrError::SidecarSpawn(msg) => format!("cannot start the OCR sidecar process: {msg}"),
+        RunOcrError::SidecarRequest(msg) => format!("OCR request to the sidecar failed: {msg}"),
+        RunOcrError::OcrFailed { code, message } => format!("OCR failed ({code}): {message}"),
+        RunOcrError::MalformedOcrResponse(msg) => format!("OCR sidecar returned an unexpected response shape: {msg}"),
+        RunOcrError::Ingest(e) => populate_review_candidates_error_to_string(e),
+    }
+}
+
+/// The real work behind [`run_ocr_and_ingest_review_candidates`] — the
+/// actual caller the brief's I4 gap named as missing: reads the current
+/// session to find `frame_id`'s source image and the session's verified
+/// model-pack digest, spawns the real OCR sidecar with this workspace as
+/// its session root, runs full-frame-plus-click-crop OCR over the real
+/// framed IPC wire, and feeds the resulting tokens into
+/// [`populate_review_candidates_if_current`] exactly as a caller that
+/// already had tokens from anywhere else would. The initial session
+/// read is unguarded (no mutation happens from it) — the same read-then-
+/// guarded-write split [`get_review_candidates_impl`]/
+/// [`review_disposition_change_impl`] already use elsewhere in this
+/// file; `populate_review_candidates_if_current` re-reads the session
+/// fresh under its own lock and re-checks `expected_session_revision`
+/// before writing anything, so a concurrent edit between this function's
+/// read and its own write still fails closed as staleness, not a lost
+/// update.
+fn run_ocr_and_ingest_review_candidates_impl(
+    workspace_root: &Path,
+    session_relative_path: &str,
+    frame_id: &str,
+    expected_session_revision: u64,
+    sidecar_exe_path: &Path,
+) -> Result<IngestedReviewCandidates, RunOcrError> {
+    let root = WorkspaceRoot::open(workspace_root).map_err(|e| RunOcrError::FrameIo(format!("cannot open workspace root: {e:?}")))?;
+    let confined = resolve_confined_path(&root, session_relative_path)
+        .map_err(|e| RunOcrError::FrameIo(format!("cannot resolve session path: {e:?}")))?;
+
+    let session_bytes = match std::fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RunOcrError::SessionNotFound),
+        Err(e) => return Err(RunOcrError::FrameIo(e.to_string())),
+    };
+    let session = forge_capture_core::sop_session::parse_session(&session_bytes).map_err(RunOcrError::SessionParse)?;
+
+    let frame = session.source_frames.iter().find(|f| f.frame_id == frame_id).ok_or_else(|| RunOcrError::FrameNotFound(frame_id.to_string()))?;
+    let model_manifest_sha256 = session.model_manifest_sha256.clone().ok_or(RunOcrError::NoModelManifestConfigured)?;
+
+    let frame_confined = resolve_confined_path(&root, &frame.source_relative_path)
+        .map_err(|e| RunOcrError::FrameIo(format!("cannot resolve frame source path: {e:?}")))?;
+    let frame_bytes = std::fs::read(frame_confined.path()).map_err(|e| RunOcrError::FrameIo(e.to_string()))?;
+    let frame_digest = sha256_hex(&frame_bytes);
+    if !frame_digest.eq_ignore_ascii_case(&frame.raster_sha256) {
+        return Err(RunOcrError::FrameDigestMismatch { expected: frame.raster_sha256.clone(), found: frame_digest });
+    }
+
+    let request_id = format!("ocr-{frame_id}-{}", session.revision);
+    let request = build_ocr_request(frame, &frame_digest, &model_manifest_sha256, request_id).map_err(RunOcrError::RequestBuild)?;
+
+    let session_root_str = root
+        .canonical_path()
+        .to_str()
+        .ok_or_else(|| RunOcrError::SidecarSpawn("workspace root path is not valid UTF-8".to_string()))?;
+    let mut sidecar = SidecarSession::spawn_with_env(sidecar_exe_path, &[("FORGE_SIDECAR_SESSION_ROOT", session_root_str)])
+        .map_err(|e| RunOcrError::SidecarSpawn(format!("{e:?}")))?;
+    let response = sidecar.request(&request).map_err(|e| RunOcrError::SidecarRequest(format!("{e:?}")))?;
+
+    let payload = match response.result {
+        IpcResult::Ok { payload } => payload,
+        IpcResult::Err { code, message } => return Err(RunOcrError::OcrFailed { code, message }),
+    };
+    let tokens: Vec<OcrToken> =
+        serde_json::from_value(payload["tokens"].clone()).map_err(|e| RunOcrError::MalformedOcrResponse(e.to_string()))?;
+
+    populate_review_candidates_if_current(&confined, frame_id, &tokens, expected_session_revision).map_err(RunOcrError::Ingest)
+}
+
+/// Tauri command (closes the I4 gap disclosed 2026-11-05: "the command
+/// has no UI caller today because no OCR execution exists yet"): the
+/// real, non-test production path from "a frame exists" all the way to
+/// persisted review candidates, running actual PP-OCR inference itself
+/// rather than requiring a caller to already have tokens from somewhere
+/// else — see [`ingest_review_candidates`] for that lower-level,
+/// tokens-already-computed command, which this one calls into after
+/// computing them for real.
+///
+/// Tauri matches invoke argument names to Rust parameter names exactly
+/// (no case conversion), so these are camelCase to match what a JS
+/// caller sends — see [`get_review_candidates`] for the same convention.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn run_ocr_and_ingest_review_candidates(
+    workspaceRoot: String,
+    sessionRelativePath: String,
+    frameId: String,
+    expectedSessionRevision: u64,
+) -> Result<IngestedReviewCandidates, String> {
+    let sidecar_exe_path = production_sidecar_exe_path()?;
+    run_ocr_and_ingest_review_candidates_impl(Path::new(&workspaceRoot), &sessionRelativePath, &frameId, expectedSessionRevision, &sidecar_exe_path)
+        .map_err(run_ocr_error_to_string)
 }
 
 /// Tauri command: apply a single reviewer disposition change to a SOP
@@ -496,6 +660,210 @@ mod tests {
         std::fs::create_dir_all(&root).ok();
         let result = get_review_candidates_impl(&root, "session.json", "f1");
         assert!(result.is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- run_ocr_and_ingest_review_candidates (closes the I4 gap) ---
+
+    /// Must match `ai-sidecar/model-pack/manifest.json`'s own SHA-256
+    /// exactly - same constant as `ai_sidecar_client.rs`'s own tests.
+    const REAL_MODEL_MANIFEST_SHA256: &str = "8d2fddf908d037c3e71a4cb1f8cc48a81bb6f7787e2ef99a9a43245c5652535b";
+
+    /// Same exact-sibling resolution [`ai_sidecar_client`]'s own tests
+    /// use - see that module's `sidecar_exe_path` for why this can't be
+    /// a shared dependency between the two test modules.
+    fn sidecar_exe_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current_exe must resolve for a running test binary");
+        let binary_name = if cfg!(windows) { "forge-capture-ai-sidecar.exe" } else { "forge-capture-ai-sidecar" };
+        let profile_dir = exe.parent().and_then(std::path::Path::parent).expect("test binary path must have target/<profile>/deps ancestors");
+        let candidate = profile_dir.join(binary_name);
+        assert!(candidate.is_file(), "expected the sidecar binary at {candidate:?} - build it first with `cargo build -p forge-capture-ai-sidecar`");
+        candidate
+    }
+
+    fn write_session_with_real_frame(root: &std::path::Path, frame_bytes: &[u8], model_manifest_sha256: Option<String>) {
+        use forge_capture_core::sop_session::{
+            FrameVerification, ReviewState, SopSessionV1, SourceFrame, SourceStorage, SOP_SESSION_KIND, SOP_SESSION_SCHEMA_VERSION,
+        };
+        std::fs::create_dir_all(root.join("frames")).unwrap();
+        std::fs::write(root.join("frames/f1.png"), frame_bytes).unwrap();
+        let raster_sha256 = forge_capture_core::sop_session::sha256_hex(frame_bytes);
+        let session = SopSessionV1 {
+            schema_version: SOP_SESSION_SCHEMA_VERSION,
+            kind: SOP_SESSION_KIND.to_string(),
+            session_id: "sess-1".to_string(),
+            created_at: "2026-11-06T00:00:00Z".to_string(),
+            updated_at: "2026-11-06T00:00:00Z".to_string(),
+            revision: 0,
+            policy_version: "policy-v1".to_string(),
+            model_manifest_sha256,
+            sidecar_protocol_version: 1,
+            source_frames: vec![SourceFrame {
+                frame_id: "f1".to_string(),
+                order: 0,
+                source_relative_path: "frames/f1.png".to_string(),
+                raster_sha256,
+                provenance_sidecar_relative_path: None,
+                provenance_sidecar_blob_sha256: None,
+                width: 400,
+                height: 120,
+                captured_at: "2026-11-06T00:00:00Z".to_string(),
+                action_kind: "click".to_string(),
+                click_box: None,
+                process_basename: None,
+                window_title: None,
+                original_storage: SourceStorage::SessionEncrypted,
+                ocr_status: None,
+                redacted_derivative_relative_path: None,
+                redacted_derivative_sha256: None,
+                redaction_candidates: vec![],
+                verification: FrameVerification::Pending,
+            }],
+            captions: vec![],
+            edit_events: vec![],
+            review_state: ReviewState::InProgress,
+            review_receipt: None,
+            export_eligible: false,
+        };
+        std::fs::write(root.join("session.json"), serde_json::to_vec(&session).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_runs_real_ocr_and_ingests_candidates() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 0, &sidecar_exe_path());
+        // The synthetic "HELLO WORLD" fixture contains no deterministic
+        // hard-positive pattern, so a real, successful run here lands on
+        // zero bound candidates - this test is about the real OCR ->
+        // ingest wiring succeeding end to end, not about what this
+        // particular fixture's text happens to match. `populate_review_
+        // candidates_if_current`'s own "ingest once" refusal (via the
+        // AlreadyPopulated guard on a *nonempty* candidate list) is
+        // already covered by that function's own test suite in
+        // `sop_workspace.rs` and is not re-tested here.
+        match result {
+            Ok(IngestedReviewCandidates { candidate_count: 0, unbound_count: 0 }) => {}
+            other => panic!("expected a real, successful OCR->ingest run with zero bound candidates, got {other:?}"),
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// C2-P2 fix round 1 (ChatGPT NEEDS CHANGES,
+    /// `results/chatgpt/capture-c2-p2-local-ppocr-review-2026-11-06.md`):
+    /// confidently-misrecognized unsupported-script OCR output (the CJK
+    /// fixture's own measured 0.661 mean confidence, inside the range
+    /// measured for genuine English text) is never "promoted" anywhere
+    /// that could cause real-world harm, because no such promotion path
+    /// exists in this codebase at all yet — proven here, not asserted.
+    /// `run_ocr_and_ingest_review_candidates` only ever writes to the
+    /// session's own structural metadata (via
+    /// `populate_review_candidates_if_current`): a `RedactionCandidate`
+    /// disposition flag, nothing else. There is no function anywhere in
+    /// this crate or `forge_capture_core` that reads a disposition and
+    /// writes pixels — `SourceFrame::redacted_derivative_relative_path`
+    /// is schema-defined but set only in this module's own and
+    /// `sop_session.rs`'s test fixtures, never by any production code
+    /// path (confirmed by inspection, pinned here by assertion: the
+    /// frame raster file on disk is byte-identical before and after this
+    /// call, for the exact fixture ChatGPT's review named). A reviewer
+    /// in the C2-P6A UI never sees this OCR text either — `ReviewCandidateView`
+    /// (`sop_workspace.rs`) carries only `candidate_id`/`detector_id`/
+    /// `reason_code`/`disposition`/boxes, by its own doc comment,
+    /// specifically never raw OCR text. C2-P2 producing a
+    /// `RedactionCandidate` disposition on garbled, unsupported-script
+    /// OCR output is therefore inert in the sense that matters: nothing
+    /// observable (an exported image, a caption, an NER fact) is ever
+    /// produced from it by code that exists today. That becomes a real
+    /// question again only once an actual apply/export function or
+    /// C2-P4/P5 exist — explicitly future, separately scoped slices.
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_on_unsupported_script_never_mutates_the_frame_raster() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_cjk.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+        let raster_path = root.join("frames/f1.png");
+        let before = std::fs::read(&raster_path).unwrap();
+
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 0, &sidecar_exe_path());
+        assert!(result.is_ok(), "expected a real, successful OCR->ingest run even on unsupported-script input, got {result:?}");
+
+        let after = std::fs::read(&raster_path).unwrap();
+        assert_eq!(before, after, "the frame raster must never be mutated by OCR ingestion, regardless of recognition outcome");
+
+        // No redacted derivative was ever written, confirming the
+        // disposition flag (if any candidate even bound) stayed exactly
+        // that — session metadata, never an applied pixel edit.
+        let session_bytes = std::fs::read(root.join("session.json")).unwrap();
+        let session: forge_capture_core::sop_session::SopSessionV1 = serde_json::from_slice(&session_bytes).unwrap();
+        let frame = session.source_frames.iter().find(|f| f.frame_id == "f1").unwrap();
+        assert!(frame.redacted_derivative_relative_path.is_none(), "no redacted derivative should exist - no apply/export function has ever run");
+        assert!(!root.join("frames/f1-redacted.png").exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_refuses_without_a_configured_model_manifest() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        write_session_with_real_frame(&root, frame_bytes, None);
+
+        // Must fail before ever spawning a sidecar - pass an
+        // intentionally nonexistent exe path to prove this.
+        let bogus_exe = root.join("no-such-sidecar.exe");
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 0, &bogus_exe);
+        assert!(matches!(result, Err(RunOcrError::NoModelManifestConfigured)), "{result:?}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_refuses_a_tampered_frame_file() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+        // Tamper with the frame file after the session recorded its digest.
+        std::fs::write(root.join("frames/f1.png"), b"not the same bytes anymore").unwrap();
+
+        let bogus_exe = root.join("no-such-sidecar.exe");
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 0, &bogus_exe);
+        assert!(matches!(result, Err(RunOcrError::FrameDigestMismatch { .. })), "{result:?}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_refuses_an_unknown_frame_id() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+
+        let bogus_exe = root.join("no-such-sidecar.exe");
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "no-such-frame", 0, &bogus_exe);
+        assert!(matches!(result, Err(RunOcrError::FrameNotFound(_))), "{result:?}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_refuses_a_stale_session_revision() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+
+        // Session is at revision 0; ask for revision 5 - must fail
+        // closed as staleness once it reaches the real ingest guard,
+        // not silently ingest against the wrong expected revision.
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 5, &sidecar_exe_path());
+        assert!(
+            matches!(result, Err(RunOcrError::Ingest(PopulateReviewCandidatesError::StaleSessionRevision { expected: 5, current: 0 }))),
+            "{result:?}"
+        );
+
         std::fs::remove_dir_all(&root).ok();
     }
 }
