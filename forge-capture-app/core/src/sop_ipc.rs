@@ -158,6 +158,15 @@ pub struct IpcRequest {
     pub bounded_paths: Vec<BoundedPath>,
     pub timeout_ms: u64,
     pub model_manifest_sha256: String,
+    /// C2-P2: an optional click-crop region, in the source frame's own
+    /// pixel space, for [`SidecarOperation::Ocr`] — "full-frame + click
+    /// crop" (brief §6, C2-P2 row). `None` (the ordinary case, and the
+    /// only valid value for [`SidecarOperation::Ner`]/[`SidecarOperation::Caption`])
+    /// means run on the whole frame only. `(x, y, w, h)`, matching the
+    /// same tuple shape [`crate::sop_session::SourceFrame::click_box`]
+    /// already carries.
+    #[serde(default)]
+    pub click_crop_box: Option<(i64, i64, u64, u64)>,
 }
 
 /// Brief §2.1: "Responses echo the request and input identities."
@@ -191,7 +200,17 @@ pub enum RequestValidationError {
     PathConfinement(PathConfinementError),
     TimeoutOutOfRange { found: u64, min: u64, max: u64 },
     InvalidModelManifestDigest,
+    /// A `click_crop_box` with a zero width or height, or a side exceeding
+    /// [`MAX_CLICK_CROP_SIDE`] — see [`validate_request`].
+    InvalidClickCropBox,
 }
+
+/// Upper bound on either side of `IpcRequest::click_crop_box` — generous
+/// for any real monitor/frame this program captures (see
+/// [`crate::png::MAX_PNG_DIMENSION`], the same cap the capture pipeline's
+/// own PNG encoder enforces), small enough to refuse a nonsensical or
+/// adversarial box before it is ever used to crop an image.
+pub const MAX_CLICK_CROP_SIDE: u64 = crate::png::MAX_PNG_DIMENSION as u64;
 
 /// Validates a request's protocol-level shape: an *exact* supported
 /// schema version (not just an upper bound — version `0` or any other
@@ -246,6 +265,11 @@ pub fn validate_request(req: &IpcRequest) -> Result<(), RequestValidationError> 
             min: MIN_TIMEOUT_MS,
             max: MAX_TIMEOUT_MS,
         });
+    }
+    if let Some((_, _, w, h)) = req.click_crop_box {
+        if w == 0 || h == 0 || w > MAX_CLICK_CROP_SIDE || h > MAX_CLICK_CROP_SIDE {
+            return Err(RequestValidationError::InvalidClickCropBox);
+        }
     }
     Ok(())
 }
@@ -454,6 +478,7 @@ mod tests {
             bounded_paths: vec![BoundedPath::new("frames/f1.png").unwrap()],
             timeout_ms: 5000,
             model_manifest_sha256: "b".repeat(64),
+            click_crop_box: None,
         }
     }
 
@@ -569,6 +594,45 @@ mod tests {
         assert!(validate_request(&req).is_ok());
         req.timeout_ms = MAX_TIMEOUT_MS;
         assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn validate_request_accepts_a_well_formed_click_crop_box() {
+        let mut req = valid_request();
+        req.click_crop_box = Some((10, 20, 100, 50));
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn validate_request_rejects_a_zero_width_click_crop_box() {
+        let mut req = valid_request();
+        req.click_crop_box = Some((0, 0, 0, 50));
+        assert_eq!(validate_request(&req), Err(RequestValidationError::InvalidClickCropBox));
+    }
+
+    #[test]
+    fn validate_request_rejects_an_oversized_click_crop_box() {
+        let mut req = valid_request();
+        req.click_crop_box = Some((0, 0, MAX_CLICK_CROP_SIDE + 1, 50));
+        assert_eq!(validate_request(&req), Err(RequestValidationError::InvalidClickCropBox));
+    }
+
+    #[test]
+    fn ipc_request_with_no_click_crop_box_field_at_all_deserializes_as_none() {
+        // Backward compatibility: an older client that predates this
+        // field must still deserialize cleanly, with the field defaulted
+        // to `None` rather than refused as an unknown/missing field.
+        let json = serde_json::json!({
+            "requestId": "req-1",
+            "schemaVersion": 1,
+            "operation": "ocr",
+            "inputDigestsSha256": [],
+            "boundedPaths": [],
+            "timeoutMs": 1000,
+            "modelManifestSha256": "b".repeat(64),
+        });
+        let req: IpcRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.click_crop_box, None);
     }
 
     #[test]

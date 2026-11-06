@@ -564,6 +564,7 @@ mod tests {
             bounded_paths: vec![BoundedPath::new("frames/f1.png").unwrap()],
             timeout_ms,
             model_manifest_sha256: "b".repeat(64),
+            click_crop_box: None,
         }
     }
 
