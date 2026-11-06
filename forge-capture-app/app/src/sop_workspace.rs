@@ -1314,7 +1314,35 @@ pub fn populate_review_candidates_if_current(
 
     let candidate_count = binding.candidates.len();
     let unbound_count = binding.unbound_matches.len();
-    frame.redaction_candidates = binding.candidates;
+    let mut candidates = binding.candidates;
+
+    // C2-P2 fix-forward (second ChatGPT NEEDS CHANGES on PR #743 at the
+    // same head, `results/chatgpt/capture-c2-p2-local-ppocr-fix-round-1-review-2026-11-06.md`):
+    // `detect_and_bind_all_candidates` assigns `Disposition::Redact` to
+    // hard positives and corroborated phone/address shapes on the
+    // strength of the *text* it was given — but `classify_recognition`'s
+    // confidence floor cannot reliably tell a genuine English decode from
+    // a confidently-misrecognized unsupported script (the measured CJK
+    // fixture scores 0.661, well inside the range measured for real
+    // English text), so a shape-matching misrecognition could otherwise
+    // reach `Redact` with no human step. Every OCR token this function is
+    // ever given today comes from exactly that unverified path — C2-P3's
+    // independent verification layer does not exist yet — so every
+    // candidate this function binds is forced to `Pending` here,
+    // regardless of what the detector/corroboration logic computed.
+    // `verify_coverage_proof` already treats a `Pending` disposition as
+    // unresolved (see `coverage_proof_flags_a_pending_candidate`), so this
+    // reuses the session's existing enforced gate — a frame can never
+    // reach `FrameVerification::Verified`, and the session can never
+    // become `export_eligible`, while any OCR-ingested candidate sits
+    // untouched; only a reviewer explicitly resolving it through
+    // `review_disposition_change` (never this function) can move it off
+    // `Pending`. Revisit once C2-P3 gives this function a real signal
+    // that a frame's recognition has been independently verified.
+    for candidate in candidates.iter_mut() {
+        candidate.disposition = forge_capture_core::sop_session::Disposition::Pending;
+    }
+    frame.redaction_candidates = candidates;
 
     // Defense in depth, same as apply_review_action_if_current: the exact
     // document this function is about to make durable must itself be
@@ -3862,6 +3890,64 @@ mod tests {
         let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0).expect("a clean frame is success, not an error");
         assert_eq!(result.candidate_count, 0);
         assert_eq!(result.unbound_count, 0);
+    }
+
+    // C2-P2 fix-forward (second ChatGPT NEEDS CHANGES on PR #743 at the
+    // same head): `classify_recognition`'s confidence floor cannot
+    // reliably distinguish a genuine English decode from a confidently-
+    // misrecognized unsupported script, so any text this function is
+    // handed — including a shape that would otherwise corroborate a
+    // review candidate straight to `Redact` with no human step — must be
+    // quarantined to `Pending` until C2-P3's independent verification
+    // exists. This is the exact synthetic shape
+    // (`results/claude/pr743-duplicate-verdict-and-real-risk-plus-freeze-violation-2026-11-06.md`)
+    // that bound and auto-dispositioned `Redact` on main before this fix.
+    #[test]
+    fn populate_review_candidates_if_current_quarantines_a_corroborated_phone_shape_to_pending_not_redact() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "Phone: 555-234-5678", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0).expect("ingestion must succeed");
+        assert_eq!(result.candidate_count, 1, "the labeled phone shape must still bind");
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        let candidate = &on_disk.source_frames[0].redaction_candidates[0];
+        assert_eq!(candidate.reason_code, "PHONE_NUMBER_WITH_LABEL", "corroboration itself must still be detected");
+        assert_eq!(
+            candidate.disposition, Disposition::Pending,
+            "a corroborated shape must be quarantined to Pending at OCR ingestion, never auto-promoted to Redact"
+        );
+    }
+
+    /// Same quarantine, for a rule/structural hard positive (brief §3.5's
+    /// "every hard positive is redacted outright, with no human review
+    /// step" is a property of the core detector/binder — proven directly
+    /// against `bind_matches_to_candidates`/`detect_and_bind_all_candidates`
+    /// in `sop_redaction.rs`'s own test suite, e.g.
+    /// `ssn_hyphenated_valid_shape_is_matched` — not of this unverified
+    /// OCR-ingestion boundary, which has no way yet to tell that text
+    /// apart from a misrecognized unsupported script).
+    #[test]
+    fn populate_review_candidates_if_current_quarantines_a_hard_positive_match_to_pending_not_redact() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let tokens = vec![ocr_token("t1", "SSN: 219-09-9999 on file", "l1", (0, 0, 100, 20))];
+        let result = populate_review_candidates_if_current(&confined, "f1", &tokens, 0).expect("ingestion must succeed");
+        assert_eq!(result.candidate_count, 1, "the SSN hard positive must still bind");
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        let candidate = &on_disk.source_frames[0].redaction_candidates[0];
+        assert_eq!(candidate.detector_id, "det.ssn", "detection itself must still fire");
+        assert_eq!(
+            candidate.disposition, Disposition::Pending,
+            "an OCR-ingested hard positive must be quarantined to Pending too, since the OCR text it matched against is itself unverified"
+        );
     }
 
     // --- read_review_candidates_snapshot (C2-P6A frontend review UI) ---

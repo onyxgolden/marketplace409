@@ -803,6 +803,24 @@ mod tests {
         assert!(frame.redacted_derivative_relative_path.is_none(), "no redacted derivative should exist - no apply/export function has ever run");
         assert!(!root.join("frames/f1-redacted.png").exists());
 
+        // C2-P2 fix-forward (second ChatGPT NEEDS CHANGES at the same
+        // head: a confident but unsupported-script misrecognition could
+        // shape-match a review-candidate rule and reach `Disposition::
+        // Redact` with no human step). Whatever this fixture's real
+        // decode happens to bind today, through the real sidecar and the
+        // real production ingestion boundary, every candidate must come
+        // back `Pending` — see `populate_review_candidates_if_current_
+        // quarantines_a_corroborated_phone_shape_to_pending_not_redact`
+        // (`sop_workspace.rs`) for the unit-level proof this end-to-end
+        // run exercises for real.
+        for candidate in &frame.redaction_candidates {
+            assert_eq!(
+                candidate.disposition,
+                forge_capture_core::sop_session::Disposition::Pending,
+                "an OCR-ingested candidate from unsupported-script input must never be anything but Pending"
+            );
+        }
+
         std::fs::remove_dir_all(&root).ok();
     }
 
