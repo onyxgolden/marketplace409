@@ -752,6 +752,60 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// C2-P2 fix round 1 (ChatGPT NEEDS CHANGES,
+    /// `results/chatgpt/capture-c2-p2-local-ppocr-review-2026-11-06.md`):
+    /// confidently-misrecognized unsupported-script OCR output (the CJK
+    /// fixture's own measured 0.661 mean confidence, inside the range
+    /// measured for genuine English text) is never "promoted" anywhere
+    /// that could cause real-world harm, because no such promotion path
+    /// exists in this codebase at all yet — proven here, not asserted.
+    /// `run_ocr_and_ingest_review_candidates` only ever writes to the
+    /// session's own structural metadata (via
+    /// `populate_review_candidates_if_current`): a `RedactionCandidate`
+    /// disposition flag, nothing else. There is no function anywhere in
+    /// this crate or `forge_capture_core` that reads a disposition and
+    /// writes pixels — `SourceFrame::redacted_derivative_relative_path`
+    /// is schema-defined but set only in this module's own and
+    /// `sop_session.rs`'s test fixtures, never by any production code
+    /// path (confirmed by inspection, pinned here by assertion: the
+    /// frame raster file on disk is byte-identical before and after this
+    /// call, for the exact fixture ChatGPT's review named). A reviewer
+    /// in the C2-P6A UI never sees this OCR text either — `ReviewCandidateView`
+    /// (`sop_workspace.rs`) carries only `candidate_id`/`detector_id`/
+    /// `reason_code`/`disposition`/boxes, by its own doc comment,
+    /// specifically never raw OCR text. C2-P2 producing a
+    /// `RedactionCandidate` disposition on garbled, unsupported-script
+    /// OCR output is therefore inert in the sense that matters: nothing
+    /// observable (an exported image, a caption, an NER fact) is ever
+    /// produced from it by code that exists today. That becomes a real
+    /// question again only once an actual apply/export function or
+    /// C2-P4/P5 exist — explicitly future, separately scoped slices.
+    #[test]
+    fn run_ocr_and_ingest_review_candidates_impl_on_unsupported_script_never_mutates_the_frame_raster() {
+        let root = temp_root();
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_cjk.png");
+        write_session_with_real_frame(&root, frame_bytes, Some(REAL_MODEL_MANIFEST_SHA256.to_string()));
+        let raster_path = root.join("frames/f1.png");
+        let before = std::fs::read(&raster_path).unwrap();
+
+        let result = run_ocr_and_ingest_review_candidates_impl(&root, "session.json", "f1", 0, &sidecar_exe_path());
+        assert!(result.is_ok(), "expected a real, successful OCR->ingest run even on unsupported-script input, got {result:?}");
+
+        let after = std::fs::read(&raster_path).unwrap();
+        assert_eq!(before, after, "the frame raster must never be mutated by OCR ingestion, regardless of recognition outcome");
+
+        // No redacted derivative was ever written, confirming the
+        // disposition flag (if any candidate even bound) stayed exactly
+        // that — session metadata, never an applied pixel edit.
+        let session_bytes = std::fs::read(root.join("session.json")).unwrap();
+        let session: forge_capture_core::sop_session::SopSessionV1 = serde_json::from_slice(&session_bytes).unwrap();
+        let frame = session.source_frames.iter().find(|f| f.frame_id == "f1").unwrap();
+        assert!(frame.redacted_derivative_relative_path.is_none(), "no redacted derivative should exist - no apply/export function has ever run");
+        assert!(!root.join("frames/f1-redacted.png").exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn run_ocr_and_ingest_review_candidates_impl_refuses_without_a_configured_model_manifest() {
         let root = temp_root();
