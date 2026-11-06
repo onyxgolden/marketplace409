@@ -583,7 +583,11 @@ mod tests {
     #[test]
     fn spawn_and_single_request_round_trips_a_stub_not_implemented_response() {
         let mut session = SidecarSession::spawn(&sidecar_exe_path()).unwrap();
-        let req = sample_request(5_000);
+        // NER has no runtime yet as of C2-P2 (OCR does - see the
+        // `real_ocr_request_*` tests below for that path) - this test is
+        // about the stub/framing round trip, not OCR specifically.
+        let mut req = sample_request(5_000);
+        req.operation = SidecarOperation::Ner;
         let resp = session.request(&req).unwrap();
         assert_eq!(resp.request_id, req.request_id);
         assert_eq!(resp.echoed_input_digests_sha256, req.input_digests_sha256);
@@ -1045,6 +1049,169 @@ mod tests {
         let req = sample_request(5_000);
         let resp = session.request(&req).unwrap();
         assert_eq!(resp.schema_version, SIDECAR_PROTOCOL_VERSION);
+        session.cancel().unwrap();
+    }
+
+    // --- real OCR dispatch, over the real IPC wire (C2-P2) ---
+    //
+    // Everything above this point only ever exercised the C2-P2
+    // scaffolding's OPERATION_NOT_IMPLEMENTED stub. These tests drive
+    // the actual OCR operation end to end, through the real spawned
+    // sidecar process and the real framed IPC wire, not just in-process
+    // (`ocr_engine`'s own tests already cover the in-process half).
+
+    /// Must match `ai-sidecar/model-pack/manifest.json`'s own SHA-256
+    /// exactly - if that manifest is ever regenerated, this constant
+    /// (and the one in `sop_review.rs`'s tests) needs updating too.
+    const REAL_MODEL_MANIFEST_SHA256: &str = "8d2fddf908d037c3e71a4cb1f8cc48a81bb6f7787e2ef99a9a43245c5652535b";
+
+    fn write_session_root_with_frame(frame_bytes: &[u8]) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("forge-ocr-ipc-test-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("frame.png"), frame_bytes).unwrap();
+        let digest = forge_capture_core::sop_session::sha256_hex(frame_bytes);
+        (dir, digest)
+    }
+
+    fn rand_suffix() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64
+    }
+
+    fn ocr_request(frame_digest: &str, model_manifest_sha256: &str, click_crop_box: Option<(i64, i64, u64, u64)>) -> IpcRequest {
+        IpcRequest {
+            request_id: format!("ocr-test-{}", std::process::id()),
+            schema_version: SIDECAR_PROTOCOL_VERSION,
+            operation: SidecarOperation::Ocr,
+            input_digests_sha256: vec![frame_digest.to_string()],
+            bounded_paths: vec![BoundedPath::new("frame.png").unwrap()],
+            timeout_ms: 30_000,
+            model_manifest_sha256: model_manifest_sha256.to_string(),
+            click_crop_box,
+        }
+    }
+
+    #[test]
+    fn real_ocr_request_over_ipc_round_trips_recognized_tokens() {
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        let (dir, digest) = write_session_root_with_frame(frame_bytes);
+        let mut session =
+            SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_SESSION_ROOT", dir.to_str().unwrap())]).unwrap();
+
+        let req = ocr_request(&digest, REAL_MODEL_MANIFEST_SHA256, None);
+        let resp = session.request(&req).unwrap();
+        let payload = match resp.result {
+            IpcResult::Ok { payload } => payload,
+            IpcResult::Err { code, message } => panic!("expected Ok, got {code}: {message}"),
+        };
+        let tokens: Vec<forge_capture_core::sop_session::OcrToken> = serde_json::from_value(payload["tokens"].clone()).unwrap();
+        assert_eq!(tokens.len(), 1, "{tokens:?}");
+        assert!(!tokens[0].text.is_empty());
+        assert_eq!(tokens[0].engine_identity, "forge-capture-ppocr-en-latin-v1");
+        assert!(payload["cropTokens"].is_null(), "no click_crop_box was requested");
+
+        session.cancel().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn real_ocr_request_with_a_click_crop_box_returns_scoped_crop_tokens() {
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_two_lines.png");
+        let (dir, digest) = write_session_root_with_frame(frame_bytes);
+        let mut session =
+            SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_SESSION_ROOT", dir.to_str().unwrap())]).unwrap();
+
+        let req = ocr_request(&digest, REAL_MODEL_MANIFEST_SHA256, Some((0, 110, 300, 90)));
+        let resp = session.request(&req).unwrap();
+        let payload = match resp.result {
+            IpcResult::Ok { payload } => payload,
+            IpcResult::Err { code, message } => panic!("expected Ok, got {code}: {message}"),
+        };
+        let full_tokens: Vec<forge_capture_core::sop_session::OcrToken> = serde_json::from_value(payload["tokens"].clone()).unwrap();
+        let crop_tokens: Vec<forge_capture_core::sop_session::OcrToken> = serde_json::from_value(payload["cropTokens"].clone()).unwrap();
+        assert_eq!(full_tokens.len(), 2, "{full_tokens:?}");
+        assert_eq!(crop_tokens.len(), 1, "{crop_tokens:?}");
+
+        session.cancel().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn real_ocr_request_without_a_session_root_fails_closed() {
+        let mut session = SidecarSession::spawn(&sidecar_exe_path()).unwrap(); // no FORGE_SIDECAR_SESSION_ROOT
+        let req = ocr_request(&"a".repeat(64), REAL_MODEL_MANIFEST_SHA256, None);
+        let resp = session.request(&req).unwrap();
+        match resp.result {
+            IpcResult::Err { code, .. } => assert_eq!(code, "NO_SESSION_ROOT"),
+            IpcResult::Ok { .. } => panic!("must fail closed with no session root"),
+        }
+        session.cancel().unwrap();
+    }
+
+    #[test]
+    fn real_ocr_request_with_a_wrong_frame_digest_fails_closed() {
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        let (dir, _real_digest) = write_session_root_with_frame(frame_bytes);
+        let mut session =
+            SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_SESSION_ROOT", dir.to_str().unwrap())]).unwrap();
+
+        let wrong_digest = "c".repeat(64);
+        let req = ocr_request(&wrong_digest, REAL_MODEL_MANIFEST_SHA256, None);
+        let resp = session.request(&req).unwrap();
+        match resp.result {
+            IpcResult::Err { code, .. } => assert_eq!(code, "FRAME_DIGEST_MISMATCH"),
+            IpcResult::Ok { .. } => panic!("must fail closed on a digest mismatch"),
+        }
+        session.cancel().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn real_ocr_request_with_a_wrong_model_manifest_digest_fails_closed() {
+        let frame_bytes = include_bytes!("../../ai-sidecar/test-fixtures/synthetic_hello_world.png");
+        let (dir, digest) = write_session_root_with_frame(frame_bytes);
+        let mut session =
+            SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_SESSION_ROOT", dir.to_str().unwrap())]).unwrap();
+
+        let req = ocr_request(&digest, &"d".repeat(64), None);
+        let resp = session.request(&req).unwrap();
+        match resp.result {
+            IpcResult::Err { code, .. } => assert_eq!(code, "MODEL_PACK_INVALID"),
+            IpcResult::Ok { .. } => panic!("must fail closed on a wrong model manifest digest"),
+        }
+        session.cancel().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn real_ocr_request_with_a_missing_frame_file_fails_closed() {
+        let dir = std::env::temp_dir().join(format!("forge-ocr-ipc-test-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut session =
+            SidecarSession::spawn_with_env(&sidecar_exe_path(), &[("FORGE_SIDECAR_SESSION_ROOT", dir.to_str().unwrap())]).unwrap();
+
+        let req = ocr_request(&"a".repeat(64), REAL_MODEL_MANIFEST_SHA256, None);
+        let resp = session.request(&req).unwrap();
+        match resp.result {
+            IpcResult::Err { code, .. } => assert_eq!(code, "FRAME_IO"),
+            IpcResult::Ok { .. } => panic!("must fail closed when the frame file does not exist"),
+        }
+        session.cancel().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ner_and_caption_operations_remain_not_implemented() {
+        let mut session = SidecarSession::spawn(&sidecar_exe_path()).unwrap();
+        for op in [SidecarOperation::Ner, SidecarOperation::Caption] {
+            let mut req = sample_request(5_000);
+            req.operation = op;
+            let resp = session.request(&req).unwrap();
+            match resp.result {
+                IpcResult::Err { code, .. } => assert_eq!(code, "OPERATION_NOT_IMPLEMENTED"),
+                IpcResult::Ok { .. } => panic!("{op:?} must remain not-implemented in this slice"),
+            }
+        }
         session.cancel().unwrap();
     }
 }
