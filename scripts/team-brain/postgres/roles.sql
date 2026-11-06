@@ -142,6 +142,57 @@ GRANT SELECT ON tb_consolidation_run_bindings TO tb_admin;
 GRANT SELECT ON tb_consolidation_audit TO tb_admin;
 GRANT SELECT ON tb_worker_heartbeats TO tb_admin;
 
+-- Owner (tb_admin): restore rights, added 2026-11-05 (P8 Step A
+-- re-qualification finding; Jason's decision 2026-11-05 ~16:57 CST).
+-- importRestore (worker/backup.mjs) does INSERT ... ON CONFLICT DO
+-- UPDATE / DO NOTHING only — never DELETE or TRUNCATE — so the owner
+-- handle needs INSERT + UPDATE on the same twenty tables it already
+-- reads, and nothing more. Proven by reading importRestore itself:
+-- its only statement shape is the INSERT above; no DELETE/TRUNCATE
+-- appears anywhere in the restore path.
+--
+-- Five tables restore rows whose surrogate id column was stripped
+-- from the backup (SURROGATE_COLUMNS in backup.mjs) and is left for
+-- the database to regenerate on INSERT, so the owner handle also
+-- needs USAGE on the five backing sequences. Two already exist for
+-- tb_consolidator (tb_consolidation_audit_seq_seq,
+-- tb_worker_heartbeats_id_seq); the other three were previously
+-- ungranted to anyone and are added here:
+-- team_brain_obligation_events_seq_seq, team_brain_handoff_events_seq_seq
+-- (both back an identity column named "seq"), and
+-- tb_episode_events_event_id_seq (backs event_id). All five names
+-- verified against a live schema via pg_get_serial_sequence(), not
+-- assumed from the naming convention.
+--
+-- This does not touch tb_consolidator or tb_reader, and does not
+-- grant DELETE/TRUNCATE to tb_admin: a restore run proved it doesn't
+-- need them (see the PR's verification evidence).
+GRANT INSERT, UPDATE ON team_brain_schema_version TO tb_admin;
+GRANT INSERT, UPDATE ON team_brain_obligations TO tb_admin;
+GRANT INSERT, UPDATE ON team_brain_obligation_dependencies TO tb_admin;
+GRANT INSERT, UPDATE ON team_brain_obligation_events TO tb_admin;
+GRANT INSERT, UPDATE ON team_brain_handoffs TO tb_admin;
+GRANT INSERT, UPDATE ON team_brain_handoff_events TO tb_admin;
+GRANT INSERT, UPDATE ON tb_retrieval_revisions TO tb_admin;
+GRANT INSERT, UPDATE ON tb_episodes TO tb_admin;
+GRANT INSERT, UPDATE ON tb_episode_grants TO tb_admin;
+GRANT INSERT, UPDATE ON tb_pins TO tb_admin;
+GRANT INSERT, UPDATE ON tb_working_set TO tb_admin;
+GRANT INSERT, UPDATE ON tb_episode_events TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_runs TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_lease TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidated_facts TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_proposals TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_checkpoints TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_run_bindings TO tb_admin;
+GRANT INSERT, UPDATE ON tb_consolidation_audit TO tb_admin;
+GRANT INSERT, UPDATE ON tb_worker_heartbeats TO tb_admin;
+GRANT USAGE, SELECT ON SEQUENCE team_brain_obligation_events_seq_seq TO tb_admin;
+GRANT USAGE, SELECT ON SEQUENCE team_brain_handoff_events_seq_seq TO tb_admin;
+GRANT USAGE, SELECT ON SEQUENCE tb_episode_events_event_id_seq TO tb_admin;
+GRANT USAGE, SELECT ON SEQUENCE tb_consolidation_audit_seq_seq TO tb_admin;
+GRANT USAGE, SELECT ON SEQUENCE tb_worker_heartbeats_id_seq TO tb_admin;
+
 -- Explicit PUBLIC revokes on every team-brain table named above.
 REVOKE ALL ON tb_episodes FROM PUBLIC;
 REVOKE ALL ON tb_episode_grants FROM PUBLIC;
