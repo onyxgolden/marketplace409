@@ -19,3 +19,23 @@ export const MAX_PURPOSE_CHARS = 1000;
 export const MAX_NOTE_CHARS = 2000;
 export const MAX_SECTION_NAME_CHARS = 300;
 export const MAX_BASIS_CHARS = 500;
+
+// Slice B (written explainer + infographic) policy limits. Generation is
+// extractive and local-only: sentences are selected from admitted
+// extracts, never invented, so these bounds cap selection, not model
+// output. A draft that cannot ground enough material records NEEDS
+// REVIEW instead of fabricating findings.
+export const MAX_FINDINGS_PER_INFOGRAPHIC = 7;
+export const MIN_FINDINGS_PER_INFOGRAPHIC = 3;
+export const MAX_FINDING_CHARS = 240;
+export const MIN_FINDING_CHARS = 40;
+export const MAX_SUMMARY_SENTENCES = 4;
+export const MAX_CONCEPTS = 8;
+export const MAX_CONTEXT_SENTENCES = 10;
+export const MAX_EXPLAINER_SENTENCES = 40;
+export const MAX_SCRIPT_SEGMENTS = 40;
+export const MAX_SCRIPT_CHARS = 12000;
+export const MAX_AUDIO_BYTES = 10485760;
+export const MAX_GLOSSARY_ENTRIES = 12;
+export const MAX_CONTENT_CHARS = 200_000;
+export const MAX_EDIT_CHARS = 50_000;
