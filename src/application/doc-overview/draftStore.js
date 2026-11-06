@@ -6,6 +6,7 @@
 //
 //   <root>/<ownerId>/source-sets/<manifestId>.json
 //   <root>/<ownerId>/drafts/<artifactId>.json
+//   <root>/<ownerId>/drafts/<artifactId>.<sha256>.wav  (synthesized audio, content-addressed)
 //
 // Access contract (enforced here, not hoped for upstream):
 // - IDENTITY-BOUND. The store is constructed with a principal
@@ -79,7 +80,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isSafePathSegment } from "@/domains/doc-overview/sanitize.js";
 import {
   assertAncestryBoundary,
@@ -104,6 +105,42 @@ function fail(message) {
 function assertRecordId(recordId) {
   if (!isSafePathSegment(recordId)) {
     fail(`record id must be a safe path segment, got ${JSON.stringify(recordId)}.`);
+  }
+}
+
+// A recorded audio digest is a 64-character lowercase hex SHA-256.
+// Anything else is never a sidecar name — it is a malformed record.
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function assertAudioSha256(sha256) {
+  if (typeof sha256 !== "string" || !SHA256_HEX.test(sha256)) {
+    fail("audio sha256 must be a 64-character lowercase hex digest.");
+  }
+}
+
+function audioFileName(artifactId, sha256) {
+  return `${artifactId}.${sha256}.wav`;
+}
+
+// The sidecar names belonging to one artifact, matched exactly:
+// <artifactId>.<64-hex-sha256>.wav. The anchored pattern means an
+// artifact id that is a prefix of another id can never claim its
+// sibling's files.
+function listAudioNames(resolvedRoot, parts, artifactId) {
+  const canonical = canonicalRootFor(resolvedRoot);
+  const dirPath = path.join(canonical, ...parts);
+  let dirFd;
+  try {
+    dirFd = openVerifiedDir(dirPath);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+  try {
+    const pattern = new RegExp(`^${artifactId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.([0-9a-f]{64})\\.wav$`);
+    return readdirVerifiedDir(dirFd).filter((name) => pattern.test(name)).sort();
+  } finally {
+    closeSync(dirFd);
   }
 }
 
@@ -156,6 +193,69 @@ function readJson(resolvedRoot, parts, fileName) {
     throw new Error(`draftStore: unreadable record at ${filePath}: ${error.message}`);
   } finally {
     closeSync(fd);
+  }
+}
+
+function readBytes(resolvedRoot, parts, fileName) {
+  const canonical = canonicalRootFor(resolvedRoot);
+  const dirPath = path.join(canonical, ...parts);
+  const filePath = path.join(dirPath, fileName);
+  let fd;
+  try {
+    fd = openVerifiedFile(filePath, O_RDONLY);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    return readFileSync(fd);
+  } catch (error) {
+    throw new Error(`draftStore: unreadable record at ${filePath}: ${error.message}`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Binary twin of atomicWriteJson: same verified directory chain,
+// temp + rename, landing check. Used for synthesized audio bytes,
+// which are too large to live inside the draft JSON record.
+function atomicWriteBytes(resolvedRoot, parts, fileName, buffer) {
+  if (!Buffer.isBuffer(buffer)) {
+    fail("audio bytes must be a Buffer.");
+  }
+  const canonical = ensureRoot(resolvedRoot);
+  const { dirFd, dirPath } = ensureVerifiedDirChain(canonical, parts);
+  try {
+    const tmpName = `.tmp-${process.pid}-${randomUUID()}`;
+    const tmpFd = createVerifiedTemp(dirFd, dirPath, tmpName);
+    try {
+      writeFileSync(tmpFd, buffer);
+    } catch (error) {
+      closeSync(tmpFd);
+      unlinkWithinDirQuiet(dirFd, tmpName);
+      throw error;
+    }
+    closeSync(tmpFd);
+    try {
+      renameWithinDir(dirFd, dirPath, tmpName, fileName);
+    } catch (error) {
+      unlinkWithinDirQuiet(dirFd, tmpName);
+      throw error;
+    }
+    const destFd = openVerifiedFile(path.join(dirPath, fileName), O_RDONLY);
+    closeSync(destFd);
+  } finally {
+    closeSync(dirFd);
+  }
+}
+
+function deleteFile(resolvedRoot, parts, fileName) {
+  const canonical = ensureRoot(resolvedRoot);
+  const { dirFd } = ensureVerifiedDirChain(canonical, parts);
+  try {
+    unlinkWithinDirQuiet(dirFd, fileName);
+  } finally {
+    closeSync(dirFd);
   }
 }
 
@@ -261,6 +361,96 @@ export function createDraftStore(root, principal) {
     },
     listDrafts() {
       return listIds(resolvedRoot, [boundOwner, "drafts"]);
+    },
+    // Synthesized audio lives as a CONTENT-ADDRESSED sidecar next
+    // to the draft JSON (<artifactId>.<sha256>.wav) so the record
+    // stays small and the audio bytes are never base64-inflated
+    // into JSON. Content addressing is the atomicity fix (slice C
+    // fix round 1): a sidecar is immutable — the same bytes always
+    // land under the same name, and new bytes never overwrite the
+    // file a committed record points at. Publication is two steps
+    // in a fixed order: the sidecar is written first (nothing
+    // references it yet, so a crash leaves only an orphan), and
+    // the JSON record naming its digest is the commit point. A
+    // record therefore references only fully committed bytes, and
+    // a failed record save leaves the previous committed audio
+    // untouched. Reads verify the bytes against the recorded
+    // digest and size and return null on any mismatch (fail
+    // closed). Same owner binding as the draft itself: a foreign
+    // store reads its own owner's directory and finds nothing.
+    // `expected` is the recorded audio descriptor { sha256, bytes };
+    // a missing or malformed descriptor reads as absent.
+    saveAudio(artifactId, buffer) {
+      assertRecordId(artifactId);
+      if (!Buffer.isBuffer(buffer)) {
+        fail("audio bytes must be a Buffer.");
+      }
+      const sha256 = createHash("sha256").update(buffer).digest("hex");
+      atomicWriteBytes(resolvedRoot, [boundOwner, "drafts"], audioFileName(artifactId, sha256), buffer);
+      return { sha256, bytes: buffer.length };
+    },
+    getAudio(artifactId, expected) {
+      assertRecordId(artifactId);
+      if (!expected || typeof expected.sha256 !== "string" || !SHA256_HEX.test(expected.sha256)
+        || !Number.isInteger(expected.bytes) || expected.bytes < 0) {
+        return null;
+      }
+      const bytes = readBytes(resolvedRoot, [boundOwner, "drafts"], audioFileName(artifactId, expected.sha256));
+      if (bytes === null) return null;
+      if (bytes.length !== expected.bytes) return null;
+      if (createHash("sha256").update(bytes).digest("hex") !== expected.sha256) return null;
+      return bytes;
+    },
+    // Deletes exactly one sidecar, named by its digest. Quiet when
+    // it is already gone; a malformed digest is a caller bug and
+    // fails loud.
+    deleteAudio(artifactId, sha256) {
+      assertRecordId(artifactId);
+      assertAudioSha256(sha256);
+      deleteFile(resolvedRoot, [boundOwner, "drafts"], audioFileName(artifactId, sha256));
+    },
+    // Deletes every sidecar for this artifact except the one named
+    // by keepSha256 (null keeps nothing). Best effort: filesystem
+    // failures are swallowed and the count of deletions is returned,
+    // so cleanup can never fail the user-visible action it follows.
+    // Callers pass the digest of the record they just committed, so
+    // a crash orphan and a superseded recording are both swept while
+    // the committed bytes survive.
+    deleteUnreferencedAudio(artifactId, keepSha256) {
+      assertRecordId(artifactId);
+      if (keepSha256 !== null && keepSha256 !== undefined) {
+        assertAudioSha256(keepSha256);
+      }
+      let names;
+      try {
+        names = listAudioNames(resolvedRoot, [boundOwner, "drafts"], artifactId);
+      } catch {
+        return 0;
+      }
+      if (names.length === 0) return 0;
+      const keepName = keepSha256 ? audioFileName(artifactId, keepSha256) : null;
+      let dirFd;
+      try {
+        const canonical = ensureRoot(resolvedRoot);
+        ({ dirFd } = ensureVerifiedDirChain(canonical, [boundOwner, "drafts"]));
+      } catch {
+        return 0;
+      }
+      let deleted = 0;
+      try {
+        for (const name of names) {
+          if (keepName !== null && name === keepName) continue;
+          try {
+            unlinkWithinDirQuiet(dirFd, name);
+            deleted += 1;
+          } catch {
+            // Best effort: one stubborn file must not block the rest.
+          }
+        }
+      } finally {
+        closeSync(dirFd);
+      }
+      return deleted;
     },
   };
 }

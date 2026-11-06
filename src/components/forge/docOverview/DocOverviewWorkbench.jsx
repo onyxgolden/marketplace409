@@ -40,6 +40,9 @@ function editableSections(content) {
   if (content.kind === "infographic") {
     return { kind: "infographic", title: content.title, findings: content.findings ?? [] };
   }
+  if (content.kind === "audio") {
+    return { kind: "audio", title: content.title, segments: content.segments ?? [] };
+  }
   return {
     kind: "explainer",
     title: content.title,
@@ -50,10 +53,10 @@ function editableSections(content) {
   };
 }
 
-export default function DocOverviewWorkbench({ initialArtifacts = [] }) {
+export default function DocOverviewWorkbench({ initialArtifacts = [], initialSelectedId = null, initialPreview = null }) {
   const [artifacts, setArtifacts] = useState(initialArtifacts);
-  const [selectedId, setSelectedId] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [selectedId, setSelectedId] = useState(initialSelectedId);
+  const [preview, setPreview] = useState(initialPreview);
   const [manifestId, setManifestId] = useState("");
   const [documentsJson, setDocumentsJson] = useState("");
   const [editJson, setEditJson] = useState("");
@@ -120,7 +123,14 @@ export default function DocOverviewWorkbench({ initialArtifacts = [] }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, editedContent }),
       });
-      setMessage({ kind: "ok", text: `Done — draft is now ${body.artifact.status}.` });
+      // approve-script and synthesize do not change the artifact
+      // status, so the generic "now <status>" message would lie.
+      const doneText = action === "approve-script"
+        ? "Script approved — you can now synthesize the audio."
+        : action === "synthesize"
+          ? "Audio synthesized — listen in the preview, then submit for review."
+          : `Done — draft is now ${body.artifact.status}.`;
+      setMessage({ kind: "ok", text: doneText });
       setEditing(false);
       await refresh();
       await selectArtifact(selected.id);
@@ -156,8 +166,10 @@ export default function DocOverviewWorkbench({ initialArtifacts = [] }) {
       <section className="mt-4 rounded border border-slate-200 bg-white p-4">
         <h2 className="text-lg font-semibold">Generate drafts</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Generate an explainer and an infographic from a source set you already saved (slice A picker).
+          Generate an explainer, an infographic, and an audio overview from a source set you already saved (slice A picker).
           The source texts are hash-checked against the manifest — a changed source generates nothing.
+          The audio overview starts as a script: approve the script, then synthesize it with the offline text-to-speech engine on this machine.
+          If no offline engine is installed, the audio artifact stays a script only — it never pretends to be finished audio.
         </p>
         <label className="mt-3 block text-sm font-medium">
           Source-set manifest id
@@ -223,6 +235,15 @@ export default function DocOverviewWorkbench({ initialArtifacts = [] }) {
               Preview — {selected.type} · {selected.status.replace("_", " ")}
             </h2>
             <div className="flex flex-wrap gap-2">
+              {selected.type === "audio" && (selected.status === "draft" || selected.status === "needs_review") && preview.artifact?.content?.scriptStatus === "draft" && (
+                <button type="button" disabled={busy} onClick={() => reviewAction("approve-script")} className="rounded bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Approve script</button>
+              )}
+              {selected.type === "audio" && (selected.status === "draft" || selected.status === "needs_review") && preview.artifact?.content?.scriptStatus === "approved" && !preview.artifact?.content?.audio?.present && (
+                <button type="button" disabled={busy} onClick={() => reviewAction("synthesize")} className="rounded bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Synthesize audio</button>
+              )}
+              {selected.type === "audio" && (selected.status === "draft" || selected.status === "needs_review") && preview.artifact?.content?.scriptStatus === "approved" && !preview.artifact?.content?.audio?.present && (
+                <span className="self-center text-sm text-slate-600">Script approved. Synthesis needs an offline text-to-speech engine on this machine — without one, this stays a script only.</span>
+              )}
               {selected.status === "draft" && (
                 <button type="button" disabled={busy} onClick={() => reviewAction("submit")} className="rounded bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Submit for review</button>
               )}

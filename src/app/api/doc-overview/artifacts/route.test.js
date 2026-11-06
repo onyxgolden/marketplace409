@@ -88,13 +88,13 @@ describe("doc-overview artifacts route", () => {
     }));
     expect(generated.status).toBe(201);
     const generatedBody = await generated.json();
-    expect(generatedBody.artifacts).toHaveLength(2);
-    expect(generatedBody.artifacts.map((a) => a.type).sort()).toEqual(["explainer", "infographic"]);
+    expect(generatedBody.artifacts).toHaveLength(3);
+    expect(generatedBody.artifacts.map((a) => a.type).sort()).toEqual(["audio", "explainer", "infographic"]);
 
     const listed = await GET();
     expect(listed.status).toBe(200);
     const listedBody = await listed.json();
-    expect(listedBody.artifacts).toHaveLength(2);
+    expect(listedBody.artifacts).toHaveLength(3);
     expect(listedBody.artifacts[0].content).toBeUndefined();
   });
 

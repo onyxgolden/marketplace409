@@ -81,11 +81,11 @@ function generate(store, manifest, texts) {
 }
 
 describe("generateDrafts", () => {
-  it("creates explainer + infographic drafts, stored and reloadable", () => {
+  it("creates explainer + infographic + audio drafts, stored and reloadable", () => {
     const { root, store, manifest, texts } = setup();
     const artifacts = generate(store, manifest, texts);
-    expect(artifacts).toHaveLength(2);
-    expect(artifacts.map((a) => a.type).sort()).toEqual(["explainer", "infographic"]);
+    expect(artifacts).toHaveLength(3);
+    expect(artifacts.map((a) => a.type).sort()).toEqual(["audio", "explainer", "infographic"]);
     for (const summary of artifacts) {
       expect(summary.status).toBe("draft");
       expect(summary.version).toBe(1);
@@ -93,11 +93,31 @@ describe("generateDrafts", () => {
       expect(stored.content).toBeDefined();
       expect(stored.contentHash).toMatch(/^[0-9a-f]{64}$/);
       expect(stored.ownerId).toBe("owner-1");
-      expect(stored.content.method).toBe("extractive-local-v1");
+      expect(stored.content.method).toBe(
+        summary.type === "audio" ? "audio-script-local-v1" : "extractive-local-v1",
+      );
     }
+    // The audio draft is a script only: its segments are the
+    // explainer's own assertions, verbatim, with citations — and in
+    // this environment no offline TTS engine exists, so the draft
+    // says so instead of claiming audio.
+    const audio = artifacts.find((a) => a.type === "audio");
+    const storedAudio = store.getDraft(audio.id);
+    expect(storedAudio.content.method).toBe("audio-script-local-v1");
+    expect(storedAudio.content.scriptStatus).toBe("draft");
+    expect(storedAudio.content.audio).toBeNull();
+    expect(storedAudio.content.segments.length).toBeGreaterThan(0);
+    const explainer = store.getDraft(artifacts.find((a) => a.type === "explainer").id);
+    const spoken = explainer.content.summary.map((assertion) => assertion.text);
+    expect(storedAudio.content.segments.map((segment) => segment.text)).toEqual(
+      expect.arrayContaining(spoken.slice(0, 1)),
+    );
+    expect(storedAudio.content.tts.available).toBe(false);
+    expect(storedAudio.content.tts.checked.length).toBeGreaterThan(0);
+    expect(storedAudio.content.needsReview.map((item) => item.code)).toContain("TTS_UNAVAILABLE");
     // Reload preserves the drafts across store instances.
     const second = createDraftStore(root, { ownerId: "owner-1" });
-    expect(second.listDrafts()).toHaveLength(2);
+    expect(second.listDrafts()).toHaveLength(3);
     const reloaded = second.getDraft(artifacts[0].id);
     expect(reloaded.content.title).toBe("Energy in living cells");
   });
@@ -497,7 +517,7 @@ describe("preview and listing", () => {
     generate(store, manifest, texts);
     const listed = listArtifacts({ store });
     expect(listed.ok).toBe(true);
-    expect(listed.artifacts).toHaveLength(2);
+    expect(listed.artifacts).toHaveLength(3);
     expect(listed.artifacts[0].content).toBeUndefined();
     const other = createDraftStore(root, { ownerId: "owner-2" });
     expect(listArtifacts({ store: other }).artifacts).toEqual([]);
