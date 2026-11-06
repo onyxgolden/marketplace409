@@ -25,7 +25,7 @@ import { createRepository } from "../ledger/repository.mjs";
 import { migrate as migrateP5, createRetrievalRepository } from "../retrieval/repository.mjs";
 import { createConsolidationEngine, migrateP6 } from "../consolidation/engine.mjs";
 import { migrateWorker } from "../worker/worker.mjs";
-import { exportBackup, BACKUP_TABLES } from "../worker/backup.mjs";
+import { exportBackup, importRestore, verifyParity, BACKUP_TABLES } from "../worker/backup.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const it60 = (name, fn) => it(name, fn, 60000);
@@ -294,6 +294,123 @@ describe("P7 role boundary (roles.sql)", () => {
       expect(c.rows[0].ok, `consolidator should use ${seq}`).toBe(true);
       const r = await db.query(`SELECT has_sequence_privilege('tb_reader', '${seq}', 'USAGE') AS ok`);
       expect(r.rows[0].ok, `reader must not use ${seq}`).toBe(false);
+    }
+  });
+
+  it60("owner handle restore grant: UPDATE limited to the three SINGLETON_UPSERT tables", async () => {
+    // Regression for the PR #740 fix round: the first cut granted
+    // table-wide UPDATE on all twenty tables, but importRestore's only
+    // UPDATE path is the three ON CONFLICT DO UPDATE singleton tables
+    // (team_brain_schema_version, tb_retrieval_revisions,
+    // tb_consolidation_lease) — every other table restores DO NOTHING
+    // into an empty target. A WHERE false update still triggers the
+    // table-privilege check with zero rows at risk, so this needs no
+    // seed data and cannot corrupt anything either way.
+    const SINGLETON_TABLES = new Set([
+      "team_brain_schema_version",
+      "tb_retrieval_revisions",
+      "tb_consolidation_lease",
+    ]);
+    async function tryUpdate(table) {
+      // Skip identity/generated columns: PostgreSQL rejects assigning
+      // them to anything but DEFAULT regardless of privilege, which
+      // would mask the permission check this test is after.
+      const { rows } = await db.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = $1
+           AND is_identity = 'NO' AND is_generated = 'NEVER'
+         ORDER BY ordinal_position LIMIT 1`,
+        [table],
+      );
+      const col = rows[0].column_name;
+      return db.query(`UPDATE ${table} SET "${col}" = "${col}" WHERE false`);
+    }
+    await db.query("SET ROLE tb_admin");
+    for (const t of ALL_TABLES) {
+      if (SINGLETON_TABLES.has(t)) {
+        await expect(tryUpdate(t), `tb_admin should UPDATE ${t}`).resolves.toBeTruthy();
+      } else {
+        await expect(tryUpdate(t), `tb_admin should be denied UPDATE on ${t}`).rejects.toThrow(/permission denied/);
+      }
+    }
+    await db.query("RESET ROLE");
+  });
+
+  it60("owner handle restore grant: sequences are USAGE only, not SELECT", async () => {
+    // Regression for the PR #740 fix round: the first cut also granted
+    // SELECT on the restore sequences, but importRestore never reads
+    // sequence state (no currval/lastval, no SELECT on the sequence
+    // relation) — only nextval() via the column DEFAULT, which needs
+    // USAGE alone.
+    const seqs = [
+      "team_brain_obligation_events_seq_seq",
+      "team_brain_handoff_events_seq_seq",
+      "tb_episode_events_event_id_seq",
+      "tb_consolidation_audit_seq_seq",
+      "tb_worker_heartbeats_id_seq",
+    ];
+    for (const seq of seqs) {
+      const usage = await db.query(`SELECT has_sequence_privilege('tb_admin', '${seq}', 'USAGE') AS ok`);
+      expect(usage.rows[0].ok, `tb_admin should have USAGE on ${seq}`).toBe(true);
+      const select = await db.query(`SELECT has_sequence_privilege('tb_admin', '${seq}', 'SELECT') AS ok`);
+      expect(select.rows[0].ok, `tb_admin should NOT have SELECT on ${seq}`).toBe(false);
+    }
+  });
+
+  it60("owner handle restore: full backup -> restore reaches parity, every surrogate-id table populated", async () => {
+    // Proves the narrowed grant set (INSERT everywhere, UPDATE on the
+    // three singletons only, sequence USAGE only) is still sufficient
+    // for a real restore — not just privilege-boundary checks. Seeds
+    // all five surrogate-id tables so every new sequence grant is
+    // actually exercised, not vacuously untested.
+    await seedPublicEpisodes(db, 1);
+    const episodeId = (
+      await db.query("SELECT episode_id FROM tb_episodes ORDER BY episode_id LIMIT 1")
+    ).rows[0].episode_id;
+    await db.query(
+      "INSERT INTO team_brain_obligations (obligation_id, kind, filed_at, source_repo, source_path, retention_disposition, created_at) VALUES ('o1', 'TASK', '2026-11-02T10:00:00Z', 'r', 'p', 'd', '2026-11-02T10:00:00Z')",
+    );
+    await db.query(
+      "INSERT INTO team_brain_obligation_events (obligation_id, actor, recorded_at, event_type, reason) VALUES ('o1', 'claude', '2026-11-02T10:00:00Z', 'FILED', 'restore parity test')",
+    );
+    await db.query(
+      "INSERT INTO team_brain_handoffs (handoff_id, created_at, updated_at) VALUES ('h1', '2026-11-02T10:00:00Z', '2026-11-02T10:00:00Z')",
+    );
+    await db.query(
+      "INSERT INTO team_brain_handoff_events (handoff_id, from_state, to_state, actor, recorded_at, reason) VALUES ('h1', 'OPEN', 'OPEN', 'claude', '2026-11-02T10:00:00Z', 'restore parity test')",
+    );
+    await db.query(
+      `INSERT INTO tb_episode_events (episode_id, event_type, revision, created_at) VALUES ('${episodeId}', 'ARCHIVED', 1, '2026-11-02T10:00:00Z')`,
+    );
+    await db.query(
+      "INSERT INTO tb_worker_heartbeats (worker_id, recorded_at, state) VALUES ('w', '2026-11-02T10:00:00Z', 'COMPLETED')",
+    );
+    await db.query(
+      "INSERT INTO tb_consolidation_audit (run_date, entry_type, payload, payload_hash, recorded_at) VALUES ('2026-11-02', 'T', '{}', 'h', '2026-11-02T10:00:00Z')",
+    );
+
+    await db.query("SET ROLE tb_admin");
+    const backup = await exportBackup(db);
+    await db.query("RESET ROLE");
+
+    const target = new PGlite();
+    try {
+      const repo = createRepository(target);
+      await repo.migrate();
+      await migrateP5(target);
+      await migrateP6(target);
+      await migrateWorker(target);
+      await target.exec(loadRolesSql());
+      await target.query("SET ROLE tb_admin");
+      await importRestore(target, backup);
+      await target.query("RESET ROLE");
+      const parity = await verifyParity(target, backup);
+      const failed = Object.entries(parity.tables)
+        .filter(([, t]) => !t.ok)
+        .map(([name]) => name);
+      expect(parity.ok, `parity failed for tables: ${failed.join(", ") || "(none listed)"}`).toBe(true);
+    } finally {
+      await target.close();
     }
   });
 });
