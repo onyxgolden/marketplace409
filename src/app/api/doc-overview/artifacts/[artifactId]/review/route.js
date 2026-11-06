@@ -1,11 +1,13 @@
-// FORGE Doc-to-Overview — slice B: review route.
+// FORGE Doc-to-Overview — slice B + slice C: review route.
 //
 // POST /api/doc-overview/artifacts/[artifactId]/review — one explicit
-// curator action: edit, submit, approve, revise, keep, discard.
-// Body: { action, reason?, editedContent? }. The actor is the
-// authenticated user id from the session, never a body field. Approve
-// and keep re-check source freshness and refuse stale artifacts;
-// edits are re-audited against the recorded citation index.
+// curator action: edit, submit, approve, revise, keep, discard,
+// approve-script, synthesize. Body: { action, reason?, editedContent? }.
+// The actor is the authenticated user id from the session, never a
+// body field. Approve and keep re-check source freshness and refuse
+// stale artifacts; edits are re-audited against the recorded citation
+// index. Slice C: approve-script approves the narration script for
+// synthesis; synthesize runs offline TTS on the approved script only.
 
 import { NextResponse } from "next/server";
 import { reviewArtifact } from "@/application/doc-overview/generate.js";
@@ -15,7 +17,7 @@ import {
   requireDocOverviewStore,
 } from "../../../_helpers.js";
 
-const ACTIONS = new Set(["edit", "submit", "approve", "revise", "keep", "discard"]);
+const ACTIONS = new Set(["edit", "submit", "approve", "revise", "keep", "discard", "approve-script", "synthesize"]);
 
 export async function POST(request, { params }) {
   try {
@@ -32,7 +34,7 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Request body must be valid JSON.", code: "INVALID_ACTION" }, { status: 400 });
     }
     if (!body || typeof body !== "object" || !ACTIONS.has(body.action)) {
-      return NextResponse.json({ error: "action must be one of: edit, submit, approve, revise, keep, discard.", code: "INVALID_ACTION" }, { status: 400 });
+      return NextResponse.json({ error: "action must be one of: edit, submit, approve, revise, keep, discard, approve-script, synthesize.", code: "INVALID_ACTION" }, { status: 400 });
     }
     if (body.action === "edit" && (body.editedContent === undefined || body.editedContent === null)) {
       return NextResponse.json({ error: "editedContent is required for edit.", code: "INVALID_EDIT" }, { status: 400 });

@@ -159,6 +159,69 @@ function readJson(resolvedRoot, parts, fileName) {
   }
 }
 
+function readBytes(resolvedRoot, parts, fileName) {
+  const canonical = canonicalRootFor(resolvedRoot);
+  const dirPath = path.join(canonical, ...parts);
+  const filePath = path.join(dirPath, fileName);
+  let fd;
+  try {
+    fd = openVerifiedFile(filePath, O_RDONLY);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    return readFileSync(fd);
+  } catch (error) {
+    throw new Error(`draftStore: unreadable record at ${filePath}: ${error.message}`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Binary twin of atomicWriteJson: same verified directory chain,
+// temp + rename, landing check. Used for synthesized audio bytes,
+// which are too large to live inside the draft JSON record.
+function atomicWriteBytes(resolvedRoot, parts, fileName, buffer) {
+  if (!Buffer.isBuffer(buffer)) {
+    fail("audio bytes must be a Buffer.");
+  }
+  const canonical = ensureRoot(resolvedRoot);
+  const { dirFd, dirPath } = ensureVerifiedDirChain(canonical, parts);
+  try {
+    const tmpName = `.tmp-${process.pid}-${randomUUID()}`;
+    const tmpFd = createVerifiedTemp(dirFd, dirPath, tmpName);
+    try {
+      writeFileSync(tmpFd, buffer);
+    } catch (error) {
+      closeSync(tmpFd);
+      unlinkWithinDirQuiet(dirFd, tmpName);
+      throw error;
+    }
+    closeSync(tmpFd);
+    try {
+      renameWithinDir(dirFd, dirPath, tmpName, fileName);
+    } catch (error) {
+      unlinkWithinDirQuiet(dirFd, tmpName);
+      throw error;
+    }
+    const destFd = openVerifiedFile(path.join(dirPath, fileName), O_RDONLY);
+    closeSync(destFd);
+  } finally {
+    closeSync(dirFd);
+  }
+}
+
+function deleteFile(resolvedRoot, parts, fileName) {
+  const canonical = ensureRoot(resolvedRoot);
+  const { dirFd } = ensureVerifiedDirChain(canonical, parts);
+  try {
+    unlinkWithinDirQuiet(dirFd, fileName);
+  } finally {
+    closeSync(dirFd);
+  }
+}
+
 function listIds(resolvedRoot, parts) {
   const canonical = canonicalRootFor(resolvedRoot);
   const dirPath = path.join(canonical, ...parts);
@@ -261,6 +324,24 @@ export function createDraftStore(root, principal) {
     },
     listDrafts() {
       return listIds(resolvedRoot, [boundOwner, "drafts"]);
+    },
+    // Synthesized audio lives as a sidecar next to the draft JSON
+    // (<artifactId>.wav) so the record stays small and the audio bytes
+    // are never base64-inflated into JSON. Same owner binding as the
+    // draft itself: a foreign store reads its own owner's directory
+    // and finds nothing.
+    saveAudio(artifactId, buffer) {
+      assertRecordId(artifactId);
+      atomicWriteBytes(resolvedRoot, [boundOwner, "drafts"], `${artifactId}.wav`, buffer);
+      return buffer.length;
+    },
+    getAudio(artifactId) {
+      assertRecordId(artifactId);
+      return readBytes(resolvedRoot, [boundOwner, "drafts"], `${artifactId}.wav`);
+    },
+    deleteAudio(artifactId) {
+      assertRecordId(artifactId);
+      deleteFile(resolvedRoot, [boundOwner, "drafts"], `${artifactId}.wav`);
     },
   };
 }

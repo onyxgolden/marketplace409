@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Doc-to-Overview | FORGE",
-  description: "Generate, review, and export sourced explainers and infographics from curated documents.",
+  description: "Generate, review, and export sourced explainers, infographics, and audio overviews from curated documents.",
 };
 
 export default async function DocOverviewPage() {
@@ -26,8 +26,9 @@ export default async function DocOverviewPage() {
     <main data-doc-overview-page>
       <h1 className="text-2xl font-bold">Doc-to-Overview</h1>
       <p className="mt-1 text-sm text-slate-600">
-        Curated explainers and infographics, each claim linked to an admitted source.
-        Drafts stay watermarked until a curator reviews them.
+        Curated explainers, infographics, and audio overviews, each claim linked to an admitted source.
+        Drafts stay watermarked until a curator reviews them. Audio overviews start as scripts — the script
+        is approved first, then synthesized with offline text-to-speech when one is installed.
       </p>
       <DocOverviewWorkbench initialArtifacts={artifacts} />
     </main>

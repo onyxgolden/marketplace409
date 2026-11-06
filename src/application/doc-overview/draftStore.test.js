@@ -47,6 +47,43 @@ describe("createDraftStore", () => {
     expect(second.getDraft("artifact_1")).toEqual(artifact);
   });
 
+  it("round-trips audio sidecars next to the draft, and lists only JSON drafts", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const bytes = Buffer.from("RIFF....WAVEfake-audio-bytes");
+    expect(store.getAudio("artifact_1")).toBeNull();
+    expect(store.saveAudio("artifact_1", bytes)).toBe(bytes.length);
+    expect(store.getAudio("artifact_1")).toEqual(bytes);
+    // The sidecar must not pollute the draft listing.
+    expect(store.listDrafts()).toEqual(["artifact_1"]);
+    // Reload preserves the sidecar across store instances.
+    const second = createDraftStore(root, { ownerId: "owner-1" });
+    expect(second.getAudio("artifact_1")).toEqual(bytes);
+    // Delete removes it; a second delete is quiet.
+    store.deleteAudio("artifact_1");
+    expect(store.getAudio("artifact_1")).toBeNull();
+    expect(() => store.deleteAudio("artifact_1")).not.toThrow();
+  });
+
+  it("audio sidecars are owner-scoped: another bound owner hears nothing", () => {
+    const root = tempRoot();
+    const owner1 = createDraftStore(root, { ownerId: "owner-1" });
+    owner1.saveDraft(artifact);
+    owner1.saveAudio("artifact_1", Buffer.from("owner-1 audio"));
+    const owner2 = createDraftStore(root, { ownerId: "owner-2" });
+    expect(owner2.getAudio("artifact_1")).toBeNull();
+    expect(owner2.getDraft("artifact_1")).toBeNull();
+  });
+
+  it("refuses traversal in audio record IDs before touching the filesystem", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    expect(() => store.saveAudio("../escape", Buffer.from("x"))).toThrow(/safe path segment/);
+    expect(() => store.getAudio("../escape")).toThrow(/safe path segment/);
+    expect(() => store.deleteAudio("../escape")).toThrow(/safe path segment/);
+  });
+
   it("is owner-scoped and non-disclosing: another bound owner sees nothing", () => {
     const root = tempRoot();
     const owner1 = createDraftStore(root, { ownerId: "owner-1" });

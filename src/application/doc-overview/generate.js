@@ -1,12 +1,20 @@
-// FORGE Doc-to-Overview — slice B: generation + review orchestration.
+// FORGE Doc-to-Overview — slice B + slice C: generation + review orchestration.
 //
 // Application layer over slice A's store/picker and slice B's domain
-// modules. The curator's flow, end to end:
+// modules, plus slice C's audio overview. The curator's flow, end to
+// end:
 //
 //   generate → draft (watermarked preview) → edit → submit → approve
 //   → keep → export. Discard ends the draft from any non-terminal
 //   status. Reload preserves retained artifacts and approval records
 //   (the store is the record; nothing lives only in memory).
+//
+// Audio adds one gate inside that flow: the narration script must be
+// explicitly approved (approve-script) before synthesis runs, and
+// synthesis uses only a locally installed offline TTS engine. When no
+// engine is installed the audio artifact stays a script-only draft
+// and says so — it is never labeled completed audio, and no audio
+// bytes are ever fabricated.
 //
 // Rules enforced here (not hoped for upstream):
 // - Generation re-verifies source hashes through extractForManifest:
@@ -36,6 +44,7 @@
 //   this module only touches the local store it was given.
 
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createDraftStore } from "./draftStore.js";
 import { extractForManifest } from "./picker.js";
 import {
@@ -43,6 +52,16 @@ import {
   generateExplainer,
   generateInfographicFindings,
 } from "@/domains/doc-overview/generation.js";
+import {
+  auditAudioScript,
+  audioScriptText,
+  buildNarrationScript,
+  computeChapters,
+  detectTtsCapability,
+  renderAudioHtml,
+  renderAudioTranscript,
+  synthesizeAudio,
+} from "@/domains/doc-overview/audio.js";
 import {
   describeInfographic,
   renderInfographicSvg,
@@ -62,7 +81,7 @@ import {
   invalidateIfStale,
   transitionArtifact,
 } from "@/domains/doc-overview/artifacts.js";
-import { MAX_CONTENT_CHARS, MAX_EDIT_CHARS, MAX_TOTAL_CHARS, MAX_FINDINGS_PER_INFOGRAPHIC, MIN_FINDINGS_PER_INFOGRAPHIC } from "@/domains/doc-overview/limits.js";
+import { MAX_AUDIO_BYTES, MAX_CONTENT_CHARS, MAX_EDIT_CHARS, MAX_FINDINGS_PER_INFOGRAPHIC, MAX_SCRIPT_CHARS, MAX_SCRIPT_SEGMENTS, MAX_TOTAL_CHARS, MIN_FINDINGS_PER_INFOGRAPHIC } from "@/domains/doc-overview/limits.js";
 
 /** Store root: env override, else the repo's gitignored data/ directory. */
 export function resolveDocOverviewRoot() {
@@ -108,11 +127,17 @@ function artifactSummary(artifact) {
 }
 
 /**
- * Generates explainer + infographic drafts on a saved manifest.
+ * Generates explainer + infographic + audio drafts on a saved manifest.
  * `documents` is the texts map extractForManifest expects:
  * { [documentId]: { text, pages? } }. `curator` is the authenticated
  * curator identity (id string). Returns { ok, artifacts } with one
  * summary per created draft, or { ok: false, error }.
+ *
+ * The audio draft is a narration script derived from the explainer's
+ * own grounded assertions. It is script-only at generation time:
+ * synthesis happens later, only after the curator explicitly approves
+ * the script. `options.tts` may inject { detectTtsCapability,
+ * synthesizeAudio } (tests); otherwise real local detection runs.
  */
 export function generateDrafts({ store, manifestId, documents, curator }, options = {}) {
   if (!isNonEmptyString(manifestId)) return fail("INVALID_MANIFEST", "manifestId is required.");
@@ -149,6 +174,35 @@ export function generateDrafts({ store, manifestId, documents, curator }, option
     }),
     altText: describeInfographic(findings),
   };
+  // Slice C: the narration script is the explainer's own assertions,
+  // spoken in order. TTS capability is detected now and recorded on
+  // the draft so the curator can see what this runtime can do — but
+  // detection here never synthesizes anything.
+  const detect = options.tts?.detectTtsCapability ?? detectTtsCapability;
+  const ttsCapability = detect();
+  const script = buildNarrationScript({ explainerContent, manifest });
+  const audioContent = {
+    ...script,
+    scriptStatus: "draft",
+    scriptApprovedBy: null,
+    scriptApprovedAt: null,
+    tts: {
+      available: ttsCapability.available,
+      engine: ttsCapability.engine?.name ?? null,
+      checked: ttsCapability.checked,
+    },
+    audio: null,
+    chapters: [],
+  };
+  if (!ttsCapability.available) {
+    audioContent.needsReview = [
+      ...audioContent.needsReview,
+      {
+        code: "TTS_UNAVAILABLE",
+        message: "No offline text-to-speech engine is installed in this runtime — this artifact is a script only, not a completed audio overview.",
+      },
+    ];
+  }
 
   for (const [label, content] of [["explainer", explainerContent], ["infographic", infographicContent]]) {
     const audit = auditCitations({ content, manifest, extracts: extracted.extracts });
@@ -166,9 +220,25 @@ export function generateDrafts({ store, manifestId, documents, curator }, option
       return fail("CONTENT_TOO_LARGE", `${label} content exceeds ${MAX_CONTENT_CHARS} characters.`);
     }
   }
+  // The audio script is audited by its own audit (same rules, same
+  // shapes as auditCitations) before anything is stored.
+  const scriptAudit = auditAudioScript({ script: audioContent, manifest, extracts: extracted.extracts });
+  if (!scriptAudit.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "CITATION_AUDIT_FAILED",
+        message: `audio draft failed its citation audit and was not stored: ${scriptAudit.issues.map((i) => i.code).join(", ")}`,
+        issues: scriptAudit.issues,
+      },
+    };
+  }
+  if (JSON.stringify(audioContent).length > MAX_CONTENT_CHARS) {
+    return fail("CONTENT_TOO_LARGE", `audio content exceeds ${MAX_CONTENT_CHARS} characters.`);
+  }
 
   const created = [];
-  for (const [type, content] of [["explainer", explainerContent], ["infographic", infographicContent]]) {
+  for (const [type, content] of [["explainer", explainerContent], ["infographic", infographicContent], ["audio", audioContent]]) {
     const shell = createDraftArtifact({ sourceSet: manifest, type, createdBy: curator }, options);
     if (!shell.ok) return { ok: false, error: shell.errors[0] };
     const artifact = {
@@ -230,7 +300,9 @@ export function getArtifactPreview({ store, artifactId }) {
     : artifact;
   const html = artifact.type === "explainer"
     ? renderExplainerHtml(artifact.content, { watermark, stale: !fresh })
-    : renderInfographicHtml(previewArtifact.content, { watermark, stale: !fresh });
+    : artifact.type === "audio"
+      ? renderAudioHtml(artifact.content, { artifactId, watermark, stale: !fresh })
+      : renderInfographicHtml(previewArtifact.content, { watermark, stale: !fresh });
   return { ok: true, artifact: publicArtifact(previewArtifact), stale: !fresh, html };
 }
 
@@ -238,7 +310,9 @@ function rebuildReferences(content) {
   const sections = content.kind === "explainer"
     ? [...(content.summary ?? []), ...(content.keyConcepts ?? []), ...(content.context ?? []),
       ...(content.glossary ?? []).map((entry) => ({ text: entry.definition, citations: entry.citations }))]
-    : [...(content.findings ?? [])];
+    : content.kind === "audio"
+      ? [...(content.segments ?? [])]
+      : [...(content.findings ?? [])];
   const seen = new Set();
   const references = [];
   for (const assertion of sections) {
@@ -346,6 +420,24 @@ function validateEditedContent(edited, artifact) {
         edited.glossary.forEach((entry, i) => validateGlossaryEntry(entry, `editedContent.glossary[${i}]`, errors));
       }
     }
+  } else if (artifact.type === "audio") {
+    // A script edit replaces narration segments with well-formed
+    // assertions (non-empty text, at least one well-formed citation).
+    // The edited script must be re-approved before synthesis: an
+    // edit after script approval resets the approval (see applyEdit).
+    if (edited.segments !== undefined) {
+      if (!Array.isArray(edited.segments)) {
+        errors.push({ code: "INVALID_EDIT", message: "editedContent.segments must be an array." });
+      } else {
+        if (edited.segments.length < 1 || edited.segments.length > MAX_SCRIPT_SEGMENTS) {
+          errors.push({
+            code: "INVALID_EDIT",
+            message: `editedContent.segments must hold 1–${MAX_SCRIPT_SEGMENTS} segments (got ${edited.segments.length}).`,
+          });
+        }
+        edited.segments.forEach((segment, i) => validateAssertion(segment, `editedContent.segments[${i}]`, errors));
+      }
+    }
   } else {
     if (edited.findings !== undefined) {
       if (!Array.isArray(edited.findings)) {
@@ -394,6 +486,13 @@ function validateContentContract(content) {
     }
     return [];
   }
+  if (content?.kind === "audio") {
+    const count = (content.segments ?? []).length;
+    if (count < 1 || count > MAX_SCRIPT_SEGMENTS) {
+      return [{ code: "INVALID_EDIT", message: `edited audio script must hold 1–${MAX_SCRIPT_SEGMENTS} segments (got ${count}).` }];
+    }
+    return [];
+  }
   return [{ code: "INVALID_EDIT", message: "edited content has an unknown kind." }];
 }
 
@@ -405,6 +504,7 @@ const CONTENT_DERIVED_NEEDS_REVIEW = new Set([
   "INSUFFICIENT_GROUNDED_MATERIAL",
   "THIN_GROUNDED_MATERIAL",
   "NO_SUMMARY",
+  "SCRIPT_TRUNCATED",
 ]);
 
 function recomputeNeedsReview(content) {
@@ -438,6 +538,26 @@ function recomputeNeedsReview(content) {
         message: `Only ${count} concise grounded finding(s) remain in the edited content (3–7 required); the infographic is incomplete and must not be approved as a full overview.`,
       });
     }
+  } else if (content.kind === "audio") {
+    const count = (content.segments ?? []).length;
+    if (count === 0) {
+      derived.push({
+        code: "INSUFFICIENT_GROUNDED_MATERIAL",
+        message: "No usable source sentences remain in the edited script; the audio overview cannot state anything grounded.",
+      });
+    } else if (count < 3) {
+      derived.push({
+        code: "THIN_GROUNDED_MATERIAL",
+        message: `Only ${count} grounded segment(s) remain in the edited script; the audio overview is thin and should be reviewed before approval.`,
+      });
+    }
+    const scriptChars = (content.segments ?? []).reduce((sum, segment) => sum + (segment.text?.length ?? 0) + 1, 0);
+    if (scriptChars > MAX_SCRIPT_CHARS) {
+      derived.push({
+        code: "SCRIPT_TRUNCATED",
+        message: `The edited script (${scriptChars} chars) exceeds the ${MAX_SCRIPT_CHARS}-char synthesis limit and would be cut short.`,
+      });
+    }
   }
   return [...kept, ...derived];
 }
@@ -459,6 +579,18 @@ function applyEdit(artifact, edited, { actor, now }) {
     next.context = edited.context ?? current.context ?? [];
     next.glossary = edited.glossary ?? current.glossary ?? [];
     next.caveats = current.caveats ?? [];
+  } else if (artifact.type === "audio") {
+    next.segments = edited.segments ?? current.segments ?? [];
+    // An edited script must be re-approved before synthesis: the
+    // approval attached to the old words, not these. Any audio
+    // synthesized from the old script is dropped with it — the
+    // sidecar file is deleted by the caller (reviewArtifact), which
+    // owns the store; here the record stops claiming it.
+    next.scriptStatus = "draft";
+    next.scriptApprovedBy = null;
+    next.scriptApprovedAt = null;
+    next.audio = null;
+    next.chapters = [];
   } else {
     next.findings = edited.findings ?? current.findings ?? [];
     // References are rebuilt before the SVG is rendered: the SVG's
@@ -524,11 +656,19 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
     // stored draft is untouched on failure (nothing is saved yet).
     const contractErrors = validateContentContract(edited.content);
     if (contractErrors.length > 0) return { ok: false, error: contractErrors[0] };
-    const audit = auditCitations({
-      content: edited.content,
-      manifest,
-      citationIndex: artifact.content.references ?? [],
-    });
+    // Audio scripts are audited by their own audit (same rules, same
+    // shapes as auditCitations, segments in place of assertions).
+    const audit = artifact.type === "audio"
+      ? auditAudioScript({
+        script: edited.content,
+        manifest,
+        citationIndex: artifact.content.references ?? [],
+      })
+      : auditCitations({
+        content: edited.content,
+        manifest,
+        citationIndex: artifact.content.references ?? [],
+      });
     if (!audit.ok) {
       return {
         ok: false,
@@ -539,12 +679,121 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
         },
       };
     }
+    // An edit drops audio synthesized from the old script: the
+    // record stopped claiming it in applyEdit, and the sidecar goes
+    // here so a stale recording can never be served for new words.
+    if (artifact.type === "audio" && artifact.content.audio?.present) {
+      store.deleteAudio(artifact.id);
+    }
     store.saveDraft(edited);
     return { ok: true, artifact: artifactSummary(edited) };
   }
 
+  // Slice C: script approval, then synthesis. Both are explicit
+  // curator actions on a draft/needs_review audio artifact — never
+  // automatic, never from an approved/kept artifact (content is
+  // frozen there; revise first).
+  if (action === "approve-script" || action === "synthesize") {
+    if (artifact.type !== "audio") {
+      return fail("INVALID_ACTION", `${action} applies only to audio artifacts.`);
+    }
+    if (artifact.status !== "draft" && artifact.status !== "needs_review") {
+      return fail("ILLEGAL_TRANSITION", `cannot ${action} on an artifact in status ${artifact.status}.`);
+    }
+    if (action === "approve-script") {
+      if (artifact.content.scriptStatus !== "draft") {
+        return fail("ILLEGAL_TRANSITION", `script is already ${artifact.content.scriptStatus}.`);
+      }
+      const next = {
+        ...artifact,
+        content: {
+          ...artifact.content,
+          scriptStatus: "approved",
+          scriptApprovedBy: actor,
+          scriptApprovedAt: now,
+        },
+        version: artifact.version + 1,
+        updatedAt: now,
+        reviewHistory: [
+          ...artifact.reviewHistory,
+          { action: "approve-script", actor, reason: reason ?? "script approved for synthesis", fromStatus: artifact.status, toStatus: artifact.status, at: now },
+        ],
+      };
+      next.contentHash = contentHashFor(next.content);
+      store.saveDraft(next);
+      return { ok: true, artifact: artifactSummary(next) };
+    }
+
+    // synthesize
+    if (artifact.content.scriptStatus !== "approved") {
+      return fail("SCRIPT_NOT_APPROVED", "the narration script must be explicitly approved before synthesis; approve the script first.");
+    }
+    const manifest = store.getSourceSet(artifact.sourceSetId);
+    const { fresh, staleReasons } = manifest
+      ? checkFreshness(artifact, manifest)
+      : { fresh: false, staleReasons: [{ code: "MANIFEST_MISSING", message: "the source set is gone." }] };
+    if (!fresh) {
+      const invalidated = invalidateIfStale(artifact, manifest, { actor }, { now });
+      if (invalidated.ok && invalidated.invalidated) store.saveDraft(invalidated.artifact);
+      return {
+        ok: false,
+        error: {
+          code: "STALE_SOURCE",
+          message: `a source changed since this draft was generated (${staleReasons.map((r) => r.code).join(", ")}); regenerate and re-review before synthesis.`,
+          staleReasons,
+        },
+        artifact: invalidated.ok ? artifactSummary(invalidated.artifact) : undefined,
+      };
+    }
+    const detect = options.tts?.detectTtsCapability ?? detectTtsCapability;
+    const capability = detect();
+    const synthesize = options.tts?.synthesizeAudio ?? synthesizeAudio;
+    const result = synthesize({ scriptText: audioScriptText(artifact.content), capability });
+    if (!result.ok) {
+      // Honest failure: nothing is stored, no audio is claimed.
+      return { ok: false, error: result.error };
+    }
+    if (result.audio.length > MAX_AUDIO_BYTES) {
+      return fail("TTS_OUTPUT_TOO_LARGE", `synthesized audio (${result.audio.length} bytes) exceeds the ${MAX_AUDIO_BYTES}-byte limit.`);
+    }
+    store.saveAudio(artifact.id, result.audio);
+    const audioSha256 = createHash("sha256").update(result.audio).digest("hex");
+    const next = {
+      ...artifact,
+      content: {
+        ...artifact.content,
+        tts: {
+          available: true,
+          engine: result.engine,
+          checked: capability.checked,
+        },
+        audio: {
+          present: true,
+          format: result.format,
+          bytes: result.audio.length,
+          durationSeconds: result.durationSeconds,
+          engine: result.engine,
+          sha256: audioSha256,
+        },
+        chapters: computeChapters({ segments: artifact.content.segments, durationSeconds: result.durationSeconds }),
+        // The runtime can now synthesize: the generation-time
+        // TTS_UNAVAILABLE note no longer describes this artifact.
+        needsReview: (artifact.content.needsReview ?? []).filter((item) => item.code !== "TTS_UNAVAILABLE"),
+      },
+      version: artifact.version + 1,
+      updatedAt: now,
+      reviewHistory: [
+        ...artifact.reviewHistory,
+        { action: "synthesize", actor, reason: reason ?? `synthesized with ${result.engine} (offline)`, fromStatus: artifact.status, toStatus: artifact.status, at: now },
+      ],
+    };
+    next.contentHash = contentHashFor(next.content);
+    store.saveDraft(next);
+    return { ok: true, artifact: artifactSummary(next) };
+  }
+
   if (!["submit", "approve", "revise", "keep", "discard"].includes(action)) {
-    return fail("INVALID_ACTION", `action must be one of: edit, submit, approve, revise, keep, discard.`);
+    return fail("INVALID_ACTION", `action must be one of: edit, submit, approve, revise, keep, discard, approve-script, synthesize.`);
   }
 
   if (action === "approve" || action === "keep") {
@@ -625,6 +874,29 @@ export function exportArtifact({ store, artifactId }, options = {}) {
       content: renderExplainerMarkdown(artifact.content, { status: artifact.status }),
     };
   }
+  if (artifact.type === "audio") {
+    // Synthesized audio exports as the playable WAV file. A
+    // script-only artifact exports its transcript instead — labeled
+    // script-only in plain words, never as completed audio.
+    if (artifact.content.audio?.present) {
+      const audio = store.getAudio(artifact.id);
+      if (!audio) {
+        return fail("AUDIO_MISSING", "this artifact records synthesized audio, but the audio file is missing from the store; regenerate and re-synthesize.");
+      }
+      return {
+        ok: true,
+        filename: `${artifact.id}.wav`,
+        mimeType: "audio/wav",
+        content: audio,
+      };
+    }
+    return {
+      ok: true,
+      filename: `${artifact.id}-transcript.md`,
+      mimeType: "text/markdown; charset=utf-8",
+      content: renderAudioTranscript(artifact.content, { status: artifact.status }),
+    };
+  }
   // The export SVG is rendered fresh from the approved, audited
   // content with the watermark OFF: the stored SVG is the draft
   // rendering and would keep its DRAFT — NOT VERIFIED banner after
@@ -635,5 +907,29 @@ export function exportArtifact({ store, artifactId }, options = {}) {
     filename: `${artifact.id}.svg`,
     mimeType: "image/svg+xml; charset=utf-8",
     content: renderInfographicSvgFor(artifact.content, false),
+  };
+}
+
+/**
+ * Returns the synthesized audio bytes for preview playback (the
+ * <audio> element in the preview HTML streams from the audio route).
+ * Owner-bound through the store — a foreign owner finds nothing.
+ * This is a preview aid, not an export: no status gate, no freshness
+ * gate. The preview page itself carries the DRAFT/STALE banners.
+ */
+export function getArtifactAudio({ store, artifactId }) {
+  if (!isNonEmptyString(artifactId)) return fail("INVALID_ARTIFACT", "artifactId is required.");
+  const artifact = store.getDraft(artifactId);
+  if (!artifact) return fail("NOT_FOUND", `no draft ${artifactId} for this owner.`);
+  if (!artifact.content.audio?.present) {
+    return fail("NOT_FOUND", `no synthesized audio for draft ${artifactId}.`);
+  }
+  const audio = store.getAudio(artifactId);
+  if (!audio) return fail("NOT_FOUND", `no synthesized audio for draft ${artifactId}.`);
+  return {
+    ok: true,
+    filename: `${artifact.id}.wav`,
+    mimeType: "audio/wav",
+    content: audio,
   };
 }
