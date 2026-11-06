@@ -44,7 +44,6 @@
 //   this module only touches the local store it was given.
 
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { createDraftStore } from "./draftStore.js";
 import { extractForManifest } from "./picker.js";
 import {
@@ -101,6 +100,19 @@ function fail(code, message) {
 
 function contentHashFor(content) {
   return sha256Hex(canonicalJson(content));
+}
+
+// Audio sidecar cleanup is best effort only: it must never mask the
+// result of the action it follows (a failed save, or a successful
+// commit whose old recording is now unreferenced).
+function cleanupAudioSidecars(store, artifactId, keepSha256) {
+  try {
+    store.deleteUnreferencedAudio(artifactId, keepSha256);
+  } catch {
+    // Orphans are harmless — nothing references them — so a cleanup
+    // failure is swallowed here; the next successful publish sweeps
+    // them instead.
+  }
 }
 
 function isNonEmptyString(value) {
@@ -680,12 +692,16 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
       };
     }
     // An edit drops audio synthesized from the old script: the
-    // record stopped claiming it in applyEdit, and the sidecar goes
-    // here so a stale recording can never be served for new words.
-    if (artifact.type === "audio" && artifact.content.audio?.present) {
-      store.deleteAudio(artifact.id);
-    }
+    // record stops claiming it in applyEdit. The sidecar is
+    // removed only AFTER the edited record is durable — deleting
+    // first would leave the old record claiming audio with
+    // missing bytes if the save failed. If the save throws, the
+    // old record and its sidecar both stay intact.
+    const previousAudio = artifact.content.audio;
     store.saveDraft(edited);
+    if (artifact.type === "audio" && previousAudio?.present) {
+      cleanupAudioSidecars(store, artifact.id, null);
+    }
     return { ok: true, artifact: artifactSummary(edited) };
   }
 
@@ -756,8 +772,15 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
     if (result.audio.length > MAX_AUDIO_BYTES) {
       return fail("TTS_OUTPUT_TOO_LARGE", `synthesized audio (${result.audio.length} bytes) exceeds the ${MAX_AUDIO_BYTES}-byte limit.`);
     }
-    store.saveAudio(artifact.id, result.audio);
-    const audioSha256 = createHash("sha256").update(result.audio).digest("hex");
+    // Publish the new audio as an immutable content-addressed
+    // sidecar FIRST: nothing references it yet, so a crash here
+    // leaves only an orphan file, never a record pointing at
+    // wrong bytes. The JSON record below is the commit point —
+    // it names the sidecar's digest and size, and the store
+    // verifies both on every read. If the record save fails, the
+    // old record still points at the old sidecar (never touched),
+    // the orphan is swept, and the original failure is reported.
+    const savedAudio = store.saveAudio(artifact.id, result.audio);
     const next = {
       ...artifact,
       content: {
@@ -770,10 +793,10 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
         audio: {
           present: true,
           format: result.format,
-          bytes: result.audio.length,
+          bytes: savedAudio.bytes,
           durationSeconds: result.durationSeconds,
           engine: result.engine,
-          sha256: audioSha256,
+          sha256: savedAudio.sha256,
         },
         chapters: computeChapters({ segments: artifact.content.segments, durationSeconds: result.durationSeconds }),
         // The runtime can now synthesize: the generation-time
@@ -788,7 +811,15 @@ export function reviewArtifact({ store, artifactId, action, actor, reason, edite
       ],
     };
     next.contentHash = contentHashFor(next.content);
-    store.saveDraft(next);
+    try {
+      store.saveDraft(next);
+    } catch (error) {
+      cleanupAudioSidecars(store, artifact.id, artifact.content.audio?.sha256 ?? null);
+      throw error;
+    }
+    // Commit succeeded: the old sidecar (and any orphan from an
+    // earlier crashed publish) is unreferenced now.
+    cleanupAudioSidecars(store, artifact.id, savedAudio.sha256);
     return { ok: true, artifact: artifactSummary(next) };
   }
 
@@ -877,11 +908,15 @@ export function exportArtifact({ store, artifactId }, options = {}) {
   if (artifact.type === "audio") {
     // Synthesized audio exports as the playable WAV file. A
     // script-only artifact exports its transcript instead — labeled
-    // script-only in plain words, never as completed audio.
+    // script-only in plain words, never as completed audio. The
+    // bytes are verified against the recorded SHA-256 and size:
+    // a record that claims audio whose bytes are missing or do
+    // not verify fails closed, never a silent transcript and
+    // never someone else's recording.
     if (artifact.content.audio?.present) {
-      const audio = store.getAudio(artifact.id);
+      const audio = store.getAudio(artifact.id, artifact.content.audio);
       if (!audio) {
-        return fail("AUDIO_MISSING", "this artifact records synthesized audio, but the audio file is missing from the store; regenerate and re-synthesize.");
+        return fail("AUDIO_CORRUPT", "this artifact records synthesized audio, but the recorded bytes are missing or do not match the recorded SHA-256 and size; regenerate and re-synthesize.");
       }
       return {
         ok: true,
@@ -924,8 +959,14 @@ export function getArtifactAudio({ store, artifactId }) {
   if (!artifact.content.audio?.present) {
     return fail("NOT_FOUND", `no synthesized audio for draft ${artifactId}.`);
   }
-  const audio = store.getAudio(artifactId);
-  if (!audio) return fail("NOT_FOUND", `no synthesized audio for draft ${artifactId}.`);
+  // The bytes are verified against the recorded SHA-256 and size
+  // before anything is served: a sidecar replaced or corrupted
+  // after publication fails closed instead of playing audio the
+  // record never claimed.
+  const audio = store.getAudio(artifactId, artifact.content.audio);
+  if (!audio) {
+    return fail("AUDIO_CORRUPT", "the recorded audio bytes are missing or do not match the recorded SHA-256 and size; re-synthesize from the approved script.");
+  }
   return {
     ok: true,
     filename: `${artifact.id}.wav`,

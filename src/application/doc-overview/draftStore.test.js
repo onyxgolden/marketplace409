@@ -3,7 +3,7 @@
 // The store is identity-bound: tests construct it with a principal
 // ({ ownerId }) and never pass an ownerId per call.
 
-import { chmodSync, mkdtempSync, statSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, statSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,32 +47,110 @@ describe("createDraftStore", () => {
     expect(second.getDraft("artifact_1")).toEqual(artifact);
   });
 
-  it("round-trips audio sidecars next to the draft, and lists only JSON drafts", () => {
+  it("round-trips content-addressed audio sidecars next to the draft, and lists only JSON drafts", () => {
     const root = tempRoot();
     const store = createDraftStore(root, { ownerId: "owner-1" });
     store.saveDraft(artifact);
     const bytes = Buffer.from("RIFF....WAVEfake-audio-bytes");
-    expect(store.getAudio("artifact_1")).toBeNull();
-    expect(store.saveAudio("artifact_1", bytes)).toBe(bytes.length);
-    expect(store.getAudio("artifact_1")).toEqual(bytes);
+    expect(store.getAudio("artifact_1", null)).toBeNull();
+    const saved = store.saveAudio("artifact_1", bytes);
+    expect(saved.bytes).toBe(bytes.length);
+    expect(saved.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(store.getAudio("artifact_1", saved)).toEqual(bytes);
     // The sidecar must not pollute the draft listing.
     expect(store.listDrafts()).toEqual(["artifact_1"]);
     // Reload preserves the sidecar across store instances.
     const second = createDraftStore(root, { ownerId: "owner-1" });
-    expect(second.getAudio("artifact_1")).toEqual(bytes);
+    expect(second.getAudio("artifact_1", saved)).toEqual(bytes);
     // Delete removes it; a second delete is quiet.
-    store.deleteAudio("artifact_1");
-    expect(store.getAudio("artifact_1")).toBeNull();
-    expect(() => store.deleteAudio("artifact_1")).not.toThrow();
+    store.deleteAudio("artifact_1", saved.sha256);
+    expect(store.getAudio("artifact_1", saved)).toBeNull();
+    expect(() => store.deleteAudio("artifact_1", saved.sha256)).not.toThrow();
+  });
+
+  it("sidecars are content-addressed and immutable: same bytes, same file; new bytes, new file, old intact", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const first = Buffer.from("first-recording");
+    const second = Buffer.from("second-recording");
+    const savedFirst = store.saveAudio("artifact_1", first);
+    expect(store.saveAudio("artifact_1", first)).toEqual(savedFirst);
+    const savedSecond = store.saveAudio("artifact_1", second);
+    expect(savedSecond.sha256).not.toBe(savedFirst.sha256);
+    expect(store.getAudio("artifact_1", savedFirst)).toEqual(first);
+    expect(store.getAudio("artifact_1", savedSecond)).toEqual(second);
+    // Both files coexist on disk; neither publish disturbed the other.
+    const dir = path.join(root, "owner-1", "drafts");
+    expect(readdirSync(dir).filter((name) => name.endsWith(".wav")).sort()).toEqual([
+      `artifact_1.${savedFirst.sha256}.wav`,
+      `artifact_1.${savedSecond.sha256}.wav`,
+    ].sort());
+  });
+
+  it("getAudio verifies bytes against the recorded SHA-256 and size, and fails closed on mismatch", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const bytes = Buffer.from("RIFF....WAVEfake-audio-bytes");
+    const saved = store.saveAudio("artifact_1", bytes);
+    const sidecar = path.join(root, "owner-1", "drafts", `artifact_1.${saved.sha256}.wav`);
+    // One flipped byte: same length, wrong hash.
+    const tampered = Buffer.from(bytes);
+    tampered[10] ^= 0xff;
+    writeFileSync(sidecar, tampered);
+    expect(store.getAudio("artifact_1", saved)).toBeNull();
+    // Restored bytes verify again: the check is on content, not a flag.
+    writeFileSync(sidecar, bytes);
+    expect(store.getAudio("artifact_1", saved)).toEqual(bytes);
+    // Replaced with shorter garbage: wrong length and wrong hash.
+    writeFileSync(sidecar, Buffer.from("garbage"));
+    expect(store.getAudio("artifact_1", saved)).toBeNull();
+    writeFileSync(sidecar, bytes);
+    // A descriptor for bytes that were never published: no file.
+    expect(store.getAudio("artifact_1", { sha256: "b".repeat(64), bytes: bytes.length })).toBeNull();
+    // Malformed descriptors fail closed, never throw.
+    expect(store.getAudio("artifact_1", { sha256: "not-a-digest", bytes: bytes.length })).toBeNull();
+    expect(store.getAudio("artifact_1", { sha256: saved.sha256, bytes: -1 })).toBeNull();
+    expect(store.getAudio("artifact_1", { sha256: saved.sha256, bytes: bytes.length + 1 })).toBeNull();
+    expect(store.getAudio("artifact_1", undefined)).toBeNull();
+  });
+
+  it("deleteAudio removes only the named sidecar", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const savedFirst = store.saveAudio("artifact_1", Buffer.from("first-recording"));
+    const savedSecond = store.saveAudio("artifact_1", Buffer.from("second-recording"));
+    store.deleteAudio("artifact_1", savedFirst.sha256);
+    expect(store.getAudio("artifact_1", savedFirst)).toBeNull();
+    expect(store.getAudio("artifact_1", savedSecond)).toEqual(Buffer.from("second-recording"));
+    expect(() => store.deleteAudio("artifact_1", savedFirst.sha256)).not.toThrow();
+    expect(() => store.deleteAudio("artifact_1", "not-a-digest")).toThrow(/sha256/);
+  });
+
+  it("deleteUnreferencedAudio keeps the committed sidecar and sweeps orphans", () => {
+    const root = tempRoot();
+    const store = createDraftStore(root, { ownerId: "owner-1" });
+    store.saveDraft(artifact);
+    const savedFirst = store.saveAudio("artifact_1", Buffer.from("first-recording"));
+    const savedSecond = store.saveAudio("artifact_1", Buffer.from("second-recording"));
+    expect(store.deleteUnreferencedAudio("artifact_1", savedFirst.sha256)).toBe(1);
+    expect(store.getAudio("artifact_1", savedFirst)).toEqual(Buffer.from("first-recording"));
+    expect(store.getAudio("artifact_1", savedSecond)).toBeNull();
+    expect(store.deleteUnreferencedAudio("artifact_1", null)).toBe(1);
+    expect(store.getAudio("artifact_1", savedFirst)).toBeNull();
+    expect(store.deleteUnreferencedAudio("artifact_1", null)).toBe(0);
+    expect(() => store.deleteUnreferencedAudio("artifact_1", "not-a-digest")).toThrow(/sha256/);
   });
 
   it("audio sidecars are owner-scoped: another bound owner hears nothing", () => {
     const root = tempRoot();
     const owner1 = createDraftStore(root, { ownerId: "owner-1" });
     owner1.saveDraft(artifact);
-    owner1.saveAudio("artifact_1", Buffer.from("owner-1 audio"));
+    const saved = owner1.saveAudio("artifact_1", Buffer.from("owner-1 audio"));
     const owner2 = createDraftStore(root, { ownerId: "owner-2" });
-    expect(owner2.getAudio("artifact_1")).toBeNull();
+    expect(owner2.getAudio("artifact_1", saved)).toBeNull();
     expect(owner2.getDraft("artifact_1")).toBeNull();
   });
 
@@ -80,8 +158,9 @@ describe("createDraftStore", () => {
     const root = tempRoot();
     const store = createDraftStore(root, { ownerId: "owner-1" });
     expect(() => store.saveAudio("../escape", Buffer.from("x"))).toThrow(/safe path segment/);
-    expect(() => store.getAudio("../escape")).toThrow(/safe path segment/);
-    expect(() => store.deleteAudio("../escape")).toThrow(/safe path segment/);
+    expect(() => store.getAudio("../escape", null)).toThrow(/safe path segment/);
+    expect(() => store.deleteAudio("../escape", "a".repeat(64))).toThrow(/safe path segment/);
+    expect(() => store.deleteUnreferencedAudio("../escape", null)).toThrow(/safe path segment/);
   });
 
   it("is owner-scoped and non-disclosing: another bound owner sees nothing", () => {

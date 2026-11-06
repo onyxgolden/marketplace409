@@ -9,7 +9,7 @@
 // real minimal WAV) — the real subprocess path is covered in the
 // domain tests; here the orchestration is under test.
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -197,8 +197,9 @@ describe("audio flow with an offline TTS engine", () => {
     expect(withAudio.content.chapters).toHaveLength(withAudio.content.segments.length);
     expect(withAudio.content.chapters[0].startsAtSeconds).toBe(0);
     expect(withAudio.content.needsReview.map((item) => item.code)).not.toContain("TTS_UNAVAILABLE");
-    expect(store.getAudio(audio.id)).toEqual(makeWav());
-    expect(inspectWav(store.getAudio(audio.id)).valid).toBe(true);
+    const audioRecord = store.getDraft(audio.id).content.audio;
+    expect(store.getAudio(audio.id, audioRecord)).toEqual(makeWav());
+    expect(inspectWav(store.getAudio(audio.id, audioRecord)).valid).toBe(true);
 
     // Preview carries a player; the audio route serves the bytes.
     const preview = getArtifactPreview({ store, artifactId: audio.id });
@@ -222,7 +223,7 @@ describe("audio flow with an offline TTS engine", () => {
     // Reload preserves the audio record and the sidecar.
     const second = createDraftStore(root, { ownerId: "owner-1" });
     expect(second.getDraft(audio.id).content.audio.present).toBe(true);
-    expect(second.getAudio(audio.id)).toEqual(makeWav());
+    expect(second.getAudio(audio.id, second.getDraft(audio.id).content.audio)).toEqual(makeWav());
   });
 
   it("an edit after synthesis resets script approval and drops the stale recording", () => {
@@ -231,7 +232,8 @@ describe("audio flow with an offline TTS engine", () => {
     const actor = "curator-1";
     approveScript(store, audio.id, actor);
     expect(synthesize(store, audio.id, tts).ok).toBe(true);
-    expect(store.getAudio(audio.id)).not.toBeNull();
+    const recorded = store.getDraft(audio.id).content.audio;
+    expect(store.getAudio(audio.id, recorded)).not.toBeNull();
 
     const draft = store.getDraft(audio.id);
     const edited = reviewArtifact({
@@ -250,7 +252,9 @@ describe("audio flow with an offline TTS engine", () => {
     expect(stored.content.scriptApprovedBy).toBeNull();
     expect(stored.content.audio).toBeNull();
     expect(stored.content.chapters).toEqual([]);
-    expect(store.getAudio(audio.id)).toBeNull();
+    // The old recording is gone with the old record: the sidecar the
+    // old record referenced no longer exists under its hash.
+    expect(store.getAudio(audio.id, recorded)).toBeNull();
     // The edited script must be re-approved before synthesis runs again.
     expect(synthesize(store, audio.id, tts).error.code).toBe("SCRIPT_NOT_APPROVED");
   });
@@ -325,7 +329,7 @@ describe("audio flow with no offline TTS engine (honest fallback)", () => {
     expect(result.error.code).toBe("TTS_UNAVAILABLE");
     const draft = store.getDraft(audio.id);
     expect(draft.content.audio).toBeNull();
-    expect(store.getAudio(audio.id)).toBeNull();
+    expect(store.getAudio(audio.id, draft.content.audio)).toBeNull();
     expect(draft.content.needsReview.map((item) => item.code)).toContain("TTS_UNAVAILABLE");
 
     // The preview never shows a player for a script-only draft.
@@ -362,10 +366,168 @@ describe("audio cross-owner access", () => {
     const tts = fakeTts();
     const { root, audio } = setup(tts);
     const other = createDraftStore(root, { ownerId: "owner-2" });
+    const owner1 = createDraftStore(root, { ownerId: "owner-1" });
+    const recorded = owner1.getDraft(audio.id).content.audio;
     expect(other.getDraft(audio.id)).toBeNull();
-    expect(other.getAudio(audio.id)).toBeNull();
+    expect(other.getAudio(audio.id, recorded)).toBeNull();
     expect(reviewArtifact({ store: other, artifactId: audio.id, action: "approve-script", actor: "curator-2" }).error.code).toBe("NOT_FOUND");
     expect(exportArtifact({ store: other, artifactId: audio.id }).error.code).toBe("NOT_FOUND");
     expect(getArtifactAudio({ store: other, artifactId: audio.id }).error.code).toBe("NOT_FOUND");
+  });
+});
+
+// Slice C fix round 1 (ChatGPT NEEDS CHANGES at 73eb20e9, P1):
+// the sidecar and the JSON record were published non-atomically, so a
+// crash between them could serve audio the record never claimed.
+// Sidecars are now content-addressed and immutable, the JSON record
+// is the commit point, and reads verify bytes against the record.
+
+/** Minimal PCM WAV with a seeded data section (same size/duration, different bytes). */
+function makeWavSeeded(seed, dataSize = 16000) {
+  const buffer = makeWav(dataSize);
+  buffer.fill(seed, 44);
+  return buffer;
+}
+
+/** Fake TTS returning different WAV bytes on every synthesis call. */
+function variantTts() {
+  let calls = 0;
+  return {
+    detectTtsCapability: () => FAKE_CAPABILITY,
+    synthesizeAudio: ({ scriptText }) => {
+      if (!scriptText || scriptText.length === 0) {
+        return { ok: false, error: { code: "TTS_EMPTY_SCRIPT", message: "empty script" } };
+      }
+      const audio = makeWavSeeded(0x11 + calls);
+      calls += 1;
+      return { ok: true, audio, format: "wav", engine: "espeak-ng", durationSeconds: 1 };
+    },
+  };
+}
+
+function sidecarNames(root, artifactId) {
+  return readdirSync(path.join(root, "owner-1", "drafts"))
+    .filter((name) => name.endsWith(".wav"))
+    .sort();
+}
+
+/** A store wrapper whose saveDraft throws for the first `failTimes` calls. */
+function failingSaveDraftStore(store, failTimes = 1) {
+  let remaining = failTimes;
+  return {
+    ...store,
+    saveDraft: (artifact) => {
+      if (remaining > 0) {
+        remaining -= 1;
+        throw new Error("injected JSON save failure");
+      }
+      return store.saveDraft(artifact);
+    },
+  };
+}
+
+describe("audio sidecar/record atomic publication", () => {
+  it("repeated synthesis publishes the new recording and retires the old sidecar", () => {
+    const tts = variantTts();
+    const { root, store, audio } = setup(tts);
+    approveScript(store, audio.id);
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    const first = store.getDraft(audio.id).content.audio;
+    expect(first.present).toBe(true);
+    expect(sidecarNames(root, audio.id)).toEqual([`${audio.id}.${first.sha256}.wav`]);
+    expect(getArtifactAudio({ store, artifactId: audio.id }).content).toEqual(makeWavSeeded(0x11));
+
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    const second = store.getDraft(audio.id).content.audio;
+    expect(second.sha256).not.toBe(first.sha256);
+    expect(sidecarNames(root, audio.id)).toEqual([`${audio.id}.${second.sha256}.wav`]);
+    expect(getArtifactAudio({ store, artifactId: audio.id }).content).toEqual(makeWavSeeded(0x12));
+    // The old recording is no longer servable under its old record.
+    expect(store.getAudio(audio.id, first)).toBeNull();
+  });
+
+  it("a JSON save failure during re-synthesis keeps the old committed audio and leaves no orphan", () => {
+    const tts = variantTts();
+    const { root, store, audio } = setup(tts);
+    approveScript(store, audio.id);
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    const first = store.getDraft(audio.id).content.audio;
+    const versionBefore = store.getDraft(audio.id).version;
+
+    const failing = failingSaveDraftStore(store, 1);
+    expect(() => synthesize(failing, audio.id, tts)).toThrow(/injected JSON save failure/);
+
+    const draft = store.getDraft(audio.id);
+    expect(draft.version).toBe(versionBefore);
+    expect(draft.content.audio.sha256).toBe(first.sha256);
+    expect(draft.content.scriptStatus).toBe("approved");
+    expect(getArtifactAudio({ store, artifactId: audio.id }).content).toEqual(makeWavSeeded(0x11));
+    expect(sidecarNames(root, audio.id)).toEqual([`${audio.id}.${first.sha256}.wav`]);
+
+    // The next synthesis succeeds on the same approved script and
+    // publishes the new recording; the old sidecar is retired.
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    const second = store.getDraft(audio.id).content.audio;
+    expect(second.sha256).not.toBe(first.sha256);
+    expect(sidecarNames(root, audio.id)).toEqual([`${audio.id}.${second.sha256}.wav`]);
+    expect(getArtifactAudio({ store, artifactId: audio.id }).content).toEqual(makeWavSeeded(0x13));
+  });
+
+  it("an edit whose JSON save fails keeps the old recording", () => {
+    const tts = variantTts();
+    const { root, store, audio } = setup(tts);
+    approveScript(store, audio.id);
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    const first = store.getDraft(audio.id).content.audio;
+    const versionBefore = store.getDraft(audio.id).version;
+
+    const draft = store.getDraft(audio.id);
+    const failing = failingSaveDraftStore(store, 1);
+    expect(() => reviewArtifact({
+      store: failing,
+      artifactId: audio.id,
+      action: "edit",
+      actor: "curator-1",
+      editedContent: { kind: "audio", segments: draft.content.segments.slice(0, 1) },
+    })).toThrow(/injected JSON save failure/);
+
+    const stored = store.getDraft(audio.id);
+    expect(stored.version).toBe(versionBefore);
+    expect(stored.content.audio.sha256).toBe(first.sha256);
+    expect(stored.content.scriptStatus).toBe("approved");
+    expect(getArtifactAudio({ store, artifactId: audio.id }).content).toEqual(makeWavSeeded(0x11));
+    expect(sidecarNames(root, audio.id)).toEqual([`${audio.id}.${first.sha256}.wav`]);
+  });
+
+  it("a corrupted or replaced sidecar fails closed on preview and export", () => {
+    const tts = variantTts();
+    const { root, store, audio } = setup(tts);
+    const actor = "curator-1";
+    approveScript(store, audio.id, actor);
+    expect(synthesize(store, audio.id, tts).ok).toBe(true);
+    reviewArtifact({ store, artifactId: audio.id, action: "submit", actor });
+    reviewArtifact({ store, artifactId: audio.id, action: "approve", actor });
+    const record = store.getDraft(audio.id).content.audio;
+    const sidecar = path.join(root, "owner-1", "drafts", `${audio.id}.${record.sha256}.wav`);
+
+    // One flipped byte: same length, wrong hash.
+    const tampered = Buffer.from(makeWavSeeded(0x11));
+    tampered[100] ^= 0xff;
+    writeFileSync(sidecar, tampered);
+    expect(getArtifactAudio({ store, artifactId: audio.id }).error.code).toBe("AUDIO_CORRUPT");
+    expect(exportArtifact({ store, artifactId: audio.id }).error.code).toBe("AUDIO_CORRUPT");
+
+    // Replaced with a different valid recording: hash mismatch.
+    writeFileSync(sidecar, makeWavSeeded(0x12));
+    expect(getArtifactAudio({ store, artifactId: audio.id }).error.code).toBe("AUDIO_CORRUPT");
+    expect(exportArtifact({ store, artifactId: audio.id }).error.code).toBe("AUDIO_CORRUPT");
+
+    // Missing bytes entirely: still fail closed, never a silent
+    // script-only export for an artifact that claims audio.
+    unlinkSync(sidecar);
+    expect(getArtifactAudio({ store, artifactId: audio.id }).error.code).toBe("AUDIO_CORRUPT");
+    const exported = exportArtifact({ store, artifactId: audio.id });
+    expect(exported.ok).toBe(false);
+    expect(exported.error.code).toBe("AUDIO_CORRUPT");
   });
 });
