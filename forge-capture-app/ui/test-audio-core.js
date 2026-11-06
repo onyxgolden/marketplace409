@@ -195,6 +195,14 @@ export class TestAudioSession {
   reset() {
     this.stopTick();
     this.stopDeadline();
+    // Bumped here and by cancel()/dispose() - every async continuation
+    // (start()'s getUserMedia await, stop()'s flush/save awaits) captures
+    // its own generation at the point it began and checks it against
+    // this.generation after every await, so a cancel/dispose/new-start
+    // that happens while one is in flight makes it a no-op on resume
+    // instead of mutating state (or saving a clip) out from under a
+    // session the caller already considers over.
+    this.generation = (this.generation ?? 0) + 1;
     this.state = "idle";
     this.reason = null;
     this.mime = null;
@@ -204,6 +212,7 @@ export class TestAudioSession {
     this.analyser = null;
     this.chunks = [];
     this.appendChain = Promise.resolve();
+    this.appendError = null;
     this.tickLevels = [];
     this.lastWaveform = null;
     this.deviceLabel = "";
@@ -237,6 +246,7 @@ export class TestAudioSession {
     }
     if (!this.AudioContextImpl) throw new Error("live level metering is not supported here");
     this.reset();
+    const gen = this.generation;
     this.state = "starting";
     this.deviceLabel = deviceLabel || (deviceId ? "Selected microphone" : "System default");
     this.emit();
@@ -248,7 +258,26 @@ export class TestAudioSession {
       const constraints = deviceId
         ? { audio: { deviceId: { exact: deviceId } } }
         : { audio: true };
-      this.stream = await this.mediaDevices.getUserMedia(constraints);
+      // The only await in start() - the permission prompt can sit open for
+      // an arbitrarily long time, during which cancel()/dispose() (or a
+      // fresh start()) may already have ended this attempt. Resolve into a
+      // LOCAL variable first, never straight into this.stream: if the
+      // generation has moved on, this.stream may already belong to a
+      // different attempt (or have been nulled by cancel/dispose/reset),
+      // and assigning the late stream there would hand an unmanaged,
+      // never-stopped microphone stream to whatever runs next.
+      const stream = await this.mediaDevices.getUserMedia(constraints);
+      if (gen !== this.generation) {
+        for (const track of stream.getTracks()) {
+          try {
+            track.stop();
+          } catch {
+            /* best effort */
+          }
+        }
+        return;
+      }
+      this.stream = stream;
       this.audioCtx = new this.AudioContextImpl();
       const source = this.audioCtx.createMediaStreamSource(this.stream);
       this.analyser = this.audioCtx.createAnalyser();
@@ -266,6 +295,7 @@ export class TestAudioSession {
         this.stop().catch((err) => this.fail(err));
       }, this.durationMs);
     } catch (err) {
+      if (gen !== this.generation) return; // a stale attempt's own failure must never overwrite newer state
       await this.cleanupAfterFailedStart();
       this.state = "failed";
       this.reason = describeRecordingError(err);
@@ -307,8 +337,18 @@ export class TestAudioSession {
   onChunk(blob) {
     if (!blob || blob.size === 0) return;
     this.appendChain = this.appendChain.then(async () => {
-      const buf = await blob.arrayBuffer();
-      this.chunks.push(new Uint8Array(buf));
+      try {
+        const buf = await blob.arrayBuffer();
+        this.chunks.push(new Uint8Array(buf));
+      } catch (err) {
+        // A rejected arrayBuffer() must never propagate out through
+        // appendChain - stopRecorderAndFlush()/stop() await this chain,
+        // and an unhandled rejection there would escape stop() entirely
+        // (no catch around that await) instead of failing the test
+        // cleanly. Record it; stop() checks appendError and fails the
+        // test for a known reason instead of saving a partial clip.
+        this.appendError = this.appendError || err;
+      }
     });
   }
 
@@ -352,19 +392,28 @@ export class TestAudioSession {
     }
   }
 
-  /** Stop the recorder, wait for the final chunk, flush the append chain. */
+  /** Stop the recorder, wait for the final chunk, flush the append chain.
+   * Resolves { timedOut } - timedOut distinguishes "the recorder never
+   * confirmed onstop" from a clean stop, so the caller can treat a timeout
+   * as a failed/truncated test instead of a complete one (MediaRecorder
+   * commonly emits its last dataavailable right on stop, so a clip whose
+   * stop was never actually observed cannot be trusted as complete). */
   stopRecorderAndFlush() {
     const rec = this.recorder;
     return new Promise((resolve) => {
       let done = false;
-      const finish = () => {
-        if (!done) {
-          done = true;
-          resolve();
+      let timer = null;
+      const finish = (timedOut) => {
+        if (done) return;
+        done = true;
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
         }
+        resolve(timedOut);
       };
       if (!rec) {
-        finish();
+        finish(false);
         return;
       }
       const prevOnStop = rec.onstop;
@@ -372,16 +421,19 @@ export class TestAudioSession {
         try {
           if (typeof prevOnStop === "function") prevOnStop.call(rec, e);
         } finally {
-          finish();
+          finish(false);
         }
       };
-      setTimeout(finish, TEST_AUDIO_STOP_TIMEOUT_MS);
+      timer = setTimeout(() => finish(true), TEST_AUDIO_STOP_TIMEOUT_MS);
       try {
         this.stopRecorder();
       } catch {
-        finish();
+        finish(false);
       }
-    }).then(() => this.appendChain);
+    }).then(async (timedOut) => {
+      await this.appendChain;
+      return timedOut;
+    });
   }
 
   async cleanupAfterFailedStart() {
@@ -412,13 +464,36 @@ export class TestAudioSession {
   /** Stop recording, measure the whole clip, save it, and report the verdict. */
   async stop() {
     if (this.state !== "recording") return;
+    const gen = this.generation;
     this.stopTick();
     this.stopDeadline();
     this.state = "stopping";
     this.emit();
-    await this.stopRecorderAndFlush();
+    const timedOut = await this.stopRecorderAndFlush();
+    // A cancel()/dispose() (or a brand-new start()) that landed while the
+    // line above was in flight already owns this session's state - this
+    // continuation must never save a clip, overwrite "cancelled", or emit
+    // a stale result on top of it.
+    if (gen !== this.generation) return;
     this.stopTracks();
     this.closeAudioCtx();
+    if (timedOut) {
+      // The recorder's own onstop never fired - MediaRecorder commonly
+      // emits its last chunk right on stop, so a clip whose stop was
+      // never actually confirmed cannot be trusted as complete. Fail
+      // rather than save a possibly-truncated clip as if it were a
+      // passing test.
+      this.state = "failed";
+      this.reason = "the recorder did not confirm stopping in time";
+      this.emit();
+      return;
+    }
+    if (this.appendError) {
+      this.state = "failed";
+      this.reason = String((this.appendError && this.appendError.message) || this.appendError);
+      this.emit();
+      return;
+    }
     const bytes = concatBytes(this.chunks);
     const aggregate = aggregateLevels(this.tickLevels);
     const verdict = audioVerdict(aggregate);
@@ -439,6 +514,14 @@ export class TestAudioSession {
           captured: verdict.captured,
         },
       });
+      // Defined semantics for "can an already-started save be cancelled":
+      // the write to disk, once invoke() has fired, runs to completion -
+      // there is no cheap abort for the Tauri IPC call. What cancel()/
+      // dispose() guarantees is narrower and sufficient: this session
+      // never reports that save as a success (or failure) once the user
+      // has already moved on. A stale generation here means exactly
+      // that happened, so the result is discarded rather than applied.
+      if (gen !== this.generation) return;
       this.result = {
         path: res && res.path,
         fileName: res && res.fileName,
@@ -450,6 +533,7 @@ export class TestAudioSession {
       this.state = "saved";
       this.emit();
     } catch (err) {
+      if (gen !== this.generation) return;
       this.state = "failed";
       this.reason = String((err && err.message) || err);
       this.emit();
@@ -459,6 +543,11 @@ export class TestAudioSession {
   /** Abort a live test without saving anything. */
   cancel() {
     if (!this.active) return;
+    // Invalidates any in-flight start()/stop() continuation immediately -
+    // see reset()'s comment. Done BEFORE touching tick/deadline/recorder
+    // so a continuation that checks generation right after this call
+    // (e.g. one already past its own await, about to run) sees the bump.
+    this.generation = (this.generation ?? 0) + 1;
     this.stopTick();
     this.stopDeadline();
     try {
@@ -473,7 +562,12 @@ export class TestAudioSession {
     this.emit();
   }
 
+  /** Tear down for good (e.g. component unmount). No further event is ever
+   * emitted by this instance after this call - any async work already in
+   * flight becomes a no-op on resume via the generation check. */
   dispose() {
+    this.generation = (this.generation ?? 0) + 1;
+    this.onEvent = () => {}; // belt-and-suspenders: even a same-generation straggler emits nowhere
     this.stopTick();
     this.stopDeadline();
     try {

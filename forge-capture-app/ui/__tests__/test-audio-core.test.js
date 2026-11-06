@@ -300,3 +300,240 @@ describe("TestAudioSession — error paths", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 });
+
+// --- lifecycle race regressions (PR #745 fix round 1) -----------------------
+//
+// ChatGPT NEEDS CHANGES, results/chatgpt/pr-745-test-audio-review.md:
+// cancel()/dispose() during a pending getUserMedia, during the recorder
+// flush, and during the save invoke must each actually stop that in-flight
+// work from mutating state or saving a clip afterward — and a recorder
+// that never confirms onstop must fail the test, never save a possibly-
+// truncated clip as if it passed. Every fake below is deferred/controllable
+// specifically to put the session mid-await at the exact point each race
+// needs it, not just at a tick boundary fake timers can already reach.
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeDeferredMediaDevices() {
+  const gum = deferred();
+  const stopTrack = vi.fn();
+  return {
+    mediaDevices: { getUserMedia: () => gum.promise },
+    resolveGetUserMedia: () => gum.resolve({ getTracks: () => [{ stop: stopTrack }] }),
+    stopTrack,
+  };
+}
+
+/** A recorder whose stop() does NOT auto-fire onstop - the test fires it
+ * manually (or never, for the timeout case), unlike FakeRecorder above. */
+class ControllableRecorder {
+  constructor(stream, opts) {
+    this.stream = stream;
+    this.opts = opts;
+    this.state = "inactive";
+    this.ondataavailable = null;
+    this.onstop = null;
+    this.onerror = null;
+  }
+  static isTypeSupported(mime) {
+    return mime.startsWith("audio/webm");
+  }
+  start() {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    // Intentionally does not call ondataavailable/onstop - the test drives
+    // those explicitly via emitChunkAndStop()/leave it hanging for timeout.
+  }
+  emitChunkAndStop(bytes = new Uint8Array([9, 9, 9])) {
+    if (this.ondataavailable) this.ondataavailable({ data: makeBlob(bytes) });
+    if (this.onstop) this.onstop({});
+  }
+}
+
+function makeControllableSession({ samplesFn, invokeImpl, mediaDevices } = {}) {
+  const events = [];
+  const fn = samplesFn || (() => toneSamples());
+  const session = new TestAudioSession({
+    invoke: invokeImpl || vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" })),
+    mediaDevices: mediaDevices || makeMediaDevices(),
+    MediaRecorderImpl: ControllableRecorder,
+    AudioContextImpl: function (...args) {
+      return new FakeAudioContext(fn, ...args);
+    },
+    onEvent: (e) => events.push(e),
+    durationMs: TEST_AUDIO_DURATION_MS,
+  });
+  return { session, events };
+}
+
+describe("TestAudioSession — cancel/dispose during pending microphone acquisition", () => {
+  it("cancel() while getUserMedia is still pending stops the late stream and never starts recording", async () => {
+    const { mediaDevices, resolveGetUserMedia, stopTrack } = makeDeferredMediaDevices();
+    const { session } = makeControllableSession({ mediaDevices });
+
+    const startPromise = session.start({});
+    expect(session.state).toBe("starting");
+
+    session.cancel();
+    expect(session.state).toBe("cancelled");
+
+    // The permission prompt resolves AFTER cancel() already ended this attempt.
+    resolveGetUserMedia();
+    await startPromise; // must resolve, not reject, for an attempt nobody cares about anymore
+    await flushMicrotasks();
+
+    expect(session.state).toBe("cancelled"); // never clobbered back to "recording"
+    expect(stopTrack).toHaveBeenCalledTimes(1); // the late stream's track was stopped, not leaked
+    expect(session.stream).toBeNull(); // the late stream was never adopted
+  });
+
+  it("dispose() while getUserMedia is still pending stops the late stream and emits nothing further", async () => {
+    const { mediaDevices, resolveGetUserMedia, stopTrack } = makeDeferredMediaDevices();
+    const { session, events } = makeControllableSession({ mediaDevices });
+
+    const startPromise = session.start({});
+    session.dispose();
+    const eventCountAtDispose = events.length;
+
+    resolveGetUserMedia();
+    await startPromise;
+    await flushMicrotasks();
+
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+    expect(session.stream).toBeNull();
+    expect(events.length).toBe(eventCountAtDispose); // no event fired after dispose()
+  });
+});
+
+describe("TestAudioSession — cancel/dispose during stop()'s recorder flush", () => {
+  it("cancel() while stop() awaits the recorder's onstop prevents the save", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" }));
+    const { session } = makeControllableSession({ invokeImpl: invoke });
+
+    await session.start({});
+    const rec = session.recorder;
+    const stopPromise = session.stop();
+    expect(session.state).toBe("stopping");
+
+    session.cancel();
+    expect(session.state).toBe("cancelled");
+
+    // The recorder confirms stop AFTER cancel() already ended this attempt.
+    // this.recorder was nulled by cancel()'s stopRecorder(), but the
+    // ControllableRecorder instance captured above is still the one
+    // stopRecorderAndFlush() registered its onstop handler on.
+    rec.emitChunkAndStop();
+    await stopPromise;
+    await flushMicrotasks();
+
+    expect(session.state).toBe("cancelled"); // never clobbered to "saved"
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("dispose() while stop() awaits the recorder's onstop prevents the save and emits nothing further", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" }));
+    const { session, events } = makeControllableSession({ invokeImpl: invoke });
+
+    await session.start({});
+    const rec = session.recorder;
+    const stopPromise = session.stop();
+    session.dispose();
+    const eventCountAtDispose = events.length;
+
+    rec.emitChunkAndStop();
+    await stopPromise;
+    await flushMicrotasks();
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(events.length).toBe(eventCountAtDispose);
+  });
+});
+
+describe("TestAudioSession — cancel during the save invoke", () => {
+  it("cancel() while stop() awaits test_audio_save discards the result instead of reporting it", async () => {
+    const save = deferred();
+    const invoke = vi.fn(() => save.promise);
+    const { session } = makeSession({ invokeImpl: invoke }); // FakeRecorder: onstop fires synchronously on stop()
+
+    await session.start({});
+    const stopPromise = session.stop(); // reaches the invoke() await synchronously up to that point
+    await flushMicrotasks();
+    expect(invoke).toHaveBeenCalledTimes(1);
+
+    session.cancel();
+    expect(session.state).toBe("cancelled");
+
+    save.resolve({ path: "/lib/late.webm", fileName: "late.webm" });
+    await stopPromise;
+    await flushMicrotasks();
+
+    expect(session.state).toBe("cancelled"); // never overwritten to "saved"
+    expect(session.result).toBeNull(); // the late result is discarded, not adopted
+  });
+});
+
+describe("TestAudioSession — recorder stop timeout", () => {
+  it("fails the test (never saves) when the recorder never confirms onstop", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" }));
+    const { session } = makeControllableSession({ invokeImpl: invoke });
+
+    await session.start({});
+    const stopPromise = session.stop();
+    expect(session.state).toBe("stopping");
+
+    // Never call emitChunkAndStop() - the recorder "hangs". Only the
+    // internal stop-flush timeout can resolve this.
+    await vi.advanceTimersByTimeAsync(5000); // TEST_AUDIO_STOP_TIMEOUT_MS
+    await stopPromise;
+
+    expect(session.state).toBe("failed");
+    expect(session.reason).toMatch(/did not confirm stopping/i);
+    expect(invoke).not.toHaveBeenCalled(); // a possibly-truncated clip is never saved as a pass
+  });
+
+  it("clears the stop-flush timer on a normal (non-timed-out) stop, so it never fires late", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" }));
+    const { session } = makeControllableSession({ invokeImpl: invoke });
+
+    await session.start({});
+    const rec = session.recorder;
+    const stopPromise = session.stop();
+    rec.emitChunkAndStop();
+    await stopPromise;
+
+    expect(session.state).toBe("saved"); // completed normally, not failed
+    // If the timer were still pending, advancing past it must change nothing.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(session.state).toBe("saved");
+  });
+});
+
+describe("TestAudioSession — a rejected chunk append fails the test instead of escaping or saving a partial clip", () => {
+  it("marks the test failed when a chunk's arrayBuffer() rejects", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/x.webm", fileName: "x.webm" }));
+    const { session } = makeControllableSession({ invokeImpl: invoke });
+
+    await session.start({});
+    const rec = session.recorder;
+    const stopPromise = session.stop();
+
+    const badBlob = { size: 4, arrayBuffer: async () => { throw new Error("blob read failed"); } };
+    rec.ondataavailable({ data: badBlob });
+    rec.onstop({});
+
+    await expect(stopPromise).resolves.toBeUndefined(); // never an unhandled rejection out of stop()
+    expect(session.state).toBe("failed");
+    expect(session.reason).toMatch(/blob read failed/i);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
