@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "packId": "forge-capture-ocr-ppocr-en-latin-v1",
+  "assets": [
+    {
+      "relativePath": "det_en_ppocrv3_mobile.onnx",
+      "sha256": "ea07c15d38ac40cd69da3c493444ec75b44ff23840553ff8ba102c1219ed39c2",
+      "byteLen": 2421707,
+      "modelId": "PP-OCRv3_mobile_det_en",
+      "revision": "PaddleOCR PP-OCRv3 mobile English/Latin text detector, ONNX export",
+      "license": "Apache-2.0"
+    },
+    {
+      "relativePath": "rec_en_ppocrv4_mobile.onnx",
+      "sha256": "e8770c967605983d1570cdf5352041dfb68fa0c21664f49f47b155abd3e0e318",
+      "byteLen": 7653044,
+      "modelId": "PP-OCRv4_mobile_rec_en",
+      "revision": "PaddleOCR PP-OCRv4 mobile English/Latin text recognizer, ONNX export",
+      "license": "Apache-2.0"
+    },
+    {
+      "relativePath": "en_dict.txt",
+      "sha256": "5662df9d2d03f0e8ca0d3b0649d6acbab904b6a14b3d3521463c71c37c668ce3",
+      "byteLen": 190,
+      "modelId": "PP-OCR_en_dict",
+      "revision": "English/Latin CTC character dictionary (95 entries)",
+      "license": "Apache-2.0"
+    },
+    {
+      "relativePath": "LICENSE-RapidOCR-Apache-2.0.txt",
+      "sha256": "3e0af25fdd06aa9586ae97adb00ea927ebe5a3805ac77d2d3a81ce5f55693333",
+      "byteLen": 11422,
+      "modelId": "license-doc",
+      "revision": "Upstream RapidOCR/PaddleOCR Apache-2.0 license text",
+      "license": "Apache-2.0"
+    },
+    {
+      "relativePath": "MODEL_LICENSES-upstream.md",
+      "sha256": "c5fd0e8603d3df743355b546121e6fe0f4ef8ff455c5a85c1681fd3ae520e153",
+      "byteLen": 8398,
+      "modelId": "license-doc",
+      "revision": "Upstream model license/provenance notes",
+      "license": "Apache-2.0"
+    }
+  ],
+  "minSidecarProtocolVersion": 1
+}
