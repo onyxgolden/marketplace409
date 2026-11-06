@@ -413,4 +413,44 @@ describe("P7 role boundary (roles.sql)", () => {
       await target.close();
     }
   });
+
+  it60("CHECK-constraint function: EXECUTE revoked from PUBLIC, granted to tb_admin only", async () => {
+    // Regression found on the real production apply (2026-11-06): fresh
+    // PostgreSQL grants EXECUTE to PUBLIC on a new function by default
+    // (the opposite of its table default), so
+    // team_brain_is_valid_utc_iso went unrevoked and every isolated test
+    // in this file passed only because of that implicit PUBLIC grant —
+    // never an explicit one. Pins both the revoke and the re-grant so a
+    // regression here fails loud instead of silently passing again.
+    const consolidator = await db.query(
+      "SELECT has_function_privilege('tb_consolidator', 'team_brain_is_valid_utc_iso(text)', 'EXECUTE') AS ok",
+    );
+    expect(consolidator.rows[0].ok, "tb_consolidator should not have EXECUTE").toBe(false);
+    const reader = await db.query(
+      "SELECT has_function_privilege('tb_reader', 'team_brain_is_valid_utc_iso(text)', 'EXECUTE') AS ok",
+    );
+    expect(reader.rows[0].ok, "tb_reader should not have EXECUTE").toBe(false);
+    const admin = await db.query(
+      "SELECT has_function_privilege('tb_admin', 'team_brain_is_valid_utc_iso(text)', 'EXECUTE') AS ok",
+    );
+    expect(admin.rows[0].ok, "tb_admin should have EXECUTE").toBe(true);
+    const publicPriv = await db.query(
+      "SELECT has_function_privilege('public', 'team_brain_is_valid_utc_iso(text)', 'EXECUTE') AS ok",
+    );
+    expect(publicPriv.rows[0].ok, "PUBLIC should not have EXECUTE").toBe(false);
+
+    // Prove it in practice, not just via has_function_privilege: an
+    // insert that hits the CHECK constraint must actually succeed under
+    // tb_admin now that the implicit PUBLIC grant is gone.
+    await db.query(
+      "INSERT INTO team_brain_handoffs (handoff_id, created_at, updated_at) VALUES ('h-exec-fn-1', '2026-11-02T10:00:00Z', '2026-11-02T10:00:00Z')",
+    );
+    await db.query("SET ROLE tb_admin");
+    await expect(
+      db.query(
+        "INSERT INTO team_brain_handoff_events (handoff_id, from_state, to_state, actor, recorded_at, reason) VALUES ('h-exec-fn-1', 'OPEN', 'OPEN', 'claude', '2026-11-02T10:00:00Z', 'exec fn regression test')",
+      ),
+    ).resolves.toBeTruthy();
+    await db.query("RESET ROLE");
+  });
 });

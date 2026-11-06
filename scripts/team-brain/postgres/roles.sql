@@ -33,6 +33,19 @@
 -- default or inherited PUBLIC grant can never widen these roles.
 -- (Fresh PostgreSQL grants PUBLIC nothing on new tables by default;
 -- the revokes below make that explicit and survive dump/restore.)
+-- FUNCTIONS are the opposite default: PostgreSQL grants EXECUTE to
+-- PUBLIC on a new function unless revoked. team_brain_is_valid_utc_iso
+-- (migrations/001_team_brain_schema.sql) went unrevoked until this
+-- block — proven on production (2026-11-06) when a Supabase default
+-- grant correction revoked it from anon/authenticated/service_role but
+-- NOT from PUBLIC/tb_admin specifically, surfacing that tb_admin's own
+-- restore inserts (team_brain_obligations/obligation_events/handoffs/
+-- handoff_events — every table whose CHECK constraint calls this
+-- function) had only ever worked because of the implicit PUBLIC grant,
+-- never an explicit one. Every isolated Docker/PGlite test this
+-- project ran passed for the same reason, silently. Revoked below,
+-- EXECUTE re-granted to tb_admin only (the sole role that inserts into
+-- those four tables); tb_consolidator and tb_reader never needed it.
 
 DO $$
 BEGIN
@@ -215,6 +228,11 @@ GRANT USAGE ON SEQUENCE team_brain_handoff_events_seq_seq TO tb_admin;
 GRANT USAGE ON SEQUENCE tb_episode_events_event_id_seq TO tb_admin;
 GRANT USAGE ON SEQUENCE tb_consolidation_audit_seq_seq TO tb_admin;
 GRANT USAGE ON SEQUENCE tb_worker_heartbeats_id_seq TO tb_admin;
+
+-- CHECK-constraint function: revoke the implicit PUBLIC EXECUTE grant,
+-- re-grant to tb_admin only (see the comment at the top of this file).
+REVOKE EXECUTE ON FUNCTION team_brain_is_valid_utc_iso(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION team_brain_is_valid_utc_iso(text) TO tb_admin;
 
 -- Explicit PUBLIC revokes on every team-brain table named above.
 REVOKE ALL ON tb_episodes FROM PUBLIC;
