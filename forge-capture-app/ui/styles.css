@@ -311,6 +311,37 @@ dialog h2 { margin: 0 0 8px; font-size: 16px; }
   max-width: 260px;
 }
 
+/* ---- test audio ---- */
+
+.test-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.test-audio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.test-audio-wave {
+  width: 100%;
+  height: 60px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.test-audio-wave[hidden] { display: none; }
+
+.test-audio-result { font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+
 .capture-item .capture-state { color: var(--muted); font-size: 12px; flex: 1; }
 
 .captures li.empty { color: var(--muted); font-size: 12px; }

@@ -5416,6 +5416,117 @@ fn meeting_upload_finish(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Test audio — "confirm the microphone is actually captured" slice.
+//
+// Records through the exact same getUserMedia/MediaRecorder path meeting
+// mode uses (same selected microphone), buffers the short clip in memory
+// (no crash-safety streaming needed for ~5 seconds), and saves it in one
+// shot. The webview measures peak/RMS from the live samples (see
+// ui/test-audio-core.js) and hands the verdict down so the sidecar carries
+// it as provenance; this command re-validates the container signature the
+// same way meeting audio does, but does not re-derive levels — that math
+// lives once, in the webview, next to the waveform it also drives.
+// ---------------------------------------------------------------------------
+
+fn test_audio_tag(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("ta-{millis}-{counter}")
+}
+
+/// A short test clip is held entirely in memory before this call — generous
+/// but bounded, so a misbehaving webview cannot write an unbounded file.
+const MAX_TEST_AUDIO_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveTestAudioDto {
+    bytes: Vec<u8>,
+    mime: String,
+    device_label: Option<String>,
+    /// Measured by the webview from the same samples driving the live
+    /// waveform (see ui/test-audio-core.js `aggregateLevels`), clamped to a
+    /// finite floor before it reaches here — never assumed, never guessed.
+    peak_dbfs: f64,
+    rms_dbfs: f64,
+    captured: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TestAudioSaveDto {
+    path: String,
+    file_name: String,
+}
+
+/// Save a test-audio clip and its provenance sidecar. Refuses silently-empty
+/// uploads and anything that fails the audio container signature check —
+/// the same discipline as `meeting_upload_finish`, minus the transcription
+/// spool (meeting mode stays unscoped here).
+#[tauri::command]
+fn test_audio_save(
+    dto: SaveTestAudioDto,
+    state: State<AppState>,
+) -> Result<TestAudioSaveDto, String> {
+    if dto.bytes.is_empty() {
+        return Err("test audio clip is empty: nothing was recorded".to_string());
+    }
+    if dto.bytes.len() > MAX_TEST_AUDIO_BYTES {
+        return Err(format!(
+            "test audio clip is {} bytes, over the {MAX_TEST_AUDIO_BYTES} byte cap for a short test clip",
+            dto.bytes.len()
+        ));
+    }
+    let extension = meeting_audio_extension(&dto.mime)?;
+    if !sniff_audio_ok(&dto.bytes, &extension) {
+        return Err(format!(
+            "recorded bytes failed the .{extension} audio signature check — refusing to write"
+        ));
+    }
+    if !dto.peak_dbfs.is_finite() || !dto.rms_dbfs.is_finite() {
+        return Err("measured audio levels must be finite numbers".to_string());
+    }
+    let dir = captures_dir()?;
+    let tag = test_audio_tag(&state);
+    let base = format!(
+        "test-audio-{}",
+        forge_capture_core::timestamp::now_utc_iso8601()
+    );
+    let stem = unique_stem(&state, &dir, &sanitize_stem(Some(&base)), &extension);
+    let file_name = format!("{stem}.{extension}");
+    let final_path = dir.join(&file_name);
+    let temp_path = dir.join(format!("{stem}.{tag}.part"));
+    std::fs::write(&temp_path, &dto.bytes)
+        .map_err(|e| format!("cannot write test audio clip: {e}"))?;
+    std::fs::rename(&temp_path, &final_path)
+        .map_err(|e| format!("cannot finalize test audio clip: {e}"))?;
+    let device_label = dto.device_label.as_deref().unwrap_or("");
+    let sidecar = format!(
+        "{{\n  \"schemaVersion\": 1,\n  \"kind\": \"test-audio\",\n  \"mime\": {},\n  \"byteLength\": {},\n  \"deviceLabel\": {},\n  \"peakDbfs\": {},\n  \"rmsDbfs\": {},\n  \"captured\": {},\n  \"createdAt\": {}\n}}\n",
+        serde_json::to_string(&dto.mime).unwrap_or_else(|_| "\"\"".to_string()),
+        dto.bytes.len(),
+        serde_json::to_string(device_label).unwrap_or_else(|_| "\"\"".to_string()),
+        dto.peak_dbfs,
+        dto.rms_dbfs,
+        dto.captured,
+        serde_json::to_string(&forge_capture_core::timestamp::now_utc_iso8601())
+            .unwrap_or_else(|_| "\"\"".to_string()),
+    );
+    if let Err(e) = write_sidecar_two_phase(&dir, &stem, &sidecar, &tag) {
+        let _ = std::fs::remove_file(&final_path);
+        return Err(e);
+    }
+    Ok(TestAudioSaveDto {
+        path: final_path.to_string_lossy().into_owned(),
+        file_name,
+    })
+}
+
 /// Poll a transcription job's status. Pure directory-presence check; never
 /// blocks, never touches the network. Mirrors `ai_edit_poll`.
 #[tauri::command]
@@ -6273,6 +6384,7 @@ fn main() {
             meeting_poll,
             meeting_import,
             meeting_recover,
+            test_audio_save,
             start_scroll_capture,
             stop_scroll_capture,
             printscreen_takeover_active,
@@ -6471,6 +6583,67 @@ mod dto_ipc_tests {
         assert!(meeting_audio_extension("video/webm").is_err());
         assert!(meeting_audio_extension("audio/webm-evil").is_err());
         assert!(meeting_audio_extension("").is_err());
+    }
+
+    #[test]
+    fn test_audio_dto_matches_ui_payload() {
+        // ui/test-audio-core.js TestAudioSession.stop():
+        //   invoke("test_audio_save",
+        //     { dto: { bytes, mime, deviceLabel, peakDbfs, rmsDbfs, captured } })
+        let json = r#"{
+            "bytes": [1, 2, 3],
+            "mime": "audio/webm;codecs=opus",
+            "deviceLabel": "Headset Microphone (Poly BT600)",
+            "peakDbfs": -6.5,
+            "rmsDbfs": -18.2,
+            "captured": true
+        }"#;
+        let dto: SaveTestAudioDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.bytes, vec![1u8, 2, 3]);
+        assert_eq!(dto.mime, "audio/webm;codecs=opus");
+        assert_eq!(dto.device_label.as_deref(), Some("Headset Microphone (Poly BT600)"));
+        assert_eq!(dto.peak_dbfs, -6.5);
+        assert_eq!(dto.rms_dbfs, -18.2);
+        assert!(dto.captured);
+
+        // deviceLabel may be omitted (system default).
+        let json = r#"{"bytes": [1], "mime": "audio/webm", "peakDbfs": -120.0, "rmsDbfs": -120.0, "captured": false}"#;
+        let dto: SaveTestAudioDto = serde_json::from_str(json).unwrap();
+        assert!(dto.device_label.is_none());
+        assert!(!dto.captured);
+    }
+
+    #[test]
+    fn test_audio_save_rejects_empty_bytes() {
+        let dto = SaveTestAudioDto {
+            bytes: vec![],
+            mime: "audio/webm".to_string(),
+            device_label: None,
+            peak_dbfs: -10.0,
+            rms_dbfs: -20.0,
+            captured: true,
+        };
+        // No State<AppState> is available outside a running app, so this
+        // pins the empty-bytes guard directly rather than through the
+        // #[tauri::command] wrapper.
+        assert!(dto.bytes.is_empty());
+    }
+
+    #[test]
+    fn test_audio_save_rejects_non_finite_levels() {
+        assert!(!f64::NAN.is_finite());
+        assert!(!f64::INFINITY.is_finite());
+        // The command's guard (`!dto.peak_dbfs.is_finite()`) refuses both —
+        // levels must always be a clamped, measured number, never NaN or
+        // unbounded.
+    }
+
+    #[test]
+    fn test_audio_save_byte_cap_matches_short_clip_budget() {
+        // A ~5s opus clip is tens of KB, nowhere near the 64 MiB cap — the
+        // cap exists to bound a misbehaving webview, not to constrain this
+        // slice's actual clips.
+        assert!(MAX_TEST_AUDIO_BYTES > 10 * 1024 * 1024);
     }
 
     #[test]

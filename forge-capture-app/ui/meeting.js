@@ -17,6 +17,7 @@ import {
   transcriptText,
   searchSegments,
 } from "./meeting-core.js";
+import { TestAudioSession } from "./test-audio-core.js";
 
 function defaultInvoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -43,10 +44,21 @@ export function renderMeetingControls(container, deps = {}) {
           </select>
         </label>
       </div>
-      <button id="meeting-record-btn" class="capture-btn" type="button">● Record</button>
+      <div class="row">
+        <button id="meeting-record-btn" class="capture-btn" type="button">● Record</button>
+        <button id="test-audio-btn" class="ghost-btn" type="button">Test audio</button>
+      </div>
       <div id="meeting-timer" class="meeting-timer" hidden>0:00</div>
       <div id="meeting-status" class="status" role="status"></div>
       <div id="meeting-recovered" class="meeting-recovered"></div>
+      <div class="test-audio">
+        <div class="test-audio-row">
+          <strong>Test audio</strong>
+          <span id="test-audio-status" class="status" role="status"></span>
+        </div>
+        <canvas id="test-audio-wave" class="test-audio-wave" width="600" height="60" hidden></canvas>
+        <div id="test-audio-result" class="test-audio-result"></div>
+      </div>
       <section class="library" aria-label="Meeting recordings">
         <h2>Recordings</h2>
         <ul id="meeting-list" class="captures"></ul>
@@ -76,6 +88,11 @@ export function renderMeetingControls(container, deps = {}) {
   const transcriptNameEl = $("meeting-transcript-name");
   const searchInput = $("meeting-search");
   const segmentsEl = $("meeting-segments");
+  const testAudioBtn = $("test-audio-btn");
+  const testAudioStatusEl = $("test-audio-status");
+  const testAudioCanvas = $("test-audio-wave");
+  const testAudioResultEl = $("test-audio-result");
+  const testAudioCtx = testAudioCanvas.getContext && testAudioCanvas.getContext("2d");
 
   // --- session records -------------------------------------------------------
   // One record per recording this session (live or adopted from recovery).
@@ -139,6 +156,7 @@ export function renderMeetingControls(container, deps = {}) {
     }
     deviceSel.disabled = recording || busy;
     languageSel.disabled = recording || busy;
+    testAudioBtn.disabled = recording || busy || testAudioSession.active;
   }
 
   function startTimer() {
@@ -305,6 +323,79 @@ export function renderMeetingControls(container, deps = {}) {
     }
   });
 
+  // --- test audio --------------------------------------------------------
+  // Confirms the SELECTED microphone (same deviceSel the recorder above
+  // uses) is actually receiving sound: records ~5s, draws a live waveform
+  // off the real samples, and refuses to call silence a pass.
+
+  const testAudioSession = new TestAudioSession({
+    invoke,
+    onEvent: onTestAudioEvent,
+  });
+
+  function setTestAudioStatus(text, kind) {
+    testAudioStatusEl.textContent = text || "";
+    testAudioStatusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function drawWaveform(samples) {
+    if (!testAudioCtx) return;
+    const w = testAudioCanvas.width;
+    const h = testAudioCanvas.height;
+    testAudioCtx.clearRect(0, 0, w, h);
+    if (!samples || samples.length === 0) return;
+    testAudioCtx.beginPath();
+    const midY = h / 2;
+    const step = w / samples.length;
+    for (let i = 0; i < samples.length; i += 1) {
+      const x = i * step;
+      const y = midY - samples[i] * midY;
+      if (i === 0) testAudioCtx.moveTo(x, y);
+      else testAudioCtx.lineTo(x, y);
+    }
+    testAudioCtx.strokeStyle = "#4caf50";
+    testAudioCtx.lineWidth = 1.5;
+    testAudioCtx.stroke();
+  }
+
+  function onTestAudioEvent(evt) {
+    recordBtn.disabled = testAudioSession.active || (liveSession && liveSession.active);
+    if (evt.state === "starting") {
+      testAudioCanvas.hidden = false;
+      testAudioResultEl.textContent = "";
+      setTestAudioStatus("Starting the microphone…", "");
+    } else if (evt.state === "recording") {
+      setTestAudioStatus(`Recording test clip… ${(evt.elapsedMs / 1000).toFixed(1)}s`, "");
+      if (evt.waveform) drawWaveform(evt.waveform);
+    } else if (evt.state === "stopping") {
+      setTestAudioStatus("Measuring the clip…", "");
+    } else if (evt.state === "saved") {
+      const r = evt.result;
+      setTestAudioStatus(r.text, r.captured ? "ok" : "error");
+      testAudioResultEl.textContent = r.path ? `Saved to: ${r.path}` : "";
+    } else if (evt.state === "failed") {
+      setTestAudioStatus(`Test audio failed: ${evt.reason || "unknown error"}`, "error");
+      testAudioCanvas.hidden = true;
+    } else if (evt.state === "cancelled") {
+      setTestAudioStatus("Test audio cancelled.", "");
+      testAudioCanvas.hidden = true;
+    }
+  }
+
+  testAudioBtn.addEventListener("click", async () => {
+    if (testAudioSession.active) return;
+    const dev = deviceSel.options[deviceSel.selectedIndex];
+    try {
+      await testAudioSession.start({
+        deviceId: deviceSel.value,
+        deviceLabel: dev ? dev.textContent : "",
+      });
+    } catch {
+      // start() already moved the session to failed and emitted; the
+      // status line above shows the error.
+    }
+  });
+
   // --- microphone picker -------------------------------------------------------
   // Labels are empty until permission is granted; after a successful
   // getUserMedia the list refreshes with real microphone names.
@@ -388,6 +479,7 @@ export function renderMeetingControls(container, deps = {}) {
           /* best effort */
         }
       }
+      testAudioSession.dispose();
     },
   };
 }
