@@ -513,6 +513,7 @@ export async function listStepDrawings(db, { ownerId, packageId, stepId, limit, 
   const { data, error } = await db.from("forge_work_step_drawing_links")
     .select("*").eq("owner_id", ownerId).eq("work_package_id", packageId).eq("step_id", stepId)
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .range(paging.offset, paging.offset + paging.limit - 1);
   if (error) {
     if (isMissingTableError(error)) return { ok: true, step: toCamelStep(proof.step), links: [] };

@@ -85,13 +85,17 @@ function revisionSummary(revision) {
 }
 
 function StepHistory({ packageId, stepId }) {
-  // Bounded reads: one page at a time, with a visible "Show more"
-  // control while a full page comes back (a full page may mean more
-  // history exists). The list never reads unbounded again.
-  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
+  // Bounded reads: one fixed-size page per request, with a growing
+  // offset. "Show more" loads the next page and appends it — the
+  // page size never grows, so no request can exceed the service's
+  // 200-row limit however long the history gets.
+  const [pages, setPages] = useState(1);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:revisions:${shown}`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/revisions?limit=${shown}`).then((b) => b.revisions),
+    `work-packages:${packageId}:work-steps:${stepId}:revisions:pages:${pages}`,
+    () => fetchPagedRows(
+      (page) => api(`/api/work-packages/${packageId}/work-steps/${stepId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
+      pages,
+    ),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -110,8 +114,8 @@ function StepHistory({ packageId, stepId }) {
           </li>
         ))}
       </ul>
-      {revisions.length === shown && (
-        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+      {revisions.length === pages * HISTORY_PAGE_SIZE && (
+        <button className={btnGhost} onClick={() => setPages((current) => current + 1)}>
           Show more history
         </button>
       )}
@@ -120,12 +124,15 @@ function StepHistory({ packageId, stepId }) {
 }
 
 function LinkHistory({ packageId, stepId, linkId }) {
-  // Bounded reads, same shape as step history: one page at a time
-  // with a visible "Show more" control while a full page comes back.
-  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
+  // Bounded reads, same shape as step history: fixed-size pages
+  // with a growing offset, appended — never a cumulative limit.
+  const [pages, setPages] = useState(1);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:drawings:${linkId}:revisions:${shown}`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions?limit=${shown}`).then((b) => b.revisions),
+    `work-packages:${packageId}:work-steps:${stepId}:drawings:${linkId}:revisions:pages:${pages}`,
+    () => fetchPagedRows(
+      (page) => api(`/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
+      pages,
+    ),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -143,8 +150,8 @@ function LinkHistory({ packageId, stepId, linkId }) {
           </li>
         ))}
       </ul>
-      {revisions.length === shown && (
-        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+      {revisions.length === pages * HISTORY_PAGE_SIZE && (
+        <button className={btnGhost} onClick={() => setPages((current) => current + 1)}>
           Show more history
         </button>
       )}
@@ -171,13 +178,17 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   const [retiringLinkId, setRetiringLinkId] = useState(null);
   const [retireReason, setRetireReason] = useState("");
   const [linkHistoryId, setLinkHistoryId] = useState(null);
-  // Bounded reads: one page of links at a time, with a visible
-  // "Show more" control while a full page comes back.
-  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
+  // Bounded reads: fixed-size pages with a growing offset,
+  // appended — never a cumulative limit, which would break past
+  // 200 rows because the service rejects any limit above 200.
+  const [pages, setPages] = useState(1);
 
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${step.id}:drawings:${shown}`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings?limit=${shown}`).then((b) => b.links),
+    `work-packages:${packageId}:work-steps:${step.id}:drawings:pages:${pages}`,
+    () => fetchPagedRows(
+      (page) => api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.links),
+      pages,
+    ),
     { ttlMs: 10_000 },
   );
   const links = data || [];
@@ -277,8 +288,8 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
           ))}
         </ul>
       )}
-      {links.length === shown && (
-        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+      {links.length === pages * HISTORY_PAGE_SIZE && (
+        <button className={btnGhost} onClick={() => setPages((current) => current + 1)}>
           Show more drawings
         </button>
       )}
@@ -410,8 +421,28 @@ async function fetchAllSteps(packageId) {
 }
 
 // One page of a history/drawing list. The "Show more" buttons below
-// grow this by one page; the lists never read unbounded again.
+// load the NEXT page at the same fixed size and append it — never a
+// cumulative limit, which would break past 200 rows because the
+// service rejects any limit above 200. Pages are appended and
+// deduped by id, so a row is never shown twice if the list shifts
+// between requests.
 const HISTORY_PAGE_SIZE = 50;
+
+async function fetchPagedRows(fetchPage, pageCount) {
+  const rows = [];
+  const seen = new Set();
+  for (let page = 0; page < pageCount; page += 1) {
+    const batch = await fetchPage(page);
+    for (const row of batch || []) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        rows.push(row);
+      }
+    }
+    if ((batch || []).length < HISTORY_PAGE_SIZE) break;
+  }
+  return rows;
+}
 
 export default function WorkPackageSteps({ packageId, onChanged = null }) {
   const [showRetired, setShowRetired] = useState(false);

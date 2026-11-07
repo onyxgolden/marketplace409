@@ -489,6 +489,21 @@ describe("listStepDrawings", () => {
     expect(db.from).toHaveBeenCalledTimes(2);
   });
 
+  it("orders links by created_at with the id as tie-breaker", async () => {
+    const linksChain = chain({ data: [LINK_ROW], error: null });
+    const db = mockDb([
+      chain({ data: STEP_ROW, error: null }),
+      linksChain,
+      chain({ data: [DRAWING_ROW], error: null }),
+    ]);
+    const result = await listStepDrawings(db, { ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1" });
+    expect(result.ok).toBe(true);
+    // created_at alone is not unique, so paging needs a total order:
+    // two links created in the same instant must still page stably.
+    expect(linksChain.order).toHaveBeenNthCalledWith(1, "created_at", { ascending: true });
+    expect(linksChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+  });
+
   it("bounds the link read to one page by default and honors an explicit page", async () => {
     const firstPage = chain({ data: [LINK_ROW], error: null });
     const defaultDb = mockDb([

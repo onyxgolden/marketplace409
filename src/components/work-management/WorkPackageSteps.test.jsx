@@ -40,10 +40,10 @@ const REVISIONS = [{
   newValues: { title: "Fabricate pipe spool", sequence_no: 1, version: 1 },
 }];
 
-function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, listStatus = 200, listError = "" } = {}) {
+function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, linkRevisions = REVISIONS, links: customLinks = null, listStatus = 200, listError = "" } = {}) {
   let currentSteps = list.map((s) => ({ ...s }));
   let generation = 2;
-  let links = [LINK_1].filter((l) => list.some((s) => s.id === l.stepId));
+  let links = (customLinks ?? [LINK_1]).filter((l) => list.some((s) => s.id === l.stepId));
   const calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     calls.push({ url, method: options.method || "GET", body: options.body });
@@ -147,11 +147,19 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, listStatus
     }
     if (parsed.pathname === `${base}/forge_wps_1/revisions`) {
       const limit = Number(parsed.searchParams.get("limit") || 50);
-      return { ok: true, json: async () => ({ step: currentSteps.find((s) => s.id === "forge_wps_1"), revisions: revisions.slice(0, limit) }) };
+      const offset = Number(parsed.searchParams.get("offset") || 0);
+      return { ok: true, json: async () => ({ step: currentSteps.find((s) => s.id === "forge_wps_1"), revisions: revisions.slice(offset, offset + limit) }) };
+    }
+    const linkHistoryMatch = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/work-steps\/forge_wps_1\/drawings\/([^/]+)\/revisions$/);
+    if (linkHistoryMatch && !options.method) {
+      const limit = Number(parsed.searchParams.get("limit") || 50);
+      const offset = Number(parsed.searchParams.get("offset") || 0);
+      return { ok: true, json: async () => ({ revisions: linkRevisions.slice(offset, offset + limit) }) };
     }
     if (parsed.pathname === `${base}/forge_wps_1/drawings` && !options.method) {
       const limit = Number(parsed.searchParams.get("limit") || 50);
-      return { ok: true, json: async () => ({ links: links.slice(0, limit) }) };
+      const offset = Number(parsed.searchParams.get("offset") || 0);
+      return { ok: true, json: async () => ({ links: links.slice(offset, offset + limit) }) };
     }
     if (parsed.pathname === `${base}/forge_wps_1/drawings` && options.method === "POST") {
       const body = JSON.parse(options.body);
@@ -404,8 +412,97 @@ describe("WorkPackageSteps", () => {
       expect(container.textContent).toContain("version 51");
     });
     expect(buttonByText(container, "Show more history")).toBe(undefined);
+    // Every page is requested at the same fixed size with a growing
+    // offset — never a cumulative limit.
     const revisionCalls = calls.filter((c) => c.url.includes("/revisions?"));
-    expect(revisionCalls.map((c) => new URL(c.url, "https://test").searchParams.get("limit"))).toEqual(["50", "100"]);
+    expect(revisionCalls.map((c) => new URL(c.url, "https://test").searchParams.get("limit"))).toEqual(["50", "50", "50"]);
+    expect(revisionCalls.map((c) => new URL(c.url, "https://test").searchParams.get("offset"))).toEqual(["0", "0", "50"]);
+  });
+
+  it("reaches the final step revision past 200 rows without ever exceeding the page limit", async () => {
+    const manyRevisions = Array.from({ length: 201 }, (_, i) => ({
+      id: `forge_wpsr_${i + 1}`, version: i + 1, action: "create",
+      recordedAt: "2026-11-07T10:00:00Z", reason: null, oldValues: null,
+      newValues: { title: `Step ${i + 1}`, sequence_no: i + 1, version: i + 1 },
+    }));
+    const { calls } = setupFetch({ revisions: manyRevisions });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "History").click(); });
+    await act(async () => {});
+    // Four more pages: 50 → 100 → 150 → 200 → 201 rows. Under the
+    // old cumulative limit the fifth page would have requested
+    // limit=250 and failed with 400, leaving the last row unreachable.
+    for (const version of [100, 150, 200, 201]) {
+      await waitFor(() => {
+        expect(buttonByText(container, "Show more history")).not.toBe(undefined);
+      });
+      await act(async () => { buttonByText(container, "Show more history").click(); });
+      await waitFor(() => {
+        expect(container.textContent).toContain(`version ${version}`);
+      });
+    }
+    expect(buttonByText(container, "Show more history")).toBe(undefined);
+    const revisionCalls = calls.filter((c) => c.url.includes("/revisions?"));
+    expect(revisionCalls.length).toBeGreaterThan(0);
+    expect(revisionCalls.every((c) => new URL(c.url, "https://test").searchParams.get("limit") === "50")).toBe(true);
+    expect(revisionCalls.some((c) => new URL(c.url, "https://test").searchParams.get("offset") === "200")).toBe(true);
+  });
+
+  it("reaches the final link revision past 200 rows", async () => {
+    const manyLinkRevisions = Array.from({ length: 201 }, (_, i) => ({
+      id: `forge_wplr_${i + 1}`, version: i + 1, action: "create",
+      recordedAt: "2026-11-07T10:00:00Z", reason: null,
+      oldValues: null, newValues: { drawing_id: "dwg_1" },
+    }));
+    const { calls } = setupFetch({ list: [STEP_1], linkRevisions: manyLinkRevisions });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Drawings").click(); });
+    await act(async () => {});
+    // The link's History button is the last "History" button in the
+    // panel — the step's own History button comes first.
+    const linkHistoryButton = () => [...container.querySelectorAll("button")]
+      .filter((b) => b.textContent.trim() === "History").at(-1);
+    await act(async () => { linkHistoryButton().click(); });
+    await act(async () => {});
+    for (const version of [100, 150, 200, 201]) {
+      await waitFor(() => {
+        expect(buttonByText(container, "Show more history")).not.toBe(undefined);
+      });
+      await act(async () => { buttonByText(container, "Show more history").click(); });
+      await waitFor(() => {
+        expect(container.textContent).toContain(`version ${version}`);
+      });
+    }
+    expect(buttonByText(container, "Show more history")).toBe(undefined);
+    const linkRevisionCalls = calls.filter((c) => c.url.includes("/drawings/forge_wpsl_1/revisions?"));
+    expect(linkRevisionCalls.length).toBeGreaterThan(0);
+    expect(linkRevisionCalls.every((c) => new URL(c.url, "https://test").searchParams.get("limit") === "50")).toBe(true);
+    expect(linkRevisionCalls.some((c) => new URL(c.url, "https://test").searchParams.get("offset") === "200")).toBe(true);
+  });
+
+  it("reaches the final drawing link past 200 rows", async () => {
+    const manyLinks = Array.from({ length: 201 }, (_, i) => ({
+      ...LINK_1, id: `forge_wpsl_${i + 1}`, refinementNote: `Link ${i + 1}`,
+      drawingId: "dwg_1", originalDrawingId: "dwg_1", drawing: DRAWINGS[0],
+    }));
+    const { calls } = setupFetch({ list: [STEP_1], links: manyLinks });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Drawings").click(); });
+    await act(async () => {});
+    for (const note of ["Link 100", "Link 150", "Link 200", "Link 201"]) {
+      await waitFor(() => {
+        expect(buttonByText(container, "Show more drawings")).not.toBe(undefined);
+      });
+      await act(async () => { buttonByText(container, "Show more drawings").click(); });
+      await waitFor(() => {
+        expect(container.textContent).toContain(note);
+      });
+    }
+    expect(buttonByText(container, "Show more drawings")).toBe(undefined);
+    const linkCalls = calls.filter((c) => c.url.includes("/forge_wps_1/drawings?"));
+    expect(linkCalls.length).toBeGreaterThan(0);
+    expect(linkCalls.every((c) => new URL(c.url, "https://test").searchParams.get("limit") === "50")).toBe(true);
+    expect(linkCalls.some((c) => new URL(c.url, "https://test").searchParams.get("offset") === "200")).toBe(true);
   });
 
   it("shows history on demand", async () => {
