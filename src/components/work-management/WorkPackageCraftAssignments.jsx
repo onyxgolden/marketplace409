@@ -67,7 +67,7 @@ function snapshotSummary(values) {
   if (!values) return "—";
   const parts = [];
   if (values.work_date != null) parts.push(formatDate(values.work_date));
-  if (values.craft != null) parts.push(values.craft);
+  if (values.craft_label != null) parts.push(values.craft_label);
   if (values.shift_kind != null) parts.push(values.shift_kind === "other" ? (values.shift_label || "other") : values.shift_kind);
   if (values.crew_size != null) parts.push(`${values.crew_size} crew`);
   if (values.hours_per_person != null) parts.push(`${values.hours_per_person} hrs each`);
@@ -128,6 +128,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
   const [editForm, setEditForm] = useState(null);
   const [retiringId, setRetiringId] = useState(null);
   const [retireReason, setRetireReason] = useState("");
+  const [retireHistoricalCorrection, setRetireHistoricalCorrection] = useState(false);
   const [historyId, setHistoryId] = useState(null);
 
   const query = new URLSearchParams({
@@ -166,6 +167,26 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     };
   }
 
+  // Edit PATCH body: unlike create, an emptied optional crew name or
+  // note is an explicit clear (null), not an omission — the backend
+  // presence flags read null as "clear" and an absent key as "keep",
+  // so omitting a cleared field would silently preserve the old value.
+  // Fields the user did not touch stay present with their stored
+  // values, so nothing else is cleared by accident.
+  function editBody(source) {
+    return {
+      workDate: source.workDate,
+      craft: source.craft,
+      shiftKind: source.shiftKind,
+      ...(source.shiftKind === "other" ? { shiftLabel: source.shiftLabel } : {}),
+      crewSize: Number(source.crewSize),
+      hoursPerPerson: Number(source.hoursPerPerson),
+      crewLabel: source.crewLabel.trim() ? source.crewLabel : null,
+      note: source.note.trim() ? source.note : null,
+      ...(source.historicalCorrection ? { historicalCorrection: true, reason: source.reason } : {}),
+    };
+  }
+
   async function onCreate(event) {
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
@@ -178,7 +199,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
         crewSize: "", hoursPerPerson: "", crewLabel: "", note: "",
         historicalCorrection: false, reason: "",
       });
-      await reload(`Craft assignment added — ${created.assignment.craft}, ${formatDate(created.assignment.workDate)} (${shiftDisplay(created.assignment)}).`);
+      await reload(`Craft assignment added — ${created.assignment.craftLabel}, ${formatDate(created.assignment.workDate)} (${shiftDisplay(created.assignment)}).`);
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -188,7 +209,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     setEditingId(assignment.id);
     setRetiringId(null);
     setEditForm({
-      workDate: assignment.workDate, craft: assignment.craft, shiftKind: assignment.shiftKind,
+      workDate: assignment.workDate, craft: assignment.craftLabel, shiftKind: assignment.shiftKind,
       shiftLabel: assignment.shiftLabel || "", crewSize: String(assignment.crewSize),
       hoursPerPerson: String(assignment.hoursPerPerson), crewLabel: assignment.crewLabel || "",
       note: assignment.note || "", historicalCorrection: false, reason: "",
@@ -204,13 +225,13 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: assignment.version,
-          ...createBody(editForm),
+          ...editBody(editForm),
           ...(editForm.reason.trim() ? { reason: editForm.reason } : {}),
         }),
       });
       setEditingId(null);
       setEditForm(null);
-      await reload(`Craft assignment updated — ${updated.assignment.craft}, ${formatDate(updated.assignment.workDate)}.`);
+      await reload(`Craft assignment updated — ${updated.assignment.craftLabel}, ${formatDate(updated.assignment.workDate)}.`);
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -221,11 +242,16 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     try {
       const retired = await api(`/api/work-packages/${packageId}/craft-assignments/${assignment.id}/retire`, {
         method: "POST",
-        body: JSON.stringify({ expectedVersion: assignment.version, reason: retireReason }),
+        body: JSON.stringify({
+          expectedVersion: assignment.version,
+          reason: retireReason,
+          ...(isPastDate(assignment.workDate) && retireHistoricalCorrection ? { historicalCorrection: true } : {}),
+        }),
       });
       setRetiringId(null);
       setRetireReason("");
-      await reload(`Craft assignment retired — ${retired.assignment.craft}, ${formatDate(retired.assignment.workDate)}.`);
+      setRetireHistoricalCorrection(false);
+      await reload(`Craft assignment retired — ${retired.assignment.craftLabel}, ${formatDate(retired.assignment.workDate)}.`);
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -436,7 +462,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
                 <>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="font-medium text-slate-900">{formatDate(assignment.workDate)} — {assignment.craft}</span>
+                      <span className="font-medium text-slate-900">{formatDate(assignment.workDate)} — {assignment.craftLabel}</span>
                       <span className="ml-2 text-slate-500">{shiftDisplay(assignment)}</span>
                       {assignment.crewLabel && <span className="ml-2 text-slate-500">· {assignment.crewLabel}</span>}
                       {assignment.retiredAt && (
@@ -453,13 +479,22 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
                     <div className="mt-2 space-y-2">
                       <input className={input} aria-label="Reason for retiring" placeholder="Reason for retiring (required)"
                         value={retireReason} onChange={(e) => setRetireReason(e.target.value)} maxLength={2000} required />
+                      {isPastDate(assignment.workDate) && (
+                        <label className="flex items-center gap-2 text-xs text-slate-700">
+                          <input type="checkbox" aria-label="This retires a past day — mark it as a historical correction"
+                            checked={retireHistoricalCorrection}
+                            onChange={(e) => setRetireHistoricalCorrection(e.target.checked)} />
+                          This retires a past day — mark it as a historical correction
+                        </label>
+                      )}
                       <div className="flex gap-2">
-                        <button className={btnPrimary} disabled={busy || !retireReason.trim()}
+                        <button className={btnPrimary}
+                          disabled={busy || !retireReason.trim() || (isPastDate(assignment.workDate) && !retireHistoricalCorrection)}
                           onClick={() => onConfirmRetire(assignment)}>
                           Retire this assignment
                         </button>
                         <button className={btnGhost} disabled={busy}
-                          onClick={() => { setRetiringId(null); setRetireReason(""); }}>
+                          onClick={() => { setRetiringId(null); setRetireReason(""); setRetireHistoricalCorrection(false); }}>
                           Keep it
                         </button>
                       </div>
@@ -470,7 +505,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
                         <>
                           <button className={btnGhost} disabled={busy} onClick={() => startEdit(assignment)}>Edit</button>
                           <button className={btnGhost} disabled={busy}
-                            onClick={() => { setRetiringId(assignment.id); setRetireReason(""); setEditingId(null); }}>
+                            onClick={() => { setRetiringId(assignment.id); setRetireReason(""); setRetireHistoricalCorrection(false); setEditingId(null); }}>
                             Retire
                           </button>
                         </>

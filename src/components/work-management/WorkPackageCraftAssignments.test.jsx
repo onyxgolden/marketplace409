@@ -9,16 +9,17 @@ import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 
 const ACTIVE = {
   id: "forge_wpca_1", workPackageId: "pkg_1", workDate: "2026-11-09",
-  craft: "Pipefitter", craftKey: "pipefitter", shiftKind: "day", shiftKey: "day",
+  craftLabel: "Pipefitter", craftKey: "pipefitter", shiftKind: "day", shiftKey: "day",
   shiftLabel: null, crewSize: 6, hoursPerPerson: 8, plannedPersonHours: 48,
   crewLabel: "Crew A", crewKey: "crew a", note: "Tie-ins", version: 1,
   retiredAt: null, retiredBy: null, createdBy: "user_1", updatedBy: "user_1",
   createdAt: "t1", updatedAt: "t1",
 };
 const RETIRED = {
-  ...ACTIVE, id: "forge_wpca_2", craft: "Welder", craftKey: "welder",
+  ...ACTIVE, id: "forge_wpca_2", craftLabel: "Welder", craftKey: "welder",
   shiftKind: "night", shiftKey: "night", version: 2, retiredAt: "t2", retiredBy: "user_1",
 };
+const PAST = { ...ACTIVE, workDate: "2026-11-06" };
 const DAY_TOTALS = [{ workDate: "2026-11-09", plannedPersonHours: 48, assignmentCount: 1 }];
 
 function setupFetch({ list = [ACTIVE], revisions = [], listStatus = 200, listError = "" } = {}) {
@@ -46,7 +47,7 @@ function setupFetch({ list = [ACTIVE], revisions = [], listStatus = 200, listErr
     if (parsed.pathname === base && options.method === "POST") {
       const body = JSON.parse(options.body);
       const created = {
-        ...ACTIVE, id: "forge_wpca_new", workDate: body.workDate, craft: body.craft,
+        ...ACTIVE, id: "forge_wpca_new", workDate: body.workDate, craftLabel: body.craft,
         craftKey: body.craft.toLowerCase(), shiftKind: body.shiftKind,
         shiftKey: body.shiftKind, crewSize: body.crewSize, hoursPerPerson: body.hoursPerPerson,
         plannedPersonHours: body.crewSize * body.hoursPerPerson,
@@ -57,7 +58,22 @@ function setupFetch({ list = [ACTIVE], revisions = [], listStatus = 200, listErr
     }
     if (parsed.pathname === `${base}/forge_wpca_1` && options.method === "PATCH") {
       const body = JSON.parse(options.body);
-      const updated = { ...ACTIVE, ...body, version: 2 };
+      // Mirror the backend presence semantics: a key present with
+      // null clears the stored value, an absent key preserves it.
+      const updated = {
+        ...ACTIVE,
+        workDate: body.workDate ?? ACTIVE.workDate,
+        craftLabel: body.craft ?? ACTIVE.craftLabel,
+        craftKey: body.craft ? body.craft.toLowerCase().replace(/ /g, "-") : ACTIVE.craftKey,
+        shiftKind: body.shiftKind ?? ACTIVE.shiftKind,
+        shiftLabel: "shiftLabel" in body ? body.shiftLabel : ACTIVE.shiftLabel,
+        crewSize: body.crewSize ?? ACTIVE.crewSize,
+        hoursPerPerson: body.hoursPerPerson ?? ACTIVE.hoursPerPerson,
+        crewLabel: "crewLabel" in body ? body.crewLabel : ACTIVE.crewLabel,
+        note: "note" in body ? body.note : ACTIVE.note,
+        version: 2,
+      };
+      updated.plannedPersonHours = updated.crewSize * updated.hoursPerPerson;
       currentList = currentList.map((a) => (a.id === ACTIVE.id ? updated : a));
       return { ok: true, json: async () => ({ assignment: updated }) };
     }
@@ -115,6 +131,20 @@ async function submitForm(container, submitButtonText = null) {
   await act(async () => {});
 }
 
+// Retries an assertion across act flushes: a save triggers a list
+// refresh, and the reread only lands after its fetch resolves.
+async function waitFor(check) {
+  for (let i = 0; i < 10; i++) {
+    try {
+      check();
+      return;
+    } catch {
+      await act(async () => {});
+    }
+  }
+  check();
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -156,6 +186,81 @@ describe("WorkPackageCraftAssignments", () => {
     expect(JSON.parse(patch.body)).toMatchObject({ expectedVersion: 1, crewSize: 8, reason: "Two extra hands" });
   });
 
+  it("prefills the stored craft label on edit and rereads the saved label", async () => {
+    const { calls } = setupFetch();
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Edit").click(); });
+    // The P1 regression: the edit form read assignment.craft, which
+    // the real service never returns, so this input was blank.
+    expect(container.querySelector('input[aria-label="Craft"]').value).toBe("Pipefitter");
+    setInput(container, "Craft", "Welder");
+    await submitForm(container, "Save changes");
+    expect(container.textContent).toContain("Craft assignment updated");
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(JSON.parse(patch.body)).toMatchObject({ expectedVersion: 1, craft: "Welder" });
+    // The reread list row (not just the confirmation) shows the label.
+    await waitFor(() => {
+      const row = [...container.querySelectorAll("li")].find((li) => li.textContent.includes("— Welder"));
+      expect(row).toBeTruthy();
+    });
+  });
+
+  it("clears a crew name and note on edit and keeps untouched fields", async () => {
+    const { calls } = setupFetch();
+    const { container } = await renderPanel();
+    expect(container.textContent).toContain("Crew A");
+    expect(container.textContent).toContain("Tie-ins");
+    await act(async () => { buttonByText(container, "Edit").click(); });
+    setInput(container, "Crew name", "");
+    setInput(container, "Note", "");
+    await submitForm(container, "Save changes");
+    expect(container.textContent).toContain("Craft assignment updated");
+    const patch = calls.find((c) => c.method === "PATCH");
+    const body = JSON.parse(patch.body);
+    // An emptied field is an explicit clear, not an omission.
+    expect(body).toMatchObject({ crewLabel: null, note: null });
+    // Untouched fields are still sent with their stored values.
+    expect(body).toMatchObject({
+      expectedVersion: 1, craft: "Pipefitter", workDate: "2026-11-09",
+      shiftKind: "day", crewSize: 6, hoursPerPerson: 8,
+    });
+    await waitFor(() => {
+      expect(container.textContent).not.toContain("Crew A");
+      expect(container.textContent).not.toContain("Tie-ins");
+      expect(container.textContent).toContain("6 crew");
+      expect(container.textContent).toContain("48 person-hours");
+    });
+  });
+
+  it("retires a past-day assignment only after the correction is confirmed", async () => {
+    const { calls } = setupFetch({ list: [PAST] });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Retire").click(); });
+    setInput(container, "Reason for retiring", "Day was cancelled");
+    const confirm = buttonByText(container, "Retire this assignment");
+    expect(confirm.disabled).toBe(true);
+    const checkbox = container.querySelector('input[aria-label="This retires a past day — mark it as a historical correction"]');
+    expect(checkbox).not.toBeNull();
+    await act(async () => { checkbox.click(); });
+    expect(buttonByText(container, "Retire this assignment").disabled).toBe(false);
+    await act(async () => { buttonByText(container, "Retire this assignment").click(); });
+    await act(async () => {});
+    expect(container.textContent).toContain("Craft assignment retired");
+    const retire = calls.find((c) => c.url.endsWith("/retire"));
+    expect(JSON.parse(retire.body)).toMatchObject({
+      expectedVersion: 1, reason: "Day was cancelled", historicalCorrection: true,
+    });
+  });
+
+  it("refuses a past-day retire without the correction confirmation", async () => {
+    const { calls } = setupFetch({ list: [PAST] });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Retire").click(); });
+    setInput(container, "Reason for retiring", "Day was cancelled");
+    expect(buttonByText(container, "Retire this assignment").disabled).toBe(true);
+    expect(calls.filter((c) => c.url.endsWith("/retire"))).toHaveLength(0);
+  });
+
   it("retires only with a reason", async () => {
     const { calls } = setupFetch();
     const { container } = await renderPanel();
@@ -175,7 +280,7 @@ describe("WorkPackageCraftAssignments", () => {
         id: "forge_wpcr_1", version: 1, action: "create", recordedAt: "t1",
         reason: null, historicalCorrection: false,
         oldValues: null,
-        newValues: { work_date: "2026-11-09", craft: "Pipefitter", shift_kind: "day", crew_size: 6, hours_per_person: 8 },
+        newValues: { work_date: "2026-11-09", craft_label: "Pipefitter", shift_kind: "day", crew_size: 6, hours_per_person: 8 },
       }],
     });
     const { container } = await renderPanel();

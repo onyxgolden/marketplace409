@@ -315,6 +315,40 @@ export async function retireCraftAssignment(db, { ownerId, packageId, assignment
 }
 
 /**
+ * Fetches the COMPLETE authorized filtered active assignment set,
+ * paging exhaustively at the 200-row page maximum, so day totals are
+ * never truncated by presentation pagination. Retired assignments are
+ * always excluded (day totals are an active-only read model); the
+ * caller's craft/shift filters and owner scope apply to every page,
+ * exactly as they do to the presentation page.
+ */
+async function fetchCompleteActiveAssignments(db, { ownerId, packageId, window, craft, shift }) {
+  const rows = [];
+  const pageSize = 200;
+  let offset = 0;
+  for (;;) {
+    let query = db.from("forge_work_craft_assignments")
+      .select("*").eq("owner_id", ownerId).eq("work_package_id", packageId)
+      .gte("work_date", window.from).lte("work_date", window.to);
+    if (craft != null) query = query.eq("craft_key", craftKeyFor(craft));
+    if (shift != null) query = query.eq("shift_key", shift);
+    query = query.is("retired_at", null);
+    const { data, error } = await query
+      .order("work_date", { ascending: true })
+      .order("shift_key", { ascending: true })
+      .order("craft_key", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const page = data || [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return rows.map(toCamelAssignment);
+}
+
+/**
  * Lists assignments for a package within a bounded window, in
  * date/shift/craft order. This is the stable read model the future
  * manpower-curve slice consumes (package_id, work_date, craft_key,
@@ -323,6 +357,13 @@ export async function retireCraftAssignment(db, { ownerId, packageId, assignment
  * unless asked for. A missing table (pre-migration window) reads as
  * an empty list — never a 500 — so the package screen keeps
  * rendering before the migration applies.
+ *
+ * Day totals always cover the complete authorized filtered active
+ * set, not just the returned page: when the page is provably the
+ * whole set (offset 0 and a short page) its active rows are the
+ * totals; otherwise the totals are aggregated over an exhaustive
+ * fetch of the active set, so a >200-row day or a nonzero offset
+ * never understates the day.
  */
 export async function listCraftAssignments(db, { ownerId, packageId, from, to, craft, shift, includeRetired, limit, offset }) {
   const window = resolveWindow({ from, to });
@@ -351,10 +392,21 @@ export async function listCraftAssignments(db, { ownerId, packageId, from, to, c
     throw error;
   }
   const assignments = (data || []).map(toCamelAssignment);
+  let dayTotals;
+  if (paging.offset === 0 && assignments.length < paging.limit) {
+    // Short first page: the returned rows ARE the complete filtered
+    // set, so the active rows on it are the complete day totals.
+    dayTotals = computeDayPlannedTotals(assignments);
+  } else {
+    // Full page or nonzero offset: the page may omit rows, so
+    // aggregate over the complete active set instead.
+    const complete = await fetchCompleteActiveAssignments(db, { ownerId, packageId, window, craft, shift });
+    dayTotals = computeDayPlannedTotals(complete);
+  }
   return {
     ok: true,
     assignments,
-    dayTotals: computeDayPlannedTotals(assignments),
+    dayTotals,
     from: window.from,
     to: window.to,
     packageStatus: pkg.status,

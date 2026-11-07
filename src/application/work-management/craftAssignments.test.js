@@ -316,6 +316,78 @@ describe("listCraftAssignments", () => {
     expect(wide).toMatchObject({ ok: false, httpStatus: 400 });
     expect(db.from).not.toHaveBeenCalled();
   });
+
+  it("totals a day with more than one full page of assignments", async () => {
+    // 250 active assignments on one day, 1 person-hour each. The
+    // presentation page (limit 200) can only show 200 of them, but
+    // the day total must cover all 250.
+    const all = Array.from({ length: 250 }, (_, i) => ({
+      ...ASSIGNMENT_ROW,
+      id: `forge_wpca_${i + 1}`,
+      crew_size: 1,
+      hours_per_person: "1.00",
+    }));
+    const db = mockDb([
+      chain({ data: PKG_ROW, error: null }),
+      chain({ data: all.slice(0, 200), error: null }),
+      chain({ data: all.slice(0, 200), error: null }),
+      chain({ data: all.slice(200), error: null }),
+    ]);
+    const result = await listCraftAssignments(db, {
+      ownerId: OWNER, packageId: "pkg_1", from: "2026-11-09", to: "2026-11-09", limit: 200,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.assignments).toHaveLength(200);
+    expect(result.dayTotals).toEqual([
+      { workDate: "2026-11-09", plannedPersonHours: 250, assignmentCount: 250 },
+    ]);
+  });
+
+  it("totals the complete set from a nonzero offset, not just the page", async () => {
+    // Three active assignments on one day (2 crew x 5 hrs = 10 each).
+    // The page starts at offset 50 and returns only the last row, but
+    // the day total must still be all three.
+    const all = [1, 2, 3].map((n) => ({
+      ...ASSIGNMENT_ROW,
+      id: `forge_wpca_${n}`,
+      crew_size: 2,
+      hours_per_person: "5.00",
+    }));
+    const db = mockDb([
+      chain({ data: PKG_ROW, error: null }),
+      chain({ data: [all[2]], error: null }),
+      chain({ data: all, error: null }),
+    ]);
+    const result = await listCraftAssignments(db, {
+      ownerId: OWNER, packageId: "pkg_1", from: "2026-11-09", to: "2026-11-09",
+      limit: 100, offset: 50,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.assignments).toHaveLength(1);
+    expect(result.dayTotals).toEqual([
+      { workDate: "2026-11-09", plannedPersonHours: 30, assignmentCount: 3 },
+    ]);
+  });
+
+  it("applies the craft filter and the retired exclusion to the totals fetch", async () => {
+    const pipefitter = { ...ASSIGNMENT_ROW, id: "forge_wpca_1" };
+    const db = mockDb([
+      chain({ data: PKG_ROW, error: null }),
+      chain({ data: [pipefitter], error: null }),
+      chain({ data: [pipefitter], error: null }),
+    ]);
+    const result = await listCraftAssignments(db, {
+      ownerId: OWNER, packageId: "pkg_1", from: "2026-11-09", to: "2026-11-09",
+      craft: "Pipefitter", limit: 1, offset: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.dayTotals).toEqual([
+      { workDate: "2026-11-09", plannedPersonHours: 48, assignmentCount: 1 },
+    ]);
+    const totalsChain = db.from.mock.results[2].value;
+    expect(totalsChain.eq).toHaveBeenCalledWith("craft_key", "pipefitter");
+    expect(totalsChain.is).toHaveBeenCalledWith("retired_at", null);
+  });
 });
 
 describe("listCraftAssignmentRevisions", () => {
