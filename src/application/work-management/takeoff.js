@@ -11,6 +11,7 @@ import {
   validateTakeoffLineInput,
   computePidTakeoffSummary,
 } from "@/domains/work-management/takeoff.js";
+import { mapPermitAnnotationRpcError } from "./permitAnnotations.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
@@ -125,7 +126,48 @@ export async function listDrawingsForPackage(db, { ownerId, packageId }) {
 }
 
 /** Deletes a drawing sheet. Proves the drawing is in the named package first (WPP1-003). Refuses if any other drawing still rolls up to it, or it still has takeoff lines — both would be orphaned data, not a cascading convenience delete. */
+/**
+ * Deletes a drawing. Slice 3: the delete runs through the trusted
+ * `forge_work_permit_annotation_delete_drawing` RPC, which retires
+ * every active permit annotation on the drawing (with a
+ * parent_drawing_deleted revision each) and deletes the drawing row
+ * in ONE transaction — so no delete can orphan an annotation. The
+ * RPC enforces the same guards the old path did (drawing in this
+ * package, no child drawings rolled up, no takeoff lines), with the
+ * same 404/409 contract.
+ *
+ * Pre-migration fallback: the code deploys on merge while the slice-3
+ * migration applies on a separate word. Until it applies the RPC does
+ * not exist — and neither does the annotation table, so no annotation
+ * can be orphaned — and the old direct-delete path below runs
+ * instead, preserving exactly the behavior callers had before slice 3.
+ */
 export async function deleteDrawing(db, { ownerId, packageId, drawingId }) {
+  const { data, error } = await db.rpc("forge_work_permit_annotation_delete_drawing", {
+    p_owner_id: ownerId,
+    p_package_id: packageId,
+    p_drawing_id: drawingId,
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883"
+        || String(error.message || "").includes("Could not find the function")) {
+      return deleteDrawingLegacy(db, { ownerId, packageId, drawingId });
+    }
+    return mapPermitAnnotationRpcError(error);
+  }
+  if (data !== true && !(Array.isArray(data) && data[0] === true)) {
+    throw new Error("Permit annotation delete-drawing RPC returned an unexpected result.");
+  }
+  return { ok: true };
+}
+
+/**
+ * The pre-slice-3 direct delete, kept ONLY as the fallback for the
+ * window before the slice-3 migration applies (see deleteDrawing
+ * above). It cannot orphan annotations: it runs only when the RPC —
+ * and therefore the annotation table — does not exist yet.
+ */
+async function deleteDrawingLegacy(db, { ownerId, packageId, drawingId }) {
   const drawing = await requireDrawingInPackage(db, { ownerId, packageId, drawingId });
   if (!drawing) return { ok: false, httpStatus: 404, error: "Drawing not found in this package." };
   const { data: children, error: childError } = await db.from("forge_work_drawings")

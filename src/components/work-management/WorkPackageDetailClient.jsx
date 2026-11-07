@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
+import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 
@@ -500,6 +501,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
         initialLinks={initialLinks}
         onLinksChanged={() => setCostRefreshKey((key) => key + 1)}
       />
+
+      <WorkPackagePermitAnnotations packageId={pkg.id} scope="package" />
 
       <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
 
