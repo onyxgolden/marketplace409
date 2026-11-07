@@ -1,0 +1,14 @@
+{
+  "description": "AI Lab P5-A programmer dry-run wiring — contract + private presentation only. Synthetic preview fixtures and an inert preview harness. No worktree creation, no test execution, no activation path.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "programmer-dry-run-wiring",
+  "scripts": {
+    "fixtures": "node fixtures/make-fixtures.mjs",
+    "preview": "node preview/run-preview.mjs",
+    "test": "node --test tests/fixtures.test.js tests/preview.test.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

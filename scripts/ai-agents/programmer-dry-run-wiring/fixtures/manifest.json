@@ -1,0 +1,61 @@
+{
+  "manifest_version": "programmer-dry-run-fixtures@1",
+  "fixtures": {
+    "unbound-all-pass": {
+      "file": "unbound-all-pass.json",
+      "sha256": "0215a6b9c3b3566a4e3f679760c61de1485bf851c907e168d5774b980bd16655",
+      "job_id": "p5a-fixture-unbound-001",
+      "status": "BLOCKED",
+      "verification_state": "BLOCKED",
+      "validates": true
+    },
+    "failed-verification": {
+      "file": "failed-verification.json",
+      "sha256": "4de933a6e41582673e7ad4e4cc158401450f6027c0310dea67a8937d59c51e6f",
+      "job_id": "p5a-fixture-failed-001",
+      "status": "FAILED_VERIFICATION",
+      "verification_state": "FAIL",
+      "validates": true
+    },
+    "blocked-timeout": {
+      "file": "blocked-timeout.json",
+      "sha256": "ec9eb004b02a2ff723434d20dc6e7d34e8b8cc485df2714e4439f08bac46d662",
+      "job_id": "p5a-fixture-blocked-001",
+      "status": "BLOCKED",
+      "verification_state": "BLOCKED",
+      "validates": true
+    },
+    "not-run": {
+      "file": "not-run.json",
+      "sha256": "3351d7e6dfadaf7bfdf444b0ddba3819e8c21ef131c56ae0f3bd0bdb11757bb0",
+      "job_id": "p5a-fixture-notrun-001",
+      "status": "PROPOSED",
+      "verification_state": "NOT_RUN",
+      "validates": true
+    },
+    "malicious-strings": {
+      "file": "malicious-strings.json",
+      "sha256": "1554e426cfe7367f439736fb604c969f71a529e2c1dc1b8a47eaa00756d8b63a",
+      "job_id": "p5a-fixture-malicious-001",
+      "status": "VERIFIED",
+      "verification_state": "BLOCKED",
+      "validates": true
+    },
+    "oversized-diff": {
+      "file": "oversized-diff.json",
+      "sha256": "5b53d7e0d85f3eef643f56848b225b1ae9f34223623a7ffd4e6a74c3420157c2",
+      "job_id": "p5a-fixture-oversized-001",
+      "status": "PROPOSED",
+      "verification_state": "NOT_RUN",
+      "validates": false
+    },
+    "stale-digest": {
+      "file": "stale-digest.json",
+      "sha256": "3e13aa0b2bc18cb49c2fe23b311ef6f6dde270798fcd4259d48c6a7876636635",
+      "job_id": "p5a-fixture-unbound-001",
+      "status": "PROPOSED",
+      "verification_state": "BLOCKED",
+      "validates": true
+    }
+  }
+}
