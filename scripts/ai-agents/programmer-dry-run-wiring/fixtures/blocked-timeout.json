@@ -1,0 +1,178 @@
+{
+  "schema_version": "programmer-dry-run-proposal@1",
+  "job_id": "p5a-fixture-blocked-001",
+  "agent": "programmer",
+  "source": {
+    "repo": "synthetic-fixture-repo",
+    "repo_id": "synthetic-local-git-repo-001",
+    "branch_display_name": "synthetic/fixture-branch",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "task": {
+    "task_id": "task-literal-correction-001",
+    "family": "literal-correction",
+    "description": "Correct one literal in the synthetic example module.",
+    "brief_digest": "5f482b37fa659a1d97ceb7cb96229d2af6067cd9ff5069a24fc12017dbc015f0",
+    "policy_version": "pa2-policy-v1",
+    "policy_digest": "dbeb6086e891a7a790d6bf1880e067ed41b6302b2dbfd883769c033cb91191f6"
+  },
+  "operator": {
+    "operator_ref": "synthetic-operator-001",
+    "run_id": "run-p5a-fixture-blocked-001"
+  },
+  "worktree": {
+    "job_scoped_id": "wt-p5a-fixture-blocked-001",
+    "diagnostic_location": "diagnostics/wt-p5a-fixture-blocked-001/notes.txt"
+  },
+  "plan": {
+    "files": [
+      {
+        "path": "src/example.js",
+        "operation": "modify",
+        "added_lines": 1,
+        "removed_lines": 1
+      }
+    ],
+    "diff": "diff --git a/src/example.js b/src/example.js\n--- a/src/example.js\n+++ b/src/example.js\n@@ -1,3 +1,3 @@\n export const greeting = \"hello\";\n-export const old = 1;\n+export const updated = 2;\n export const bye = \"bye\";",
+    "patch_sha256": "95fb4448fe305d32edbad236bb19061d3ce65297e122322b96557d14561c81a9",
+    "candidate_tree_digest": "ea6ed938ba2a6dfa78de077839b92becb7b2df38c07f8780b0f855e9ed00442a"
+  },
+  "test_profiles": [
+    "syntax",
+    "baseline",
+    "candidate"
+  ],
+  "verification": {
+    "receipt": {
+      "schema_version": "1",
+      "agent": "qa-test-runner",
+      "advisory": true,
+      "job_id": "p5a-fixture-blocked-001",
+      "target": "synthetic-fixture-repo",
+      "head_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checkout_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "COMPLETED",
+      "verdict": "SUITES_FAILED",
+      "reason_code": null,
+      "diagnostics": [],
+      "isolation": {
+        "mechanism": "bwrap",
+        "network": "denied (namespace)",
+        "environment": "scrubbed allowlist",
+        "execution_tree": "disposable copy materialized from the pinned commit (git archive)",
+        "original_checkout": "untouched"
+      },
+      "suites": [
+        {
+          "id": "syntax",
+          "patterns": [
+            "src/example-syntax.test.js"
+          ],
+          "timeout_ms": 30000,
+          "status": "PASS",
+          "exit_code": 0,
+          "signal": null,
+          "reason_code": null,
+          "reason": null,
+          "test_counts": {
+            "total": 4,
+            "passed": 4,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "failing_tests": [],
+          "failing_tests_total": 0,
+          "failing_tests_truncated": false,
+          "cleanup_failed": false
+        },
+        {
+          "id": "baseline",
+          "patterns": [
+            "src/example-baseline.test.js"
+          ],
+          "timeout_ms": 30000,
+          "status": "TIMEOUT",
+          "exit_code": 1,
+          "signal": null,
+          "reason_code": "TIMEOUT",
+          "reason": "baseline profile exceeded 30s",
+          "test_counts": {
+            "total": 4,
+            "passed": 4,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "failing_tests": [],
+          "failing_tests_total": 0,
+          "failing_tests_truncated": false,
+          "cleanup_failed": false
+        },
+        {
+          "id": "candidate",
+          "patterns": [
+            "src/example-candidate.test.js"
+          ],
+          "timeout_ms": 30000,
+          "status": "PASS",
+          "exit_code": 0,
+          "signal": null,
+          "reason_code": null,
+          "reason": null,
+          "test_counts": {
+            "total": 4,
+            "passed": 4,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "failing_tests": [],
+          "failing_tests_total": 0,
+          "failing_tests_truncated": false,
+          "cleanup_failed": false
+        }
+      ],
+      "totals": {
+        "suites_total": 3,
+        "suites_passed": 2,
+        "suites_failed": 0,
+        "suites_error": 0,
+        "suites_timeout": 1,
+        "suites_skipped_budget": 0,
+        "tests_total": 12,
+        "tests_passed": 12,
+        "tests_failed": 0,
+        "tests_pending": 0
+      }
+    },
+    "logs_digest": "639df1055c346dd05051c72b4d48e31b5d059e6eae9ba24a15032f43b7db8cdf"
+  },
+  "risks": [
+    "Synthetic fixture: the candidate was never executed against a real branch."
+  ],
+  "rollback_notes": "No rollback applies: nothing was applied, committed, or pushed.",
+  "created_at": "2026-11-07T12:00:00Z",
+  "expires_at": "2026-11-08T12:00:00Z",
+  "audit": [
+    {
+      "event": "created",
+      "at": "2026-11-07T12:00:00Z",
+      "actor": "synthetic-operator-001",
+      "detail": "synthetic fixture created"
+    },
+    {
+      "event": "proposed",
+      "at": "2026-11-07T12:00:01Z",
+      "actor": "synthetic-operator-001",
+      "detail": "synthetic proposal prepared"
+    }
+  ],
+  "status": "BLOCKED",
+  "advisory": true,
+  "authorization": "PROPOSAL_ONLY"
+}

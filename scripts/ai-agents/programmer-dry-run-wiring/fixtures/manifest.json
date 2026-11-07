@@ -1,0 +1,61 @@
+{
+  "manifest_version": "programmer-dry-run-fixtures@1",
+  "fixtures": {
+    "valid-verified": {
+      "file": "valid-verified.json",
+      "sha256": "4e04245b08aeb38a4be499086f2cf1357d617319e731697fba20f5e99474e521",
+      "job_id": "p5a-fixture-verified-001",
+      "status": "VERIFIED",
+      "verification_state": "PASS",
+      "validates": true
+    },
+    "failed-verification": {
+      "file": "failed-verification.json",
+      "sha256": "b5fdb60bf754963d3e02c1db3dacaf895ec4f39d33f1bace7738459573b66a01",
+      "job_id": "p5a-fixture-failed-001",
+      "status": "FAILED_VERIFICATION",
+      "verification_state": "FAIL",
+      "validates": true
+    },
+    "blocked-timeout": {
+      "file": "blocked-timeout.json",
+      "sha256": "c120e429fb16048237230e291f992e584421aff04070259d966d5180b9db2dce",
+      "job_id": "p5a-fixture-blocked-001",
+      "status": "BLOCKED",
+      "verification_state": "BLOCKED",
+      "validates": true
+    },
+    "not-run": {
+      "file": "not-run.json",
+      "sha256": "3351d7e6dfadaf7bfdf444b0ddba3819e8c21ef131c56ae0f3bd0bdb11757bb0",
+      "job_id": "p5a-fixture-notrun-001",
+      "status": "PROPOSED",
+      "verification_state": "NOT_RUN",
+      "validates": true
+    },
+    "malicious-strings": {
+      "file": "malicious-strings.json",
+      "sha256": "9c935756b1428f0484830fed0a6c3a0d6b988cb5df926401725155feb7d73c65",
+      "job_id": "p5a-fixture-malicious-001",
+      "status": "VERIFIED",
+      "verification_state": "PASS",
+      "validates": true
+    },
+    "oversized-diff": {
+      "file": "oversized-diff.json",
+      "sha256": "5b53d7e0d85f3eef643f56848b225b1ae9f34223623a7ffd4e6a74c3420157c2",
+      "job_id": "p5a-fixture-oversized-001",
+      "status": "PROPOSED",
+      "verification_state": "NOT_RUN",
+      "validates": false
+    },
+    "stale-digest": {
+      "file": "stale-digest.json",
+      "sha256": "494b3ad06c92f11b70510f0f7278c43e980685af2732fac10097d5d57874309f",
+      "job_id": "p5a-fixture-verified-001",
+      "status": "PROPOSED",
+      "verification_state": "PASS",
+      "validates": true
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "schema_version": "programmer-dry-run-proposal@1",
+  "job_id": "p5a-fixture-notrun-001",
+  "agent": "programmer",
+  "source": {
+    "repo": "synthetic-fixture-repo",
+    "repo_id": "synthetic-local-git-repo-001",
+    "branch_display_name": "synthetic/fixture-branch",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "task": {
+    "task_id": "task-literal-correction-001",
+    "family": "literal-correction",
+    "description": "Correct one literal in the synthetic example module.",
+    "brief_digest": "5f482b37fa659a1d97ceb7cb96229d2af6067cd9ff5069a24fc12017dbc015f0",
+    "policy_version": "pa2-policy-v1",
+    "policy_digest": "dbeb6086e891a7a790d6bf1880e067ed41b6302b2dbfd883769c033cb91191f6"
+  },
+  "operator": {
+    "operator_ref": "synthetic-operator-001",
+    "run_id": "run-p5a-fixture-notrun-001"
+  },
+  "worktree": {
+    "job_scoped_id": "wt-p5a-fixture-notrun-001",
+    "diagnostic_location": "diagnostics/wt-p5a-fixture-notrun-001/notes.txt"
+  },
+  "plan": {
+    "files": [
+      {
+        "path": "src/example.js",
+        "operation": "modify",
+        "added_lines": 1,
+        "removed_lines": 1
+      }
+    ],
+    "diff": "diff --git a/src/example.js b/src/example.js\n--- a/src/example.js\n+++ b/src/example.js\n@@ -1,3 +1,3 @@\n export const greeting = \"hello\";\n-export const old = 1;\n+export const updated = 2;\n export const bye = \"bye\";",
+    "patch_sha256": "95fb4448fe305d32edbad236bb19061d3ce65297e122322b96557d14561c81a9",
+    "candidate_tree_digest": "26cf2bdd7d69be910537a6c634f6a49846e70dedaf5309c77d630986d1d47970"
+  },
+  "test_profiles": [
+    "syntax",
+    "baseline",
+    "candidate"
+  ],
+  "verification": {
+    "receipt": null,
+    "logs_digest": "c04d1d9bcc8644821340af26db07fbc7859d20a13e2fc438aca3cab625a1a3c5"
+  },
+  "risks": [
+    "Synthetic fixture: the candidate was never executed against a real branch."
+  ],
+  "rollback_notes": "No rollback applies: nothing was applied, committed, or pushed.",
+  "created_at": "2026-11-07T12:00:00Z",
+  "expires_at": "2026-11-08T12:00:00Z",
+  "audit": [
+    {
+      "event": "created",
+      "at": "2026-11-07T12:00:00Z",
+      "actor": "synthetic-operator-001",
+      "detail": "synthetic fixture created"
+    },
+    {
+      "event": "proposed",
+      "at": "2026-11-07T12:00:01Z",
+      "actor": "synthetic-operator-001",
+      "detail": "synthetic proposal prepared"
+    }
+  ],
+  "status": "PROPOSED",
+  "advisory": true,
+  "authorization": "PROPOSAL_ONLY"
+}

@@ -1,0 +1,15 @@
+{
+  "descriptors": [
+    {
+      "agent": "programmer",
+      "job_id": "programmer-dry-run-proposal@1",
+      "kind": "programmer-dry-run-proposal",
+      "note": "DATA, not a scheduler registration. Nothing is wired to run. Real-branch dry runs need Jason's separate explicit authorization.",
+      "proposed_trigger": "manual 'Prepare dry run' press in the private Workbench (documentation only — not registered anywhere; no automatic invocation)",
+      "readiness": "CONTRACT_ONLY",
+      "reporting_window": "one bounded dry-run proposal per explicit trigger",
+      "version": 1,
+      "window_name": "programmer-dry-run-single-proposal"
+    }
+  ]
+}
