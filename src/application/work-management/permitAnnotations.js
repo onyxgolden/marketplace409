@@ -253,6 +253,13 @@ export async function updatePermitAnnotation(db, { ownerId, packageId, annotatio
     p_permit_reference: validation.values.permitReference ?? null,
     p_note: validation.values.note ?? null,
     p_reason: validation.values.reason ?? null,
+    // Presence is separate from value: a supplied field (even an
+    // explicit null/empty, which clears it) sets its flag; an absent
+    // field leaves the flag false and the RPC preserves the value.
+    // validation.values holds only supplied fields, so `undefined`
+    // here means "absent" and `null` means "explicitly cleared".
+    p_set_reference: validation.values.permitReference !== undefined,
+    p_set_note: validation.values.note !== undefined,
   });
   if (error) return mapPermitAnnotationRpcError(error);
   return { ok: true, annotation: toCamelAnnotation(rpcRow(data)) };

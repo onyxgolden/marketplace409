@@ -283,7 +283,7 @@ describe("slice 3 migration: RPC flows and audit", () => {
   it60("the RPCs take no actor parameter — audit forgery is impossible by signature", async () => {
     for (const fn of [
       "forge_work_permit_annotation_create(text,text,text,text,text,text,text,text)",
-      "forge_work_permit_annotation_update(text,text,integer,text,text,text,text,text)",
+      "forge_work_permit_annotation_update(text,text,integer,text,text,text,text,text,boolean,boolean)",
       "forge_work_permit_annotation_retire(text,text,integer,text)",
       "forge_work_permit_annotation_delete_drawing(text,text,text)",
     ]) {
@@ -332,7 +332,7 @@ describe("slice 3 migration: RPC flows and audit", () => {
     });
     const { rows } = await asUser(db, OWNER_A, `
       select * from forge_work_permit_annotation_update(
-        '${OWNER_A}', '${ann.id}', 1, 'New', 'https://example.com/new', null, 'note', 'renamed');
+        '${OWNER_A}', '${ann.id}', 1, 'New', 'https://example.com/new', null, 'note', 'renamed', false, true);
     `);
     expect(rows[0].version).toBe(2);
     expect(rows[0].label).toBe("New");
@@ -346,8 +346,54 @@ describe("slice 3 migration: RPC flows and audit", () => {
     expect(revs[1].reason).toBe("renamed");
     await expect(asUser(db, OWNER_A, `
       select * from forge_work_permit_annotation_update(
-        '${OWNER_A}', '${ann.id}', 1, 'Stale', null, null, null, null);
+        '${OWNER_A}', '${ann.id}', 1, 'Stale', null, null, null, null, false, false);
     `)).rejects.toThrow(/WPP3_VERSION_CONFLICT/);
+  });
+
+  it60("update can clear optional reference and note, and leaving them unset preserves them", async () => {
+    const ann = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "package", label: "Portal", url: "https://example.com/x",
+      reference: "PERMIT-1", note: "See portal",
+    });
+    // Explicit null with the set flag clears; label/URL stay put.
+    const { rows } = await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_update(
+        '${OWNER_A}', '${ann.id}', 1, null, null, null, null, null, true, true);
+    `);
+    expect(rows[0].version).toBe(2);
+    expect(rows[0].label).toBe("Portal");
+    expect(rows[0].permit_reference).toBeNull();
+    expect(rows[0].note).toBeNull();
+    const { rows: revs } = await db.query(
+      `select action, old_values, new_values from forge_work_permit_annotation_revisions where annotation_id = '${ann.id}' order by version;`,
+    );
+    expect(revs.map((r) => r.action)).toEqual(["create", "update"]);
+    expect(revs[1].old_values.permit_reference).toBe("PERMIT-1");
+    expect(revs[1].new_values.permit_reference).toBeNull();
+    expect(revs[1].old_values.note).toBe("See portal");
+    expect(revs[1].new_values.note).toBeNull();
+    // A label-only update with both flags false preserves set values.
+    const ann2 = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "package", label: "Keep", url: "https://example.com/y",
+      reference: "PERMIT-2", note: "Keep me",
+    });
+    const { rows: kept } = await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_update(
+        '${OWNER_A}', '${ann2.id}', 1, 'Kept', null, null, null, null, false, false);
+    `);
+    expect(kept[0].version).toBe(2);
+    expect(kept[0].label).toBe("Kept");
+    expect(kept[0].permit_reference).toBe("PERMIT-2");
+    expect(kept[0].note).toBe("Keep me");
+    // Explicit empty string also clears, while the other field (flag
+    // false) is preserved.
+    const { rows: cleared } = await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_update(
+        '${OWNER_A}', '${ann2.id}', 2, null, null, '', null, null, true, false);
+    `);
+    expect(cleared[0].version).toBe(3);
+    expect(cleared[0].permit_reference).toBeNull();
+    expect(cleared[0].note).toBe("Keep me");
   });
 
   it60("retire soft-deletes with a revision; a retired annotation cannot be updated or retired again", async () => {
@@ -362,7 +408,7 @@ describe("slice 3 migration: RPC flows and audit", () => {
     expect(rows[0].retired_by).toBe(OWNER_A);
     await expect(asUser(db, OWNER_A, `
       select * from forge_work_permit_annotation_update(
-        '${OWNER_A}', '${ann.id}', 2, 'Nope', null, null, null, null);
+        '${OWNER_A}', '${ann.id}', 2, 'Nope', null, null, null, null, false, false);
     `)).rejects.toThrow(/WPP3_RETIRED/);
     await expect(asUser(db, OWNER_A, `
       select * from forge_work_permit_annotation_retire('${OWNER_A}', '${ann.id}', 2, null);
@@ -442,6 +488,184 @@ describe("slice 3 migration: RPC flows and audit", () => {
     const { rows } = await db.query(`select retired_at from forge_work_permit_annotations where id = '${ann.id}';`);
     expect(rows[0].retired_at).toBeNull();
   });
+
+  it60("drawing delete detaches previously retired annotations and preserves their history", async () => {
+    const active = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_a1", label: "Active", url: "https://example.com/a",
+    });
+    const retired = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_a1", label: "Retired", url: "https://example.com/r",
+    });
+    // Retire one first: it keeps its live drawing id (correct while
+    // the drawing exists) — the exact state the old code choked on,
+    // because the retired row still held the restrictive FK.
+    await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_retire('${OWNER_A}', '${retired.id}', 1, 'Superseded');
+    `);
+    // dwg_a2 is seeded as a child of dwg_a1; delete the child first so
+    // the parent delete is not blocked by the children guard.
+    await asUser(db, OWNER_A, `
+      select forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_a', 'dwg_a2');
+    `);
+    const { rows } = await asUser(db, OWNER_A, `
+      select forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_a', 'dwg_a1');
+    `);
+    expect(rows[0].forge_work_permit_annotation_delete_drawing).toBe(true);
+    const { rows: drawings } = await db.query(`select id from forge_work_drawings where id = 'dwg_a1';`);
+    expect(drawings).toHaveLength(0);
+    const { rows: anns } = await db.query(
+      `select * from forge_work_permit_annotations where id in ('${active.id}', '${retired.id}') order by id;`,
+    );
+    const wasActive = anns.find((a) => a.id === active.id);
+    const wasRetired = anns.find((a) => a.id === retired.id);
+    for (const ann of [wasActive, wasRetired]) {
+      expect(ann.retired_at).not.toBeNull();
+      expect(ann.drawing_id).toBeNull();
+      expect(ann.original_drawing_id).toBe("dwg_a1");
+    }
+    expect(wasActive.version).toBe(2);
+    expect(wasActive.retired_by).toBe(OWNER_A);
+    // The previously retired one keeps its original retirement
+    // (actor and timestamp) and gains a detachment revision.
+    expect(wasRetired.version).toBe(3);
+    expect(wasRetired.retired_by).toBe(OWNER_A);
+    const { rows: revs } = await db.query(
+      `select action, old_values, new_values from forge_work_permit_annotation_revisions
+        where annotation_id = '${retired.id}' order by version;`,
+    );
+    expect(revs.map((r) => r.action)).toEqual(["create", "retire", "parent_drawing_deleted"]);
+    expect(revs[2].old_values.drawing_id).toBe("dwg_a1");
+    expect(revs[2].old_values.retired_at).not.toBeNull();
+    expect(revs[2].new_values.drawing_id).toBeNull();
+    expect(revs[2].new_values.original_drawing_id).toBe("dwg_a1");
+    expect(revs[2].new_values.retired_at).toBe(revs[2].old_values.retired_at);
+  });
+
+  it60("a failed drawing delete leaves active and previously retired annotations unchanged", async () => {
+    const active = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_a1", label: "Active", url: "https://example.com/a",
+    });
+    const retired = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_a1", label: "Retired", url: "https://example.com/r",
+    });
+    await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_retire('${OWNER_A}', '${retired.id}', 1, 'Superseded');
+    `);
+    // dwg_a2 is a child of dwg_a1, so the parent delete is blocked.
+    await expect(asUser(db, OWNER_A, `
+      select forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_a', 'dwg_a1');
+    `)).rejects.toThrow(/WPP3_DRAWING_HAS_CHILDREN/);
+    const { rows: anns } = await db.query(
+      `select * from forge_work_permit_annotations where id in ('${active.id}', '${retired.id}') order by id;`,
+    );
+    const wasActive = anns.find((a) => a.id === active.id);
+    const wasRetired = anns.find((a) => a.id === retired.id);
+    expect(wasActive.retired_at).toBeNull();
+    expect(wasActive.drawing_id).toBe("dwg_a1");
+    expect(wasActive.version).toBe(1);
+    expect(wasRetired.retired_at).not.toBeNull();
+    expect(wasRetired.drawing_id).toBe("dwg_a1");
+    expect(wasRetired.original_drawing_id).toBe("dwg_a1");
+    expect(wasRetired.version).toBe(2);
+    const { rows: revs } = await db.query(
+      `select count(*) as n from forge_work_permit_annotation_revisions
+        where annotation_id in ('${active.id}', '${retired.id}');`,
+    );
+    expect(Number(revs[0].n)).toBe(3); // create + create + retire, no detachment rows
+  });
+});
+
+describe("slice 3 migration: URL validation at the database boundary", () => {
+  let db;
+  beforeEach(async () => { db = await setupDb(); }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("the URL validator parses authority and port strictly (direct function calls)", async () => {
+    const cases = [
+      // [url, expected]
+      ["https://example.com/x", true],
+      ["https://example.com:8443/x", true],
+      ["https://example.com:65535/x", true],
+      ["https://example.com:0/x", true],
+      ["https://example.com:/x", true], // empty port = default port, WHATWG-equivalent
+      ["https://example.com:080/x", true],
+      ["https://fc.example.com/x", true], // a DNS name starting with fc is not an IPv6 literal
+      ["https://[::ffff:192.0.2.1]/x", true],
+      ["https://8.8.8.8/x", true],
+      ["https://example.com:bad/x", false],
+      ["https://example.com:99999/x", false],
+      ["https://example.com:65536/x", false],
+      ["https://example.com:80:80/x", false],
+      ["https://example.com:12a/x", false],
+      ["https://example.com:99999999999999999999/x", false],
+      ["https://user@example.com/x", false],
+      ["https://user:pass@example.com/x", false],
+      ["https://[::1]/x", false],
+      ["https://[::]/x", false],
+      ["https://[::1/x", false],
+      ["https://[]/x", false],
+      ["https://[1234]/x", false],
+      ["https://[::1::2]/x", false],
+      ["https://[12345::]/x", false],
+      ["https://[::ffff:999.0.2.1]/x", false],
+      ["https://[fe80::1]/x", false],
+      ["https://[fc00::1]/x", false],
+      ["https://[fd12:3456::1]/x", false],
+      ["https://999.1.1.1/x", false],
+      ["https://0177.0.0.1/x", false], // octal-form loopback, not a DNS name
+      ["https://0x7f.0.0.1/x", false], // hex-form loopback
+      ["https://1.2.3.04/x", false], // leading-zero octet is not a canonical quad
+      ["https://2130706433/x", false], // bare number = IPv4-number form
+      ["https://1.2.3/x", false], // short dotted numeric form
+      ["https://127.0.0.1/x", false],
+      ["https://10.0.0.5/x", false],
+      ["https://192.168.1.1/x", false],
+      ["https://172.31.255.255/x", false],
+      ["https://localhost/x", false],
+      ["https://app.localhost/x", false],
+      ["http://example.com/x", false],
+      ["https://example.com/pa th", false],
+      ["https://exa mple.com/x", false],
+    ];
+    for (const [url, expected] of cases) {
+      const { rows } = await db.query(
+        `select forge_work_permit_annotation_url_is_valid('${url}') as ok;`,
+      );
+      expect({ url, ok: rows[0].ok }).toEqual({ url, ok: expected });
+    }
+  });
+
+  it60("create and update reject malformed authority and port forms at the database boundary", async () => {
+    for (const url of [
+      "https://example.com:bad/x",
+      "https://example.com:99999/x",
+      "https://example.com:80:80/x",
+      "https://[::1/x",
+      "https://[]/x",
+      "https://[::1::2]/x",
+      "https://user@example.com/x",
+      "https://0177.0.0.1/x",
+      "https://999.1.1.1/x",
+    ]) {
+      await expect(createAnnotation(db, OWNER_A, {
+        packageId: "pkg_a", targetKind: "package", label: "X", url,
+      })).rejects.toThrow(/WPP3_INVALID_URL/);
+    }
+    // A valid explicit port and a DNS name starting with fc are accepted.
+    const ok = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "package", label: "Port", url: "https://example.com:8443/x",
+    });
+    expect(ok.url).toBe("https://example.com:8443/x");
+    const fc = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "package", label: "FC", url: "https://fc.example.com/x",
+    });
+    expect(fc.url).toBe("https://fc.example.com/x");
+    // The same malformed URL is rejected on update too.
+    await expect(asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_update(
+        '${OWNER_A}', '${ok.id}', 1, null, 'https://example.com:bad/x', null, null, null, false, false);
+    `)).rejects.toThrow(/WPP3_INVALID_URL/);
+  });
 });
 
 describe("slice 3 migration: effective ACL matrix and default-privilege negative case", () => {
@@ -469,10 +693,12 @@ describe("slice 3 migration: effective ACL matrix and default-privilege negative
   it60("only authenticated may execute the RPCs (and the URL validator)", async () => {
     for (const fn of [
       "forge_work_permit_annotation_create(text,text,text,text,text,text,text,text)",
-      "forge_work_permit_annotation_update(text,text,integer,text,text,text,text,text)",
+      "forge_work_permit_annotation_update(text,text,integer,text,text,text,text,text,boolean,boolean)",
       "forge_work_permit_annotation_retire(text,text,integer,text)",
       "forge_work_permit_annotation_delete_drawing(text,text,text)",
       "forge_work_permit_annotation_url_is_valid(text)",
+      "forge_work_permit_annotation_ipv4_is_valid(text)",
+      "forge_work_permit_annotation_ipv4_is_private_or_loopback(text)",
     ]) {
       const { rows: authRows } = await db.query(
         `select has_function_privilege('authenticated', 'public.${fn}'::regprocedure, 'EXECUTE') as ok;`,
@@ -518,6 +744,9 @@ describe("slice 3 migration: effective ACL matrix and default-privilege negative
     expect(sql).toContain("revoke all on forge_work_permit_annotations from service_role");
     expect(sql).toContain("revoke all on forge_work_permit_annotation_revisions from service_role");
     expect(sql).toContain("revoke all on function public.forge_work_permit_annotation_create(text, text, text, text, text, text, text, text) from public");
+    expect(sql).toContain("revoke all on function public.forge_work_permit_annotation_update(text, text, integer, text, text, text, text, text, boolean, boolean) from public");
+    expect(sql).toContain("revoke all on function public.forge_work_permit_annotation_ipv4_is_valid(text) from public");
+    expect(sql).toContain("revoke all on function public.forge_work_permit_annotation_ipv4_is_private_or_loopback(text) from public");
     expect(sql).toContain("revoke all on function public.forge_work_permit_annotation_delete_drawing(text, text, text) from public");
     expect(sql).toContain("force row level security");
   });

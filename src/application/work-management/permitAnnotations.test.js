@@ -159,7 +159,44 @@ describe("updatePermitAnnotation", () => {
       p_permit_reference: null,
       p_note: null,
       p_reason: null,
+      // note was explicitly cleared (null) so its flag is set;
+      // permitReference was absent so its flag stays false (preserve).
+      p_set_reference: false,
+      p_set_note: true,
     });
+  });
+
+  it("sets the reference flag when the reference is cleared and leaves both flags false when neither is supplied", async () => {
+    const updated = { ...ANNOTATION_ROW, version: 2, permit_reference: null };
+    const db = mockDb(
+      [chain({ data: ANNOTATION_ROW, error: null })],
+      [{ data: updated, error: null }],
+    );
+    const cleared = await updatePermitAnnotation(db, {
+      ownerId: OWNER, packageId: "pkg_1", annotationId: "forge_wppa_1",
+      patch: { expectedVersion: 1, label: "Renamed", permitReference: "" },
+    });
+    expect(cleared.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_permit_annotation_update", expect.objectContaining({
+      p_permit_reference: null,
+      p_note: null,
+      p_set_reference: true,
+      p_set_note: false,
+    }));
+
+    const db2 = mockDb(
+      [chain({ data: ANNOTATION_ROW, error: null })],
+      [{ data: { ...ANNOTATION_ROW, version: 2, label: "Renamed" }, error: null }],
+    );
+    const kept = await updatePermitAnnotation(db2, {
+      ownerId: OWNER, packageId: "pkg_1", annotationId: "forge_wppa_1",
+      patch: { expectedVersion: 1, label: "Renamed" },
+    });
+    expect(kept.ok).toBe(true);
+    expect(db2.rpc).toHaveBeenCalledWith("forge_work_permit_annotation_update", expect.objectContaining({
+      p_set_reference: false,
+      p_set_note: false,
+    }));
   });
 });
 

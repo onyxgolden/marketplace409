@@ -143,11 +143,59 @@ revoke all on forge_work_permit_annotation_revisions from service_role;
 -- dead links stay saved and editable). Shared by the create/update
 -- RPCs so the rule is enforced at the database boundary, not only in
 -- the application service: a direct RPC caller gets the same verdict
--- as the UI. Accepts an absolute HTTPS URL with a nonempty DNS host;
--- rejects credentials in the URL, localhost, loopback, and private IP
--- literals (IPv4 and IPv6). The application service normalizes the
--- URL (host lowercased) before calling; a direct RPC caller stores
--- the valid URL as supplied.
+-- as the UI. Accepts an absolute HTTPS URL with a nonempty host and
+-- a structurally valid authority; rejects credentials in the URL,
+-- localhost, loopback, and private IP literals (IPv4 and IPv6).
+-- The authority is parsed, not regex-matched: the host/port split
+-- handles bracketed IPv6 literals, rejects a second colon, and
+-- validates the port as decimal digits in 0..65535 (an empty port is
+-- the default port, exactly as the WHATWG URL parser treats it).
+-- Non-canonical IPv4 number forms (leading-zero octets, hex numbers,
+-- bare numbers, short dotted forms) are rejected: the parser reads
+-- them as IP literals, so they are not DNS names. The application
+-- service normalizes the URL (host lowercased) before calling; a
+-- direct RPC caller stores the valid URL as supplied.
+--
+-- Two small helpers keep the IPv4 rules in one place: the validator
+-- below calls them for dotted-quad hosts and for IPv4 tails embedded
+-- in IPv6 literals. Both are pure validators (no tables, no auth);
+-- they take EXECUTE from authenticated like the validator itself.
+create or replace function public.forge_work_permit_annotation_ipv4_is_valid(p_host text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_host ~ '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    and split_part(p_host, '.', 1) ~ '^(0|[1-9][0-9]{0,2})$'
+    and split_part(p_host, '.', 2) ~ '^(0|[1-9][0-9]{0,2})$'
+    and split_part(p_host, '.', 3) ~ '^(0|[1-9][0-9]{0,2})$'
+    and split_part(p_host, '.', 4) ~ '^(0|[1-9][0-9]{0,2})$'
+    and split_part(p_host, '.', 1)::integer <= 255
+    and split_part(p_host, '.', 2)::integer <= 255
+    and split_part(p_host, '.', 3)::integer <= 255
+    and split_part(p_host, '.', 4)::integer <= 255;
+$$;
+
+-- Caller must pass a valid canonical quad (see
+-- forge_work_permit_annotation_ipv4_is_valid); the casts below assume
+-- it. Private: 10/8, 172.16/12, 192.168/16. Loopback: 127/8.
+-- 0/8 ("this network") is also rejected.
+create or replace function public.forge_work_permit_annotation_ipv4_is_private_or_loopback(p_host text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select split_part(p_host, '.', 1)::integer = 127
+    or split_part(p_host, '.', 1)::integer = 10
+    or (split_part(p_host, '.', 1)::integer = 172
+        and split_part(p_host, '.', 2)::integer between 16 and 31)
+    or (split_part(p_host, '.', 1)::integer = 192
+        and split_part(p_host, '.', 2)::integer = 168)
+    or split_part(p_host, '.', 1)::integer = 0;
+$$;
+
 create or replace function public.forge_work_permit_annotation_url_is_valid(p_url text)
 returns boolean
 language plpgsql
@@ -155,26 +203,113 @@ stable
 set search_path = ''
 as $$
 declare
+  v_rest text;
+  v_authority text;
   v_host text;
+  v_port text;
+  v_is_ipv6 boolean;
+  v_content text;
+  v_pieces text[];
+  v_piece text;
 begin
   if p_url is null then return false; end if;
   if char_length(p_url) > 2048 then return false; end if;
   if p_url !~ '^https://[^[:space:][:cntrl:]]+$' then return false; end if;
-  -- No credentials: nothing that looks like userinfo before the first
-  -- path slash (an '@' in the path itself is fine).
-  if substring(p_url from '^https://[^/]*@') is not null then return false; end if;
-  -- Bracketed IPv6 literal first; otherwise the plain host up to the
-  -- first port/path/query/fragment delimiter.
-  v_host := lower(substring(p_url from '^https://\[([^\]]+)\]'));
-  if v_host is null then
-    v_host := lower(substring(p_url from '^https://([^/:?#]+)'));
+  v_rest := substring(p_url from 9);
+  -- Authority: everything up to the first '/', '?', or '#'.
+  v_authority := substring(v_rest from '^[^/?#]*');
+  if v_authority is null or v_authority = '' then return false; end if;
+  -- No credentials: any '@' in the authority is userinfo.
+  if position('@' in v_authority) > 0 then return false; end if;
+
+  if v_authority like '[%' then
+    -- Bracketed IPv6 literal: [content] or [content]:port, nothing else.
+    if v_authority !~ '^\[[0-9a-fA-F:.]+\](:[0-9]*)?$' then return false; end if;
+    v_content := substring(v_authority from '^\[([0-9a-fA-F:.]+)\]');
+    v_port := substring(v_authority from '^\[[0-9a-fA-F:.]+\]:(.*)$');
+    v_is_ipv6 := true;
+    v_host := v_content;
+  else
+    -- No brackets outside a bracketed literal.
+    if position('[' in v_authority) > 0 or position(']' in v_authority) > 0 then return false; end if;
+    if position(':' in v_authority) > 0 then
+      -- Exactly one colon: host:port. A second colon is malformed
+      -- (an unbracketed IPv6 literal is not a host).
+      if (char_length(v_authority) - char_length(replace(v_authority, ':', ''))) > 1 then return false; end if;
+      v_host := split_part(v_authority, ':', 1);
+      v_port := split_part(v_authority, ':', 2);
+    else
+      v_host := v_authority;
+      v_port := null;
+    end if;
+    v_is_ipv6 := false;
   end if;
+
+  -- Port: empty means the default port (WHATWG-equivalent); otherwise
+  -- decimal digits only, at most 5 digits, value 0..65535.
+  if v_port is not null and v_port <> '' then
+    if v_port !~ '^[0-9]+$' then return false; end if;
+    if char_length(v_port) > 5 then return false; end if;
+    if v_port::integer > 65535 then return false; end if;
+  end if;
+
   if v_host is null or v_host = '' then return false; end if;
+
+  if v_is_ipv6 then
+    -- IPv6 literal grammar: only hex digits, colons, and dots made it
+    -- past the bracket regex. Require at least one colon (a bare
+    -- number is not an IPv6 address), at most one '::' compression,
+    -- no ':::', and pieces of at most 4 hex digits — except the last
+    -- piece, which may be an embedded dotted-quad IPv4 tail.
+    if position(':' in v_host) = 0 then return false; end if;
+    if position(':::' in v_host) > 0 then return false; end if;
+    if (char_length(v_host) - char_length(replace(v_host, '::', ''))) / 2 > 1 then return false; end if;
+    v_pieces := string_to_array(v_host, ':');
+    -- Piece-count bound: without compression exactly 8 pieces (an
+    -- IPv4 tail counts as 2); with compression fewer than 8.
+    if position('::' in v_host) = 0 then
+      if array_length(v_pieces, 1) <> 8
+         and not (array_length(v_pieces, 1) = 7 and v_pieces[7] like '%.%.%.%') then return false; end if;
+    elsif array_length(v_pieces, 1) > 7 then
+      return false;
+    end if;
+    foreach v_piece in array v_pieces loop
+      if v_piece = '' then continue; end if; -- the '::' gap
+      if v_piece like '%.%.%.%' then
+        -- Embedded IPv4 tail: only valid as the last piece.
+        if v_piece <> v_pieces[array_length(v_pieces, 1)] then return false; end if;
+        if not public.forge_work_permit_annotation_ipv4_is_valid(v_piece) then return false; end if;
+      elsif v_piece !~ '^[0-9a-fA-F]{1,4}$' then
+        return false;
+      end if;
+    end loop;
+    -- Private/loopback IPv6: ::1, :: (unspecified), fe80::/10
+    -- link-local, fc00::/7 unique-local.
+    v_host := lower(v_host);
+    if v_host = '::1' or v_host = '::' then return false; end if;
+    if v_host ~ '^fe[89ab][0-9a-f]:' then return false; end if;
+    if v_host ~ '^f[cd][0-9a-f]{2}:' then return false; end if;
+    return true;
+  end if;
+
+  -- Unbracketed host: lowercase for the checks below.
+  v_host := lower(v_host);
   if v_host = 'localhost' or v_host like '%.localhost' then return false; end if;
-  if v_host = '::1' or v_host = '::' or v_host like 'fe80:%'
-     or v_host like 'fc%' or v_host like 'fd%' then return false; end if;
-  if v_host ~ '^127\.' or v_host = '0.0.0.0' or v_host ~ '^10\.'
-     or v_host ~ '^192\.168\.' or v_host ~ '^172\.(1[6-9]|2[0-9]|3[01])\.' then return false; end if;
+  -- A dotted decimal quad is an IPv4 literal, never a DNS name:
+  -- validate it as one, then apply the private/loopback rules.
+  if v_host ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' then
+    if not public.forge_work_permit_annotation_ipv4_is_valid(v_host) then return false; end if;
+    if public.forge_work_permit_annotation_ipv4_is_private_or_loopback(v_host) then return false; end if;
+    return true;
+  end if;
+  -- Non-canonical IPv4 number forms: the WHATWG parser reads a bare
+  -- number, a hex number, or a short dotted numeric form as an IPv4
+  -- address, so they are not DNS names. Reject them outright.
+  if v_host ~ '^[0-9]+$' then return false; end if;
+  if v_host ~ '^0[xX][0-9a-fA-F]+$' then return false; end if;
+  if v_host ~ '^([0-9]+|0[xX][0-9a-fA-F]+)(\.([0-9]+|0[xX][0-9a-fA-F]+)){1,3}$' then return false; end if;
+  -- Otherwise a DNS reg-name: no further structural checks beyond
+  -- the no-space/no-control regex and the nonempty host above.
   return true;
 end;
 $$;
@@ -318,7 +453,9 @@ create or replace function public.forge_work_permit_annotation_update(
   p_url text,
   p_permit_reference text,
   p_note text,
-  p_reason text
+  p_reason text,
+  p_set_reference boolean,
+  p_set_note boolean
 )
 returns public.forge_work_permit_annotations
 language plpgsql
@@ -366,12 +503,16 @@ begin
   if not public.forge_work_permit_annotation_url_is_valid(v_url) then
     raise exception 'WPP3_INVALID_URL';
   end if;
-  v_reference := case when p_permit_reference is null then v_old.permit_reference
+  -- Presence is separate from value: a caller that does not set an
+  -- optional field preserves it; a caller that sets it to null/empty
+  -- clears it; a caller that sets text replaces it. NULL alone cannot
+  -- carry both "absent" and "clear", which is why the flags exist.
+  v_reference := case when p_set_reference is not true then v_old.permit_reference
                       else nullif(btrim(p_permit_reference), '') end;
   if v_reference is not null and char_length(v_reference) > 120 then
     raise exception 'WPP3_REFERENCE_TOO_LONG';
   end if;
-  v_note := case when p_note is null then v_old.note
+  v_note := case when p_set_note is not true then v_old.note
                  else nullif(btrim(p_note), '') end;
   if v_note is not null and char_length(v_note) > 1000 then
     raise exception 'WPP3_NOTE_TOO_LONG';
@@ -521,6 +662,9 @@ declare
   v_drawing public.forge_work_drawings%rowtype;
   v_actor text;
   v_annotation public.forge_work_permit_annotations%rowtype;
+  v_retired_at timestamptz;
+  v_retired_by text;
+  v_old_version integer;
 begin
   if not public.has_workspace_access(p_owner_id) then
     raise exception 'WPP3_WORKSPACE_FORBIDDEN';
@@ -604,6 +748,63 @@ begin
        'Parent drawing deleted.', now());
   end loop;
 
+  -- Detach annotations already retired before this delete: they
+  -- still hold the restrictive FK on the drawing row, so the final
+  -- DELETE below would fail on them. Their retirement stands
+  -- (retired_at/retired_by unchanged); only the live drawing id is
+  -- cleared, and the detachment is recorded with a
+  -- parent_drawing_deleted revision, like the active retirements
+  -- above. The version bump is required: the revision's version must
+  -- stay unique per annotation.
+  for v_annotation in
+    select * from public.forge_work_permit_annotations
+      where owner_id = p_owner_id and drawing_id = p_drawing_id and retired_at is not null
+      order by created_at asc
+      for update
+  loop
+    v_retired_at := v_annotation.retired_at;
+    v_retired_by := v_annotation.retired_by;
+    v_old_version := v_annotation.version;
+
+    update public.forge_work_permit_annotations
+      set drawing_id = null,
+          version = version + 1,
+          updated_by = v_actor,
+          updated_at = now()
+      where owner_id = p_owner_id and id = v_annotation.id
+      returning * into v_annotation;
+
+    insert into public.forge_work_permit_annotation_revisions
+      (owner_id, id, annotation_id, version, actor_id, action,
+       old_values, new_values, reason, recorded_at)
+    values
+      (p_owner_id, 'forge_wppr_' || gen_random_uuid(), v_annotation.id, v_annotation.version, v_actor,
+       'parent_drawing_deleted',
+       jsonb_build_object(
+         'target_kind', 'drawing',
+         'drawing_id', p_drawing_id,
+         'original_drawing_id', p_drawing_id,
+         'label', v_annotation.label,
+         'url', v_annotation.url,
+         'permit_reference', v_annotation.permit_reference,
+         'note', v_annotation.note,
+         'retired_at', v_retired_at,
+         'retired_by', v_retired_by,
+         'version', v_old_version),
+       jsonb_build_object(
+         'target_kind', v_annotation.target_kind,
+         'drawing_id', v_annotation.drawing_id,
+         'original_drawing_id', v_annotation.original_drawing_id,
+         'label', v_annotation.label,
+         'url', v_annotation.url,
+         'permit_reference', v_annotation.permit_reference,
+         'note', v_annotation.note,
+         'retired_at', v_annotation.retired_at,
+         'retired_by', v_annotation.retired_by,
+         'version', v_annotation.version),
+       'Parent drawing deleted.', now());
+  end loop;
+
   delete from public.forge_work_drawings
     where owner_id = p_owner_id and package_id = p_package_id and id = p_drawing_id;
   return true;
@@ -616,13 +817,17 @@ $$;
 -- is the authenticated client); direct table access by service role
 -- remains a separate, server-side concern.
 revoke all on function public.forge_work_permit_annotation_url_is_valid(text) from public;
+revoke all on function public.forge_work_permit_annotation_ipv4_is_valid(text) from public;
+revoke all on function public.forge_work_permit_annotation_ipv4_is_private_or_loopback(text) from public;
 revoke all on function public.forge_work_permit_annotation_create(text, text, text, text, text, text, text, text) from public;
-revoke all on function public.forge_work_permit_annotation_update(text, text, integer, text, text, text, text, text) from public;
+revoke all on function public.forge_work_permit_annotation_update(text, text, integer, text, text, text, text, text, boolean, boolean) from public;
 revoke all on function public.forge_work_permit_annotation_retire(text, text, integer, text) from public;
 revoke all on function public.forge_work_permit_annotation_delete_drawing(text, text, text) from public;
 grant execute on function public.forge_work_permit_annotation_url_is_valid(text) to authenticated;
+grant execute on function public.forge_work_permit_annotation_ipv4_is_valid(text) to authenticated;
+grant execute on function public.forge_work_permit_annotation_ipv4_is_private_or_loopback(text) to authenticated;
 grant execute on function public.forge_work_permit_annotation_create(text, text, text, text, text, text, text, text) to authenticated;
-grant execute on function public.forge_work_permit_annotation_update(text, text, integer, text, text, text, text, text) to authenticated;
+grant execute on function public.forge_work_permit_annotation_update(text, text, integer, text, text, text, text, text, boolean, boolean) to authenticated;
 grant execute on function public.forge_work_permit_annotation_retire(text, text, integer, text) to authenticated;
 grant execute on function public.forge_work_permit_annotation_delete_drawing(text, text, text) to authenticated;
 

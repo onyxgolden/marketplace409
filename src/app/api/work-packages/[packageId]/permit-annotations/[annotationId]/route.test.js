@@ -33,6 +33,22 @@ describe("PATCH /api/work-packages/[packageId]/permit-annotations/[annotationId]
     });
   });
 
+  it("forwards an explicitly cleared field verbatim (presence survives the route)", async () => {
+    updatePermitAnnotation.mockResolvedValue({ ok: true, annotation: { id: "forge_wppa_1", version: 2, note: null } });
+    const request = new Request("https://test/x", {
+      method: "PATCH",
+      body: JSON.stringify({ expectedVersion: 1, note: null }),
+    });
+    const response = await PATCH(request, { params: params() });
+    expect(response.status).toBe(200);
+    // The null must reach the service as null (not dropped): the
+    // service encodes it as "clear the note" via the set flag.
+    expect(updatePermitAnnotation).toHaveBeenCalledWith(AUTH.db, {
+      ownerId: "owner_1", packageId: "pkg_1", annotationId: "forge_wppa_1",
+      patch: { expectedVersion: 1, note: null },
+    });
+  });
+
   it("maps a version conflict to 409", async () => {
     updatePermitAnnotation.mockResolvedValue({ ok: false, httpStatus: 409, error: "This permit link was changed by someone else — refresh and try again." });
     const request = new Request("https://test/x", {
