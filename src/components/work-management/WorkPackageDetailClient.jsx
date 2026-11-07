@@ -7,6 +7,7 @@ import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, fin
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
+import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
@@ -505,6 +506,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
       <WorkPackagePermitAnnotations packageId={pkg.id} scope="package" />
 
       <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
+
+      <WorkPackageCraftAssignments packageId={pkg.id} />
 
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-slate-900">Scope baseline</h2>
