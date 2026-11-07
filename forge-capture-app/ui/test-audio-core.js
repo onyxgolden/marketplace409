@@ -284,8 +284,18 @@ export class TestAudioSession {
       this.analyser.fftSize = this.fftSize;
       source.connect(this.analyser);
       this.recorder = new this.MediaRecorderImpl(this.stream, { mimeType: this.mime });
-      this.recorder.ondataavailable = (e) => this.onChunk(e && e.data);
-      this.recorder.onerror = (e) => this.onRecorderError(e);
+      // ChatGPT re-review P1: these callbacks are registered once per
+      // recorder and fire on the browser's own schedule, not this
+      // session's - a cancelled attempt's recorder can still deliver a
+      // late dataavailable/error event after a brand-new attempt has
+      // already started (reset() gave it a fresh chunks/appendChain).
+      // Closing over `gen` here and checking it inside onChunk/
+      // onRecorderError is what actually stops a stale attempt's bytes
+      // or error from landing in a newer attempt's buffer/state - the
+      // start()/stop() continuation guards alone don't reach these,
+      // since they're event callbacks, not awaited continuations.
+      this.recorder.ondataavailable = (e) => this.onChunk(gen, e && e.data);
+      this.recorder.onerror = (e) => this.onRecorderError(gen, e);
       this.recorder.start();
       this.startedAt = Date.now();
       this.state = "recording";
@@ -334,13 +344,19 @@ export class TestAudioSession {
     }
   }
 
-  onChunk(blob) {
+  onChunk(gen, blob) {
+    // A stale attempt's recorder firing this after cancel()/dispose()/a
+    // new start() must never touch the CURRENT attempt's chunks/chain -
+    // see the comment where this handler is installed in start().
+    if (gen !== this.generation) return;
     if (!blob || blob.size === 0) return;
     this.appendChain = this.appendChain.then(async () => {
       try {
         const buf = await blob.arrayBuffer();
+        if (gen !== this.generation) return; // generation could move on while this await was in flight too
         this.chunks.push(new Uint8Array(buf));
       } catch (err) {
+        if (gen !== this.generation) return;
         // A rejected arrayBuffer() must never propagate out through
         // appendChain - stopRecorderAndFlush()/stop() await this chain,
         // and an unhandled rejection there would escape stop() entirely
@@ -352,7 +368,8 @@ export class TestAudioSession {
     });
   }
 
-  onRecorderError(e) {
+  onRecorderError(gen, e) {
+    if (gen !== this.generation) return; // see onChunk's comment
     if (this.state !== "recording") return;
     this.fail(new Error(describeRecordingError((e && e.error) || e)));
   }

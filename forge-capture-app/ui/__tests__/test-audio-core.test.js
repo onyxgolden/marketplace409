@@ -537,3 +537,44 @@ describe("TestAudioSession — a rejected chunk append fails the test instead of
     expect(invoke).not.toHaveBeenCalled();
   });
 });
+
+describe("TestAudioSession — cross-generation recorder callback isolation (re-review P1)", () => {
+  it("a cancelled attempt's delayed dataavailable/error cannot append to or fail a newer attempt", async () => {
+    const invoke = vi.fn(async () => ({ path: "/lib/b.webm", fileName: "b.webm" }));
+    const { session } = makeControllableSession({ invokeImpl: invoke });
+
+    // Attempt A: starts, then is cancelled - but its recorder object (and
+    // the callback closures installed on it) still exists and can still
+    // fire, exactly like a real MediaRecorder whose final events arrive
+    // asynchronously after stop() was called on it.
+    await session.start({});
+    const recA = session.recorder;
+    session.cancel();
+    expect(session.state).toBe("cancelled");
+
+    // Attempt B starts before A's delayed events ever arrive.
+    await session.start({});
+    const recB = session.recorder;
+    expect(session.state).toBe("recording");
+    expect(recB).not.toBe(recA);
+
+    // A's late events arrive only now - after B already owns the session.
+    recA.ondataavailable({ data: makeBlob(new Uint8Array([7, 7, 7])) });
+    recA.onerror(new Error("late attempt A error"));
+
+    expect(session.state).toBe("recording"); // never knocked to "failed" by A's late error
+    expect(session.chunks.length).toBe(0); // A's late chunk never queued onto B's chain
+
+    // B completes normally afterward, proving A's interference didn't
+    // corrupt B structurally - and that only B's byte gets saved.
+    const stopPromise = session.stop();
+    recB.emitChunkAndStop(new Uint8Array([1, 2, 3]));
+    await stopPromise;
+    await flushMicrotasks();
+
+    expect(session.state).toBe("saved");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const dto = invoke.mock.calls[0][1].dto;
+    expect(Array.from(dto.bytes)).toEqual([1, 2, 3]);
+  });
+});
