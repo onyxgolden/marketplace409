@@ -13,6 +13,7 @@ import { useState } from "react";
 import { ForgeLoadingState, ForgeErrorState, ForgeEmptyState } from "@/components/forge/ForgeStates";
 import { forgeTheme } from "@/components/forge/theme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import WorkPackagePermitAnnotations from "@/components/work-management/WorkPackagePermitAnnotations";
 
 const DRAWING_TYPE_LABELS = { p_id: "P&ID", cut_sheet: "Cut sheet", isometric: "Isometric" };
 const CATEGORY_LABELS = { pipe: "Pipe", fitting: "Fitting", valve: "Valve", support: "Support", other: "Other" };
@@ -377,7 +378,7 @@ function LinesTable({ packageId, drawingId, lines, onChanged, onDeleted }) {
   );
 }
 
-function DrawingPanel({ packageId, drawing, onDrawingDeleted }) {
+function DrawingPanel({ packageId, drawing, onDrawingDeleted, onAnnotationsChanged }) {
   const [confirmation, setConfirmation] = useState("");
   const [drawingBusy, setDrawingBusy] = useState(false);
   const [drawingError, setDrawingError] = useState("");
@@ -452,6 +453,15 @@ function DrawingPanel({ packageId, drawing, onDrawingDeleted }) {
           <LinesTable packageId={packageId} drawingId={drawing.id} lines={lines} onChanged={onLineChanged} onDeleted={onLineDeleted} />
         )}
         <Confirmation message={confirmation} />
+      </div>
+
+      <div className="mt-4">
+        <WorkPackagePermitAnnotations
+          packageId={packageId}
+          scope="drawing"
+          drawingId={drawing.id}
+          onChanged={onAnnotationsChanged}
+        />
       </div>
 
       {drawing.drawingType === "p_id" && (
@@ -808,6 +818,18 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
     () => api(`/api/work-packages/${packageId}/drawings`).then((b) => b.drawings),
     { ttlMs: 10_000 },
   );
+  // Per-drawing permit-link counts for the drawing list. One fetch for
+  // the whole package; each drawing panel keeps its own list fresh and
+  // reports changes back here so the counts follow.
+  const { data: drawingAnnotations, refresh: refreshDrawingAnnotations } = useStaleWhileRevalidate(
+    `work-packages:${packageId}:permit-annotations:drawing`,
+    () => api(`/api/work-packages/${packageId}/permit-annotations?targetKind=drawing`).then((b) => b.annotations),
+    { ttlMs: 10_000 },
+  );
+  const annotationCounts = new Map();
+  for (const annotation of drawingAnnotations || []) {
+    annotationCounts.set(annotation.drawingId, (annotationCounts.get(annotation.drawingId) || 0) + 1);
+  }
 
   if (isLoading) return <ForgeLoadingState label="Loading drawings…" />;
   if (error) return <ForgeErrorState title="Unable to load drawings" detail={error} onRetry={refresh} />;
@@ -820,6 +842,7 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
     setDrawingConfirmation(`Deleted — ${DRAWING_TYPE_LABELS[drawing.drawingType]} "${drawing.drawingNumber}" was removed.`);
     setActiveDrawingId(null);
     refresh();
+    refreshDrawingAnnotations();
   }
 
   return (
@@ -845,17 +868,21 @@ export default function WorkPackageTakeoffScreen({ packageId }) {
       ) : (
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]">
           <nav className="space-y-1">
-            {drawings.map((d) => (
-              <button key={d.id} type="button" onClick={() => setActiveDrawingId(d.id)}
-                className={`block w-full rounded-lg px-3 py-2 text-left text-sm font-bold ${d.id === activeDrawingId ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200"}`}>
-                {DRAWING_TYPE_LABELS[d.drawingType]} — {d.drawingNumber}
-              </button>
-            ))}
+            {drawings.map((d) => {
+              const linkCount = annotationCounts.get(d.id) || 0;
+              return (
+                <button key={d.id} type="button" onClick={() => setActiveDrawingId(d.id)}
+                  className={`block w-full rounded-lg px-3 py-2 text-left text-sm font-bold ${d.id === activeDrawingId ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200"}`}>
+                  {DRAWING_TYPE_LABELS[d.drawingType]} — {d.drawingNumber}
+                  {linkCount > 0 ? ` · ${linkCount} permit link${linkCount === 1 ? "" : "s"}` : ""}
+                </button>
+              );
+            })}
           </nav>
           <div>
             {activeDrawing && (
               <DrawingPanel key={activeDrawing.id} packageId={packageId} drawing={activeDrawing}
-                onDrawingDeleted={onDrawingDeleted} />
+                onDrawingDeleted={onDrawingDeleted} onAnnotationsChanged={refreshDrawingAnnotations} />
             )}
           </div>
         </div>

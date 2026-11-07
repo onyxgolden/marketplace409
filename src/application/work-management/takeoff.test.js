@@ -6,13 +6,21 @@ import {
 } from "./takeoff.js";
 
 // Supabase-shaped chain mock, same shape as workLinks.test.js: one chain
-// per db.from() call, consumed in order.
-function mockDb(chains = []) {
+// per db.from() call, consumed in order; plus an rpc() queue for the
+// slice-3 delete-drawing RPC (deleteDrawing calls the RPC first and
+// falls back to the legacy direct delete only when the RPC does not
+// exist yet).
+function mockDb(chains = [], rpcResults = []) {
   const queue = [...chains];
+  const rpcQueue = [...rpcResults];
   return {
     from: vi.fn(() => {
       if (queue.length === 0) throw new Error("mockDb: from() called more times than chains queued");
       return queue.shift();
+    }),
+    rpc: vi.fn(async () => {
+      if (rpcQueue.length === 0) throw new Error("mockDb: rpc() called more times than results queued");
+      return rpcQueue.shift();
     }),
   };
 }
@@ -117,35 +125,67 @@ describe("listDrawingsForPackage", () => {
 describe("deleteDrawing", () => {
   const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
 
-  it("refuses to delete a P&ID that still has child drawings rolled up to it", async () => {
-    const childrenChain = chain({ data: [{ id: "dwg_child" }], error: null });
-    const db = mockDb([drawingChain, childrenChain]);
+  it("deletes through the RPC (which retires attached annotations atomically) without touching tables directly", async () => {
+    const db = mockDb([], [{ data: true, error: null }]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result).toEqual({ ok: true });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_permit_annotation_delete_drawing", {
+      p_owner_id: OWNER, p_package_id: "pkg_1", p_drawing_id: "dwg_1",
+    });
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("maps the RPC's children guard to 409", async () => {
+    const db = mockDb([], [{ data: null, error: { message: "WPP3_DRAWING_HAS_CHILDREN" } }]);
     const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_pid1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
     expect(result.error).toMatch(/rolled up/);
   });
 
-  it("refuses to delete a drawing that still has takeoff lines", async () => {
-    const childrenChain = chain({ data: [], error: null });
-    const linesChain = chain({ data: [{ id: "line_1" }], error: null });
-    const db = mockDb([drawingChain, childrenChain, linesChain]);
+  it("maps the RPC's lines guard to 409", async () => {
+    const db = mockDb([], [{ data: null, error: { message: "WPP3_DRAWING_HAS_LINES" } }]);
     const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
     expect(result.error).toMatch(/takeoff lines/);
   });
 
-  it("deletes cleanly when there are no children or lines", async () => {
+  it("WPP1-003: 404s when the RPC says the drawing lives in another package than the URL names", async () => {
+    const db = mockDb([], [{ data: null, error: { message: "WPP3_DRAWING_NOT_FOUND" } }]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404 });
+    expect(result.error).toMatch(/in this package/);
+  });
+
+  it("falls back to the legacy direct delete when the RPC does not exist yet (pre-migration window)", async () => {
     const childrenChain = chain({ data: [], error: null });
     const linesChain = chain({ data: [], error: null });
     const deleteChain = chain({ data: null, error: null });
-    const db = mockDb([drawingChain, childrenChain, linesChain, deleteChain]);
+    const db = mockDb(
+      [drawingChain, childrenChain, linesChain, deleteChain],
+      [{ data: null, error: { code: "PGRST202", message: "Could not find the function public.forge_work_permit_annotation_delete_drawing" } }],
+    );
     const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result).toEqual({ ok: true });
+    expect(db.from).toHaveBeenCalledTimes(4);
   });
 
-  it("WPP1-003: 404s when the drawing lives in another package than the URL names", async () => {
+  it("legacy fallback still refuses a P&ID that has child drawings rolled up to it", async () => {
+    const childrenChain = chain({ data: [{ id: "dwg_child" }], error: null });
+    const db = mockDb(
+      [drawingChain, childrenChain],
+      [{ data: null, error: { code: "PGRST202", message: "Could not find the function" } }],
+    );
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_pid1" });
+    expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+    expect(result.error).toMatch(/rolled up/);
+  });
+
+  it("legacy fallback still 404s when the drawing lives in another package", async () => {
     const otherPkgChain = chain({ data: { id: "dwg_1", package_id: "pkg_2" }, error: null });
-    const db = mockDb([otherPkgChain]);
+    const db = mockDb(
+      [otherPkgChain],
+      [{ data: null, error: { code: "PGRST202", message: "Could not find the function" } }],
+    );
     const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
     expect(result).toMatchObject({ ok: false, httpStatus: 404 });
     expect(result.error).toMatch(/in this package/);
