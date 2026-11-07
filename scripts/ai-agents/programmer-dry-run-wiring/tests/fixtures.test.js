@@ -32,7 +32,7 @@ test("manifest covers exactly the seven frozen fixtures", () => {
     "not-run",
     "oversized-diff",
     "stale-digest",
-    "valid-verified",
+    "unbound-all-pass",
   ]);
 });
 
@@ -73,24 +73,24 @@ test("malicious-strings fixture renders inert in the detail page", () => {
   assert.match(html, /Proposal only — never applied, committed, pushed, or merged by this system\./);
 });
 
-test("stale-digest fixture: a decision bound to the verified fixture's digest refuses", async () => {
+test("stale-digest fixture: a decision bound to the unbound fixture's digest refuses", async () => {
   const { validateDecision } = await import(join(SRC, "decisionValidator.js"));
-  const verified = serializePrivateItem({
-    proposal: JSON.parse(readFileSync(join(WIRING, "fixtures", "valid-verified.json"), "utf8")),
+  const unbound = serializePrivateItem({
+    proposal: JSON.parse(readFileSync(join(WIRING, "fixtures", "unbound-all-pass.json"), "utf8")),
     publishedAt: "2026-11-07T12:00:00Z",
   });
   const stale = serializePrivateItem({
     proposal: JSON.parse(readFileSync(join(WIRING, "fixtures", "stale-digest.json"), "utf8")),
     publishedAt: "2026-11-07T12:00:00Z",
   });
-  assert.notEqual(stale.proposal_digest, verified.proposal_digest);
+  assert.notEqual(stale.proposal_digest, unbound.proposal_digest);
   assert.throws(
     () =>
       validateDecision(
         stale,
         {
           item_id: stale.item_id,
-          proposal_digest: verified.proposal_digest,
+          proposal_digest: unbound.proposal_digest,
           row_id: "proposal",
           decision: "accept",
           note: "",

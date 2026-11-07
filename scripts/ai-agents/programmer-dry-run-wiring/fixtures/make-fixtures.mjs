@@ -86,7 +86,10 @@ function receiptFor({ jobId, verdict, suites, reasonCode = null }) {
     job_id: jobId,
     target: "synthetic-fixture-repo",
     head_pin: BASE_SHA,
-    checkout_head: OBSERVED_HEAD,
+    // A genuine P3 COMPLETED report always has checkout_head ===
+    // head_pin: runner.js refuses a run whose resolved checkout
+    // HEAD differs from the job pin before anything executes.
+    checkout_head: BASE_SHA,
     status: "COMPLETED",
     verdict,
     reason_code: reasonCode,
@@ -160,18 +163,27 @@ function baseProposal({ jobId, status, diff, added, removed, patchDigest, receip
 
 const FIXTURES = {};
 
-// (a) valid VERIFIED-shape proposal.
-FIXTURES["valid-verified"] = baseProposal({
-  jobId: "p5a-fixture-verified-001",
-  status: "VERIFIED",
+// (a) Unbound all-PASS proposal: every suite passes, but the P3
+// v1 receipt carries no candidate-tree digest, so the mapping is
+// BLOCKED (CANDIDATE_IDENTITY_UNPROVEN) until P5-C binds the
+// candidate. This is an unverified illustration, never a verified
+// proposal — the old name "valid-verified" advertised a VERIFIED
+// outcome a bare v1 receipt cannot prove.
+FIXTURES["unbound-all-pass"] = baseProposal({
+  jobId: "p5a-fixture-unbound-001",
+  status: "BLOCKED",
   diff: SMALL_DIFF,
   added: 1,
   removed: 1,
   receipt: receiptFor({
-    jobId: "p5a-fixture-verified-001",
+    jobId: "p5a-fixture-unbound-001",
     verdict: "ALL_SUITES_PASS",
     suites: [suite("syntax", "PASS"), suite("baseline", "PASS"), suite("candidate", "PASS")],
   }),
+  risks: [
+    "Synthetic fixture: the candidate was never executed against a real branch.",
+    "Unverified illustration: the P3 v1 receipt proves no candidate identity, so this proposal maps to BLOCKED.",
+  ],
 });
 
 // (b) FAILED_VERIFICATION proposal.
@@ -251,18 +263,18 @@ FIXTURES["oversized-diff"] = baseProposal({
 });
 FIXTURES["oversized-diff"].plan.files = [{ path: "src/big.js", operation: "add", added_lines: 201, removed_lines: 0 }];
 
-// (g) Stale-digest proposal: same shape as the verified fixture but
-// a changed risk note, hence a different proposal digest. A decision
-// bound to the verified fixture's digest must refuse against this
-// item as STALE_DIGEST.
+// (g) Stale-digest proposal: same shape as the unbound-all-pass
+// fixture but a changed risk note, hence a different proposal
+// digest. A decision bound to the unbound fixture's digest must
+// refuse against this item as STALE_DIGEST.
 FIXTURES["stale-digest"] = baseProposal({
-  jobId: "p5a-fixture-verified-001",
+  jobId: "p5a-fixture-unbound-001",
   status: "PROPOSED",
   diff: SMALL_DIFF,
   added: 1,
   removed: 1,
   receipt: receiptFor({
-    jobId: "p5a-fixture-verified-001",
+    jobId: "p5a-fixture-unbound-001",
     verdict: "ALL_SUITES_PASS",
     suites: [suite("syntax", "PASS"), suite("baseline", "PASS"), suite("candidate", "PASS")],
   }),
@@ -280,7 +292,7 @@ for (const [name, proposal] of Object.entries(FIXTURES)) {
     sha256: sha256(text),
     job_id: proposal.job_id,
     status: proposal.status,
-    verification_state: name === "valid-verified" || name === "malicious-strings" || name === "stale-digest" ? "PASS" : name === "failed-verification" ? "FAIL" : name === "blocked-timeout" ? "BLOCKED" : "NOT_RUN",
+    verification_state: name === "unbound-all-pass" || name === "malicious-strings" || name === "stale-digest" ? "BLOCKED" : name === "failed-verification" ? "FAIL" : name === "blocked-timeout" ? "BLOCKED" : "NOT_RUN",
     validates: !["oversized-diff"].includes(name),
   };
 }

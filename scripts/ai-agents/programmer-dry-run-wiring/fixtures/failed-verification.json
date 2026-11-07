@@ -51,7 +51,7 @@
       "job_id": "p5a-fixture-failed-001",
       "target": "synthetic-fixture-repo",
       "head_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "checkout_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "checkout_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "COMPLETED",
       "verdict": "SUITES_FAILED",
       "reason_code": null,

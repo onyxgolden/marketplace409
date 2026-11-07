@@ -60,7 +60,7 @@ function sizedDiff(addedCount, removedCount, padChars = 0) {
   return lines.join("\n");
 }
 
-function receipt({ jobId, verdict = "ALL_SUITES_PASS", suites, reasonCode = null, headPin = BASE_SHA, isolation = { mechanism: "bwrap" } } = {}) {
+function receipt({ jobId, verdict = "ALL_SUITES_PASS", suites, reasonCode = null, headPin = BASE_SHA, checkoutHead = null, isolation = { mechanism: "bwrap" } } = {}) {
   const list = suites ?? [
     { id: "syntax", status: "PASS" },
     { id: "baseline", status: "PASS" },
@@ -88,7 +88,10 @@ function receipt({ jobId, verdict = "ALL_SUITES_PASS", suites, reasonCode = null
     job_id: jobId,
     target: "synthetic-fixture-repo",
     head_pin: headPin,
-    checkout_head: OBSERVED_HEAD,
+    // A genuine P3 COMPLETED report always has checkout_head ===
+    // head_pin (runner.js refuses otherwise), so the faithful
+    // fixture checkout is the pin, not the observed head.
+    checkout_head: checkoutHead ?? headPin,
     status: "COMPLETED",
     verdict,
     reason_code: reasonCode,
@@ -141,7 +144,14 @@ function makeProposal(over = {}) {
     },
     test_profiles: ["syntax", "baseline", "candidate"],
     verification: { receipt: receipt({ jobId: "p5a-test-001" }), logs_digest: sha256("logs:p5a-test-001") },
-    risks: ["Synthetic fixture: never executed against a real branch."],
+    // Unverified illustration, not a verified proposal: the attached
+    // P3 v1 receipt carries no candidate-tree digest, so the mapping
+    // is BLOCKED until P5-C binds the candidate. The fixture's own
+    // status says so — nothing here claims VERIFIED.
+    risks: [
+      "Synthetic fixture: never executed against a real branch.",
+      "Unverified illustration: the P3 v1 receipt proves no candidate identity, so this proposal maps to BLOCKED.",
+    ],
     rollback_notes: "No rollback applies: nothing was applied, committed, or pushed.",
     created_at: "2026-11-07T12:00:00Z",
     expires_at: "2026-11-08T12:00:00Z",
@@ -149,7 +159,7 @@ function makeProposal(over = {}) {
       { event: "created", at: "2026-11-07T12:00:00Z", actor: "synthetic-operator-001", detail: "created" },
       { event: "proposed", at: "2026-11-07T12:00:01Z", actor: "synthetic-operator-001", detail: "proposed" },
     ],
-    status: "VERIFIED",
+    status: "BLOCKED",
     advisory: true,
     authorization: "PROPOSAL_ONLY",
   };
@@ -408,10 +418,61 @@ describe("receipt mapping (fail-closed matrix)", () => {
     expect(out.lifecycle).toBe("PROPOSED");
     expect(out.reason_codes).toContain("RECEIPT_MISSING");
   });
-  it("maps all suites passing to PASS / VERIFIED", () => {
+  it("maps all suites passing to BLOCKED — no VERIFIED from a bare P3 v1 receipt", () => {
     const out = mapReceiptToVerification({ proposal: proposal(), receipt: receipt({ jobId: "p5a-test-001" }) });
-    expect(out.verification_state).toBe("PASS");
-    expect(out.lifecycle).toBe("VERIFIED");
+    expect(out.verification_state).toBe("BLOCKED");
+    expect(out.lifecycle).toBe("BLOCKED");
+    expect(out.reason_codes).toContain("CANDIDATE_IDENTITY_UNPROVEN");
+  });
+  it("blocks a different candidate digest with all suites passing", () => {
+    const p = proposal();
+    const other = validateProposal({
+      ...p,
+      plan: { ...p.plan, candidate_tree_digest: sha256("candidate-tree:a-different-tree") },
+    });
+    const out = mapReceiptToVerification({ proposal: other, receipt: receipt({ jobId: "p5a-test-001" }) });
+    expect(out.verification_state).toBe("BLOCKED");
+    expect(out.reason_codes).toContain("CANDIDATE_IDENTITY_UNPROVEN");
+  });
+  it("blocks a checkout head that is not the pinned base", () => {
+    const p = proposal();
+    const out = mapReceiptToVerification({
+      proposal: p,
+      receipt: receipt({ jobId: "p5a-test-001", checkoutHead: "c".repeat(40) }),
+    });
+    expect(out.verification_state).toBe("BLOCKED");
+    expect(out.reason_codes).toContain("CHECKOUT_HEAD_MISMATCH");
+  });
+  it.each([
+    ["empty mechanism", { mechanism: "" }],
+    ["mechanism none", { mechanism: "none" }],
+    ["unknown mechanism", { mechanism: "gvisor" }],
+  ])("blocks an unproven isolation mechanism: %s", (_label, isolation) => {
+    const p = proposal();
+    const out = mapReceiptToVerification({ proposal: p, receipt: receipt({ jobId: "p5a-test-001", isolation }) });
+    expect(out.verification_state).toBe("BLOCKED");
+    expect(out.reason_codes).toContain("ISOLATION_FAILURE");
+  });
+  it("blocks a receipt with missing suite counts", () => {
+    const p = proposal();
+    const r = receipt({ jobId: "p5a-test-001" });
+    delete r.suites[0].test_counts;
+    // Totals no longer agree either, but the counts gap must fire first.
+    expect(mapReceiptToVerification({ proposal: p, receipt: r }).verification_state).toBe("BLOCKED");
+    expect(mapReceiptToVerification({ proposal: p, receipt: r }).reason_codes).toContain("COUNTS_MISSING");
+  });
+  it("blocks incoherent suite counts and inconsistent test totals", () => {
+    const p = proposal();
+    const incoherent = receipt({ jobId: "p5a-test-001" });
+    incoherent.suites[0].test_counts.total = 99;
+    expect(mapReceiptToVerification({ proposal: p, receipt: incoherent }).verification_state).toBe("BLOCKED");
+    const badTotals = receipt({ jobId: "p5a-test-001" });
+    badTotals.totals.tests_total = 999;
+    expect(mapReceiptToVerification({ proposal: p, receipt: badTotals }).verification_state).toBe("BLOCKED");
+    expect(mapReceiptToVerification({ proposal: p, receipt: badTotals }).reason_codes).toContain("INCONSISTENT_CLASSIFICATION");
+    const noTotals = receipt({ jobId: "p5a-test-001" });
+    delete noTotals.totals;
+    expect(mapReceiptToVerification({ proposal: p, receipt: noTotals }).verification_state).toBe("BLOCKED");
   });
   it.each([
     ["candidate FAIL", [{ id: "syntax", status: "PASS" }, { id: "baseline", status: "PASS" }, { id: "candidate", status: "FAIL" }], "FAIL", "FAILED_VERIFICATION"],
@@ -485,7 +546,7 @@ describe("decision contract", () => {
   });
 
   it("validates a decision and records the human state", () => {
-    const stored = validateDecision(item(), decision(), "synthetic-operator-001");
+    const stored = validateDecision(item(), decision({ expected_version: 0 }), "synthetic-operator-001");
     expect(stored.human_state).toBe("ACCEPTED_FOR_CONSIDERATION");
     expect(stored.actor).toBe("synthetic-operator-001");
     expect(stored.policy_version).toBe("pa2-policy-v1");
@@ -506,9 +567,78 @@ describe("decision contract", () => {
     expectRefusal(() => validateDecision(it, decision({ policy_version: "other" }), "op"), "STALE_DIGEST");
   });
 
+  it("refuses a decision with no expected_version (missing CAS guard)", () => {
+    const it = item();
+    expectRefusal(() => validateDecision(it, decision(), "synthetic-operator-001"), "MISSING_VERSION");
+    expectRefusal(
+      () => appendDecision({ item: it, history: [], decision: decision(), actor: "synthetic-operator-001" }),
+      "MISSING_VERSION",
+    );
+    // A non-integer or negative expected_version is not a guard.
+    expectRefusal(
+      () => validateDecision(it, decision({ expected_version: 1.5 }), "synthetic-operator-001"),
+      "BAD_DECISION",
+    );
+    expectRefusal(
+      () => validateDecision(it, decision({ expected_version: -1 }), "synthetic-operator-001"),
+      "BAD_DECISION",
+    );
+    // The adapter may supply the guard explicitly instead of the body.
+    const stored = validateDecision(it, decision(), "synthetic-operator-001", { expectedVersion: 0, historyLength: 0 });
+    expect(stored.human_state).toBe("ACCEPTED_FOR_CONSIDERATION");
+  });
+
+  it("refuses a replay whose decision bytes differ (same ID, different payload)", () => {
+    const it = item();
+    const h0 = appendDecision({
+      item: it,
+      history: [],
+      decision: decision({ expected_version: 0 }),
+      actor: "synthetic-operator-001",
+    });
+    expect(h0).toHaveLength(1);
+    // Same ID, different note -> not a replay, an ID collision.
+    expectRefusal(
+      () =>
+        appendDecision({
+          item: it,
+          history: h0,
+          decision: decision({ note: "a different note" }),
+          actor: "synthetic-operator-001",
+        }),
+      "DECISION_ID_CONFLICT",
+    );
+    // Same ID, different decision -> conflict.
+    expectRefusal(
+      () =>
+        appendDecision({
+          item: it,
+          history: h0,
+          decision: decision({ decision: "reject" }),
+          actor: "synthetic-operator-001",
+        }),
+      "DECISION_ID_CONFLICT",
+    );
+    // Same ID and bytes, different actor -> conflict.
+    expectRefusal(
+      () =>
+        appendDecision({
+          item: it,
+          history: h0,
+          decision: decision(),
+          actor: "someone-else",
+        }),
+      "DECISION_ID_CONFLICT",
+    );
+    // Same ID and identical bytes -> the idempotent replay still works.
+    const h0b = appendDecision({ item: it, history: h0, decision: decision(), actor: "synthetic-operator-001" });
+    expect(h0b).toHaveLength(1);
+    expect(h0b[0]).toBe(h0[0]);
+  });
+
   it("enforces expected-version compare-and-set; reversal is a new event", () => {
     const it = item();
-    const h0 = appendDecision({ item: it, history: [], decision: decision(), actor: "synthetic-operator-001" });
+    const h0 = appendDecision({ item: it, history: [], decision: decision({ expected_version: 0 }), actor: "synthetic-operator-001" });
     expect(h0).toHaveLength(1);
     expect(h0[0].version).toBe(1);
     expect(Object.isFrozen(h0)).toBe(true);
@@ -539,7 +669,7 @@ describe("decision contract", () => {
     const proposal = validateProposal(makeProposal());
     const before = canonicalDigest(proposal);
     const it = serializePrivateItem({ proposal, publishedAt: "2026-11-07T12:00:00Z" });
-    appendDecision({ item: it, history: [], decision: decision(), actor: "synthetic-operator-001" });
+    appendDecision({ item: it, history: [], decision: decision({ expected_version: 0 }), actor: "synthetic-operator-001" });
     expect(canonicalDigest(proposal)).toBe(before);
     expect(canonicalDigest(it.proposal)).toBe(before);
     expect(Object.isFrozen(it.proposal)).toBe(true);
@@ -573,7 +703,8 @@ describe("private item serializer", () => {
     expect(a.row_ids).toContain("proposal");
     expect(a.row_ids).toContain("evidence-suite-syntax");
     expect(a.row_ids).toContain("evidence-suite-candidate");
-    expect(a.verification.verification_state).toBe("PASS");
+    expect(a.verification.verification_state).toBe("BLOCKED");
+    expect(a.verification.reason_codes).toContain("CANDIDATE_IDENTITY_UNPROVEN");
   });
 
   it("refuses a determinism conflict on republish", () => {
@@ -648,7 +779,7 @@ describe("proposal renderer (XSS battery)", () => {
     const item = serializePrivateItem({ proposal: makeProposal(), publishedAt: "2026-11-07T12:00:00Z" });
     const html = renderDetail(item, { mode: "DISABLED" });
     expect(html).toContain("Feature OFF");
-    expect(html).toContain("Verification: PASS");
+    expect(html).toContain("Verification: BLOCKED");
     expect(html).toContain("Human decision: PENDING");
     expect(html).toContain(BASE_SHA);
     expect(html).toContain(sha256(smallDiff()));
@@ -657,7 +788,7 @@ describe("proposal renderer (XSS battery)", () => {
   it("shows distinct Verification and Human decision columns in list + detail", () => {
     const item = serializePrivateItem({ proposal: makeProposal(), publishedAt: "2026-11-07T12:00:00Z" });
     const list = renderListItem(item, { humanState: "PENDING", mode: "SYNTHETIC_PREVIEW" });
-    expect(list).toContain("Verification: PASS");
+    expect(list).toContain("Verification: BLOCKED");
     expect(list).toContain("Human decision: PENDING");
     const detail = renderDetail(item, { humanState: "ACCEPTED_FOR_CONSIDERATION", mode: "SYNTHETIC_PREVIEW" });
     expect(detail).toContain("Human decision: ACCEPTED_FOR_CONSIDERATION");
@@ -702,7 +833,7 @@ describe("proposal renderer (XSS battery)", () => {
     const history = appendDecision({
       item,
       history: [],
-      decision: { item_id: item.item_id, proposal_digest: item.proposal_digest, row_id: "proposal", decision: "reject", note: "<b>nope</b>", at: "2026-11-07T13:00:00Z", decision_id: "d1" },
+      decision: { item_id: item.item_id, proposal_digest: item.proposal_digest, row_id: "proposal", decision: "reject", note: "<b>nope</b>", at: "2026-11-07T13:00:00Z", decision_id: "d1", expected_version: 0 },
       actor: "synthetic-operator-001",
     });
     const html = renderDetail(item, { decisions: history, humanState: "REJECTED", mode: "SYNTHETIC_PREVIEW" });

@@ -26,14 +26,21 @@ In `marketplace409`:
     `qa-test-runner` receipt to the P5 verification state
     (`NOT_RUN` / `PASS` / `FAIL` / `BLOCKED`) and job lifecycle.
     Fail-closed: missing receipt, skipped suite, timeout, stale or
-    mismatched digest, isolation failure, cleanup failure, budget
-    overrun, or any unverified suite is never `VERIFIED`.
+    mismatched digest, checkout-head mismatch, isolation failure,
+    missing or incoherent suite counts, inconsistent totals,
+    cleanup failure, budget overrun, or any unverified suite is
+    never `VERIFIED`. In particular P5-A emits no VERIFIED from a
+    bare P3 v1 receipt at all: the v1 report carries no
+    candidate-tree digest, so an all-PASS receipt maps to BLOCKED
+    (`CANDIDATE_IDENTITY_UNPROVEN`) until P5-C binds the candidate.
   - `decisionValidator.js` — P5 decision contract layered on the
     existing private decision shape (`accept` / `reject` /
     `send-back` → `ACCEPTED_FOR_CONSIDERATION` / `REJECTED` /
     `PENDING`). Accept approves for human consideration only — it
-    never applies a patch. Append-only with expected-version
-    compare-and-set; actor is server-derived, never a body field;
+    never applies a patch. Append-only with mandatory
+    expected-version compare-and-set (an omitted version refuses);
+    a same-ID replay must bind the same decision bytes or it
+    refuses; actor is server-derived, never a body field;
     stale digest refuses. Role scoping: read-only viewers cannot
     decide; cross-owner fails closed.
   - `privateItemSerializer.js` — private Workbench item with the
@@ -71,15 +78,17 @@ In `marketplace409`:
 
 ```sh
 # OFF by default — returns before opening any fixture (exit 10):
-node preview/run-preview.mjs --fixture valid-verified --out /tmp/p5a-preview
+node preview/run-preview.mjs --fixture unbound-all-pass --out /tmp/p5a-preview
 
 # Synthetic preview — writes <name>.private-item.json + <name>.html (exit 0):
-node preview/run-preview.mjs --fixture valid-verified --out /tmp/p5a-preview --mode SYNTHETIC_PREVIEW
+node preview/run-preview.mjs --fixture unbound-all-pass --out /tmp/p5a-preview --mode SYNTHETIC_PREVIEW
 ```
 
-Fixtures: `valid-verified`, `failed-verification`, `blocked-timeout`,
+Fixtures: `unbound-all-pass` (every suite passes, but the P3 v1
+receipt proves no candidate identity, so it maps to BLOCKED),
+`failed-verification`, `blocked-timeout`,
 `not-run`, `malicious-strings`, `oversized-diff` (refuses on the
-200-line budget), `stale-digest` (a decision bound to the verified
+200-line budget), `stale-digest` (a decision bound to the unbound
 fixture's digest refuses against it).
 
 ## Tests

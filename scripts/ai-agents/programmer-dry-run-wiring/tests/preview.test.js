@@ -43,39 +43,41 @@ test("DISABLED returns before opening fixtures (exit 10, even for a nonexistent 
 });
 
 test("default mode is DISABLED (no --mode flag)", () => {
-  const r = withTmp((dir) => run(["--fixture", "valid-verified", "--out", dir]));
+  const r = withTmp((dir) => run(["--fixture", "unbound-all-pass", "--out", dir]));
   assert.equal(r.status, 10);
 });
 
 test("SYNTHETIC_PREVIEW writes the private item + rendered HTML", () => {
   withTmp((dir) => {
-    const r = run(["--fixture", "valid-verified", "--out", dir, "--mode", "SYNTHETIC_PREVIEW"]);
+    const r = run(["--fixture", "unbound-all-pass", "--out", dir, "--mode", "SYNTHETIC_PREVIEW"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const receipt = JSON.parse(r.stdout);
     assert.equal(receipt.ok, true);
-    assert.equal(receipt.verification_state, "PASS");
-    assert.equal(receipt.lifecycle, "VERIFIED");
-    const itemPath = join(dir, "valid-verified.private-item.json");
-    const htmlPath = join(dir, "valid-verified.html");
+    // No VERIFIED from a bare P3 v1 receipt: all suites pass, but
+    // the candidate identity is unproven, so the state is BLOCKED.
+    assert.equal(receipt.verification_state, "BLOCKED");
+    assert.equal(receipt.lifecycle, "BLOCKED");
+    const itemPath = join(dir, "unbound-all-pass.private-item.json");
+    const htmlPath = join(dir, "unbound-all-pass.html");
     assert.equal(existsSync(itemPath), true);
     assert.equal(existsSync(htmlPath), true);
     const item = JSON.parse(readFileSync(itemPath, "utf8"));
     assert.equal(item.kind, "programmer-dry-run-proposal");
     assert.equal(item.execution_authorized, false);
     const html = readFileSync(htmlPath, "utf8");
-    assert.match(html, /Verification: PASS/);
+    assert.match(html, /Verification: BLOCKED/);
     assert.match(html, /Proposal only — never applied, committed, pushed, or merged by this system\./);
   });
 });
 
 test("each fixture previews to its mapped state", () => {
   const expected = {
-    "valid-verified": "PASS",
+    "unbound-all-pass": "BLOCKED",
     "failed-verification": "FAIL",
     "blocked-timeout": "BLOCKED",
     "not-run": "NOT_RUN",
-    "malicious-strings": "PASS",
-    "stale-digest": "PASS",
+    "malicious-strings": "BLOCKED",
+    "stale-digest": "BLOCKED",
   };
   withTmp((dir) => {
     for (const [fixture, state] of Object.entries(expected)) {
@@ -105,13 +107,13 @@ test("unknown fixture refuses (exit 12)", () => {
 
 test("live-shaped mode refuses with ACTIVATION_REQUIRED (exit 11)", () => {
   withTmp((dir) => {
-    const r = run(["--fixture", "valid-verified", "--out", dir, "--mode", "LIVE"]);
+    const r = run(["--fixture", "unbound-all-pass", "--out", dir, "--mode", "LIVE"]);
     assert.equal(r.status, 11);
     assert.equal(JSON.parse(r.stdout).code, "ACTIVATION_REQUIRED");
   });
 });
 
 test("usage error exits 2 without a fixture or out dir", () => {
-  const r = run(["--fixture", "valid-verified"]);
+  const r = run(["--fixture", "unbound-all-pass"]);
   assert.equal(r.status, 2);
 });

@@ -51,7 +51,7 @@
       "job_id": "p5a-fixture-malicious-001",
       "target": "synthetic-fixture-repo",
       "head_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "checkout_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "checkout_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "COMPLETED",
       "verdict": "ALL_SUITES_PASS",
       "reason_code": null,

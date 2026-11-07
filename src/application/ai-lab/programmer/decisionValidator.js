@@ -18,11 +18,16 @@
  * (a body "actor" refuses, mirroring private-decision.mjs).
  *
  * Decisions are append-only with expected-version compare-and-set:
- * a stale expected_version refuses, so two concurrent decisions
- * cannot silently overwrite each other. Reversal is a new event,
- * never a rewrite. No decision mutates the proposal, the receipt,
- * Git refs or worktrees — the stored history is frozen, and the
- * tests prove the proposal digest is identical before and after.
+ * a missing expected_version refuses, a stale expected_version
+ * refuses, so two concurrent decisions cannot silently overwrite
+ * each other. Reversal is a new event, never a rewrite. A replay
+ * by decision_id is idempotent only when the replayed decision
+ * binds the same item, digest, actor and decision bytes — an ID
+ * collision with different bytes refuses. No decision mutates the
+ * proposal, the receipt, Git refs or worktrees — the stored history
+ * is frozen, and the tests prove the proposal digest is identical
+ * before and after. The atomic store itself is P5-D; this module
+ * must not encode a permissive contract in the meantime.
  */
 import { JobRefusal, POLICY_VERSION } from "./jobContracts.js";
 
@@ -74,7 +79,13 @@ export function authorizeDecision({ actorRole, actorOwnerRef, itemOwnerRef }) {
 /**
  * Validate one decision against a private item. `actor` is the
  * server-derived session identity. `expectedVersion` (when given)
- * is the compare-and-set guard: it must equal history.length.
+ * is the compare-and-set guard supplied explicitly by the
+ * authenticated adapter — the trusted equivalent of the decision's
+ * own expected_version. The guard is MANDATORY: every new decision
+ * must carry an integer non-negative expected_version (in the
+ * decision body or from the adapter), equal to the current history
+ * length. An omitted version refuses — a decision with no
+ * expected_version never silently bypasses compare-and-set.
  */
 export function validateDecision(item, decision, actor, { expectedVersion, historyLength } = {}) {
   if (decision === null || typeof decision !== "object" || Array.isArray(decision)) {
@@ -113,8 +124,17 @@ export function validateDecision(item, decision, actor, { expectedVersion, histo
     throw new JobRefusal("BAD_DECISION", `note must be a string of at most ${NOTE_MAX_CHARS} characters`);
   }
   const expected = decision.expected_version ?? expectedVersion;
+  if (expected === undefined) {
+    throw new JobRefusal(
+      "MISSING_VERSION",
+      "expected_version is required for every new decision (compare-and-set guard); reload the current decision history and re-review",
+    );
+  }
+  if (!Number.isInteger(expected) || expected < 0) {
+    throw new JobRefusal("BAD_DECISION", "expected_version must be a non-negative integer");
+  }
   const current = historyLength ?? 0;
-  if (expected !== undefined && expected !== current) {
+  if (expected !== current) {
     throw new JobRefusal(
       "STALE_VERSION",
       `decision expected version ${expected} but the current decision version is ${current}; reload and re-review`,
@@ -136,15 +156,41 @@ export function validateDecision(item, decision, actor, { expectedVersion, histo
 
 /**
  * Append a decision to a frozen decision history. Returns a NEW
- * frozen array — the input history is never mutated, and a decision
+ * frozen array — the input history is never mutated. A decision
  * already in the history (same decision_id) is returned unchanged
- * (idempotent retry). A stale expected_version refuses before
+ * (idempotent retry) ONLY when the replayed decision binds the
+ * same item, digest, actor and decision bytes as the stored
+ * record; a same-ID replay with different bytes refuses
+ * (DECISION_ID_CONFLICT) — an ID collision is not a replay. The
+ * compare-and-set guard was already performed at first append and
+ * the stored version attests to it, so a bound replay does not
+ * re-prove the version. A stale expected_version refuses before
  * anything is appended.
  */
 export function appendDecision({ item, history, decision, actor }) {
   const list = Array.isArray(history) ? history : [];
-  if (list.some((d) => d.decision_id === decision.decision_id)) {
-    return Object.freeze([...list]);
+  if (decision !== null && typeof decision === "object" && typeof decision.decision_id === "string") {
+    const existing = list.find((d) => d.decision_id === decision.decision_id);
+    if (existing) {
+      const replayNote = decision.note === undefined ? "" : decision.note;
+      const replayPolicy = decision.policy_version === undefined ? POLICY_VERSION : decision.policy_version;
+      if (
+        existing.item_id !== decision.item_id ||
+        existing.proposal_digest !== decision.proposal_digest ||
+        existing.policy_version !== replayPolicy ||
+        existing.row_id !== decision.row_id ||
+        existing.decision !== decision.decision ||
+        existing.note !== replayNote ||
+        existing.at !== decision.at ||
+        existing.actor !== actor
+      ) {
+        throw new JobRefusal(
+          "DECISION_ID_CONFLICT",
+          `decision_id '${decision.decision_id}' is already recorded with different decision bytes; a replay must bind the same item, digest, actor and decision`,
+        );
+      }
+      return Object.freeze([...list]);
+    }
   }
   const stored = validateDecision(item, decision, actor, { historyLength: list.length });
   const record = Object.freeze({
