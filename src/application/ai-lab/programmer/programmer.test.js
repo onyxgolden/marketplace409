@@ -636,6 +636,87 @@ describe("decision contract", () => {
     expect(h0b[0]).toBe(h0[0]);
   });
 
+  it("refuses a replay against a different current item (replay/item binding)", () => {
+    const itA = item();
+    const h0 = appendDecision({
+      item: itA,
+      history: [],
+      decision: decision({ expected_version: 0 }),
+      actor: "synthetic-operator-001",
+    });
+    const replay = () =>
+      appendDecision({ item: itA, history: h0, decision: decision(), actor: "synthetic-operator-001" });
+    expect(replay()).toHaveLength(1);
+
+    // The verdict's example: item B's own id/digest, history of A,
+    // byte-identical replay of A's decision -> refuses, it is not
+    // a replay of anything B ever decided.
+    const itB = serializePrivateItem({
+      proposal: makeProposal({ job_id: "p5a-test-002" }),
+      publishedAt: "2026-11-07T12:00:00Z",
+    });
+    expect(itB.item_id).not.toBe(itA.item_id);
+    expect(itB.proposal_digest).not.toBe(itA.proposal_digest);
+    expectRefusal(
+      () =>
+        appendDecision({ item: itB, history: h0, decision: decision(), actor: "synthetic-operator-001" }),
+      "ITEM_MISMATCH",
+    );
+    // Same item ID, but the current proposal digest has moved on.
+    expectRefusal(
+      () =>
+        appendDecision({
+          item: { ...itA, proposal_digest: "f".repeat(64) },
+          history: h0,
+          decision: decision(),
+          actor: "synthetic-operator-001",
+        }),
+      "STALE_DIGEST",
+    );
+    // Same item and digest, but the stored row is not part of the
+    // current item's rows.
+    expectRefusal(
+      () =>
+        appendDecision({
+          item: { ...itA, row_ids: ["other-row"] },
+          history: h0,
+          decision: decision(),
+          actor: "synthetic-operator-001",
+        }),
+      "UNKNOWN_ROW",
+    );
+    // Stored record binds a superseded policy version.
+    const stalePolicy = Object.freeze([{ ...h0[0], policy_version: "pa2-policy-v0" }]);
+    expectRefusal(
+      () =>
+        appendDecision({ item: itA, history: stalePolicy, decision: decision(), actor: "synthetic-operator-001" }),
+      "STALE_DIGEST",
+    );
+  });
+
+  it("same-item exact replay still succeeds after the history version advances", () => {
+    const it = item();
+    const h0 = appendDecision({
+      item: it,
+      history: [],
+      decision: decision({ expected_version: 0 }),
+      actor: "synthetic-operator-001",
+    });
+    const h1 = appendDecision({
+      item: it,
+      history: h0,
+      decision: decision({ decision_id: "dec-2", decision: "reject", note: "on second thought", expected_version: 1 }),
+      actor: "synthetic-operator-001",
+    });
+    expect(h1).toHaveLength(2);
+    // Exact replay of dec-1 against the advanced history: no new
+    // CAS check on a retry, history returned unchanged.
+    const h1b = appendDecision({ item: it, history: h1, decision: decision(), actor: "synthetic-operator-001" });
+    expect(h1b).toHaveLength(2);
+    expect(h1b[0]).toBe(h1[0]);
+    expect(h1b[1]).toBe(h1[1]);
+  });
+
   it("enforces expected-version compare-and-set; reversal is a new event", () => {
     const it = item();
     const h0 = appendDecision({ item: it, history: [], decision: decision({ expected_version: 0 }), actor: "synthetic-operator-001" });

@@ -160,18 +160,48 @@ export function validateDecision(item, decision, actor, { expectedVersion, histo
  * already in the history (same decision_id) is returned unchanged
  * (idempotent retry) ONLY when the replayed decision binds the
  * same item, digest, actor and decision bytes as the stored
- * record; a same-ID replay with different bytes refuses
- * (DECISION_ID_CONFLICT) — an ID collision is not a replay. The
- * compare-and-set guard was already performed at first append and
- * the stored version attests to it, so a bound replay does not
- * re-prove the version. A stale expected_version refuses before
- * anything is appended.
+ * record AND the stored record binds the CURRENT item: the
+ * stored item ID, proposal digest, row and policy must match the
+ * item the replay is being appended to. A replay against a
+ * different current item refuses (ITEM_MISMATCH / STALE_DIGEST /
+ * UNKNOWN_ROW) even when the replayed bytes are identical to the
+ * stored record — the stored decision belongs to its own item, not
+ * to whichever item the caller names. A same-ID replay with
+ * different bytes refuses (DECISION_ID_CONFLICT) — an ID collision
+ * is not a replay. The compare-and-set guard was already
+ * performed at first append and the stored version attests to it,
+ * so a bound replay does not re-prove the version; replay stays
+ * idempotent for the same item even when the history version has
+ * advanced. A stale expected_version refuses before anything is
+ * appended.
  */
 export function appendDecision({ item, history, decision, actor }) {
   const list = Array.isArray(history) ? history : [];
   if (decision !== null && typeof decision === "object" && typeof decision.decision_id === "string") {
     const existing = list.find((d) => d.decision_id === decision.decision_id);
     if (existing) {
+      // Current-item binding: a replay is idempotent only for the
+      // item the stored decision was recorded against. Without
+      // this, a stored decision for item A could be replayed
+      // successfully against a request naming item B.
+      if (existing.item_id !== item.item_id) {
+        throw new JobRefusal("ITEM_MISMATCH", "the recorded decision belongs to a different item");
+      }
+      if (existing.proposal_digest !== item.proposal_digest) {
+        throw new JobRefusal(
+          "STALE_DIGEST",
+          "the proposal has changed since this decision was recorded; re-review the current proposal",
+        );
+      }
+      if (!item.row_ids.includes(existing.row_id)) {
+        throw new JobRefusal("UNKNOWN_ROW", `row '${existing.row_id}' is not part of this proposal`);
+      }
+      if (existing.policy_version !== POLICY_VERSION) {
+        throw new JobRefusal(
+          "STALE_DIGEST",
+          `the recorded decision binds policy ${existing.policy_version}, current policy is ${POLICY_VERSION}`,
+        );
+      }
       const replayNote = decision.note === undefined ? "" : decision.note;
       const replayPolicy = decision.policy_version === undefined ? POLICY_VERSION : decision.policy_version;
       if (
