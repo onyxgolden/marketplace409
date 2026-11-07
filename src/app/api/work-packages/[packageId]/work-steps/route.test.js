@@ -41,6 +41,7 @@ describe("GET /api/work-packages/[packageId]/work-steps", () => {
       ownerId: "owner_1",
       packageId: "pkg_1",
       includeRetired: true,
+      retiredOnly: false,
       limit: "10",
       offset: "0",
     });
@@ -48,6 +49,28 @@ describe("GET /api/work-packages/[packageId]/work-steps", () => {
     expect(body.steps).toHaveLength(1);
     expect(body.generation).toBe(2);
     expect(body.packageStatus).toBe("in_progress");
+  });
+
+  it("forwards a retired-only request to the service", async () => {
+    listWorkSteps.mockResolvedValue({
+      ok: true,
+      steps: [{ id: "forge_wps_3", sequenceNo: 3, retiredAt: "t2" }],
+      generation: 2,
+      packageStatus: "in_progress",
+    });
+    const response = await GET(
+      new Request("https://test/x?retiredOnly=true&limit=100&offset=100"),
+      { params: params() },
+    );
+    expect(response.status).toBe(200);
+    expect(listWorkSteps).toHaveBeenCalledWith(AUTH.db, {
+      ownerId: "owner_1",
+      packageId: "pkg_1",
+      includeRetired: undefined,
+      retiredOnly: true,
+      limit: "100",
+      offset: "100",
+    });
   });
 
   it("returns the service error status", async () => {

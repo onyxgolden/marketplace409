@@ -221,6 +221,15 @@ async function reorderSteps(db, uid, { packageId, stepIds, expectedGeneration, r
   return rows;
 }
 
+async function moveStep(db, uid, { packageId, stepId, targetSequenceNo, expectedGeneration, reason }) {
+  const { rows } = await asUser(db, uid, `
+    select * from forge_work_step_move(
+      '${OWNER_A}', '${packageId}', '${stepId}', ${sqlNum(targetSequenceNo)},
+      ${sqlNum(expectedGeneration)}, ${sqlStr(reason ?? null)});
+  `);
+  return rows;
+}
+
 async function createLink(db, uid, { packageId, stepId, drawingId, refinementNote, reason }) {
   const { rows } = await asUser(db, uid, `
     select * from forge_work_step_link_drawing_create(
@@ -742,6 +751,91 @@ describe("slice 5 migration: RPC flows and audit", () => {
   });
 });
 
+describe("slice 5 migration: single-step move", () => {
+  let db;
+
+  beforeEach(async () => { db = await setupDb(); }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("moves one step without enumerating the active set, shifting only the steps between", async () => {
+    const first = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "First" });
+    const second = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Second" });
+    const third = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Third" });
+    expect(await orderGeneration(db, "pkg_a")).toBe(3);
+    // Move "First" (position 1) to position 3: Second and Third
+    // shift up one; First lands last. Only the shifted steps get a
+    // reorder revision — the unmoved step keeps its history clean.
+    const moved = await moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: first.id, targetSequenceNo: 3, expectedGeneration: 3, reason: "Field order",
+    });
+    expect(moved.map((s) => [s.title, s.sequence_no])).toEqual([
+      ["Second", 1],
+      ["Third", 2],
+      ["First", 3],
+    ]);
+    expect(await orderGeneration(db, "pkg_a")).toBe(4);
+    expect((await revisionsFor(db, first.id)).map((r) => r.action)).toEqual(["create", "reorder"]);
+    expect((await revisionsFor(db, second.id)).map((r) => r.action)).toEqual(["create", "reorder"]);
+    expect((await revisionsFor(db, third.id)).map((r) => r.action)).toEqual(["create", "reorder"]);
+    // Move "First" back up to position 1.
+    const back = await moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: first.id, targetSequenceNo: 1, expectedGeneration: 4,
+    });
+    expect(back.map((s) => [s.title, s.sequence_no])).toEqual([
+      ["First", 1],
+      ["Second", 2],
+      ["Third", 3],
+    ]);
+    expect(await orderGeneration(db, "pkg_a")).toBe(5);
+  });
+
+  it60("a no-op move returns the order unchanged and does not bump the generation", async () => {
+    const first = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "First" });
+    const second = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Second" });
+    const moved = await moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: first.id, targetSequenceNo: 1, expectedGeneration: 2,
+    });
+    expect(moved.map((s) => [s.title, s.sequence_no])).toEqual([["First", 1], ["Second", 2]]);
+    expect(await orderGeneration(db, "pkg_a")).toBe(2);
+    expect((await revisionsFor(db, first.id)).map((r) => r.action)).toEqual(["create"]);
+  });
+
+  it60("rejects an out-of-range target, a stale generation, and a retired or foreign step", async () => {
+    const first = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "First" });
+    const second = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Second" });
+    for (const badTarget of [0, 3, -1]) {
+      await expect(moveStep(db, OWNER_A, {
+        packageId: "pkg_a", stepId: first.id, targetSequenceNo: badTarget, expectedGeneration: 2,
+      })).rejects.toThrow(/WPP5_INVALID_POSITION/);
+    }
+    await expect(moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: first.id, targetSequenceNo: 2, expectedGeneration: 1,
+    })).rejects.toThrow(/WPP5_VERSION_CONFLICT/);
+    await expect(moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: "ghost", targetSequenceNo: 1, expectedGeneration: 2,
+    })).rejects.toThrow(/WPP5_STEP_NOT_FOUND/);
+    const retired = await retireStep(db, OWNER_A, second.id, { expectedVersion: 1, reason: "No longer needed" });
+    expect(retired.retired_at).not.toBe(null);
+    // Generation is 3 after the retire (2 creates + 1 retire bump).
+    await expect(moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: second.id, targetSequenceNo: 1, expectedGeneration: 3,
+    })).rejects.toThrow(/WPP5_RETIRED/);
+    // A step from another package is not found through this one.
+    await db.exec(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_a2', 'in_progress');
+    `);
+    const other = await createStep(db, OWNER_A, { packageId: "pkg_a2", title: "Elsewhere" });
+    await expect(moveStep(db, OWNER_A, {
+      packageId: "pkg_a", stepId: other.id, targetSequenceNo: 1, expectedGeneration: 3,
+    })).rejects.toThrow(/WPP5_STEP_NOT_FOUND/);
+    // Terminal packages block moves.
+    await expect(moveStep(db, OWNER_A, {
+      packageId: "pkg_cancelled", stepId: first.id, targetSequenceNo: 1, expectedGeneration: 0,
+    })).rejects.toThrow(/WPP5_PACKAGE_TERMINAL/);
+  });
+});
+
 describe("slice 5 migration: drawing links", () => {
   let db;
   beforeEach(async () => { db = await setupDb(); }, 60000);
@@ -936,6 +1030,80 @@ describe("slice 5 migration: drawing-delete coordination", () => {
     expect(drawingRows).toHaveLength(1);
     expect((await linkRevisionsFor(db, link.id)).map((r) => r.action)).toEqual(["create"]);
   });
+
+  it60("a drawing with child drawings is blocked, then deletes once the child is gone", async () => {
+    // dwg_child rolls its takeoff up to dwg_1, so dwg_1 has children.
+    // This exercises the child check in the slice-5 replacement delete
+    // RPC on the real code path: p_id_drawing_id is a genuine
+    // forge_work_drawings column (slice-1 migration, "which P&ID this
+    // drawing's takeoff rolls up to"), so the check reads "a drawing
+    // exists whose P&ID parent is this drawing" — it is not a typo.
+    await db.exec(`
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id)
+        values ('${OWNER_A}', 'pkg_a', 'dwg_child', 'C-301', 'cut_sheet', 'Child sheet', 'dwg_1');
+    `);
+    const step1 = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Step one" });
+    const step2 = await createStep(db, OWNER_A, { packageId: "pkg_a", title: "Step two" });
+    const activeLink = await createLink(db, OWNER_A, { packageId: "pkg_a", stepId: step1.id, drawingId: "dwg_1" });
+    const retiredLink = await createLink(db, OWNER_A, { packageId: "pkg_a", stepId: step2.id, drawingId: "dwg_1" });
+    await retireLink(db, OWNER_A, retiredLink.id, { expectedVersion: 1, reason: "Wrong drawing" });
+    const activeAnnotation = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_1", label: "Permit B",
+    });
+    const retiredAnnotation = await createAnnotation(db, OWNER_A, {
+      packageId: "pkg_a", targetKind: "drawing", drawingId: "dwg_1", label: "Permit C",
+    });
+    await asUser(db, OWNER_A, `
+      select * from forge_work_permit_annotation_retire('${OWNER_A}', '${retiredAnnotation.id}', 1, 'Superseded');
+    `);
+
+    // Blocked: dwg_1 has a child. Nothing is retired or detached.
+    await expect(deleteDrawing(db, OWNER_A, { packageId: "pkg_a", drawingId: "dwg_1" }))
+      .rejects.toThrow(/WPP3_DRAWING_HAS_CHILDREN/);
+    const { rows: blockedLinkRows } = await db.query(`
+      select retired_at, drawing_id from forge_work_step_drawing_links where id = '${activeLink.id}';
+    `);
+    expect(blockedLinkRows[0].retired_at).toBe(null);
+    expect(blockedLinkRows[0].drawing_id).toBe("dwg_1");
+    const { rows: blockedAnnRows } = await db.query(`
+      select retired_at, drawing_id from forge_work_permit_annotations where id = '${activeAnnotation.id}';
+    `);
+    expect(blockedAnnRows[0].retired_at).toBe(null);
+    expect(blockedAnnRows[0].drawing_id).toBe("dwg_1");
+
+    // The child has no children of its own, so it deletes cleanly;
+    // then the parent deletes with the same-transaction cleanup.
+    const childDeleted = await deleteDrawing(db, OWNER_A, { packageId: "pkg_a", drawingId: "dwg_child" });
+    expect(childDeleted.forge_work_permit_annotation_delete_drawing).toBe(true);
+    const deleted = await deleteDrawing(db, OWNER_A, { packageId: "pkg_a", drawingId: "dwg_1" });
+    expect(deleted.forge_work_permit_annotation_delete_drawing).toBe(true);
+    const { rows: linkRows } = await db.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_step_drawing_links where id = '${activeLink.id}';
+    `);
+    expect(linkRows[0].retired_at).not.toBe(null);
+    expect(linkRows[0].drawing_id).toBe(null);
+    expect(linkRows[0].original_drawing_id).toBe("dwg_1");
+    const { rows: retiredLinkRows } = await db.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_step_drawing_links where id = '${retiredLink.id}';
+    `);
+    expect(retiredLinkRows[0].drawing_id).toBe(null);
+    expect(retiredLinkRows[0].original_drawing_id).toBe("dwg_1");
+    const { rows: annRows } = await db.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_permit_annotations where id = '${activeAnnotation.id}';
+    `);
+    expect(annRows[0].retired_at).not.toBe(null);
+    expect(annRows[0].drawing_id).toBe(null);
+    expect(annRows[0].original_drawing_id).toBe("dwg_1");
+    const { rows: retiredAnnRows } = await db.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_permit_annotations where id = '${retiredAnnotation.id}';
+    `);
+    expect(retiredAnnRows[0].drawing_id).toBe(null);
+    expect(retiredAnnRows[0].original_drawing_id).toBe("dwg_1");
+    const { rows: drawingRows } = await db.query(`
+      select id from forge_work_drawings where package_id = 'pkg_a' and id in ('dwg_1', 'dwg_child');
+    `);
+    expect(drawingRows).toHaveLength(0);
+  });
 });
 
 describe("slice 5 migration: effective ACL matrix and default-privilege negative case", () => {
@@ -954,6 +1122,7 @@ describe("slice 5 migration: effective ACL matrix and default-privilege negative
     "forge_work_step_create(text, text, text, text, text, integer, numeric, text, text, integer, text)",
     "forge_work_step_update(text, text, integer, text, text, text, integer, numeric, text, boolean, boolean, boolean, boolean, boolean, boolean, text)",
     "forge_work_step_reorder(text, text, text[], integer, text)",
+    "forge_work_step_move(text, text, text, integer, integer, text)",
     "forge_work_step_retire(text, text, integer, text, boolean)",
     "forge_work_step_link_drawing_create(text, text, text, text, text, text)",
     "forge_work_step_link_drawing_retire(text, text, integer, text)",
@@ -1022,7 +1191,7 @@ describe("slice 5 migration: effective ACL matrix and default-privilege negative
     expect(realRows[0].ok).toBe(false);
   });
 
-  it60("the shipped migration text carries explicit REVOKEs for all five tables and all nine functions", async () => {
+  it60("the shipped migration text carries explicit REVOKEs for all five tables and all ten functions", async () => {
     const sql = loadMigrationSql(SLICE5);
     for (const table of TABLES) {
       expect(sql).toContain(`revoke insert, update, delete, truncate, references, trigger on ${table} from authenticated`);
@@ -1183,6 +1352,79 @@ describe.skipIf(!HAS_REAL_PG)("slice 5 migration: real-PostgreSQL subset", () =>
     expect(stepRows[0].retired_at).toBe(null);
   });
 
+  it60("drawing delete is blocked by a child drawing on real PostgreSQL, then succeeds once the child is gone", async () => {
+    // dwg_child rolls its takeoff up to dwg_parent, so the parent has
+    // children. This is the live real-PostgreSQL proof of the child
+    // check in the slice-5 replacement delete RPC: p_id_drawing_id is
+    // a genuine forge_work_drawings column (slice-1 migration), so
+    // the check reads "a drawing exists whose P&ID parent is this
+    // drawing" — an undefined identifier would raise here instead.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_real_child', 'in_progress');
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id) values
+        ('${OWNER_A}', 'pkg_real_child', 'dwg_parent', 'P-401', 'p_id', 'Parent line', null),
+        ('${OWNER_A}', 'pkg_real_child', 'dwg_child', 'C-402', 'cut_sheet', 'Child sheet', 'dwg_parent');
+    `);
+    const step = await pgCreateStep(OWNER_A, "pkg_real_child", "Child-blocked step");
+    const link = await pgCreateLink(OWNER_A, "pkg_real_child", step.id, "dwg_parent");
+    const ann = await pgCreateAnnotation(OWNER_A, "pkg_real_child", "dwg_parent");
+    await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_step_link_drawing_retire('${OWNER_A}', '${link.id}', 1, 'Wrong drawing');
+    `);
+    await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_permit_annotation_retire('${OWNER_A}', '${ann.id}', 1, 'Superseded');
+    `);
+    const { rows: linkBefore } = await pgClient.query(`
+      select retired_at, drawing_id from forge_work_step_drawing_links where id = '${link.id}';
+    `);
+    const { rows: annBefore } = await pgClient.query(`
+      select retired_at, drawing_id from forge_work_permit_annotations where id = '${ann.id}';
+    `);
+    expect(linkBefore[0].retired_at).not.toBe(null);
+    expect(annBefore[0].retired_at).not.toBe(null);
+
+    // Blocked: the parent has a child. Nothing is detached.
+    await expect(pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_real_child', 'dwg_parent');
+    `)).rejects.toThrow(/WPP3_DRAWING_HAS_CHILDREN/);
+    const { rows: linkBlocked } = await pgClient.query(`
+      select retired_at, drawing_id from forge_work_step_drawing_links where id = '${link.id}';
+    `);
+    const { rows: annBlocked } = await pgClient.query(`
+      select retired_at, drawing_id from forge_work_permit_annotations where id = '${ann.id}';
+    `);
+    expect(linkBlocked[0].drawing_id).toBe("dwg_parent");
+    expect(new Date(linkBlocked[0].retired_at).getTime()).toBe(new Date(linkBefore[0].retired_at).getTime());
+    expect(annBlocked[0].drawing_id).toBe("dwg_parent");
+    expect(new Date(annBlocked[0].retired_at).getTime()).toBe(new Date(annBefore[0].retired_at).getTime());
+
+    // The child has no children of its own, so it deletes cleanly;
+    // then the parent deletes with the same-transaction cleanup.
+    const { rows: childDeleted } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_real_child', 'dwg_child');
+    `);
+    expect(childDeleted[0].forge_work_permit_annotation_delete_drawing).toBe(true);
+    const { rows: parentDeleted } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_permit_annotation_delete_drawing('${OWNER_A}', 'pkg_real_child', 'dwg_parent');
+    `);
+    expect(parentDeleted[0].forge_work_permit_annotation_delete_drawing).toBe(true);
+    const { rows: linkFinal } = await pgClient.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_step_drawing_links where id = '${link.id}';
+    `);
+    expect(linkFinal[0].drawing_id).toBe(null);
+    expect(linkFinal[0].original_drawing_id).toBe("dwg_parent");
+    const { rows: annFinal } = await pgClient.query(`
+      select retired_at, drawing_id, original_drawing_id from forge_work_permit_annotations where id = '${ann.id}';
+    `);
+    expect(annFinal[0].drawing_id).toBe(null);
+    expect(annFinal[0].original_drawing_id).toBe("dwg_parent");
+    const { rows: drawingRows } = await pgClient.query(`
+      select id from forge_work_drawings where package_id = 'pkg_real_child';
+    `);
+    expect(drawingRows).toHaveLength(0);
+  });
+
   it60("two concurrent reorders serialize: one wins, the other gets a version conflict", async () => {
     const s1 = await pgCreateStep(OWNER_A, "pkg_real", "S1");
     const s2 = await pgCreateStep(OWNER_A, "pkg_real", "S2");
@@ -1222,6 +1464,55 @@ describe.skipIf(!HAS_REAL_PG)("slice 5 migration: real-PostgreSQL subset", () =>
       where work_package_id = 'pkg_real' and retired_at is null order by sequence_no;
     `);
     expect(rows.map((r) => r.id)).toEqual([s2.id, s1.id]);
+  });
+
+  it60("two concurrent moves serialize: one wins, the other gets a version conflict", async () => {
+    // A fresh package: pkg_real already holds the reorder test's
+    // steps, so this leg must not assume its generation.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_real_move', 'in_progress');
+    `);
+    const s1 = await pgCreateStep(OWNER_A, "pkg_real_move", "M1");
+    const s2 = await pgCreateStep(OWNER_A, "pkg_real_move", "M2");
+    const s3 = await pgCreateStep(OWNER_A, "pkg_real_move", "M3");
+    expect(await pgOrderGeneration("pkg_real_move")).toBe(3);
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    try {
+      await clientA.query(`set role authenticated; set app.test_uid = '${OWNER_A}';`);
+      await clientB.query(`set role authenticated; set app.test_uid = '${OWNER_A}';`);
+      // A takes the order-row lock first (its move completes while
+      // its transaction stays open); B's move then blocks on the
+      // same lock until A commits — and then fails the generation
+      // guard, exactly like a concurrent reorder.
+      await clientA.query("begin");
+      const rowsA = await clientA.query(`
+        select * from forge_work_step_move(
+          '${OWNER_A}', 'pkg_real_move', '${s1.id}', 3, 3, null);
+      `);
+      expect(rowsA.rows.map((r) => r.id)).toEqual([s2.id, s3.id, s1.id]);
+      await clientB.query("begin");
+      const pB = clientB.query(`
+        select * from forge_work_step_move(
+          '${OWNER_A}', 'pkg_real_move', '${s3.id}', 1, 3, null);
+      `);
+      pB.catch(() => {});
+      await clientA.query("commit");
+      await expect(pB).rejects.toThrow(/WPP5_VERSION_CONFLICT/);
+      await clientB.query("rollback");
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+    }
+    expect(await pgOrderGeneration("pkg_real_move")).toBe(4);
+    const { rows } = await pgClient.query(`
+      select id from forge_work_steps
+      where work_package_id = 'pkg_real_move' and retired_at is null order by sequence_no;
+    `);
+    expect(rows.map((r) => r.id)).toEqual([s2.id, s3.id, s1.id]);
   });
 
   it60("effective ACL matrix holds on real PostgreSQL", async () => {

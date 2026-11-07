@@ -11,6 +11,7 @@ import {
   createWorkStep,
   updateWorkStep,
   reorderWorkSteps,
+  moveWorkStep,
   retireWorkStep,
   listWorkSteps,
   listWorkStepRevisions,
@@ -40,7 +41,7 @@ function chain(result = { data: null, error: null }) {
   const node = {
     select: vi.fn(() => node), eq: vi.fn(() => node), order: vi.fn(() => node),
     gte: vi.fn(() => node), lte: vi.fn(() => node), is: vi.fn(() => node),
-    in: vi.fn(() => node),
+    not: vi.fn(() => node), in: vi.fn(() => node),
     range: vi.fn(() => node),
     single: vi.fn(async () => result), maybeSingle: vi.fn(async () => result),
     then: (resolve) => resolve(result),
@@ -234,6 +235,72 @@ describe("reorderWorkSteps", () => {
   });
 });
 
+describe("moveWorkStep", () => {
+  it("rejects an invalid move before querying", async () => {
+    const db = mockDb([], []);
+    const result = await moveWorkStep(db, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", targetSequenceNo: 0, expectedGeneration: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(db.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("404s on an unknown package without calling the RPC", async () => {
+    const db = mockDb([chain({ data: null, error: null })], []);
+    const result = await moveWorkStep(db, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", targetSequenceNo: 2, expectedGeneration: 0,
+    });
+    expect(result).toMatchObject({ ok: false, httpStatus: 404, error: "Work package not found." });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("calls the move RPC and returns the moved steps plus the new generation", async () => {
+    const db = mockDb(
+      [
+        chain({ data: PKG_ROW, error: null }),
+        chain({ data: { generation: 2 }, error: null }),
+      ],
+      [{ data: [STEP_ROW, { ...STEP_ROW, id: "forge_wps_2", sequence_no: 2 }], error: null }],
+    );
+    const result = await moveWorkStep(db, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1",
+      targetSequenceNo: 2, expectedGeneration: 1, reason: "Field order",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.steps).toHaveLength(2);
+    expect(result.generation).toBe(2);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_step_move", {
+      p_owner_id: OWNER,
+      p_package_id: "pkg_1",
+      p_step_id: "forge_wps_1",
+      p_target_sequence_no: 2,
+      p_expected_generation: 1,
+      p_reason: "Field order",
+    });
+  });
+
+  it("maps a stale generation to 409 and an out-of-range target to 400", async () => {
+    const staleDb = mockDb(
+      [chain({ data: PKG_ROW, error: null })],
+      [{ data: null, error: new Error("WPP5_VERSION_CONFLICT") }],
+    );
+    const stale = await moveWorkStep(staleDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", targetSequenceNo: 2, expectedGeneration: 1,
+    });
+    expect(stale).toMatchObject({ ok: false, httpStatus: 409 });
+    const rangeDb = mockDb(
+      [chain({ data: PKG_ROW, error: null })],
+      [{ data: null, error: new Error("WPP5_INVALID_POSITION") }],
+    );
+    const range = await moveWorkStep(rangeDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", targetSequenceNo: 99, expectedGeneration: 1,
+    });
+    expect(range).toMatchObject({ ok: false, httpStatus: 400 });
+  });
+});
+
 describe("retireWorkStep", () => {
   it("calls the retire RPC with version and reason", async () => {
     const db = mockDb(
@@ -286,6 +353,35 @@ describe("listWorkSteps", () => {
     expect(result.steps[0]).toMatchObject({ sequenceNo: 1, plannedPersonHours: 24.5 });
     expect(result.generation).toBe(3);
   });
+
+  it("fetches retired-only pages without the active-only filter", async () => {
+    const stepsChain = chain({ data: [{ ...STEP_ROW, retired_at: "t2" }], error: null });
+    const db = mockDb([
+      chain({ data: PKG_ROW, error: null }),
+      stepsChain,
+      chain({ data: { generation: 3 }, error: null }),
+    ]);
+    const result = await listWorkSteps(db, { ownerId: OWNER, packageId: "pkg_1", retiredOnly: true, limit: 100, offset: 100 });
+    expect(result.ok).toBe(true);
+    expect(result.steps).toHaveLength(1);
+    expect(stepsChain.not).toHaveBeenCalledWith("retired_at", "is", null);
+    expect(stepsChain.is).not.toHaveBeenCalled();
+    expect(stepsChain.range).toHaveBeenCalledWith(100, 199);
+  });
+
+  it("pages the active list with the active-only filter", async () => {
+    const stepsChain = chain({ data: [STEP_ROW], error: null });
+    const db = mockDb([
+      chain({ data: PKG_ROW, error: null }),
+      stepsChain,
+      chain({ data: { generation: 3 }, error: null }),
+    ]);
+    const result = await listWorkSteps(db, { ownerId: OWNER, packageId: "pkg_1", includeRetired: false, limit: 100, offset: 100 });
+    expect(result.ok).toBe(true);
+    expect(stepsChain.is).toHaveBeenCalledWith("retired_at", null);
+    expect(stepsChain.not).not.toHaveBeenCalled();
+    expect(stepsChain.range).toHaveBeenCalledWith(100, 199);
+  });
 });
 
 describe("listWorkStepRevisions", () => {
@@ -307,6 +403,29 @@ describe("listWorkStepRevisions", () => {
     expect(result.step.id).toBe("forge_wps_1");
     expect(result.revisions).toHaveLength(1);
     expect(result.revisions[0]).toMatchObject({ action: "create", version: 1 });
+  });
+
+  it("bounds the history read to one page by default and honors an explicit page", async () => {
+    const firstPage = chain({ data: [REVISION_ROW], error: null });
+    const defaultDb = mockDb([chain({ data: STEP_ROW, error: null }), firstPage]);
+    const defaults = await listWorkStepRevisions(defaultDb, { ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1" });
+    expect(defaults.ok).toBe(true);
+    expect(firstPage.range).toHaveBeenCalledWith(0, 99);
+    const revisionsPage = chain({ data: [REVISION_ROW], error: null });
+    const revisionsDb = mockDb([chain({ data: STEP_ROW, error: null }), revisionsPage]);
+    const revisions = await listWorkStepRevisions(revisionsDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", limit: 50, offset: 50,
+    });
+    expect(revisions.ok).toBe(true);
+    expect(revisionsPage.range).toHaveBeenCalledWith(50, 99);
+  });
+
+  it("rejects bad paging before querying", async () => {
+    const db = mockDb([], []);
+    const result = await listWorkStepRevisions(db, { ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", limit: 0 });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(db.from).not.toHaveBeenCalled();
   });
 });
 
@@ -369,6 +488,29 @@ describe("listStepDrawings", () => {
     // No drawing lookup happens when no link has a live drawing id.
     expect(db.from).toHaveBeenCalledTimes(2);
   });
+
+  it("bounds the link read to one page by default and honors an explicit page", async () => {
+    const firstPage = chain({ data: [LINK_ROW], error: null });
+    const defaultDb = mockDb([
+      chain({ data: STEP_ROW, error: null }),
+      firstPage,
+      chain({ data: [DRAWING_ROW], error: null }),
+    ]);
+    const defaults = await listStepDrawings(defaultDb, { ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1" });
+    expect(defaults.ok).toBe(true);
+    expect(firstPage.range).toHaveBeenCalledWith(0, 99);
+    const secondPage = chain({ data: [LINK_ROW], error: null });
+    const pagedDb = mockDb([
+      chain({ data: STEP_ROW, error: null }),
+      secondPage,
+      chain({ data: [DRAWING_ROW], error: null }),
+    ]);
+    const paged = await listStepDrawings(pagedDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", limit: 50, offset: 50,
+    });
+    expect(paged.ok).toBe(true);
+    expect(secondPage.range).toHaveBeenCalledWith(50, 99);
+  });
 });
 
 describe("listStepDrawingLinkRevisions", () => {
@@ -388,6 +530,28 @@ describe("listStepDrawingLinkRevisions", () => {
     expect(result.ok).toBe(true);
     expect(result.revisions).toHaveLength(1);
     expect(result.revisions[0]).toMatchObject({ action: "create" });
+  });
+
+  it("bounds the link-history read to one page by default and honors an explicit page", async () => {
+    const linkRevision = {
+      id: "forge_wplr_1", link_id: "forge_wpsl_1", version: 1,
+      actor_id: "user_1", action: "create", old_values: null,
+      new_values: { drawing_id: "dwg_1" }, reason: null, recorded_at: "t1",
+    };
+    const firstPage = chain({ data: [linkRevision], error: null });
+    const defaultDb = mockDb([chain({ data: LINK_ROW, error: null }), firstPage]);
+    const defaults = await listStepDrawingLinkRevisions(defaultDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", linkId: "forge_wpsl_1",
+    });
+    expect(defaults.ok).toBe(true);
+    expect(firstPage.range).toHaveBeenCalledWith(0, 99);
+    const secondPage = chain({ data: [linkRevision], error: null });
+    const pagedDb = mockDb([chain({ data: LINK_ROW, error: null }), secondPage]);
+    const paged = await listStepDrawingLinkRevisions(pagedDb, {
+      ownerId: OWNER, packageId: "pkg_1", stepId: "forge_wps_1", linkId: "forge_wpsl_1", limit: 25, offset: 25,
+    });
+    expect(paged.ok).toBe(true);
+    expect(secondPage.range).toHaveBeenCalledWith(25, 49);
   });
 });
 

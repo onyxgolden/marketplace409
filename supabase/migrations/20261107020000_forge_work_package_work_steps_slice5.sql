@@ -863,6 +863,126 @@ begin
 end;
 $$;
 
+-- Moves ONE active step to a target position (1..N) without requiring
+-- the caller to enumerate the whole active set. The full-permutation
+-- reorder RPC above cannot be driven from a paged UI: once a package
+-- holds more steps than one page, the UI cannot know the complete
+-- active set, so any permutation it submits is necessarily partial
+-- and the reorder RPC rightly rejects it. A single-step move needs
+-- only the step, its target position, and the generation guard — the
+-- new order is computed inside this transaction from the live active
+-- set, then applied through the same helper (same renumbering, same
+-- per-step 'reorder' revisions, same generation bump) as a full
+-- reorder. A no-op move (target == current position) returns the
+-- current order unchanged and does not bump the generation.
+create or replace function public.forge_work_step_move(
+  p_owner_id text,
+  p_package_id text,
+  p_step_id text,
+  p_target_sequence_no integer,
+  p_expected_generation integer,
+  p_reason text
+)
+returns setof public.forge_work_steps
+language plpgsql
+security definer
+set search_path = ''
+set row_security = off
+as $$
+declare
+  v_pkg_status text;
+  v_order public.forge_work_step_order%rowtype;
+  v_actor text;
+  v_step public.forge_work_steps%rowtype;
+  v_current integer;
+  v_total integer;
+  v_ordered_ids text[];
+begin
+  if not public.has_workspace_access(p_owner_id) then
+    raise exception 'WPP5_WORKSPACE_FORBIDDEN';
+  end if;
+  -- The audit actor is the authenticated caller, never a parameter.
+  v_actor := auth.uid()::text;
+  if v_actor is null or btrim(v_actor) = '' then
+    raise exception 'WPP5_INVALID_ACTOR';
+  end if;
+  select status into v_pkg_status from public.forge_work_packages
+    where owner_id = p_owner_id and id = p_package_id;
+  if not found then
+    raise exception 'WPP5_PACKAGE_NOT_FOUND';
+  end if;
+  if v_pkg_status in ('cancelled', 'verified_closed') then
+    raise exception 'WPP5_PACKAGE_TERMINAL';
+  end if;
+  if p_reason is not null and char_length(p_reason) > 1000 then
+    raise exception 'WPP5_REASON_TOO_LONG';
+  end if;
+
+  -- Row lock on the order token: a concurrent move/reorder serializes
+  -- here and fails the generation guard below instead of silently
+  -- overwriting the first move.
+  v_order := public.forge_work_step_order_row(p_owner_id, p_package_id);
+  if p_expected_generation is null or v_order.generation <> p_expected_generation then
+    raise exception 'WPP5_VERSION_CONFLICT';
+  end if;
+
+  select * into v_step from public.forge_work_steps
+    where owner_id = p_owner_id and id = p_step_id for update;
+  if not found or v_step.work_package_id <> p_package_id then
+    raise exception 'WPP5_STEP_NOT_FOUND';
+  end if;
+  if v_step.retired_at is not null then
+    raise exception 'WPP5_RETIRED';
+  end if;
+  v_current := v_step.sequence_no;
+  select count(*) into v_total from public.forge_work_steps
+    where owner_id = p_owner_id and work_package_id = p_package_id and retired_at is null;
+  if p_target_sequence_no is null or p_target_sequence_no < 1 or p_target_sequence_no > v_total then
+    raise exception 'WPP5_INVALID_POSITION';
+  end if;
+
+  if p_target_sequence_no = v_current then
+    return query
+      select * from public.forge_work_steps
+        where owner_id = p_owner_id and work_package_id = p_package_id and retired_at is null
+        order by sequence_no asc, id asc;
+    return;
+  end if;
+
+  -- The new order, computed from the live active set: the moved step
+  -- takes the target position; steps between the old and new position
+  -- shift by one to make room; all others keep their position.
+  select array_agg(id order by new_seq, id) into v_ordered_ids
+    from (
+      select id,
+        case
+          when id = p_step_id then p_target_sequence_no
+          when p_target_sequence_no < v_current
+            and sequence_no >= p_target_sequence_no and sequence_no < v_current
+            then sequence_no + 1
+          when p_target_sequence_no > v_current
+            and sequence_no > v_current and sequence_no <= p_target_sequence_no
+            then sequence_no - 1
+          else sequence_no
+        end as new_seq
+      from public.forge_work_steps
+      where owner_id = p_owner_id and work_package_id = p_package_id and retired_at is null
+    ) s;
+
+  perform public.forge_work_step_apply_order(
+    p_owner_id, p_package_id, v_ordered_ids, null, v_actor, p_reason);
+
+  update public.forge_work_step_order
+    set generation = generation + 1, updated_at = now()
+    where owner_id = p_owner_id and work_package_id = p_package_id;
+
+  return query
+    select * from public.forge_work_steps
+      where owner_id = p_owner_id and work_package_id = p_package_id and retired_at is null
+      order by sequence_no asc, id asc;
+end;
+$$;
+
 create or replace function public.forge_work_step_retire(
   p_owner_id text,
   p_step_id text,
@@ -1475,6 +1595,7 @@ revoke all on function public.forge_work_step_apply_order(text, text, text[], te
 revoke all on function public.forge_work_step_create(text, text, text, text, text, integer, numeric, text, text, integer, text) from public;
 revoke all on function public.forge_work_step_update(text, text, integer, text, text, text, integer, numeric, text, boolean, boolean, boolean, boolean, boolean, boolean, text) from public;
 revoke all on function public.forge_work_step_reorder(text, text, text[], integer, text) from public;
+revoke all on function public.forge_work_step_move(text, text, text, integer, integer, text) from public;
 revoke all on function public.forge_work_step_retire(text, text, integer, text, boolean) from public;
 revoke all on function public.forge_work_step_link_drawing_create(text, text, text, text, text, text) from public;
 revoke all on function public.forge_work_step_link_drawing_retire(text, text, integer, text) from public;
@@ -1482,6 +1603,7 @@ revoke all on function public.forge_work_permit_annotation_delete_drawing(text, 
 grant execute on function public.forge_work_step_create(text, text, text, text, text, integer, numeric, text, text, integer, text) to authenticated;
 grant execute on function public.forge_work_step_update(text, text, integer, text, text, text, integer, numeric, text, boolean, boolean, boolean, boolean, boolean, boolean, text) to authenticated;
 grant execute on function public.forge_work_step_reorder(text, text, text[], integer, text) to authenticated;
+grant execute on function public.forge_work_step_move(text, text, text, integer, integer, text) to authenticated;
 grant execute on function public.forge_work_step_retire(text, text, integer, text, boolean) to authenticated;
 grant execute on function public.forge_work_step_link_drawing_create(text, text, text, text, text, text) to authenticated;
 grant execute on function public.forge_work_step_link_drawing_retire(text, text, integer, text) to authenticated;

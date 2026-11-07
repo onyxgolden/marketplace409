@@ -272,6 +272,28 @@ export function validateWorkStepReorderInput(input) {
   return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
 }
 
+/**
+ * Validates a single-step move request: the step to move, its target
+ * position (1..N, the upper bound is enforced server-side against the
+ * live active count), and the expected sequence generation the caller
+ * listed against. A move never needs the full active set — that is the
+ * point: a paged UI cannot enumerate it past one page.
+ */
+export function validateWorkStepMoveInput(input) {
+  const errors = [];
+  if (!isNonEmptyString(input?.stepId)) errors.push("stepId is required.");
+  if (!Number.isInteger(input?.targetSequenceNo) || input.targetSequenceNo < 1) {
+    errors.push("targetSequenceNo is required and must be a positive whole number.");
+  }
+  if (!Number.isInteger(input?.expectedGeneration) || input.expectedGeneration < 0) {
+    errors.push("expectedGeneration is required and must be a non-negative whole number.");
+  }
+  if (input?.reason != null && (typeof input.reason !== "string" || input.reason.length > MAX_REASON_LENGTH)) {
+    errors.push(`reason must be at most ${MAX_REASON_LENGTH} characters.`);
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
 /** Validates a step-drawing link creation input. */
 export function validateWorkStepLinkInput(input) {
   const errors = [];

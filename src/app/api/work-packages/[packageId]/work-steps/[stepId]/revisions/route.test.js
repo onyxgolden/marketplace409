@@ -45,4 +45,17 @@ describe("GET /api/work-packages/[packageId]/work-steps/[stepId]/revisions", () 
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(404);
   });
+
+  it("forwards paging to the service", async () => {
+    listWorkStepRevisions.mockResolvedValue({ ok: true, step: { id: "forge_wps_1" }, revisions: [] });
+    const response = await GET(new Request("https://test/x?limit=50&offset=50"), { params: params() });
+    expect(response.status).toBe(200);
+    expect(listWorkStepRevisions).toHaveBeenCalledWith(AUTH.db, {
+      ownerId: "owner_1",
+      packageId: "pkg_1",
+      stepId: "forge_wps_1",
+      limit: "50",
+      offset: "50",
+    });
+  });
 });

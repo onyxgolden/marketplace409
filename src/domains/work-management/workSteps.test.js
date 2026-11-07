@@ -7,6 +7,7 @@ import {
   validateWorkStepUpdateInput,
   validateWorkStepRetireInput,
   validateWorkStepReorderInput,
+  validateWorkStepMoveInput,
   validateWorkStepLinkInput,
   validateWorkStepLinkRetireInput,
 } from "./workSteps.js";
@@ -138,6 +139,30 @@ describe("validateWorkStepReorderInput", () => {
     expect(validateWorkStepReorderInput({ stepIds: ["a"] }).ok).toBe(false);
     expect(validateWorkStepReorderInput({ stepIds: ["a"], expectedGeneration: -1 }).ok).toBe(false);
     expect(validateWorkStepReorderInput({ stepIds: "a", expectedGeneration: 0 }).ok).toBe(false);
+  });
+});
+
+describe("validateWorkStepMoveInput", () => {
+  it("accepts a step, a target position, and a generation", () => {
+    expect(validateWorkStepMoveInput({
+      stepId: "a", targetSequenceNo: 3, expectedGeneration: 2,
+    })).toEqual({ ok: true, errors: [] });
+    expect(validateWorkStepMoveInput({
+      stepId: "a", targetSequenceNo: 1, expectedGeneration: 0, reason: "Sequence fix",
+    }).ok).toBe(true);
+  });
+
+  it("rejects a missing step, a non-positive or fractional target, and a missing generation", () => {
+    const base = { stepId: "a", targetSequenceNo: 2, expectedGeneration: 0 };
+    expect(validateWorkStepMoveInput({ ...base, stepId: "" }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, stepId: " " }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, targetSequenceNo: 0 }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, targetSequenceNo: -1 }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, targetSequenceNo: 1.5 }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, targetSequenceNo: "2" }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ stepId: "a", targetSequenceNo: 2 }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, expectedGeneration: -1 }).ok).toBe(false);
+    expect(validateWorkStepMoveInput({ ...base, reason: "x".repeat(1001) }).ok).toBe(false);
   });
 });
 

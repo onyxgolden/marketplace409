@@ -6,10 +6,13 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, stepId } = await params;
+    const search = new URL(request.url).searchParams;
     const result = await listWorkStepRevisions(auth.db, {
       ownerId: auth.ownerId,
       packageId,
       stepId,
+      limit: search.get("limit") || undefined,
+      offset: search.get("offset") || undefined,
     });
     if (!result.ok) return fail(result);
     return ok({ step: result.step, revisions: result.revisions });

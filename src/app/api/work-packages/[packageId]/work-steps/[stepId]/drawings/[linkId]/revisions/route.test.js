@@ -46,4 +46,18 @@ describe("GET /api/work-packages/[packageId]/work-steps/[stepId]/drawings/[linkI
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(404);
   });
+
+  it("forwards paging to the service", async () => {
+    listStepDrawingLinkRevisions.mockResolvedValue({ ok: true, link: { id: "forge_wpsl_1" }, revisions: [] });
+    const response = await GET(new Request("https://test/x?limit=50&offset=50"), { params: params() });
+    expect(response.status).toBe(200);
+    expect(listStepDrawingLinkRevisions).toHaveBeenCalledWith(AUTH.db, {
+      ownerId: "owner_1",
+      packageId: "pkg_1",
+      stepId: "forge_wps_1",
+      linkId: "forge_wpsl_1",
+      limit: "50",
+      offset: "50",
+    });
+  });
 });

@@ -85,9 +85,13 @@ function revisionSummary(revision) {
 }
 
 function StepHistory({ packageId, stepId }) {
+  // Bounded reads: one page at a time, with a visible "Show more"
+  // control while a full page comes back (a full page may mean more
+  // history exists). The list never reads unbounded again.
+  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:revisions`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/revisions`).then((b) => b.revisions),
+    `work-packages:${packageId}:work-steps:${stepId}:revisions:${shown}`,
+    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/revisions?limit=${shown}`).then((b) => b.revisions),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -95,23 +99,33 @@ function StepHistory({ packageId, stepId }) {
   const revisions = data || [];
   if (revisions.length === 0) return <p className="mt-2 text-xs text-slate-500">No history yet.</p>;
   return (
-    <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600">
-      {revisions.map((revision) => (
-        <li key={revision.id}>
-          <span className="font-medium text-slate-900">{ACTION_LABELS[revision.action] || revision.action}</span>
-          {` — version ${revision.version} · ${formatWhen(revision.recordedAt)}`}
-          {revision.reason ? ` · “${revision.reason}”` : ""}
-          <span className="block text-slate-500">{revisionSummary(revision)}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600">
+        {revisions.map((revision) => (
+          <li key={revision.id}>
+            <span className="font-medium text-slate-900">{ACTION_LABELS[revision.action] || revision.action}</span>
+            {` — version ${revision.version} · ${formatWhen(revision.recordedAt)}`}
+            {revision.reason ? ` · “${revision.reason}”` : ""}
+            <span className="block text-slate-500">{revisionSummary(revision)}</span>
+          </li>
+        ))}
+      </ul>
+      {revisions.length === shown && (
+        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+          Show more history
+        </button>
+      )}
+    </>
   );
 }
 
 function LinkHistory({ packageId, stepId, linkId }) {
+  // Bounded reads, same shape as step history: one page at a time
+  // with a visible "Show more" control while a full page comes back.
+  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:drawings:${linkId}:revisions`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions`).then((b) => b.revisions),
+    `work-packages:${packageId}:work-steps:${stepId}:drawings:${linkId}:revisions:${shown}`,
+    () => api(`/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions?limit=${shown}`).then((b) => b.revisions),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -119,15 +133,22 @@ function LinkHistory({ packageId, stepId, linkId }) {
   const revisions = data || [];
   if (revisions.length === 0) return <p className="mt-2 text-xs text-slate-500">No history yet.</p>;
   return (
-    <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600">
-      {revisions.map((revision) => (
-        <li key={revision.id}>
-          <span className="font-medium text-slate-900">{ACTION_LABELS[revision.action] || revision.action}</span>
-          {` — version ${revision.version} · ${formatWhen(revision.recordedAt)}`}
-          {revision.reason ? ` · “${revision.reason}”` : ""}
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600">
+        {revisions.map((revision) => (
+          <li key={revision.id}>
+            <span className="font-medium text-slate-900">{ACTION_LABELS[revision.action] || revision.action}</span>
+            {` — version ${revision.version} · ${formatWhen(revision.recordedAt)}`}
+            {revision.reason ? ` · “${revision.reason}”` : ""}
+          </li>
+        ))}
+      </ul>
+      {revisions.length === shown && (
+        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+          Show more history
+        </button>
+      )}
+    </>
   );
 }
 
@@ -150,10 +171,13 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   const [retiringLinkId, setRetiringLinkId] = useState(null);
   const [retireReason, setRetireReason] = useState("");
   const [linkHistoryId, setLinkHistoryId] = useState(null);
+  // Bounded reads: one page of links at a time, with a visible
+  // "Show more" control while a full page comes back.
+  const [shown, setShown] = useState(HISTORY_PAGE_SIZE);
 
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${step.id}:drawings`,
-    () => api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings`).then((b) => b.links),
+    `work-packages:${packageId}:work-steps:${step.id}:drawings:${shown}`,
+    () => api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings?limit=${shown}`).then((b) => b.links),
     { ttlMs: 10_000 },
   );
   const links = data || [];
@@ -253,6 +277,11 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
           ))}
         </ul>
       )}
+      {links.length === shown && (
+        <button className={btnGhost} onClick={() => setShown((current) => current + HISTORY_PAGE_SIZE)}>
+          Show more drawings
+        </button>
+      )}
       {!step.retiredAt && linkableDrawings.length > 0 && (
         <form onSubmit={onLink} className="mt-2 flex flex-col gap-2 sm:flex-row">
           <select className={`${input} flex-1`} aria-label="Drawing to link" value={linkDrawingId}
@@ -341,6 +370,49 @@ function ProgressContext({ packageId }) {
 // move a step up or down and the new order is saved as one
 // transaction, guarded so a stale order is rejected instead of
 // silently overwriting someone else's change.
+// The schedule is fetched exhaustively, in stable sequence order:
+// active steps first (one page at a time), then retired steps
+// separately. A single capped request can never stand for the whole
+// schedule — past one page it would silently truncate the order a
+// move depends on, and retired rows could crowd supersession
+// candidates out of the page. Both loops stop on a short page, so a
+// package with few steps still costs two requests and no more.
+const LIST_PAGE_SIZE = 100;
+
+async function fetchAllSteps(packageId) {
+  const active = [];
+  let offset = 0;
+  let generation = 0;
+  let packageStatus = "";
+  for (;;) {
+    const page = await api(
+      `/api/work-packages/${packageId}/work-steps?includeRetired=false&limit=${LIST_PAGE_SIZE}&offset=${offset}`,
+    );
+    if (offset === 0) {
+      generation = page.generation ?? 0;
+      packageStatus = page.packageStatus || "";
+    }
+    active.push(...(page.steps || []));
+    if ((page.steps || []).length < LIST_PAGE_SIZE) break;
+    offset += LIST_PAGE_SIZE;
+  }
+  const retired = [];
+  offset = 0;
+  for (;;) {
+    const page = await api(
+      `/api/work-packages/${packageId}/work-steps?retiredOnly=true&limit=${LIST_PAGE_SIZE}&offset=${offset}`,
+    );
+    retired.push(...(page.steps || []));
+    if ((page.steps || []).length < LIST_PAGE_SIZE) break;
+    offset += LIST_PAGE_SIZE;
+  }
+  return { steps: [...active, ...retired], generation, packageStatus };
+}
+
+// One page of a history/drawing list. The "Show more" buttons below
+// grow this by one page; the lists never read unbounded again.
+const HISTORY_PAGE_SIZE = 50;
+
 export default function WorkPackageSteps({ packageId, onChanged = null }) {
   const [showRetired, setShowRetired] = useState(false);
   const [error, setError] = useState("");
@@ -362,7 +434,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   // candidates), but hidden from the list unless asked for.
   const { data, error: loadError, isLoading, refresh } = useStaleWhileRevalidate(
     `work-packages:${packageId}:work-steps:all`,
-    () => api(`/api/work-packages/${packageId}/work-steps?includeRetired=true&limit=200`),
+    () => fetchAllSteps(packageId),
     { ttlMs: 10_000 },
   );
   const steps = data?.steps || [];
@@ -493,18 +565,20 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     const index = activeSteps.findIndex((s) => s.id === step.id);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= activeSteps.length) return;
-    const next = [...activeSteps];
-    [next[index], next[target]] = [next[target], next[index]];
+    // A single-step move, not a full permutation: the server computes
+    // the new order from the live active set inside the transaction,
+    // so the panel never has to enumerate a schedule longer than one
+    // page to reorder it. The generation guard still applies.
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const reordered = await api(`/api/work-packages/${packageId}/work-steps/reorder`, {
+      const moved = await api(`/api/work-packages/${packageId}/work-steps/${step.id}/move`, {
         method: "POST",
         body: JSON.stringify({
-          stepIds: next.map((s) => s.id),
+          targetSequenceNo: target + 1,
           expectedGeneration: generation,
         }),
       });
-      await reload(`Schedule order updated — ${reordered.steps.length} active steps.`);
+      await reload(`Schedule order updated — ${moved.steps.length} active steps.`);
     } catch (e) {
       setError(e.message);
       await refresh();

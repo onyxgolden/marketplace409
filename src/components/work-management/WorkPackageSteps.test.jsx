@@ -58,9 +58,18 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, listStatus
       if (listStatus !== 200) {
         return { ok: false, status: listStatus, json: async () => ({ error: listError }) };
       }
+      // Mirror the service's paging: active and retired are fetched
+      // separately, each sliced by limit/offset.
       const includeRetired = parsed.searchParams.get("includeRetired") === "true";
-      const rows = includeRetired ? currentSteps : currentSteps.filter((s) => !s.retiredAt);
-      return { ok: true, json: async () => ({ steps: rows, generation, packageStatus: "in_progress" }) };
+      const retiredOnly = parsed.searchParams.get("retiredOnly") === "true";
+      const limit = Number(parsed.searchParams.get("limit") || 100);
+      const offset = Number(parsed.searchParams.get("offset") || 0);
+      const rows = retiredOnly
+        ? currentSteps.filter((s) => s.retiredAt)
+        : includeRetired
+          ? currentSteps
+          : currentSteps.filter((s) => !s.retiredAt);
+      return { ok: true, json: async () => ({ steps: rows.slice(offset, offset + limit), generation, packageStatus: "in_progress" }) };
     }
     if (parsed.pathname === base && options.method === "POST") {
       const body = JSON.parse(options.body);
@@ -88,6 +97,23 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, listStatus
       currentSteps = [...ordered, ...currentSteps.filter((s) => s.retiredAt)];
       generation += 1;
       return { ok: true, json: async () => ({ steps: ordered, generation }) };
+    }
+    const moveMatch = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/work-steps\/([^/]+)\/move$/);
+    if (moveMatch && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      const active = currentSteps.filter((s) => !s.retiredAt)
+        .sort((a, b) => a.sequenceNo - b.sequenceNo);
+      const index = active.findIndex((s) => s.id === moveMatch[1]);
+      const [moved] = active.splice(index, 1);
+      active.splice(body.targetSequenceNo - 1, 0, moved);
+      // Positions are the array order now — renumber() sorts by the
+      // stored sequence numbers, so assign them first or the move
+      // would be undone by its own sort.
+      active.forEach((s, i) => { s.sequenceNo = i + 1; });
+      currentSteps = [...active, ...currentSteps.filter((s) => s.retiredAt)];
+      renumber();
+      generation += 1;
+      return { ok: true, json: async () => ({ steps: active, generation }) };
     }
     const stepMatch = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/work-steps\/([^/]+)$/);
     if (stepMatch && options.method === "PATCH") {
@@ -120,10 +146,12 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, listStatus
       return { ok: true, json: async () => ({ step: retired }) };
     }
     if (parsed.pathname === `${base}/forge_wps_1/revisions`) {
-      return { ok: true, json: async () => ({ step: currentSteps.find((s) => s.id === "forge_wps_1"), revisions }) };
+      const limit = Number(parsed.searchParams.get("limit") || 50);
+      return { ok: true, json: async () => ({ step: currentSteps.find((s) => s.id === "forge_wps_1"), revisions: revisions.slice(0, limit) }) };
     }
     if (parsed.pathname === `${base}/forge_wps_1/drawings` && !options.method) {
-      return { ok: true, json: async () => ({ links }) };
+      const limit = Number(parsed.searchParams.get("limit") || 50);
+      return { ok: true, json: async () => ({ links: links.slice(0, limit) }) };
     }
     if (parsed.pathname === `${base}/forge_wps_1/drawings` && options.method === "POST") {
       const body = JSON.parse(options.body);
@@ -289,21 +317,95 @@ describe("WorkPackageSteps", () => {
     });
   });
 
-  it("moves a step down and saves the new order with the generation guard", async () => {
+  it("moves a step down with a single-step move and the generation guard", async () => {
     const { calls } = setupFetch();
     const { container } = await renderPanel();
     await act(async () => { buttonByText(container, "↓ Move down").click(); });
     await act(async () => {});
     expect(container.textContent).toContain("Schedule order updated");
-    const reorder = calls.find((c) => c.url.endsWith("/reorder"));
-    expect(JSON.parse(reorder.body)).toMatchObject({
-      stepIds: ["forge_wps_2", "forge_wps_1"],
+    const move = calls.find((c) => c.url.endsWith("/move"));
+    expect(JSON.parse(move.body)).toMatchObject({
+      targetSequenceNo: 2,
       expectedGeneration: 2,
     });
+    // A move never submits a full permutation: no reorder call at all.
+    expect(calls.some((c) => c.url.endsWith("/reorder"))).toBe(false);
     await waitFor(() => {
       expect(container.textContent).toContain("#1 Install supports");
       expect(container.textContent).toContain("#2 Fabricate pipe spool");
     });
+  });
+
+  it("loads a 201-step schedule completely and moves without a permutation", async () => {
+    const many = Array.from({ length: 201 }, (_, i) => ({
+      ...STEP_1, id: `forge_wps_${i + 1}`, title: `Step ${i + 1}`, sequenceNo: i + 1,
+    }));
+    const { calls } = setupFetch({ list: many });
+    const { container } = await renderPanel();
+    const stepRows = () => [...container.querySelectorAll("ul.mt-4 > li")];
+    await waitFor(() => {
+      expect(stepRows()).toHaveLength(201);
+      expect(stepRows()[200].textContent).toContain("#201 Step 201");
+    });
+    // The active list was paged exhaustively (100 + 100 + 1), and
+    // the retired list was fetched separately — never one capped
+    // request standing for the whole schedule.
+    const listCalls = calls.filter((c) => c.method === "GET" && c.url.includes("/work-steps?"));
+    expect(listCalls.map((c) => new URL(c.url, "https://test").searchParams.get("offset"))).toEqual(["0", "100", "200", "0"]);
+    await act(async () => { buttonByText(container, "↓ Move down").click(); });
+    await act(async () => {});
+    const move = calls.find((c) => c.url.endsWith("/move"));
+    expect(JSON.parse(move.body)).toMatchObject({ targetSequenceNo: 2, expectedGeneration: 2 });
+    expect(calls.some((c) => c.url.endsWith("/reorder"))).toBe(false);
+    await waitFor(() => {
+      expect(container.textContent).toContain("#1 Step 2");
+      expect(container.textContent).toContain("#2 Step 1");
+    });
+  });
+
+  it("keeps retired supersession candidates visible past 200 total rows", async () => {
+    const active = Array.from({ length: 150 }, (_, i) => ({
+      ...STEP_1, id: `forge_wps_a${i + 1}`, title: `Active ${i + 1}`, sequenceNo: i + 1,
+    }));
+    const retired = Array.from({ length: 60 }, (_, i) => ({
+      ...STEP_1, id: `forge_wps_r${i + 1}`, title: `Retired ${i + 1}`,
+      sequenceNo: 151 + i, version: 2, retiredAt: "t2", retiredBy: "user_1",
+    }));
+    setupFetch({ list: [...active, ...retired] });
+    const { container } = await renderPanel();
+    const stepRows = () => [...container.querySelectorAll("ul.mt-4 > li")];
+    await waitFor(() => {
+      expect(stepRows()).toHaveLength(150);
+      expect(stepRows()[149].textContent).toContain("#150 Active 150");
+    });
+    // All 60 retired steps are fetched on their own pages, so the
+    // last one is still offered as a supersession candidate — under
+    // the old single capped fetch it would have been cut off.
+    const supersedes = container.querySelector("#step-supersedes");
+    expect(supersedes.textContent).toContain("#210 Retired 60");
+  });
+
+  it("pages history with a visible Show more control", async () => {
+    const manyRevisions = Array.from({ length: 51 }, (_, i) => ({
+      id: `forge_wpsr_${i + 1}`, version: i + 1, action: "create",
+      recordedAt: "2026-11-07T10:00:00Z", reason: null, oldValues: null,
+      newValues: { title: `Step ${i + 1}`, sequence_no: i + 1, version: i + 1 },
+    }));
+    const { calls } = setupFetch({ revisions: manyRevisions });
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "History").click(); });
+    await act(async () => {});
+    expect(container.textContent).toContain("version 50");
+    expect(container.textContent).not.toContain("version 51");
+    expect(buttonByText(container, "Show more history")).not.toBe(undefined);
+    await act(async () => { buttonByText(container, "Show more history").click(); });
+    await act(async () => {});
+    await waitFor(() => {
+      expect(container.textContent).toContain("version 51");
+    });
+    expect(buttonByText(container, "Show more history")).toBe(undefined);
+    const revisionCalls = calls.filter((c) => c.url.includes("/revisions?"));
+    expect(revisionCalls.map((c) => new URL(c.url, "https://test").searchParams.get("limit"))).toEqual(["50", "100"]);
   });
 
   it("shows history on demand", async () => {

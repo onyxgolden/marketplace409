@@ -42,6 +42,7 @@ import {
   validateWorkStepUpdateInput,
   validateWorkStepRetireInput,
   validateWorkStepReorderInput,
+  validateWorkStepMoveInput,
   validateWorkStepLinkInput,
   validateWorkStepLinkRetireInput,
 } from "@/domains/work-management/workSteps.js";
@@ -340,6 +341,34 @@ export async function reorderWorkSteps(db, { ownerId, packageId, stepIds, expect
   return { ok: true, steps, generation };
 }
 
+/**
+ * Moves one active step to a target position (1..N), guarded by the
+ * sequence generation the caller listed against. Unlike a full
+ * reorder, a move never needs the caller to enumerate the active
+ * set — the new order is computed inside the transaction from the
+ * live active steps. Returns the reordered active steps plus the new
+ * generation.
+ */
+export async function moveWorkStep(db, { ownerId, packageId, stepId, targetSequenceNo, expectedGeneration, reason }) {
+  const validation = validateWorkStepMoveInput({ stepId, targetSequenceNo, expectedGeneration, reason });
+  if (!validation.ok) return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
+  const pkg = await requirePackage(db, { ownerId, packageId });
+  if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
+
+  const { data, error } = await db.rpc("forge_work_step_move", {
+    p_owner_id: ownerId,
+    p_package_id: packageId,
+    p_step_id: stepId,
+    p_target_sequence_no: targetSequenceNo,
+    p_expected_generation: expectedGeneration,
+    p_reason: reason ?? null,
+  });
+  if (error) return mapWorkStepRpcError(error);
+  const steps = (Array.isArray(data) ? data : []).map(toCamelStep);
+  const generation = await readOrderGeneration(db, { ownerId, packageId });
+  return { ok: true, steps, generation };
+}
+
 /** Retires one step (excluded from the active sequence, kept in history). */
 export async function retireWorkStep(db, { ownerId, packageId, stepId, expectedVersion, reason, historicalCorrection }) {
   const validation = validateWorkStepRetireInput({ expectedVersion, reason });
@@ -375,8 +404,14 @@ async function readOrderGeneration(db, { ownerId, packageId }) {
  * sequence, then retired). A missing table (pre-migration window)
  * reads as an empty list — never a 500 — so the package screen keeps
  * rendering before the migration applies.
+ *
+ * Active and retired are fetched separately by the panel: active with
+ * includeRetired=false (paged, exhaustively, so a schedule longer
+ * than one page is never silently truncated) and retired with
+ * retiredOnly=true (paged separately, so retired rows can never crowd
+ * active rows — or supersession candidates — out of a page).
  */
-export async function listWorkSteps(db, { ownerId, packageId, includeRetired, limit, offset }) {
+export async function listWorkSteps(db, { ownerId, packageId, includeRetired, retiredOnly, limit, offset }) {
   const paging = resolvePaging({ limit, offset });
   if (paging.error) return { ok: false, httpStatus: 400, error: paging.error };
   const pkg = await requirePackage(db, { ownerId, packageId });
@@ -384,7 +419,8 @@ export async function listWorkSteps(db, { ownerId, packageId, includeRetired, li
 
   let query = db.from("forge_work_steps")
     .select("*").eq("owner_id", ownerId).eq("work_package_id", packageId);
-  if (includeRetired === false) query = query.is("retired_at", null);
+  if (retiredOnly === true) query = query.not("retired_at", "is", null);
+  else if (includeRetired === false) query = query.is("retired_at", null);
   const { data, error } = await query
     .order("retired_at", { ascending: true, nullsFirst: true })
     .order("sequence_no", { ascending: true })
@@ -406,13 +442,16 @@ export async function listWorkSteps(db, { ownerId, packageId, includeRetired, li
 }
 
 /** Reads one step's full audit history, oldest revision first. */
-export async function listWorkStepRevisions(db, { ownerId, packageId, stepId }) {
+export async function listWorkStepRevisions(db, { ownerId, packageId, stepId, limit, offset }) {
+  const paging = resolvePaging({ limit, offset });
+  if (paging.error) return { ok: false, httpStatus: 400, error: paging.error };
   const proof = await requireStepInPackage(db, { ownerId, packageId, stepId });
   if (proof?.missing) return { ok: true, step: null, revisions: [] };
   if (!proof) return { ok: false, httpStatus: 404, error: "Work step not found." };
   const { data, error } = await db.from("forge_work_step_revisions")
     .select("*").eq("owner_id", ownerId).eq("step_id", stepId)
-    .order("version", { ascending: true });
+    .order("version", { ascending: true })
+    .range(paging.offset, paging.offset + paging.limit - 1);
   if (error) {
     if (isMissingTableError(error)) return { ok: true, step: toCamelStep(proof.step), revisions: [] };
     throw error;
@@ -465,13 +504,16 @@ export async function retireStepDrawingLink(db, { ownerId, packageId, stepId, li
  * originalDrawingId. A missing table (pre-migration window) reads as
  * an empty list.
  */
-export async function listStepDrawings(db, { ownerId, packageId, stepId }) {
+export async function listStepDrawings(db, { ownerId, packageId, stepId, limit, offset }) {
+  const paging = resolvePaging({ limit, offset });
+  if (paging.error) return { ok: false, httpStatus: 400, error: paging.error };
   const proof = await requireStepInPackage(db, { ownerId, packageId, stepId });
   if (proof?.missing) return { ok: true, step: null, links: [] };
   if (!proof) return { ok: false, httpStatus: 404, error: "Work step not found." };
   const { data, error } = await db.from("forge_work_step_drawing_links")
     .select("*").eq("owner_id", ownerId).eq("work_package_id", packageId).eq("step_id", stepId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .range(paging.offset, paging.offset + paging.limit - 1);
   if (error) {
     if (isMissingTableError(error)) return { ok: true, step: toCamelStep(proof.step), links: [] };
     throw error;
@@ -498,13 +540,16 @@ export async function listStepDrawings(db, { ownerId, packageId, stepId }) {
 }
 
 /** Reads one drawing link's full audit history, oldest revision first. */
-export async function listStepDrawingLinkRevisions(db, { ownerId, packageId, stepId, linkId }) {
+export async function listStepDrawingLinkRevisions(db, { ownerId, packageId, stepId, linkId, limit, offset }) {
+  const paging = resolvePaging({ limit, offset });
+  if (paging.error) return { ok: false, httpStatus: 400, error: paging.error };
   const proof = await requireLinkInStep(db, { ownerId, packageId, stepId, linkId });
   if (proof?.missing) return { ok: true, link: null, revisions: [] };
   if (!proof) return { ok: false, httpStatus: 404, error: "Drawing link not found." };
   const { data, error } = await db.from("forge_work_step_drawing_link_revisions")
     .select("*").eq("owner_id", ownerId).eq("link_id", linkId)
-    .order("version", { ascending: true });
+    .order("version", { ascending: true })
+    .range(paging.offset, paging.offset + paging.limit - 1);
   if (error) {
     if (isMissingTableError(error)) return { ok: true, link: toCamelLink(proof.link), revisions: [] };
     throw error;

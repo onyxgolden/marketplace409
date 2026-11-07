@@ -41,6 +41,19 @@ describe("GET /api/work-packages/[packageId]/work-steps/[stepId]/drawings", () =
     const body = await response.json();
     expect(body.links).toHaveLength(1);
   });
+
+  it("forwards paging to the service", async () => {
+    listStepDrawings.mockResolvedValue({ ok: true, step: { id: "forge_wps_1" }, links: [] });
+    const response = await GET(new Request("https://test/x?limit=50&offset=50"), { params: params() });
+    expect(response.status).toBe(200);
+    expect(listStepDrawings).toHaveBeenCalledWith(AUTH.db, {
+      ownerId: "owner_1",
+      packageId: "pkg_1",
+      stepId: "forge_wps_1",
+      limit: "50",
+      offset: "50",
+    });
+  });
 });
 
 describe("POST /api/work-packages/[packageId]/work-steps/[stepId]/drawings", () => {

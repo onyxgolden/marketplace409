@@ -8,10 +8,12 @@ export async function GET(request, { params }) {
     const { packageId } = await params;
     const search = new URL(request.url).searchParams;
     const includeRetiredParam = search.get("includeRetired");
+    const retiredOnlyParam = search.get("retiredOnly");
     const result = await listWorkSteps(auth.db, {
       ownerId: auth.ownerId,
       packageId,
       includeRetired: includeRetiredParam === null ? undefined : includeRetiredParam === "true",
+      retiredOnly: retiredOnlyParam === "true",
       limit: search.get("limit") || undefined,
       offset: search.get("offset") || undefined,
     });
