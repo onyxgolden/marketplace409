@@ -1,12 +1,14 @@
 // Manpower curve panel (work package planner, slice 6).
 //
 // A derived view only: required labor by craft and outage day, computed on
-// the server from the active work-step plan, with craft-assignment staffing
-// shown as an overlay. This panel never edits step hours, duration, or
-// craft, never assigns workers, and never mutates progress — it only sets
-// the outage window and each step's explicit start day (which days receive
-// the step's hours). All totals on screen are server-computed; the panel
-// renders them, it does not re-derive the curve in the browser.
+// the server from the active work-step plan against the package's frozen
+// baseline, with craft-assignment staffing shown as an overlay. This panel
+// never edits step hours, duration, or craft, never assigns workers, and
+// never mutates progress — it only sets each step's explicit start day
+// (which days receive the step's hours). All totals on screen are
+// server-computed; the panel renders them, it does not re-derive the curve
+// in the browser. Person-hours are the only unit shown: there is no
+// persisted hours/person-day rule and no equivalent-persons display.
 
 import { useMemo, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -57,15 +59,10 @@ function formatHours(value) {
   return `${Number(value).toFixed(2)}`;
 }
 
-function formatEquivalents(value) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return `${Number(value).toFixed(2)}`;
-}
-
-// SVG line chart: X = outage day, Y = required equivalent persons (or
-// person-hours in the hours view). One line per visible craft, plus a dashed
-// total-capacity overlay. No chart library — plain SVG.
-function CurveChart({ days, crafts, visibleCrafts, showCapacity, hoursView, standard }) {
+// SVG line chart: X = outage day, Y = required person-hours per day. One
+// line per visible craft, plus a dashed total-capacity overlay. No chart
+// library — plain SVG.
+function CurveChart({ days, crafts, visibleCrafts, showCapacity }) {
   const width = 720;
   const height = 260;
   const padLeft = 48;
@@ -80,9 +77,9 @@ function CurveChart({ days, crafts, visibleCrafts, showCapacity, hoursView, stan
   const valueFor = (day, craftKey) => {
     const cell = day.crafts[craftKey];
     if (!cell) return 0;
-    return hoursView ? cell.requiredHours : cell.requiredEquivalents;
+    return cell.requiredHours;
   };
-  const capacityFor = (day) => (hoursView ? day.totalAssignedHours : day.totalAssignedEquivalents);
+  const capacityFor = (day) => day.totalAssignedHours;
 
   let maxValue = 0;
   for (const day of days) {
@@ -140,88 +137,13 @@ function CurveChart({ days, crafts, visibleCrafts, showCapacity, hoursView, stan
         />
       )}
       <text x={padLeft} y={12} fontSize="11" fill="#334155">
-        {hoursView ? "Required person-hours per day" : `Required equivalent persons per day (${standard} hrs/person-day)`}
+        Required person-hours per day
       </text>
     </svg>
   );
 }
 
-function SettingsForm({ packageId, settings, packageStatus, onSaved }) {
-  const [startDate, setStartDate] = useState(settings?.outageStartDate ?? "");
-  const [days, setDays] = useState(settings?.outageDays != null ? String(settings.outageDays) : "");
-  const [standard, setStandard] = useState(
-    settings?.standardHoursPerPersonDay != null ? String(settings.standardHoursPerPersonDay) : "8",
-  );
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const readOnly = packageStatus === "cancelled" || packageStatus === "verified_closed";
-
-  async function onSubmit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage("");
-    try {
-      await api(`/api/work-packages/${packageId}/manpower-curve/settings`, {
-        method: "PUT",
-        body: JSON.stringify({
-          outageStartDate: startDate,
-          outageDays: Number(days),
-          standardHoursPerPersonDay: standard === "" ? null : Number(standard),
-          expectedVersion: settings?.version ?? 0,
-          reason: reason.trim() === "" ? null : reason.trim(),
-        }),
-      });
-      setMessage(settings ? "Outage window updated." : "Outage window set.");
-      onSaved();
-    } catch (error) {
-      setMessage(error.message || "The outage window could not be saved.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (readOnly) {
-    return (
-      <p className="mt-2 text-xs text-slate-500">
-        This work package is closed — the outage window is shown as it was, and cannot be changed.
-      </p>
-    );
-  }
-
-  return (
-    <form onSubmit={onSubmit} className="mt-3 grid gap-3 sm:grid-cols-4">
-      <div>
-        <label className={label} htmlFor="curve-start-date">Outage start date</label>
-        <input id="curve-start-date" className={input} type="date" value={startDate}
-          onChange={(e) => setStartDate(e.target.value)} required />
-      </div>
-      <div>
-        <label className={label} htmlFor="curve-days">Outage days (1–366)</label>
-        <input id="curve-days" className={input} type="number" min="1" max="366" step="1" value={days}
-          onChange={(e) => setDays(e.target.value)} required />
-      </div>
-      <div>
-        <label className={label} htmlFor="curve-standard">Standard hours / person-day</label>
-        <input id="curve-standard" className={input} type="number" min="0.01" max="24" step="0.25" value={standard}
-          onChange={(e) => setStandard(e.target.value)} />
-      </div>
-      <div>
-        <label className={label} htmlFor="curve-window-reason">Reason (optional)</label>
-        <input id="curve-window-reason" className={input} type="text" maxLength={1000} value={reason}
-          onChange={(e) => setReason(e.target.value)} placeholder="Why the window changed" />
-      </div>
-      <div className="sm:col-span-4 flex items-center gap-3">
-        <button className={btnPrimary} type="submit" disabled={busy}>
-          {settings ? "Update outage window" : "Set outage window"}
-        </button>
-        {message && <span className="text-xs text-slate-600">{message}</span>}
-      </div>
-    </form>
-  );
-}
-
-function PlacementControl({ packageId, step, outageDays, readOnly, onSaved }) {
+function PlacementControl({ packageId, step, outageDays, baselineVersion, readOnly, onSaved }) {
   const placement = step.placement;
   const [startDay, setStartDay] = useState(placement ? String(placement.startDayIndex) : "1");
   const [reason, setReason] = useState("");
@@ -237,6 +159,7 @@ function PlacementControl({ packageId, step, outageDays, readOnly, onSaved }) {
         method: "PUT",
         body: JSON.stringify({
           stepId: step.stepId,
+          baselineVersion,
           startDayIndex: Number(startDay),
           expectedVersion: placement?.version ?? 0,
           reason: reason.trim() === "" ? null : reason.trim(),
@@ -316,7 +239,6 @@ export default function WorkPackageManpowerCurve({ packageId }) {
     () => api(`/api/work-packages/${packageId}/manpower-curve`),
     { ttlMs: 10_000 },
   );
-  const [hoursView, setHoursView] = useState(false);
   const [showCapacity, setShowCapacity] = useState(true);
   const [hiddenCrafts, setHiddenCrafts] = useState([]);
   const [exportMessage, setExportMessage] = useState("");
@@ -360,15 +282,15 @@ export default function WorkPackageManpowerCurve({ packageId }) {
     if (!curve) return;
     const lines = [
       `# Manpower curve — package ${packageId}`,
-      `# Outage window: ${curve.window?.outageStartDate ?? "not set"} to ${curve.window?.outageEndDate ?? "not set"} (${curve.window?.outageDays ?? 0} days), standard ${curve.window?.standardHoursPerPersonDay ?? ""} hours/person-day`,
-      `# Computed at: ${curve.computedAt ?? ""}, settings version: ${curve.settings?.version ?? ""}`,
+      `# Baseline v${curve.baseline?.versionNumber ?? "?"}: ${curve.window?.outageStartDate ?? "not set"} to ${curve.window?.outageEndDate ?? "not set"} (${curve.window?.outageDays ?? 0} days)`,
+      `# Computed at: ${curve.computedAt ?? ""}`,
       `# ${curve.baselineDisclosure}`,
-      "day,date,craft,required_hours,required_equivalents,assigned_hours,assigned_equivalents,gap_hours",
+      "day,date,craft,required_hours,assigned_hours,gap_hours",
     ];
     for (const row of dailyRows) {
       lines.push([
         row.dayIndex, row.date, `"${String(row.craftLabel).replace(/"/g, '""')}"`,
-        row.requiredHours, row.requiredEquivalents, row.assignedHours, row.assignedEquivalents, row.gapHours,
+        row.requiredHours, row.assignedHours, row.gapHours,
       ].join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -387,8 +309,8 @@ export default function WorkPackageManpowerCurve({ packageId }) {
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Manpower curve</h2>
           <p className="mt-1 text-xs text-slate-500">
-            Required labor by craft and outage day, from the active work-step plan. Craft-assignment staffing is shown
-            as a capacity overlay — it never moves demand. {curve?.baselineDisclosure}
+            Required labor by craft and outage day, from the active work-step plan against the package&apos;s frozen
+            baseline. Craft-assignment staffing is shown as a capacity overlay — it never moves demand. {curve?.baselineDisclosure}
           </p>
         </div>
         {curve && windowConfigured && (
@@ -421,11 +343,11 @@ export default function WorkPackageManpowerCurve({ packageId }) {
 
           {windowConfigured ? (
             <div className="mt-3 text-xs text-slate-600">
+              <span>Baseline v{curve.baseline.versionNumber}</span>
+              <span className="mx-2">·</span>
               <span>Outage: {formatDate(curve.window.outageStartDate)} – {formatDate(curve.window.outageEndDate)}</span>
               <span className="mx-2">·</span>
               <span>{curve.window.outageDays} days</span>
-              <span className="mx-2">·</span>
-              <span>{curve.window.standardHoursPerPersonDay} standard hours / person-day</span>
               <span className="mx-2">·</span>
               <span>Computed {formatWhen(curve.computedAt)}</span>
               {readOnly && <span className="mx-2">·</span>}
@@ -434,12 +356,10 @@ export default function WorkPackageManpowerCurve({ packageId }) {
           ) : (
             <div className="mt-3">
               <p className="text-sm text-slate-600">
-                No outage window is set yet. Set the window to see the manpower curve — no dates are assumed.
+                Freeze/select a package baseline first — the curve is drawn from the package&apos;s frozen baseline, and no dates are assumed.
               </p>
             </div>
           )}
-
-          <SettingsForm packageId={packageId} settings={curve.settings} packageStatus={curve.packageStatus} onSaved={refreshCurve} />
 
           {windowConfigured && (
             <>
@@ -467,9 +387,6 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                     <button type="button" className={`${btn} border border-slate-300 text-slate-700`} onClick={() => setShowCapacity((v) => !v)} aria-pressed={showCapacity}>
                       {showCapacity ? "Hide capacity overlay" : "Show capacity overlay"}
                     </button>
-                    <button type="button" className={`${btn} border border-slate-300 text-slate-700`} onClick={() => setHoursView((v) => !v)} aria-pressed={hoursView}>
-                      {hoursView ? "Show equivalent persons" : "Show person-hours"}
-                    </button>
                   </div>
 
                   <div className="mt-3 overflow-x-auto">
@@ -478,12 +395,10 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                       crafts={allocatableCrafts}
                       visibleCrafts={visibleCrafts}
                       showCapacity={showCapacity}
-                      hoursView={hoursView}
-                      standard={curve.window.standardHoursPerPersonDay}
                     />
                     <p className="mt-1 text-xs text-slate-500">
-                      Solid lines: required {hoursView ? "person-hours" : "equivalent persons"} per craft.
-                      {showCapacity && " Dashed line: total assigned capacity."} X axis: outage day (day 1 is the outage start date).
+                      Solid lines: required person-hours per craft.
+                      {showCapacity && " Dashed line: total assigned capacity."} X axis: outage day (day 1 is the baseline start date).
                     </p>
                   </div>
 
@@ -496,9 +411,7 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                           <th className="py-2 pr-3">Date</th>
                           <th className="py-2 pr-3">Craft</th>
                           <th className="py-2 pr-3 text-right">Required hrs</th>
-                          <th className="py-2 pr-3 text-right">Required people</th>
                           <th className="py-2 pr-3 text-right">Assigned hrs</th>
-                          <th className="py-2 pr-3 text-right">Assigned people</th>
                           <th className="py-2 text-right">Gap hrs</th>
                         </tr>
                       </thead>
@@ -509,9 +422,7 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                             <td className="py-1.5 pr-3">{formatDate(row.date)}</td>
                             <td className="py-1.5 pr-3">{row.craftLabel}</td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(row.requiredHours)}</td>
-                            <td className="py-1.5 pr-3 text-right">{formatEquivalents(row.requiredEquivalents)}</td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(row.assignedHours)}</td>
-                            <td className="py-1.5 pr-3 text-right">{formatEquivalents(row.assignedEquivalents)}</td>
                             <td className={`py-1.5 text-right ${row.gapHours < 0 ? "text-red-600" : ""}`}>{formatHours(row.gapHours)}</td>
                           </tr>
                         ))}
@@ -527,7 +438,6 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                           <th className="py-2 pr-3">Craft</th>
                           <th className="py-2 pr-3 text-right">Steps</th>
                           <th className="py-2 pr-3 text-right">Required hrs</th>
-                          <th className="py-2 pr-3 text-right">Required people</th>
                           <th className="py-2 pr-3 text-right">Assigned hrs</th>
                           <th className="py-2 text-right">Gap hrs</th>
                         </tr>
@@ -538,7 +448,6 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                             <td className="py-1.5 pr-3">{craft.craftLabel}</td>
                             <td className="py-1.5 pr-3 text-right">{craft.stepCount}</td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(craft.totalRequiredHours)}</td>
-                            <td className="py-1.5 pr-3 text-right">{formatEquivalents(craft.totalRequiredEquivalents)}</td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(craft.totalAssignedHours)}</td>
                             <td className={`py-1.5 text-right ${craft.totalGapHours < 0 ? "text-red-600" : ""}`}>{formatHours(craft.totalGapHours)}</td>
                           </tr>
@@ -547,7 +456,6 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                           <td className="py-1.5 pr-3">Total</td>
                           <td className="py-1.5 pr-3 text-right">{curve.totals.stepCount}</td>
                           <td className="py-1.5 pr-3 text-right">{formatHours(curve.totals.requiredHours)}</td>
-                          <td className="py-1.5 pr-3 text-right">{formatEquivalents(curve.totals.requiredEquivalents)}</td>
                           <td className="py-1.5 pr-3 text-right">{formatHours(curve.totals.assignedHours)}</td>
                           <td className="py-1.5 text-right">{formatHours(curve.totals.gapHours)}</td>
                         </tr>
@@ -587,6 +495,7 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                 <p className="mt-1 text-xs text-slate-500">
                   A start day only moves which outage days receive a step&apos;s hours — it never changes the step&apos;s
                   hours, craft, or duration. Steps without a start day use the unsequenced baseline (days 1..duration).
+                  Placements are bound to baseline v{curve.baseline.versionNumber}; a re-baseline does not carry them forward.
                 </p>
                 <ul className="mt-2 space-y-3">
                   {curve.steps.map((step) => (
@@ -616,6 +525,7 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                             packageId={packageId}
                             step={step}
                             outageDays={curve.window.outageDays}
+                            baselineVersion={curve.baseline.versionNumber}
                             readOnly={readOnly}
                             onSaved={refreshCurve}
                           />

@@ -28,22 +28,17 @@ const STEP_3 = {
 };
 
 function day(dayIndex, date, requiredHours, assignedHours) {
-  const requiredEquivalents = requiredHours / 8;
-  const assignedEquivalents = assignedHours / 8;
   return {
     dayIndex, date,
     crafts: requiredHours > 0 || assignedHours > 0 ? {
       pipefitter: {
         craftKey: "pipefitter", craftLabel: "Pipefitter",
-        requiredHours, requiredEquivalents, assignedHours, assignedEquivalents,
+        requiredHours, assignedHours,
         assignedShiftPersonSlots: 2, gapHours: assignedHours - requiredHours,
-        gapEquivalents: assignedEquivalents - requiredEquivalents,
       },
     } : {},
     totalRequiredHours: requiredHours,
-    totalRequiredEquivalents: requiredEquivalents,
     totalAssignedHours: assignedHours,
-    totalAssignedEquivalents: assignedEquivalents,
     totalGapHours: assignedHours - requiredHours,
   };
 }
@@ -51,12 +46,10 @@ function day(dayIndex, date, requiredHours, assignedHours) {
 function curveFixture(overrides = {}) {
   return {
     windowConfigured: true,
-    window: { outageStartDate: "2026-11-09", outageEndDate: "2026-11-18", outageDays: 10, standardHoursPerPersonDay: 8 },
-    settings: {
-      ownerId: "owner_1", workPackageId: "pkg_1",
-      outageStartDate: "2026-11-09", outageDays: 10, standardHoursPerPersonDay: 8,
-      version: 2, createdBy: "user_1", updatedBy: "user_1", createdAt: "t1", updatedAt: "t2",
+    baseline: {
+      versionNumber: 1, baselineStart: "2026-11-09", baselineFinish: "2026-11-18", frozenAt: "t0",
     },
+    window: { baselineVersion: 1, outageStartDate: "2026-11-09", outageEndDate: "2026-11-18", outageDays: 10 },
     days: [
       day(1, "2026-11-09", 0, 14),
       day(2, "2026-11-10", 0, 0),
@@ -72,16 +65,16 @@ function curveFixture(overrides = {}) {
     crafts: [
       {
         craftKey: "pipefitter", craftLabel: "Pipefitter",
-        totalRequiredHours: 40, totalRequiredEquivalents: 5,
-        totalAssignedHours: 14, totalAssignedEquivalents: 1.75, totalGapHours: -26, stepCount: 1,
+        totalRequiredHours: 40,
+        totalAssignedHours: 14, totalGapHours: -26, stepCount: 1,
       },
       {
         craftKey: "welder", craftLabel: "Welder",
-        totalRequiredHours: 16, totalRequiredEquivalents: 2,
-        totalAssignedHours: 0, totalAssignedEquivalents: 0, totalGapHours: -16, stepCount: 1,
+        totalRequiredHours: 16,
+        totalAssignedHours: 0, totalGapHours: -16, stepCount: 1,
       },
     ],
-    totals: { requiredHours: 56, requiredEquivalents: 7, assignedHours: 14, assignedEquivalents: 1.75, gapHours: -42, stepCount: 2 },
+    totals: { requiredHours: 56, assignedHours: 14, gapHours: -42, stepCount: 2 },
     excludedSteps: [{
       ...STEP_3,
       reason: "missing_hours",
@@ -98,7 +91,7 @@ function curveFixture(overrides = {}) {
       message: "Unsequenced baseline — steps start at outage day 1 until an explicit start day is set.",
     }],
     steps: [STEP_1, STEP_2, STEP_3],
-    baselineDisclosure: "Unsequenced baseline — starts at outage day 1.",
+    baselineDisclosure: "Required labor is spread evenly over each step's duration from its start day.",
     computedAt: "2026-11-07T12:00:00Z",
     notApplied: false,
     packageStatus: "in_progress",
@@ -115,15 +108,6 @@ function setupFetch({ curve = curveFixture(), listStatus = 200 } = {}) {
     if (parsed.pathname === "/api/work-packages/pkg_1/manpower-curve" && !options.method) {
       if (listStatus !== 200) return { ok: false, status: listStatus, json: async () => ({ error: "Not found." }) };
       return { ok: true, json: async () => current };
-    }
-    if (parsed.pathname === "/api/work-packages/pkg_1/manpower-curve/settings" && options.method === "PUT") {
-      const body = JSON.parse(options.body);
-      current = {
-        ...current,
-        settings: { ...current.settings, outageDays: body.outageDays, version: (current.settings?.version ?? 0) + 1 },
-        window: { ...current.window, outageDays: body.outageDays },
-      };
-      return { ok: true, json: async () => ({ settings: current.settings }) };
     }
     if (parsed.pathname === "/api/work-packages/pkg_1/manpower-curve/placements" && options.method === "PUT") {
       const body = JSON.parse(options.body);
@@ -151,20 +135,6 @@ async function renderPanel() {
 
 function buttonByText(container, text) {
   return [...container.querySelectorAll("button")].find((b) => b.textContent.trim() === text) ?? null;
-}
-
-function setInput(container, labelText, value) {
-  const inputs = [...container.querySelectorAll("input, select")];
-  const input = inputs.find((el) => container.querySelector(`label[for="${el.id}"]`)?.textContent.includes(labelText));
-  if (!input) throw new Error(`no input for ${labelText}`);
-  act(() => {
-    const setter = Object.getOwnPropertyDescriptor(
-      input.tagName === "SELECT" ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype,
-      "value",
-    ).set;
-    setter.call(input, value);
-    input.dispatchEvent(new Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
-  });
 }
 
 async function submitForm(container, submitButtonText = null) {
@@ -197,12 +167,14 @@ afterEach(() => {
 });
 
 describe("WorkPackageManpowerCurve", () => {
-  it("renders the window, chart legend, daily table, totals, and reconciliation", async () => {
+  it("renders the baseline header, chart legend, daily table, totals, and reconciliation — person-hours only", async () => {
     setupFetch();
     const { container } = await renderPanel();
     await waitFor(() => expect(container.textContent).toContain("Manpower curve"));
+    expect(container.textContent).toContain("Baseline v1");
     expect(container.textContent).toContain("10 days");
-    expect(container.textContent).toContain("8 standard hours / person-day");
+    expect(container.textContent).not.toContain("standard hours");
+    expect(container.textContent).not.toContain("Required people");
     expect(container.textContent).toContain("Pipefitter");
     expect(container.textContent).toContain("Welder");
     expect(container.textContent).toContain("Daily demand by craft");
@@ -233,39 +205,37 @@ describe("WorkPackageManpowerCurve", () => {
     expect(buttonByText(container, "Clear placement")).not.toBeNull();
   });
 
-  it("sets a start day for an unplaced step through the placements route", async () => {
+  it("sets a start day for an unplaced step through the placements route, naming the baseline version", async () => {
     const { calls } = setupFetch();
     const { container } = await renderPanel();
     await waitFor(() => expect(buttonByText(container, "Set start day")).not.toBeNull());
     await submitForm(container, "Set start day");
     const put = calls.find((c) => c.method === "PUT" && c.url.includes("/manpower-curve/placements"));
     expect(put).toBeDefined();
-    expect(JSON.parse(put.body)).toMatchObject({ stepId: "step_2", startDayIndex: 1, expectedVersion: 0 });
+    expect(JSON.parse(put.body)).toMatchObject({ stepId: "step_2", baselineVersion: 1, startDayIndex: 1, expectedVersion: 0 });
   });
 
-  it("shows the configuration prompt and saves a new window when none is set", async () => {
-    const { calls } = setupFetch({
+  it("shows the freeze-a-baseline empty state with no settings form when no baseline exists", async () => {
+    setupFetch({
       curve: curveFixture({
-        windowConfigured: false, window: null, settings: null, days: [],
-        crafts: [], totals: { requiredHours: 0, requiredEquivalents: 0, assignedHours: 0, assignedEquivalents: 0, gapHours: 0, stepCount: 0 },
-        excludedSteps: [{ ...STEP_1, reason: "window_not_configured", detail: "No outage window is set." }],
+        windowConfigured: false, window: null, baseline: null, days: [],
+        crafts: [], totals: { requiredHours: 0, assignedHours: 0, gapHours: 0, stepCount: 0 },
+        excludedSteps: [{ ...STEP_1, reason: "baseline_not_frozen", detail: "Freeze/select a package baseline first." }],
         reconciliation: { requiredHoursTotal: 0, unallocatedKnownHours: 0, unclassifiedKnownHours: 0, knownActiveStepHours: 40, reconciled: false },
-        warnings: [{ code: "WINDOW_NOT_CONFIGURED", message: "Set the outage window to see the manpower curve — no dates are assumed." }],
+        warnings: [{ code: "BASELINE_NOT_FROZEN", message: "Freeze/select a package baseline first." }],
       }),
     });
     const { container } = await renderPanel();
-    await waitFor(() => expect(container.textContent).toContain("No outage window is set yet"));
-    expect(buttonByText(container, "Set outage window")).not.toBeNull();
-    setInput(container, "Outage start date", "2026-11-09");
-    setInput(container, "Outage days", "10");
-    await submitForm(container, "Set outage window");
-    const put = calls.find((c) => c.method === "PUT" && c.url.includes("/manpower-curve/settings"));
-    expect(put).toBeDefined();
-    expect(JSON.parse(put.body)).toMatchObject({ outageStartDate: "2026-11-09", outageDays: 10, expectedVersion: 0 });
+    await waitFor(() => expect(container.textContent).toContain("Freeze/select a package baseline first"));
+    // No outage-window form exists in this slice: the window comes from
+    // the package's frozen baseline, never from a settings row.
+    expect(buttonByText(container, "Set outage window")).toBeNull();
+    expect(buttonByText(container, "Update outage window")).toBeNull();
+    expect(container.querySelector("form")).toBeNull();
   });
 
   it("shows the not-applied message when the migration has not been applied", async () => {
-    setupFetch({ curve: curveFixture({ notApplied: true, windowConfigured: false, window: null, settings: null, days: [] }) });
+    setupFetch({ curve: curveFixture({ notApplied: true, windowConfigured: false, window: null, baseline: null, days: [] }) });
     const { container } = await renderPanel();
     await waitFor(() => expect(container.textContent).toContain("isn't available yet"));
   });
@@ -276,7 +246,7 @@ describe("WorkPackageManpowerCurve", () => {
     await waitFor(() => expect(container.textContent).toContain("Read-only"));
     expect(buttonByText(container, "Set start day")).toBeNull();
     expect(buttonByText(container, "Move start day")).toBeNull();
-    expect(buttonByText(container, "Update outage window")).toBeNull();
+    expect(buttonByText(container, "Clear placement")).toBeNull();
     expect(container.textContent).toContain("Starts outage day 3");
   });
 
@@ -284,7 +254,7 @@ describe("WorkPackageManpowerCurve", () => {
     setupFetch({
       curve: curveFixture({
         steps: [], excludedSteps: [], days: Array.from({ length: 10 }, (_, i) => day(i + 1, `2026-11-${String(9 + i).padStart(2, "0")}`, 0, 0)),
-        totals: { requiredHours: 0, requiredEquivalents: 0, assignedHours: 0, assignedEquivalents: 0, gapHours: 0, stepCount: 0 },
+        totals: { requiredHours: 0, assignedHours: 0, gapHours: 0, stepCount: 0 },
         crafts: [], warnings: [],
         reconciliation: { requiredHoursTotal: 0, unallocatedKnownHours: 0, unclassifiedKnownHours: 0, knownActiveStepHours: 0, reconciled: true },
       }),

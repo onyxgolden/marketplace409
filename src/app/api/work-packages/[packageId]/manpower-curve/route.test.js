@@ -32,7 +32,8 @@ describe("GET /api/work-packages/[packageId]/manpower-curve", () => {
       ok: true,
       curve: {
         windowConfigured: true,
-        window: { outageStartDate: "2026-11-09", outageEndDate: "2026-11-18", outageDays: 10, standardHoursPerPersonDay: 8 },
+        baseline: { versionNumber: 1, baselineStart: "2026-11-09", baselineFinish: "2026-11-18" },
+        window: { baselineVersion: 1, outageStartDate: "2026-11-09", outageEndDate: "2026-11-18", outageDays: 10 },
         days: [{ dayIndex: 1, date: "2026-11-09", totalRequiredHours: 10 }],
         totals: { requiredHours: 40 },
         notApplied: false,
@@ -41,11 +42,31 @@ describe("GET /api/work-packages/[packageId]/manpower-curve", () => {
     });
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(200);
-    expect(getManpowerCurve).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1" });
+    expect(getManpowerCurve).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", baselineVersion: null });
     const body = await response.json();
     expect(body.windowConfigured).toBe(true);
     expect(body.totals.requiredHours).toBe(40);
     expect(body.packageStatus).toBe("in_progress");
+  });
+
+  it("passes a named baseline version through to the service", async () => {
+    getManpowerCurve.mockResolvedValue({
+      ok: true,
+      curve: { windowConfigured: true, notApplied: false },
+      packageStatus: "in_progress",
+    });
+    const response = await GET(new Request("https://test/x?baselineVersion=2"), { params: params() });
+    expect(response.status).toBe(200);
+    expect(getManpowerCurve).toHaveBeenCalledWith(AUTH.db, { ownerId: "owner_1", packageId: "pkg_1", baselineVersion: 2 });
+  });
+
+  it("rejects a non-numeric or non-positive baseline version before calling the service", async () => {
+    for (const bad of ["abc", "0", "-1", "1.5"]) {
+      vi.clearAllMocks();
+      const response = await GET(new Request(`https://test/x?baselineVersion=${bad}`), { params: params() });
+      expect(response.status).toBe(400);
+      expect(getManpowerCurve).not.toHaveBeenCalled();
+    }
   });
 
   it("forwards a service failure with its status", async () => {

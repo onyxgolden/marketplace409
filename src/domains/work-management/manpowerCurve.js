@@ -3,14 +3,19 @@
 // The manpower curve is a DERIVED view only: required labor by craft and
 // outage day, computed from the active work-step plan, with craft-assignment
 // staffing shown as an overlay. Nothing here mutates steps, assignments, or
-// progress, and nothing here is stored — the service recomputes on every GET.
+// progress, and nothing here is stored — the service recomputes on every GET
+// from a single database snapshot.
+//
+// The outage window is the package's current/latest immutable baseline
+// (forge_work_package_baselines): day 1 = baseline_start, final day =
+// baseline_finish, outage_days = finish - start + 1 (date-only arithmetic).
+// Slice 6 adds no second outage setting and no standard-hours rule.
+// Person-hours are the authoritative unit: no "equivalent persons" are
+// computed or persisted here.
 //
 // Decimal rules (deterministic, exact):
 // - Person-hours are integer hundredths (cents). Step hours are numeric(12,2),
 //   so `Math.round(hours * 100)` is exact; totals are exact sums of cents.
-// - Required equivalents per day/craft are hours / standard_hours_per_person_day,
-//   rounded to 4 decimals. Totals use the total hours, never a sum of rounded
-//   day equivalents, so totals stay consistent with the underlying hours.
 // - Equal-spread baseline: a step with H hours over D days puts
 //   floor(H / D) cents on each day and the fractional residual (H - D *
 //   floor(H / D)) deterministically on the LAST allocated day, so the day
@@ -23,16 +28,11 @@
 // The curve is only "reconciled" when no known hours are excluded and no
 // hours are unknown.
 
-export const MAX_OUTAGE_DAYS = 366;
-export const MIN_OUTAGE_DAYS = 1;
-export const DEFAULT_STANDARD_HOURS_PER_PERSON_DAY = 8;
-export const MAX_STANDARD_HOURS_PER_PERSON_DAY = 24;
-export const EQUIVALENT_SCALE = 4;
-export const MAX_REASON_LENGTH = 1000;
 export const BASELINE_DISCLOSURE = "Unsequenced baseline — starts at outage day 1.";
+export const MAX_REASON_LENGTH = 1000;
 
 export const EXCLUDED_REASONS = {
-  WINDOW_NOT_CONFIGURED: "window_not_configured",
+  BASELINE_NOT_FROZEN: "baseline_not_frozen",
   MISSING_HOURS: "missing_hours",
   MISSING_CRAFT: "missing_craft",
   DURATION_EXCEEDS_OUTAGE: "duration_exceeds_outage",
@@ -64,6 +64,14 @@ export function outageEndDate(outageStartDate, outageDays) {
   return addDays(outageStartDate, outageDays - 1);
 }
 
+// Inclusive day count between two calendar dates, date-only (UTC) math so
+// a DST boundary inside the window can never drift the count.
+export function outageDayCount(startDate, endDate) {
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  return Math.round((Date.UTC(ey, em - 1, ed) - Date.UTC(sy, sm - 1, sd)) / 86_400_000) + 1;
+}
+
 // 1-based outage day index for a calendar date, or null outside the window.
 export function dayIndexForDate(outageStartDate, outageDays, workDate) {
   if (!isValidCalendarDate(workDate)) return null;
@@ -84,19 +92,6 @@ export function centsToHours(cents) {
   return cents / 100;
 }
 
-export function equivalentsForHours(hours, standardHoursPerPersonDay) {
-  const factor = 10 ** EQUIVALENT_SCALE;
-  return Math.round((hours / standardHoursPerPersonDay) * factor) / factor;
-}
-
-function isFiniteNumber(value) {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function hasAtMostTwoDecimals(value) {
-  return Math.abs(value * 100 - Math.round(value * 100)) < 1e-9;
-}
-
 function isValidReason(value) {
   return value === undefined || value === null || typeof value === "string";
 }
@@ -105,39 +100,14 @@ function invalid(message) {
   return { ok: false, error: message };
 }
 
-export function validateManpowerCurveSettingsInput(input) {
-  if (!input || typeof input !== "object") return invalid("Manpower curve settings are required.");
-  const { outageStartDate, outageDays, standardHoursPerPersonDay, expectedVersion, reason } = input;
-  if (!isValidCalendarDate(outageStartDate)) {
-    return invalid("Enter a valid outage start date (YYYY-MM-DD).");
-  }
-  if (!Number.isInteger(outageDays) || outageDays < MIN_OUTAGE_DAYS || outageDays > MAX_OUTAGE_DAYS) {
-    return invalid(`Outage days must be a whole number from ${MIN_OUTAGE_DAYS} to ${MAX_OUTAGE_DAYS}.`);
-  }
-  if (standardHoursPerPersonDay !== undefined && standardHoursPerPersonDay !== null) {
-    if (
-      !isFiniteNumber(standardHoursPerPersonDay) ||
-      standardHoursPerPersonDay <= 0 ||
-      standardHoursPerPersonDay > MAX_STANDARD_HOURS_PER_PERSON_DAY ||
-      !hasAtMostTwoDecimals(standardHoursPerPersonDay)
-    ) {
-      return invalid("Standard hours per person-day must be more than 0 and no more than 24, with at most 2 decimals.");
-    }
-  }
-  if (expectedVersion !== undefined && expectedVersion !== null && (!Number.isInteger(expectedVersion) || expectedVersion < 0)) {
-    return invalid("The settings version must be a whole number (0 or more).");
-  }
-  if (!isValidReason(reason) || (typeof reason === "string" && reason.length > MAX_REASON_LENGTH)) {
-    return invalid(`The reason must be ${MAX_REASON_LENGTH} characters or fewer.`);
-  }
-  return { ok: true };
-}
-
 export function validateManpowerCurvePlacementInput(input) {
   if (!input || typeof input !== "object") return invalid("Placement details are required.");
-  const { stepId, startDayIndex, expectedVersion, reason } = input;
+  const { stepId, baselineVersion, startDayIndex, expectedVersion, reason } = input;
   if (typeof stepId !== "string" || stepId.trim() === "") {
     return invalid("Choose a work step to place.");
+  }
+  if (!Number.isInteger(baselineVersion) || baselineVersion < 1) {
+    return invalid("The baseline version is required to place a step.");
   }
   if (!Number.isInteger(startDayIndex) || startDayIndex < 1) {
     return invalid("The start day must be a whole number from 1.");
@@ -189,26 +159,28 @@ export function spreadHoursCents(totalCents, dayCount) {
 
 // Compute the derived manpower curve for one package.
 //
-// Inputs (all already owner-scoped and package-scoped by the service):
-// - settings: { outageStartDate, outageDays, standardHoursPerPersonDay } | null
+// Inputs (all already owner-scoped and package-scoped by the service, from
+// ONE database snapshot — see forge_work_manpower_curve_snapshot):
+// - baseline: { versionNumber, baselineStart, baselineFinish, frozenAt } | null
 // - steps: active work steps, each { id, title, sequenceNo, craftKey,
 //   craftLabel, plannedDurationDays, plannedPersonHours, version }
-// - placements: active placements, each { stepId, startDayIndex }
+// - placements: active placements FOR THE NAMED BASELINE VERSION, each
+//   { id, stepId, startDayIndex, version } — older versions never arrive here
 // - assignments: active craft assignments, each { workDate, craftKey,
 //   craftLabel, crewSize, hoursPerPerson } (any date; out-of-window rows are
 //   counted, never mapped to a day)
 // The result is pure derived data: days, per-craft totals, excluded steps,
 // reconciliation, warnings, and the per-step placement view the UI needs.
-export function computeManpowerCurve({ settings, steps, placements, assignments }) {
+// All hours are person-hours; no equivalent-persons math lives here.
+export function computeManpowerCurve({ baseline, steps, placements, assignments }) {
   const emptyTotals = {
     requiredHours: 0,
-    requiredEquivalents: 0,
     assignedHours: 0,
-    assignedEquivalents: 0,
     gapHours: 0,
     stepCount: 0,
   };
   const empty = {
+    baseline: null,
     window: null,
     windowConfigured: false,
     days: [],
@@ -248,33 +220,33 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
     excludedReason: null,
   }));
 
-  if (!settings) {
+  if (!baseline) {
     const excludedSteps = stepViews.map((step) => ({
       ...step,
-      reason: EXCLUDED_REASONS.WINDOW_NOT_CONFIGURED,
-      detail: "No outage window is set, so this step's hours cannot be placed on days.",
+      reason: EXCLUDED_REASONS.BASELINE_NOT_FROZEN,
+      detail: "No package baseline is frozen, so this step's hours cannot be placed on days.",
     }));
     return {
       ...empty,
       excludedSteps,
-      steps: stepViews.map((step) => ({ ...step, excludedReason: EXCLUDED_REASONS.WINDOW_NOT_CONFIGURED })),
+      steps: stepViews.map((step) => ({ ...step, excludedReason: EXCLUDED_REASONS.BASELINE_NOT_FROZEN })),
       warnings: [
         {
-          code: "WINDOW_NOT_CONFIGURED",
-          message: "Set the outage window to see the manpower curve — no dates are assumed.",
+          code: "BASELINE_NOT_FROZEN",
+          message: "Freeze/select a package baseline first — the curve is drawn from the package's frozen baseline, and no dates are assumed.",
         },
       ],
     };
   }
 
-  const outageDays = settings.outageDays;
-  const standard = settings.standardHoursPerPersonDay;
-  const dates = outageDates(settings.outageStartDate, outageDays);
+  const outageDays = outageDayCount(baseline.baselineStart, baseline.baselineFinish);
+  const dates = outageDates(baseline.baselineStart, outageDays);
   const window = {
-    outageStartDate: settings.outageStartDate,
-    outageEndDate: outageEndDate(settings.outageStartDate, outageDays),
+    baselineVersion: baseline.versionNumber,
+    outageStartDate: baseline.baselineStart,
+    outageEndDate: baseline.baselineFinish,
     outageDays,
-    standardHoursPerPersonDay: standard,
+    frozenAt: baseline.frozenAt ?? null,
   };
 
   // Per-day, per-craft accumulator in integer cents.
@@ -357,7 +329,7 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
   let outOfWindowAssignmentCount = 0;
   let inWindowAssignmentCents = 0;
   for (const assignment of assignments ?? []) {
-    const dayIndex = dayIndexForDate(settings.outageStartDate, outageDays, assignment.workDate);
+    const dayIndex = dayIndexForDate(baseline.baselineStart, outageDays, assignment.workDate);
     if (dayIndex === null) {
       outOfWindowAssignmentCount += 1;
       continue;
@@ -400,12 +372,9 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
         craftKey,
         craftLabel: craftMeta.get(craftKey),
         requiredHours,
-        requiredEquivalents: equivalentsForHours(requiredHours, standard),
         assignedHours,
-        assignedEquivalents: equivalentsForHours(assignedHours, standard),
         assignedShiftPersonSlots: cell.assignedSlots,
         gapHours: assignedHours - requiredHours,
-        gapEquivalents: equivalentsForHours(assignedHours - requiredHours, standard),
       };
       totalRequiredCents += cell.requiredCents;
       totalAssignedCents += cell.assignedCents;
@@ -420,9 +389,7 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
       date,
       crafts,
       totalRequiredHours,
-      totalRequiredEquivalents: equivalentsForHours(totalRequiredHours, standard),
       totalAssignedHours,
-      totalAssignedEquivalents: equivalentsForHours(totalAssignedHours, standard),
       totalGapHours: totalAssignedHours - totalRequiredHours,
     };
   });
@@ -435,9 +402,7 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
       craftKey,
       craftLabel: totals.craftLabel,
       totalRequiredHours: requiredHours,
-      totalRequiredEquivalents: equivalentsForHours(requiredHours, standard),
       totalAssignedHours: assignedHours,
-      totalAssignedEquivalents: equivalentsForHours(assignedHours, standard),
       totalGapHours: assignedHours - requiredHours,
       stepCount: totals.stepCount,
     };
@@ -448,9 +413,7 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
       craftKey: null,
       craftLabel: "Unclassified",
       totalRequiredHours: centsToHours(unclassifiedKnownCents),
-      totalRequiredEquivalents: equivalentsForHours(centsToHours(unclassifiedKnownCents), standard),
       totalAssignedHours: 0,
-      totalAssignedEquivalents: 0,
       totalGapHours: -centsToHours(unclassifiedKnownCents),
       stepCount: stepViews.filter((s) => s.excludedReason === EXCLUDED_REASONS.MISSING_CRAFT).length,
     });
@@ -468,9 +431,7 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
   const assignedHours = centsToHours(assignedCents);
   const totals = {
     requiredHours,
-    requiredEquivalents: equivalentsForHours(requiredHours, standard),
     assignedHours,
-    assignedEquivalents: equivalentsForHours(assignedHours, standard),
     gapHours: assignedHours - requiredHours,
     stepCount: stepViews.filter((s) => !s.excludedReason).length,
   };
@@ -516,6 +477,12 @@ export function computeManpowerCurve({ settings, steps, placements, assignments 
   }
 
   return {
+    baseline: {
+      versionNumber: baseline.versionNumber,
+      baselineStart: baseline.baselineStart,
+      baselineFinish: baseline.baselineFinish,
+      frozenAt: baseline.frozenAt ?? null,
+    },
     window,
     windowConfigured: true,
     days,

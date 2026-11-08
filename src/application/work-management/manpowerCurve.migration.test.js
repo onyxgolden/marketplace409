@@ -1,37 +1,44 @@
-// Work Package Planner slice 6 — migration/integration proof.
+// Work Package Planner slice 6 — migration/integration proof (reconciled scope).
 //
 // Applies the SHIPPED migration SQL (read from disk, never ad-hoc
 // grants) in an in-memory PGlite database (real PostgreSQL) and proves:
-//   - Schema: the settings + placements + revision tables, CHECKs
-//     (outage days 1-366, standard hours (0, 24], start day >= 1),
-//     the owner/package uniqueness, the partial-unique live placement
-//     per step, and the package hard-delete restriction;
+//   - Schema: NO second outage-setting source exists (no settings table,
+//     no settings revisions, no standard-hours column anywhere); the
+//     placements table carries baseline_version with a same-owner/
+//     package/version FK to forge_work_package_baselines; the partial-
+//     unique live placement per step per baseline version; revisions;
+//   - Snapshot RPC: one statement returns baseline + steps + placements
+//     + assignments + per-source generations; named version, latest
+//     version, missing named version (404), no baseline (baseline null);
+//   - Placement RPCs: set/move/clear against an EXACT baseline version
+//     (stale/rebased input refused, terminal packages read-only,
+//     version guards, reason rules, fit-inside-window);
+//   - Re-baseline: old placements stay readable against their named
+//     baseline, never carry forward, and are never mutated afterwards;
+//   - Read consistency (P1-3): the snapshot's generation markers match
+//     the arrays in the same result — one statement, one snapshot;
 //   - RLS: owner isolation, co-owner access, anon sees nothing, direct
 //     writes denied (RPC-only write path);
-//   - RPCs: settings set (create/update, version guard, terminal
-//     rule, window-shrink rejection with affected step ids),
-//     placement set (window required, fit-inside-window, move needs
-//     version + reason, version conflict), placement clear (version +
-//     reason, retired afterwards), and the two REPLACED slice-5
-//     functions (step retire retires the live placement in the same
-//     transaction; step duration change re-validates the placement);
 //   - Atomic audit: a failed mutation leaves no row and no revision;
+//   - Slice-5 untouched: forge_work_step_update / forge_work_step_retire
+//     keep their exact bodies across the slice-6 apply (a duration edit
+//     that strands a placement succeeds; the placement is rejected ON
+//     READ as unallocated, never by blocking the edit);
 //   - Effective ACL matrix for authenticated/anon/service_role, and
-//     the default-privilege negative case (a selective GRANT alone
-//     does NOT revoke an already-effective broad privilege, which is
-//     why the migration's explicit REVOKEs are load-bearing).
+//     the default-privilege negative case.
 // Roles, the auth.uid() stub, workspace_members, and the
 // has_workspace_access() copy mirror production; the prerequisite
-// packages/drawings/takeoff-lines tables are the minimal shapes the
-// slice-3/4/5 foreign keys reference, plus the status column the
-// terminal-package rule reads.
+// packages/drawings/takeoff-lines/baselines tables are the minimal
+// shapes the slice-3/4/5/6 foreign keys reference, plus the status
+// column the terminal-package rule reads.
 //
 // A real-PostgreSQL subset (concurrent placement edits with two live
-// connections, ACL matrix, same-transaction audit rollback) runs
-// against a scratch PG16 cluster when the binaries exist, and SKIPS
-// LOUDLY — never silently — when they do not. PGlite is
-// single-connection, so it cannot prove concurrent-edit
-// serialization; that leg exists only on real PG.
+// connections, an uncommitted step edit invisible to the snapshot,
+// ACL matrix, same-transaction audit rollback) runs against a scratch
+// PG16 cluster when the binaries exist, and SKIPS LOUDLY — never
+// silently — when they do not. PGlite is single-connection, so it
+// cannot prove concurrent-edit serialization; that leg exists only
+// on real PG.
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
@@ -52,7 +59,7 @@ const MEMBER_C = "33333333-3333-4333-8333-333333333333";
 const SLICE3 = "20261107000000_forge_work_package_permit_annotations_slice3.sql";
 const SLICE4 = "20261107010000_forge_work_package_craft_assignments_slice4.sql";
 const SLICE5 = "20261107020000_forge_work_package_work_steps_slice5.sql";
-const SLICE6 = "20261107030000_work_package_manpower_curve.sql";
+const SLICE6 = "20261107030000_forge_work_package_manpower_curve_slice6.sql";
 
 function loadMigrationSql(name) {
   return readFileSync(join(HERE, "..", "..", "..", "supabase", "migrations", name), "utf8");
@@ -60,7 +67,8 @@ function loadMigrationSql(name) {
 
 // Minimal prerequisite shape with the exact keys the slice-3/4/5/6
 // foreign keys reference, plus the status column the terminal-package
-// rule reads. Copied from the slice-5 migration test.
+// rule reads. Copied from the slice-5 migration test, plus the rung-4
+// baselines table (the reconciled slice-6 window source).
 const PREREQ_SQL = `
   create role anon nologin;
   create role authenticated nologin;
@@ -113,6 +121,32 @@ const PREREQ_SQL = `
     line_no integer,
     primary key (owner_id, id)
   );
+  create table forge_work_package_baselines (
+    owner_id text not null,
+    id text not null default ('forge_wpb_' || gen_random_uuid()::text),
+    package_id text not null,
+    version_number integer not null,
+    baseline_start date not null,
+    baseline_finish date not null,
+    baseline_hours numeric(14,2) not null,
+    baseline_cost numeric(14,2) not null,
+    frozen_by text not null,
+    frozen_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    primary key (owner_id, id),
+    constraint forge_work_package_baselines_version_check check (version_number >= 1),
+    constraint forge_work_package_baselines_dates_check check (baseline_finish >= baseline_start),
+    constraint forge_work_package_baselines_version_unique unique (owner_id, package_id, version_number)
+  );
+  -- The snapshot RPC is SECURITY INVOKER: it reads packages and baselines
+  -- as the caller, so the application role needs SELECT on these
+  -- prerequisite tables (the steps/placements/assignments grants come
+  -- from their own slice migrations). The placement RPCs are SECURITY
+  -- DEFINER and do not need the caller's grants.
+  grant select on forge_work_packages to authenticated;
+  grant select on forge_work_package_baselines to authenticated;
+  grant select on forge_work_drawings to authenticated;
+  grant select on forge_work_takeoff_lines to authenticated;
 `;
 
 const SEED_SQL = `
@@ -120,7 +154,15 @@ const SEED_SQL = `
     ('${OWNER_A}', 'pkg_a', 'in_progress'),
     ('${OWNER_A}', 'pkg_cancelled', 'cancelled'),
     ('${OWNER_A}', 'pkg_closed', 'verified_closed'),
+    ('${OWNER_A}', 'pkg_nobaseline', 'in_progress'),
     ('${OWNER_B}', 'pkg_b', 'in_progress');
+  insert into forge_work_package_baselines
+    (owner_id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by)
+  values
+    ('${OWNER_A}', 'pkg_a', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}'),
+    ('${OWNER_A}', 'pkg_cancelled', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}'),
+    ('${OWNER_A}', 'pkg_closed', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}'),
+    ('${OWNER_B}', 'pkg_b', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_B}');
   insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id) values
     ('${OWNER_A}', 'pkg_a', 'dwg_1', 'P-101', 'p_id', 'Main line', null),
     ('${OWNER_A}', 'pkg_a', 'dwg_2', 'C-201', 'cut_sheet', 'Spool sheet', null);
@@ -128,14 +170,25 @@ const SEED_SQL = `
     values ('${OWNER_A}', '${MEMBER_C}', 'active', 'co_owner');
 `;
 
+// Slice-5 function bodies captured BEFORE the slice-6 apply, so the
+// "slice 6 does not replace slice-5 functions" test compares real text.
+let slice5BodiesBefore = null;
+
 async function setupDb() {
   const db = new PGlite();
   await db.exec(PREREQ_SQL);
   // Apply the shipped files in timestamp order: slice 3, slice 4,
-  // slice 5 (the step functions slice 6 replaces), then slice 6.
+  // slice 5, then slice 6. The slice-5 bodies are captured between
+  // slice 5 and slice 6.
   await db.exec(loadMigrationSql(SLICE3));
   await db.exec(loadMigrationSql(SLICE4));
   await db.exec(loadMigrationSql(SLICE5));
+  const { rows } = await db.query(`
+    select proname, prosrc from pg_proc
+    where proname in ('forge_work_step_update', 'forge_work_step_retire')
+      and pronamespace = 'public'::regnamespace order by proname;
+  `);
+  slice5BodiesBefore = Object.fromEntries(rows.map((r) => [r.proname, r.prosrc]));
   await db.exec(loadMigrationSql(SLICE6));
   await db.exec(SEED_SQL);
   return db;
@@ -207,25 +260,38 @@ async function retireStep(db, uid, stepId, { expectedVersion, reason } = {}) {
   return rows[0];
 }
 
-async function setSettings(db, uid, {
-  packageId, startDate, days, standard, expectedVersion, reason,
+async function createAssignment(db, uid, {
+  packageId, workDate, craftLabel, crewSize, hoursPerPerson,
 } = {}) {
+  // Slice-4 signature: (owner, package, work_date, craft_label,
+  // crew_label, shift_kind, shift_label, crew_size, hours_per_person,
+  // note, historical_correction, reason). craft_key is derived from the
+  // label inside the RPC.
   const { rows } = await asUser(db, uid, `
-    select * from forge_work_manpower_curve_settings_set(
-      '${OWNER_A}', '${packageId ?? "pkg_a"}', ${sqlStr(startDate ?? "2026-11-09")},
-      ${sqlNum(days ?? 10)}, ${sqlNum(standard ?? null)},
-      ${sqlNum(expectedVersion ?? null)}, ${sqlStr(reason ?? null)});
+    select * from forge_work_craft_assignment_create(
+      '${OWNER_A}', '${packageId ?? "pkg_a"}', ${sqlStr(workDate ?? "2026-11-09")},
+      ${sqlStr(craftLabel ?? "Pipefitter")},
+      null, 'day', null, ${sqlNum(crewSize ?? 2)}, ${sqlNum(hoursPerPerson ?? 7)},
+      null, null, null);
   `);
   return rows[0];
 }
 
+async function snapshot(db, uid, { packageId, baselineVersion } = {}) {
+  const { rows } = await asUser(db, uid, `
+    select forge_work_manpower_curve_snapshot(
+      '${OWNER_A}', '${packageId ?? "pkg_a"}', ${sqlNum(baselineVersion ?? null)}) as snap;
+  `);
+  return rows[0].snap;
+}
+
 async function setPlacement(db, uid, {
-  packageId, stepId, startDay, expectedVersion, reason,
+  packageId, stepId, baselineVersion, startDay, expectedVersion, reason,
 } = {}) {
   const { rows } = await asUser(db, uid, `
     select * from forge_work_manpower_curve_placement_set(
       '${OWNER_A}', '${packageId ?? "pkg_a"}', '${stepId}',
-      ${sqlNum(startDay)}, ${sqlNum(expectedVersion ?? null)}, ${sqlStr(reason ?? null)});
+      ${sqlNum(baselineVersion ?? 1)}, ${sqlNum(startDay)}, ${sqlNum(expectedVersion ?? null)}, ${sqlStr(reason ?? null)});
   `);
   return rows[0];
 }
@@ -238,12 +304,12 @@ async function clearPlacement(db, uid, placementId, { expectedVersion, reason } 
   return rows[0];
 }
 
-async function settingsRow(db, packageId = "pkg_a") {
-  const { rows } = await db.query(`
-    select * from forge_work_package_curve_settings
-    where owner_id = '${OWNER_A}' and work_package_id = '${packageId}';
+async function addBaseline(db, { packageId, version, start, finish } = {}) {
+  await db.query(`
+    insert into forge_work_package_baselines
+      (owner_id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by)
+    values ('${OWNER_A}', '${packageId ?? "pkg_a"}', ${version}, '${start}', '${finish}', 400, 100000, '${OWNER_A}');
   `);
-  return rows[0] ?? null;
 }
 
 async function placementRows(db, stepId) {
@@ -262,120 +328,145 @@ async function placementRevisionRows(db, placementId) {
   return rows;
 }
 
-describe("slice 6 migration: schema constraints", () => {
+describe("slice 6 migration: no second outage-setting source", () => {
   let db;
   beforeEach(async () => { db = await setupDb(); }, 60000);
   afterEach(async () => { await db?.close(); }, 60000);
 
-  it60("creates the four new tables with the expected columns", async () => {
+  it60("creates exactly the two placement tables — no settings table, no standard-hours column", async () => {
     const { rows } = await db.query(`
-      select table_name, column_name from information_schema.columns
+      select table_name from information_schema.tables
       where table_schema = 'public'
-        and table_name in (
-          'forge_work_package_curve_settings',
-          'forge_work_package_curve_settings_revisions',
-          'forge_work_step_curve_placements',
-          'forge_work_step_curve_placement_revisions')
-      order by table_name, ordinal_position;
+        and table_name like '%manpower%' or table_name like '%curve%'
+      order by table_name;
     `);
-    const byTable = {};
-    for (const row of rows) (byTable[row.table_name] ??= []).push(row.column_name);
-    expect(byTable.forge_work_package_curve_settings).toEqual([
-      "owner_id", "work_package_id", "outage_start_date", "outage_days",
-      "standard_hours_per_person_day", "version", "created_by", "updated_by",
-      "created_at", "updated_at",
+    expect(rows.map((r) => r.table_name)).toEqual([
+      "forge_work_step_curve_placement_revisions",
+      "forge_work_step_curve_placements",
     ]);
-    expect(byTable.forge_work_step_curve_placements).toContain("start_day_index");
-    expect(byTable.forge_work_step_curve_placement_revisions).toContain("action");
-    expect(byTable.forge_work_package_curve_settings_revisions).toContain("action");
+    const settings = await db.query(`
+      select table_name from information_schema.tables
+      where table_name in ('forge_work_package_curve_settings', 'forge_work_package_curve_settings_revisions');
+    `);
+    expect(settings.rows).toHaveLength(0);
+    const stdHours = await db.query(`
+      select column_name from information_schema.columns
+      where column_name like '%standard_hours%';
+    `);
+    expect(stdHours.rows).toHaveLength(0);
+    const fns = await db.query(`
+      select proname from pg_proc
+      where proname like '%manpower_curve%' and pronamespace = 'public'::regnamespace
+      order by proname;
+    `);
+    expect(fns.rows.map((r) => r.proname)).toEqual([
+      "forge_work_manpower_curve_placement_clear",
+      "forge_work_manpower_curve_placement_set",
+      "forge_work_manpower_curve_snapshot",
+    ]);
   });
 
-  it60("rejects outage days outside 1-366 and standard hours outside (0, 24]", async () => {
-    await expect(setSettings(db, OWNER_A, { days: 0 })).rejects.toThrow(/WPP6_INVALID_OUTAGE_DAYS/);
-    await expect(setSettings(db, OWNER_A, { days: 367 })).rejects.toThrow(/WPP6_INVALID_OUTAGE_DAYS/);
-    await expect(setSettings(db, OWNER_A, { standard: 0 })).rejects.toThrow(/WPP6_INVALID_STANDARD_HOURS/);
-    await expect(setSettings(db, OWNER_A, { standard: 25 })).rejects.toThrow(/WPP6_INVALID_STANDARD_HOURS/);
-    await expect(setSettings(db, OWNER_A, { standard: 8.005 })).rejects.toThrow(/WPP6_INVALID_STANDARD_HOURS/);
-  });
-
-  it60("rejects a second live placement for the same step at the database level", async () => {
+  it60("placements carry baseline_version with a FK to the same owner/package/version", async () => {
+    const fks = await db.query(`
+      select conname, pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'forge_work_step_curve_placements'::regclass and contype = 'f';
+    `);
+    const defs = fks.rows.map((r) => r.def);
+    expect(defs.some((d) => d.includes("forge_work_package_baselines") && d.includes("baseline_version"))).toBe(true);
+    expect(defs.some((d) => d.includes("forge_work_steps"))).toBe(true);
+    // A placement naming a baseline version that does not exist is refused.
     const step = await createStep(db, OWNER_A, {});
-    await setSettings(db, OWNER_A, {});
-    const placement = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 1 });
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 9, startDay: 1 }))
+      .rejects.toThrow(/WPP6_BASELINE_NOT_FOUND/);
+    expect(await placementRows(db, step.id)).toHaveLength(0);
+  });
+
+  it60("rejects a second live placement for the same step AND baseline version at the database level", async () => {
+    const step = await createStep(db, OWNER_A, {});
+    const placement = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 1 });
     expect(placement.version).toBe(1);
-    // A direct second live row for the same step violates the partial
-    // unique index even for the table owner.
+    // A direct second live row for the same step + version violates the
+    // partial unique index even for the table owner.
     await expect(db.query(`
       insert into forge_work_step_curve_placements
-        (owner_id, id, work_package_id, step_id, start_day_index, version, created_by, updated_by)
-        values ('${OWNER_A}', 'forge_wpsp_direct', 'pkg_a', '${step.id}', 2, 1, 'u', 'u');
+        (owner_id, id, work_package_id, step_id, baseline_version, start_day_index, version, created_by, updated_by)
+        values ('${OWNER_A}', 'forge_wpsp_direct', 'pkg_a', '${step.id}', 1, 2, 1, 'u', 'u');
     `)).rejects.toThrow(/duplicate key/i);
+    // The same step CAN hold a placement for a different baseline version.
+    await addBaseline(db, { version: 2, start: "2026-11-20", finish: "2026-11-29" });
+    const other = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 2, startDay: 1 });
+    expect(other.baseline_version).toBe(2);
   });
 
-  it60("refuses to delete a package while settings exist", async () => {
-    await setSettings(db, OWNER_A, {});
+  it60("refuses to delete a package while placements exist", async () => {
+    const step = await createStep(db, OWNER_A, {});
+    await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 1 });
     await expect(db.query(`
       delete from forge_work_packages where owner_id = '${OWNER_A}' and id = 'pkg_a';
     `)).rejects.toThrow(/foreign key/i);
   });
 });
 
-describe("slice 6 migration: settings RPC", () => {
+describe("slice 6 migration: snapshot RPC", () => {
   let db;
   beforeEach(async () => { db = await setupDb(); }, 60000);
   afterEach(async () => { await db?.close(); }, 60000);
 
-  it60("creates a window at version 1 with a create revision, then updates it version-guarded", async () => {
-    const created = await setSettings(db, OWNER_A, { days: 10, standard: 8 });
-    expect(created.version).toBe(1);
-    expect(dateStr(created.outage_start_date)).toBe("2026-11-09");
-    expect(created.outage_days).toBe(10);
-    expect(Number(created.standard_hours_per_person_day)).toBe(8);
-    const updated = await setSettings(db, OWNER_A, { days: 12, standard: 8, expectedVersion: 1, reason: "Outage extended" });
-    expect(updated.version).toBe(2);
-    expect(updated.outage_days).toBe(12);
-    const { rows } = await db.query(`
-      select version, action, reason from forge_work_package_curve_settings_revisions
-      where owner_id = '${OWNER_A}' and work_package_id = 'pkg_a' order by version;
-    `);
-    expect(rows.map((r) => [r.version, r.action])).toEqual([[1, "create"], [2, "update"]]);
-    expect(rows[1].reason).toBe("Outage extended");
-  });
-
-  it60("defaults the standard day to 8 when omitted", async () => {
-    const created = await setSettings(db, OWNER_A, {});
-    expect(Number(created.standard_hours_per_person_day)).toBe(8);
-  });
-
-  it60("rejects a stale expected version and a create with a nonzero version", async () => {
-    await setSettings(db, OWNER_A, {});
-    await expect(setSettings(db, OWNER_A, { days: 11, expectedVersion: 99 })).rejects.toThrow(/WPP6_VERSION_CONFLICT/);
-    await expect(setSettings(db, OWNER_A, { days: 11 })).rejects.toThrow(/WPP6_VERSION_CONFLICT/);
-    // Another owner acting on OWNER_A's workspace is forbidden before any
-    // package lookup: the caller is OWNER_B, the owner in the call is OWNER_A.
-    await expect(setSettings(db, OWNER_B, { packageId: "pkg_a", days: 10, expectedVersion: 2 })).rejects.toThrow(/WPP6_WORKSPACE_FORBIDDEN/);
-  });
-
-  it60("refuses settings on a terminal package and on an unknown package", async () => {
-    await expect(setSettings(db, OWNER_A, { packageId: "pkg_cancelled", days: 10 })).rejects.toThrow(/WPP6_PACKAGE_TERMINAL/);
-    await expect(setSettings(db, OWNER_A, { packageId: "pkg_closed", days: 10 })).rejects.toThrow(/WPP6_PACKAGE_TERMINAL/);
-    await expect(setSettings(db, OWNER_A, { packageId: "pkg_nope", days: 10 })).rejects.toThrow(/WPP6_PACKAGE_NOT_FOUND/);
-  });
-
-  it60("rejects shrinking the window when a live placement would run past it, naming the step, and leaves the window unchanged", async () => {
+  it60("returns baseline + steps + placements + assignments + generations in one snapshot", async () => {
     const step = await createStep(db, OWNER_A, { durationDays: 4, personHours: 40 });
-    await setSettings(db, OWNER_A, { days: 10 });
-    // Day 7 + 4 days ends on day 10: fits exactly.
-    await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 7 });
-    await expect(
-      setSettings(db, OWNER_A, { days: 8, expectedVersion: 1, reason: "Outage shortened" }),
-    ).rejects.toThrow(new RegExp(`WPP6_PLACEMENT_OUTSIDE_WINDOW:${step.id}`));
-    const row = await settingsRow(db);
-    expect(row.outage_days).toBe(10);
-    expect(row.version).toBe(1);
-    // Growing the window instead is fine: the placement still fits.
-    const grown = await setSettings(db, OWNER_A, { days: 12, expectedVersion: 1, reason: "Outage extended" });
-    expect(grown.outage_days).toBe(12);
+    await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    await createAssignment(db, OWNER_A, { workDate: "2026-11-09", crewSize: 2, hoursPerPerson: 7 });
+    const snap = await snapshot(db, OWNER_A, {});
+    expect(snap.baseline.version_number).toBe(1);
+    expect(dateStr(snap.baseline.baseline_start)).toBe("2026-11-09");
+    expect(dateStr(snap.baseline.baseline_finish)).toBe("2026-11-18");
+    expect(snap.steps).toHaveLength(1);
+    expect(snap.steps[0].id).toBe(step.id);
+    expect(Number(snap.steps[0].planned_person_hours)).toBe(40);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].step_id).toBe(step.id);
+    expect(snap.placements[0].start_day_index).toBe(3);
+    expect(snap.assignments).toHaveLength(1);
+    expect(dateStr(snap.assignments[0].work_date)).toBe("2026-11-09");
+    expect(snap.assignments[0].crew_size).toBe(2);
+    // The generation markers describe exactly the arrays in this same result.
+    expect(snap.generations.steps.count).toBe(1);
+    expect(snap.generations.steps.max_version).toBe(1);
+    expect(snap.generations.placements.count).toBe(1);
+    expect(snap.generations.assignments.count).toBe(1);
+    expect(snap.generations.baseline_version).toBe(1);
+  });
+
+  it60("a named baseline version is read; a missing named version raises, and no baseline reads null", async () => {
+    await addBaseline(db, { version: 2, start: "2026-11-20", finish: "2026-11-29" });
+    const latest = await snapshot(db, OWNER_A, {});
+    expect(latest.baseline.version_number).toBe(2);
+    const named = await snapshot(db, OWNER_A, { baselineVersion: 1 });
+    expect(named.baseline.version_number).toBe(1);
+    expect(dateStr(named.baseline.baseline_start)).toBe("2026-11-09");
+    await expect(snapshot(db, OWNER_A, { baselineVersion: 9 })).rejects.toThrow(/WPP6_BASELINE_NOT_FOUND/);
+    const none = await snapshot(db, OWNER_A, { packageId: "pkg_nobaseline" });
+    expect(none.baseline).toBeNull();
+    expect(none.steps).toEqual([]);
+    expect(none.generations.baseline_version).toBeNull();
+  });
+
+  it60("a retired step and its placement are invisible to the snapshot (placement inert, not deleted)", async () => {
+    const step = await createStep(db, OWNER_A, {});
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    await retireStep(db, OWNER_A, step.id, { expectedVersion: 1, reason: "Superseded" });
+    const snap = await snapshot(db, OWNER_A, {});
+    expect(snap.steps).toHaveLength(0);
+    expect(snap.placements).toHaveLength(0);
+    // The placement row itself is untouched: still live, still readable.
+    const rows = await placementRows(db, step.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(placed.id);
+    expect(rows[0].retired_at).toBeNull();
+  });
+
+  it60("the snapshot refuses another owner's workspace", async () => {
+    await expect(snapshot(db, OWNER_B, {})).rejects.toThrow(/WPP6_WORKSPACE_FORBIDDEN/);
   });
 });
 
@@ -384,25 +475,19 @@ describe("slice 6 migration: placement RPCs", () => {
   beforeEach(async () => { db = await setupDb(); }, 60000);
   afterEach(async () => { await db?.close(); }, 60000);
 
-  it60("requires a window before any placement", async () => {
-    const step = await createStep(db, OWNER_A, {});
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 1 })).rejects.toThrow(/WPP6_WINDOW_NOT_CONFIGURED/);
-    expect(await placementRows(db, step.id)).toHaveLength(0);
-  });
-
   it60("sets a placement at version 1 with an audit revision, then moves it version-guarded with a reason", async () => {
     const step = await createStep(db, OWNER_A, { durationDays: 2, personHours: 30 });
-    await setSettings(db, OWNER_A, { days: 10 });
-    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 3 });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
     expect(placed.start_day_index).toBe(3);
     expect(placed.version).toBe(1);
+    expect(placed.baseline_version).toBe(1);
     // Moving without a reason is refused.
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 4, expectedVersion: 1 }))
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 4, expectedVersion: 1 }))
       .rejects.toThrow(/WPP6_REASON_REQUIRED/);
     // Moving with a stale version is refused.
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 4, expectedVersion: 99, reason: "Sequencing" }))
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 4, expectedVersion: 99, reason: "Sequencing" }))
       .rejects.toThrow(/WPP6_VERSION_CONFLICT/);
-    const moved = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 4, expectedVersion: 1, reason: "Sequencing" });
+    const moved = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 4, expectedVersion: 1, reason: "Sequencing" });
     expect(moved.start_day_index).toBe(4);
     expect(moved.version).toBe(2);
     const revisions = await placementRevisionRows(db, placed.id);
@@ -416,27 +501,24 @@ describe("slice 6 migration: placement RPCs", () => {
 
   it60("rejects a start day outside the window and a placement that runs past it", async () => {
     const step = await createStep(db, OWNER_A, { durationDays: 4, personHours: 40 });
-    await setSettings(db, OWNER_A, { days: 10 });
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 11 })).rejects.toThrow(/WPP6_INVALID_START_DAY/);
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 8 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 11 })).rejects.toThrow(/WPP6_INVALID_START_DAY/);
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 8 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
     expect(await placementRows(db, step.id)).toHaveLength(0);
     // Day 7 + 4 days ends on day 10: fits exactly.
-    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 7 });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 7 });
     expect(placed.start_day_index).toBe(7);
   });
 
   it60("a step with no duration can only start on day 1", async () => {
-    const step = await createStep(db, OWNER_A, { durationDays: null, personHours: 20, setDurationDays: false });
-    await setSettings(db, OWNER_A, { days: 10 });
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 2 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
-    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 1 });
+    const step = await createStep(db, OWNER_A, { durationDays: null, personHours: 20 });
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 2 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 1 });
     expect(placed.start_day_index).toBe(1);
   });
 
   it60("clears a placement version-guarded with a reason, and a cleared placement cannot be cleared again", async () => {
     const step = await createStep(db, OWNER_A, {});
-    await setSettings(db, OWNER_A, { days: 10 });
-    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 3 });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
     await expect(clearPlacement(db, OWNER_A, placed.id, { expectedVersion: 1, reason: "  " }))
       .rejects.toThrow(/WPP6_REASON_REQUIRED/);
     await expect(clearPlacement(db, OWNER_A, placed.id, { expectedVersion: 99, reason: "No longer sequenced" }))
@@ -449,80 +531,132 @@ describe("slice 6 migration: placement RPCs", () => {
     await expect(clearPlacement(db, OWNER_A, placed.id, { expectedVersion: 2, reason: "Again" }))
       .rejects.toThrow(/WPP6_RETIRED/);
     // A new placement can be set after a clear.
-    const replaced = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 2 });
+    const replaced = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 2 });
     expect(replaced.id).not.toBe(placed.id);
     expect(replaced.version).toBe(1);
   });
 
   it60("refuses placements on terminal packages and on retired steps", async () => {
     const step = await createStep(db, OWNER_A, {});
-    await setSettings(db, OWNER_A, { days: 10 });
+    await expect(setPlacement(db, OWNER_A, { packageId: "pkg_cancelled", stepId: step.id, baselineVersion: 1, startDay: 1 }))
+      .rejects.toThrow(/WPP6_PACKAGE_TERMINAL/);
     const retired = await retireStep(db, OWNER_A, step.id, { expectedVersion: 1, reason: "Superseded" });
     expect(retired.retired_at).not.toBeNull();
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 1 })).rejects.toThrow(/WPP6_RETIRED/);
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 1 })).rejects.toThrow(/WPP6_RETIRED/);
   });
 
   it60("a failed placement leaves no placement row and no revision (atomic audit)", async () => {
     const step = await createStep(db, OWNER_A, { durationDays: 4, personHours: 40 });
-    await setSettings(db, OWNER_A, { days: 10 });
-    await expect(setPlacement(db, OWNER_A, { stepId: step.id, startDay: 8 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 8 })).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
     expect(await placementRows(db, step.id)).toHaveLength(0);
     const { rows } = await db.query(`select count(*)::int as n from forge_work_step_curve_placement_revisions;`);
     expect(rows[0].n).toBe(0);
   });
 });
 
-describe("slice 6 migration: replaced slice-5 functions", () => {
+describe("slice 6 migration: re-baseline", () => {
   let db;
   beforeEach(async () => { db = await setupDb(); }, 60000);
   afterEach(async () => { await db?.close(); }, 60000);
 
-  it60("retiring a step retires its live placement in the same transaction with a step_retired revision", async () => {
-    const step = await createStep(db, OWNER_A, {});
-    await setSettings(db, OWNER_A, { days: 10 });
-    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 3 });
-    const retired = await retireStep(db, OWNER_A, step.id, { expectedVersion: 1, reason: "Superseded" });
-    expect(retired.retired_at).not.toBeNull();
-    const placements = await placementRows(db, step.id);
-    expect(placements).toHaveLength(1);
-    expect(placements[0].retired_at).not.toBeNull();
-    expect(placements[0].version).toBe(2);
-    const revisions = await placementRevisionRows(db, placed.id);
-    expect(revisions.map((r) => [r.version, r.action])).toEqual([[1, "set"], [2, "step_retired"]]);
+  it60("a re-baseline never reuses old placements: latest reads empty, the named old version still reads its placement", async () => {
+    const step = await createStep(db, OWNER_A, { durationDays: 2, personHours: 30 });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    await addBaseline(db, { version: 2, start: "2026-11-20", finish: "2026-11-29" });
+
+    const latest = await snapshot(db, OWNER_A, {});
+    expect(latest.baseline.version_number).toBe(2);
+    expect(latest.placements).toHaveLength(0);
+    const old = await snapshot(db, OWNER_A, { baselineVersion: 1 });
+    expect(old.baseline.version_number).toBe(1);
+    expect(old.placements).toHaveLength(1);
+    expect(old.placements[0].id).toBe(placed.id);
+    expect(old.placements[0].start_day_index).toBe(3);
   });
 
-  it60("a duration change that strands the placement rejects, and the step is unchanged", async () => {
-    const step = await createStep(db, OWNER_A, { durationDays: 4, personHours: 40 });
-    await setSettings(db, OWNER_A, { days: 10 });
-    await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 7 });
-    await expect(updateStep(db, OWNER_A, step.id, {
-      expectedVersion: 1, durationDays: 5, setDurationDays: true, reason: "More work",
-    })).rejects.toThrow(new RegExp(`WPP6_PLACEMENT_OUTSIDE_WINDOW:${step.id}`));
-    const { rows } = await db.query(`select planned_duration_days, version from forge_work_steps where id = '${step.id}';`);
-    expect(rows[0].planned_duration_days).toBe(4);
+  it60("writes against a stale baseline version are refused; the new version accepts them", async () => {
+    const step = await createStep(db, OWNER_A, { durationDays: 2, personHours: 30 });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    await addBaseline(db, { version: 2, start: "2026-11-20", finish: "2026-11-29" });
+
+    await expect(setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 4, expectedVersion: 1, reason: "Late move" }))
+      .rejects.toThrow(/WPP6_BASELINE_STALE/);
+    await expect(clearPlacement(db, OWNER_A, placed.id, { expectedVersion: 1, reason: "No longer sequenced" }))
+      .rejects.toThrow(/WPP6_BASELINE_STALE/);
+    // The old placement row is untouched by the refused writes.
+    const rows = await placementRows(db, step.id);
+    expect(rows).toHaveLength(1);
     expect(rows[0].version).toBe(1);
-    // Shortening the duration so the placement fits is fine.
-    const updated = await updateStep(db, OWNER_A, step.id, {
-      expectedVersion: 1, durationDays: 3, setDurationDays: true, reason: "Less work",
-    });
-    expect(updated.planned_duration_days).toBe(3);
-    expect(updated.version).toBe(2);
+    expect(rows[0].retired_at).toBeNull();
+    // The new version takes a fresh placement.
+    const fresh = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 2, startDay: 2 });
+    expect(fresh.baseline_version).toBe(2);
+    expect(fresh.version).toBe(1);
+    expect(fresh.id).not.toBe(placed.id);
   });
 
-  it60("a title-only update with a live placement still works (slice-5 behaviour preserved)", async () => {
+  it60("201 revisions page exactly with no duplicates and no missing rows", async () => {
     const step = await createStep(db, OWNER_A, {});
-    await setSettings(db, OWNER_A, { days: 10 });
-    await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 2 });
-    const updated = await updateStep(db, OWNER_A, step.id, {
-      expectedVersion: 1, title: "Fabricate pipe spool, revised", reason: "Typo",
-    });
-    expect(updated.title).toBe("Fabricate pipe spool, revised");
-    expect(updated.version).toBe(2);
-    const placements = await placementRows(db, step.id);
-    expect(placements[0].retired_at).toBeNull();
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 1 });
+    // One set revision exists; seed 200 more directly (same shape the
+    // RPC writes) so the paging proof does not need 200 RPC round trips.
+    const values = [];
+    for (let v = 2; v <= 201; v++) {
+      values.push(`('${OWNER_A}', 'forge_wpspr_seed_${v}', '${placed.id}', ${v}, '${OWNER_A}', 'set', '{}', '{}', null)`);
+    }
+    await db.query(`
+      insert into forge_work_step_curve_placement_revisions
+        (owner_id, id, placement_id, version, actor_id, action, old_values, new_values, reason)
+      values ${values.join(",")};
+    `);
+    const seen = [];
+    for (let offset = 0; offset < 201; offset += 50) {
+      const { rows } = await db.query(`
+        select version from forge_work_step_curve_placement_revisions
+        where owner_id = '${OWNER_A}' and placement_id = '${placed.id}'
+        order by version asc, id asc
+        limit 50 offset ${offset};
+      `);
+      expect(rows.length).toBeLessThanOrEqual(50);
+      seen.push(...rows.map((r) => r.version));
+    }
+    expect(seen).toHaveLength(201);
+    expect(new Set(seen).size).toBe(201);
+    expect(seen).toEqual(Array.from({ length: 201 }, (_, i) => i + 1));
+  });
+});
+
+describe("slice 6 migration: slice-5 functions untouched", () => {
+  let db;
+  beforeEach(async () => { db = await setupDb(); }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("the slice-6 apply does not change the slice-5 step function bodies", async () => {
+    const { rows } = await db.query(`
+      select proname, prosrc from pg_proc
+      where proname in ('forge_work_step_update', 'forge_work_step_retire')
+        and pronamespace = 'public'::regnamespace order by proname;
+    `);
+    expect(Object.fromEntries(rows.map((r) => [r.proname, r.prosrc]))).toEqual(slice5BodiesBefore);
   });
 
-  it60("the replaced functions keep their exact slice-5 signatures (no overload was created)", async () => {
+  it60("a duration edit that strands a placement SUCCEEDS — the placement is rejected on read, never by blocking the edit", async () => {
+    const step = await createStep(db, OWNER_A, { durationDays: 4, personHours: 40 });
+    await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 7 });
+    const updated = await updateStep(db, OWNER_A, step.id, {
+      expectedVersion: 1, durationDays: 5, setDurationDays: true, reason: "More work",
+    });
+    expect(updated.planned_duration_days).toBe(5);
+    expect(updated.version).toBe(2);
+    // The snapshot still returns the step (new duration) and the placement;
+    // the application layer marks it unallocated on read.
+    const snap = await snapshot(db, OWNER_A, {});
+    expect(snap.steps[0].planned_duration_days).toBe(5);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].start_day_index).toBe(7);
+  });
+
+  it60("the slice-5 functions keep their exact signatures (no overload was created)", async () => {
     const { rows } = await db.query(`
       select proname, pg_get_function_identity_arguments(oid) as args
       from pg_proc where proname in ('forge_work_step_update', 'forge_work_step_retire')
@@ -542,38 +676,28 @@ describe("slice 6 migration: RLS and ACL", () => {
   afterEach(async () => { await db?.close(); }, 60000);
 
   it60("owner isolation: another owner sees nothing, a co-owner sees the rows, anon sees nothing", async () => {
-    await setSettings(db, OWNER_A, {});
     const step = await createStep(db, OWNER_A, {});
-    await setPlacement(db, OWNER_A, { stepId: step.id, startDay: 2 });
-    const asOther = await asUser(db, OWNER_B, `select * from forge_work_package_curve_settings;`);
+    await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 2 });
+    const asOther = await asUser(db, OWNER_B, `select * from forge_work_step_curve_placements;`);
     expect(asOther.rows).toHaveLength(0);
-    const asOtherPlacements = await asUser(db, OWNER_B, `select * from forge_work_step_curve_placements;`);
-    expect(asOtherPlacements.rows).toHaveLength(0);
-    const asCoOwner = await asUser(db, MEMBER_C, `select * from forge_work_package_curve_settings;`);
+    const asCoOwner = await asUser(db, MEMBER_C, `select * from forge_work_step_curve_placements;`);
     expect(asCoOwner.rows).toHaveLength(1);
     // Anon has no policy and no grant: the select is denied outright.
     await expect(
-      asRole(db, "anon", OWNER_A, `select * from forge_work_package_curve_settings;`),
+      asRole(db, "anon", OWNER_A, `select * from forge_work_step_curve_placements;`),
     ).rejects.toThrow(/permission denied/i);
   });
 
   it60("direct writes as authenticated are denied — the RPCs are the only write path", async () => {
     await expect(asUser(db, OWNER_A, `
-      insert into forge_work_package_curve_settings
-        (owner_id, work_package_id, outage_start_date, outage_days, version, created_by, updated_by)
-        values ('${OWNER_A}', 'pkg_a', '2026-11-09', 10, 1, 'u', 'u');
-    `)).rejects.toThrow(/42501|permission denied|policy/i);
-    await expect(asUser(db, OWNER_A, `
       insert into forge_work_step_curve_placements
-        (owner_id, id, work_package_id, step_id, start_day_index, version, created_by, updated_by)
-        values ('${OWNER_A}', 'forge_wpsp_direct', 'pkg_a', 'step_x', 1, 1, 'u', 'u');
+        (owner_id, id, work_package_id, step_id, baseline_version, start_day_index, version, created_by, updated_by)
+        values ('${OWNER_A}', 'forge_wpsp_direct', 'pkg_a', 'step_x', 1, 1, 1, 'u', 'u');
     `)).rejects.toThrow(/42501|permission denied|policy/i);
   });
 
   it60("effective privileges: authenticated reads and executes, anon and service_role get nothing", async () => {
     for (const table of [
-      "forge_work_package_curve_settings",
-      "forge_work_package_curve_settings_revisions",
       "forge_work_step_curve_placements",
       "forge_work_step_curve_placement_revisions",
     ]) {
@@ -586,11 +710,9 @@ describe("slice 6 migration: RLS and ACL", () => {
       expect(rows[0]).toEqual({ can_select: true, can_insert: false, anon_select: false, sr_select: false });
     }
     for (const fn of [
-      "forge_work_manpower_curve_settings_set(text, text, date, integer, numeric, integer, text)",
-      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, text)",
+      "forge_work_manpower_curve_snapshot(text, text, integer)",
+      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, integer, text)",
       "forge_work_manpower_curve_placement_clear(text, text, integer, text)",
-      "forge_work_step_update(text, text, integer, text, text, text, integer, numeric, text, boolean, boolean, boolean, boolean, boolean, boolean, text)",
-      "forge_work_step_retire(text, text, integer, text, boolean)",
     ]) {
       const { rows } = await db.query(`
         select has_function_privilege('authenticated', 'public.${fn}', 'EXECUTE') as auth_exec,
@@ -602,11 +724,11 @@ describe("slice 6 migration: RLS and ACL", () => {
     }
   });
 
-  it60("the shipped SQL states the explicit revokes and the forced RLS, and takes no caller-supplied actor", async () => {
+  it60("the shipped SQL states the explicit revokes and the forced RLS, names no second outage source, and takes no caller-supplied actor", async () => {
     const sql = loadMigrationSql(SLICE6);
     for (const fn of [
-      "forge_work_manpower_curve_settings_set(text, text, date, integer, numeric, integer, text)",
-      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, text)",
+      "forge_work_manpower_curve_snapshot(text, text, integer)",
+      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, integer, text)",
       "forge_work_manpower_curve_placement_clear(text, text, integer, text)",
     ]) {
       expect(sql).toContain(`revoke all on function public.${fn} from public`);
@@ -615,6 +737,11 @@ describe("slice 6 migration: RLS and ACL", () => {
     expect(sql).toContain("force row level security");
     expect(sql).not.toMatch(/p_actor/);
     expect(sql).toContain("auth.uid()");
+    // No second outage-setting source: no settings table/RPC and no
+    // standard-hours divisor anywhere in the shipped file.
+    expect(sql).not.toMatch(/forge_work_package_curve_settings/);
+    expect(sql).not.toMatch(/standard_hours_per_person_day/);
+    expect(sql).not.toMatch(/forge_work_manpower_curve_settings_set/);
   });
 });
 
@@ -677,6 +804,12 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
         ('${OWNER_A}', 'pkg_real', 'in_progress'),
         ('${OWNER_A}', 'pkg_real_b', 'in_progress'),
         ('${OWNER_A}', 'pkg_real_c', 'in_progress');
+      insert into forge_work_package_baselines
+        (owner_id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by)
+      values
+        ('${OWNER_A}', 'pkg_real', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}'),
+        ('${OWNER_A}', 'pkg_real_b', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}'),
+        ('${OWNER_A}', 'pkg_real_c', 1, '2026-11-09', '2026-11-18', 400, 100000, '${OWNER_A}');
       insert into workspace_members (owner_id, member_user_id, status, role)
         values ('${OWNER_A}', '${MEMBER_C}', 'active', 'co_owner');
     `);
@@ -708,15 +841,18 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
     return rows[0];
   }
 
+  async function pgSnapshot(uid, packageId, baselineVersion = null) {
+    const { rows } = await pgAsUser(pgClient, uid, `
+      select forge_work_manpower_curve_snapshot('${OWNER_A}', '${packageId}', ${baselineVersion ?? "null"}) as snap;
+    `);
+    return rows[0].snap;
+  }
+
   it60("concurrent placement edits on the same version: one wins, the other gets VERSION_CONFLICT", async () => {
     const step = await pgCreateStep(OWNER_A, "pkg_real");
-    await pgAsUser(pgClient, OWNER_A, `
-      select * from forge_work_manpower_curve_settings_set(
-        '${OWNER_A}', 'pkg_real', '2026-11-09', 10, null, null, null);
-    `);
     const placed = await pgAsUser(pgClient, OWNER_A, `
       select * from forge_work_manpower_curve_placement_set(
-        '${OWNER_A}', 'pkg_real', '${step.id}', 2, null, null);
+        '${OWNER_A}', 'pkg_real', '${step.id}', 1, 2, null, null);
     `);
     expect(placed.rows[0].version).toBe(1);
 
@@ -728,7 +864,7 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
     try {
       const move = (client, day) => pgAsUser(client, OWNER_A, `
         select * from forge_work_manpower_curve_placement_set(
-          '${OWNER_A}', 'pkg_real', '${step.id}', ${day}, 1, 'Race move');
+          '${OWNER_A}', 'pkg_real', '${step.id}', 1, ${day}, 1, 'Race move');
       `);
       const results = await Promise.allSettled([move(clientA, 3), move(clientB, 4)]);
       const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -749,34 +885,37 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
     }
   });
 
-  it60("concurrent settings updates on the same version: one wins, the other gets VERSION_CONFLICT", async () => {
-    await pgAsUser(pgClient, OWNER_A, `
-      select * from forge_work_manpower_curve_settings_set(
-        '${OWNER_A}', 'pkg_real_b', '2026-11-09', 10, null, null, null);
-    `);
-    const clientA = new Client(pgCfg);
-    const clientB = new Client(pgCfg);
-    await clientA.connect();
-    await clientB.connect();
+  it60("an uncommitted step edit is invisible to the snapshot, and visible after commit with a bumped generation (P1-3)", async () => {
+    const step = await pgCreateStep(OWNER_A, "pkg_real_b");
+    const before = await pgSnapshot(OWNER_A, "pkg_real_b");
+    expect(before.steps[0].planned_duration_days).toBe(4);
+    expect(before.generations.steps.max_version).toBe(1);
+
+    const writer = new Client(pgCfg);
+    await writer.connect();
     try {
-      const update = (client, days) => pgAsUser(client, OWNER_A, `
-        select * from forge_work_manpower_curve_settings_set(
-          '${OWNER_A}', 'pkg_real_b', '2026-11-09', ${days}, null, 1, 'Race update');
+      await writer.query("begin");
+      await pgAsUser(writer, OWNER_A, `
+        select * from forge_work_step_update(
+          '${OWNER_A}', '${step.id}', 1, null, null, null, 6, null, null,
+          false, false, true, false, false, false, 'More work');
       `);
-      const results = await Promise.allSettled([update(clientA, 11), update(clientB, 12)]);
-      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-      const rejected = results.filter((r) => r.status === "rejected");
-      expect(rejected).toHaveLength(1);
-      expect(String(rejected[0].reason?.message ?? rejected[0].reason)).toMatch(/WPP6_VERSION_CONFLICT/);
+      // The writer's change is uncommitted: a concurrent snapshot must
+      // still see the old duration and the old generation — never a mix.
+      const during = await pgSnapshot(OWNER_A, "pkg_real_b");
+      expect(during.steps[0].planned_duration_days).toBe(4);
+      expect(during.generations.steps.max_version).toBe(1);
+      await writer.query("commit");
     } finally {
-      await clientA.end().catch(() => {});
-      await clientB.end().catch(() => {});
+      await writer.end().catch(() => {});
     }
+    const after = await pgSnapshot(OWNER_A, "pkg_real_b");
+    expect(after.steps[0].planned_duration_days).toBe(6);
+    expect(after.generations.steps.max_version).toBe(2);
   });
 
   it60("ACL matrix on real PG: authenticated reads and executes, anon and service_role get nothing", async () => {
     for (const table of [
-      "forge_work_package_curve_settings",
       "forge_work_step_curve_placements",
       "forge_work_step_curve_placement_revisions",
     ]) {
@@ -789,8 +928,8 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
       expect(rows[0]).toEqual({ can_select: true, can_insert: false, anon_select: false, sr_select: false });
     }
     for (const fn of [
-      "forge_work_manpower_curve_settings_set(text, text, date, integer, numeric, integer, text)",
-      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, text)",
+      "forge_work_manpower_curve_snapshot(text, text, integer)",
+      "forge_work_manpower_curve_placement_set(text, text, text, integer, integer, integer, text)",
       "forge_work_manpower_curve_placement_clear(text, text, integer, text)",
     ]) {
       const { rows } = await pgClient.query(`
@@ -805,21 +944,15 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
 
   it60("a failed placement set on real PG leaves no placement and no revision", async () => {
     const step = await pgCreateStep(OWNER_A, "pkg_real_c");
-    await pgAsUser(pgClient, OWNER_A, `
-      select * from forge_work_manpower_curve_settings_set(
-        '${OWNER_A}', 'pkg_real_c', '2026-11-09', 10, null, null, null);
-    `);
     await expect(pgAsUser(pgClient, OWNER_A, `
       select * from forge_work_manpower_curve_placement_set(
-        '${OWNER_A}', 'pkg_real_c', '${step.id}', 8, null, null);
+        '${OWNER_A}', 'pkg_real_c', '${step.id}', 1, 8, null, null);
     `)).rejects.toThrow(/WPP6_PLACEMENT_OUTSIDE_WINDOW/);
     const { rows } = await pgClient.query(`
       select count(*)::int as placements from forge_work_step_curve_placements
       where owner_id = '${OWNER_A}' and step_id = '${step.id}';
     `);
     expect(rows[0].placements).toBe(0);
-    // Revisions are scoped to this step's placements: earlier tests in
-    // this cluster created their own placements, so count only these.
     const rev = await pgClient.query(`
       select count(*)::int as n from forge_work_step_curve_placement_revisions r
       join forge_work_step_curve_placements p on p.id = r.placement_id

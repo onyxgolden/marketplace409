@@ -168,11 +168,6 @@ export function mapWorkStepRpcError(error) {
   if (message.includes("WPP5_PACKAGE_TERMINAL")) {
     return { ok: false, httpStatus: 409, error: "This work package is closed — new steps cannot be added, and only corrections to existing steps are allowed." };
   }
-  // Slice 6: a duration change that would strand the step's curve placement
-  // outside the outage window rejects instead of silently stranding it.
-  if (message.includes("WPP6_PLACEMENT_OUTSIDE_WINDOW")) {
-    return { ok: false, httpStatus: 409, error: "That duration change would push this step's curve placement outside the outage window — move the placement or shorten the duration first." };
-  }
   if (message.includes("WPP5_INVALID_ORDER")) {
     return { ok: false, httpStatus: 400, error: "The new order must list every active step exactly once." };
   }

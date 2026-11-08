@@ -1,36 +1,27 @@
 // Manpower curve (work package planner, slice 6) — application service.
 //
-// Reads are plain PostgREST reads (steps, placements, assignments, settings)
-// and the curve itself is recomputed on every GET by the pure domain module
-// — nothing derived is stored. Writes go through the slice-6 SECURITY
-// DEFINER RPCs only (the RPCs derive the actor from auth.uid() and enforce
-// ownership, terminal guards, optimistic versions, and the
-// reject-by-default placement-outside-window rule).
-//
-// Consistency fence: the outage window anchors every date and duration
-// decision, so the GET re-reads the settings version after the bulk reads.
-// If the version moved mid-read the whole read is retried once; a second
-// move returns STALE_SNAPSHOT (409) instead of a curve computed from two
-// different windows. Step/assignment/placement rows are re-validated on
-// read by the domain module (a placement that no longer fits its window is
-// reported as unallocated, never silently re-placed), so a mixed-revision
-// set still reconciles internally.
+// The curve read is ONE database call: forge_work_manpower_curve_snapshot
+// returns the named/current baseline, the active steps, the active
+// placements for that baseline version, and the active assignments in a
+// single statement (one snapshot), and the pure domain module computes the
+// curve from it. Nothing derived is stored. Because the read is a single
+// snapshot, a step edit, placement move, retirement, or assignment edit
+// can never produce a mixed-revision curve — there is no retry loop and
+// no STALE_SNAPSHOT. Writes go through the slice-6 SECURITY DEFINER RPCs
+// only (the RPCs derive the actor from auth.uid() and enforce ownership,
+// the exact baseline version, terminal guards, optimistic versions, and
+// the reject-by-default placement-outside-window rule).
 
 import {
-  MAX_OUTAGE_DAYS,
   computeManpowerCurve,
   validateManpowerCurvePlacementClearInput,
   validateManpowerCurvePlacementInput,
-  validateManpowerCurveSettingsInput,
 } from "@/domains/work-management/manpowerCurve";
 
 export const NOT_APPLIED_ERROR =
   "The manpower curve isn't available yet — the database change for this feature hasn't been applied.";
-export const STALE_SNAPSHOT_ERROR =
-  "The manpower curve changed while it was being read — refresh to see the latest curve.";
 
 const PAGE_SIZE = 200;
-const MAX_READ_ATTEMPTS = 2;
 
 function isMissingTableError(error) {
   return error?.code === "42P01" || String(error?.message || "").includes("does not exist");
@@ -60,6 +51,15 @@ export function mapManpowerCurveRpcError(error) {
   if (message.includes("WPP6_PACKAGE_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Work package not found." };
   }
+  if (message.includes("WPP6_BASELINE_NOT_FOUND")) {
+    return { ok: false, httpStatus: 404, error: "Baseline version not found." };
+  }
+  if (message.includes("WPP6_BASELINE_STALE")) {
+    return { ok: false, httpStatus: 409, error: "This package was re-baselined — set the placement again against the new baseline." };
+  }
+  if (message.includes("WPP6_INVALID_BASELINE_VERSION")) {
+    return { ok: false, httpStatus: 400, error: "A baseline version is required." };
+  }
   if (message.includes("WPP6_STEP_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Work step not found." };
   }
@@ -76,13 +76,10 @@ export function mapManpowerCurveRpcError(error) {
       code: "PLACEMENT_OUTSIDE_WINDOW",
       error:
         count > 0
-          ? `That change would push ${count} step${count === 1 ? "" : "s"} outside the outage window — adjust the window or move the placement first.`
-          : "That change would push a step outside the outage window — adjust the window or move the placement first.",
+          ? `That change would push ${count} step${count === 1 ? "" : "s"} outside the outage window — move the placement or shorten the duration first.`
+          : "That change would push a step outside the outage window — move the placement or shorten the duration first.",
       affectedStepIds,
     };
-  }
-  if (message.includes("WPP6_WINDOW_NOT_CONFIGURED")) {
-    return { ok: false, httpStatus: 400, error: "Set the outage window before placing steps on the curve." };
   }
   if (message.includes("WPP6_VERSION_CONFLICT")) {
     return { ok: false, httpStatus: 409, error: "The manpower curve was changed by someone else — refresh and try again." };
@@ -94,16 +91,7 @@ export function mapManpowerCurveRpcError(error) {
     return { ok: false, httpStatus: 409, error: "This work package is closed — the manpower curve is read-only." };
   }
   if (message.includes("WPP6_INVALID_START_DAY")) {
-    return { ok: false, httpStatus: 400, error: `The start day must be a whole number from 1 to ${MAX_OUTAGE_DAYS}.` };
-  }
-  if (message.includes("WPP6_INVALID_START_DATE")) {
-    return { ok: false, httpStatus: 400, error: "Enter a valid outage start date (YYYY-MM-DD)." };
-  }
-  if (message.includes("WPP6_INVALID_OUTAGE_DAYS")) {
-    return { ok: false, httpStatus: 400, error: `Outage days must be a whole number from 1 to ${MAX_OUTAGE_DAYS}.` };
-  }
-  if (message.includes("WPP6_INVALID_STANDARD_HOURS")) {
-    return { ok: false, httpStatus: 400, error: "Standard hours per person-day must be more than 0 and no more than 24, with at most 2 decimals." };
+    return { ok: false, httpStatus: 400, error: "The start day must fall inside the outage window." };
   }
   if (message.includes("WPP6_REASON_REQUIRED")) {
     return { ok: false, httpStatus: 400, error: "A reason is required for this change." };
@@ -145,22 +133,6 @@ async function requirePackage(db, ownerId, packageId) {
   return { ok: true, status: data.status ?? null };
 }
 
-function toCamelSettings(row) {
-  if (!row) return null;
-  return {
-    ownerId: row.owner_id,
-    workPackageId: row.work_package_id,
-    outageStartDate: row.outage_start_date,
-    outageDays: row.outage_days,
-    standardHoursPerPersonDay: Number(row.standard_hours_per_person_day),
-    version: row.version,
-    createdBy: row.created_by,
-    updatedBy: row.updated_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 function toCamelPlacement(row) {
   if (!row) return null;
   return {
@@ -168,6 +140,7 @@ function toCamelPlacement(row) {
     ownerId: row.owner_id,
     workPackageId: row.work_package_id,
     stepId: row.step_id,
+    baselineVersion: row.baseline_version,
     startDayIndex: row.start_day_index,
     version: row.version,
     retiredAt: row.retired_at,
@@ -196,215 +169,94 @@ function toCamelRevision(row) {
   };
 }
 
-async function fetchSettingsRow(db, ownerId, packageId) {
-  const { data, error } = await db
-    .from("forge_work_package_curve_settings")
-    .select("*")
-    .eq("owner_id", ownerId)
-    .eq("work_package_id", packageId)
-    .maybeSingle();
-  if (error) {
-    if (isMissingTableError(error)) return { row: null, missingTable: true };
-    throw error;
-  }
-  return { row: data ?? null, missingTable: false };
-}
-
-async function fetchActiveSteps(db, ownerId, packageId) {
-  const rows = [];
-  let offset = 0;
-  for (;;) {
-    const { data, error } = await db
-      .from("forge_work_steps")
-      .select("id, title, sequence_no, craft_key, craft_label, planned_duration_days, planned_person_hours, version, retired_at")
-      .eq("owner_id", ownerId)
-      .eq("work_package_id", packageId)
-      .is("retired_at", null)
-      .order("sequence_no", { ascending: true })
-      .order("id", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) {
-      if (isMissingTableError(error)) return [];
-      throw error;
-    }
-    rows.push(...(data ?? []));
-    if ((data ?? []).length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    sequenceNo: row.sequence_no,
-    craftKey: row.craft_key,
-    craftLabel: row.craft_label,
-    plannedDurationDays: row.planned_duration_days,
-    plannedPersonHours: row.planned_person_hours == null ? null : Number(row.planned_person_hours),
-    version: row.version,
-  }));
-}
-
-async function fetchActivePlacements(db, ownerId, packageId) {
-  const rows = [];
-  let offset = 0;
-  for (;;) {
-    const { data, error } = await db
-      .from("forge_work_step_curve_placements")
-      .select("id, step_id, start_day_index, version")
-      .eq("owner_id", ownerId)
-      .eq("work_package_id", packageId)
-      .is("retired_at", null)
-      .order("step_id", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) {
-      if (isMissingTableError(error)) return [];
-      throw error;
-    }
-    rows.push(...(data ?? []));
-    if ((data ?? []).length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return rows.map((row) => ({
-    id: row.id,
-    stepId: row.step_id,
-    startDayIndex: row.start_day_index,
-    version: row.version,
-  }));
-}
-
-async function fetchActiveAssignments(db, ownerId, packageId) {
-  const rows = [];
-  let offset = 0;
-  for (;;) {
-    const { data, error } = await db
-      .from("forge_work_craft_assignments")
-      .select("work_date, craft_key, craft_label, crew_size, hours_per_person")
-      .eq("owner_id", ownerId)
-      .eq("work_package_id", packageId)
-      .is("retired_at", null)
-      .order("work_date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) {
-      if (isMissingTableError(error)) return [];
-      throw error;
-    }
-    rows.push(...(data ?? []));
-    if ((data ?? []).length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return rows.map((row) => ({
-    workDate: row.work_date,
-    craftKey: row.craft_key,
-    craftLabel: row.craft_label,
-    crewSize: row.crew_size,
-    hoursPerPerson: row.hours_per_person == null ? null : Number(row.hours_per_person),
-  }));
+function toCamelSnapshot(row) {
+  const baseline = row?.baseline ?? null;
+  return {
+    baseline: baseline
+      ? {
+          versionNumber: baseline.version_number,
+          baselineStart: baseline.baseline_start,
+          baselineFinish: baseline.baseline_finish,
+          frozenAt: baseline.frozen_at ?? null,
+        }
+      : null,
+    steps: (row?.steps ?? []).map((s) => ({
+      id: s.id,
+      title: s.title,
+      sequenceNo: s.sequence_no,
+      craftKey: s.craft_key,
+      craftLabel: s.craft_label,
+      plannedDurationDays: s.planned_duration_days,
+      plannedPersonHours: s.planned_person_hours == null ? null : Number(s.planned_person_hours),
+      version: s.version,
+    })),
+    placements: (row?.placements ?? []).map((p) => ({
+      id: p.id,
+      stepId: p.step_id,
+      startDayIndex: p.start_day_index,
+      version: p.version,
+    })),
+    assignments: (row?.assignments ?? []).map((a) => ({
+      workDate: a.work_date,
+      craftKey: a.craft_key,
+      craftLabel: a.craft_label,
+      crewSize: a.crew_size,
+      hoursPerPerson: a.hours_per_person == null ? null : Number(a.hours_per_person),
+    })),
+    generations: row?.generations ?? null,
+  };
 }
 
 /**
- * The derived manpower curve for one package. Recomputed on every call from
- * the live step plan, placements, and assignments — nothing derived is
- * stored. Pre-migration (settings table missing) the curve reports
- * notApplied so the panel can say the feature isn't available yet instead
- * of failing.
+ * The derived manpower curve for one package. One snapshot RPC call
+ * returns the baseline, steps, placements and assignments from a single
+ * database snapshot; the domain module computes the curve from it.
+ * Pre-migration (snapshot RPC missing) the curve reports notApplied so
+ * the panel can say the feature isn't available yet instead of failing.
+ * baselineVersion pins a named baseline version; omitted, the current
+ * (latest) version is used.
  */
-export async function getManpowerCurve(db, { ownerId, packageId }) {
+export async function getManpowerCurve(db, { ownerId, packageId, baselineVersion = null }) {
   const pkg = await requirePackage(db, ownerId, packageId);
   if (!pkg.ok) return pkg;
-
-  for (let attempt = 1; attempt <= MAX_READ_ATTEMPTS; attempt += 1) {
-    const settingsRead = await fetchSettingsRow(db, ownerId, packageId);
-    const settings = toCamelSettings(settingsRead.row);
-    const steps = await fetchActiveSteps(db, ownerId, packageId);
-    const placements = await fetchActivePlacements(db, ownerId, packageId);
-    const assignments = await fetchActiveAssignments(db, ownerId, packageId);
-
-    // Consistency fence: the window anchors every date/duration decision.
-    // If its version moved while the bulk reads ran, retry once; a second
-    // move returns STALE_SNAPSHOT instead of a mixed-window curve.
-    const fenceRead = await fetchSettingsRow(db, ownerId, packageId);
-    const fenceVersion = fenceRead.row?.version ?? null;
-    const readVersion = settings?.version ?? null;
-    if (fenceVersion !== readVersion && attempt < MAX_READ_ATTEMPTS) continue;
-    if (fenceVersion !== readVersion) {
-      return { ok: false, httpStatus: 409, error: STALE_SNAPSHOT_ERROR };
+  let requestedVersion = null;
+  if (baselineVersion !== null && baselineVersion !== undefined) {
+    requestedVersion = Number(baselineVersion);
+    if (!Number.isInteger(requestedVersion) || requestedVersion < 1) {
+      return { ok: false, httpStatus: 400, error: "Baseline version must be a whole number (1 or more)." };
     }
-
-    const curve = computeManpowerCurve({
-      settings: settings
-        ? {
-            outageStartDate: settings.outageStartDate,
-            outageDays: settings.outageDays,
-            standardHoursPerPersonDay: settings.standardHoursPerPersonDay,
-          }
-        : null,
-      steps,
-      placements,
-      assignments,
-    });
-    return {
-      ok: true,
-      curve: {
-        ...curve,
-        settings,
-        computedAt: new Date().toISOString(),
-        notApplied: settingsRead.missingTable,
-      },
-      packageStatus: pkg.status,
-    };
   }
-  return { ok: false, httpStatus: 409, error: STALE_SNAPSHOT_ERROR };
-}
-
-/** The outage settings for one package, with their versioned history. */
-export async function getCurveSettings(db, { ownerId, packageId }) {
-  const pkg = await requirePackage(db, ownerId, packageId);
-  if (!pkg.ok) return pkg;
-  const settingsRead = await fetchSettingsRow(db, ownerId, packageId);
-  const settings = toCamelSettings(settingsRead.row);
-  let revisions = [];
-  if (settings) {
-    const rows = [];
-    let offset = 0;
-    for (;;) {
-      const { data, error } = await db
-        .from("forge_work_package_curve_settings_revisions")
-        .select("id, owner_id, work_package_id, version, actor_id, action, old_values, new_values, reason, recorded_at")
-        .eq("owner_id", ownerId)
-        .eq("work_package_id", packageId)
-        .order("version", { ascending: true })
-        .order("id", { ascending: true })
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (error) throw error;
-      rows.push(...(data ?? []));
-      if ((data ?? []).length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
-    }
-    revisions = rows.map(toCamelRevision);
-  }
-  return { ok: true, settings, revisions, notApplied: settingsRead.missingTable, packageStatus: pkg.status };
-}
-
-/** Create or update the outage window (owner-scoped RPC, version-guarded). */
-export async function setCurveSettings(db, { ownerId, packageId, input }) {
-  const checked = validateManpowerCurveSettingsInput(input);
-  if (!checked.ok) return { ok: false, httpStatus: 400, error: checked.error };
-  const pkg = await requirePackage(db, ownerId, packageId);
-  if (!pkg.ok) return pkg;
-  const { data, error } = await db.rpc("forge_work_manpower_curve_settings_set", {
+  const { data, error } = await db.rpc("forge_work_manpower_curve_snapshot", {
     p_owner_id: ownerId,
     p_package_id: packageId,
-    p_outage_start_date: input.outageStartDate,
-    p_outage_days: input.outageDays,
-    p_standard_hours_per_person_day: input.standardHoursPerPersonDay ?? null,
-    p_expected_version: input.expectedVersion ?? null,
-    p_reason: input.reason ?? null,
+    p_baseline_version: requestedVersion,
   });
-  if (error) return mapManpowerCurveRpcError(error);
-  return { ok: true, settings: toCamelSettings(rpcRow(data)), packageStatus: pkg.status };
+  if (error) {
+    if (isMissingRpcError(error)) {
+      const empty = computeManpowerCurve({ baseline: null, steps: [], placements: [], assignments: [] });
+      return {
+        ok: true,
+        curve: { ...empty, notApplied: true },
+        packageStatus: pkg.status,
+      };
+    }
+    return mapManpowerCurveRpcError(error);
+  }
+  const snapshot = toCamelSnapshot(rpcRow(data));
+  const curve = computeManpowerCurve(snapshot);
+  return {
+    ok: true,
+    curve: {
+      ...curve,
+      generations: snapshot.generations,
+      computedAt: new Date().toISOString(),
+      notApplied: false,
+    },
+    packageStatus: pkg.status,
+  };
 }
 
-/** Set (or move) a step's explicit start day (owner-scoped RPC, version-guarded). */
+/** Set (or move) a step's explicit start day against an exact baseline version (owner-scoped RPC, version-guarded). */
 export async function setStepPlacement(db, { ownerId, packageId, input }) {
   const checked = validateManpowerCurvePlacementInput(input);
   if (!checked.ok) return { ok: false, httpStatus: 400, error: checked.error };
@@ -414,6 +266,7 @@ export async function setStepPlacement(db, { ownerId, packageId, input }) {
     p_owner_id: ownerId,
     p_package_id: packageId,
     p_step_id: input.stepId,
+    p_baseline_version: input.baselineVersion,
     p_start_day_index: input.startDayIndex,
     p_expected_version: input.expectedVersion ?? null,
     p_reason: input.reason ?? null,
@@ -446,7 +299,7 @@ export async function listPlacementRevisions(db, { ownerId, packageId, placement
   if (!pkg.ok) return pkg;
   const { data: placementRows, error: placementError } = await db
     .from("forge_work_step_curve_placements")
-    .select("id, owner_id, work_package_id, step_id, start_day_index, version, retired_at, retired_by, created_by, updated_by, created_at, updated_at")
+    .select("id, owner_id, work_package_id, step_id, baseline_version, start_day_index, version, retired_at, retired_by, created_by, updated_by, created_at, updated_at")
     .eq("owner_id", ownerId)
     .eq("work_package_id", packageId)
     .eq("id", placementId)
@@ -465,7 +318,8 @@ export async function listPlacementRevisions(db, { ownerId, packageId, placement
     .eq("placement_id", placementId)
     .order("version", { ascending: true })
     .order("id", { ascending: true })
-    .range(paging.offset, paging.offset + paging.limit);
+    // PostgREST ranges are inclusive: limit=50 is rows offset..offset+49.
+    .range(paging.offset, paging.offset + paging.limit - 1);
   if (error) throw error;
   const revisions = (data ?? []).map(toCamelRevision);
   return {

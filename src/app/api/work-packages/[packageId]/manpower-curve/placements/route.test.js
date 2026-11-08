@@ -36,7 +36,7 @@ describe("PUT /api/work-packages/[packageId]/manpower-curve/placements", () => {
     const response = await PUT(
       new Request("https://test/x", {
         method: "PUT",
-        body: JSON.stringify({ stepId: "step_1", startDayIndex: 3 }),
+        body: JSON.stringify({ stepId: "step_1", baselineVersion: 1, startDayIndex: 3 }),
       }),
       { params: params() },
     );
@@ -44,7 +44,7 @@ describe("PUT /api/work-packages/[packageId]/manpower-curve/placements", () => {
     expect(setStepPlacement).toHaveBeenCalledWith(AUTH.db, {
       ownerId: "owner_1",
       packageId: "pkg_1",
-      input: { stepId: "step_1", startDayIndex: 3 },
+      input: { stepId: "step_1", baselineVersion: 1, startDayIndex: 3 },
     });
     const body = await response.json();
     expect(body.placement.startDayIndex).toBe(3);
