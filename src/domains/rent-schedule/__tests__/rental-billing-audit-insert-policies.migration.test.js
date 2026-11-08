@@ -99,12 +99,21 @@ describe("rental billing audit insert policies migration", () => {
     expect(sql).not.toContain("create or replace function");
     expect(sql).not.toContain("alter table");
     expect(sql).not.toContain("drop table");
-    // The existing SELECT policies are untouched — the only DROP POLICY lines name the new
-    // policies themselves (idempotency for re-runs).
-    const drops = sql.match(/drop policy if exists "[^"]+"/g) || [];
-    expect(drops.length).toBeGreaterThan(0);
-    for (const drop of drops) {
-      expect(drop).not.toMatch(/owner_select|tenant_select|owner_all/);
+    // A re-run drops nothing: every policy is guarded by a pg_policies existence check, so
+    // policies already applied by hand (the cutover-audit INSERT was applied live 2026-11-08
+    // before this migration landed) are left untouched instead of dropped and recreated.
+    expect(sql).not.toContain("drop policy");
+  });
+
+  it("guards every policy with a pg_policies existence check, so a re-run is a pure no-op", () => {
+    const guards = sql.match(/if not exists \( select 1 from pg_policies/g) || [];
+    expect(guards).toHaveLength(7); // five audit INSERTs + settings INSERT + settings UPDATE
+    for (const { table, policy } of auditInsertPolicies) {
+      expect(sql).toContain(`tablename = '${table}'`);
+      expect(sql).toContain(`policyname = '${policy}'`);
     }
+    expect(sql).toContain("tablename = 'rental_billing_settings'");
+    expect(sql).toContain("policyname = 'rental_billing_settings_owner_insert'");
+    expect(sql).toContain("policyname = 'rental_billing_settings_owner_update'");
   });
 });
