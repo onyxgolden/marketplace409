@@ -5,13 +5,16 @@ Status: **NOT ACTIVATED. No live mode exists in this release.**
 ## Gates (all Jason-gated, each a separate explicit word)
 
 1. **P5-A merge** — needs ChatGPT exact-head review + Jason's merge word.
-   This slice alone.
-2. **P5-B / P5-C / P5-D** — separate slices, separate reviews. None is
-   authorized by P5-A.
-3. **Real-branch dry runs** — need Jason's separate explicit
+   This slice alone. (MERGED Nov 7, PR #749, squash `614134cb`.)
+2. **P5-B merge** — needs ChatGPT exact-head review + Muse's
+   agreement check under the standing order (GO + check = merge).
+   P5-B alone: no P5-C/D, no real-branch dry runs, no activation.
+3. **P5-C / P5-D** — separate slices, separate reviews. None is
+   authorized by P5-A or P5-B.
+4. **Real-branch dry runs** — need Jason's separate explicit
    authorization per agent/per trial. Synthetic fixtures are the only
    runs in this slice, and they never touch a real branch.
-4. **Activation (any live mode)** — needs Jason's per-agent/per-trial
+5. **Activation (any live mode)** — needs Jason's per-agent/per-trial
    word plus a separately reviewed change that adds a live mode.
    There is deliberately no code path in this release that turns a
    caller value into a live mode.

@@ -1,0 +1,6 @@
+# Generated deterministic mirrors — NOT committed. A nested .git
+# directory would land in the PR as an embedded repository (a
+# gitlink), and clones would get empty dirs. The generator rebuilds
+# them byte-identically (fixed author/committer/dates), and the
+# preview harness + test suite regenerate them when missing.
+repos/
