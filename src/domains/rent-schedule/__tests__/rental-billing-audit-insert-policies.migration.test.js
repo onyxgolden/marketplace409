@@ -17,12 +17,17 @@ const sql = readFileSync(
 //
 // This test pins the fix at the migration-text level, the same way the repo's other RLS
 // migration tests do (see add-rent-schedule-collection-authority.migration.test.js and
-// schedule-pet-fee.migration.test.js). A live PostgreSQL 16 behavioral check (scratch
-// cluster, stubbed auth.uid()/has_workspace_access()) was also run during development:
-// with these policies an authenticated owner can insert an audit row for their own workspace
-// and gets 42501 inserting one for another workspace, and the
-// INSERT ... ON CONFLICT DO UPDATE on rental_billing_settings succeeds for the owner and
-// fails for anyone else. Without them, every one of those writes is denied — the bug.
+// schedule-pet-fee.migration.test.js). A live PostgreSQL 16 behavioral check
+// (scripts/rental-billing-rls-proof/, scratch cluster, live-faithful fixtures) was
+// also run during development — see that directory's README for the full matrix.
+//
+// Fix round 1 (ChatGPT NEEDS CHANGES, drop 0ce90438, P1): the same-workspace bypass
+// question was resolved by PROOF, not by tightening: has_workspace_access is the
+// canonical billing-write predicate (owner + active co-owner), shared verbatim by
+// all five RPCs, so a direct write cannot reach anyone the RPCs exclude. The
+// 103/103 scratch-PostgreSQL checks cover every persona (owner, active/invited/
+// suspended co-owner, manager, bookkeeper, read-only member, unrelated owner,
+// anon) against direct INSERT/UPDATE and all five RPCs.
 
 const auditInsertPolicies = [
   {
@@ -103,6 +108,22 @@ describe("rental billing audit insert policies migration", () => {
     // policies already applied by hand (the cutover-audit INSERT was applied live 2026-11-08
     // before this migration landed) are left untouched instead of dropped and recreated.
     expect(sql).not.toContain("drop policy");
+  });
+
+  it("does not tighten the predicate to owner-only: every new policy gates on the canonical billing-write predicate", () => {
+    // Fix round 1 (P1, drop 0ce90438): the canonical billing-write authority is
+    // owner + active co-owner, i.e. has_workspace_access(owner_id) — the exact
+    // predicate all five RPCs gate on. An owner-only predicate would break the
+    // live co-owner billing workflow (the co-owner activates billing); a
+    // role-specific predicate would invent an authority the workspace model
+    // does not have. Every one of the seven policies must gate on exactly that.
+    const blocks = sql.split("create policy ").slice(1);
+    expect(blocks).toHaveLength(7);
+    for (const block of blocks) {
+      expect(block).toContain("to authenticated");
+      expect(block).toContain("with check (has_workspace_access(owner_id))");
+      expect(block).not.toContain("with check (true)");
+    }
   });
 
   it("guards every policy with a pg_policies existence check, so a re-run is a pure no-op", () => {

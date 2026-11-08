@@ -15,9 +15,36 @@
 --   set_rental_late_fee_auto_settings()   -> rental_billing_settings (upsert) + rental_late_fee_settings_audit
 --   set_rental_payment_policy()           -> rental_billing_settings (upsert) + rental_payment_policy_audit
 --   set_rental_card_convenience_fee()     -> rental_billing_settings (upsert) + rental_convenience_fee_audit
--- All five RPCs enforce owner access themselves (auth.uid() + has_workspace_access(p_owner_id))
--- before writing, so the policies below add the missing RLS permission without widening who can
--- write: an owner can insert/update only rows in workspaces they have access to.
+-- All five RPCs enforce access themselves (has_workspace_access(p_owner_id))
+-- before writing, so the policies below add the missing RLS permission without
+-- widening who can write: an owner or active co-owner can insert/update only rows
+-- in workspaces they have access to.
+--
+-- FIX ROUND 1 (ChatGPT NEEDS CHANGES, drop 0ce90438, P1): could a same-workspace
+-- member WITHOUT billing authority (manager, bookkeeper, read-only member,
+-- invited/suspended co-owner) bypass the RPCs' checks with a direct SQL/PostgREST
+-- write, given `authenticated` holds relation-level INSERT/UPDATE on these tables
+-- and RLS is the only gate? Resolution: PROVEN IMPOSSIBLE, no SQL change. Live
+-- catalog evidence (read from production 2026-11-08, read-only):
+--   * has_workspace_access(owner_id) returns true ONLY for the primary owner or
+--     an active co-owner member — the function admits only the co_owner role in
+--     active status. Manager/bookkeeper/read_only rows can exist (the live role
+--     CHECK permits those values) but can never satisfy the predicate.
+--   * All five RPCs gate on that exact same predicate, so the RPC gate and the
+--     policy gate admit exactly the same callers; a direct write cannot reach
+--     anyone the RPCs exclude. The canonical billing-write authority is owner +
+--     active co-owner. Tightening the policies to owner-only would break the live
+--     co-owner billing workflow (the co-owner is the one who activates billing).
+--   * RLS + FORCE RLS is on for all six tables, and live data holds exactly one
+--     workspace_members row (an active co-owner); the invite RPC rejects any
+--     role other than co_owner, so the app can only create co_owner rows.
+-- Behavioral proof: scripts/rental-billing-rls-proof/ (scratch PostgreSQL 16,
+-- live-faithful fixtures incl. the verbatim predicate, the live role/status
+-- model, and the five RPCs verbatim) — 103/103 checks: predicate per persona,
+-- pre-fix denial, guarded double-apply, direct-write matrix on all five audit
+-- tables plus settings INSERT/UPDATE, all five RPCs per persona, SELECT
+-- visibility. The already-live cutover policy is untouched by this round: its
+-- predicate is unchanged, and changing it would need a separate owner decision.
 --
 -- WHY POLICIES AND NOT A DEFINER FUNCTION: the codebase deliberately runs these RPCs as SECURITY
 -- INVOKER with explicit owner checks (see 20260822010000 and the 20260829 workspace-access
