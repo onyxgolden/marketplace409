@@ -1,0 +1,57 @@
+{
+  "fixture": "oversized-diff",
+  "job": {
+    "job_id": "p5b-fixture-oversized-diff-001",
+    "idempotency_key": "p5b-fixture-oversized-diff-key",
+    "operator_ref": "op:evaluator-fixture",
+    "repo_id": "repo:p5b-synthetic-oversized-diff",
+    "base_sha": "99544034a5a12fbd98014ac8032f4dc10e7e1a2c",
+    "task_digest": "d43c0165a5d4188ba2daa38c80871818a551279516d8ef78f649356b83d49dff"
+  },
+  "task": {
+    "task_id": "p5b-fixture-task-1",
+    "family": "literal-correction",
+    "description": "Change the greeting constant in lib/alpha.js from \"hello\" to \"hi\".",
+    "brief_digest": "15a2db627bff2435a2b222ed1c0b16f372b8eee0692a62603ffe039816178e76",
+    "policy_digest": "dbeb6086e891a7a790d6bf1880e067ed41b6302b2dbfd883769c033cb91191f6",
+    "constraints": {
+      "allowed_paths": [
+        "lib"
+      ],
+      "forbidden_paths": [],
+      "allowed_operations": [
+        "modify",
+        "add"
+      ]
+    }
+  },
+  "candidate": {
+    "task": {
+      "task_id": "p5b-fixture-task-1"
+    },
+    "plan": {
+      "test_profile_ids": [
+        "syntax"
+      ],
+      "target_files": [
+        {
+          "path": "lib/alpha.js",
+          "base_blob_or_null": "8a03029a1a90f82af5ef758c8eea1b86306b909a4a241277697b245705ecbc2a"
+        }
+      ]
+    },
+    "proposed_diff": "diff --git a/lib/alpha.js b/lib/alpha.js\n--- a/lib/alpha.js\n+++ b/lib/alpha.js\n@@ -1,2 +1,203 @@\n export const greeting = \"hello\";\n export const bye = \"bye\";\n+export const generated0 = 0;\n+export const generated1 = 1;\n+export const generated2 = 2;\n+export const generated3 = 3;\n+export const generated4 = 4;\n+export const generated5 = 5;\n+export const generated6 = 6;\n+export const generated7 = 7;\n+export const generated8 = 8;\n+export const generated9 = 9;\n+export const generated10 = 10;\n+export const generated11 = 11;\n+export const generated12 = 12;\n+export const generated13 = 13;\n+export const generated14 = 14;\n+export const generated15 = 15;\n+export const generated16 = 16;\n+export const generated17 = 17;\n+export const generated18 = 18;\n+export const generated19 = 19;\n+export const generated20 = 20;\n+export const generated21 = 21;\n+export const generated22 = 22;\n+export const generated23 = 23;\n+export const generated24 = 24;\n+export const generated25 = 25;\n+export const generated26 = 26;\n+export const generated27 = 27;\n+export const generated28 = 28;\n+export const generated29 = 29;\n+export const generated30 = 30;\n+export const generated31 = 31;\n+export const generated32 = 32;\n+export const generated33 = 33;\n+export const generated34 = 34;\n+export const generated35 = 35;\n+export const generated36 = 36;\n+export const generated37 = 37;\n+export const generated38 = 38;\n+export const generated39 = 39;\n+export const generated40 = 40;\n+export const generated41 = 41;\n+export const generated42 = 42;\n+export const generated43 = 43;\n+export const generated44 = 44;\n+export const generated45 = 45;\n+export const generated46 = 46;\n+export const generated47 = 47;\n+export const generated48 = 48;\n+export const generated49 = 49;\n+export const generated50 = 50;\n+export const generated51 = 51;\n+export const generated52 = 52;\n+export const generated53 = 53;\n+export const generated54 = 54;\n+export const generated55 = 55;\n+export const generated56 = 56;\n+export const generated57 = 57;\n+export const generated58 = 58;\n+export const generated59 = 59;\n+export const generated60 = 60;\n+export const generated61 = 61;\n+export const generated62 = 62;\n+export const generated63 = 63;\n+export const generated64 = 64;\n+export const generated65 = 65;\n+export const generated66 = 66;\n+export const generated67 = 67;\n+export const generated68 = 68;\n+export const generated69 = 69;\n+export const generated70 = 70;\n+export const generated71 = 71;\n+export const generated72 = 72;\n+export const generated73 = 73;\n+export const generated74 = 74;\n+export const generated75 = 75;\n+export const generated76 = 76;\n+export const generated77 = 77;\n+export const generated78 = 78;\n+export const generated79 = 79;\n+export const generated80 = 80;\n+export const generated81 = 81;\n+export const generated82 = 82;\n+export const generated83 = 83;\n+export const generated84 = 84;\n+export const generated85 = 85;\n+export const generated86 = 86;\n+export const generated87 = 87;\n+export const generated88 = 88;\n+export const generated89 = 89;\n+export const generated90 = 90;\n+export const generated91 = 91;\n+export const generated92 = 92;\n+export const generated93 = 93;\n+export const generated94 = 94;\n+export const generated95 = 95;\n+export const generated96 = 96;\n+export const generated97 = 97;\n+export const generated98 = 98;\n+export const generated99 = 99;\n+export const generated100 = 100;\n+export const generated101 = 101;\n+export const generated102 = 102;\n+export const generated103 = 103;\n+export const generated104 = 104;\n+export const generated105 = 105;\n+export const generated106 = 106;\n+export const generated107 = 107;\n+export const generated108 = 108;\n+export const generated109 = 109;\n+export const generated110 = 110;\n+export const generated111 = 111;\n+export const generated112 = 112;\n+export const generated113 = 113;\n+export const generated114 = 114;\n+export const generated115 = 115;\n+export const generated116 = 116;\n+export const generated117 = 117;\n+export const generated118 = 118;\n+export const generated119 = 119;\n+export const generated120 = 120;\n+export const generated121 = 121;\n+export const generated122 = 122;\n+export const generated123 = 123;\n+export const generated124 = 124;\n+export const generated125 = 125;\n+export const generated126 = 126;\n+export const generated127 = 127;\n+export const generated128 = 128;\n+export const generated129 = 129;\n+export const generated130 = 130;\n+export const generated131 = 131;\n+export const generated132 = 132;\n+export const generated133 = 133;\n+export const generated134 = 134;\n+export const generated135 = 135;\n+export const generated136 = 136;\n+export const generated137 = 137;\n+export const generated138 = 138;\n+export const generated139 = 139;\n+export const generated140 = 140;\n+export const generated141 = 141;\n+export const generated142 = 142;\n+export const generated143 = 143;\n+export const generated144 = 144;\n+export const generated145 = 145;\n+export const generated146 = 146;\n+export const generated147 = 147;\n+export const generated148 = 148;\n+export const generated149 = 149;\n+export const generated150 = 150;\n+export const generated151 = 151;\n+export const generated152 = 152;\n+export const generated153 = 153;\n+export const generated154 = 154;\n+export const generated155 = 155;\n+export const generated156 = 156;\n+export const generated157 = 157;\n+export const generated158 = 158;\n+export const generated159 = 159;\n+export const generated160 = 160;\n+export const generated161 = 161;\n+export const generated162 = 162;\n+export const generated163 = 163;\n+export const generated164 = 164;\n+export const generated165 = 165;\n+export const generated166 = 166;\n+export const generated167 = 167;\n+export const generated168 = 168;\n+export const generated169 = 169;\n+export const generated170 = 170;\n+export const generated171 = 171;\n+export const generated172 = 172;\n+export const generated173 = 173;\n+export const generated174 = 174;\n+export const generated175 = 175;\n+export const generated176 = 176;\n+export const generated177 = 177;\n+export const generated178 = 178;\n+export const generated179 = 179;\n+export const generated180 = 180;\n+export const generated181 = 181;\n+export const generated182 = 182;\n+export const generated183 = 183;\n+export const generated184 = 184;\n+export const generated185 = 185;\n+export const generated186 = 186;\n+export const generated187 = 187;\n+export const generated188 = 188;\n+export const generated189 = 189;\n+export const generated190 = 190;\n+export const generated191 = 191;\n+export const generated192 = 192;\n+export const generated193 = 193;\n+export const generated194 = 194;\n+export const generated195 = 195;\n+export const generated196 = 196;\n+export const generated197 = 197;\n+export const generated198 = 198;\n+export const generated199 = 199;\n+export const generated200 = 200;"
+  },
+  "host": {
+    "mirror": "repos/oversized-diff",
+    "allowed_profile_ids": [
+      "syntax"
+    ]
+  },
+  "expected": {
+    "status": "BLOCKED",
+    "reason_codes": [
+      "BUDGET_EXCEEDED"
+    ]
+  }
+}

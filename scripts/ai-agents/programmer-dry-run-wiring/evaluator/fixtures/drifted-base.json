@@ -1,0 +1,57 @@
+{
+  "fixture": "drifted-base",
+  "job": {
+    "job_id": "p5b-fixture-drifted-base-001",
+    "idempotency_key": "p5b-fixture-drifted-base-key",
+    "operator_ref": "op:evaluator-fixture",
+    "repo_id": "repo:p5b-synthetic-drifted-base",
+    "base_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "task_digest": "d43c0165a5d4188ba2daa38c80871818a551279516d8ef78f649356b83d49dff"
+  },
+  "task": {
+    "task_id": "p5b-fixture-task-1",
+    "family": "literal-correction",
+    "description": "Change the greeting constant in lib/alpha.js from \"hello\" to \"hi\".",
+    "brief_digest": "15a2db627bff2435a2b222ed1c0b16f372b8eee0692a62603ffe039816178e76",
+    "policy_digest": "dbeb6086e891a7a790d6bf1880e067ed41b6302b2dbfd883769c033cb91191f6",
+    "constraints": {
+      "allowed_paths": [
+        "lib"
+      ],
+      "forbidden_paths": [],
+      "allowed_operations": [
+        "modify",
+        "add"
+      ]
+    }
+  },
+  "candidate": {
+    "task": {
+      "task_id": "p5b-fixture-task-1"
+    },
+    "plan": {
+      "test_profile_ids": [
+        "syntax"
+      ],
+      "target_files": [
+        {
+          "path": "lib/alpha.js",
+          "base_blob_or_null": "8a03029a1a90f82af5ef758c8eea1b86306b909a4a241277697b245705ecbc2a"
+        }
+      ]
+    },
+    "proposed_diff": "diff --git a/lib/alpha.js b/lib/alpha.js\n--- a/lib/alpha.js\n+++ b/lib/alpha.js\n@@ -1,2 +1,2 @@\n-export const greeting = \"hello\";\n+export const greeting = \"hi\";\n export const bye = \"bye\";"
+  },
+  "host": {
+    "mirror": "repos/drifted-base",
+    "allowed_profile_ids": [
+      "syntax"
+    ]
+  },
+  "expected": {
+    "status": "BLOCKED",
+    "reason_codes": [
+      "BASE_UNAVAILABLE"
+    ]
+  }
+}

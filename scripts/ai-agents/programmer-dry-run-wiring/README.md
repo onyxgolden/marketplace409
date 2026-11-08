@@ -91,6 +91,100 @@ receipt proves no candidate identity, so it maps to BLOCKED),
 200-line budget), `stale-digest` (a decision bound to the unbound
 fixture's digest refuses against it).
 
+## P5-B — trusted local worktree evaluator (this slice)
+
+P5-B adds the evaluator to the same contract module. **No test
+execution, no real-branch run, no activation, no merge.** It
+validates one bounded candidate against a pinned local mirror and
+applies it to disposable scratch only, recording immutable
+diff/tree provenance. It executes no candidate code.
+
+In `marketplace409`:
+
+- `src/application/ai-lab/programmer/worktreeEvaluator.js` — pure
+  domain: evaluation record `programmer-worktree-evaluation@1`
+  (frozen, exact field set, append-only audit), candidate-tree
+  digest (`p5b-candidate-tree-v1`: SHA-256 over
+  `<mode> <git-blob-sha1>\t<path>` lines sorted by path), tree
+  hygiene (refuses symlink/gitlink/`.git`/case-collision), mirror
+  config denylist (includes, hooks path, filters, credentials,
+  transport overrides), job/candidate validation, porcelain-vs-plan
+  check, canonical-diff normalization, replay binding
+  (idempotency key ⇒ one job + task + base + candidate diff;
+  changed base refuses `STALE_DIGEST`), in-memory idempotency
+  store. No I/O, no git, no processes.
+- `src/infrastructure/ai-lab/programmer/worktreeHost.js` — host
+  adapter: scrubbed git env (`GIT_CONFIG_NOSYSTEM=1`,
+  `GIT_OPTIONAL_LOCKS=0`, no prompt), host-owned temp home,
+  hooks neutralized (`core.hooksPath` → empty host dir),
+  `protocol.allow=never`, mirror validation (offline, exact
+  commit, clean tree, no hooks/filters/submodules), detached
+  disposable worktree under a host-owned root, snapshot from
+  `ls-tree`/`cat-file`, prototype plan validation with host-owned
+  constraints, byte-level apply to scratch (never `git apply` of a
+  caller string), canonical diff + provenance, before/after
+  refs/HEAD/index-content + outside-root canaries, try/finally
+  cleanup that removes only the identity-verified job-owned
+  worktree (never `--force`; cleanup failure ⇒
+  `BLOCKED`/`CLEANUP_FAILED`, never `VERIFIED`), and
+  `reconcileStaleWorktrees` — explicit operator recovery only,
+  never a scheduler; foreign worktrees are listed as skipped and
+  never touched.
+- `scripts/ai-agents/programmer-dry-run-wiring/evaluator/` — this
+  slice's harness:
+  - `fixtures/` — 9 frozen synthetic scenarios + `manifest.json`
+    with SHA-256 digests + deterministic local Git mirrors under
+    `fixtures/repos/`. Regenerate with
+    `node fixtures/make-evaluator-fixtures.mjs`.
+  - `preview/run-evaluator-preview.mjs` — inert preview harness
+    (see below).
+  - `tests/evaluator.test.js` — node:test integration suite
+    (fixtures, preview CLI, idempotency, crash/retry, base-mutation
+    replay, reconciler, isolation attestation).
+
+### Isolation — read this before running anything
+
+P5-B executes no candidate code: the only processes it spawns are
+fixed-argv git commands under a scrubbed environment. The isolation
+probe (`qa-test-runner` `detectIsolation`, only `bwrap`/`unshare`
+count) is therefore **attested on every record, not a gate on
+validation/apply/provenance** — but a null mechanism is recorded
+as a risk and the record states plainly that it does **not**
+authorize execution. **P5-C must re-probe and prove isolation
+before running any candidate test**; on a host with no proven
+mechanism, candidate execution is blocked there
+(`ISOLATION_BLOCKED`). A Git worktree alone is not a sandbox, and
+this slice never claims it is. On the build VM neither mechanism
+proves itself (bwrap fails bringing up loopback; unshare cannot
+bind-mount the container rootfs), so records there carry
+`mechanism: null` + the execution-gate note — the fail-closed
+behavior is the proof, not a gap to work around.
+
+### Synthetic preview (P5-B)
+
+```sh
+# OFF by default — returns before opening any fixture (exit 10):
+node evaluator/preview/run-evaluator-preview.mjs --fixture clean-propose --out /tmp/p5b-preview
+
+# Synthetic preview — writes <name>.evaluation.json (exit 0 for any terminal status):
+node evaluator/preview/run-evaluator-preview.mjs --fixture clean-propose --out /tmp/p5b-preview --mode SYNTHETIC_PREVIEW
+```
+
+Fixtures: `clean-propose` (PROPOSED), `drifted-base`,
+`forged-hook`, `forged-auth`, `malicious-filter`,
+`symlink-tree`, `traversal-diff`, `oversized-diff`
+(all BLOCKED), `hostile-capability` (REFUSED).
+
+### Tests (P5-B)
+
+```sh
+# Pure domain module (vitest, from the repo root):
+npx vitest run src/application/ai-lab/programmer/worktreeEvaluator.test.js
+
+# Evaluator integration (node:test):
+node --test scripts/ai-agents/programmer-dry-run-wiring/evaluator/tests/evaluator.test.js
+```
+
 ## Tests
 
 ```sh

@@ -1,0 +1,68 @@
+{
+  "manifest_version": "programmer-evaluator-fixtures@1",
+  "fixtures": {
+    "clean-propose": {
+      "file": "clean-propose.json",
+      "sha256": "f63e69820b2451555c9bb71878255e06571de6c8c96fcedcb07ec33a54ad0135",
+      "job_id": "p5b-fixture-clean-propose-001",
+      "status": "PROPOSED",
+      "validates": true
+    },
+    "drifted-base": {
+      "file": "drifted-base.json",
+      "sha256": "d0eec664d06622de00ad0ac35bf1ed57f579f18b5cd806bba8eec7a7a4a20ae2",
+      "job_id": "p5b-fixture-drifted-base-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "forged-hook": {
+      "file": "forged-hook.json",
+      "sha256": "8feadecc92908b524c3f22e82b4cff92cd1c89187b707de53b74884f1da6b9ea",
+      "job_id": "p5b-fixture-forged-hook-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "forged-auth": {
+      "file": "forged-auth.json",
+      "sha256": "3e855629b3efefe4ad2b14361e529a74c3fbf7058e49911069991545d9e8a442",
+      "job_id": "p5b-fixture-forged-auth-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "malicious-filter": {
+      "file": "malicious-filter.json",
+      "sha256": "ed9924a8b459365b85b4793860e9983f7811692d2dc2289637aa689b26f5fa05",
+      "job_id": "p5b-fixture-malicious-filter-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "symlink-tree": {
+      "file": "symlink-tree.json",
+      "sha256": "67762733cdbf776c65fd6a1150b4228f362f7baea3302dc1519889b27a927b77",
+      "job_id": "p5b-fixture-symlink-tree-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "traversal-diff": {
+      "file": "traversal-diff.json",
+      "sha256": "7b17cd4c0600043e5671bfb9b9bc90888e85fd5f033ae1fb0db6e2b294302aa3",
+      "job_id": "p5b-fixture-traversal-diff-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "oversized-diff": {
+      "file": "oversized-diff.json",
+      "sha256": "736eb959f9e0de9a7f06f899874ec9e20dac8c0c8791995c62e76b843582dcf1",
+      "job_id": "p5b-fixture-oversized-diff-001",
+      "status": "BLOCKED",
+      "validates": true
+    },
+    "hostile-capability": {
+      "file": "hostile-capability.json",
+      "sha256": "aea4f59ffa0d81196ee3d35c3724d974b3bbdb048ab677e3569465f15485c33a",
+      "job_id": "p5b-fixture-hostile-capability-001",
+      "status": "REFUSED",
+      "validates": true
+    }
+  }
+}
