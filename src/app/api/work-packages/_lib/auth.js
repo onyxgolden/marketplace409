@@ -23,6 +23,7 @@ export function fail(result) {
   return NextResponse.json({
     error: result.error || "Request failed.",
     ...(result.blockers ? { blockers: result.blockers } : {}),
+    ...(result.affectedStepIds ? { affectedStepIds: result.affectedStepIds } : {}),
   }, { status: result.httpStatus || 400 });
 }
 
