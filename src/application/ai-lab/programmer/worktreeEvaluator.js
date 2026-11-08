@@ -56,6 +56,10 @@ export const P5B_REASONS = Object.freeze({
   INTERRUPTED: "INTERRUPTED",
   PATCH_MISMATCH: "PATCH_MISMATCH",
   STALE_WORKTREE: "STALE_WORKTREE",
+  // A host-provided outside-root canary changed, vanished, or could
+  // not be compared during evaluation: the confinement evidence
+  // explicitly failed, so the evaluation fails closed to BLOCKED.
+  OUTSIDE_ROOT_MUTATION: "OUTSIDE_ROOT_MUTATION",
 });
 
 /** Terminal evaluation statuses (the record's `status` field). */

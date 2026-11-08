@@ -17,6 +17,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,6 +153,96 @@ test("isolation is attested on the record and execution stays gated on P5-C", as
     assert.match(record.isolation.execution_gate, /P5-C must prove isolation/);
     assert.ok(record.risks.some((r) => r.startsWith("no-os-isolation-on-host:")));
   }
+});
+
+test("outside-root canary: a canary mutated mid-evaluation fails closed to BLOCKED, cleanup still runs", async () => {
+  const fixture = loadFixture("clean-propose");
+  const store = createMemoryStore();
+  const worktreeRoot = mkdtempSync(join(tmpdir(), "p5b-canary-mutation-"));
+  const canaryDir = mkdtempSync(join(tmpdir(), "p5b-canary-file-"));
+  const canaryPath = join(canaryDir, "outside-canary.txt");
+  writeFileSync(canaryPath, "p5b-outside-root-canary:do-not-touch\n", "utf8");
+  const host = {
+    mirrorPath: join(FIXTURES, fixture.host.mirror),
+    worktreeRoot,
+    taskConstraints: fixture.task.constraints,
+    allowedProfileIds: fixture.host.allowed_profile_ids,
+    canaryPaths: [canaryPath],
+    store,
+    hostMode: "SYNTHETIC_PREVIEW",
+    // Controlled mutation: the isolation probe runs inside the
+    // evaluation, before any worktree exists — mutating the
+    // host-provided canary here is the deterministic stand-in for
+    // any outside-root write during the run.
+    isolationProber: async () => {
+      writeFileSync(canaryPath, "p5b-outside-root-canary:MUTATED\n", "utf8");
+      return null;
+    },
+  };
+  const record = await evaluateCandidate({ job: fixture.job, task: fixture.task, candidate: fixture.candidate }, host);
+  assert.equal(record.status, "BLOCKED");
+  assert.notEqual(record.status, "PROPOSED");
+  assert.ok(record.reason_codes.includes("OUTSIDE_ROOT_MUTATION"));
+  assert.equal(record.reason_codes.includes("OK"), false, "a blocked record must not carry the OK marker");
+  assert.equal(record.canaries.outside_root_unchanged, false);
+  assert.match(record.canaries.detail, /outside-root-canary-changed:/);
+  // Cleanup still ran: the scratch worktree is gone, and the
+  // diagnostic plan/provenance stay on the record.
+  assert.equal(record.worktree.removed, true);
+  assert.equal(readdirSync(worktreeRoot).length, 0, "worktree root must be empty after cleanup");
+  assert.match(record.plan.patch_sha256, /^[0-9a-f]{64}$/);
+  assert.match(record.plan.candidate_tree_digest, /^[0-9a-f]{64}$/);
+});
+
+test("outside-root canary: a canary removed mid-evaluation fails closed as unreadable", async () => {
+  const fixture = loadFixture("clean-propose");
+  const store = createMemoryStore();
+  const worktreeRoot = mkdtempSync(join(tmpdir(), "p5b-canary-removed-"));
+  const canaryDir = mkdtempSync(join(tmpdir(), "p5b-canary-file-"));
+  const canaryPath = join(canaryDir, "outside-canary.txt");
+  writeFileSync(canaryPath, "p5b-outside-root-canary:do-not-touch\n", "utf8");
+  const host = {
+    mirrorPath: join(FIXTURES, fixture.host.mirror),
+    worktreeRoot,
+    taskConstraints: fixture.task.constraints,
+    allowedProfileIds: fixture.host.allowed_profile_ids,
+    canaryPaths: [canaryPath],
+    store,
+    hostMode: "SYNTHETIC_PREVIEW",
+    isolationProber: async () => {
+      rmSync(canaryPath, { force: true });
+      return null;
+    },
+  };
+  const record = await evaluateCandidate({ job: fixture.job, task: fixture.task, candidate: fixture.candidate }, host);
+  assert.equal(record.status, "BLOCKED");
+  assert.ok(record.reason_codes.includes("OUTSIDE_ROOT_MUTATION"));
+  assert.equal(record.canaries.outside_root_unchanged, false);
+  assert.match(record.canaries.detail, /outside-root-canary-unreadable-after:/);
+  assert.equal(record.worktree.removed, true);
+});
+
+test("outside-root canary: an unchanged canary leaves a clean candidate PROPOSED", async () => {
+  const fixture = loadFixture("clean-propose");
+  const store = createMemoryStore();
+  const worktreeRoot = mkdtempSync(join(tmpdir(), "p5b-canary-clean-"));
+  const canaryDir = mkdtempSync(join(tmpdir(), "p5b-canary-file-"));
+  const canaryPath = join(canaryDir, "outside-canary.txt");
+  writeFileSync(canaryPath, "p5b-outside-root-canary:do-not-touch\n", "utf8");
+  const host = {
+    mirrorPath: join(FIXTURES, fixture.host.mirror),
+    worktreeRoot,
+    taskConstraints: fixture.task.constraints,
+    allowedProfileIds: fixture.host.allowed_profile_ids,
+    canaryPaths: [canaryPath],
+    store,
+    hostMode: "SYNTHETIC_PREVIEW",
+  };
+  const record = await evaluateCandidate({ job: fixture.job, task: fixture.task, candidate: fixture.candidate }, host);
+  assert.equal(record.status, "PROPOSED");
+  assert.deepEqual(record.reason_codes, ["OK"]);
+  assert.equal(record.canaries.outside_root_unchanged, true);
+  assert.equal(record.worktree.removed, true);
 });
 
 test("idempotency: same key + job + candidate returns the identical record, no second execution", async () => {

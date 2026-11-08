@@ -838,15 +838,31 @@ export async function evaluateCandidate(input, host) {
       outside_root_unchanged: true,
       detail: "mirror refs/HEAD/index compared before/after",
     };
+    // Outside-root canaries cover ONLY the host-supplied paths: a
+    // changed, removed, or unreadable canary fails the check. An
+    // empty canary list is no evidence about the rest of the
+    // filesystem — it proves nothing universal.
+    const failedCanaries = [];
     for (const [p, before] of canaryBefore) {
       let afterDigest = null;
+      let readableAfter = true;
       try {
         afterDigest = sha256Hex(fs.readFileSync(p));
-      } catch {}
-      if (afterDigest !== before) {
-        canaries.outside_root_unchanged = false;
-        canaries.detail = `outside-root-canary-changed:${p}`;
+      } catch {
+        readableAfter = false;
       }
+      if (before === null) {
+        // Unreadable before the run started: cannot be compared.
+        failedCanaries.push(`outside-root-canary-unreadable-before:${p}`);
+      } else if (!readableAfter) {
+        failedCanaries.push(`outside-root-canary-unreadable-after:${p}`);
+      } else if (afterDigest !== before) {
+        failedCanaries.push(`outside-root-canary-changed:${p}`);
+      }
+    }
+    if (failedCanaries.length > 0) {
+      canaries.outside_root_unchanged = false;
+      canaries.detail = failedCanaries.join("; ");
     }
     if (mirrorInfo && (!canaries.refs_unchanged || !canaries.head_unchanged || canaries.index_unchanged === false)) {
       // The mirror moved under us — the evaluation cannot be trusted.
@@ -864,6 +880,25 @@ export async function evaluateCandidate(input, host) {
         status: "BLOCKED",
         reason_codes: [...(outcome?.reason_codes ?? []), REASON.CLEANUP_FAILED],
         detail: `cleanup failed: ${cleanupFailed.detail}`,
+        isolation: outcome?.isolation ?? { mechanism: null, detail: "unknown", attested_by: "qa-test-runner-isolation@detectIsolation", execution_gate: "P5-C must prove isolation before running candidate tests; this record does not authorize execution" },
+        plan: outcome?.plan ?? null,
+        budgets: outcome?.budgets ?? null,
+      };
+    }
+    if (!canaries.outside_root_unchanged) {
+      // A host-provided outside-root canary changed, vanished, or
+      // could not be compared: the confinement evidence explicitly
+      // failed, so the evaluation fails closed to BLOCKED even when
+      // the candidate otherwise validated — a PROPOSED outcome must
+      // never carry failed canary evidence downstream to P5-C.
+      // Earlier reasons are preserved (the "OK" success marker is
+      // not a reason); the plan/provenance stay on the record as
+      // diagnostic evidence, and cleanup has already run above.
+      const priorReasons = (outcome?.reason_codes ?? []).filter((r) => r !== REASON.OK);
+      outcome = {
+        status: "BLOCKED",
+        reason_codes: [...new Set([...priorReasons, P5B_REASONS.OUTSIDE_ROOT_MUTATION])],
+        detail: `outside-root canary failed: ${canaries.detail}`,
         isolation: outcome?.isolation ?? { mechanism: null, detail: "unknown", attested_by: "qa-test-runner-isolation@detectIsolation", execution_gate: "P5-C must prove isolation before running candidate tests; this record does not authorize execution" },
         plan: outcome?.plan ?? null,
         budgets: outcome?.budgets ?? null,
