@@ -209,6 +209,18 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, linkRevisi
   return { calls, getSteps: () => currentSteps, getLinks: () => links };
 }
 
+function buttonByAriaLabel(container, label) {
+  return container.querySelector(`button[aria-label="${label}"]`);
+}
+
+function stepRows(container) {
+  return [...container.querySelectorAll("[data-step-id]")];
+}
+
+function stepCells(row) {
+  return [...row.querySelectorAll('[role="cell"], [role="gridcell"]')];
+}
+
 async function renderPanel(props = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -270,13 +282,21 @@ afterEach(() => {
 });
 
 describe("WorkPackageSteps", () => {
-  it("renders steps in schedule order with estimates and package context", async () => {
+  it("renders steps in schedule order as an editable grid with estimates and package context", async () => {
     setupFetch();
     const { container } = await renderPanel();
-    expect(container.textContent).toContain("#1 Fabricate pipe spool");
-    expect(container.textContent).toContain("#2 Install supports");
-    expect(container.textContent).toContain("Planned 3 days");
-    expect(container.textContent).toContain("Planned 24.5 person-hours");
+    const rows = stepRows(container);
+    expect(rows).toHaveLength(2);
+    expect(stepCells(rows[0])[0].textContent).toContain("#1");
+    expect(stepCells(rows[0])[1].textContent).toContain("Fabricate pipe spool");
+    expect(stepCells(rows[0])[2].textContent).toContain("Shop work");
+    expect(stepCells(rows[0])[3].textContent).toContain("Pipefitter");
+    expect(stepCells(rows[0])[4].textContent).toContain("3");
+    expect(stepCells(rows[0])[5].textContent).toContain("24.5");
+    expect(stepCells(rows[1])[0].textContent).toContain("#2");
+    expect(stepCells(rows[1])[1].textContent).toContain("Install supports");
+    // Blank add-rows fill the page below the steps.
+    expect(container.querySelectorAll("[data-blank-row]")).toHaveLength(10);
     expect(container.textContent).toContain("Planned crew (from craft assignments)");
     expect(container.textContent).toContain("48 person-hours");
     expect(container.textContent).toContain("Takeoff progress (from progress entries)");
@@ -332,16 +352,17 @@ describe("WorkPackageSteps", () => {
     // in the confirmation and in the "Replaces" dropdown — both are
     // correct), and the next step closes the gap to #1.
     await waitFor(() => {
-      const rows = [...container.querySelectorAll("ul.mt-4 > li")];
+      const rows = stepRows(container);
       expect(rows).toHaveLength(1);
-      expect(rows[0].textContent).toContain("#1 Install supports");
+      expect(stepCells(rows[0])[0].textContent).toContain("#1");
+      expect(stepCells(rows[0])[1].textContent).toContain("Install supports");
     });
   });
 
   it("moves a step down with a single-step move and the generation guard", async () => {
     const { calls } = setupFetch();
     const { container } = await renderPanel();
-    await act(async () => { buttonByText(container, "↓ Move down").click(); });
+    await act(async () => { buttonByAriaLabel(container, "Move Fabricate pipe spool down").click(); });
     await act(async () => {});
     expect(container.textContent).toContain("Schedule order updated");
     const move = calls.find((c) => c.url.endsWith("/move"));
@@ -352,8 +373,11 @@ describe("WorkPackageSteps", () => {
     // A move never submits a full permutation: no reorder call at all.
     expect(calls.some((c) => c.url.endsWith("/reorder"))).toBe(false);
     await waitFor(() => {
-      expect(container.textContent).toContain("#1 Install supports");
-      expect(container.textContent).toContain("#2 Fabricate pipe spool");
+      const rows = stepRows(container);
+      expect(stepCells(rows[0])[0].textContent).toContain("#1");
+      expect(stepCells(rows[0])[1].textContent).toContain("Install supports");
+      expect(stepCells(rows[1])[0].textContent).toContain("#2");
+      expect(stepCells(rows[1])[1].textContent).toContain("Fabricate pipe spool");
     });
   });
 
@@ -363,24 +387,26 @@ describe("WorkPackageSteps", () => {
     }));
     const { calls } = setupFetch({ list: many });
     const { container } = await renderPanel();
-    const stepRows = () => [...container.querySelectorAll("ul.mt-4 > li")];
     await waitFor(() => {
-      expect(stepRows()).toHaveLength(201);
-      expect(stepRows()[200].textContent).toContain("#201 Step 201");
+      expect(stepRows(container)).toHaveLength(201);
+      const last = stepRows(container)[200];
+      expect(stepCells(last)[0].textContent).toContain("#201");
+      expect(stepCells(last)[1].textContent).toContain("Step 201");
     });
     // The active list was paged exhaustively (100 + 100 + 1), and
     // the retired list was fetched separately — never one capped
     // request standing for the whole schedule.
     const listCalls = calls.filter((c) => c.method === "GET" && c.url.includes("/work-steps?"));
     expect(listCalls.map((c) => new URL(c.url, "https://test").searchParams.get("offset"))).toEqual(["0", "100", "200", "0"]);
-    await act(async () => { buttonByText(container, "↓ Move down").click(); });
+    await act(async () => { buttonByAriaLabel(container, "Move Step 1 down").click(); });
     await act(async () => {});
     const move = calls.find((c) => c.url.endsWith("/move"));
     expect(JSON.parse(move.body)).toMatchObject({ targetSequenceNo: 2, expectedGeneration: 2 });
     expect(calls.some((c) => c.url.endsWith("/reorder"))).toBe(false);
     await waitFor(() => {
-      expect(container.textContent).toContain("#1 Step 2");
-      expect(container.textContent).toContain("#2 Step 1");
+      const rows = stepRows(container);
+      expect(stepCells(rows[0])[1].textContent).toContain("Step 2");
+      expect(stepCells(rows[1])[1].textContent).toContain("Step 1");
     });
   });
 
@@ -394,10 +420,11 @@ describe("WorkPackageSteps", () => {
     }));
     setupFetch({ list: [...active, ...retired] });
     const { container } = await renderPanel();
-    const stepRows = () => [...container.querySelectorAll("ul.mt-4 > li")];
     await waitFor(() => {
-      expect(stepRows()).toHaveLength(150);
-      expect(stepRows()[149].textContent).toContain("#150 Active 150");
+      expect(stepRows(container)).toHaveLength(150);
+      const last = stepRows(container)[149];
+      expect(stepCells(last)[0].textContent).toContain("#150");
+      expect(stepCells(last)[1].textContent).toContain("Active 150");
     });
     // All 60 retired steps are fetched on their own pages, so the
     // last one is still offered as a supersession candidate — under
@@ -566,19 +593,63 @@ describe("WorkPackageSteps", () => {
   it("hides retired steps unless asked, and offers them as supersession candidates", async () => {
     setupFetch({ list: [STEP_1, STEP_2, RETIRED_STEP] });
     const { container } = await renderPanel();
-    const stepRows = () => [...container.querySelectorAll("ul.mt-4 > li")];
     expect(container.textContent).toContain("Fabricate pipe spool");
     // The retired step is not a list row — though its name does
     // appear in the "Replaces" dropdown, which is how a replacement
     // step is authored.
-    expect(stepRows().some((li) => li.textContent.includes("Old plan"))).toBe(false);
+    expect(stepRows(container).some((row) => row.textContent.includes("Old plan"))).toBe(false);
     await act(async () => {
       container.querySelector('input[type="checkbox"]').click();
     });
     await act(async () => {});
-    expect(stepRows().some((li) => li.textContent.includes("Old plan"))).toBe(true);
+    expect(stepRows(container).some((row) => row.textContent.includes("Old plan"))).toBe(true);
     const supersedes = container.querySelector("#step-supersedes");
     expect(supersedes.textContent).toContain("#3 Old plan");
+  });
+
+  it("creates a step by typing in a blank row, with the server assigning its number", async () => {
+    const { calls } = setupFetch({ list: [] });
+    const { container } = await renderPanel();
+    const blankTitle = container.querySelector('[aria-label="Title for new step row 1"]');
+    expect(blankTitle.textContent).toContain("New step title");
+    await act(async () => {
+      blankTitle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = container.querySelector('input[aria-label="Title for new step row 1"]');
+    setInput(container, "Title for new step row 1", "Set pipe");
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await act(async () => {});
+    expect(container.textContent).toContain("Work step added");
+    const post = calls.find((c) => c.method === "POST" && c.url.includes("/work-steps") && !c.url.includes("/reorder"));
+    expect(JSON.parse(post.body)).toMatchObject({ title: "Set pipe" });
+    await waitFor(() => {
+      const rows = stepRows(container);
+      expect(rows).toHaveLength(1);
+      expect(stepCells(rows[0])[0].textContent).toContain("#1");
+      expect(stepCells(rows[0])[1].textContent).toContain("Set pipe");
+    });
+  });
+
+  it("edits a step title in the grid through the existing PATCH", async () => {
+    const { calls } = setupFetch();
+    const { container } = await renderPanel();
+    const titleCell = container.querySelector('[aria-label="Title for step 1"]');
+    await act(async () => {
+      titleCell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    setInput(container, "Title for step 1", "Fabricate pipe spool (revised)");
+    const editor = container.querySelector('input[aria-label="Title for step 1"]');
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await act(async () => {});
+    expect(container.textContent).toContain("Work step updated");
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(JSON.parse(patch.body)).toMatchObject({
+      expectedVersion: 1, title: "Fabricate pipe spool (revised)",
+    });
   });
 
   it("shows the plain-words unavailable message while the migration is unapplied", async () => {
