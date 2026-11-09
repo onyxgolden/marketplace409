@@ -50,12 +50,14 @@ def client_text(obj: dict) -> bytes:
 class _StubServer:
     """Minimal ReceptionistServer stand-in for gateway tests."""
 
-    def __init__(self, tmp, *, mode="TEST_ONLY", campaign=10.0):
+    def __init__(self, tmp, *, mode="TEST_ONLY", campaign=10.0,
+                 per_call=0.50):
         self.config = ReceptionistConfig(
             cost_ledger_path=os.path.join(tmp, "ledger.json"),
             kill_switch_path=os.path.join(tmp, "kill.json"),
             stream_token_secret="stream-secret",
-            max_cost_campaign_usd=campaign)
+            max_cost_campaign_usd=campaign,
+            max_cost_per_call_usd=per_call)
         self.kill_switch = KillSwitch(self.config.kill_switch_path)
         self.cost_ledger = CostLedger(self.config.cost_ledger_path)
         self.latency_recorder = LatencyRecorder(os.path.join(tmp, "latency.jsonl"))
@@ -436,6 +438,170 @@ class TestSessionReservationAtGateway(unittest.TestCase):
                 self.assertNotIn("CA-gw-B", server.pipelines)
                 sock_b.close()
                 sock_a.close()
+            finally:
+                gateway.stop()
+
+
+class TestDurationBudgetExtension(unittest.TestCase):
+    """Fix round 3, P1: a live call's duration headroom must grow with
+    its elapsed billable time — one blended minute reserved per minute,
+    in the media loop, independent of turns. A silent call cannot
+    accrue unreserved minutes, and the final record can never convert
+    unreserved duration into an over-ceiling charge. Elapsed time is
+    simulated by backdating the session's started_at (the gateway
+    measures elapsed time from it, exactly as the close path does)."""
+
+    def _send_silence(self, sock, stream_sid, call_sid, seq=1):
+        """One media frame of silence: no turn flushes (50 frames
+        make a turn), so the call stays silent for budget purposes."""
+        sock.sendall(client_text({
+            "event": "media", "streamSid": stream_sid,
+            "media": {"callSid": call_sid, "sequenceNumber": str(seq),
+                      "timestamp": str(seq * 20),
+                      "payload": base64.b64encode(b"\x00" * 160).decode()}}))
+
+    def test_silent_call_ends_when_campaign_covers_only_one_minute(self):
+        # The verdict's regression (1): campaign ceiling sufficient
+        # for exactly one minute. The call must end at the second
+        # minute boundary, before minute 2 accrues.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.04)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dur-1",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dur-1", "MZ-dur-1", token)
+                time.sleep(0.5)
+                self.assertIn("CA-dur-1", server.live_sessions)
+                live = server.live_sessions["CA-dur-1"]
+                self.assertEqual(live["reserved_minutes"], 1)
+                live["session"].started_at = time.time() - 61
+                self._send_silence(sock, "MZ-dur-1", "CA-dur-1")
+                time.sleep(0.5)
+                self.assertIn(("CA-dur-1", "duration_budget_exhausted"),
+                              server.ended)
+                self.assertNotIn("CA-dur-1", server.live_sessions)
+                # Nothing past the one reserved minute was ever held.
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.04)
+                held = [e for e in server.cost_ledger.entries()
+                        if e.get("kind") == "reservation"]
+                self.assertEqual(len(held), 1)
+                self.assertEqual(held[0]["purpose"], "session")
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_two_concurrent_calls_near_limit_neither_exceeds_ceiling(self):
+        # The verdict's regression (2): campaign of exactly two
+        # minutes, two live calls. Neither may accrue a second minute.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.08)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                socks = []
+                for cid, sid in (("CA-dur-A", "MZ-dur-A"),
+                                 ("CA-dur-B", "MZ-dur-B")):
+                    token = sign_stream_token("stream-secret", cid,
+                                              "brandy-rental-office")
+                    socks.append(_open_stream(port, cid, sid, token))
+                time.sleep(0.5)
+                self.assertIn("CA-dur-A", server.live_sessions)
+                self.assertIn("CA-dur-B", server.live_sessions)
+                for cid in ("CA-dur-A", "CA-dur-B"):
+                    server.live_sessions[cid]["session"].started_at = \
+                        time.time() - 61
+                self._send_silence(socks[0], "MZ-dur-A", "CA-dur-A")
+                self._send_silence(socks[1], "MZ-dur-B", "CA-dur-B")
+                time.sleep(0.5)
+                self.assertIn(("CA-dur-A", "duration_budget_exhausted"),
+                              server.ended)
+                self.assertIn(("CA-dur-B", "duration_budget_exhausted"),
+                              server.ended)
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.08)
+                for cid in ("CA-dur-A", "CA-dur-B"):
+                    self.assertLessEqual(
+                        server.cost_ledger.call_total_usd(cid), 0.50)
+                for sock in socks:
+                    sock.close()
+            finally:
+                gateway.stop()
+
+    def test_extension_reserves_each_further_minute_while_headroom_remains(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=10.0)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dur-2",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dur-2", "MZ-dur-2", token)
+                time.sleep(0.5)
+                live = server.live_sessions["CA-dur-2"]
+                self.assertEqual(live["reserved_minutes"], 1)
+                for elapsed, minutes in ((61, 2), (121, 3), (181, 4)):
+                    live["session"].started_at = time.time() - elapsed
+                    self._send_silence(sock, "MZ-dur-2", "CA-dur-2",
+                                       seq=elapsed)
+                    time.sleep(0.3)
+                    self.assertIn("CA-dur-2", server.live_sessions)
+                    self.assertEqual(live["reserved_minutes"], minutes)
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.16)
+                # Normal close still works after extensions.
+                sock.sendall(client_text(
+                    {"event": "stop", "stop": {"callSid": "CA-dur-2"}}))
+                time.sleep(0.5)
+                self.assertIn(("CA-dur-2", "twilio_stop"), server.ended)
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_admission_refuses_when_no_turn_headroom(self):
+        # Per-call ceiling $0.05: the session minute ($0.04) fits, but
+        # one more minute for a turn does not — the call is refused at
+        # admission instead of being admitted unable to take a turn,
+        # and the refused session minute is released, not held.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=10.0,
+                                 per_call=0.05)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dur-3",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dur-3", "MZ-dur-3", token)
+                time.sleep(0.5)
+                self.assertNotIn("CA-dur-3", server.live_sessions)
+                self.assertNotIn("CA-dur-3", server.pipelines)
+                self.assertEqual(server.cost_ledger.entries(), [])
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_max_call_duration_cap_ends_call_with_headroom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=10.0)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dur-4",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dur-4", "MZ-dur-4", token)
+                time.sleep(0.5)
+                live = server.live_sessions["CA-dur-4"]
+                live["session"].started_at = time.time() - 1801
+                self._send_silence(sock, "MZ-dur-4", "CA-dur-4")
+                time.sleep(0.5)
+                self.assertIn(("CA-dur-4", "max_call_duration_reached"),
+                              server.ended)
+                self.assertNotIn("CA-dur-4", server.live_sessions)
+                sock.close()
             finally:
                 gateway.stop()
 

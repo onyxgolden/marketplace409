@@ -384,6 +384,43 @@ class TestSessionTurnReservations(unittest.TestCase):
             self.assertAlmostEqual(ledger.call_total_usd("CA-1"),
                                    ledger.total_usd())
 
+    def test_extended_session_final_never_exceeds_reserved_headroom(self):
+        # Fix round 3, P1: the gateway extends the session reservation
+        # one blended minute per elapsed minute; the final record
+        # prices actual elapsed duration at component rates, so the
+        # final total can never exceed what was reserved — no
+        # unreserved duration becomes an over-ceiling charge.
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            # A ~3-minute call: three session-minute reservations.
+            for _ in range(3):
+                ledger.reserve(call_sid="CA-1", source="TEST",
+                               purpose="session", projected_usd=0.04,
+                               max_per_call_usd=0.50, max_campaign_usd=10.0)
+            turn_res = ledger.reserve(
+                call_sid="CA-1", source="TEST", purpose="turn",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            turn = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=0.0,
+                agent_chars=200, llm_minutes=0.01,
+                settle_reservation_id=turn_res["id"])
+            final = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=150,
+                agent_chars=0, llm_minutes=0.0,
+                final=True, final_once=True)
+            self.assertEqual(
+                [e for e in ledger.entries()
+                 if e.get("kind") == "reservation"], [])
+            self.assertAlmostEqual(
+                ledger.total_usd(),
+                turn["estimated_usd"] + final["estimated_usd"])
+            # The final duration charge is inside the headroom the
+            # three session minutes held (blended $0.04/min vs
+            # component ~$0.0206/min actuals).
+            self.assertLessEqual(final["estimated_usd"], 0.12)
+            self.assertLessEqual(ledger.total_usd(), 0.50)
+
     def test_last_minute_held_while_call_stays_connected(self):
         # The verdict's regression: call A reserves the last minute of
         # budget, completes a fast turn but stays connected, and call B

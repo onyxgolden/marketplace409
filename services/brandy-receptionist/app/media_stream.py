@@ -14,7 +14,10 @@ Flow per stream:
   media     -> sequence/timestamp tracking (gaps recorded, never fatal),
                barge-in detection (caller audio while TTS is playing ->
                pipeline stop + Twilio `clear`), utterance buffering,
-               pipeline turn -> paced audio back to Twilio
+               pipeline turn -> paced audio back to Twilio; every media
+               event also re-checks the duration budget (one blended
+               minute reserved per elapsed minute, call ended when the
+               ceilings cannot fund the next minute — fix round 3, P1)
   stop      -> end the session, ingest the call record, close cleanly
   mark      -> log (playback acknowledgement)
 
@@ -296,6 +299,21 @@ class MediaStreamGateway:
                         audio_buffer.clear()
                     self.server.end_live_session(call_sid, "twilio_stop")
                     break
+                # Duration budget (fix round 3, P1): checked after
+                # every media event, independent of turns — a silent
+                # call's frames arrive just as steadily as a talking
+                # call's, so its budget is enforced even with no turns.
+                # A failed extension (or the absolute duration cap)
+                # ends the session before the next billable interval
+                # accrues; the socket close falls back to Twilio's
+                # human voicemail/forwarding.
+                if call_sid is not None:
+                    live = self.server.live_sessions.get(call_sid)
+                    if live is not None:
+                        reason = self._duration_budget_check(live, call_sid)
+                        if reason is not None:
+                            self.server.end_live_session(call_sid, reason)
+                            break
         except (ConnectionError, OSError, ValueError):
             # Dropped stream without `stop`: end as INCOMPLETE (safe close).
             if call_sid is not None:
@@ -376,6 +394,21 @@ class MediaStreamGateway:
         # settlement never touches it. Its id is kept on the live
         # session so the close path can settle it explicitly; it is
         # released if pipeline construction fails.
+        #
+        # One minute is only the FIRST minute (fix round 3, P1): the
+        # gateway extends the session reservation one blended minute
+        # per elapsed minute in the media loop
+        # (_duration_budget_check), independent of turns, so a silent
+        # call cannot accrue unreserved billable duration. The full
+        # 30-minute maximum is NOT reserved at admission: at the
+        # blended rate it costs ~$1.20, more than the $0.50 per-call
+        # ceiling, so a full-max reservation would refuse every call.
+        # Instead each minute is claimed atomically as it approaches,
+        # and the call ends (fail closed) the minute the ceilings
+        # cannot fund the next one. Under the default ceilings a call
+        # is therefore duration-capped at ~12 minutes ($0.50 / $0.04);
+        # the 30-minute maximum is reachable only with a higher
+        # per-call ceiling, set by the owner with the spend word.
         reservation = None
         try:
             reservation = self.server.cost_ledger.reserve(
@@ -384,7 +417,30 @@ class MediaStreamGateway:
                     self.server.config.cost_rate_version),
                 max_per_call_usd=self.server.config.max_cost_per_call_usd,
                 max_campaign_usd=self.server.config.max_cost_campaign_usd)
+            # Admission must fit the reserved duration AND the
+            # projected turn spend (fix round 3, P1): one more blended
+            # minute for a turn has to fit the PER-CALL ceiling, or
+            # the call is admitted into a state where it can never
+            # take a turn. The campaign ceiling is NOT part of this
+            # check: the campaign is shared and dynamic (a sibling
+            # ending frees it), and every reserve() claim enforces it
+            # atomically — the check here is the per-call fit the
+            # verdict requires. A sibling may still consume the
+            # headroom before the first turn; that turn's own
+            # reserve() is the real guard and fails the call closed
+            # then.
+            self.server.cost_ledger.check_call_ceiling(
+                call_sid=call_sid,
+                projected_usd=blended_minute_usd(
+                    self.server.config.cost_rate_version),
+                max_per_call_usd=self.server.config.max_cost_per_call_usd)
         except BudgetExceeded:
+            if reservation is not None:
+                try:
+                    self.server.cost_ledger.release_reservation(
+                        reservation["id"])
+                except BudgetExceeded:
+                    pass  # corrupt ledger: the headroom stays held
             return None
         session = CallSession(call_sid, source=source)
         # The TwiML <Say> already spoke the disclosure: mark it played so
@@ -406,9 +462,65 @@ class MediaStreamGateway:
         sender.start()
         live = {"session": session, "pipeline": pipeline, "sender": sender,
                 "stream_sid": event["stream_sid"], "source": source,
-                "session_reservation_id": reservation["id"]}
+                "session_reservation_id": reservation["id"],
+                # Minutes of duration headroom held so far (fix round 3,
+                # P1): 1 at admission, extended one minute at a time by
+                # _duration_budget_check as the call elapses.
+                "reserved_minutes": 1}
         self.server.live_sessions[call_sid] = live
         return live
+
+    def _duration_budget_check(self, live: dict, call_sid: str) -> str | None:
+        """Enforce the call's duration budget (fix round 3, P1).
+
+        Returns None while the call may continue, or a reason string
+        when the session must end NOW, before the next billable
+        interval accrues. Runs on every media-loop iteration,
+        independent of turns: Twilio streams audio frames even while
+        the caller is silent, so a quiet call is checked just as
+        often as a talkative one.
+
+        The rule: the call may only accrue billable minutes it has
+        already reserved. At admission one blended minute is held; at
+        each further minute boundary one more is claimed atomically
+        (purpose "session", same as the admission minute), so the
+        headroom grows with the elapsed time and a concurrent call
+        cannot spend it first. A failed extension means the
+        per-call or campaign ceiling cannot fund the next minute:
+        the call ends instead of accruing unreserved duration. The
+        absolute max_call_duration_s cap ends the call even with
+        headroom to spare.
+
+        Coverage: a held minute is priced at the blended $0.04 while
+        the final record prices duration at the component rates
+        (~$0.0206/min), so reserved headroom always exceeds the final
+        duration charge — the final can never convert unreserved
+        duration into an over-ceiling charge. Turn provider spend is
+        separately guarded by per-turn reservations (unchanged).
+        Crash/restart: extension reservations are purpose "session"
+        with the 3600 s TTL, so a dead worker's unspent headroom
+        settles as assumed spend (fix round 2), never silently
+        restored."""
+        session = live["session"]
+        elapsed_s = time.time() - session.started_at
+        if elapsed_s >= self.server.config.max_call_duration_s:
+            return "max_call_duration_reached"
+        minutes_needed = int(elapsed_s // 60) + 1
+        reserved = live.get("reserved_minutes", 1)
+        while reserved < minutes_needed:
+            try:
+                self.server.cost_ledger.reserve(
+                    call_sid=call_sid, source=live["source"],
+                    purpose="session",
+                    projected_usd=blended_minute_usd(
+                        self.server.config.cost_rate_version),
+                    max_per_call_usd=self.server.config.max_cost_per_call_usd,
+                    max_campaign_usd=self.server.config.max_cost_campaign_usd)
+            except BudgetExceeded:
+                return "duration_budget_exhausted"
+            reserved += 1
+        live["reserved_minutes"] = reserved
+        return None
 
     def _flush_turn(self, conn: socket.socket, call_sid: str, audio: bytes,
                     sender: AudioSender | None) -> None:

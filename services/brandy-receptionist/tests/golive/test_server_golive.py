@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -332,6 +333,37 @@ class TestKillAndEndLiveSession(unittest.TestCase):
                 self.assertIsNone(server.end_live_session("CA-srv-1", "completed"))
                 # The record reached the outbox (no FORGE URL configured).
                 self.assertEqual(server.outbox.pending_count(), 1)
+            finally:
+                server.shutdown()
+
+    def test_end_live_session_settles_extended_session_minutes(self):
+        # Fix round 3, P1: the gateway extends the session reservation
+        # one blended minute per elapsed minute; the close settles all
+        # of them into one final priced on actual elapsed duration,
+        # and the total never exceeds the reserved headroom.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, session = self._live_server(tmp)
+            try:
+                # Three session minutes reserved, as the gateway's
+                # extension would hold for a ~3-minute call.
+                for _ in range(3):
+                    server.cost_ledger.reserve(
+                        call_sid="CA-srv-1", source="TEST", purpose="session",
+                        projected_usd=0.04, max_per_call_usd=0.50,
+                        max_campaign_usd=10.0)
+                session.started_at = time.time() - 150
+                payload = server.end_live_session("CA-srv-1", "completed")
+                self.assertIsNotNone(payload)
+                self.assertEqual(
+                    [e for e in server.cost_ledger.entries()
+                     if e.get("kind") == "reservation"], [])
+                finals = [e for e in server.cost_ledger.entries()
+                          if e.get("usage", {}).get("final") is True]
+                self.assertEqual(len(finals), 1)
+                self.assertAlmostEqual(finals[0]["usage"]["duration_s"],
+                                       150, delta=1)
+                self.assertLessEqual(finals[0]["estimated_usd"], 0.12)
+                self.assertLessEqual(payload["cost_estimate_usd"], 0.50)
             finally:
                 server.shutdown()
 

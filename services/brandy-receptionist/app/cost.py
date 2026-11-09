@@ -566,20 +566,27 @@ class CostLedger:
         return self._read(lambda entries: [dict(e) for e in entries])
 
     def check_call_ceiling(self, *, call_sid: str, projected_usd: float,
-                           max_per_call_usd: float, max_campaign_usd: float) -> None:
+                           max_per_call_usd: float,
+                           max_campaign_usd: float | None = None) -> None:
         """Raise BudgetExceeded before a session/action that would breach.
         Read-only check (no reservation): callers that proceed to spend
         must use reserve() instead, so the headroom is actually held.
         projected_usd is the worst-case additional spend for this call
         (e.g. one more minute at the blended rate). The campaign total
         includes everything already ledgered, reservations included.
-        """
+        Pass max_campaign_usd=None to check the per-call ceiling only:
+        the campaign is a shared, dynamic resource — a sibling ending
+        frees it — so the campaign fit is enforced atomically by each
+        reserve() claim, not by an admission-time read (fix round 3,
+        P1: the verdict's admission check is a per-call fit)."""
         def _check(entries: list) -> None:
             spent_this_call = self._spent_for_call(entries, call_sid)
             if spent_this_call + projected_usd > max_per_call_usd:
                 raise BudgetExceeded(
                     f"per-call ceiling ${max_per_call_usd:.2f} would be breached "
                     f"(spent ${spent_this_call:.4f} + projected ${projected_usd:.4f})")
+            if max_campaign_usd is None:
+                return
             total = self._campaign_total(entries)
             if total + projected_usd > max_campaign_usd:
                 raise BudgetExceeded(
