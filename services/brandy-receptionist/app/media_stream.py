@@ -14,10 +14,16 @@ Flow per stream:
   media     -> sequence/timestamp tracking (gaps recorded, never fatal),
                barge-in detection (caller audio while TTS is playing ->
                pipeline stop + Twilio `clear`), utterance buffering,
-               pipeline turn -> paced audio back to Twilio; every media
-               event also re-checks the duration budget (one blended
-               minute reserved per elapsed minute, call ended when the
-               ceilings cannot fund the next minute — fix round 3, P1)
+               pipeline turn -> paced audio back to Twilio; the duration
+               budget is enforced on a deadline independent of frames
+               (one blended minute reserved per elapsed minute, the
+               next claimed 5 s before its interval starts, call ended
+               when the ceilings cannot fund it — fix round 3, P1;
+               deadline + watchdog enforcement fix round 4, P1):
+               every media event re-checks it, each socket read is
+               bounded by the next deadline, and an independent
+               watchdog thread enforces it while frames stall or a
+               provider turn blocks the loop
   stop      -> end the session, ingest the call record, close cleanly
   mark      -> log (playback acknowledgement)
 
@@ -36,6 +42,7 @@ import base64
 import hashlib
 import json
 import queue
+import select
 import socket
 import struct
 import threading
@@ -52,6 +59,15 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 FRAME_BYTES = 160          # 20 ms of mulaw 8kHz audio per Twilio frame
 FRAME_INTERVAL_S = 0.02
 UTTERANCE_FLUSH_FRAMES = 50  # flush a turn after ~1.0 s of caller audio
+# Fix round 4, P1 — deadline enforcement: the next minute is reserved
+# RESERVE_MARGIN_S before its billable interval starts, so scheduling
+# and network delays can never push the reservation past the boundary.
+RESERVE_MARGIN_S = 5.0
+# Longest a single socket wait may run without a budget recheck.
+MAX_READ_TIMEOUT_S = 30.0
+# The watchdog re-derives its deadline at least this often, so an
+# extension made by the loop thread is never stale for long.
+WATCHDOG_POLL_S = 5.0
 
 
 def _ws_accept(key: str) -> str:
@@ -59,42 +75,110 @@ def _ws_accept(key: str) -> str:
     return base64.b64encode(digest).decode()
 
 
-def _recv_exact(sock: socket.socket, n: int) -> bytes:
-    data = b""
-    while len(data) < n:
-        chunk = sock.recv(n - len(data))
-        if not chunk:
-            raise ConnectionError("websocket peer closed")
-        data += chunk
-    return data
+class _FrameTimeout(Exception):
+    """No complete frame arrived before the read deadline. Any partial
+    bytes already received stay buffered in the reader — the next read
+    resumes the same frame instead of desyncing the stream."""
 
 
-def read_frame(sock: socket.socket) -> dict | None:
-    """Read one WebSocket frame. Returns {"opcode", "payload"} or None on
-    a clean close frame. Raises on protocol errors / peer disconnect."""
-    header = _recv_exact(sock, 2)
-    b0, b1 = header[0], header[1]
+_NEED_MORE = object()  # _try_parse_frame sentinel: not enough bytes yet
+
+
+def _try_parse_frame(buf: bytes):
+    """Parse one complete WebSocket frame from the head of `buf`.
+
+    Returns (frame, consumed) where frame is {"opcode", "payload"} (or
+    None for a clean close frame) and consumed is the byte count to
+    drop from the buffer; returns (_NEED_MORE, 0) when the buffer
+    does not yet hold a whole frame. Raises ValueError on fragmented
+    frames, exactly as the old blocking read_frame did."""
+    if len(buf) < 2:
+        return _NEED_MORE, 0
+    b0, b1 = buf[0], buf[1]
     fin = bool(b0 & 0x80)
     opcode = b0 & 0x0F
     masked = bool(b1 & 0x80)
     length = b1 & 0x7F
+    offset = 2
     if length == 126:
-        length = struct.unpack(">H", _recv_exact(sock, 2))[0]
+        if len(buf) < offset + 2:
+            return _NEED_MORE, 0
+        length = struct.unpack(">H", buf[offset:offset + 2])[0]
+        offset += 2
     elif length == 127:
-        length = struct.unpack(">Q", _recv_exact(sock, 8))[0]
-    mask_key = _recv_exact(sock, 4) if masked else b""
-    payload = _recv_exact(sock, length) if length else b""
+        if len(buf) < offset + 8:
+            return _NEED_MORE, 0
+        length = struct.unpack(">Q", buf[offset:offset + 8])[0]
+        offset += 8
+    if masked:
+        if len(buf) < offset + 4:
+            return _NEED_MORE, 0
+        mask_key = buf[offset:offset + 4]
+        offset += 4
+    else:
+        mask_key = b""
+    if len(buf) < offset + length:
+        return _NEED_MORE, 0
+    payload = bytes(buf[offset:offset + length])
     if masked:
         payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
     if not fin:
         raise ValueError("fragmented websocket frames are not supported")
+    consumed = offset + length
     if opcode == 8:  # close
-        return None
+        return None, consumed
     if opcode == 9:  # ping -> caller replies with pong
-        return {"opcode": 9, "payload": payload}
+        return {"opcode": 9, "payload": payload}, consumed
     if opcode == 10:  # pong -> ignore
-        return {"opcode": 10, "payload": payload}
-    return {"opcode": opcode, "payload": payload}
+        return {"opcode": 10, "payload": payload}, consumed
+    return {"opcode": opcode, "payload": payload}, consumed
+
+
+class _BufferedFrameReader:
+    """Reads WebSocket frames from a socket against a deadline.
+
+    Bytes are accumulated in an internal buffer and frames are parsed
+    from it, so a read that times out mid-frame loses nothing: the
+    partial bytes stay buffered and the next read resumes the same
+    frame. The wait uses select(), never the socket timeout — the
+    audio sender thread shares this socket and its sendall relies on
+    the 30 s socket timeout, so the reader must not shrink it.
+
+    read_frame_until(deadline_s) returns the next complete frame, or
+    None on a clean close frame; it raises _FrameTimeout when the
+    deadline passes first, ConnectionError when the peer closes, and
+    ValueError on protocol errors."""
+
+    def __init__(self, sock: socket.socket):
+        self._sock = sock
+        self._buf = bytearray()
+
+    def read_frame_until(self, deadline_s: float) -> dict | None:
+        while True:
+            frame, consumed = _try_parse_frame(bytes(self._buf))
+            if frame is not _NEED_MORE:
+                del self._buf[:consumed]
+                return frame
+            remaining = deadline_s - time.time()
+            if remaining <= 0:
+                raise _FrameTimeout()
+            wait = None if remaining == float("inf") else remaining
+            readable, _, _ = select.select([self._sock], [], [], wait)
+            if not readable:
+                raise _FrameTimeout()
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                raise ConnectionError("websocket peer closed")
+            self._buf.extend(chunk)
+
+
+def read_frame(sock: socket.socket) -> dict | None:
+    """Read one WebSocket frame (blocking). Returns {"opcode", "payload"}
+    or None on a clean close frame. Raises on protocol errors / peer
+    disconnect. Kept for single-frame callers; the gateway loop uses
+    _BufferedFrameReader so a deadline can interrupt a stalled read
+    without losing partial bytes."""
+    return _BufferedFrameReader(sock).read_frame_until(float("inf"))
 
 
 def write_frame(sock: socket.socket, opcode: int, payload: bytes) -> None:
@@ -170,6 +254,53 @@ class AudioSender(threading.Thread):
                 return
 
 
+class _BudgetWatchdog(threading.Thread):
+    """Independent duration-deadline enforcer (fix round 4, P1).
+
+    The media loop's deadline-bounded reads cannot fire while the
+    loop thread is blocked in a long provider turn, while a partial
+    frame trickles in byte by byte, or while a send blocks. The
+    watchdog runs on its own thread and enforces the budget at each
+    deadline instead: it reserves the next minute (or ends the call),
+    and on ending it shuts the socket down so any blocked read/send
+    in the loop or sender thread unblocks at once. It re-derives the
+    deadline from the live session at least every WATCHDOG_POLL_S, so
+    an extension made by the loop thread is never stale for long.
+    Daemon thread; stopped via `stop_event`, and it exits on its own
+    when the session is gone."""
+
+    def __init__(self, gateway: "MediaStreamGateway", conn: socket.socket,
+                 call_sid: str, stop_event: threading.Event):
+        super().__init__(daemon=True)
+        self._gateway = gateway
+        self._conn = conn
+        self._call_sid = call_sid
+        self._stop = stop_event
+
+    def run(self) -> None:
+        while not self._stop.is_set():
+            live = self._gateway.server.live_sessions.get(self._call_sid)
+            if live is None:
+                return
+            deadline = self._gateway._next_budget_deadline(live)
+            delay = deadline - time.time()
+            if delay <= 0:
+                reason = self._gateway._duration_budget_check(
+                    live, self._call_sid)
+                if reason is not None:
+                    self._terminate(reason)
+                    return
+                continue
+            self._stop.wait(timeout=min(delay, WATCHDOG_POLL_S))
+
+    def _terminate(self, reason: str) -> None:
+        self._gateway.server.end_live_session(self._call_sid, reason)
+        try:
+            self._conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
 class MediaStreamGateway:
     """One gateway process: accepts Twilio Media Streams connections and
     drives CallPipelines. `server` is the ReceptionistServer (duck-typed):
@@ -237,8 +368,10 @@ class MediaStreamGateway:
         stream_sid = None
         call_sid = None
         sender: AudioSender | None = None
+        watchdog: _BudgetWatchdog | None = None
+        watchdog_stop = threading.Event()
         try:
-            conn.settimeout(30.0)
+            conn.settimeout(MAX_READ_TIMEOUT_S)
             key = self._handshake(conn)
             if key is None:
                 conn.close()
@@ -246,8 +379,32 @@ class MediaStreamGateway:
             tracker = MediaSequenceTracker()
             audio_buffer = bytearray()
             frames_since_flush = 0
+            reader = _BufferedFrameReader(conn)
             while True:
-                frame = read_frame(conn)
+                # Deadline-bounded read (fix round 4, P1): the next
+                # frame is awaited only until the budget must next be
+                # enforced — the earlier of the next minute's reserve
+                # deadline, the absolute duration cap, and 30 s. A
+                # timeout here is not a dropped stream: it is the
+                # moment to reserve the next minute or end the call.
+                # Partial bytes stay buffered in the reader.
+                live = (self.server.live_sessions.get(call_sid)
+                        if call_sid is not None else None)
+                deadline = time.time() + MAX_READ_TIMEOUT_S
+                if live is not None:
+                    deadline = min(deadline,
+                                   self._next_budget_deadline(live))
+                try:
+                    frame = reader.read_frame_until(deadline)
+                except _FrameTimeout:
+                    live = (self.server.live_sessions.get(call_sid)
+                            if call_sid is not None else None)
+                    if live is not None:
+                        reason = self._duration_budget_check(live, call_sid)
+                        if reason is not None:
+                            self.server.end_live_session(call_sid, reason)
+                            break
+                    continue
                 if frame is None:
                     break  # clean close
                 if frame["opcode"] == 9:  # ping
@@ -270,6 +427,13 @@ class MediaStreamGateway:
                     if session is None:
                         break  # refused: token/mode/kill/budget — socket closed
                     sender = session["sender"]
+                    # Independent deadline enforcer (fix round 4, P1):
+                    # covers the cases a bounded read cannot — a
+                    # partial frame trickling in, a long provider turn
+                    # blocking this thread, a blocked send.
+                    watchdog = _BudgetWatchdog(self, conn, call_sid,
+                                               watchdog_stop)
+                    watchdog.start()
                     continue
                 if call_sid is None:
                     continue  # media before start: ignore
@@ -299,14 +463,17 @@ class MediaStreamGateway:
                         audio_buffer.clear()
                     self.server.end_live_session(call_sid, "twilio_stop")
                     break
-                # Duration budget (fix round 3, P1): checked after
-                # every media event, independent of turns — a silent
-                # call's frames arrive just as steadily as a talking
-                # call's, so its budget is enforced even with no turns.
-                # A failed extension (or the absolute duration cap)
-                # ends the session before the next billable interval
-                # accrues; the socket close falls back to Twilio's
-                # human voicemail/forwarding.
+                # Duration budget (fix round 3, P1; deadline-enforced
+                # in fix round 4): checked after every media event,
+                # independent of turns — a silent call's frames arrive
+                # just as steadily as a talking call's, so its budget
+                # is enforced even with no turns. A failed extension
+                # (or the absolute duration cap) ends the session
+                # before the next billable interval accrues; the
+                # socket close falls back to Twilio's human
+                # voicemail/forwarding. The same check also runs on
+                # the read deadline and in the watchdog thread, so a
+                # call with no frames at all is enforced just the same.
                 if call_sid is not None:
                     live = self.server.live_sessions.get(call_sid)
                     if live is not None:
@@ -319,6 +486,7 @@ class MediaStreamGateway:
             if call_sid is not None:
                 self.server.end_live_session(call_sid, "stream_dropped")
         finally:
+            watchdog_stop.set()
             if sender is not None:
                 sender.stop()
             try:
@@ -397,11 +565,12 @@ class MediaStreamGateway:
         #
         # One minute is only the FIRST minute (fix round 3, P1): the
         # gateway extends the session reservation one blended minute
-        # per elapsed minute in the media loop
-        # (_duration_budget_check), independent of turns, so a silent
-        # call cannot accrue unreserved billable duration. The full
-        # 30-minute maximum is NOT reserved at admission: at the
-        # blended rate it costs ~$1.20, more than the $0.50 per-call
+        # per elapsed minute — on every media event, on the read
+        # deadline, and in the watchdog thread (_duration_budget_check
+        # / _next_budget_deadline, fix round 4) — independent of turns,
+        # so a silent call cannot accrue unreserved billable duration.
+        # The full 30-minute maximum is NOT reserved at admission: at
+        # the blended rate it costs ~$1.20, more than the $0.50 per-call
         # ceiling, so a full-max reservation would refuse every call.
         # Instead each minute is claimed atomically as it approaches,
         # and the call ends (fail closed) the minute the ceilings
@@ -466,30 +635,61 @@ class MediaStreamGateway:
                 # Minutes of duration headroom held so far (fix round 3,
                 # P1): 1 at admission, extended one minute at a time by
                 # _duration_budget_check as the call elapses.
-                "reserved_minutes": 1}
+                "reserved_minutes": 1,
+                # Serializes _duration_budget_check between the media
+                # loop and the watchdog thread (fix round 4, P1): both
+                # may fire at the same deadline, and without the lock
+                # both could reserve the same next minute — or one
+                # could fail the call closed on a minute the other
+                # had just reserved.
+                "budget_lock": threading.Lock()}
         self.server.live_sessions[call_sid] = live
         return live
 
+    def _next_budget_deadline(self, live: dict) -> float:
+        """Wall-clock time by which the budget must next be enforced:
+        the earlier of the next minute's reserve deadline (one margin
+        before the currently covered interval ends, so the next minute
+        is reserved BEFORE its billable interval starts) and the
+        absolute duration cap."""
+        session = live["session"]
+        reserved = live.get("reserved_minutes", 1)
+        reserve_deadline = (session.started_at + reserved * 60
+                            - RESERVE_MARGIN_S)
+        cap_deadline = (session.started_at
+                        + self.server.config.max_call_duration_s)
+        return min(reserve_deadline, cap_deadline)
+
     def _duration_budget_check(self, live: dict, call_sid: str) -> str | None:
-        """Enforce the call's duration budget (fix round 3, P1).
+        """Enforce the call's duration budget (fix round 3, P1;
+        deadline-enforced in fix round 4).
 
         Returns None while the call may continue, or a reason string
         when the session must end NOW, before the next billable
-        interval accrues. Runs on every media-loop iteration,
-        independent of turns: Twilio streams audio frames even while
-        the caller is silent, so a quiet call is checked just as
-        often as a talkative one.
+        interval accrues. Runs on every media-loop iteration, on the
+        read deadline, and in the watchdog thread — independent of
+        turns and of incoming frames: Twilio streams audio frames even
+        while the caller is silent, so a quiet call is checked just as
+        often as a talkative one, and a call with no frames at all is
+        checked by the deadline paths instead.
 
         The rule: the call may only accrue billable minutes it has
         already reserved. At admission one blended minute is held; at
         each further minute boundary one more is claimed atomically
         (purpose "session", same as the admission minute), so the
         headroom grows with the elapsed time and a concurrent call
-        cannot spend it first. A failed extension means the
-        per-call or campaign ceiling cannot fund the next minute:
-        the call ends instead of accruing unreserved duration. The
-        absolute max_call_duration_s cap ends the call even with
-        headroom to spare.
+        cannot spend it first. The next minute is claimed
+        RESERVE_MARGIN_S BEFORE its interval starts, so scheduling
+        and network delays can never push the reservation past the
+        boundary. A failed extension means the per-call or campaign
+        ceiling cannot fund the next minute: the call ends instead of
+        accruing unreserved duration. The absolute max_call_duration_s
+        cap ends the call even with headroom to spare.
+
+        Serialized on the session's budget_lock: the loop and the
+        watchdog may both fire at the same deadline, and without the
+        lock both could reserve the same next minute — or one could
+        fail the call closed on a minute the other had just reserved.
 
         Coverage: a held minute is priced at the blended $0.04 while
         the final record prices duration at the component rates
@@ -501,26 +701,32 @@ class MediaStreamGateway:
         with the 3600 s TTL, so a dead worker's unspent headroom
         settles as assumed spend (fix round 2), never silently
         restored."""
-        session = live["session"]
-        elapsed_s = time.time() - session.started_at
-        if elapsed_s >= self.server.config.max_call_duration_s:
-            return "max_call_duration_reached"
-        minutes_needed = int(elapsed_s // 60) + 1
-        reserved = live.get("reserved_minutes", 1)
-        while reserved < minutes_needed:
-            try:
-                self.server.cost_ledger.reserve(
-                    call_sid=call_sid, source=live["source"],
-                    purpose="session",
-                    projected_usd=blended_minute_usd(
-                        self.server.config.cost_rate_version),
-                    max_per_call_usd=self.server.config.max_cost_per_call_usd,
-                    max_campaign_usd=self.server.config.max_cost_campaign_usd)
-            except BudgetExceeded:
-                return "duration_budget_exhausted"
-            reserved += 1
-        live["reserved_minutes"] = reserved
-        return None
+        lock = live.get("budget_lock")
+        if lock is None:
+            lock = live["budget_lock"] = threading.Lock()
+        with lock:
+            session = live["session"]
+            elapsed_s = time.time() - session.started_at
+            if elapsed_s >= self.server.config.max_call_duration_s:
+                return "max_call_duration_reached"
+            # Look one margin ahead: the next minute is reserved
+            # BEFORE its interval starts, not after it has begun.
+            minutes_needed = int((elapsed_s + RESERVE_MARGIN_S) // 60) + 1
+            reserved = live.get("reserved_minutes", 1)
+            while reserved < minutes_needed:
+                try:
+                    self.server.cost_ledger.reserve(
+                        call_sid=call_sid, source=live["source"],
+                        purpose="session",
+                        projected_usd=blended_minute_usd(
+                            self.server.config.cost_rate_version),
+                        max_per_call_usd=self.server.config.max_cost_per_call_usd,
+                        max_campaign_usd=self.server.config.max_cost_campaign_usd)
+                except BudgetExceeded:
+                    return "duration_budget_exhausted"
+                reserved += 1
+            live["reserved_minutes"] = reserved
+            return None
 
     def _flush_turn(self, conn: socket.socket, call_sid: str, audio: bytes,
                     sender: AudioSender | None) -> None:

@@ -606,5 +606,215 @@ class TestDurationBudgetExtension(unittest.TestCase):
                 gateway.stop()
 
 
+class TestDurationDeadlineEnforcement(unittest.TestCase):
+    """Fix round 4, P1: the duration budget must be enforced on a
+    deadline independent of incoming media events. The fix-round-3
+    check runs only after a successfully read frame, so a silent
+    socket, a stalled partial frame, or a long provider turn can let
+    a call sit past a paid minute boundary without securing the next
+    minute. These regressions drive the gateway with NO further
+    frames (or a stalled partial frame) after backdating the
+    session's started_at, and require the call to end — or the next
+    minute to be reserved — on the deadline, not on the next frame."""
+
+    @staticmethod
+    def _wait_until(predicate, timeout_s, interval_s=0.1):
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if predicate():
+                return True
+            time.sleep(interval_s)
+        return predicate()
+
+    def _send_silence(self, sock, stream_sid, call_sid, seq=1):
+        sock.sendall(client_text({
+            "event": "media", "streamSid": stream_sid,
+            "media": {"callSid": call_sid, "sequenceNumber": str(seq),
+                      "timestamp": str(seq * 20),
+                      "payload": base64.b64encode(b"\x00" * 160).decode()}}))
+
+    def test_no_frames_call_ends_at_one_minute_boundary(self):
+        # The verdict's socket/no-frame regression: campaign covers
+        # exactly one minute; after start the socket stays open but
+        # sends nothing. The call must end (duration_budget_exhausted)
+        # before uncovered time accrues — enforcement cannot wait for
+        # the next media event.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.04)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dl-1",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dl-1", "MZ-dl-1", token)
+                time.sleep(0.5)
+                self.assertIn("CA-dl-1", server.live_sessions)
+                server.live_sessions["CA-dl-1"]["session"].started_at = \
+                    time.time() - 61
+                ended = self._wait_until(
+                    lambda: ("CA-dl-1", "duration_budget_exhausted")
+                    in server.ended, timeout_s=15)
+                self.assertTrue(
+                    ended, "idle call was not ended at the minute boundary")
+                self.assertNotIn("CA-dl-1", server.live_sessions)
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.04)
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_partial_frame_stall_ends_when_budget_exhausted(self):
+        # A truncated media frame: the gateway holds the first bytes
+        # but no complete frame. The budget must still be enforced on
+        # the deadline — a stalled partial frame is not a free minute.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.04)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dl-2",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dl-2", "MZ-dl-2", token)
+                time.sleep(0.5)
+                self.assertIn("CA-dl-2", server.live_sessions)
+                frame = client_text({
+                    "event": "media", "streamSid": "MZ-dl-2",
+                    "media": {"callSid": "CA-dl-2", "sequenceNumber": "1",
+                              "timestamp": "20",
+                              "payload": base64.b64encode(
+                                  b"\x00" * 160).decode()}})
+                sock.sendall(frame[:5])
+                server.live_sessions["CA-dl-2"]["session"].started_at = \
+                    time.time() - 61
+                ended = self._wait_until(
+                    lambda: ("CA-dl-2", "duration_budget_exhausted")
+                    in server.ended, timeout_s=15)
+                self.assertTrue(
+                    ended, "partial-frame stall was not ended at the boundary")
+                self.assertNotIn("CA-dl-2", server.live_sessions)
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.04)
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_partial_frame_stall_reserves_and_stream_survives_with_headroom(self):
+        # Same stall, but the campaign has headroom: the next minute
+        # must be reserved on the deadline, and when the rest of the
+        # stalled frame finally arrives it must parse as the same
+        # media event — the buffered partial bytes are preserved, the
+        # stream does not desync.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=10.0)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dl-3",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dl-3", "MZ-dl-3", token)
+                time.sleep(0.5)
+                live = server.live_sessions["CA-dl-3"]
+                self.assertEqual(live["reserved_minutes"], 1)
+                frame = client_text({
+                    "event": "media", "streamSid": "MZ-dl-3",
+                    "media": {"callSid": "CA-dl-3", "sequenceNumber": "1",
+                              "timestamp": "20",
+                              "payload": base64.b64encode(
+                                  b"\x00" * 160).decode()}})
+                sock.sendall(frame[:5])
+                live["session"].started_at = time.time() - 61
+                reserved = self._wait_until(
+                    lambda: live.get("reserved_minutes", 1) == 2,
+                    timeout_s=15)
+                self.assertTrue(
+                    reserved, "next minute was not reserved during the stall")
+                sock.sendall(frame[5:])
+                time.sleep(0.5)
+                self.assertIn("CA-dl-3", server.live_sessions)
+                self.assertEqual(live["reserved_minutes"], 2)
+                self.assertNotIn(("CA-dl-3", "stream_dropped"), server.ended)
+                self._send_silence(sock, "MZ-dl-3", "CA-dl-3", seq=2)
+                time.sleep(0.5)
+                self.assertIn("CA-dl-3", server.live_sessions)
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_two_idle_calls_near_limit_both_end_without_frames(self):
+        # Concurrent-call variant of the no-frame regression: campaign
+        # of exactly two minutes, two live calls, no frames from
+        # either while waiting for I/O. Neither may accrue a second
+        # minute, and neither may spend the other's headroom.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.08)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                socks = []
+                for cid, sid in (("CA-dl-A", "MZ-dl-A"),
+                                 ("CA-dl-B", "MZ-dl-B")):
+                    token = sign_stream_token("stream-secret", cid,
+                                              "brandy-rental-office")
+                    socks.append(_open_stream(port, cid, sid, token))
+                time.sleep(0.5)
+                for cid in ("CA-dl-A", "CA-dl-B"):
+                    server.live_sessions[cid]["session"].started_at = \
+                        time.time() - 61
+                for cid in ("CA-dl-A", "CA-dl-B"):
+                    ended = self._wait_until(
+                        lambda c=cid: (c, "duration_budget_exhausted")
+                        in server.ended, timeout_s=15)
+                    self.assertTrue(ended, f"{cid} was not ended while idle")
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.08)
+                for cid in ("CA-dl-A", "CA-dl-B"):
+                    self.assertLessEqual(
+                        server.cost_ledger.call_total_usd(cid), 0.50)
+                for sock in socks:
+                    sock.close()
+            finally:
+                gateway.stop()
+
+    def test_long_provider_turn_does_not_block_budget_enforcement(self):
+        # A provider turn that blocks the media-loop thread for
+        # seconds must not suspend budget enforcement: the independent
+        # watchdog ends the call on the deadline even while the turn
+        # is still running.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.04)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-dl-5",
+                                          "brandy-rental-office")
+                sock = _open_stream(port, "CA-dl-5", "MZ-dl-5", token)
+                time.sleep(0.5)
+                pipe = server.pipelines["CA-dl-5"]
+                orig_handle = pipe.handle_audio
+
+                def slow_handle(audio):
+                    time.sleep(8)  # a hung STT/LLM/TTS turn
+                    return orig_handle(audio)
+
+                pipe.handle_audio = slow_handle
+                for seq in range(1, 61):
+                    self._send_silence(sock, "MZ-dl-5", "CA-dl-5", seq=seq)
+                time.sleep(0.3)  # let the turn start blocking
+                server.live_sessions["CA-dl-5"]["session"].started_at = \
+                    time.time() - 61
+                ended = self._wait_until(
+                    lambda: ("CA-dl-5", "duration_budget_exhausted")
+                    in server.ended, timeout_s=15)
+                self.assertTrue(
+                    ended, "call was not ended while a turn blocked the loop")
+                self.assertNotIn("CA-dl-5", server.live_sessions)
+                self.assertAlmostEqual(server.cost_ledger.total_usd(), 0.04)
+                sock.close()
+            finally:
+                gateway.stop()
+
+
 if __name__ == "__main__":
     unittest.main()
