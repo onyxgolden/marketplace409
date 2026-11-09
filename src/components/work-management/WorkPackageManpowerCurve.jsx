@@ -12,6 +12,7 @@
 
 import { useMemo, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -25,7 +26,7 @@ const CHART_COLORS = [
 ];
 
 async function api(path, options) {
-  const response = await fetch(path, {
+  const response = await fetch(withWorkspaceQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });

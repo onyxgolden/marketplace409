@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_PACKAGE_TYPES, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -14,7 +15,7 @@ const label = "block text-xs font-medium text-slate-600 mb-1";
 // loaded options by canonical slug; if it is not one of the owner's
 // properties the picker stays on "No property assigned" rather than
 // silently choosing something else.
-export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
+export default function WorkPackageCreateForm({ initialPropertyId = "", workspaceParam = null }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -32,7 +33,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/work-packages/property-options")
+    fetch(withWorkspaceQuery("/api/work-packages/property-options"))
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Unable to load properties.");
@@ -62,7 +63,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
     event.preventDefault();
     setSaving(true);
     setError("");
-    const response = await fetch("/api/work-packages", {
+    const response = await fetch(withWorkspaceQuery("/api/work-packages"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -85,7 +86,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
       setError(body.error || "Unable to create the package.");
       return;
     }
-    router.push(`/forge/work/${body.package.id}`);
+    router.push(`/forge/work/${body.package.id}${workspaceParam ? `?workspace=${encodeURIComponent(workspaceParam)}` : ""}`);
   }
 
   return (

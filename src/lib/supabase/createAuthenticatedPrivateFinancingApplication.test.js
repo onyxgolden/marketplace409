@@ -13,7 +13,7 @@ function stubOwnerLookup(data) {
     eq: vi.fn(function eq() {
       return this;
     }),
-    maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+    then: (resolve) => resolve({ data: data ? [{ ...data, role: data.role ?? "co_owner" }] : [], error: null }),
   };
 }
 

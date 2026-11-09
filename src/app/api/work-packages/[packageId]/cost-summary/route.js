@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError } from "../../_lib/auth.js";
 import { getPackageCostSummary } from "@/application/work-management/packageCosts";
 
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;

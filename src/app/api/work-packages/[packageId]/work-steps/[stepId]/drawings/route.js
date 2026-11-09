@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth
 import { listStepDrawings, createStepDrawingLink } from "@/application/work-management/workSteps";
 
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, stepId } = await params;
@@ -22,7 +22,7 @@ export async function GET(request, { params }) {
 }
 
 export async function POST(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, stepId } = await params;

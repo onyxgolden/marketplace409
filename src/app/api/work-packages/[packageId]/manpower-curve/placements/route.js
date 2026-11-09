@@ -7,7 +7,7 @@ import { setStepPlacement } from "@/application/work-management/manpowerCurve";
 // craft, or duration. Moving an existing placement needs its current
 // version and a reason.
 export async function PUT(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
   try {

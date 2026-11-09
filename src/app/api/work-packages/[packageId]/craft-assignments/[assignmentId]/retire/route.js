@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth
 import { retireCraftAssignment } from "@/application/work-management/craftAssignments";
 
 export async function POST(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, assignmentId } = await params;

@@ -6,7 +6,7 @@ import { ok, fail, serverError, workAuth } from "../work-packages/_lib/auth.js";
 // GET /api/work-documents?kind=template — list the workspace's library.
 export async function GET(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const url = new URL(request.url);
     const documentId = url.searchParams.get("documentId");
@@ -31,7 +31,7 @@ export async function GET(request) {
 // POST /api/work-documents — multipart upload (file, name, kind, …).
 export async function POST(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const form = await request.formData();
     const file = form.get("file");
@@ -64,7 +64,7 @@ export async function POST(request) {
 // DELETE /api/work-documents?documentId=… — remove a document and its file.
 export async function DELETE(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const documentId = new URL(request.url).searchParams.get("documentId");
     if (!documentId) return fail({ error: "documentId is required.", httpStatus: 400 });

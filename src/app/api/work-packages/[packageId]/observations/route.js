@@ -7,7 +7,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 //   quantity_examined?, quantity_required?, inspected_at?, inspector?, notes? }.
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const { data, error } = await auth.db.from("forge_work_inspection_observations").select("*")
@@ -22,7 +22,7 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

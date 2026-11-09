@@ -9,7 +9,14 @@ function chainable(result) {
   const builder = {
     select: () => builder,
     eq: () => builder,
-    maybeSingle: () => Promise.resolve(result),
+    // resolveEffectiveOwnerId awaits the membership LIST query directly
+    // (thenable array), not .maybeSingle(): a single membership row arrives
+    // as a one-element array, no membership as an empty array.
+    then: (resolve) =>
+      resolve({
+        data: result.data ? [{ ...result.data, role: result.data.role ?? "co_owner" }] : [],
+        error: result.error,
+      }),
   };
   return builder;
 }

@@ -6,7 +6,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 // attestation. Interim input for Readiness Review -> Ready until Rung 3.
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const supabase = auth.db;
@@ -22,7 +22,7 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

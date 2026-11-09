@@ -14,7 +14,7 @@ import {
   resolveEffectiveOwnerId,
 } from "@/lib/supabase/resolveEffectiveOwnerId";
 
-export async function createAuthenticatedForgeApplication() {
+export async function createAuthenticatedForgeApplication({ requestedOwnerId = null } = {}) {
   const supabaseClient =
     await createClient();
 
@@ -39,10 +39,15 @@ export async function createAuthenticatedForgeApplication() {
     };
   }
 
+  // UI-density redesign: a validated ?workspace= selection overrides the
+  // default resolution. resolveEffectiveOwnerId honors it only for the
+  // actor's own id or an active membership, so an unvalidated value can
+  // never widen access. Callers that pass nothing keep today's behavior.
   const effectiveOwnerId =
     await resolveEffectiveOwnerId({
       supabaseClient,
       actorUserId: user.id,
+      requestedOwnerId,
     });
 
   const currentOwnerId =

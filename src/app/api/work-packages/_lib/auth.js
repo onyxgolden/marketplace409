@@ -5,8 +5,24 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 // owner_id is the EFFECTIVE workspace owner (resolveEffectiveOwnerId):
 // active members act within the owner's workspace. The acting user id is
 // passed separately as actor — attribution is never isolation.
-export async function workAuth() {
-  const authenticated = await createAuthenticatedForgeApplication();
+//
+// UI-density redesign: pass the route handler's `request` and a
+// ?workspace=<ownerId> query param selects a different workspace the actor
+// can act within. The selection is validated inside
+// resolveEffectiveOwnerId (own id or an active membership only); an
+// unvalidated value falls back to the default resolution, so a crafted
+// param can never widen access. Callers that pass no request keep today's
+// behavior.
+export async function workAuth(request) {
+  let requestedOwnerId = null;
+  if (request?.url) {
+    try {
+      requestedOwnerId = new URL(request.url).searchParams.get("workspace");
+    } catch {
+      requestedOwnerId = null;
+    }
+  }
+  const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId });
   if (authenticated.response) return { error: authenticated.response };
   return {
     db: authenticated.supabaseClient,

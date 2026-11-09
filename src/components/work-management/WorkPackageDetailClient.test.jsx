@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => routerMocks }));
 
 import WorkPackageDetailClient from "./WorkPackageDetailClient";
@@ -85,13 +85,15 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
   return { patches, deletes };
 }
 
-function renderDetail(pkg = BASE_PKG, { deletionEligibility } = {}) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
     root.render(
       <WorkPackageDetailClient
+        initialTab={initialTab}
+        workspaceParam={workspaceParam}
         initial={{
           package: pkg,
           transitions: [],
@@ -338,6 +340,10 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     ],
   };
 
+  function renderDangerZone(pkg, opts = {}) {
+    return renderDetail(pkg, { ...opts, initialTab: "activity" });
+  }
+
   function dangerZone(container) {
     return container.querySelector('section[aria-label="Danger zone"]');
   }
@@ -361,14 +367,14 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("renders no delete affordance without server eligibility", () => {
     stubFetch();
-    const { container } = renderDetail(BASE_PKG);
+    const { container } = renderDangerZone(BASE_PKG);
     expect(dangerZone(container)).toBeNull();
     expect(container.textContent).not.toContain("Danger zone");
   });
 
   it("renders no delete affordance for non-owners", () => {
     stubFetch();
-    const { container } = renderDetail(BASE_PKG, {
+    const { container } = renderDangerZone(BASE_PKG, {
       deletionEligibility: { ...ELIGIBLE, isOwner: false },
     });
     expect(dangerZone(container)).toBeNull();
@@ -376,7 +382,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("shows exact blocker categories, counts, and next steps when blocked", () => {
     stubFetch();
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: BLOCKED });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: BLOCKED });
     const zone = dangerZone(container);
     expect(zone).not.toBeNull();
     expect(zone.textContent).toContain("Budget history (1)");
@@ -390,7 +396,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("tells owners of non-draft packages to cancel instead of deleting", () => {
     stubFetch();
-    const { container } = renderDetail({ ...BASE_PKG, status: "in_progress" }, {
+    const { container } = renderDangerZone({ ...BASE_PKG, status: "in_progress" }, {
       deletionEligibility: {
         isOwner: true, canDelete: false, status: "in_progress", packageVersion: 2, blockers: [],
       },
@@ -404,7 +410,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("requires typing the exact code before Delete enables; Cancel closes", async () => {
     stubFetch();
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     const dialog = dialogEl(container);
     expect(dialog).not.toBeNull();
@@ -428,7 +434,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("Escape closes the dialog and focus returns to the Delete button", () => {
     stubFetch();
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     expect(dialogEl(container)).not.toBeNull();
     act(() => {
@@ -451,7 +457,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
         json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }),
       })),
     });
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     typeCode(container, "WP-0001");
     const deleteButton = dialogButton(container, "Delete");
@@ -479,7 +485,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
         json: async () => ({ error: "Unable to complete the request." }),
       }),
     });
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     typeCode(container, "WP-0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
@@ -491,7 +497,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
 
   it("keeps the dialog open when the network fails", async () => {
     stubFetch({ deleteImpl: async () => { throw new Error("offline"); } });
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     typeCode(container, "WP-0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
@@ -512,7 +518,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
       }),
       getEligibility: BLOCKED,
     });
-    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
     typeCode(container, "WP-0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
@@ -520,11 +526,88 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     expect(dialogEl(container)).toBeNull();
     expect(routerMocks.push).not.toHaveBeenCalled();
     // The refreshed danger zone explains the fresh blockers, error visible,
-    // and the package itself is still on screen.
+    // and the detail client itself is still mounted on the Activity tab.
     const zone = dangerZone(container);
     expect(zone.textContent).toContain("Budget history (1)");
     expect(container.querySelector('[role="alert"]').textContent)
       .toContain("This package has records that must be kept");
-    expect(container.textContent).toContain("Turnover");
+    expect(container.querySelector('[role="tablist"]')).not.toBeNull();
+  });
+});
+
+describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
+  function tabButton(container, label) {
+    return [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent === label);
+  }
+  function headings(container) {
+    return [...container.querySelectorAll("h2")].map((h) => h.textContent);
+  }
+
+  it("renders all eight tabs with Overview selected by default", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    const tabs = [...container.querySelectorAll('[role="tab"]')].map((b) => b.textContent);
+    expect(tabs).toEqual([
+      "Overview", "Work steps", "Milestones", "Permits",
+      "IFA→IFC redlines", "Budget & Change Orders", "Documents", "Activity / Audit",
+    ]);
+    expect(tabButton(container, "Overview").getAttribute("aria-selected")).toBe("true");
+    expect(headings(container)).toContain("Package");
+  });
+
+  it("switching to Milestones shows the placeholder and hides the Overview panels", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    act(() => { tabButton(container, "Milestones").click(); });
+    expect(tabButton(container, "Milestones").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Milestone tracking arrives with slice 9");
+    expect(headings(container)).not.toContain("Package");
+    expect(headings(container)).not.toContain("Lifecycle");
+    // Deep-linkable: the switch updates the URL without a refetch.
+    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=milestones", { scroll: false });
+  });
+
+  it("switching back to Overview restores the package panels", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    act(() => { tabButton(container, "Milestones").click(); });
+    act(() => { tabButton(container, "Overview").click(); });
+    expect(headings(container)).toContain("Package");
+    expect(routerMocks.replace).toHaveBeenCalledWith("/", { scroll: false });
+  });
+
+  it("honors an initial tab from the server-resolved ?tab= deep link", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { initialTab: "milestones" });
+    expect(tabButton(container, "Milestones").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Milestone tracking arrives with slice 9");
+    expect(headings(container)).not.toContain("Package");
+  });
+
+  it("falls back to Overview for an unknown initial tab", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { initialTab: "bogus" });
+    expect(tabButton(container, "Overview").getAttribute("aria-selected")).toBe("true");
+    expect(headings(container)).toContain("Package");
+  });
+
+  it("shows the danger zone only on the Activity / Audit tab", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, {
+      deletionEligibility: { isOwner: true, canDelete: true, status: "draft", packageVersion: 1, blockers: [] },
+    });
+    expect(container.querySelector('section[aria-label="Danger zone"]')).toBeNull();
+    act(() => { tabButton(container, "Activity / Audit").click(); });
+    expect(container.querySelector('section[aria-label="Danger zone"]')).not.toBeNull();
+    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=activity", { scroll: false });
+  });
+
+  it("preserves the workspace selection in the tab URL when one is active", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { workspaceParam: "owner_2" });
+    act(() => { tabButton(container, "Milestones").click(); });
+    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=milestones&workspace=owner_2", { scroll: false });
+    act(() => { tabButton(container, "Overview").click(); });
+    expect(routerMocks.replace).toHaveBeenCalledWith("/?workspace=owner_2", { scroll: false });
   });
 });

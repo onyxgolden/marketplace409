@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 import {
   LINK_RELATIONSHIPS, RESOLVABLE_LINK_TYPES,
   LINK_STATUS_LABELS, LINK_PROVENANCE_LABELS,
@@ -29,7 +30,7 @@ export default function WorkPackageLinks({ packageId, initialLinks = [], onLinks
   const other = rel ? (packageIsSource ? rel.target : rel.source) : null;
 
   async function fetchLinks() {
-    const response = await fetch(`/api/work-links?packageId=${encodeURIComponent(packageId)}`);
+    const response = await fetch(withWorkspaceQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not load links.");
     return data.links || [];
@@ -57,7 +58,7 @@ export default function WorkPackageLinks({ packageId, initialLinks = [], onLinks
         : { relationship_type: relType,
             source_domain: other.domain, source_type: other.type, source_id: otherId.trim(),
             target_domain: "workmgmt", target_type: "work_package", target_id: packageId };
-      const response = await fetch("/api/work-links", {
+      const response = await fetch(withWorkspaceQuery("/api/work-links"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -74,7 +75,7 @@ export default function WorkPackageLinks({ packageId, initialLinks = [], onLinks
       const path = action === "unlink"
         ? `/api/work-links/${linkId}`
         : `/api/work-links/${linkId}/${action}`;
-      const response = await fetch(path, {
+      const response = await fetch(withWorkspaceQuery(path), {
         method: action === "unlink" ? "DELETE" : "POST",
         headers: { "content-type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,

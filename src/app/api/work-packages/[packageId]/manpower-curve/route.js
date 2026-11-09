@@ -9,7 +9,7 @@ import { getManpowerCurve } from "@/application/work-management/manpowerCurve";
 // (latest) frozen baseline is used. No baseline at all is an empty state,
 // not an error — the panel says to freeze/select a baseline first.
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
   const url = new URL(request.url);

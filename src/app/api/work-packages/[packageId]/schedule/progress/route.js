@@ -7,7 +7,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js
 // baseline schedule and the status date, and derives all EVM values.
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

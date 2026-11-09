@@ -5,6 +5,7 @@ import {
   LINK_RELATIONSHIPS, LINK_STATUS_LABELS,
 } from "@/domains/work-management/workLinks.js";
 import { DOCUMENT_KIND_SUGGESTIONS, DOCUMENT_KIND_LABELS } from "@/domains/work-management/workDocuments.js";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
@@ -26,7 +27,7 @@ async function openSignedUrl(documentId, action) {
   tab.opener = null;
   try {
     const response = await fetch(
-      `/api/work-documents?documentId=${encodeURIComponent(documentId)}&action=${action}`);
+      withWorkspaceQuery(`/api/work-documents?documentId=${encodeURIComponent(documentId)}&action=${action}`));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not open the document.");
     tab.location.href = data.url;
@@ -65,9 +66,9 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
     setError("");
     try {
       const [linksRes, libRes, designerRes] = await Promise.all([
-        fetch(`/api/work-links?packageId=${encodeURIComponent(packageId)}`),
-        fetch("/api/work-documents"),
-        fetch("/api/forge/designer"),
+        fetch(withWorkspaceQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`)),
+        fetch(withWorkspaceQuery("/api/work-documents")),
+        fetch(withWorkspaceQuery("/api/forge/designer")),
       ]);
       const linksData = await linksRes.json();
       if (!linksRes.ok) throw new Error(linksData.error || "Could not load links.");
@@ -98,7 +99,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
         : { relationship_type: relType,
             source_domain: rel.source.domain, source_type: rel.source.type, source_id: otherId.trim(),
             target_domain: "workmgmt", target_type: "work_package", target_id: packageId };
-      const response = await fetch("/api/work-links", {
+      const response = await fetch(withWorkspaceQuery("/api/work-links"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -118,11 +119,11 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
       form.append("file", uploadFile);
       form.append("name", uploadName.trim() || uploadFile.name);
       form.append("kind", uploadKind);
-      const upRes = await fetch("/api/work-documents", { method: "POST", body: form });
+      const upRes = await fetch(withWorkspaceQuery("/api/work-documents"), { method: "POST", body: form });
       const upData = await upRes.json();
       if (!upRes.ok) { setError(upData.error || "Could not upload the document."); return; }
       // Auto-link the new library document to this package.
-      const linkRes = await fetch("/api/work-links", {
+      const linkRes = await fetch(withWorkspaceQuery("/api/work-links"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
           relationship_type: "library_supporting_document",
@@ -142,7 +143,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
   async function onUnlink(linkId) {
     setBusy(true); setError("");
     try {
-      const response = await fetch(`/api/work-links/${linkId}`, { method: "DELETE" });
+      const response = await fetch(withWorkspaceQuery(`/api/work-links/${linkId}`), { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) { setError(data.error || "Could not unlink."); return; }
       refresh();

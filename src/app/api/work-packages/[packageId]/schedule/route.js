@@ -4,7 +4,7 @@ import { ok, fail, serverError, workAuth } from "../../_lib/auth.js";
 // GET: current schedule status — baseline, latest snapshot, variances.
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const status = await getScheduleStatus(auth.db, {

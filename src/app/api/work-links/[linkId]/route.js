@@ -3,7 +3,7 @@ import { ok, fail, serverError, workAuth } from "../../work-packages/_lib/auth.j
 
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const result = await getLinkDetail(auth.db, {
       ownerId: auth.ownerId, linkId: params.linkId,
@@ -17,7 +17,7 @@ export async function GET(request, { params }) {
 
 export async function DELETE(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const result = await unlinkWorkLink(auth.db, {
       ownerId: auth.ownerId, linkId: params.linkId,

@@ -17,6 +17,7 @@
 
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -26,7 +27,7 @@ const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-5
 const btnDanger = `${btn} border border-red-300 text-red-700 hover:bg-red-50`;
 
 async function api(path, options) {
-  const response = await fetch(path, {
+  const response = await fetch(withWorkspaceQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
