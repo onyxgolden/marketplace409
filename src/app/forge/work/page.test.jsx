@@ -121,11 +121,15 @@ describe("/forge/work list filters (D5)", () => {
     expect(html).toContain("Unassigned repairs");
   });
 
-  it("distinguishes 'no packages yet' from 'no matches' and offers Clear filters", async () => {
+  it("shows blank add-rows instead of an empty state when there are no packages yet, and keeps 'no matches' distinct", async () => {
     mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
     const emptyHtml = await renderPage();
-    expect(emptyHtml).toContain("No work packages yet");
+    // The grid fills the page with blank rows even with zero packages —
+    // typing in one creates the next package. No separate empty state.
+    expect(emptyHtml).not.toContain("No work packages yet");
     expect(emptyHtml).not.toContain("match these filters");
+    expect(emptyHtml).toContain('role="table"');
+    expect(emptyHtml).toContain("New package title");
 
     mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: PACKAGES });
     const noMatchHtml = await renderPage({ status: "verified_closed" });

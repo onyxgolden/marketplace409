@@ -29,6 +29,38 @@ export const WP_PACKAGE_TYPES = Object.freeze([
 
 export const WP_PRIORITIES = Object.freeze(["low", "normal", "high", "critical"]);
 
+// Source systems a package or step may have been imported from (file
+// import only — no live SAP / Maximo / P6 connection). The pair
+// (source_system, source_record_id) is the re-import key: importing the
+// same file twice updates the same rows instead of duplicating them.
+// The columns live behind the editable-grid migration; until it is
+// applied, callers must not send these fields (the table has no such
+// columns yet) and matching falls back to number / sequence / title.
+export const IMPORT_SOURCE_SYSTEMS = Object.freeze(["sap", "maximo", "p6", "excel", "other"]);
+
+export function validateSourceTracking(input) {
+  const errors = [];
+  if (input.source_system !== undefined && input.source_system !== null) {
+    if (!IMPORT_SOURCE_SYSTEMS.includes(input.source_system)) {
+      errors.push(`source_system must be one of: ${IMPORT_SOURCE_SYSTEMS.join(", ")}.`);
+    }
+  }
+  if (input.source_record_id !== undefined && input.source_record_id !== null) {
+    if (typeof input.source_record_id !== "string"
+        || input.source_record_id.trim().length === 0
+        || input.source_record_id.length > 200) {
+      errors.push("source_record_id must be a non-blank string of at most 200 characters.");
+    }
+  }
+  if ((input.source_system ?? null) !== null && (input.source_record_id ?? null) === null) {
+    errors.push("source_record_id is required when source_system is set.");
+  }
+  if ((input.source_record_id ?? null) !== null && (input.source_system ?? null) === null) {
+    errors.push("source_system is required when source_record_id is set.");
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 export const WP_PROGRESS_BASES = Object.freeze([
   "quantity", "manhours", "milestone_weights", "manual",
 ]);
@@ -340,6 +372,8 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
   if (input.code !== undefined) {
     errors.push("code is assigned by the per-owner sequence and cannot be set directly.");
   }
+  const source = validateSourceTracking(input);
+  if (!source.ok) errors.push(...source.errors);
   return { ok: errors.length === 0, errors };
 }
 

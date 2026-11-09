@@ -14,11 +14,21 @@
 // so in plain words.
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { formatEstimate } from "@/domains/work-management/workSteps";
 import { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
+import EditableGridCell from "./EditableGridCell.jsx";
+import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
+
+// The work-steps worklist is a Maximo-style editable grid now (same
+// pattern as the package list): double-click a cell, dropdown where
+// the value is fixed, type where it isn't. The full edit form stays
+// for the fields the grid does not carry (source note, reason,
+// historical correction). Days/hours show as plain numbers — the old
+// "Planned N days" card text is gone with the cards.
+const STEPS_GRID_COLS = "grid-cols-[3rem_minmax(10rem,2fr)_minmax(10rem,2fr)_8rem_5.5rem_6rem_11rem]";
+const BLANK_ROWS = 10;
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -486,6 +496,16 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   const [retireHistoricalCorrection, setRetireHistoricalCorrection] = useState(false);
   const [historyId, setHistoryId] = useState(null);
   const [drawingsId, setDrawingsId] = useState(null);
+  // Blank add-rows: the grid always fills the page (minimum 10) when
+  // the package is open, so the next step is typed in place. A blank
+  // row's draft lives here until its title is present; only then does
+  // it become a step (the server assigns its sequence number).
+  const [drafts, setDrafts] = useState(() => Array.from({ length: BLANK_ROWS }, () => ({
+    title: "", description: "", craftLabel: "", plannedDurationDays: "",
+    plannedPersonHours: "", sourceNote: "", insertAt: "", supersedesStepId: "", reason: "",
+  })));
+  const [selectedId, setSelectedId] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Retired steps are fetched too (they are the only supersession
   // candidates), but hidden from the list unless asked for.
@@ -642,6 +662,282 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     } finally { setBusy(false); }
   }
 
+  // A grid cell commit: one field through the existing PATCH, guarded
+  // by the step's version. An emptied optional field is an explicit
+  // clear (null); the cell's own validation already rejected a bad
+  // number or an empty title, so a failure here is the server's word
+  // (e.g. a version race) and the cell reverts with the message.
+  async function onCommitCell(step, field, value) {
+    const patch = { expectedVersion: step.version };
+    if (field === "plannedDurationDays") {
+      patch.plannedDurationDays = value === "" ? null : Number(value);
+    } else if (field === "plannedPersonHours") {
+      patch.plannedPersonHours = value === "" ? null : Number(value);
+    } else if (field === "description" || field === "craftLabel") {
+      patch[field] = value === "" ? null : value;
+    } else {
+      patch[field] = value;
+    }
+    const updated = await api(`/api/work-packages/${packageId}/work-steps/${step.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    await reload(`Work step updated — #${updated.step.sequenceNo} ${updated.step.title}.`);
+  }
+
+  function updateDraft(index, patch) {
+    setDrafts((current) => current.map((draft, i) => (i === index ? { ...draft, ...patch } : draft)));
+    return { ...drafts[index], ...patch };
+  }
+
+  // Typing into a blank row: the draft is kept even when the title is
+  // missing (so a craft/days choice is not lost), and the row only
+  // becomes a step once it has a title. The server assigns the
+  // sequence number — never the client.
+  async function commitBlank(index, field, value) {
+    const draft = updateDraft(index, { [field]: value });
+    if (!draft.title.trim()) {
+      setError("Give the new step a title first — the row stays as a draft until it has one.");
+      return;
+    }
+    setBusy(true); setError(""); setConfirmation("");
+    try {
+      const created = await api(`/api/work-packages/${packageId}/work-steps`, {
+        method: "POST", body: JSON.stringify(createBody(draft)),
+      });
+      setDrafts((current) => current.map((d, i) => (i === index ? {
+        title: "", description: "", craftLabel: "", plannedDurationDays: "",
+        plannedPersonHours: "", sourceNote: "", insertAt: "", supersedesStepId: "", reason: "",
+      } : d)));
+      await reload(`Work step added — #${created.step.sequenceNo} ${created.step.title}.`);
+    } catch (e) {
+      setError(e.message);
+    } finally { setBusy(false); }
+  }
+
+  function craftOptionsFor(currentLabel) {
+    const options = [{ value: "", label: "—" }];
+    for (const craft of COMMON_CRAFTS) options.push({ value: craft, label: craft });
+    if (currentLabel && !COMMON_CRAFTS.includes(currentLabel)) {
+      options.push({ value: currentLabel, label: currentLabel });
+    }
+    return options;
+  }
+
+  const validateDays = (next) => {
+    if (next.trim() === "") return null;
+    const n = Number(next);
+    return Number.isInteger(n) && n >= 1 && n <= 366
+      ? null : "Planned days must be a whole number from 1 to 366.";
+  };
+
+  const validateHours = (next) => {
+    if (next.trim() === "") return null;
+    const n = Number(next);
+    return Number.isFinite(n) && n > 0 && n <= 1000000 && Math.round(n * 100) === n * 100
+      ? null : "Planned hours must be more than 0 and at most 1,000,000, with at most two decimal places.";
+  };
+
+  // One schedule row plus its expandable detail rows (full edit form,
+  // retire confirm, drawings, history). Retired rows are read-only:
+  // their cells never edit and only Drawings / History are offered.
+  function renderStepRow(step) {
+    const retired = !!step.retiredAt;
+    const cellError = (text) => setError(text);
+    return (
+      <Fragment key={step.id}>
+        <div role="row" data-step-id={step.id}
+          onClick={() => setSelectedId(step.id)}
+          className={`grid ${STEPS_GRID_COLS} items-center gap-x-2 border-b border-slate-200 px-3 py-2 text-sm ${selectedId === step.id ? "bg-blue-50" : "hover:bg-slate-50"} ${retired ? "opacity-70" : ""}`}>
+          <div role="cell" className="min-w-0 truncate font-medium text-slate-900"
+            title={`Step #${step.sequenceNo}, version ${step.version}`}>
+            #{step.sequenceNo}
+            {retired && <span className="ml-1 rounded bg-slate-100 px-1 text-xs text-slate-600">Retired</span>}
+          </div>
+          <EditableGridCell
+            value={step.title}
+            display={(
+              <span>
+                {step.title}
+                {step.supersedesStepId && (
+                  <span className="ml-2 text-slate-400">
+                    · Replaces #{stepById.get(step.supersedesStepId)?.sequenceNo ?? "?"} {stepById.get(step.supersedesStepId)?.title ?? "a retired step"}
+                  </span>
+                )}
+              </span>
+            )}
+            ariaLabel={`Title for step ${step.sequenceNo}`}
+            readOnly={retired}
+            validate={(next) => (next.trim() === "" ? "Title is required." : null)}
+            onCommit={(next) => onCommitCell(step, "title", next)}
+            onError={cellError}
+            className="font-medium text-slate-900"
+          />
+          <EditableGridCell
+            value={step.description || ""}
+            display={step.description || "—"}
+            ariaLabel={`Description for step ${step.sequenceNo}`}
+            readOnly={retired}
+            onCommit={(next) => onCommitCell(step, "description", next)}
+            onError={cellError}
+            className="text-slate-700"
+          />
+          <EditableGridCell
+            value={step.craftLabel || ""}
+            display={step.craftLabel || "—"}
+            editor="select" options={craftOptionsFor(step.craftLabel)}
+            ariaLabel={`Craft for step ${step.sequenceNo}`}
+            readOnly={retired}
+            onCommit={(next) => onCommitCell(step, "craftLabel", next)}
+            onError={cellError}
+            className="text-slate-700"
+          />
+          <EditableGridCell
+            value={step.plannedDurationDays == null ? "" : String(step.plannedDurationDays)}
+            display={step.plannedDurationDays == null ? "—" : String(step.plannedDurationDays)}
+            editor="number" ariaLabel={`Planned days for step ${step.sequenceNo}`}
+            readOnly={retired} validate={validateDays}
+            onCommit={(next) => onCommitCell(step, "plannedDurationDays", next)}
+            onError={cellError}
+            className="text-slate-700"
+          />
+          <EditableGridCell
+            value={step.plannedPersonHours == null ? "" : String(step.plannedPersonHours)}
+            display={step.plannedPersonHours == null ? "—" : String(step.plannedPersonHours)}
+            editor="number" ariaLabel={`Planned hours for step ${step.sequenceNo}`}
+            readOnly={retired} validate={validateHours}
+            onCommit={(next) => onCommitCell(step, "plannedPersonHours", next)}
+            onError={cellError}
+            className="text-slate-700"
+          />
+          <div role="cell" className="flex min-w-0 flex-wrap gap-1">
+            {!retired && !isTerminal && (
+              <>
+                <button className={btnGhost} disabled={busy}
+                  onClick={() => onMove(step, -1)}
+                  aria-label={`Move ${step.title} up`}>
+                  ↑
+                </button>
+                <button className={btnGhost} disabled={busy}
+                  onClick={() => onMove(step, 1)}
+                  aria-label={`Move ${step.title} down`}>
+                  ↓
+                </button>
+              </>
+            )}
+            {!retired && (
+              <>
+                <button className={btnGhost} disabled={busy} onClick={() => startEdit(step)}>Edit</button>
+                <button className={btnGhost} disabled={busy}
+                  onClick={() => { setRetiringId(step.id); setRetireReason(""); setRetireHistoricalCorrection(false); setEditingId(null); }}>
+                  Retire
+                </button>
+              </>
+            )}
+            <button className={btnGhost} disabled={busy}
+              onClick={() => setDrawingsId((current) => (current === step.id ? null : step.id))}>
+              {drawingsId === step.id ? "Hide drawings" : "Drawings"}
+            </button>
+            <button className={btnGhost} disabled={busy}
+              onClick={() => setHistoryId((current) => (current === step.id ? null : step.id))}>
+              {historyId === step.id ? "Hide history" : "History"}
+            </button>
+          </div>
+        </div>
+        {editingId === step.id && (
+          <div role="row" className={`grid ${STEPS_GRID_COLS} border-b border-slate-200 bg-slate-50 px-3 py-3`}>
+            <div role="cell" className="col-span-7">
+              <form onSubmit={(e) => onSaveEdit(e, step)} className="space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input className={`${input} flex-1`} aria-label="Step title" value={editForm.title}
+                    onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                    required maxLength={160} />
+                  <input className={input} aria-label="Craft" list="step-craft-suggestions"
+                    placeholder="Craft (optional)" value={editForm.craftLabel}
+                    onChange={(e) => setEditForm((f) => ({ ...f, craftLabel: e.target.value }))} maxLength={80} />
+                  <input className={input} aria-label="Planned duration days" type="number" min="1" max="366" step="1"
+                    placeholder="Days (optional)" value={editForm.plannedDurationDays}
+                    onChange={(e) => setEditForm((f) => ({ ...f, plannedDurationDays: e.target.value }))} />
+                  <input className={input} aria-label="Planned person-hours" type="number" min="0.01" max="1000000" step="0.01"
+                    placeholder="Person-hours (optional)" value={editForm.plannedPersonHours}
+                    onChange={(e) => setEditForm((f) => ({ ...f, plannedPersonHours: e.target.value }))} />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input className={`${input} flex-[2]`} aria-label="Description" placeholder="Description (optional)"
+                    value={editForm.description}
+                    onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} maxLength={4000} />
+                  <input className={`${input} flex-1`} aria-label="Source note" placeholder="Source note (optional)"
+                    value={editForm.sourceNote}
+                    onChange={(e) => setEditForm((f) => ({ ...f, sourceNote: e.target.value }))} maxLength={1000} />
+                </div>
+                {step.sourceNote && (
+                  <p className="text-xs text-slate-500">Source: {step.sourceNote}</p>
+                )}
+                <label className="flex items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" checked={editForm.historicalCorrection}
+                    disabled={isTerminal}
+                    onChange={(e) => setEditForm((f) => ({ ...f, historicalCorrection: e.target.checked }))} />
+                  {isTerminal
+                    ? "This package is closed, so this edit is recorded as a historical correction"
+                    : "Record this edit as a historical correction"}
+                </label>
+                <input className={input} aria-label="Reason for this change"
+                  placeholder={editForm.historicalCorrection || isTerminal ? "Reason for this change (required)" : "Reason for this change (optional)"}
+                  value={editForm.reason}
+                  onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
+                  maxLength={1000} required={editForm.historicalCorrection || isTerminal} />
+                <div className="flex gap-2">
+                  <button type="submit" className={btnPrimary} disabled={busy}>Save changes</button>
+                  <button type="button" className={btnGhost} disabled={busy}
+                    onClick={() => { setEditingId(null); setEditForm(null); }}>Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {retiringId === step.id && (
+          <div role="row" className={`grid ${STEPS_GRID_COLS} border-b border-slate-200 bg-slate-50 px-3 py-3`}>
+            <div role="cell" className="col-span-7 space-y-2">
+              <input className={input} aria-label="Reason for retiring" placeholder="Reason for retiring (required)"
+                value={retireReason} onChange={(e) => setRetireReason(e.target.value)} maxLength={1000} required />
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input type="checkbox" aria-label="Record this retirement as a historical correction"
+                  checked={retireHistoricalCorrection}
+                  onChange={(e) => setRetireHistoricalCorrection(e.target.checked)} />
+                Record this retirement as a historical correction
+              </label>
+              <div className="flex gap-2">
+                <button className={btnPrimary} disabled={busy || !retireReason.trim()}
+                  onClick={() => onConfirmRetire(step)}>
+                  Retire this step
+                </button>
+                <button className={btnGhost} disabled={busy}
+                  onClick={() => { setRetiringId(null); setRetireReason(""); setRetireHistoricalCorrection(false); }}>
+                  Keep it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {drawingsId === step.id && (
+          <div role="row" className={`grid ${STEPS_GRID_COLS} border-b border-slate-200 bg-slate-50 px-3 py-3`}>
+            <div role="cell" className="col-span-7">
+              <StepDrawings packageId={packageId} step={step} drawings={drawings} busy={busy}
+                onChanged={() => reload()} />
+            </div>
+          </div>
+        )}
+        {historyId === step.id && (
+          <div role="row" className={`grid ${STEPS_GRID_COLS} border-b border-slate-200 bg-slate-50 px-3 py-3`}>
+            <div role="cell" className="col-span-7">
+              <StepHistory packageId={packageId} stepId={step.id} />
+            </div>
+          </div>
+        )}
+      </Fragment>
+    );
+  }
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Work steps</h2>
@@ -737,156 +1033,95 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
         </form>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs text-slate-600">
           <input type="checkbox" checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} />
           Show retired
         </label>
+        {!isTerminal && (
+          <button type="button" onClick={() => setImportOpen(true)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Import from file
+          </button>
+        )}
       </div>
 
       {isLoading ? (
         <p className="mt-3 text-xs text-slate-500">Loading work steps…</p>
-      ) : activeSteps.length === 0 && retiredSteps.length === 0 ? (
-        <p className="mt-3 text-xs text-slate-500">No work steps yet — add the first one above.</p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {(showRetired ? steps : activeSteps).map((step) => (
-            <li key={step.id} className="rounded border border-slate-100 p-3 text-xs">
-              {editingId === step.id ? (
-                <form onSubmit={(e) => onSaveEdit(e, step)} className="space-y-2">
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input className={`${input} flex-1`} aria-label="Step title" value={editForm.title}
-                      onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                      required maxLength={160} />
-                    <input className={input} aria-label="Craft" list="step-craft-suggestions"
-                      placeholder="Craft (optional)" value={editForm.craftLabel}
-                      onChange={(e) => setEditForm((f) => ({ ...f, craftLabel: e.target.value }))} maxLength={80} />
-                    <input className={input} aria-label="Planned duration days" type="number" min="1" max="366" step="1"
-                      placeholder="Days (optional)" value={editForm.plannedDurationDays}
-                      onChange={(e) => setEditForm((f) => ({ ...f, plannedDurationDays: e.target.value }))} />
-                    <input className={input} aria-label="Planned person-hours" type="number" min="0.01" max="1000000" step="0.01"
-                      placeholder="Person-hours (optional)" value={editForm.plannedPersonHours}
-                      onChange={(e) => setEditForm((f) => ({ ...f, plannedPersonHours: e.target.value }))} />
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input className={`${input} flex-[2]`} aria-label="Description" placeholder="Description (optional)"
-                      value={editForm.description}
-                      onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} maxLength={4000} />
-                    <input className={`${input} flex-1`} aria-label="Source note" placeholder="Source note (optional)"
-                      value={editForm.sourceNote}
-                      onChange={(e) => setEditForm((f) => ({ ...f, sourceNote: e.target.value }))} maxLength={1000} />
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-slate-700">
-                    <input type="checkbox" checked={editForm.historicalCorrection}
-                      disabled={isTerminal}
-                      onChange={(e) => setEditForm((f) => ({ ...f, historicalCorrection: e.target.checked }))} />
-                    {isTerminal
-                      ? "This package is closed, so this edit is recorded as a historical correction"
-                      : "Record this edit as a historical correction"}
-                  </label>
-                  <input className={input} aria-label="Reason for this change"
-                    placeholder={editForm.historicalCorrection || isTerminal ? "Reason for this change (required)" : "Reason for this change (optional)"}
-                    value={editForm.reason}
-                    onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
-                    maxLength={1000} required={editForm.historicalCorrection || isTerminal} />
-                  <div className="flex gap-2">
-                    <button type="submit" className={btnPrimary} disabled={busy}>Save changes</button>
-                    <button type="button" className={btnGhost} disabled={busy}
-                      onClick={() => { setEditingId(null); setEditForm(null); }}>Cancel</button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="font-medium text-slate-900">#{step.sequenceNo} {step.title}</span>
-                      {step.craftLabel && <span className="ml-2 text-slate-500">· {step.craftLabel}</span>}
-                      {step.supersedesStepId && (
-                        <span className="ml-2 text-slate-500">
-                          · Replaces #{stepById.get(step.supersedesStepId)?.sequenceNo ?? "?"} {stepById.get(step.supersedesStepId)?.title ?? "a retired step"}
-                        </span>
-                      )}
-                      {step.retiredAt && (
-                        <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-slate-600">Retired</span>
-                      )}
-                    </div>
-                    <span className="text-slate-400">v{step.version}</span>
-                  </div>
-                  <p className="mt-1 text-slate-600">
-                    {formatEstimate(step.plannedDurationDays, "days")}
-                    {" · "}
-                    {formatEstimate(step.plannedPersonHours, "person-hours")}
-                  </p>
-                  {step.description && <p className="mt-1 text-slate-600">{step.description}</p>}
-                  {step.sourceNote && <p className="mt-1 text-slate-500">Source: {step.sourceNote}</p>}
-                  {retiringId === step.id ? (
-                    <div className="mt-2 space-y-2">
-                      <input className={input} aria-label="Reason for retiring" placeholder="Reason for retiring (required)"
-                        value={retireReason} onChange={(e) => setRetireReason(e.target.value)} maxLength={1000} required />
-                      <label className="flex items-center gap-2 text-xs text-slate-700">
-                        <input type="checkbox" aria-label="Record this retirement as a historical correction"
-                          checked={retireHistoricalCorrection}
-                          onChange={(e) => setRetireHistoricalCorrection(e.target.checked)} />
-                        Record this retirement as a historical correction
-                      </label>
-                      <div className="flex gap-2">
-                        <button className={btnPrimary} disabled={busy || !retireReason.trim()}
-                          onClick={() => onConfirmRetire(step)}>
-                          Retire this step
-                        </button>
-                        <button className={btnGhost} disabled={busy}
-                          onClick={() => { setRetiringId(null); setRetireReason(""); setRetireHistoricalCorrection(false); }}>
-                          Keep it
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {!step.retiredAt && !isTerminal && (
-                        <>
-                          <button className={btnGhost} disabled={busy}
-                            onClick={() => onMove(step, -1)}
-                            aria-label={`Move ${step.title} up`}>
-                            ↑ Move up
-                          </button>
-                          <button className={btnGhost} disabled={busy}
-                            onClick={() => onMove(step, 1)}
-                            aria-label={`Move ${step.title} down`}>
-                            ↓ Move down
-                          </button>
-                        </>
-                      )}
-                      {!step.retiredAt && (
-                        <>
-                          <button className={btnGhost} disabled={busy} onClick={() => startEdit(step)}>Edit</button>
-                          <button className={btnGhost} disabled={busy}
-                            onClick={() => { setRetiringId(step.id); setRetireReason(""); setRetireHistoricalCorrection(false); setEditingId(null); }}>
-                            Retire
-                          </button>
-                        </>
-                      )}
-                      <button className={btnGhost} disabled={busy}
-                        onClick={() => setDrawingsId((current) => (current === step.id ? null : step.id))}>
-                        {drawingsId === step.id ? "Hide drawings" : "Drawings"}
-                      </button>
-                      <button className={btnGhost} disabled={busy}
-                        onClick={() => setHistoryId((current) => (current === step.id ? null : step.id))}>
-                        {historyId === step.id ? "Hide history" : "History"}
-                      </button>
-                    </div>
-                  )}
-                  {drawingsId === step.id && (
-                    <StepDrawings packageId={packageId} step={step} drawings={drawings} busy={busy}
-                      onChanged={() => reload()} />
-                  )}
-                  {historyId === step.id && (
-                    <StepHistory packageId={packageId} stepId={step.id} />
-                  )}
-                </>
-              )}
-            </li>
+      ) : loadError ? null : (
+        // The worklist IS the grid: double-click a cell to edit it,
+        // blank rows fill the page so the next step is typed in place.
+        // A closed package gets no blank rows and no add pointer — the
+        // dead "add the first one above" text is gone.
+        <div role="table" aria-label="Work steps" className="mt-4 border-t border-slate-300">
+          <div role="row" className={`grid ${STEPS_GRID_COLS} items-center gap-x-2 border-b-2 border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500`}>
+            <div role="columnheader">#</div>
+            <div role="columnheader">Title</div>
+            <div role="columnheader">Description</div>
+            <div role="columnheader">Craft</div>
+            <div role="columnheader">Planned days</div>
+            <div role="columnheader">Planned hours</div>
+            <div role="columnheader">Actions</div>
+          </div>
+          {isTerminal && steps.length === 0 && (
+            <p className="px-3 py-3 text-xs text-slate-500">This package is closed — no work steps were added.</p>
+          )}
+          {activeSteps.map((step) => renderStepRow(step))}
+          {!isTerminal && drafts.map((draft, index) => (
+            <div key={`blank-${index}`} role="row" data-blank-row={index}
+              className={`grid ${STEPS_GRID_COLS} items-center gap-x-2 border-b border-dashed border-slate-200 bg-slate-50/60 px-3 py-2 text-sm`}>
+              <div role="cell" className="min-w-0 truncate text-slate-300">—</div>
+              <EditableGridCell
+                value={draft.title} display={draft.title || "New step title…"}
+                ariaLabel={`Title for new step row ${index + 1}`} placeholder="New step title"
+                onCommit={(next) => commitBlank(index, "title", next)}
+                onError={(text) => setError(text)}
+                className="font-medium text-slate-400"
+              />
+              <EditableGridCell
+                value={draft.description} display={draft.description || "—"}
+                ariaLabel={`Description for new step row ${index + 1}`} placeholder="Description"
+                onCommit={(next) => commitBlank(index, "description", next)}
+                onError={(text) => setError(text)}
+                className="text-slate-700"
+              />
+              <EditableGridCell
+                value={draft.craftLabel} display={draft.craftLabel || "—"}
+                editor="select" options={craftOptionsFor(draft.craftLabel)}
+                ariaLabel={`Craft for new step row ${index + 1}`}
+                onCommit={(next) => commitBlank(index, "craftLabel", next)}
+                onError={(text) => setError(text)}
+                className="text-slate-700"
+              />
+              <EditableGridCell
+                value={draft.plannedDurationDays} display={draft.plannedDurationDays || "—"}
+                editor="number" ariaLabel={`Planned days for new step row ${index + 1}`}
+                validate={validateDays}
+                onCommit={(next) => commitBlank(index, "plannedDurationDays", next)}
+                onError={(text) => setError(text)}
+                className="text-slate-700"
+              />
+              <EditableGridCell
+                value={draft.plannedPersonHours} display={draft.plannedPersonHours || "—"}
+                editor="number" ariaLabel={`Planned hours for new step row ${index + 1}`}
+                validate={validateHours}
+                onCommit={(next) => commitBlank(index, "plannedPersonHours", next)}
+                onError={(text) => setError(text)}
+                className="text-slate-700"
+              />
+              <div role="cell" className="min-w-0 truncate text-slate-300">—</div>
+            </div>
           ))}
-        </ul>
+          {showRetired && retiredSteps.map((step) => renderStepRow(step))}
+        </div>
+      )}
+      {importOpen && (
+        <WorkPackageImportDialog
+          kind="steps"
+          packageId={packageId}
+          onImported={(summary) => reload(summary?.message || "Import applied.")}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </section>
   );

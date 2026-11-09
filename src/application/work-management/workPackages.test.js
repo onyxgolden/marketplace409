@@ -1048,3 +1048,70 @@ describe("deleteWorkPackage (D7)", () => {
     await expect(deleteWorkPackage(unknown, args)).rejects.toThrow(/mystery/);
   });
 });
+
+// --- Editable grid: import source tracking ---------------------------
+// The (source_system, source_record_id) pair is import bookkeeping:
+// validated in the domain, carried on create only when the caller
+// sent it (the columns do not exist until the migration applies), and
+// editable through the update path so a re-import can stamp a row it
+// matched by another key.
+describe("import source tracking", () => {
+  it("carries the source pair on create when the caller sent it", async () => {
+    const insertChain = chain({ data: { ...PKG, source_system: "sap", source_record_id: "1002345" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "SAP job", source_system: "sap", source_record_id: "1002345" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
+      source_system: "sap", source_record_id: "1002345",
+    }));
+  });
+
+  it("omits the source keys entirely when the caller did not send them", async () => {
+    const insertChain = chain({ data: { ...PKG, id: "forge_wp_new", code: "WP-0007" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover" } });
+    expect(result.ok).toBe(true);
+    const row = insertChain.insert.mock.calls[0][0];
+    expect(row).not.toHaveProperty("source_system");
+    expect(row).not.toHaveProperty("source_record_id");
+  });
+
+  it("rejects an unknown source system and a lone record id", async () => {
+    const db = mockDb([]);
+    const badSystem = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "SAP job", source_system: "oracle", source_record_id: "1" } });
+    expect(badSystem.ok).toBe(false);
+    expect(badSystem.httpStatus).toBe(400);
+    const loneId = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "SAP job", source_record_id: "1" } });
+    expect(loneId.ok).toBe(false);
+    expect(loneId.httpStatus).toBe(400);
+  });
+
+  it("maps a duplicate source key to 409 instead of a 500", async () => {
+    const insertChain = chain({ data: null, error: {
+      code: "23505",
+      message: 'duplicate key value violates unique constraint "uq_forge_work_packages_source"',
+    } });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "SAP job", source_system: "sap", source_record_id: "1002345" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(result.error).toContain("already imported");
+  });
+
+  it("lets an update stamp the source pair", async () => {
+    const getChain = chain({ data: { ...PKG }, error: null });
+    const updateChain = chain({ data: { ...PKG, source_system: "sap", source_record_id: "1002345" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { source_system: "sap", source_record_id: "1002345" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      source_system: "sap", source_record_id: "1002345",
+    }));
+  });
+});

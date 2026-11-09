@@ -61,6 +61,10 @@ function toCamelStep(row) {
     plannedDurationDays: row.planned_duration_days ?? null,
     plannedPersonHours: row.planned_person_hours == null ? null : Number(row.planned_person_hours),
     sourceNote: row.source_note ?? null,
+    // Import bookkeeping (null until the editable-grid migration adds
+    // the columns; select("*") simply omits them before then).
+    sourceSystem: row.source_system ?? null,
+    sourceRecordId: row.source_record_id ?? null,
     supersedesStepId: row.supersedes_step_id ?? null,
     version: row.version,
     retiredAt: row.retired_at ?? null,

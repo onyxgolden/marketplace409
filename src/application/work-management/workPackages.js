@@ -49,6 +49,8 @@ async function getPackage(db, ownerId, packageId) {
 // Fields the edit endpoint may change. Status, code, and percent_complete
 // are excluded by validatePackageInput; actual_* dates move only via
 // transitions; scope_baseline_id moves only via the freeze/change workflow.
+// source_system / source_record_id are import bookkeeping (the re-import
+// key) — set by the import apply path, never by the grid.
 const EDITABLE_FIELDS = [
   "title", "description", "package_type", "priority", "project_id", "property_id",
   "responsible_party", "planned_start", "planned_finish",
@@ -57,7 +59,24 @@ const EDITABLE_FIELDS = [
   "planned_qty", "planned_unit", "planned_manhours",
   "earned_qty", "earned_manhours", "actual_manhours",
   "progress_basis", "progress_updated_by",
+  "source_system", "source_record_id",
 ];
+
+// Maps a database error on the import-tracking columns to the honest
+// client-facing result: a duplicate source key is a re-import of an
+// already-imported record (409), and an undefined-column error means
+// the editable-grid migration has not been applied yet (400, not 500).
+function mapSourceColumnError(error, constraint) {
+  if (!error) return null;
+  const message = typeof error.message === "string" ? error.message : "";
+  if (error.code === "23505" && message.includes(constraint)) {
+    return { ok: false, httpStatus: 409, error: "This record was already imported from that source system." };
+  }
+  if (error.code === "42703" && (message.includes("source_system") || message.includes("source_record_id"))) {
+    return { ok: false, httpStatus: 400, error: "Import tracking is not available yet — the database change for it has not been applied." };
+  }
+  return null;
+}
 
 // -- Residential property association (Slice 2) -----------------------------
 // A package belongs to zero or one residential property. The stored value
@@ -159,9 +178,21 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     percent_complete: null,
     created_by: actor, updated_by: actor, created_at: now, updated_at: now,
   };
+  // Import bookkeeping, only when the caller sent it (the columns do
+  // not exist until the editable-grid migration applies — sending
+  // nulls unconditionally would break every create before then).
+  // validatePackageInput above already validated the pair.
+  if (input.source_system !== undefined || input.source_record_id !== undefined) {
+    row.source_system = input.source_system ?? null;
+    row.source_record_id = input.source_record_id ?? null;
+  }
   row.percent_complete = derivePercentComplete(row);
   const { data, error } = await db.from(TABLES.packages).insert(row).select("*").single();
-  if (error) throw error;
+  if (error) {
+    const mapped = mapSourceColumnError(error, "uq_forge_work_packages_source");
+    if (mapped) return mapped;
+    throw error;
+  }
   return { ok: true, package: data };
 }
 
@@ -297,7 +328,11 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     .eq("owner_id", ownerId).eq("id", packageId);
   if (pkg.updated_at) query = query.eq("updated_at", pkg.updated_at);
   const { data, error } = await query.select("*").maybeSingle();
-  if (error) throw error;
+  if (error) {
+    const mapped = mapSourceColumnError(error, "uq_forge_work_packages_source");
+    if (mapped) return mapped;
+    throw error;
+  }
   if (!data) {
     return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
   }
