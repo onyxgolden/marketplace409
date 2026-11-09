@@ -34,6 +34,7 @@ from .cost import BudgetExceeded, blended_minute_usd
 from .policy import quote_guard
 from .policy.disclosure import current_revision, verify_disclosure_text
 from .providers import ProviderError
+from .session import CALL_SOURCES
 
 
 class PipelineClosed(RuntimeError):
@@ -45,6 +46,9 @@ class CallPipeline:
     def __init__(self, *, stt, llm, tts, dialogue, config, cost_ledger=None,
                  latency_recorder=None, kill_switch=None, activation_mode: str = "OFF",
                  source: str = "SYNTHETIC", call_sid: str = ""):
+        if source not in CALL_SOURCES:
+            raise ValueError(
+                f"call source must be one of {CALL_SOURCES}, got {source!r}")
         self.stt = stt
         self.llm = llm
         self.tts = tts
@@ -73,8 +77,15 @@ class CallPipeline:
             raise PipelineClosed("call duration limit reached")
         if self.cost_ledger is not None:
             try:
-                self.cost_ledger.check_call_ceiling(
-                    call_sid=self.call_sid, projected_usd=blended_minute_usd(self.config.cost_rate_version),
+                # Reserve one more minute of headroom BEFORE any provider
+                # work this turn: the reservation is atomic across
+                # concurrent sessions (fix round 1, P1-3), so a turn can
+                # never start on a ceiling a sibling call already spent.
+                # The reservation is settled into the actual turn cost by
+                # record_call at the end of handle_audio.
+                self.cost_ledger.reserve(
+                    call_sid=self.call_sid, source=self.source,
+                    projected_usd=blended_minute_usd(self.config.cost_rate_version),
                     max_per_call_usd=self.config.max_cost_per_call_usd,
                     max_campaign_usd=self.config.max_cost_campaign_usd)
             except BudgetExceeded as exc:

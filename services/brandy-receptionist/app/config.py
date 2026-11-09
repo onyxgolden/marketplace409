@@ -47,6 +47,12 @@ class ReceptionistConfig:
     telephony_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_TELEPHONY_ENABLED", False))
     outbound_alerts_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_OUTBOUND_ALERTS_ENABLED", False))
     recording_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_RECORDING_ENABLED", False))
+    # Voicemail recordings are a SEPARATE policy from AI call recording
+    # (fix round 1, P2-2): the fallback TwiML records a caller's voice
+    # only when this flag is on AND an attorney-APPROVED voicemail
+    # disclosure exists (app/policy/disclosure.py). Either one missing
+    # means no <Record> is rendered. Default OFF.
+    voicemail_recording_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_VOICEMAIL_RECORDING_ENABLED", False))
     transcript_storage_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_TRANSCRIPT_STORAGE_ENABLED", False))
     live_tenant_sync_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_LIVE_TENANT_SYNC_ENABLED", False))
 
@@ -164,6 +170,7 @@ class ReceptionistConfig:
             "telephony_enabled": self.telephony_enabled,
             "outbound_alerts_enabled": self.outbound_alerts_enabled,
             "recording_enabled": self.recording_enabled,
+            "voicemail_recording_enabled": self.voicemail_recording_enabled,
             "transcript_storage_enabled": self.transcript_storage_enabled,
             "live_tenant_sync_enabled": self.live_tenant_sync_enabled,
             "operation_id": self.operation_id,
@@ -176,6 +183,7 @@ class ReceptionistConfig:
             "telephony": self.telephony_enabled,
             "outbound_alerts": self.outbound_alerts_enabled,
             "recording": self.recording_enabled,
+            "voicemail_recording": self.voicemail_recording_enabled,
             "transcript_storage": self.transcript_storage_enabled,
             "live_tenant_sync": self.live_tenant_sync_enabled,
         }.get(feature, False)

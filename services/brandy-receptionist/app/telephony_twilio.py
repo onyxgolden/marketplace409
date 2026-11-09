@@ -124,7 +124,20 @@ def verify_twiml_disclosure() -> dict:
     return {"ok": ok, "revision_id": revision["id"], "revision_status": revision["status"]}
 
 
-def twiml_human_fallback(forward_e164: str | None = None, reason: str = "unavailable") -> str:
+def voicemail_recording_allowed(config) -> bool:
+    """True only when BOTH gates pass: the operator enabled voicemail
+    recording in config AND an attorney-APPROVED voicemail disclosure
+    exists. Either one missing means the fallback must not record.
+    (Fix round 1, P2-2: transcribe="false" disables transcription, NOT
+    recording — so a <Record> in the fallback is a recording that needs
+    its own approved disclosure, storage/retention decision, and
+    test-number routing.)"""
+    from .policy.disclosure import voicemail_recording_approved
+    return bool(config.voicemail_recording_enabled) and voicemail_recording_approved()
+
+
+def twiml_human_fallback(forward_e164: str | None = None, reason: str = "unavailable",
+                         *, record_voicemail: bool = False) -> str:
     """Human voicemail/forwarding fallback TwiML for the TEST number.
 
     This is the content to host as the number's fallback (TwiML Bin or
@@ -133,48 +146,83 @@ def twiml_human_fallback(forward_e164: str | None = None, reason: str = "unavail
     rollback drill verifies the number's configured fallback points at
     this content (rehearsal-only; no number is provisioned in this build).
     If a forward destination is configured, the caller is offered a human
-    transfer first; otherwise straight to voicemail recording."""
+    transfer first; otherwise straight to voicemail recording.
+
+    Recording (fix round 1, P2-2): <Record> is rendered ONLY when
+    record_voicemail is True AND the voicemail-recording policy is
+    APPROVED — the builder re-checks the policy itself, so a caller
+    passing True on a draft policy still gets no recording. When
+    recording, the approved voicemail disclosure is spoken first. When
+    not recording, the caller is told to call back — the fallback never
+    promises a message it cannot take."""
     import html
+    from .policy.disclosure import VOICEMAIL_RECORDING_POLICY, voicemail_recording_approved
     safe_reason = html.escape(reason, quote=True)
+    record = bool(record_voicemail) and voicemail_recording_approved()
     parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"]
-    parts.append("<Say>Brandy's rental office. The automated assistant is "
-                 f"currently {safe_reason}. Please leave a message and Brandy will call you back.</Say>")
+    if record:
+        parts.append("<Say>Brandy's rental office. The automated assistant is "
+                     f"currently {safe_reason}. "
+                     + html.escape(VOICEMAIL_RECORDING_POLICY["text"]) + "</Say>")
+    else:
+        parts.append("<Say>Brandy's rental office. The automated assistant is "
+                     f"currently {safe_reason}. No one is available to take your call right now. "
+                     "Please call back later and Brandy will help you.</Say>")
     if forward_e164:
         safe_forward = html.escape(forward_e164, quote=True)
         parts.append(f"<Dial timeout=\"20\">{safe_forward}</Dial>")
-    parts.append("<Record maxLength=\"120\" playBeep=\"true\" "
-                 "transcribe=\"false\" />")
+    if record:
+        parts.append("<Record maxLength=\"120\" playBeep=\"true\" "
+                     "transcribe=\"false\" />")
     parts.append("<Say>Thank you. Goodbye.</Say>")
     parts.append("</Response>")
     return "".join(parts)
 
 
-def twiml_transfer(forward_e164: str, *, timeout_s: int = 20) -> str:
+def twiml_transfer(forward_e164: str, *, timeout_s: int = 20,
+                   record_voicemail: bool = False) -> str:
     """TwiML: transfer the caller to a human number, then fall back to
-    voicemail if nobody answers."""
+    voicemail if nobody answers. Voicemail records only when
+    record_voicemail is True AND the voicemail-recording policy is
+    APPROVED (see twiml_human_fallback); otherwise the caller is told
+    to call back."""
     import html
+    from .policy.disclosure import VOICEMAIL_RECORDING_POLICY, voicemail_recording_approved
     safe_forward = html.escape(forward_e164, quote=True)
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response>"
-        "<Say>Transferring you to Brandy now.</Say>"
-        f"<Dial timeout=\"{int(timeout_s)}\">{safe_forward}</Dial>"
-        "<Say>Brandy could not be reached. Please leave a message.</Say>"
-        "<Record maxLength=\"120\" playBeep=\"true\" transcribe=\"false\" />"
-        "</Response>"
-    )
+    record = bool(record_voicemail) and voicemail_recording_approved()
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>",
+             "<Say>Transferring you to Brandy now.</Say>",
+             f"<Dial timeout=\"{int(timeout_s)}\">{safe_forward}</Dial>"]
+    if record:
+        parts.append("<Say>" + html.escape(VOICEMAIL_RECORDING_POLICY["text"]) + "</Say>")
+        parts.append("<Record maxLength=\"120\" playBeep=\"true\" transcribe=\"false\" />")
+    else:
+        parts.append("<Say>Brandy could not be reached. No one is available "
+                     "to take a message right now. Please call back later.</Say>")
+    parts.append("<Say>Thank you. Goodbye.</Say>")
+    parts.append("</Response>")
+    return "".join(parts)
 
 
-def twiml_voicemail(*, max_length_s: int = 120) -> str:
-    """TwiML: voicemail-only (no forward destination configured)."""
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response>"
-        "<Say>Brandy's rental office. Please leave a message and Brandy will call you back.</Say>"
-        f"<Record maxLength=\"{int(max_length_s)}\" playBeep=\"true\" transcribe=\"false\" />"
-        "<Say>Thank you. Goodbye.</Say>"
-        "</Response>"
-    )
+def twiml_voicemail(*, max_length_s: int = 120, record_voicemail: bool = False) -> str:
+    """TwiML: voicemail-only (no forward destination configured).
+    Records only when record_voicemail is True AND the
+    voicemail-recording policy is APPROVED (see twiml_human_fallback);
+    otherwise the caller is told to call back — a voicemail box that
+    cannot record takes no message."""
+    import html
+    from .policy.disclosure import VOICEMAIL_RECORDING_POLICY, voicemail_recording_approved
+    record = bool(record_voicemail) and voicemail_recording_approved()
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"]
+    if record:
+        parts.append("<Say>" + html.escape(VOICEMAIL_RECORDING_POLICY["text"]) + "</Say>")
+        parts.append(f"<Record maxLength=\"{int(max_length_s)}\" playBeep=\"true\" transcribe=\"false\" />")
+    else:
+        parts.append("<Say>Brandy's rental office. No one is available to take "
+                     "a message right now. Please call back later and Brandy will help you.</Say>")
+    parts.append("<Say>Thank you. Goodbye.</Say>")
+    parts.append("</Response>")
+    return "".join(parts)
 
 
 # --- Media Streams events -----------------------------------------------------

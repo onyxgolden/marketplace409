@@ -202,7 +202,8 @@ class TwilioAlertTransport:
     def __init__(self, account_sid: str, auth_token: str, from_number: str,
                  *, alert_ack_url: str = "", ack_digit: str = "1",
                  allowlist: RecipientAllowlist | None = None,
-                 client=None, cost_ledger=None, source: str = "TEST"):
+                 client=None, cost_ledger=None, source: str = "TEST",
+                 max_campaign_usd: float = 10.00):
         if not account_sid or not auth_token:
             raise ProviderAuthError("Twilio credentials missing")
         if not from_number:
@@ -216,6 +217,11 @@ class TwilioAlertTransport:
         self._client = client
         self.cost_ledger = cost_ledger
         self.source = source
+        # Campaign ceiling the pre-send reserve is checked against (fix
+        # round 1, P1-3). Default is the config default; the go-live
+        # wiring must pass config.max_cost_campaign_usd so the transport
+        # never enforces a different ceiling than the worker.
+        self.max_campaign_usd = max_campaign_usd
         self.calls: list = []
 
     def _client_or_build(self):
@@ -243,6 +249,24 @@ class TwilioAlertTransport:
             return {"accepted": False, "sid": None,
                     "failure_class": "no_consented_recipient",
                     "requested_at": now, "call_completed": True}
+        # Hard budget (fix round 1, P1-3): reserve the attempt's cost
+        # BEFORE the provider call, so a send can never start on a
+        # ceiling a concurrent call already spent. The reservation is
+        # settled into the actual alert cost by record_alert on success
+        # and released on any failure — a failed send holds no headroom.
+        reservation = None
+        if self.cost_ledger is not None and emergency_event_id:
+            from ..cost import BudgetExceeded, estimate_alert_cost_usd
+            try:
+                reservation = self.cost_ledger.reserve(
+                    emergency_event_id=emergency_event_id, channel=channel,
+                    source=self.source,
+                    projected_usd=estimate_alert_cost_usd(channel=channel),
+                    max_campaign_usd=self.max_campaign_usd)
+            except BudgetExceeded:
+                return {"accepted": False, "sid": None,
+                        "failure_class": "budget_exceeded",
+                        "requested_at": now, "call_completed": True}
         try:
             client = self._client_or_build()
             if channel == "VOICE":
@@ -256,6 +280,8 @@ class TwilioAlertTransport:
                 msg = client.messages.create(to=to, from_=self.from_number, body=message)
                 sid = getattr(msg, "sid", None)
         except Exception as exc:  # noqa: BLE001 — mapped to the taxonomy
+            if reservation is not None:
+                self.cost_ledger.release_reservation(reservation["id"])
             err = classify_error(exc)
             return {"accepted": False, "sid": None,
                     "failure_class": err.kind,
@@ -616,6 +642,24 @@ class AlertDispatcher:
         if self.live_gate is not None:
             self.live_gate()
 
+    def _any_consent(self) -> bool:
+        """True when at least one role+channel has a consented
+        recipient. When no recipient allowlist is configured (v1
+        tests), there is no consent check to fail — True."""
+        if self.recipient_allowlist is None:
+            return True
+        return any(self.recipient_allowlist.is_consented(role, channel)
+                   for role in ("PRIMARY", "BACKUP")
+                   for channel in ("VOICE", "SMS"))
+
+    def _role_has_consent(self, role: str) -> bool:
+        """True when the role has a consented recipient on any channel
+        (or no allowlist is configured)."""
+        if self.recipient_allowlist is None:
+            return True
+        return any(self.recipient_allowlist.is_consented(role, channel)
+                   for channel in ("VOICE", "SMS"))
+
     def dispatch_emergency(self, emergency_event_id: str, hazard: str,
                            message: str) -> dict:
         """Start primary voice + SMS CONCURRENTLY. Returns the alert record.
@@ -625,7 +669,16 @@ class AlertDispatcher:
         Go-live gate: the record is created FIRST (so the refusal is
         durable and visible), then the live gate is checked. A refused
         dispatch is recorded REFUSED/UNRESOLVED with the reason — never
-        silently dropped, never retried against the provider."""
+        silently dropped, never retried against the provider.
+
+        No-consent gate (fix round 1, P2-1): when the allowlist is
+        configured and NO role+channel has a consented recipient, the
+        dispatch is a terminal refusal — REFUSED/UNRESOLVED with
+        no_consented_recipient, no provider attempts, no ACK deadline,
+        no backup wave. When at least one consented channel exists, the
+        dispatch proceeds; per-attempt no-consent failures stay FAILED
+        attempts (auditable) and the existing immediate-backup logic
+        escalates to a consented backup."""
         with self._lock:
             if emergency_event_id in self._alerts:
                 return self._alerts[emergency_event_id]
@@ -647,6 +700,14 @@ class AlertDispatcher:
                 alert["state"] = "REFUSED"
                 alert["resolution_state"] = "UNRESOLVED"
                 alert["refused_reason"] = str(exc)
+                alert["_dirty"] = True
+            self._persist_safe()
+            return alert
+        if not self._any_consent():
+            with self._lock:
+                alert["state"] = "REFUSED"
+                alert["resolution_state"] = "UNRESOLVED"
+                alert["refused_reason"] = "no_consented_recipient"
                 alert["_dirty"] = True
             self._persist_safe()
             return alert
@@ -772,6 +833,20 @@ class AlertDispatcher:
                 alert["state"] = "REFUSED"
                 alert["resolution_state"] = "UNRESOLVED"
                 alert["refused_reason"] = str(exc)
+                alert["_dirty"] = True
+                self._persist_safe()
+                return alert
+            # No consented backup recipient (fix round 1, P2-1): there is
+            # no wave to start and no retry that could ever succeed
+            # without new consent, so do not claim the backup, do not
+            # arm a retry, and do not burn attempts against the
+            # provider. The alert stays UNACKNOWLEDGED / UNRESOLVED and
+            # visible; its attempts already record the no-consent
+            # failures. An operator adds consent and re-dispatches.
+            if not self._role_has_consent("BACKUP"):
+                alert["state"] = "UNACKNOWLEDGED"
+                alert["resolution_state"] = "UNRESOLVED"
+                alert["next_retry_at"] = None
                 alert["_dirty"] = True
                 self._persist_safe()
                 return alert

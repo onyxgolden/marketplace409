@@ -38,9 +38,10 @@ import struct
 import threading
 import time
 
+from .cost import BudgetExceeded, blended_minute_usd
 from .pipeline import PipelineClosed
 from .providers import ProviderError
-from .session import CallSession
+from .session import CallSession, canonical_source
 from .telephony_twilio import (
     MediaSequenceTracker, parse_media_event, verify_stream_token)
 
@@ -359,7 +360,29 @@ class MediaStreamGateway:
         existing = self.server.live_sessions.get(call_sid)
         if existing is not None:
             return existing
-        session = CallSession(call_sid, source=state["mode"])
+        # Canonical mode -> source mapping at the gateway boundary (fix
+        # round 1, P1-1): a TEST_ONLY session is a TEST call, a
+        # LIVE_APPROVED session is a LIVE call. The ingest route and the
+        # DB CHECK accept only TEST | LIVE | SYNTHETIC — a raw mode value
+        # here would 400 every rehearsal ingest. OFF is refused above.
+        source = canonical_source(state["mode"])
+        # Hard budget first (fix round 1, P1-3): reserve one minute of
+        # headroom BEFORE creating the session or any provider pipeline.
+        # An exhausted campaign refuses the session here — no provider
+        # session, no chargeable action, no phantom record. The
+        # reservation is released if pipeline construction fails, and
+        # settled into the actual call cost at session end.
+        reservation = None
+        try:
+            reservation = self.server.cost_ledger.reserve(
+                call_sid=call_sid, source=source,
+                projected_usd=blended_minute_usd(
+                    self.server.config.cost_rate_version),
+                max_per_call_usd=self.server.config.max_cost_per_call_usd,
+                max_campaign_usd=self.server.config.max_cost_campaign_usd)
+        except BudgetExceeded:
+            return None
+        session = CallSession(call_sid, source=source)
         # The TwiML <Say> already spoke the disclosure: mark it played so
         # the dialogue does not repeat it in-stream. The revision pinned
         # here is verified against the registry at voice-webhook time.
@@ -369,14 +392,16 @@ class MediaStreamGateway:
         revision = current_revision()
         session.dialogue.mark_twiml_disclosure_played(revision["id"])
         try:
-            pipeline = self.server.make_pipeline(call_sid, source=state["mode"],
+            pipeline = self.server.make_pipeline(call_sid, source=source,
                                                  dialogue=session.dialogue)
         except (ProviderError, PipelineClosed):
+            if reservation is not None:
+                self.server.cost_ledger.release_reservation(reservation["id"])
             return None
         sender = AudioSender(conn, event["stream_sid"])
         sender.start()
         live = {"session": session, "pipeline": pipeline, "sender": sender,
-                "stream_sid": event["stream_sid"], "source": state["mode"]}
+                "stream_sid": event["stream_sid"], "source": source}
         self.server.live_sessions[call_sid] = live
         return live
 

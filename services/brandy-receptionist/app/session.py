@@ -16,6 +16,27 @@ from dataclasses import dataclass, field
 from .config import ReceptionistConfig
 from .policy.dialogue import CallDialogue
 
+# The ONLY source labels a call record may carry (ingest route + DB
+# CHECK enforce the same set). Activation modes are NOT sources.
+CALL_SOURCES = ("TEST", "LIVE", "SYNTHETIC")
+
+# Canonical activation-mode -> call-source mapping, applied at the
+# gateway boundary (media_stream._start_session). A TEST_ONLY session
+# is a TEST call; a LIVE_APPROVED session is a LIVE call. OFF has no
+# session at all — passing it here is a caller bug, not a label.
+MODE_TO_SOURCE = {"TEST_ONLY": "TEST", "LIVE_APPROVED": "LIVE"}
+
+
+def canonical_source(mode: str) -> str:
+    """Map an activation mode to the call-source label its sessions
+    carry. Raises ValueError for OFF (no session) or an unknown mode —
+    a mode value must never reach a call record, an ingest payload, or
+    the inbox badge unmapped (fix round 1, P1-1)."""
+    try:
+        return MODE_TO_SOURCE[mode]
+    except KeyError:
+        raise ValueError(f"activation mode {mode!r} has no call source") from None
+
 
 def mask_e164(e164: str | None) -> str | None:
     if not e164:
@@ -50,6 +71,13 @@ class CallSession:
     def __init__(self, call_sid: str, ani: str | None = None,
                  config: ReceptionistConfig | None = None,
                  source: str = "SYNTHETIC"):
+        if source not in CALL_SOURCES:
+            # Defense in depth: the gateway canonicalizes the mode
+            # before constructing a session; a mode value (TEST_ONLY,
+            # LIVE_APPROVED, OFF) reaching here is a bug, and the
+            # ingest route + DB CHECK would 400 it anyway.
+            raise ValueError(
+                f"call source must be one of {CALL_SOURCES}, got {source!r}")
         self.call_sid = call_sid
         self.config = config or ReceptionistConfig()
         self.dialogue = CallDialogue(call_sid, ani=ani, config=self.config)

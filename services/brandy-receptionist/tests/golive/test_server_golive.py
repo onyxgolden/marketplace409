@@ -99,7 +99,11 @@ class TestVoiceWebhook(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(ctype, "text/xml")
         self.assertIn("<Response>", body)
-        self.assertIn("leave a message", body)
+        # Fix round 1, P2-2: the OFF fallback must not record — no
+        # <Record>, and no promise of a message it cannot take.
+        self.assertIn("call back later", body)
+        self.assertNotIn("leave a message", body)
+        self.assertNotIn("<Record", body)
         self.assertNotIn("<Stream", body)
 
     def test_test_only_correct_number_serves_stream_twiml(self):
@@ -120,7 +124,9 @@ class TestVoiceWebhook(unittest.TestCase):
         status, _, body = server.handle_voice_webhook(params, URL, _sig(params))
         self.assertEqual(status, 200)
         self.assertNotIn("<Stream", body)
-        self.assertIn("leave a message", body)
+        # Fix round 1, P2-2: the wrong-number fallback records nothing.
+        self.assertIn("call back later", body)
+        self.assertNotIn("<Record", body)
 
     def test_kill_serves_fallback_with_forward(self):
         server = self._server()
@@ -132,6 +138,74 @@ class TestVoiceWebhook(unittest.TestCase):
         self.assertNotIn("<Stream", body)
         self.assertIn("<Dial", body)
         self.assertIn("+15559876543", body)
+        # Fix round 1, P2-2: even the kill fallback with a forward
+        # destination records nothing without an approved policy.
+        self.assertNotIn("<Record", body)
+
+
+class TestVoicemailRecording(unittest.TestCase):
+    """Fix round 1, P2-2: a <Record> in the fallback is a recording
+    (transcribe="false" disables transcription, NOT recording), so the
+    fallback records only when the operator enabled it AND an
+    attorney-APPROVED voicemail disclosure exists. Either gate missing
+    means no <Record> — OFF, kill, and worker-unreachable fallbacks
+    never create unapproved recordings."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._env = mock.patch.dict(os.environ, {"RECEPTIONIST_TWILIO_AUTH_TOKEN": TOKEN})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _server(self, **overrides):
+        server = ReceptionistServer(_config(self._tmp.name, **overrides))
+        self.addCleanup(server.shutdown)
+        return server
+
+    def _off_fallback(self, server):
+        params = _params()
+        status, _, body = server.handle_voice_webhook(params, URL, _sig(params))
+        self.assertEqual(status, 200)
+        return body
+
+    def test_flag_on_without_approved_policy_still_does_not_record(self):
+        import app.policy.disclosure as disc
+        self.assertEqual(disc.VOICEMAIL_RECORDING_POLICY["status"], "UNAPPROVED")
+        server = self._server(voicemail_recording_enabled=True)
+        body = self._off_fallback(server)
+        self.assertNotIn("<Record", body)
+        self.assertIn("call back later", body)
+
+    def test_approved_policy_plus_flag_records_with_disclosure(self):
+        import app.policy.disclosure as disc
+        original = disc.VOICEMAIL_RECORDING_POLICY["status"]
+        try:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = "APPROVED"
+            server = self._server(voicemail_recording_enabled=True)
+            body = self._off_fallback(server)
+            self.assertIn("<Record", body)
+            # The approved voicemail disclosure is spoken first.
+            self.assertIn("recorded as a voicemail", body)
+        finally:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = original
+
+    def test_flag_off_with_approved_policy_does_not_record(self):
+        import app.policy.disclosure as disc
+        original = disc.VOICEMAIL_RECORDING_POLICY["status"]
+        try:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = "APPROVED"
+            server = self._server(voicemail_recording_enabled=False)
+            body = self._off_fallback(server)
+            self.assertNotIn("<Record", body)
+        finally:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = original
+
+    def test_health_reports_voicemail_recording_state(self):
+        server = self._server()
+        health = server.health()
+        self.assertEqual(health["voicemail_recording"], {
+            "enabled": False, "policy_approved": False, "records": False})
 
 
 class TestHealthAndOperatorStatus(unittest.TestCase):

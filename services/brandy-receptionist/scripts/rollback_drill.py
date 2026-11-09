@@ -44,9 +44,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.activation import load_activation_state
 from app.config import ReceptionistConfig
 from app.kill_switch import KillSwitch
-from app.policy.disclosure import current_revision, verify_disclosure_text
+from app.policy.disclosure import (
+    VOICEMAIL_RECORDING_POLICY, current_revision, verify_disclosure_text,
+    voicemail_recording_approved)
 from app.policy.quote_guard import TEMPLATES
-from app.telephony_twilio import twiml_human_fallback, verify_twiml_disclosure
+from app.telephony_twilio import (
+    twiml_human_fallback, verify_twiml_disclosure, voicemail_recording_allowed)
 
 
 def mask_e164(value: str) -> str:
@@ -75,11 +78,27 @@ def preflight(config: ReceptionistConfig, base_dir: str) -> list[dict]:
                          f"revision={revision['id']} status={revision['status']} — "
                          f"{'LIVE_APPROVED unreachable until an APPROVED revision exists' if revision['status'] != 'APPROVED' else 'an APPROVED revision exists; LIVE_APPROVED is reachable with owner word + rehearsal receipts'}"))
     try:
-        fallback = twiml_human_fallback(config.fallback_forward_e164 or None)
-        checks.append(_check("fallback_twiml_renders", "<Record" in fallback and "<Response>" in fallback,
-                             "voicemail fallback renders"))
+        # The fallback served on OFF / kill / worker-unreachable records
+        # the caller ONLY when voicemail recording is approved + enabled
+        # (fix round 1, P2-2). Prove the rendered fallback matches the
+        # policy: <Record> present exactly when recording is allowed.
+        allowed = voicemail_recording_allowed(config)
+        fallback = twiml_human_fallback(config.fallback_forward_e164 or None,
+                                        record_voicemail=allowed)
+        records = "<Record" in fallback
+        checks.append(_check("fallback_twiml_renders", "<Response>" in fallback,
+                             "human fallback renders"))
+        checks.append(_check("fallback_records_only_when_approved", records == allowed,
+                             f"voicemail recording allowed={allowed}, <Record> present={records}"))
     except Exception as exc:  # noqa: BLE001 — a render failure is a failed check
         checks.append(_check("fallback_twiml_renders", False, str(exc)))
+        checks.append(_check("fallback_records_only_when_approved", False, str(exc)))
+    checks.append(_check("voicemail_recording_policy",
+                         VOICEMAIL_RECORDING_POLICY["status"] in ("APPROVED", "UNAPPROVED"),
+                         f"policy={VOICEMAIL_RECORDING_POLICY['id']} status={VOICEMAIL_RECORDING_POLICY['status']} "
+                         f"enabled={config.voicemail_recording_enabled} "
+                         f"records={voicemail_recording_allowed(config)} — "
+                         f"{'recording is ON with an approved disclosure' if voicemail_recording_allowed(config) else 'fallback does not record (policy unapproved or flag off)'}"))
     checks.append(_check("recording_off_by_default", not config.recording_enabled,
                          "recording_enabled=False" if not config.recording_enabled else "recording is ON"))
     checks.append(_check("transcript_storage_off_by_default", not config.transcript_storage_enabled,
@@ -117,6 +136,12 @@ def retention_audit(config: ReceptionistConfig, base_dir: str) -> list[dict]:
     checks.append(_check("provider_retention_audited", False,
                          "OPERATOR ACTION: confirm Deepgram/Cartesia/Twilio retention "
                          "settings in each vendor console (cannot be checked from this host)"))
+    checks.append(_check("voicemail_retention_audited", False,
+                         "OPERATOR ACTION: if voicemail recording is ever approved, "
+                         "confirm the Twilio number's recording storage/retention "
+                         "for <Record> voicemails in the Twilio console (cannot be "
+                         "checked from this host); with recording off, no voicemail "
+                         "recordings exist to retain"))
     return checks
 
 

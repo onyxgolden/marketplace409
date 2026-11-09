@@ -20,13 +20,14 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from app.config import ReceptionistConfig
-from app.cost import CostLedger
+from app.cost import BudgetExceeded, CostLedger
 from app.kill_switch import KillSwitch
 from app.latency import LatencyRecorder
 from app.media_stream import MediaStreamGateway, _ws_accept, read_frame, write_frame
 from app.pipeline import CallPipeline
 from app.policy.dialogue import CallDialogue
 from app.providers import FakeLLM, FakeSTT, FakeTTS
+from app.session import CallSession, canonical_source
 from app.telephony_twilio import (
     MediaSequenceTracker, parse_media_event, sign_stream_token)
 
@@ -49,16 +50,18 @@ def client_text(obj: dict) -> bytes:
 class _StubServer:
     """Minimal ReceptionistServer stand-in for gateway tests."""
 
-    def __init__(self, tmp, *, mode="TEST_ONLY"):
+    def __init__(self, tmp, *, mode="TEST_ONLY", campaign=10.0):
         self.config = ReceptionistConfig(
             cost_ledger_path=os.path.join(tmp, "ledger.json"),
             kill_switch_path=os.path.join(tmp, "kill.json"),
-            stream_token_secret="stream-secret")
+            stream_token_secret="stream-secret",
+            max_cost_campaign_usd=campaign)
         self.kill_switch = KillSwitch(self.config.kill_switch_path)
         self.cost_ledger = CostLedger(self.config.cost_ledger_path)
         self.latency_recorder = LatencyRecorder(os.path.join(tmp, "latency.jsonl"))
         self.live_sessions: dict = {}
         self.ended: list = []
+        self.payloads: dict = {}
         self.mode = mode
         self.pipelines: dict = {}
 
@@ -82,7 +85,25 @@ class _StubServer:
             return None
         live = self.live_sessions.pop(call_sid)
         self.ended.append((call_sid, reason))
-        return live["session"].ingest_payload()
+        payload = live["session"].ingest_payload()
+        self.payloads[call_sid] = payload
+        return payload
+
+
+def _open_stream(port, call_sid, stream_sid, token):
+    """Handshake + start frame; returns the connected socket."""
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    sock.sendall(
+        b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+        b"Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        b"Sec-WebSocket-Version: 13\r\n\r\n")
+    head = sock.recv(1024)
+    assert b"101 Switching Protocols" in head
+    sock.sendall(client_text({
+        "event": "start", "streamSid": stream_sid,
+        "start": {"streamSid": stream_sid, "callSid": call_sid,
+                  "customParameters": {"token": token}}}))
+    return sock
 
 
 class TestMediaEventParsing(unittest.TestCase):
@@ -239,6 +260,131 @@ class TestGatewayHandshake(unittest.TestCase):
                 sock.close()  # drop without stop
                 time.sleep(0.5)
                 self.assertIn(("CA-drop-1", "stream_dropped"), server.ended)
+            finally:
+                gateway.stop()
+
+
+class TestCanonicalSource(unittest.TestCase):
+    """Fix round 1, P1-1: activation modes are NOT call sources. The
+    gateway maps TEST_ONLY -> TEST and LIVE_APPROVED -> LIVE at the
+    boundary, so a rehearsal call's ingest payload carries TEST — the
+    ingest route and the DB CHECK accept only TEST | LIVE | SYNTHETIC,
+    and the inbox badge renders the payload's source verbatim."""
+
+    def test_mapping(self):
+        self.assertEqual(canonical_source("TEST_ONLY"), "TEST")
+        self.assertEqual(canonical_source("LIVE_APPROVED"), "LIVE")
+        with self.assertRaises(ValueError):
+            canonical_source("OFF")
+        with self.assertRaises(ValueError):
+            canonical_source("BOGUS")
+
+    def test_session_rejects_raw_mode_values(self):
+        for bad in ("TEST_ONLY", "LIVE_APPROVED", "OFF", "BOGUS"):
+            with self.assertRaises(ValueError, msg=bad):
+                CallSession("CA-bad", source=bad)
+        self.assertEqual(CallSession("CA-ok", source="TEST").source, "TEST")
+
+    def test_test_only_start_labels_the_session_test(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY")
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-src-1", "brandy-rental-office")
+                sock = _open_stream(port, "CA-src-1", "MZ-src-1", token)
+                time.sleep(0.5)
+                live = server.live_sessions["CA-src-1"]
+                self.assertEqual(live["source"], "TEST")
+                self.assertEqual(live["session"].source, "TEST")
+                self.assertEqual(server.pipelines["CA-src-1"].source, "TEST")
+                # Stop: the completed ingest payload carries TEST, so the
+                # ingest route accepts it, the DB CHECK admits it, and
+                # the inbox badge renders it as a test call.
+                sock.sendall(client_text({
+                    "event": "stop", "stop": {"callSid": "CA-src-1"}}))
+                time.sleep(0.5)
+                payload = server.payloads["CA-src-1"]
+                self.assertEqual(payload["source"], "TEST")
+                self.assertIn(payload["source"], ("TEST", "LIVE", "SYNTHETIC"))
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_live_approved_start_labels_the_session_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="LIVE_APPROVED")
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-src-2", "brandy-rental-office")
+                sock = _open_stream(port, "CA-src-2", "MZ-src-2", token)
+                time.sleep(0.5)
+                self.assertEqual(server.live_sessions["CA-src-2"]["source"], "LIVE")
+                self.assertEqual(server.live_sessions["CA-src-2"]["session"].source, "LIVE")
+                sock.close()
+            finally:
+                gateway.stop()
+
+    def test_reconnect_resumes_with_the_canonical_source(self):
+        # A clean WebSocket close (no `stop` frame) leaves the live
+        # session in place; a reconnect with the same call SID + a fresh
+        # token resumes the SAME session object — no duplicate pipeline,
+        # no second budget reservation — still labeled TEST.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY")
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-src-3", "brandy-rental-office")
+                sock = _open_stream(port, "CA-src-3", "MZ-src-3", token)
+                time.sleep(0.3)
+                first_session = server.live_sessions["CA-src-3"]["session"]
+                first_pipeline = server.pipelines["CA-src-3"]
+                # Clean close frame: the gateway breaks the read loop
+                # WITHOUT ending the session (no `stop` arrived).
+                sock.sendall(client_frame(8, b""))
+                sock.close()
+                time.sleep(0.5)
+                self.assertEqual(server.ended, [])
+                self.assertIn("CA-src-3", server.live_sessions)
+                # Reconnect with a fresh token: the EXISTING session
+                # resumes, still labeled TEST.
+                token2 = sign_stream_token("stream-secret", "CA-src-3", "brandy-rental-office")
+                sock2 = _open_stream(port, "CA-src-3", "MZ-src-3b", token2)
+                time.sleep(0.3)
+                live = server.live_sessions["CA-src-3"]
+                self.assertIs(live["session"], first_session)
+                self.assertIs(server.pipelines["CA-src-3"], first_pipeline)
+                self.assertEqual(live["source"], "TEST")
+                self.assertEqual(live["session"].source, "TEST")
+                sock2.close()
+            finally:
+                gateway.stop()
+
+    def test_budget_exhausted_session_refused_before_pipeline(self):
+        # Fix round 1, P1-3: with the campaign spent, the gateway
+        # refuses the session BEFORE any provider pipeline is created —
+        # no chargeable session, no phantom record.
+        with tempfile.TemporaryDirectory() as tmp:
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.05)
+            server.cost_ledger.record_call(
+                call_sid="CA-spent", source="TEST", duration_s=1500,
+                agent_chars=6000)  # ~$0.75: the $0.05 campaign is spent
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token = sign_stream_token("stream-secret", "CA-src-4", "brandy-rental-office")
+                sock = _open_stream(port, "CA-src-4", "MZ-src-4", token)
+                time.sleep(0.5)
+                self.assertNotIn("CA-src-4", server.live_sessions)
+                self.assertNotIn("CA-src-4", server.pipelines)
+                self.assertEqual(server.ended, [])
+                sock.close()
             finally:
                 gateway.stop()
 

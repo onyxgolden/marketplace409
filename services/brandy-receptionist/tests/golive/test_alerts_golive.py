@@ -45,7 +45,7 @@ class _FakeTwilioClient:
         self.calls = _FakeTwilioCalls()
 
 
-def _consented_allowlist(*, voice=True, sms=True):
+def _consented_allowlist(*, voice=True, sms=True, roles=("PRIMARY",)):
     consent = {}
     if voice:
         consent["voice"] = {"given": True, "given_at": "2026-11-08T00:00:00Z",
@@ -53,9 +53,12 @@ def _consented_allowlist(*, voice=True, sms=True):
     if sms:
         consent["sms"] = {"given": True, "given_at": "2026-11-08T00:00:00Z",
                           "recorded_by": "operator"}
-    return RecipientAllowlist({
-        "PRIMARY": {"name": "Brandy Morgan", "voice_e164": "+15551234567",
-                    "sms_e164": "+15551234567", "consent": consent}})
+    entries = {}
+    for role in roles:
+        entries[role] = {"name": f"{role.title()} Person",
+                         "voice_e164": "+15551234567",
+                         "sms_e164": "+15551234567", "consent": dict(consent)}
+    return RecipientAllowlist(entries)
 
 
 def _transport(allowlist, client=None):
@@ -169,7 +172,10 @@ class TestDispatcherLiveGate(unittest.TestCase):
             backup = [a for a in after["attempts"] if a.role == "BACKUP"]
             self.assertEqual(backup, [])
 
-    def test_test_mode_dispatch_without_consent_records_failed_attempts(self):
+    def test_both_empty_consent_is_a_terminal_refusal(self):
+        # Fix round 1, P2-1: no consented recipient on any role+channel
+        # is a terminal gate refusal — REFUSED/UNRESOLVED with the
+        # reason, no provider attempts, no ACK deadline, no backup wave.
         with tempfile.TemporaryDirectory() as tmp:
             client = _FakeTwilioClient()
             transport = _transport(RecipientAllowlist({}), client)
@@ -177,15 +183,124 @@ class TestDispatcherLiveGate(unittest.TestCase):
                                           allowlist=RecipientAllowlist({}))
             record = dispatcher.dispatch_emergency("emg-noconsent-1", "WATER",
                                                    "Water emergency.")
-            # No consented recipient: the provider is never called, the
-            # attempts are recorded FAILED, and the alert stays visible.
+            self.assertEqual(record["state"], "REFUSED")
+            self.assertEqual(record["resolution_state"], "UNRESOLVED")
+            self.assertEqual(record["refused_reason"], "no_consented_recipient")
+            self.assertEqual(record["attempts"], [])
             self.assertEqual(client.messages.created, [])
             self.assertEqual(client.calls.created, [])
+            # Never escalated: the timeout check leaves it REFUSED.
+            after = dispatcher.check_ack_timeout("emg-noconsent-1")
+            self.assertEqual(after["state"], "REFUSED")
+            self.assertEqual(after["attempts"], [])
+            self.assertIsNone(after["next_retry_at"])
+            dispatcher.shutdown()
+
+    def test_primary_missing_backup_consented_escalates_to_backup(self):
+        # Fix round 1, P2-1: primary without consent but a consented
+        # backup means the dispatch proceeds — the primary attempts are
+        # recorded FAILED (auditable, no provider call) and the backup
+        # wave starts immediately.
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _FakeTwilioClient()
+            allowlist = _consented_allowlist(roles=("BACKUP",))
+            transport = _transport(allowlist, client)
+            dispatcher = self._dispatcher(tmp, transport=transport,
+                                          allowlist=allowlist)
+            record = dispatcher.dispatch_emergency("emg-backup-1", "WATER",
+                                                   "Water emergency.")
+            self.assertEqual(record["state"], "UNACKNOWLEDGED")
             self.assertEqual(record["resolution_state"], "UNRESOLVED")
-            self.assertTrue(record["attempts"])
-            self.assertTrue(all(a.state == "FAILED" for a in record["attempts"]))
+            primary = [a for a in record["attempts"] if a.role == "PRIMARY"]
+            self.assertEqual(len(primary), 2)
+            self.assertTrue(all(a.state == "FAILED" for a in primary))
             self.assertTrue(all(a.failure_class == "no_consented_recipient"
-                                for a in record["attempts"]))
+                                for a in primary))
+            backup = [a for a in record["attempts"] if a.role == "BACKUP"]
+            self.assertEqual(len(backup), 2)
+            self.assertTrue(all(a.state in ("ACCEPTED", "DELIVERED") for a in backup))
+            # The backup calls actually reached the provider.
+            self.assertEqual(len(client.calls.created), 1)
+            self.assertEqual(len(client.messages.created), 1)
+            dispatcher.shutdown()
+
+    def test_channel_specific_consent_attempts_only_the_consented_channel(self):
+        # Fix round 1, P2-1: voice consented, SMS not — the voice call
+        # goes out, the SMS attempt fails without a provider call, and
+        # the alert is NOT refused outright (a consented channel exists).
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _FakeTwilioClient()
+            allowlist = _consented_allowlist(sms=False)
+            transport = _transport(allowlist, client)
+            dispatcher = self._dispatcher(tmp, transport=transport,
+                                          allowlist=allowlist)
+            record = dispatcher.dispatch_emergency("emg-channel-1", "WATER",
+                                                   "Water emergency.")
+            # The voice call is out; nobody has acknowledged, and the
+            # backup has no consent, so the timeout check leaves the
+            # alert UNACKNOWLEDGED (not refused — a consented channel
+            # is in flight) with no backup wave and no retry armed.
+            self.assertEqual(record["state"], "UNACKNOWLEDGED")
+            self.assertEqual(record["resolution_state"], "UNRESOLVED")
+            self.assertIsNone(record["next_retry_at"])
+            voice = [a for a in record["attempts"]
+                     if a.role == "PRIMARY" and a.channel == "VOICE"]
+            sms = [a for a in record["attempts"]
+                   if a.role == "PRIMARY" and a.channel == "SMS"]
+            self.assertEqual(len(voice), 1)
+            self.assertIn(voice[0].state, ("ACCEPTED", "DELIVERED"))
+            self.assertEqual(len(sms), 1)
+            self.assertEqual(sms[0].state, "FAILED")
+            self.assertEqual(sms[0].failure_class, "no_consented_recipient")
+            self.assertEqual(len(client.calls.created), 1)
+            self.assertEqual(client.messages.created, [])
+            dispatcher.shutdown()
+
+    def test_backup_wave_skipped_when_backup_has_no_consent(self):
+        # Fix round 1, P2-1: primary voice accepted but unanswered, and
+        # the backup has no consented recipient — no backup wave starts,
+        # no retry is armed, the alert stays UNACKNOWLEDGED/UNRESOLVED
+        # with the no-consent failures on the record.
+        with tempfile.TemporaryDirectory() as tmp:
+            allowlist = _consented_allowlist(roles=("PRIMARY",))
+            dispatcher = self._dispatcher(
+                tmp,
+                transport=FakeAlertTransport(
+                    {("PRIMARY", "VOICE"): ["unanswered"],
+                     ("PRIMARY", "SMS"): ["accepted"]}),
+                allowlist=allowlist)
+            record = dispatcher.dispatch_emergency("emg-nobackup-1", "WATER",
+                                                   "Water emergency.")
+            # Immediate backup on the unanswered primary voice leg: the
+            # backup wave is skipped (no consent), so no BACKUP attempts
+            # exist and no retry is armed.
+            backup = [a for a in record["attempts"] if a.role == "BACKUP"]
+            self.assertEqual(backup, [])
+            self.assertEqual(record["state"], "UNACKNOWLEDGED")
+            self.assertEqual(record["resolution_state"], "UNRESOLVED")
+            self.assertIsNone(record["next_retry_at"])
+            dispatcher.shutdown()
+
+    def test_kill_during_escalation_still_refuses(self):
+        # Fix round 1, P2-1: the kill-during-escalation contract is
+        # unchanged — a kill after dispatch refuses the backup wave
+        # (this is the same scenario as test_kill_mid_escalation, kept
+        # here to prove the consent changes did not disturb it).
+        with tempfile.TemporaryDirectory() as tmp:
+            gate_state = {"killed": False}
+
+            def gate():
+                if gate_state["killed"]:
+                    raise AlertRefused("kill switch engaged")
+
+            dispatcher = self._dispatcher(
+                tmp, transport=FakeAlertTransport(),
+                gate=gate, allowlist=_consented_allowlist())
+            dispatcher.dispatch_emergency("emg-kill-2", "WATER", "Water emergency.")
+            gate_state["killed"] = True
+            after = dispatcher.check_ack_timeout("emg-kill-2")
+            self.assertEqual(after["state"], "REFUSED")
+            dispatcher.shutdown()
 
 
 if __name__ == "__main__":

@@ -53,6 +53,9 @@ class TestPreflight(unittest.TestCase):
             self.assertEqual(statuses["kill_switch_readable"], "PASS")
             self.assertEqual(statuses["disclosure_pinned"], "PASS")
             self.assertEqual(statuses["fallback_twiml_renders"], "PASS")
+            # Fix round 1, P2-2: the default fallback records nothing.
+            self.assertEqual(statuses["fallback_records_only_when_approved"], "PASS")
+            self.assertEqual(statuses["voicemail_recording_policy"], "PASS")
             self.assertEqual(statuses["recording_off_by_default"], "PASS")
             self.assertEqual(statuses["transcript_storage_off_by_default"], "PASS")
             self.assertEqual(statuses["test_number_configured"], "PASS")
@@ -70,6 +73,34 @@ class TestPreflight(unittest.TestCase):
             statuses = _statuses(preflight(config, tmp))
             self.assertEqual(statuses["cost_ledger_readable"], "FAIL")
 
+    def test_preflight_voicemail_flag_without_approval_still_no_record(self):
+        # Fix round 1, P2-2: the flag alone never enables recording.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp, voicemail_recording_enabled=True)
+            statuses = _statuses(preflight(config, tmp))
+            self.assertEqual(statuses["fallback_records_only_when_approved"], "PASS")
+            detail = next(c for c in preflight(config, tmp)
+                          if c["check"] == "voicemail_recording_policy")["detail"]
+            self.assertIn("records=False", detail)
+
+    def test_preflight_voicemail_approved_and_enabled_records(self):
+        # Fix round 1, P2-2: with an APPROVED policy + the flag, the
+        # fallback records by design — and the preflight proves the
+        # rendered fallback matches the policy.
+        import app.policy.disclosure as disc
+        original = disc.VOICEMAIL_RECORDING_POLICY["status"]
+        try:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = "APPROVED"
+            with tempfile.TemporaryDirectory() as tmp:
+                config = _config(tmp, voicemail_recording_enabled=True)
+                statuses = _statuses(preflight(config, tmp))
+                self.assertEqual(statuses["fallback_records_only_when_approved"], "PASS")
+                detail = next(c for c in preflight(config, tmp)
+                              if c["check"] == "voicemail_recording_policy")["detail"]
+                self.assertIn("records=True", detail)
+        finally:
+            disc.VOICEMAIL_RECORDING_POLICY["status"] = original
+
     def test_mask_e164(self):
         self.assertEqual(mask_e164("+15551234567"), "+1-***-***-4567")
         self.assertEqual(mask_e164(""), "***")
@@ -86,6 +117,10 @@ class TestRetentionAudit(unittest.TestCase):
             # Provider-side retention cannot be checked from this host:
             # always an open operator action, never silently green.
             self.assertEqual(statuses["provider_retention_audited"], "FAIL")
+            # Fix round 1, P2-2: Twilio voicemail retention is a separate
+            # operator confirmation (nothing to retain while recording
+            # is off, but the item stays open until confirmed).
+            self.assertEqual(statuses["voicemail_retention_audited"], "FAIL")
 
     def test_stray_recording_artifact_fails_the_audit(self):
         with tempfile.TemporaryDirectory() as tmp:

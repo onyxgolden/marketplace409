@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .activation import load_activation_state
 from .config import DisabledError, ReceptionistConfig
-from .cost import CostLedger, blended_minute_usd
+from .cost import BudgetExceeded, CostLedger, blended_minute_usd
 from .integrations.alerts import (
     AlertDispatcher, AlertRefused, FakeAlertTransport, RecipientAllowlist)
 from .integrations.delivery import Outbox, OutboxWorker
@@ -44,7 +44,8 @@ from .providers import FakeLLM, FakeSTT, FakeTTS, ProviderAuthError
 from .session import CallSession, idempotency_key
 from .telephony_twilio import (
     require_telephony, sign_stream_token, twiml_human_fallback,
-    twiml_start_stream, verify_twilio_signature, verify_twiml_disclosure)
+    twiml_start_stream, verify_twilio_signature, verify_twiml_disclosure,
+    voicemail_recording_allowed)
 
 MAX_CONCURRENT_CALLS = 10
 
@@ -258,8 +259,14 @@ class ReceptionistServer:
             live = self.live_sessions.get(call_sid)
             source = (live or {}).get("source", "SYNTHETIC")
             if duration_s is not None:
-                self.cost_ledger.record_call(
-                    call_sid=call_sid, source=source, duration_s=duration_s)
+                # Post-hoc accounting: a corrupt ledger must not break
+                # the status callback — the spend is already known to
+                # have happened; the corruption stays visible in /health.
+                try:
+                    self.cost_ledger.record_call(
+                        call_sid=call_sid, source=source, duration_s=duration_s)
+                except BudgetExceeded:
+                    pass
         return {"deduped": False, "event_id": key}
 
     # -- live sessions (media gateway) ------------------------------------------
@@ -306,11 +313,20 @@ class ReceptionistServer:
         session.end(reason)
         duration_s = max((session.ended_at or time.time()) - session.started_at, 0)
         self.budget.charge(duration_s / 60.0)
-        entry = self.cost_ledger.record_call(
-            call_sid=call_sid, source=live["source"], duration_s=duration_s,
-            agent_chars=pipeline.agent_chars)
-        session.cost_estimate_usd = entry["estimated_usd"]
-        session.cost_rate_version = entry["rate_version"]
+        # The actual cost lands in the ledger (settling the session's
+        # reservations). If the ledger is corrupt, the spend already
+        # happened — the call record must still ingest, so the cost is
+        # left blank and the corruption stays visible in /health rather
+        # than dropping the record.
+        try:
+            entry = self.cost_ledger.record_call(
+                call_sid=call_sid, source=live["source"], duration_s=duration_s,
+                agent_chars=pipeline.agent_chars)
+            session.cost_estimate_usd = entry["estimated_usd"]
+            session.cost_rate_version = entry["rate_version"]
+        except BudgetExceeded:
+            session.cost_estimate_usd = None
+            session.cost_rate_version = None
         # Attach the emergency alert record (if any) so the FORGE ingest
         # upserts it into the alerts table — the inbox timeline's source
         # of truth. The dispatcher record is serialized here; the ingest
@@ -426,23 +442,36 @@ class ReceptionistServer:
             return 503, "application/json", json.dumps({"error": str(exc)})
         state = self.activation_state()
         called = params.get("To", "")
+        # Voicemail recording in the fallback is a separate policy from
+        # AI call recording (fix round 1, P2-2): the fallback served on
+        # OFF / kill / wrong-number / unpinned-disclosure / no-stream-URL
+        # records the caller ONLY when the operator enabled it AND an
+        # attorney-APPROVED voicemail disclosure exists. Otherwise the
+        # caller hears the no-recording message (or a human transfer).
+        record_voicemail = voicemail_recording_allowed(self.config)
         if state["mode"] == "OFF":
-            return 200, "text/xml", twiml_human_fallback(reason="unavailable")
+            return 200, "text/xml", twiml_human_fallback(
+                reason="unavailable", record_voicemail=record_voicemail)
         if self.kill_switch.is_killed():
             return 200, "text/xml", twiml_human_fallback(
-                self.config.fallback_forward_e164 or None, reason="temporarily unavailable")
+                self.config.fallback_forward_e164 or None,
+                reason="temporarily unavailable", record_voicemail=record_voicemail)
         if state["mode"] == "TEST_ONLY" and called != self.config.test_number_e164:
-            return 200, "text/xml", twiml_human_fallback(reason="unavailable")
+            return 200, "text/xml", twiml_human_fallback(
+                reason="unavailable", record_voicemail=record_voicemail)
         if state["mode"] == "LIVE_APPROVED":
             live_number = os.environ.get("RECEPTIONIST_LIVE_NUMBER_E164", "")
             if live_number and called != live_number:
-                return 200, "text/xml", twiml_human_fallback(reason="unavailable")
+                return 200, "text/xml", twiml_human_fallback(
+                    reason="unavailable", record_voicemail=record_voicemail)
         disclosure = verify_twiml_disclosure()
         if not disclosure["ok"]:
-            return 200, "text/xml", twiml_human_fallback(reason="unavailable")
+            return 200, "text/xml", twiml_human_fallback(
+                reason="unavailable", record_voicemail=record_voicemail)
         url_out = self.stream_url()
         if not url_out:
-            return 200, "text/xml", twiml_human_fallback(reason="unavailable")
+            return 200, "text/xml", twiml_human_fallback(
+                reason="unavailable", record_voicemail=record_voicemail)
         call_sid = params.get("CallSid", "")
         token = sign_stream_token(self.config.stream_token_secret, call_sid,
                                   self.config.operation_id)
@@ -476,15 +505,28 @@ class ReceptionistServer:
         latency = self.latency_recorder.receipt(targets={
             "latency_p95_target_ms": self.config.latency_p95_target_ms,
             "barge_in_stop_p95_target_ms": self.config.barge_in_stop_p95_target_ms})
-        from .policy.disclosure import current_revision
+        from .policy.disclosure import current_revision, voicemail_recording_approved
         revision = current_revision()
+        # Cost totals are read through the ledger's fail-closed guard: a
+        # corrupt ledger reports None + the reason instead of a reset 0.
+        try:
+            cost_total = self.cost_ledger.total_usd()
+            cost_corrupt = None
+        except BudgetExceeded as exc:
+            cost_total = None
+            cost_corrupt = str(exc)
         return {"ok": True, **self.config.live_features(),
                 "activation_mode": state["mode"],
                 "activation_valid": state["valid"],
                 "activation_reason": state["reason"],
                 "kill_switch": self.kill_switch.state(),
                 "budget_used_minutes": round(self.budget.used_minutes, 2),
-                "cost_total_usd": self.cost_ledger.total_usd(),
+                "cost_total_usd": cost_total,
+                "cost_ledger_corrupt": cost_corrupt,
+                "voicemail_recording": {
+                    "enabled": self.config.voicemail_recording_enabled,
+                    "policy_approved": voicemail_recording_approved(),
+                    "records": voicemail_recording_allowed(self.config)},
                 "cost_per_call_ceiling_usd": self.config.max_cost_per_call_usd,
                 "cost_campaign_ceiling_usd": self.config.max_cost_campaign_usd,
                 "active_calls": len(self.sessions),
@@ -500,10 +542,14 @@ class ReceptionistServer:
         cost ledger totals, unresolved alerts, and live session list
         (call SIDs + source + duration, no phone numbers)."""
         status = self.health()
-        status["cost_ledger_entries"] = len(self.cost_ledger.entries())
-        status["cost_by_source"] = {
-            source: self.cost_ledger.total_usd(source=source)
-            for source in ("TEST", "LIVE", "SYNTHETIC")}
+        try:
+            status["cost_ledger_entries"] = len(self.cost_ledger.entries())
+            status["cost_by_source"] = {
+                source: self.cost_ledger.total_usd(source=source)
+                for source in ("TEST", "LIVE", "SYNTHETIC")}
+        except BudgetExceeded:
+            status["cost_ledger_entries"] = None
+            status["cost_by_source"] = None
         status["alerts_unresolved"] = self.dispatcher.health()["unresolved"]
         status["live_sessions"] = [
             {"call_sid": sid, "source": live["source"],

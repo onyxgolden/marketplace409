@@ -27,15 +27,50 @@ both checked BEFORE provider sessions start and BEFORE expensive
 actions (alert sends, TTS turns). On exhaustion the call fails closed
 to human voicemail + an operator alert — never a silent drop, never an
 unbounded session.
+
+Reservations (fix round 1, P1-3): `reserve()` atomically claims
+projected spend under a cross-process file lock before any chargeable
+provider session or send, so two concurrent calls cannot both pass
+against the same remaining balance. A reservation is a durable ledger
+entry (kind "reservation") that counts toward the totals until the
+actual cost is recorded — `record_call` / `record_alert` release the
+open reservations for that call / alert event in the same atomic
+write, so reserved and actual costs are never double-counted.
+Reservations older than RESERVATION_TTL_S (2x the max call duration)
+are stale — their session is dead — and are purged on the next load.
+
+Corrupt ledger (fix round 1, P1-3): a missing file is a fresh start;
+an existing file that cannot be read or parsed is CORRUPT, and the
+ledger fails closed on it — every spend-authorizing operation raises
+BudgetExceeded and no new session or send is authorized. The corrupt
+file is never silently reset to an empty ledger (that would erase
+campaign spend). Fix the file (or replace it deliberately, as an
+operator action) and the ledger recovers on the next read.
+
+Multi-worker: all mutations take an exclusive fcntl lock on
+<path>.lock and re-read the file under the lock, so two workers
+sharing one ledger file cannot clobber each other's entries.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
 import threading
 import time
 import uuid
+
+try:
+    import fcntl  # POSIX cross-process ledger lock; absent on Windows.
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
+
+# Reservations outlive their session only by a crash. A reservation
+# older than this belongs to a dead session (max call duration is 1800 s)
+# and is purged on the next load instead of holding campaign headroom
+# forever.
+RESERVATION_TTL_S = 3600
 
 # --- Rate table ------------------------------------------------------------
 RATE_TABLES = {
@@ -98,34 +133,223 @@ class CostLedger:
        "source": "TEST"|"LIVE"|"SYNTHETIC", "rate_version",
        "usage": {...raw usage...}, "estimated_usd": float,
        "correlation_id": str}
+    Reservations add:
+      {"kind": "reservation", "status": "reserved",
+       "reserved_at": <epoch seconds>, "call_sid"|"emergency_event_id",
+       "channel": <alert channel or None>, "estimated_usd": <projected>}
+    A reservation counts toward every total until it is released or
+    settled into an actual entry — that is what makes the ceiling hard
+    across concurrent sessions.
     """
 
     def __init__(self, path: str, rate_version: str = "1.0"):
         self.path = path
         self.rate_version = rate_version
         self._lock = threading.Lock()
+        self._corrupt: str | None = None
         self._entries = self._load()
 
+    # -- corruption + locking -------------------------------------------------
+
+    @property
+    def is_corrupt(self) -> bool:
+        """True when the ledger file exists but cannot be read/parsed.
+        Spend authorization is refused while corrupt; /health reports it."""
+        return self._corrupt is not None
+
+    @property
+    def corrupt_reason(self) -> str | None:
+        return self._corrupt
+
     def _load(self) -> list:
+        """Read the ledger file. A missing file is a fresh start ([]).
+        An existing file that cannot be read or parsed sets _corrupt
+        and returns [] — the caller must refuse spend, never treat the
+        empty list as a reset campaign. Expired reservations are purged
+        (their sessions are dead; the purge persists on the next save)."""
         try:
             with open(self.path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            if isinstance(data, list):
-                return data
-        except (OSError, ValueError):
-            pass
-        return []
+            if not isinstance(data, list):
+                raise ValueError("cost ledger is not a JSON list")
+        except FileNotFoundError:
+            self._corrupt = None
+            return []
+        except (OSError, ValueError) as exc:
+            self._corrupt = f"cost ledger unreadable: {exc}"
+            return []
+        self._corrupt = None
+        now = time.time()
+        return [e for e in data
+                if not (isinstance(e, dict) and e.get("kind") == "reservation"
+                        and e.get("status") == "reserved"
+                        and isinstance(e.get("reserved_at"), (int, float))
+                        and now - e["reserved_at"] > RESERVATION_TTL_S)]
+
+    def _refresh(self) -> None:
+        """Re-read the file into memory. Callers hold _lock; mutations
+        additionally hold the file lock, so a refresh under a mutation
+        sees every other worker's committed entries."""
+        self._entries = self._load()
+
+    def _require_readable(self) -> None:
+        """Fail closed on a corrupt ledger: no spend may be authorized
+        (or recorded) against a ledger whose prior spend is unknown."""
+        if self._corrupt is not None:
+            raise BudgetExceeded(
+                f"cost ledger is corrupt ({self._corrupt}); refusing new "
+                "spend until an operator repairs or deliberately replaces it")
+
+    @contextlib.contextmanager
+    def _file_lock(self):
+        """Exclusive cross-process lock on <path>.lock (POSIX fcntl).
+        Without fcntl (Windows) there is no cross-process serialization;
+        the in-process lock still serializes threads of this worker."""
+        if fcntl is None:
+            yield
+            return
+        lock_path = f"{self.path}.lock"
+        directory = os.path.dirname(lock_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            deadline = time.time() + 5
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.time() >= deadline:
+                        raise BudgetExceeded(
+                            f"timed out waiting for cost ledger lock {lock_path}")
+                    time.sleep(0.01)
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
 
     def _save_locked(self) -> None:
         directory = os.path.dirname(self.path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        tmp = f"{self.path}.tmp.{os.getpid()}"
+        tmp = f"{self.path}.tmp.{os.getpid()}.{threading.get_ident()}"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(self._entries, fh, indent=2, sort_keys=True)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, self.path)
+
+    def _mutate(self, fn):
+        """Run fn(entries) atomically: in-process lock + cross-process
+        file lock + re-read under the lock, then save. fn returns the
+        mutation's result. Raises BudgetExceeded on a corrupt ledger."""
+        with self._lock:
+            with self._file_lock():
+                self._refresh()
+                self._require_readable()
+                result = fn(self._entries)
+                self._save_locked()
+                return result
+
+    def _read(self, fn):
+        """Read under the in-process lock, re-reading the file first so
+        another worker's committed entries are visible. Raises
+        BudgetExceeded on a corrupt ledger."""
+        with self._lock:
+            self._refresh()
+            self._require_readable()
+            return fn(list(self._entries))
+
+    # -- reservations ----------------------------------------------------------
+
+    def _spent_for_call(self, entries: list, call_sid: str) -> float:
+        return round(sum(e["estimated_usd"] for e in entries
+                         if e.get("call_sid") == call_sid), 6)
+
+    def _campaign_total(self, entries: list) -> float:
+        return round(sum(e["estimated_usd"] for e in entries), 6)
+
+    def reserve(self, *, call_sid: str | None = None,
+                emergency_event_id: str | None = None,
+                channel: str | None = None, source: str = "TEST",
+                projected_usd: float, max_per_call_usd: float | None = None,
+                max_campaign_usd: float) -> dict:
+        """Atomically claim projected spend before a chargeable provider
+        session or send. The reservation is durable (it survives a
+        restart) and counts toward the per-call and campaign totals
+        until released or settled into an actual entry, so two
+        concurrent calls cannot both pass against the same remaining
+        balance. Raises BudgetExceeded when the claim would breach a
+        ceiling or the ledger is corrupt. One of call_sid (a call) or
+        emergency_event_id (an alert send) must be given."""
+        if call_sid is None and emergency_event_id is None:
+            raise ValueError("reserve requires call_sid or emergency_event_id")
+        if projected_usd < 0:
+            raise ValueError("reserve requires a non-negative projected_usd")
+
+        def _claim(entries: list) -> dict:
+            if call_sid is not None and max_per_call_usd is not None:
+                spent = self._spent_for_call(entries, call_sid)
+                if spent + projected_usd > max_per_call_usd:
+                    raise BudgetExceeded(
+                        f"per-call ceiling ${max_per_call_usd:.2f} would be breached "
+                        f"(spent ${spent:.4f} + projected ${projected_usd:.4f})")
+            total = self._campaign_total(entries)
+            if total + projected_usd > max_campaign_usd:
+                raise BudgetExceeded(
+                    f"campaign ceiling ${max_campaign_usd:.2f} would be breached "
+                    f"(spent ${total:.4f} + projected ${projected_usd:.4f})")
+            reservation = {
+                "id": str(uuid.uuid4()),
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "kind": "reservation",
+                "status": "reserved",
+                "reserved_at": time.time(),
+                "call_sid": call_sid,
+                "emergency_event_id": emergency_event_id,
+                "channel": channel,
+                "source": source,
+                "rate_version": self.rate_version,
+                "estimated_usd": round(projected_usd, 6),
+                "correlation_id": call_sid or emergency_event_id,
+            }
+            entries.append(reservation)
+            return reservation
+
+        return self._mutate(_claim)
+
+    def release_reservation(self, reservation_id: str) -> bool:
+        """Release one reservation by id (e.g. a session refused after
+        the reserve, or a failed provider send). Returns True when a
+        reservation was removed. Never raises on a missing id."""
+        def _release(entries: list) -> bool:
+            before = len(entries)
+            entries[:] = [e for e in entries
+                          if not (e.get("kind") == "reservation"
+                                  and e.get("id") == reservation_id)]
+            return len(entries) < before
+
+        return self._mutate(_release)
+
+    def _release_for_call(self, entries: list, call_sid: str) -> None:
+        """Drop every open reservation for a call: the actual cost entry
+        replaces the headroom it held (never double-counted)."""
+        entries[:] = [e for e in entries
+                      if not (e.get("kind") == "reservation"
+                              and e.get("call_sid") == call_sid)]
+
+    def _release_for_alert(self, entries: list, emergency_event_id: str,
+                           channel: str) -> None:
+        entries[:] = [e for e in entries
+                      if not (e.get("kind") == "reservation"
+                              and e.get("emergency_event_id") == emergency_event_id
+                              and e.get("channel") == channel)]
+
+    # -- actuals ---------------------------------------------------------------
 
     def record_call(self, *, call_sid: str, source: str, duration_s: float,
                     agent_chars: int = 0, llm_minutes: float = 0.0,
@@ -148,10 +372,13 @@ class CostLedger:
             "estimated_usd": cost,
             "correlation_id": correlation_id or call_sid,
         }
-        with self._lock:
-            self._entries.append(entry)
-            self._save_locked()
-        return entry
+
+        def _append(entries: list) -> dict:
+            self._release_for_call(entries, call_sid)
+            entries.append(entry)
+            return entry
+
+        return self._mutate(_append)
 
     def record_alert(self, *, emergency_event_id: str, source: str, channel: str,
                      correlation_id: str | None = None) -> dict:
@@ -167,45 +394,49 @@ class CostLedger:
             "estimated_usd": cost,
             "correlation_id": correlation_id or emergency_event_id,
         }
-        with self._lock:
-            self._entries.append(entry)
-            self._save_locked()
-        return entry
+
+        def _append(entries: list) -> dict:
+            self._release_for_alert(entries, emergency_event_id, channel)
+            entries.append(entry)
+            return entry
+
+        return self._mutate(_append)
 
     def total_usd(self, *, source: str | None = None) -> float:
-        with self._lock:
-            entries = list(self._entries)
-        total = sum(e["estimated_usd"] for e in entries
-                    if source is None or e.get("source") == source)
-        return round(total, 6)
+        def _total(entries: list) -> float:
+            return round(sum(e["estimated_usd"] for e in entries
+                             if source is None or e.get("source") == source), 6)
+
+        return self._read(_total)
 
     def call_total_usd(self, call_sid: str) -> float:
-        with self._lock:
-            entries = list(self._entries)
-        return round(sum(e["estimated_usd"] for e in entries
-                         if e.get("call_sid") == call_sid), 6)
+        return self._read(lambda entries: self._spent_for_call(entries, call_sid))
 
     def entries(self) -> list:
-        with self._lock:
-            return [dict(e) for e in self._entries]
+        return self._read(lambda entries: [dict(e) for e in entries])
 
     def check_call_ceiling(self, *, call_sid: str, projected_usd: float,
                            max_per_call_usd: float, max_campaign_usd: float) -> None:
         """Raise BudgetExceeded before a session/action that would breach.
-
+        Read-only check (no reservation): callers that proceed to spend
+        must use reserve() instead, so the headroom is actually held.
         projected_usd is the worst-case additional spend for this call
         (e.g. one more minute at the blended rate). The campaign total
-        includes everything already ledgered.
+        includes everything already ledgered, reservations included.
         """
-        spent_this_call = self.call_total_usd(call_sid)
-        if spent_this_call + projected_usd > max_per_call_usd:
-            raise BudgetExceeded(
-                f"per-call ceiling ${max_per_call_usd:.2f} would be breached "
-                f"(spent ${spent_this_call:.4f} + projected ${projected_usd:.4f})")
-        if self.total_usd() + projected_usd > max_campaign_usd:
-            raise BudgetExceeded(
-                f"campaign ceiling ${max_campaign_usd:.2f} would be breached "
-                f"(spent ${self.total_usd():.4f} + projected ${projected_usd:.4f})")
+        def _check(entries: list) -> None:
+            spent_this_call = self._spent_for_call(entries, call_sid)
+            if spent_this_call + projected_usd > max_per_call_usd:
+                raise BudgetExceeded(
+                    f"per-call ceiling ${max_per_call_usd:.2f} would be breached "
+                    f"(spent ${spent_this_call:.4f} + projected ${projected_usd:.4f})")
+            total = self._campaign_total(entries)
+            if total + projected_usd > max_campaign_usd:
+                raise BudgetExceeded(
+                    f"campaign ceiling ${max_campaign_usd:.2f} would be breached "
+                    f"(spent ${total:.4f} + projected ${projected_usd:.4f})")
+
+        self._read(_check)
 
 
 def blended_minute_usd(version: str = "1.0") -> float:

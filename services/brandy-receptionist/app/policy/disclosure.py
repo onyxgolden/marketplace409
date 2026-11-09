@@ -34,6 +34,43 @@ REVISIONS = {
     },
 }
 
+# --- Voicemail recordings: a SEPARATE policy from the AI call disclosure --
+#
+# A Twilio <Record> in the human-voicemail fallback is an AUDIO RECORDING
+# of the caller, even with transcribe="false" (that flag disables
+# transcription, not recording). The go-live scope keeps recordings OFF
+# by default and requires approved disclosure/retention before real
+# calls — so a voicemail recording needs its OWN approved disclosure,
+# storage/retention decision, and test-number routing before the
+# fallback may record anyone (fix round 1, P2-2).
+#
+# No attorney-approved voicemail wording exists yet: the policy below
+# is UNAPPROVED and the fallback renders NO <Record> until BOTH the
+# policy is APPROVED (attorney-blessed wording replaces this draft)
+# AND the operator enables it (config.voicemail_recording_enabled).
+# Until then the fallback offers a human transfer when one is
+# configured, and otherwise tells the caller to call back — it never
+# records.
+VOICEMAIL_RECORDING_POLICY = {
+    "id": "voicemail-recording-2026-11-08",
+    "status": "UNAPPROVED",  # draft wording — attorney review pending
+    "language": "en",
+    # Draft wording, spoken immediately before <Record> once approved.
+    # Do NOT present it to a caller as approved while UNAPPROVED.
+    "text": ("Brandy's rental office. Your message will be recorded as a "
+             "voicemail so Brandy can call you back. If you do not want "
+             "your message recorded, please hang up and call again during "
+             "office hours."),
+    "source": "draft wording for attorney review — NOT approved",
+}
+
+
+def voicemail_recording_approved() -> bool:
+    """True only when an attorney-approved voicemail-recording disclosure
+    exists. The fallback TwiML checks this itself, so a caller can never
+    be recorded on a draft policy even if the config flag is on."""
+    return VOICEMAIL_RECORDING_POLICY["status"] == "APPROVED"
+
 # The revision the server plays today. UNAPPROVED by construction: the
 # service is OFF / synthetic-only until the attorney blesses a revision.
 CURRENT_REVISION_ID = "draft-2026-11-08"
