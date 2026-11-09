@@ -262,9 +262,14 @@ class ReceptionistServer:
                 # Post-hoc accounting: a corrupt ledger must not break
                 # the status callback — the spend is already known to
                 # have happened; the corruption stays visible in /health.
+                # final_once: end_live_session may already have
+                # recorded the final — only the first final entry lands
+                # (fix round 2, P1), so a call is never duration-
+                # charged twice by the callback + the close racing.
                 try:
                     self.cost_ledger.record_call(
-                        call_sid=call_sid, source=source, duration_s=duration_s)
+                        call_sid=call_sid, source=source, duration_s=duration_s,
+                        final=True, final_once=True)
                 except BudgetExceeded:
                     pass
         return {"deduped": False, "event_id": key}
@@ -314,16 +319,26 @@ class ReceptionistServer:
         duration_s = max((session.ended_at or time.time()) - session.started_at, 0)
         self.budget.charge(duration_s / 60.0)
         # The actual cost lands in the ledger (settling the session's
-        # reservations). If the ledger is corrupt, the spend already
-        # happened — the call record must still ingest, so the cost is
-        # left blank and the corruption stays visible in /health rather
-        # than dropping the record.
+        # reservations). The final record prices duration exactly once,
+        # on the full elapsed call duration (fix round 2, P1) — the
+        # turns already recorded their own LLM/TTS usage, so the final
+        # carries agent_chars=0 / llm_minutes=0. final_once: the
+        # Twilio status callback may already have recorded the final —
+        # only the first final entry lands. The session's cost estimate
+        # is the call's TRUE total (duration + all turn actuals), not
+        # just the final entry. If the ledger is corrupt, the spend
+        # already happened — the call record must still ingest, so the
+        # cost is left blank and the corruption stays visible in
+        # /health rather than dropping the record.
         try:
-            entry = self.cost_ledger.record_call(
-                call_sid=call_sid, source=live["source"], duration_s=duration_s,
-                agent_chars=pipeline.agent_chars)
-            session.cost_estimate_usd = entry["estimated_usd"]
-            session.cost_rate_version = entry["rate_version"]
+            self.cost_ledger.record_call(
+                call_sid=call_sid, source=live["source"],
+                duration_s=duration_s, agent_chars=0, llm_minutes=0.0,
+                final=True, final_once=True,
+                usage_extra={"total_agent_chars": pipeline.agent_chars,
+                             "total_turns": pipeline.turns})
+            session.cost_estimate_usd = self.cost_ledger.call_total_usd(call_sid)
+            session.cost_rate_version = self.cost_ledger.rate_version
         except BudgetExceeded:
             session.cost_estimate_usd = None
             session.cost_rate_version = None

@@ -20,8 +20,12 @@ app/policy/disclosure.py) before TTS. Any mismatch fails the call
 closed to human fallback.
 
 Every turn records stage timings into the LatencyRecorder and charges
-the CostLedger (STT minutes, LLM minutes, TTS chars). A turn that
-exceeds the call's turn/duration limits, the cost ceiling, the kill
+the CostLedger for its incremental provider usage (LLM minutes, TTS
+chars); the call's duration is charged once at close, on the full
+elapsed call duration (fix round 2, P1 — pricing a turn's processing
+time as duration would double-count it against the final duration
+charge, and settling a turn must never drop the session reservation).
+A turn that exceeds the call's turn/duration limits, the cost ceiling, the kill
 switch, or the activation mode fails closed to human fallback — the
 pipeline raises PipelineClosed, which the media gateway translates into
 the Twilio human-fallback TwiML.
@@ -63,6 +67,12 @@ class CallPipeline:
         self.turns = 0
         self.started_at = time.monotonic()
         self.agent_chars = 0
+        # The current turn's reservation (fix round 2, P1): held from
+        # _require_live_turn until the turn settles (success) or is
+        # released (failure). Distinct from the session reservation the
+        # gateway holds for the call's duration — a turn must never
+        # release the session reservation.
+        self._turn_reservation: dict | None = None
 
     # --- guards ---------------------------------------------------------------
 
@@ -81,10 +91,16 @@ class CallPipeline:
                 # work this turn: the reservation is atomic across
                 # concurrent sessions (fix round 1, P1-3), so a turn can
                 # never start on a ceiling a sibling call already spent.
-                # The reservation is settled into the actual turn cost by
-                # record_call at the end of handle_audio.
-                self.cost_ledger.reserve(
+                # The reservation is held in self._turn_reservation and
+                # settled by handle_audio into ONLY this turn's actual
+                # cost (fix round 2, P1) — it never touches the session
+                # reservation the gateway holds for the call's duration.
+                # A failed turn releases it instead (see
+                # _release_turn_reservation), so a failed provider turn
+                # holds no headroom after the failure.
+                self._turn_reservation = self.cost_ledger.reserve(
                     call_sid=self.call_sid, source=self.source,
+                    purpose="turn",
                     projected_usd=blended_minute_usd(self.config.cost_rate_version),
                     max_per_call_usd=self.config.max_cost_per_call_usd,
                     max_campaign_usd=self.config.max_cost_campaign_usd)
@@ -93,6 +109,20 @@ class CallPipeline:
                 # (the gateway catches PipelineClosed); it must never
                 # escape as a raw BudgetExceeded and kill the stream thread.
                 raise PipelineClosed(str(exc)) from exc
+
+    def _release_turn_reservation(self) -> None:
+        """Release the current turn's reservation without settling it
+        (the turn failed, so the projected spend never happened). The
+        session reservation is untouched. Never raises: a corrupt ledger
+        refuses the release, which is conservative — the headroom stays
+        held until an operator reconciles it."""
+        reservation, self._turn_reservation = self._turn_reservation, None
+        if reservation is None or self.cost_ledger is None:
+            return
+        try:
+            self.cost_ledger.release_reservation(reservation["id"])
+        except BudgetExceeded:
+            pass
 
     # --- disclosure -----------------------------------------------------------
 
@@ -120,8 +150,30 @@ class CallPipeline:
         "dialogue_state", "trace": {...stage ms...}, "llm_text",
         "disclosure": {...}}. Raises PipelineClosed on any guard,
         ProviderError on a provider failure (the gateway then falls back
-        to the safe prompt, never invents a slot)."""
+        to the safe prompt, never invents a slot). A failed turn
+        releases its own reservation (the projected spend never
+        happened) and never touches the session reservation."""
         self._require_live_turn()
+        try:
+            return self._turn(audio)
+        except BudgetExceeded as exc:
+            # A corrupt ledger at settlement must fail the call closed
+            # to human fallback, never kill the stream thread with a
+            # raw BudgetExceeded (same rule as _require_live_turn).
+            self._release_turn_reservation()
+            raise PipelineClosed(str(exc)) from exc
+        except (PipelineClosed, ProviderError):
+            self._release_turn_reservation()
+            raise
+        except Exception:
+            self._release_turn_reservation()
+            raise
+
+    def _turn(self, audio: bytes) -> dict:
+        """One turn's provider work: STT -> advisory LLM -> dialogue ->
+        disclosure pinning -> quote-guard re-gate -> TTS -> latency +
+        cost settlement. Called only from handle_audio, after
+        _require_live_turn has reserved this turn's headroom."""
         turn_started = time.perf_counter()
         trace: dict = {}
 
@@ -179,10 +231,24 @@ class CallPipeline:
                 stt_ms=trace["stt_ms"], llm_ms=trace["llm_ms"],
                 tts_first_audio_ms=trace["tts_first_audio_ms"], e2e_ms=trace["e2e_ms"])
         if self.cost_ledger is not None:
+            # Settle ONLY this turn's reservation (fix round 2, P1):
+            # the session reservation stays held for the call's
+            # duration. The turn prices only its incremental provider
+            # usage (LLM minutes + TTS chars, duration 0) — duration
+            # is priced exactly once, by the final record at close,
+            # on the full elapsed call duration. (_require_live_turn
+            # always sets _turn_reservation when a ledger is present;
+            # a missing id here would fall back to releasing all of
+            # the call's reservations, the old behavior — it cannot
+            # happen through handle_audio.)
+            reservation, self._turn_reservation = self._turn_reservation, None
             self.cost_ledger.record_call(
                 call_sid=self.call_sid, source=self.source,
-                duration_s=(time.perf_counter() - turn_started),
-                agent_chars=len(reply_text), llm_minutes=trace["llm_ms"] / 60000.0)
+                duration_s=0.0,
+                agent_chars=len(reply_text),
+                llm_minutes=trace["llm_ms"] / 60000.0,
+                settle_reservation_id=(reservation or {}).get("id"),
+                usage_extra={"turn": self.turns})
 
         return {"audio": tts_result.get("audio", b""), "transcript": transcript,
                 "reply_text": reply_text, "dialogue_state": dialogue_out.get("state"),

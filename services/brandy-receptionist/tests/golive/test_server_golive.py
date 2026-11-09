@@ -335,6 +335,52 @@ class TestKillAndEndLiveSession(unittest.TestCase):
             finally:
                 server.shutdown()
 
+    def test_status_callback_then_close_records_one_final(self):
+        # Fix round 2, P1: the Twilio status callback and the session
+        # close race to record the final duration charge — only the
+        # first final entry lands, so the call is never charged twice.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, session = self._live_server(tmp)
+            try:
+                server.handle_status_callback(
+                    "CA-srv-1", "completed",
+                    {"CallDuration": "120", "SequenceNumber": "1"})
+                payload = server.end_live_session("CA-srv-1", "completed")
+                self.assertIsNotNone(payload)
+                finals = [e for e in server.cost_ledger.entries()
+                          if e.get("usage", {}).get("final") is True]
+                self.assertEqual(len(finals), 1)
+                self.assertAlmostEqual(finals[0]["usage"]["duration_s"], 120.0)
+                # The session's estimate is the call's TRUE total, not
+                # just the close's own (near-zero) duration entry.
+                self.assertAlmostEqual(
+                    payload["cost_estimate_usd"],
+                    server.cost_ledger.call_total_usd("CA-srv-1"))
+                self.assertAlmostEqual(
+                    payload["cost_estimate_usd"],
+                    finals[0]["estimated_usd"])
+            finally:
+                server.shutdown()
+
+    def test_close_then_status_callback_records_one_final(self):
+        # The race in the other order: close first, callback second.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, session = self._live_server(tmp)
+            try:
+                payload = server.end_live_session("CA-srv-1", "completed")
+                self.assertIsNotNone(payload)
+                server.handle_status_callback(
+                    "CA-srv-1", "completed",
+                    {"CallDuration": "120", "SequenceNumber": "1"})
+                finals = [e for e in server.cost_ledger.entries()
+                          if e.get("usage", {}).get("final") is True]
+                self.assertEqual(len(finals), 1)
+                self.assertAlmostEqual(
+                    payload["cost_estimate_usd"],
+                    server.cost_ledger.call_total_usd("CA-srv-1"))
+            finally:
+                server.shutdown()
+
     def test_outbox_gate_off_blocks_alerts_not_ingest(self):
         with tempfile.TemporaryDirectory() as tmp:
             from app.integrations.alerts import AlertRefused

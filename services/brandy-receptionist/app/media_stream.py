@@ -370,12 +370,16 @@ class MediaStreamGateway:
         # headroom BEFORE creating the session or any provider pipeline.
         # An exhausted campaign refuses the session here — no provider
         # session, no chargeable action, no phantom record. The
-        # reservation is released if pipeline construction fails, and
-        # settled into the actual call cost at session end.
+        # reservation is purpose "session" (fix round 2, P1): it is
+        # the call's duration headroom, held for the whole call, and
+        # settled only by the final record at session end — a turn's
+        # settlement never touches it. Its id is kept on the live
+        # session so the close path can settle it explicitly; it is
+        # released if pipeline construction fails.
         reservation = None
         try:
             reservation = self.server.cost_ledger.reserve(
-                call_sid=call_sid, source=source,
+                call_sid=call_sid, source=source, purpose="session",
                 projected_usd=blended_minute_usd(
                     self.server.config.cost_rate_version),
                 max_per_call_usd=self.server.config.max_cost_per_call_usd,
@@ -401,7 +405,8 @@ class MediaStreamGateway:
         sender = AudioSender(conn, event["stream_sid"])
         sender.start()
         live = {"session": session, "pipeline": pipeline, "sender": sender,
-                "stream_sid": event["stream_sid"], "source": source}
+                "stream_sid": event["stream_sid"], "source": source,
+                "session_reservation_id": reservation["id"]}
         self.server.live_sessions[call_sid] = live
         return live
 

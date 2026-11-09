@@ -152,5 +152,65 @@ class TestPipelineTurn(unittest.TestCase):
             self.assertEqual(info["revision_status"], "UNAPPROVED")
 
 
+class TestTurnReservationLifecycle(unittest.TestCase):
+    """Fix round 2, P1: the session reservation the gateway holds for
+    the call's duration must survive every turn — a turn settles ONLY
+    its own reservation, and a failed turn releases its own
+    reservation instead. The turn prices no duration (duration is
+    priced once, at close)."""
+
+    def test_successful_turn_keeps_session_reservation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pipe = _pipeline(tmp)
+            session_res = pipe.cost_ledger.reserve(
+                call_sid="CA-pipe-1", source="TEST", purpose="session",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            result = pipe.handle_audio(b"audio-1")
+            self.assertTrue(result["audio"])
+            # The session reservation is untouched by the turn.
+            remaining = [e for e in pipe.cost_ledger.entries()
+                         if e.get("kind") == "reservation"]
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0]["id"], session_res["id"])
+            self.assertEqual(remaining[0]["purpose"], "session")
+            # The turn actual prices only its LLM/TTS usage: no
+            # duration — the old code charged the turn's processing
+            # time as duration and dropped the session reservation.
+            turn_entries = [e for e in pipe.cost_ledger.entries()
+                            if e.get("kind") == "call"]
+            self.assertEqual(len(turn_entries), 1)
+            self.assertEqual(turn_entries[0]["usage"]["duration_s"], 0.0)
+            self.assertGreater(turn_entries[0]["estimated_usd"], 0.0)
+            self.assertAlmostEqual(
+                pipe.cost_ledger.total_usd(),
+                0.04 + turn_entries[0]["estimated_usd"])
+
+    def test_failed_turn_releases_its_reservation_keeps_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stt = FakeSTT(fail_on={b"bad-audio"})
+            pipe = _pipeline(tmp, stt=stt)
+            pipe.cost_ledger.reserve(
+                call_sid="CA-pipe-1", source="TEST", purpose="session",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            with self.assertRaises(ProviderError):
+                pipe.handle_audio(b"bad-audio")
+            # The failed turn's reservation is released (the projected
+            # spend never happened); the session reservation is held.
+            remaining = [e for e in pipe.cost_ledger.entries()
+                         if e.get("kind") == "reservation"]
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0]["purpose"], "session")
+            self.assertEqual(
+                [e for e in pipe.cost_ledger.entries()
+                 if e.get("kind") == "call"], [])
+            self.assertAlmostEqual(pipe.cost_ledger.total_usd(), 0.04)
+            # The call is still usable after the failure: the next
+            # turn runs on the same session reservation.
+            pipe.handle_audio(b"audio-1")
+            self.assertEqual(pipe.turns, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

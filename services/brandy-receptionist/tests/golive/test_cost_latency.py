@@ -219,23 +219,74 @@ class TestCostReservations(unittest.TestCase):
             ledger.reserve(call_sid="CA-1", source="TEST", projected_usd=0.04,
                            max_per_call_usd=0.50, max_campaign_usd=10.0)
 
-    def test_stale_reservation_is_purged_after_ttl(self):
+    def test_expired_reservation_settles_as_assumed_spend(self):
+        # Fix round 2, P1: an expired reservation is NEVER silently
+        # dropped — the spend it held may already have happened (a
+        # crashed worker's unsettled provider attempt), so the
+        # conservative rule settles it as ASSUMED spend at its
+        # projected amount. The ceiling is never silently restored.
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "ledger.json")
             ledger = CostLedger(path)
-            ledger.reserve(call_sid="CA-1", source="TEST", projected_usd=0.04,
+            ledger.reserve(call_sid="CA-1", source="TEST", purpose="session",
+                           projected_usd=0.04,
                            max_per_call_usd=0.50, max_campaign_usd=10.0)
             self.assertAlmostEqual(ledger.total_usd(), 0.04)
             # Age the reservation past the TTL on disk (a crashed
-            # session's headroom): the next load drops it.
+            # session's headroom): the next load settles it as assumed
+            # spend instead of dropping it.
             with open(path, "r", encoding="utf-8") as fh:
                 entries = json.load(fh)
             entries[0]["reserved_at"] = time.time() - RESERVATION_TTL_S - 60
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(entries, fh)
             restarted = CostLedger(path)
-            self.assertAlmostEqual(restarted.total_usd(), 0.0)
-            self.assertEqual(restarted.entries(), [])
+            self.assertAlmostEqual(restarted.total_usd(), 0.04)
+            settled = restarted.entries()
+            self.assertEqual(len(settled), 1)
+            self.assertEqual(settled[0]["kind"], "call")
+            self.assertEqual(settled[0]["call_sid"], "CA-1")
+            self.assertTrue(settled[0]["usage"]["expired_reservation"])
+            self.assertTrue(settled[0]["usage"]["assumed_spend"])
+            self.assertEqual(settled[0]["usage"]["purpose"], "session")
+            self.assertEqual(settled[0]["usage"]["reservation_id"],
+                             entries[0]["id"])
+            # The conversion persists and never double-counts: a later
+            # mutation saves the settled entry, and a fresh load sees
+            # the same single assumed-spend entry (the reservation is
+            # gone, so there is nothing left to convert).
+            restarted.record_call(call_sid="CA-2", source="TEST", duration_s=60)
+            reloaded = CostLedger(path)
+            assumed = [e for e in reloaded.entries()
+                       if e.get("usage", {}).get("assumed_spend")]
+            self.assertEqual(len(assumed), 1)
+            self.assertAlmostEqual(assumed[0]["estimated_usd"], 0.04)
+            # And the assumed spend still holds the ceiling: a campaign
+            # with exactly the assumed amount left refuses new spend.
+            with self.assertRaises(BudgetExceeded):
+                reloaded.reserve(call_sid="CA-3", source="TEST",
+                                 projected_usd=0.04, max_per_call_usd=0.50,
+                                 max_campaign_usd=reloaded.total_usd())
+
+    def test_expired_alert_reservation_settles_as_assumed_spend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ledger.json")
+            ledger = CostLedger(path)
+            ledger.reserve(emergency_event_id="emg-1", channel="SMS",
+                           source="TEST", purpose="alert",
+                           projected_usd=estimate_alert_cost_usd(channel="SMS"),
+                           max_campaign_usd=10.0)
+            with open(path, "r", encoding="utf-8") as fh:
+                entries = json.load(fh)
+            entries[0]["reserved_at"] = time.time() - RESERVATION_TTL_S - 60
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh)
+            restarted = CostLedger(path)
+            self.assertAlmostEqual(restarted.total_usd(), 0.0079)
+            settled = restarted.entries()
+            self.assertEqual(len(settled), 1)
+            self.assertEqual(settled[0]["kind"], "alert")
+            self.assertTrue(settled[0]["usage"]["assumed_spend"])
 
     def test_alert_reserve_settles_and_releases_on_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -259,6 +310,206 @@ class TestCostReservations(unittest.TestCase):
             self.assertAlmostEqual(ledger.total_usd(), 0.0079)
             self.assertEqual(
                 [e["kind"] for e in ledger.entries()], ["alert"])
+
+
+class TestSessionTurnReservations(unittest.TestCase):
+    """Fix round 2, P1: session and per-turn reservations have distinct
+    identities and lifecycles. A turn settles ONLY its own reservation;
+    the session reservation survives every turn and is settled only by
+    the final record at close, priced on the full elapsed call
+    duration. The final record is at-most-once per call."""
+
+    def test_turn_settlement_keeps_session_reservation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            session_res = ledger.reserve(
+                call_sid="CA-1", source="TEST", purpose="session",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            turn_res = ledger.reserve(
+                call_sid="CA-1", source="TEST", purpose="turn",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            self.assertAlmostEqual(ledger.total_usd(), 0.08)
+            # A turn settles: only its own reservation is released.
+            # The turn prices its incremental provider usage only
+            # (LLM minutes + TTS chars, duration 0) — duration is
+            # priced once, at close.
+            turn = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=0.0,
+                agent_chars=100, llm_minutes=0.01,
+                settle_reservation_id=turn_res["id"],
+                usage_extra={"turn": 1})
+            self.assertEqual(turn["usage"]["duration_s"], 0.0)
+            self.assertEqual(turn["usage"]["turn"], 1)
+            remaining = [e for e in ledger.entries()
+                         if e.get("kind") == "reservation"]
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0]["id"], session_res["id"])
+            self.assertEqual(remaining[0]["purpose"], "session")
+            self.assertAlmostEqual(ledger.total_usd(),
+                                   0.04 + turn["estimated_usd"])
+
+    def test_final_record_prices_full_elapsed_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            ledger.reserve(call_sid="CA-1", source="TEST", purpose="session",
+                           projected_usd=0.04, max_per_call_usd=0.50,
+                           max_campaign_usd=10.0)
+            turn_res = ledger.reserve(
+                call_sid="CA-1", source="TEST", purpose="turn",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=10.0)
+            turn = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=0.0,
+                agent_chars=100, llm_minutes=0.01,
+                settle_reservation_id=turn_res["id"])
+            # Two turns of fast processing (sub-second each): the old
+            # code priced the call on the sum of processing times and
+            # dropped the session reservation on the first turn. The
+            # final prices the FULL elapsed call duration instead.
+            final = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=300,
+                agent_chars=0, llm_minutes=0.0,
+                final=True, final_once=True)
+            self.assertTrue(final["usage"]["final"])
+            self.assertEqual(
+                [e["kind"] for e in ledger.entries()], ["call", "call"])
+            self.assertAlmostEqual(
+                ledger.total_usd(),
+                turn["estimated_usd"] + final["estimated_usd"])
+            self.assertAlmostEqual(
+                final["estimated_usd"],
+                estimate_call_cost_usd(duration_s=300))
+            self.assertAlmostEqual(ledger.call_total_usd("CA-1"),
+                                   ledger.total_usd())
+
+    def test_last_minute_held_while_call_stays_connected(self):
+        # The verdict's regression: call A reserves the last minute of
+        # budget, completes a fast turn but stays connected, and call B
+        # is refused until genuinely sufficient headroom is available.
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            campaign = 0.08  # exactly two blended minutes
+            # Call A takes the last minute as its session reservation.
+            ledger.reserve(call_sid="CA-A", source="TEST", purpose="session",
+                           projected_usd=0.04, max_per_call_usd=0.50,
+                           max_campaign_usd=campaign)
+            # A's fast turn: reserves one more minute, settles it into
+            # a small actual (sub-second processing + a few chars).
+            turn_res = ledger.reserve(
+                call_sid="CA-A", source="TEST", purpose="turn",
+                projected_usd=0.04, max_per_call_usd=0.50,
+                max_campaign_usd=campaign)
+            ledger.record_call(
+                call_sid="CA-A", source="TEST", duration_s=0.0,
+                agent_chars=50, llm_minutes=0.001,
+                settle_reservation_id=turn_res["id"])
+            # A is still connected: its session reservation is held,
+            # so the campaign has no minute left for B.
+            held = [e for e in ledger.entries()
+                    if e.get("kind") == "reservation"
+                    and e.get("call_sid") == "CA-A"]
+            self.assertEqual(len(held), 1)
+            self.assertEqual(held[0]["purpose"], "session")
+            with self.assertRaises(BudgetExceeded):
+                ledger.reserve(call_sid="CA-B", source="TEST",
+                               purpose="session", projected_usd=0.04,
+                               max_per_call_usd=0.50,
+                               max_campaign_usd=campaign)
+            # A closes: the final settles the session reservation and
+            # prices the elapsed duration. Only then is B's minute
+            # genuinely available.
+            ledger.record_call(call_sid="CA-A", source="TEST", duration_s=60,
+                               agent_chars=0, llm_minutes=0.0,
+                               final=True, final_once=True)
+            self.assertEqual(
+                [e for e in ledger.entries()
+                 if e.get("kind") == "reservation"], [])
+            ledger.reserve(call_sid="CA-B", source="TEST", purpose="session",
+                           projected_usd=0.04, max_per_call_usd=0.50,
+                           max_campaign_usd=campaign)
+
+    def test_final_record_is_at_most_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            first = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=120,
+                final=True, final_once=True)
+            # The Twilio status callback racing the session close must
+            # not duration-charge the call a second time.
+            second = ledger.record_call(
+                call_sid="CA-1", source="TEST", duration_s=120,
+                final=True, final_once=True)
+            self.assertEqual(second["id"], first["id"])
+            finals = [e for e in ledger.entries()
+                      if e.get("usage", {}).get("final") is True]
+            self.assertEqual(len(finals), 1)
+            self.assertAlmostEqual(ledger.total_usd(),
+                                   estimate_call_cost_usd(duration_s=120))
+
+    def test_concurrent_final_records_land_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = CostLedger(os.path.join(tmp, "ledger.json"))
+            barrier = threading.Barrier(2)
+            results = []
+
+            def close_once():
+                barrier.wait(timeout=10)
+                entry = ledger.record_call(
+                    call_sid="CA-1", source="TEST", duration_s=120,
+                    final=True, final_once=True)
+                results.append(entry["id"])
+
+            threads = [threading.Thread(target=close_once) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=10)
+            self.assertEqual(len(set(results)), 1)
+            finals = [e for e in ledger.entries()
+                      if e.get("usage", {}).get("final") is True]
+            self.assertEqual(len(finals), 1)
+            self.assertAlmostEqual(ledger.total_usd(),
+                                   estimate_call_cost_usd(duration_s=120))
+
+    def test_crashed_worker_unsettled_attempt_survives_restart(self):
+        # A worker crashes mid-call with a session reservation and an
+        # unsettled turn reservation on disk. After the TTL, a restart
+        # must NOT restore the headroom: both claims settle as assumed
+        # spend, and the campaign stays spent.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ledger.json")
+            ledger = CostLedger(path)
+            ledger.reserve(call_sid="CA-1", source="TEST", purpose="session",
+                           projected_usd=0.04, max_per_call_usd=0.50,
+                           max_campaign_usd=10.0)
+            ledger.reserve(call_sid="CA-1", source="TEST", purpose="turn",
+                           projected_usd=0.04, max_per_call_usd=0.50,
+                           max_campaign_usd=10.0)
+            with open(path, "r", encoding="utf-8") as fh:
+                entries = json.load(fh)
+            for e in entries:
+                e["reserved_at"] = time.time() - RESERVATION_TTL_S - 60
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh)
+            restarted = CostLedger(path)
+            self.assertAlmostEqual(restarted.total_usd(), 0.08)
+            self.assertEqual(
+                [e for e in restarted.entries()
+                 if e.get("kind") == "reservation"], [])
+            assumed = [e for e in restarted.entries()
+                       if e.get("usage", {}).get("assumed_spend")]
+            self.assertEqual(len(assumed), 2)
+            self.assertEqual(
+                sorted(e["usage"]["purpose"] for e in assumed),
+                ["session", "turn"])
+            # The campaign is still spent: no new session fits in it.
+            with self.assertRaises(BudgetExceeded):
+                restarted.reserve(call_sid="CA-2", source="TEST",
+                                  purpose="session", projected_usd=0.04,
+                                  max_per_call_usd=0.50,
+                                  max_campaign_usd=0.08)
 
 
 def _reserve_child(path, call_sid, queue):

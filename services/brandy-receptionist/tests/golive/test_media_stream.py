@@ -389,5 +389,56 @@ class TestCanonicalSource(unittest.TestCase):
                 gateway.stop()
 
 
+class TestSessionReservationAtGateway(unittest.TestCase):
+    """Fix round 2, P1: the gateway's session reservation must survive
+    a turn (the old code dropped it on the first turn's settlement,
+    freeing the campaign headroom for a concurrent call)."""
+
+    def test_session_reservation_survives_turn_and_blocks_second_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Campaign of exactly two minutes: call A takes one as its
+            # session reservation; its turn takes the other as a turn
+            # reservation and settles it into a small actual.
+            server = _StubServer(tmp, mode="TEST_ONLY", campaign=0.08)
+            gateway = MediaStreamGateway(server, host="127.0.0.1", port=0)
+            gateway.start()
+            try:
+                port = gateway._sock.getsockname()[1]
+                token_a = sign_stream_token("stream-secret",
+                                            "CA-gw-A", "brandy-rental-office")
+                sock_a = _open_stream(port, "CA-gw-A", "MZ-gw-A", token_a)
+                time.sleep(0.5)
+                self.assertIn("CA-gw-A", server.live_sessions)
+                for seq in range(1, 61):
+                    sock_a.sendall(client_text({
+                        "event": "media", "streamSid": "MZ-gw-A",
+                        "media": {"callSid": "CA-gw-A",
+                                  "sequenceNumber": str(seq),
+                                  "timestamp": str(seq * 20),
+                                  "payload": base64.b64encode(
+                                      b"\x00" * 160).decode()}}))
+                time.sleep(1.0)
+                pipe = server.pipelines["CA-gw-A"]
+                self.assertGreaterEqual(pipe.turns, 1)
+                # A completed a turn and is still connected: its
+                # session reservation must still be held.
+                held = [e for e in server.cost_ledger.entries()
+                        if e.get("kind") == "reservation"
+                        and e.get("call_sid") == "CA-gw-A"]
+                self.assertEqual(len(held), 1)
+                self.assertEqual(held[0]["purpose"], "session")
+                # Call B cannot start: no minute of headroom is left.
+                token_b = sign_stream_token("stream-secret",
+                                            "CA-gw-B", "brandy-rental-office")
+                sock_b = _open_stream(port, "CA-gw-B", "MZ-gw-B", token_b)
+                time.sleep(0.5)
+                self.assertNotIn("CA-gw-B", server.live_sessions)
+                self.assertNotIn("CA-gw-B", server.pipelines)
+                sock_b.close()
+                sock_a.close()
+            finally:
+                gateway.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

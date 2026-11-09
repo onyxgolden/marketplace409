@@ -260,7 +260,7 @@ class TwilioAlertTransport:
             try:
                 reservation = self.cost_ledger.reserve(
                     emergency_event_id=emergency_event_id, channel=channel,
-                    source=self.source,
+                    source=self.source, purpose="alert",
                     projected_usd=estimate_alert_cost_usd(channel=channel),
                     max_campaign_usd=self.max_campaign_usd)
             except BudgetExceeded:
