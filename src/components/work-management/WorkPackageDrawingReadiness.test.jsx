@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache } from "@/hooks/swrCache";
 
-import WorkPackageDrawingReadiness from "./WorkPackageDrawingReadiness.jsx";
+import WorkPackageDrawingReadiness, { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
 
 const SHA = "a".repeat(64);
 
@@ -100,6 +100,12 @@ afterEach(() => {
 });
 
 describe("WorkPackageDrawingReadiness", () => {
+  it("withdrawn badges read as not usable, never green (fix round 1)", () => {
+    expect(badgeClass("Withdrawn — package cancelled")).toBe("bg-slate-200 text-slate-600");
+    expect(badgeClass("Withdrawn — package verified closed")).toBe("bg-slate-200 text-slate-600");
+    expect(badgeClass("IFC — Issued for construction")).toBe("bg-green-100 text-green-800");
+  });
+
   it("renders the counts and one badge per drawing", async () => {
     setupFetch();
     const { container } = await renderPanel();

@@ -197,8 +197,8 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, linkRevisi
         json: async () => ({
           packageId: "pkg_1", packageStatus: "in_progress",
           drawings: [
-            { drawingId: "dwg_1", drawingNumber: "P-101", drawingType: "p_id", title: "Main line", badge: "IFA — In review", constructionUsable: false, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
-            { drawingId: "dwg_2", drawingNumber: "C-201", drawingType: "cut_sheet", title: "Spool sheet", badge: "IFC — Issued for construction", constructionUsable: true, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+            { drawingId: "dwg_1", drawingNumber: "P-101", drawingType: "p_id", title: "Main line", badge: "IFA — In review", constructionUsable: false, preliminary: true, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+            { drawingId: "dwg_2", drawingNumber: "C-201", drawingType: "cut_sheet", title: "Spool sheet", badge: "IFC — Issued for construction", constructionUsable: true, preliminary: false, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
           ],
           counts: { drawingsTotal: 2, ifcReleased: 1, pendingReview: 1, returned: 0, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
         }),

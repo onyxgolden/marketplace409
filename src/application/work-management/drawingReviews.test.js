@@ -546,6 +546,12 @@ describe("mapDrawingReviewRpcError", () => {
       .toMatchObject({ ok: false, httpStatus: 409 });
     expect(mapDrawingReviewRpcError(new Error("WPP7_INVALID_SHA256")))
       .toMatchObject({ ok: false, httpStatus: 400 });
+    // Fix round 1: a reused key for a different target/payload is a
+    // 409 conflict, and a separation-of-duties refusal is a 403.
+    expect(mapDrawingReviewRpcError(new Error("WPP7_IDEMPOTENCY_CONFLICT")))
+      .toMatchObject({ ok: false, httpStatus: 409 });
+    expect(mapDrawingReviewRpcError(new Error("WPP7_DECISION_FORBIDDEN")))
+      .toMatchObject({ ok: false, httpStatus: 403 });
   });
 
   it("throws unknown errors so the route turns them into a 500", () => {

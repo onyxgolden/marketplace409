@@ -617,6 +617,109 @@ describe("slice 7 migration: lifecycle", () => {
     expect(redlineRows[0].n).toBe(1);
   });
 
+  it60("idempotency keys are bound to their target and payload", async () => {
+    const { revision, review } = await openReviewedDrawing();
+    const revisionB = await createRevision(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", code: "B", sha: SHA_B,
+    });
+    // A review key replayed for a different revision is refused.
+    const roundB = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revisionB.id,
+      key: "bound-review-1", reason: "First.",
+    });
+    await expect(createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id,
+      key: "bound-review-1", reason: "Same key, other revision.",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Same revision, different designated reviewer: refused.
+    await expect(createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revisionB.id,
+      reviewerId: MEMBER_C, key: "bound-review-1", reason: "Same key, other reviewer.",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Same key, same target and reviewer: replays (a reworded reason
+    // is free text and does not break the replay).
+    const replay = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revisionB.id,
+      key: "bound-review-1", reason: "Retry after a timeout.",
+    });
+    expect(replay.id).toBe(roundB.id);
+
+    // Redlines: same key, different content is refused.
+    const redlineA = await createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Move this nozzle.", severity: "REQUIRED", key: "bound-redline-1",
+    });
+    await expect(createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Different note.", severity: "REQUIRED", key: "bound-redline-1",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    await expect(createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Move this nozzle.", severity: "INFO", key: "bound-redline-1",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    await expect(createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Move this nozzle.", severity: "REQUIRED", page: 3, x: 0.1, y: 0.1,
+      key: "bound-redline-1",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    await expect(createRedline(db, OWNER_A, {
+      reviewId: roundB.id, revisionId: revisionB.id,
+      comment: "Move this nozzle.", severity: "REQUIRED", key: "bound-redline-1",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Same key, same payload: replays — even after the review closes.
+    const redlineB = await createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Move this nozzle.", severity: "REQUIRED", key: "bound-redline-1",
+    });
+    expect(redlineB.id).toBe(redlineA.id);
+    await decideReview(db, OWNER_A, {
+      reviewId: review.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Reset.",
+    });
+    const redlineC = await createRedline(db, OWNER_A, {
+      reviewId: review.id, revisionId: revision.id,
+      comment: "Move this nozzle.", severity: "REQUIRED", key: "bound-redline-1",
+    });
+    expect(redlineC.id).toBe(redlineA.id);
+    const { rows: redlineRows } = await db.query(`
+      select count(*)::integer as n from forge_wp_drawing_redlines
+      where idempotency_key = 'bound-redline-1';
+    `);
+    expect(redlineRows[0].n).toBe(1);
+  });
+
+  it60("separation of duties: the round opener cannot decide when a different reviewer is assigned", async () => {
+    const { revision, review } = await openReviewedDrawing();
+    // No designated reviewer: the single-owner flow is unchanged —
+    // the opener decides.
+    const decided = await decideReview(db, OWNER_A, {
+      reviewId: review.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Reset for the SoD check.",
+    });
+    expect(decided.state).toBe("RETURNED");
+    // Round 2 with a designated reviewer (the co-owner MEMBER_C).
+    const round2 = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id, reviewerId: MEMBER_C,
+    });
+    // The opener may not decide their own round now.
+    await expect(decideReview(db, OWNER_A, {
+      reviewId: round2.id, expectedVersion: 1, decision: "APPROVE", reason: "Checked.",
+    })).rejects.toThrow(/WPP7_DECISION_FORBIDDEN/);
+    // The designated reviewer decides.
+    const decided2 = await decideReview(db, MEMBER_C, {
+      reviewId: round2.id, expectedVersion: 1, decision: "APPROVE", reason: "Checked by the reviewer.",
+    });
+    expect(decided2.state).toBe("APPROVED");
+    expect(decided2.closed_by).toBe(MEMBER_C);
+    // The opener designating themself as reviewer is still allowed
+    // to decide.
+    const round3 = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id, reviewerId: OWNER_A,
+    });
+    const decided3 = await decideReview(db, OWNER_A, {
+      reviewId: round3.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Self-designated.",
+    });
+    expect(decided3.state).toBe("RETURNED");
+  });
+
   it60("version guards reject stale decisions and resolutions", async () => {
     const { revision, review } = await openReviewedDrawing();
     const redline = await createRedline(db, OWNER_A, {
@@ -698,6 +801,89 @@ describe("slice 7 migration: lifecycle", () => {
     })).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
     const snap = await snapshot(db, OWNER_A, { packageId: "pkg_cancelled" });
     expect(snap.packageStatus).toBe("cancelled");
+  });
+
+  // Fix round 1 (P1): issue IFC, open a second round, then cancel
+  // the package — the trigger retires the release and cancels the
+  // open round in the same transaction, and the snapshot withdraws
+  // the drawing. History stays on file.
+  async function issueIfcAndTerminate(status) {
+    const { revision, review } = await openReviewedDrawing();
+    await decideReview(db, OWNER_A, {
+      reviewId: review.id, expectedVersion: 1, decision: "APPROVE", reason: "Checked.",
+    });
+    await createIfcRelease(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", reviewId: review.id, code: "C", sha: SHA_C,
+    });
+    expect(await badgeFor(db, "pkg_a", "dwg_1")).toEqual({ badge: "IFC — Issued for construction", constructionUsable: true });
+    const revisionD = await createRevision(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", code: "D", sha: SHA_B,
+    });
+    const round2 = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revisionD.id,
+    });
+    // Cancel/close the package the way production does: the
+    // transition RPC runs SECURITY DEFINER as the table owner (the
+    // app role holds SELECT only on forge_work_packages), with the
+    // caller's JWT set — so the status change here runs as the
+    // superuser with app.test_uid set, never as `authenticated`.
+    await db.exec(`set app.test_uid = '${OWNER_A}';`);
+    await db.query(`update forge_work_packages set status = '${status}' where owner_id = '${OWNER_A}' and id = 'pkg_a';`);
+    return { review, round2 };
+  }
+
+  it60("cancelling a package withdraws its IFC release and cancels its open review", async () => {
+    const { review, round2 } = await issueIfcAndTerminate("cancelled");
+    expect(await badgeFor(db, "pkg_a", "dwg_1")).toEqual({ badge: "Withdrawn — package cancelled", constructionUsable: false });
+    const snap = await snapshot(db, OWNER_A, { packageId: "pkg_a" });
+    expect(snap.packageStatus).toBe("cancelled");
+    expect(snap.counts.ifcReleased).toBe(0);
+    const row = snap.drawings.find((d) => d.drawing_id === "dwg_1");
+    expect(row.preliminary).toBe(false);
+    const { rows: releaseRows } = await db.query(`
+      select retired_at, retired_by from forge_wp_drawing_ifc_releases where drawing_id = 'dwg_1';
+    `);
+    expect(releaseRows).toHaveLength(1);
+    expect(releaseRows[0].retired_at).not.toBe(null);
+    expect(releaseRows[0].retired_by).toBe(OWNER_A);
+    const { rows: reviewRows } = await db.query(`
+      select state, closed_by, decision_reason from forge_wp_drawing_reviews where id = '${round2.id}';
+    `);
+    expect(reviewRows[0].state).toBe("CANCELLED");
+    expect(reviewRows[0].closed_by).toBe(OWNER_A);
+    expect(reviewRows[0].decision_reason).toBe("Package cancelled.");
+    // The withdrawal is auditable, and both rounds stay on file.
+    expect((await eventsFor(db, round2.id)).map((e) => e.event_type)).toContain("REVIEW_CANCELLED");
+    const { rows: releaseEvents } = await db.query(`
+      select event_type from forge_wp_drawing_review_events
+      where review_id = '${review.id}' and event_type = 'IFC_RELEASE_RETIRED';
+    `);
+    expect(releaseEvents).toHaveLength(1);
+    const { rows: allReviews } = await db.query(`
+      select count(*)::integer as n from forge_wp_drawing_reviews where drawing_id = 'dwg_1';
+    `);
+    expect(allReviews[0].n).toBe(2);
+    // No new release or review after cancellation.
+    await expect(createIfcRelease(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", reviewId: review.id, code: "E", sha: SHA_A,
+    })).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
+    await expect(createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: review.drawing_revision_id,
+    })).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
+  });
+
+  it60("verified-closed packages withdraw IFC the same way", async () => {
+    const { review, round2 } = await issueIfcAndTerminate("verified_closed");
+    expect(await badgeFor(db, "pkg_a", "dwg_1")).toEqual({ badge: "Withdrawn — package verified closed", constructionUsable: false });
+    const snap = await snapshot(db, OWNER_A, { packageId: "pkg_a" });
+    expect(snap.packageStatus).toBe("verified_closed");
+    expect(snap.counts.ifcReleased).toBe(0);
+    const { rows: reviewRows } = await db.query(`
+      select state, decision_reason from forge_wp_drawing_reviews where id = '${round2.id}';
+    `);
+    expect(reviewRows[0].state).toBe("CANCELLED");
+    expect(reviewRows[0].decision_reason).toBe("Package verified closed.");
+    expect((await eventsFor(db, review.id)).map((e) => e.event_type)).toContain("IFC_RELEASE_RETIRED");
   });
 
   it60("a failed decision leaves no review event (atomic audit)", async () => {
@@ -921,16 +1107,29 @@ describe("slice 7 migration: effective ACLs and migration text", () => {
     }
   });
 
-  it60("authenticated can EXECUTE the ten RPCs; anon cannot", async () => {
+  it60("authenticated can EXECUTE the ten RPCs; anon, service_role and PUBLIC cannot", async () => {
     for (const fn of RPCS) {
       const { rows } = await db.query(
         `select has_function_privilege('authenticated', 'public.${fn}', 'EXECUTE') as ok;`,
       );
       expect(rows[0].ok, `authenticated EXECUTE on ${fn}`).toBe(true);
-      const { rows: anonRows } = await db.query(
-        `select has_function_privilege('anon', 'public.${fn}', 'EXECUTE') as ok;`,
-      );
-      expect(anonRows[0].ok, `anon EXECUTE on ${fn}`).toBe(false);
+      for (const role of ["anon", "service_role", "public"]) {
+        const { rows: deniedRows } = await db.query(
+          `select has_function_privilege('${role}', 'public.${fn}', 'EXECUTE') as ok;`,
+        );
+        expect(deniedRows[0].ok, `${role} EXECUTE on ${fn}`).toBe(false);
+      }
+    }
+  });
+
+  it60("RLS is enabled and forced on all six tables", async () => {
+    for (const table of TABLES) {
+      const { rows } = await db.query(`
+        select relrowsecurity as rls, relforcerowsecurity as forced
+        from pg_class where relname = '${table}' and relnamespace = 'public'::regnamespace;
+      `);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ rls: true, forced: true });
     }
   });
 
@@ -964,6 +1163,9 @@ describe("slice 7 migration: effective ACLs and migration text", () => {
     for (const fn of RPCS) {
       expect(sql).toContain(`revoke all on function public.${fn} from public`);
       expect(sql).toContain(`grant execute on function public.${fn} to authenticated`);
+      // Fix round 1: explicit anon/service_role revokes, so the
+      // posture survives a direct default grant to a named role.
+      expect(sql).toContain(`revoke execute on function public.${fn} from anon, service_role`);
     }
     expect(sql).toContain("force row level security");
   });
@@ -1004,6 +1206,12 @@ if (!HAS_REAL_PG) {
 describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () => {
   let pgDir;
   let pgClient;
+  let pgClient2;
+  // A third connection that stays superuser: pg_stat_activity masks
+  // state/wait_event for other roles' backends, so a lock-wait poll
+  // issued as `authenticated` can never see the wait (proven by a
+  // standalone repro — the wait is real, the view just hides it).
+  let pgDiag;
   let pgCfg;
 
   beforeAll(async () => {
@@ -1018,6 +1226,13 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
     pgCfg = { host: pgDir, port: 55432, user: "postgres", database: "postgres" };
     pgClient = new Client(pgCfg);
     await pgClient.connect();
+    // A second connection: PGlite is single-connection, so every
+    // true-concurrency leg (same-key races, cancel/release ordering)
+    // needs two live sessions here.
+    pgClient2 = new Client(pgCfg);
+    await pgClient2.connect();
+    pgDiag = new Client(pgCfg);
+    await pgDiag.connect();
     await pgClient.query(PREREQ_SQL);
     await pgClient.query(loadMigrationSql(SLICE3));
     await pgClient.query(loadMigrationSql(SLICE4));
@@ -1039,6 +1254,8 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
 
   afterAll(async () => {
     try { await pgClient?.end(); } catch { /* already closed */ }
+    try { await pgClient2?.end(); } catch { /* already closed */ }
+    try { await pgDiag?.end(); } catch { /* already closed */ }
     if (pgDir) {
       try { execSync(`runuser -u ${PG_RUN_USER} -- "${PG_BIN}/pg_ctl" -D "${pgDir}" stop -m fast`, { stdio: "pipe" }); } catch { /* already stopped */ }
       rmSync(pgDir, { recursive: true, force: true });
@@ -1150,5 +1367,170 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
     `);
     expect(afterRows[0].n).toBeGreaterThanOrEqual(0);
     expect(pgCfg.version).toMatch(/PostgreSQL 16/);
+  });
+
+  // Fix round 1 (P2): two live sessions racing the same idempotency
+  // key, and a package cancellation racing an IFC release. Each leg
+  // builds its own package/drawing so it is independent of the
+  // earlier legs' accumulated state.
+  async function pgApprovedReview(packageId, drawingId) {
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', '${packageId}', 'in_progress');
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id)
+        values ('${OWNER_A}', '${packageId}', '${drawingId}', 'P-401', 'p_id', 'Concurrent line', null);
+    `);
+    const { rows: revRows } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_revision_create(
+        '${OWNER_A}', '${packageId}', '${drawingId}', 'A', 's3://forge/conc-a.pdf', '${SHA_A}');
+    `);
+    const revision = revRows[0];
+    const { rows: reviewRows } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_review_create(
+        '${OWNER_A}', '${packageId}', '${drawingId}', '${revision.id}', null, 'conc-review-${packageId}', null);
+    `);
+    return { revision, review: reviewRows[0] };
+  }
+
+  async function waitForLockWait() {
+    // True concurrency proof: the second session must actually be
+    // blocked on a lock (not merely slow). Poll pg_stat_activity
+    // for up to 5s; the loop is the assertion's precondition. The
+    // poll runs on the superuser diag connection: pg_stat_activity
+    // masks state/wait_event for other roles' backends, so a poll
+    // issued as `authenticated` would never see the wait.
+    for (let i = 0; i < 50; i += 1) {
+      const { rows } = await pgDiag.query(`
+        select pid from pg_stat_activity
+        where pid <> pg_backend_pid() and wait_event_type = 'Lock' and state = 'active';
+      `);
+      if (rows.length > 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
+  it60("concurrent same-key redline creation stores one redline and one event", async () => {
+    const { revision, review } = await pgApprovedReview("pkg_conc", "dwg_c1");
+    const redlineSql = `
+      select * from forge_wp_drawing_redline_create(
+        '${OWNER_A}', '${review.id}', '${revision.id}',
+        'Move this nozzle.', 'REQUIRED', null, 2, 0.5, 0.25, null, 'conc-rl-1');
+    `;
+    const [first, second] = await Promise.allSettled([
+      pgAsUser(pgClient, OWNER_A, redlineSql),
+      pgAsUser(pgClient2, OWNER_A, redlineSql),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+    expect(first.value.rows[0].id).toBe(second.value.rows[0].id);
+    const { rows: redlineRows } = await pgClient.query(`
+      select id from forge_wp_drawing_redlines where review_id = '${review.id}';
+    `);
+    expect(redlineRows).toHaveLength(1);
+    const { rows: eventRows } = await pgClient.query(`
+      select count(*)::integer as n from forge_wp_drawing_review_events
+      where review_id = '${review.id}' and event_type = 'REDLINE_ADDED';
+    `);
+    expect(eventRows[0].n).toBe(1);
+    // A concurrent same-key request with a different payload conflicts.
+    const conflictSql = `
+      select * from forge_wp_drawing_redline_create(
+        '${OWNER_A}', '${review.id}', '${revision.id}',
+        'A different note.', 'REQUIRED', null, 2, 0.5, 0.25, null, 'conc-rl-1');
+    `;
+    await expect(pgAsUser(pgClient, OWNER_A, conflictSql)).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+  });
+
+  it60("concurrent same-key review creation stores one round", async () => {
+    // No OPEN review on this revision yet: the two concurrent opens
+    // race the same key, not the one-OPEN-review rule.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_conc2', 'in_progress');
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id)
+        values ('${OWNER_A}', 'pkg_conc2', 'dwg_c2', 'P-402', 'p_id', 'Concurrent line 2', null);
+    `);
+    const { rows: revRows } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_revision_create(
+        '${OWNER_A}', 'pkg_conc2', 'dwg_c2', 'A', 's3://forge/c2-a.pdf', '${SHA_A}');
+    `);
+    const revision = revRows[0];
+    const reviewSql = `
+      select * from forge_wp_drawing_review_create(
+        '${OWNER_A}', 'pkg_conc2', 'dwg_c2', '${revision.id}', null, 'conc-review-2', null);
+    `;
+    const [first, second] = await Promise.allSettled([
+      pgAsUser(pgClient, OWNER_A, reviewSql),
+      pgAsUser(pgClient2, OWNER_A, reviewSql),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+    expect(first.value.rows[0].id).toBe(second.value.rows[0].id);
+    const { rows } = await pgClient.query(`
+      select count(*)::integer as n from forge_wp_drawing_reviews
+      where drawing_revision_id = '${revision.id}';
+    `);
+    expect(rows[0].n).toBe(1);
+  });
+
+  it60("concurrent cancel and release serialize to a withdrawn drawing", async () => {
+    const { revision, review } = await pgApprovedReview("pkg_conc3", "dwg_c3");
+    await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_review_decide(
+        '${OWNER_A}', '${review.id}', 1, 'APPROVE', 'Checked.');
+    `);
+    // Direction 1: the release runs inside an open transaction, so
+    // it still holds the package row lock; the cancel on the second
+    // session blocks, then the trigger retires the just-created
+    // release once the release commits.
+    await pgClient.query(`set role authenticated; set app.test_uid = '${OWNER_A}'; begin;`);
+    await pgClient.query(`
+      select * from forge_wp_drawing_ifc_release(
+        '${OWNER_A}', 'pkg_conc3', 'dwg_c3', '${review.id}', 'C', 's3://forge/c3-c.pdf', '${SHA_C}', null);
+    `);
+    const cancelPromise = pgClient2.query(`
+      set app.test_uid = '${OWNER_A}';
+      update forge_work_packages set status = 'cancelled'
+      where owner_id = '${OWNER_A}' and id = 'pkg_conc3';
+    `);
+    expect(await waitForLockWait()).toBe(true);
+    await pgClient.query("commit; reset role;");
+    await cancelPromise;
+    await pgClient2.query("reset role;");
+    const { rows: releaseRows } = await pgClient.query(`
+      select retired_at, retired_by from forge_wp_drawing_ifc_releases where drawing_id = 'dwg_c3';
+    `);
+    expect(releaseRows).toHaveLength(1);
+    expect(releaseRows[0].retired_at).not.toBe(null);
+    expect(releaseRows[0].retired_by).toBe(OWNER_A);
+    const snap = await pgSnapshot("pkg_conc3");
+    expect(snap.drawings.find((d) => d.drawing_id === "dwg_c3").badge).toBe("Withdrawn — package cancelled");
+    expect(snap.counts.ifcReleased).toBe(0);
+
+    // Direction 2: the cancel holds the lock while the release
+    // waits; once the cancel commits, the release sees the terminal
+    // package and refuses.
+    const second = await pgApprovedReview("pkg_conc4", "dwg_c4");
+    await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_review_decide(
+        '${OWNER_A}', '${second.review.id}', 1, 'APPROVE', 'Checked.');
+    `);
+    await pgClient.query(`set app.test_uid = '${OWNER_A}'; begin;`);
+    await pgClient.query(`
+      update forge_work_packages set status = 'cancelled'
+      where owner_id = '${OWNER_A}' and id = 'pkg_conc4';
+    `);
+    const releasePromise = pgClient2.query(`
+      set role authenticated; set app.test_uid = '${OWNER_A}';
+      select * from forge_wp_drawing_ifc_release(
+        '${OWNER_A}', 'pkg_conc4', 'dwg_c4', '${second.review.id}', 'C', 's3://forge/c4-c.pdf', '${SHA_C}', null);
+    `);
+    expect(await waitForLockWait()).toBe(true);
+    await pgClient.query("commit; reset role;");
+    await expect(releasePromise).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
+    await pgClient2.query("reset role;");
+    const snap2 = await pgSnapshot("pkg_conc4");
+    expect(snap2.drawings.find((d) => d.drawing_id === "dwg_c4").badge).toBe("Withdrawn — package cancelled");
   });
 });

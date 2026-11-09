@@ -266,7 +266,8 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
                   Drawing: {readinessByDrawingId.get(link.drawingId).badge}
                 </span>
               )}
-              {link.drawingId && readinessByDrawingId.get(link.drawingId)?.constructionUsable === false && (
+              {link.drawingId && readinessByDrawingId.get(link.drawingId)?.constructionUsable === false
+                && readinessByDrawingId.get(link.drawingId)?.preliminary === true && (
                 <span className="ml-2 text-slate-500">— preliminary</span>
               )}
               {link.drawingId && readinessByDrawingId.get(link.drawingId)?.constructionUsable === true && (

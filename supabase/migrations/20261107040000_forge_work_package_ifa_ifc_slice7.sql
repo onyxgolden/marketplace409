@@ -66,11 +66,26 @@
 -- Roles (brief §3, fallback): no planner role model exists yet (the
 -- admin-permissions scopes are brief-only), so all slice-7 writes are
 -- gated on has_workspace_access(owner_id) — owner/co-owner only —
--- exactly as slices 1–6 gate. Separation of duties (an actor cannot
--- approve their own review) is NOT enforced in this slice: there is
--- no configuration surface for it, and the owner is necessarily an
--- actor in a single-owner workspace. opened_by/closed_by are recorded
--- on every round so a later role-model slice can enforce it.
+-- exactly as slices 1–6 gate. Separation of duties IS enforced at the
+-- decide step in this slice (fix round 1): when a reviewer_id is
+-- designated on a round and differs from the round opener, the opener
+-- may not decide that round — only the designated reviewer or an
+-- owner/co-owner other than the opener may. With no designated
+-- reviewer the single-owner flow is unchanged (the owner decides).
+-- opened_by/closed_by are recorded on every round.
+--
+-- Terminal-package coordination (fix round 1): cancelling or
+-- verifying-closed a package retires its ACTIVE IFC releases and
+-- cancels its OPEN reviews in the same transaction (trigger
+-- forge_wp_drawing_package_terminal), so no cancelled/closed package
+-- can show an IFC drawing as construction-usable; the readiness
+-- snapshot also derives a Withdrawn badge for terminal packages, so
+-- the read model is correct even for packages cancelled before this
+-- slice. Idempotency keys are bound to their canonical target and
+-- normalized payload: a replay with a different target or payload is
+-- refused with WPP7_IDEMPOTENCY_CONFLICT (409), and a concurrent
+-- same-key create re-checks after acquiring its serialization lock,
+-- so it replays instead of failing.
 --
 -- What is NOT in this slice: busts/backcharges, field verification,
 -- reusable templates, in-tool editing of controlled drawings, permit
@@ -485,9 +500,14 @@ begin
     raise exception 'WPP7_INVALID_SHA256';
   end if;
 
+  -- Lock the package row: a concurrent package cancellation (whose
+  -- trigger retires ACTIVE releases) serializes against this release
+  -- instead of racing it — whichever commits first, the drawing ends
+  -- non-usable in a terminal package.
   select status into v_status
   from public.forge_work_packages
-  where owner_id = p_owner_id and id = p_package_id;
+  where owner_id = p_owner_id and id = p_package_id
+  for update;
   if not found then
     raise exception 'WPP7_PACKAGE_NOT_FOUND';
   end if;
@@ -569,12 +589,22 @@ begin
   end if;
 
   -- Idempotency first: a retry returns the original round even if
-  -- the revision has since been retired or the package closed.
+  -- the revision has since been retired or the package closed. The
+  -- key is bound to its canonical target (drawing revision) and
+  -- normalized payload (designated reviewer): a replay whose target
+  -- or reviewer differs is a different request and is refused with
+  -- WPP7_IDEMPOTENCY_CONFLICT instead of returning the wrong round.
+  -- The reason is free text and is NOT part of the fingerprint, so a
+  -- retry that rewords it still replays.
   if p_idempotency_key is not null then
     select * into v_existing
     from public.forge_wp_drawing_reviews
     where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
     if found then
+      if v_existing.drawing_revision_id <> p_drawing_revision_id
+         or v_existing.reviewer_id is distinct from p_reviewer_id then
+        raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+      end if;
       return query
         select * from public.forge_wp_drawing_reviews
         where owner_id = p_owner_id and id = v_existing.id;
@@ -619,6 +649,26 @@ begin
     raise exception 'WPP7_REVISION_NOT_IFA';
   end if;
 
+  -- Recheck after the serialization lock: a concurrent same-key
+  -- open may have committed while this call waited on the revision
+  -- row — replay it (or refuse a conflicting key) instead of racing
+  -- the insert.
+  if p_idempotency_key is not null then
+    select * into v_existing
+    from public.forge_wp_drawing_reviews
+    where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
+    if found then
+      if v_existing.drawing_revision_id <> p_drawing_revision_id
+         or v_existing.reviewer_id is distinct from p_reviewer_id then
+        raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+      end if;
+      return query
+        select * from public.forge_wp_drawing_reviews
+        where owner_id = p_owner_id and id = v_existing.id;
+      return;
+    end if;
+  end if;
+
   select coalesce(max(round_no), 0) + 1 into v_round_no
   from public.forge_wp_drawing_reviews
   where owner_id = p_owner_id and drawing_revision_id = p_drawing_revision_id;
@@ -634,6 +684,25 @@ begin
       p_idempotency_key, v_actor_id
     );
   exception when unique_violation then
+    -- Two requests racing the same key, or a second OPEN review on
+    -- the same revision: tell them apart by re-reading the key. A
+    -- matching key replays; a mismatched key conflicts; anything
+    -- else is the one-OPEN-review rule.
+    if p_idempotency_key is not null then
+      select * into v_existing
+      from public.forge_wp_drawing_reviews
+      where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
+      if found then
+        if v_existing.drawing_revision_id <> p_drawing_revision_id
+           or v_existing.reviewer_id is distinct from p_reviewer_id then
+          raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+        end if;
+        return query
+          select * from public.forge_wp_drawing_reviews
+          where owner_id = p_owner_id and id = v_existing.id;
+        return;
+      end if;
+    end if;
     raise exception 'WPP7_DUPLICATE_OPEN_REVIEW';
   end;
 
@@ -719,12 +788,27 @@ begin
   end if;
 
   -- Idempotency first: a retry returns the original redline even if
-  -- the review has since closed.
+  -- the review has since closed. The key is bound to its canonical
+  -- target (review + revision) and normalized payload (comment,
+  -- severity, step link, anchor): a replay whose target or payload
+  -- differs is a different request and is refused with
+  -- WPP7_IDEMPOTENCY_CONFLICT instead of returning the wrong redline.
   if p_idempotency_key is not null then
     select * into v_existing
     from public.forge_wp_drawing_redlines
     where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
     if found then
+      if v_existing.review_id <> p_review_id
+         or v_existing.drawing_revision_id <> p_drawing_revision_id
+         or v_existing.comment <> p_comment
+         or v_existing.severity <> p_severity
+         or v_existing.step_id is distinct from p_step_id
+         or v_existing.anchor_page is distinct from p_anchor_page
+         or v_existing.anchor_x is distinct from p_anchor_x
+         or v_existing.anchor_y is distinct from p_anchor_y
+         or v_existing.anchor_text is distinct from p_anchor_text then
+        raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+      end if;
       return query
         select * from public.forge_wp_drawing_redlines
         where owner_id = p_owner_id and id = v_existing.id;
@@ -758,17 +842,74 @@ begin
     end if;
   end if;
 
+  -- Recheck after the serialization lock: a concurrent same-key
+  -- create may have committed while this call waited on the review
+  -- row — replay it (or refuse a conflicting key) instead of
+  -- failing on the unique index.
+  if p_idempotency_key is not null then
+    select * into v_existing
+    from public.forge_wp_drawing_redlines
+    where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
+    if found then
+      if v_existing.review_id <> p_review_id
+         or v_existing.drawing_revision_id <> p_drawing_revision_id
+         or v_existing.comment <> p_comment
+         or v_existing.severity <> p_severity
+         or v_existing.step_id is distinct from p_step_id
+         or v_existing.anchor_page is distinct from p_anchor_page
+         or v_existing.anchor_x is distinct from p_anchor_x
+         or v_existing.anchor_y is distinct from p_anchor_y
+         or v_existing.anchor_text is distinct from p_anchor_text then
+        raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+      end if;
+      return query
+        select * from public.forge_wp_drawing_redlines
+        where owner_id = p_owner_id and id = v_existing.id;
+      return;
+    end if;
+  end if;
+
   v_redline_id := 'forge_wpdrl_' || replace(gen_random_uuid()::text, '-', '');
-  insert into public.forge_wp_drawing_redlines (
-    owner_id, id, package_id, review_id, drawing_id, drawing_revision_id,
-    step_id, anchor_page, anchor_x, anchor_y, anchor_text,
-    comment, severity, idempotency_key, created_by
-  ) values (
-    p_owner_id, v_redline_id, v_review.package_id, p_review_id,
-    v_review.drawing_id, p_drawing_revision_id,
-    p_step_id, p_anchor_page, p_anchor_x, p_anchor_y, p_anchor_text,
-    p_comment, p_severity, p_idempotency_key, v_actor_id
-  );
+  begin
+    insert into public.forge_wp_drawing_redlines (
+      owner_id, id, package_id, review_id, drawing_id, drawing_revision_id,
+      step_id, anchor_page, anchor_x, anchor_y, anchor_text,
+      comment, severity, idempotency_key, created_by
+    ) values (
+      p_owner_id, v_redline_id, v_review.package_id, p_review_id,
+      v_review.drawing_id, p_drawing_revision_id,
+      p_step_id, p_anchor_page, p_anchor_x, p_anchor_y, p_anchor_text,
+      p_comment, p_severity, p_idempotency_key, v_actor_id
+    );
+  exception when unique_violation then
+    -- A same-key create racing this one: the recheck above should
+    -- have caught it, but the unique index is the final arbiter.
+    -- Re-read the key — a matching key replays, a mismatched key
+    -- conflicts, anything else re-raises as-is.
+    if p_idempotency_key is not null then
+      select * into v_existing
+      from public.forge_wp_drawing_redlines
+      where owner_id = p_owner_id and idempotency_key = p_idempotency_key;
+      if found then
+        if v_existing.review_id <> p_review_id
+           or v_existing.drawing_revision_id <> p_drawing_revision_id
+           or v_existing.comment <> p_comment
+           or v_existing.severity <> p_severity
+           or v_existing.step_id is distinct from p_step_id
+           or v_existing.anchor_page is distinct from p_anchor_page
+           or v_existing.anchor_x is distinct from p_anchor_x
+           or v_existing.anchor_y is distinct from p_anchor_y
+           or v_existing.anchor_text is distinct from p_anchor_text then
+          raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+        end if;
+        return query
+          select * from public.forge_wp_drawing_redlines
+          where owner_id = p_owner_id and id = v_existing.id;
+        return;
+      end if;
+    end if;
+    raise;
+  end;
 
   insert into public.forge_wp_drawing_review_events (
     owner_id, id, package_id, review_id, drawing_id, actor_id,
@@ -962,6 +1103,18 @@ begin
     raise exception 'WPP7_VERSION_CONFLICT';
   end if;
 
+  -- Separation of duties: when a reviewer is designated on the round
+  -- and differs from the round opener, the opener may not decide
+  -- their own round — only the designated reviewer, or an
+  -- owner/co-owner other than the opener, may. With no designated
+  -- reviewer (or when the opener designated themself) the
+  -- single-owner flow is unchanged: the opener decides.
+  if v_review.reviewer_id is not null
+     and v_review.reviewer_id <> v_review.opened_by
+     and v_actor_id = v_review.opened_by then
+    raise exception 'WPP7_DECISION_FORBIDDEN';
+  end if;
+
   if p_decision = 'APPROVE' then
     select count(*) into v_open_count
     from public.forge_wp_drawing_redlines
@@ -1073,9 +1226,14 @@ begin
     raise exception 'WPP7_REASON_TOO_LONG';
   end if;
 
+  -- Lock the package row: a concurrent package cancellation (whose
+  -- trigger retires ACTIVE releases) serializes against this release
+  -- instead of racing it — whichever commits first, the drawing ends
+  -- non-usable in a terminal package.
   select status into v_status
   from public.forge_work_packages
-  where owner_id = p_owner_id and id = p_package_id;
+  where owner_id = p_owner_id and id = p_package_id
+  for update;
   if not found then
     raise exception 'WPP7_PACKAGE_NOT_FOUND';
   end if;
@@ -1656,6 +1814,13 @@ begin
       coalesce(pf.pending_field_redlines, 0) as pending_field_redlines,
       case
         when d.retired_at is not null then 'Retired'
+        -- A terminal package withdraws every drawing it holds: an
+        -- ACTIVE release no longer authorizes construction, and an
+        -- IFA round no longer awaits review. A drawing with no
+        -- revision at all keeps its own state (nothing to withdraw).
+        when pr.status in ('cancelled', 'verified_closed') and lr.revision_id is not null then
+          case when pr.status = 'cancelled' then 'Withdrawn — package cancelled'
+               else 'Withdrawn — package verified closed' end
         when ar.release_id is not null then 'IFC — Issued for construction'
         when lv.state = 'OPEN' then 'IFA — In review'
         when lv.state = 'RETURNED' then 'IFA — Returned to drafter'
@@ -1663,8 +1828,17 @@ begin
         when lr.revision_id is not null then 'IFA — Awaiting review'
         else 'No issued revision'
       end as badge,
-      (ar.release_id is not null) as construction_usable
+      (ar.release_id is not null
+        and pr.status not in ('cancelled', 'verified_closed')) as construction_usable,
+      -- Preliminary = an IFA drawing that is not retired, not
+      -- released IFC, and not withdrawn with its package. The
+      -- progress history shows this as a PRE-IFC flag (display only).
+      (d.retired_at is null
+        and ar.release_id is null
+        and pr.status not in ('cancelled', 'verified_closed')
+        and lr.revision_id is not null) as preliminary
     from drawings d
+    cross join package_row pr
     left join latest_revision lr on lr.drawing_id = d.id
     left join latest_review lv on lv.drawing_id = d.id
     left join active_release ar on ar.drawing_id = d.id
@@ -1691,6 +1865,109 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Trigger: forge_wp_drawing_package_terminal
+-- Cancelling or verifying-closed a package coordinates with slice 7
+-- in the SAME transaction as the status change (the transition RPC
+-- locks the package row first, so a concurrent IFC release serializes
+-- against it): every ACTIVE IFC release of the package's drawings is
+-- retired and every OPEN review is cancelled, each with its own
+-- auditable event, and the reason names the terminal state. History
+-- is retained — releases and rounds stay on file, only their state
+-- changes. Reopening a cancelled package (cancelled -> draft) does
+-- NOT restore releases or rounds: a reopened package must re-issue
+-- IFC through a fresh approved review.
+--
+-- The actor is the JWT caller when present (the transition RPC runs
+-- with the caller's JWT set); a direct service update with no JWT
+-- records 'system'. The function is SECURITY DEFINER with
+-- row_security off so the FORCED-RLS tables accept its writes, and
+-- it runs as the migration owner (postgres in production), which is
+-- why the trigger fires identically for transition-RPC updates and
+-- direct SQL updates.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.forge_wp_drawing_on_package_terminal()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+set row_security = off
+as $$
+declare
+  -- auth.uid() is a uuid or null (never an empty string), so a plain
+  -- text cast is the correct fallback shape.
+  v_actor_id text := coalesce(auth.uid()::text, 'system');
+  v_reason text;
+  v_release public.forge_wp_drawing_ifc_releases%rowtype;
+  v_review public.forge_wp_drawing_reviews%rowtype;
+begin
+  if new.status = 'cancelled' then
+    v_reason := 'Package cancelled.';
+  else
+    v_reason := 'Package verified closed.';
+  end if;
+
+  for v_release in
+    select *
+    from public.forge_wp_drawing_ifc_releases
+    where owner_id = new.owner_id and package_id = new.id and retired_at is null
+    order by released_at, id
+  loop
+    update public.forge_wp_drawing_ifc_releases
+    set retired_at = now(), retired_by = v_actor_id
+    where owner_id = new.owner_id and id = v_release.id;
+
+    insert into public.forge_wp_drawing_review_events (
+      owner_id, id, package_id, review_id, drawing_id, actor_id,
+      event_type, before_state, after_state, payload_minimal
+    ) values (
+      new.owner_id,
+      'forge_wpdre_' || replace(gen_random_uuid()::text, '-', ''),
+      new.id, v_release.review_id, v_release.drawing_id, v_actor_id,
+      'IFC_RELEASE_RETIRED', 'ACTIVE', 'RETIRED',
+      jsonb_build_object('release_id', v_release.id, 'reason', v_reason)
+    );
+  end loop;
+
+  for v_review in
+    select *
+    from public.forge_wp_drawing_reviews
+    where owner_id = new.owner_id and package_id = new.id and state = 'OPEN'
+    order by opened_at, id
+  loop
+    update public.forge_wp_drawing_reviews
+    set state = 'CANCELLED',
+        closed_by = v_actor_id,
+        closed_at = now(),
+        decision_reason = v_reason,
+        version = version + 1
+    where owner_id = new.owner_id and id = v_review.id;
+
+    insert into public.forge_wp_drawing_review_events (
+      owner_id, id, package_id, review_id, drawing_id, actor_id,
+      event_type, before_state, after_state, payload_minimal
+    ) values (
+      new.owner_id,
+      'forge_wpdre_' || replace(gen_random_uuid()::text, '-', ''),
+      new.id, v_review.id, v_review.drawing_id, v_actor_id,
+      'REVIEW_CANCELLED', 'OPEN', 'CANCELLED',
+      jsonb_build_object('reason', v_reason)
+    );
+  end loop;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists forge_wp_drawing_package_terminal on public.forge_work_packages;
+create trigger forge_wp_drawing_package_terminal
+  after update of status on public.forge_work_packages
+  for each row
+  when (new.status in ('cancelled', 'verified_closed')
+        and old.status not in ('cancelled', 'verified_closed'))
+  execute function public.forge_wp_drawing_on_package_terminal();
+
+-- ---------------------------------------------------------------------------
 -- Function grants: no default PUBLIC EXECUTE on new functions (Supabase
 -- defaults re-grant it — revoked here explicitly), EXECUTE only where
 -- the app needs it. The snapshot RPC is a read, but PostgREST still
@@ -1710,6 +1987,25 @@ revoke all on function public.forge_wp_drawing_field_redline_create(text, text, 
 revoke all on function public.forge_wp_drawing_field_redline_reconcile(text, text, text, text) from public;
 revoke all on function public.forge_wp_drawing_retire(text, text, text, text) from public;
 revoke all on function public.forge_wp_drawing_readiness_snapshot(text, text) from public;
+
+-- Belt and braces against DIRECT default grants: a REVOKE from
+-- PUBLIC does not remove a privilege granted directly to a named
+-- role, and Supabase's default privileges grant EXECUTE on new
+-- functions to anon. anon and service_role are explicitly revoked
+-- EXECUTE on every function, so the effective posture is
+-- authenticated-only even if the PUBLIC revoke is ever bypassed.
+-- (The migration test proves this with has_function_privilege for
+-- authenticated / anon / service_role / PUBLIC on all ten.)
+revoke execute on function public.forge_wp_drawing_revision_create(text, text, text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_review_create(text, text, text, text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_redline_create(text, text, text, text, text, text, integer, numeric, numeric, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_redline_resolve(text, text, integer, text, text, boolean, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_review_decide(text, text, integer, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_ifc_release(text, text, text, text, text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_field_redline_create(text, text, text, text, text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_field_redline_reconcile(text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_retire(text, text, text, text) from anon, service_role;
+revoke execute on function public.forge_wp_drawing_readiness_snapshot(text, text) from anon, service_role;
 
 grant execute on function public.forge_wp_drawing_revision_create(text, text, text, text, text, text) to authenticated;
 grant execute on function public.forge_wp_drawing_review_create(text, text, text, text, text, text, text) to authenticated;

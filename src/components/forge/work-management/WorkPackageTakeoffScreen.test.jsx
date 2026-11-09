@@ -228,4 +228,53 @@ describe("WorkPackageTakeoffScreen", () => {
     expect(mounted.container.textContent).toContain('Voided — the 2026-11-01 entry for "6in CS pipe" no longer counts toward totals');
     expect(mounted.container.textContent).toContain("Voided");
   });
+
+  it("slice 7: entries on IFA-linked lines carry a PRE-IFC flag; IFC-linked entries do not", async () => {
+    const listedEntries = [
+      { id: "forge_wprg_1", takeoffLineId: "line_ifa", workDate: "2026-11-01", installedQuantity: 10, version: 1, voidedAt: null },
+      { id: "forge_wprg_2", takeoffLineId: "line_ifc", workDate: "2026-11-02", installedQuantity: 5, version: 1, voidedAt: null },
+    ];
+    global.fetch = vi.fn((url, options) => {
+      if (url.includes("/drawings/readiness") && !options?.method) {
+        return jsonResponse({
+          drawings: [
+            { drawingId: "dwg_ifa", badge: "IFA — In review", constructionUsable: false, preliminary: true },
+            { drawingId: "dwg_ifc", badge: "IFC — Issued for construction", constructionUsable: true, preliminary: false },
+          ],
+        });
+      }
+      if (url.endsWith("/drawings") && !options?.method) return jsonResponse({ drawings: [] });
+      if (url.includes("/progress/summary") && !options?.method) {
+        return jsonResponse({
+          summary: {
+            packageId: "pkg_4",
+            lines: [
+              { lineId: "line_ifa", drawingId: "dwg_ifa", description: "IFA pipe", baselineQuantity: 40, baselineUnit: "ft", installed: 10, remaining: 30, percentComplete: 25, overrun: false },
+              { lineId: "line_ifc", drawingId: "dwg_ifc", description: "IFC pipe", baselineQuantity: 20, baselineUnit: "ft", installed: 5, remaining: 15, percentComplete: 25, overrun: false },
+            ],
+            package: {
+              aggregatePercent: 25, cappedAggregateCompletion: 25,
+              unitGroups: [{ unit: "ft", baseline: 60, installed: 15, lineCount: 2 }],
+              overrunLineCount: 0,
+            },
+          },
+        });
+      }
+      if (url.endsWith("/progress") && !options?.method) return jsonResponse({ entries: listedEntries });
+      if (url.includes("/takeoff-lines") && !options?.method) return jsonResponse({ lines: [] });
+      if (url.includes("/revisions")) return jsonResponse({ revisions: [] });
+      return jsonResponse({}, false);
+    });
+    mounted = mount(<WorkPackageTakeoffScreen packageId="pkg_4" />);
+    await flush();
+    act(() => { buttonWithText(mounted.container, "Daily progress").click(); });
+    for (let i = 0; i < 8; i += 1) await flush();
+
+    // Exactly one PRE-IFC tag: the IFA entry. The IFC entry has
+    // none, and the totals are untouched (10 + 5 installed).
+    expect(mounted.container.textContent.match(/PRE-IFC/g)).toHaveLength(1);
+    expect(mounted.container.textContent).toContain("IFA pipe");
+    expect(mounted.container.textContent).toContain("IFC pipe");
+    expect(mounted.container.textContent).toContain("15 of 60 ft");
+  });
 });

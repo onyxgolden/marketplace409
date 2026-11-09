@@ -23,14 +23,19 @@
 //    new round.
 // 4. Steps may plan and link against IFA (marked preliminary); IFA
 //    alone never authorizes construction use. Daily progress still
-//    records (flagged PRE_IFC where a drawing linkage exists);
+//    records (flagged PRE_IFC where a drawing linkage exists —
+//    preIfcTag, shown in the takeoff history display only);
 //    assignments and the manpower curve are status-signal only — this
 //    module changes no progress math, assignment, or curve logic.
 // 5. Slice independence: no busts/backcharges, field verification,
 //    reusable templates, permit lifecycle, notifications, or automatic
 //    scheduling live here. Roles: owner/co-owner-only gates until the
-//    admin-permissions role model lands; reviewer assignment is
-//    recorded but does not restrict who may decide in this slice.
+//    admin-permissions role model lands; separation of duties IS
+//    enforced at the decide step (see the migration): when a reviewer
+//    is designated and differs from the round opener, the opener may
+//    not decide their own round. A terminal package (cancelled /
+//    verified closed) withdraws every drawing it holds: no IFC badge,
+//    no construction use, no preliminary flag.
 
 export const REVIEW_STATES = Object.freeze([
   "OPEN",
@@ -289,19 +294,36 @@ export function validateDrawingRetireInput(input) {
  * RPC implements the same rules in SQL, and the migration tests
  * assert both on the same fixtures.
  *
- * input: { retiredAt, latestRevision: { issuedAs } | null,
+ * input: { retiredAt, packageStatus, latestRevision: { issuedAs } | null,
  *          latestReview: { state } | null, activeRelease: object | null }
  * returns: { badge, constructionUsable, preliminary }
+ *
+ * A terminal package (cancelled / verified closed) withdraws every
+ * drawing that has a revision: the release (if any) is retired by the
+ * package trigger, and the badge names the withdrawal. A drawing with
+ * no revision at all keeps its own state — there is nothing to
+ * withdraw. Retired still beats everything.
  */
 export function deriveDrawingReadiness(input) {
   if (input?.retiredAt) {
     return { badge: "Retired", constructionUsable: false, preliminary: false };
   }
+  const packageStatus = input?.packageStatus ?? null;
+  const terminal = packageStatus === "cancelled" || packageStatus === "verified_closed";
+  const hasRevision = input?.latestRevision != null;
+  if (terminal && hasRevision) {
+    return {
+      badge: packageStatus === "cancelled"
+        ? "Withdrawn — package cancelled"
+        : "Withdrawn — package verified closed",
+      constructionUsable: false,
+      preliminary: false,
+    };
+  }
   if (input?.activeRelease) {
     return { badge: "IFC — Issued for construction", constructionUsable: true, preliminary: false };
   }
   const state = input?.latestReview?.state ?? null;
-  const hasRevision = input?.latestRevision != null;
   if (state === "OPEN") {
     return { badge: "IFA — In review", constructionUsable: false, preliminary: hasRevision };
   }
@@ -321,13 +343,30 @@ export function deriveDrawingReadiness(input) {
  * Step-view label for a linked drawing's readiness (brief §7): an IFA
  * drawing is planning context marked preliminary; an IFC-released
  * drawing is the construction issue. A retired drawing is named, never
- * silently dropped.
+ * silently dropped. A withdrawn drawing names the package state that
+ * withdrew it.
  */
 export function stepDrawingLabel(readiness) {
   if (!readiness) return "Drawing: readiness unknown";
   if (readiness.badge === "Retired") return "Retired drawing";
+  if (typeof readiness.badge === "string" && readiness.badge.startsWith("Withdrawn")) {
+    return `Drawing: ${readiness.badge.charAt(0).toLowerCase()}${readiness.badge.slice(1)}`;
+  }
   if (readiness.constructionUsable) return "IFC — construction issue";
   if (readiness.preliminary) return "Drawing: IFA — preliminary";
   if (readiness.badge === "No issued revision") return "Drawing: no issued revision";
   return `Drawing: ${readiness.badge}`;
+}
+
+/**
+ * Display-only PRE-IFC flag for a progress entry (brief §7): an entry
+ * recorded against a preliminary (IFA) drawing carries the "PRE-IFC"
+ * tag in the daily history display. It never changes any total —
+ * historic actuals stay exactly as recorded, and an IFC-linked or
+ * withdrawn entry carries no flag. Takes a readiness row as returned
+ * by the snapshot (or derived by deriveDrawingReadiness); returns
+ * "PRE-IFC" or null.
+ */
+export function preIfcTag(readiness) {
+  return readiness?.preliminary === true ? "PRE-IFC" : null;
 }

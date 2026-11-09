@@ -46,6 +46,9 @@ export function badgeClass(badge) {
   if (badge === "IFA — Returned to drafter") return "bg-red-100 text-red-800";
   if (badge === "IFA — Approved; IFC not issued") return "bg-blue-100 text-blue-800";
   if (badge === "Retired") return "bg-slate-200 text-slate-600";
+  // Fix round 1: a withdrawn drawing (terminal package) reads like a
+  // retired one — not usable, grey, never green.
+  if (badge === "Withdrawn — package cancelled" || badge === "Withdrawn — package verified closed") return "bg-slate-200 text-slate-600";
   return "bg-slate-100 text-slate-700";
 }
 

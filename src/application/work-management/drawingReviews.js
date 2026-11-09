@@ -196,6 +196,10 @@ function toCamelReadinessDrawing(row) {
     openRequiredRedlines: row.open_required_redlines ?? 0,
     pendingFieldRedlines: row.pending_field_redlines ?? 0,
     badge: row.badge,
+    // Added by fix round 1: the snapshot derives preliminary from
+    // the same rules as the domain module. Rows from a pre-fix
+    // snapshot (no preliminary column) read as not preliminary.
+    preliminary: row.preliminary ?? false,
     constructionUsable: row.construction_usable === true,
   };
 }
@@ -260,11 +264,17 @@ export function mapDrawingReviewRpcError(error) {
   if (message.includes("WPP7_DUPLICATE_OPEN_REVIEW")) {
     return { ok: false, httpStatus: 409, error: "This revision already has an open review." };
   }
+  if (message.includes("WPP7_IDEMPOTENCY_CONFLICT")) {
+    return { ok: false, httpStatus: 409, error: "This request was already used for a different review or redline — use a new idempotency key." };
+  }
   if (message.includes("WPP7_REVIEW_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Review not found." };
   }
   if (message.includes("WPP7_REVIEW_CLOSED")) {
     return { ok: false, httpStatus: 409, error: "This review is closed — open a new round to continue." };
+  }
+  if (message.includes("WPP7_DECISION_FORBIDDEN")) {
+    return { ok: false, httpStatus: 403, error: "Only the assigned reviewer can decide this review — the person who opened the round cannot close it when a different reviewer is assigned." };
   }
   if (message.includes("WPP7_REVIEW_NOT_APPROVED")) {
     return { ok: false, httpStatus: 409, error: "Only an approved review can issue an IFC revision." };

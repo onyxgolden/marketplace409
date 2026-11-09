@@ -15,6 +15,7 @@ import {
   validateDrawingRetireInput,
   deriveDrawingReadiness,
   stepDrawingLabel,
+  preIfcTag,
 } from "./drawingReviews.js";
 
 const SHA = "a".repeat(64);
@@ -183,6 +184,33 @@ describe("deriveDrawingReadiness", () => {
     expect(deriveDrawingReadiness({ latestRevision: null, latestReview: null, activeRelease: null }))
       .toEqual({ badge: "No issued revision", constructionUsable: false, preliminary: false });
   });
+
+  it("a terminal package withdraws every drawing that has a revision", () => {
+    // An ACTIVE release no longer authorizes construction once the
+    // package is cancelled or verified closed.
+    expect(deriveDrawingReadiness({
+      packageStatus: "cancelled", latestRevision: ifcRevision,
+      latestReview: { state: "APPROVED" }, activeRelease: { id: "rel_1" },
+    })).toEqual({ badge: "Withdrawn — package cancelled", constructionUsable: false, preliminary: false });
+    expect(deriveDrawingReadiness({
+      packageStatus: "verified_closed", latestRevision: revision,
+      latestReview: { state: "OPEN" }, activeRelease: null,
+    })).toEqual({ badge: "Withdrawn — package verified closed", constructionUsable: false, preliminary: false });
+    // A drawing with no revision at all keeps its own state — there
+    // is nothing to withdraw.
+    expect(deriveDrawingReadiness({
+      packageStatus: "cancelled", latestRevision: null,
+      latestReview: null, activeRelease: null,
+    })).toEqual({ badge: "No issued revision", constructionUsable: false, preliminary: false });
+  });
+
+  it("retired beats a terminal package", () => {
+    expect(deriveDrawingReadiness({
+      retiredAt: "2026-11-08T00:00:00Z", packageStatus: "cancelled",
+      latestRevision: ifcRevision, latestReview: { state: "APPROVED" },
+      activeRelease: { id: "rel_1" },
+    })).toEqual({ badge: "Retired", constructionUsable: false, preliminary: false });
+  });
 });
 
 describe("stepDrawingLabel", () => {
@@ -196,5 +224,25 @@ describe("stepDrawingLabel", () => {
     expect(stepDrawingLabel({ badge: "No issued revision", constructionUsable: false, preliminary: false }))
       .toBe("Drawing: no issued revision");
     expect(stepDrawingLabel(null)).toBe("Drawing: readiness unknown");
+  });
+
+  it("labels a withdrawn drawing by the package state that withdrew it", () => {
+    expect(stepDrawingLabel({ badge: "Withdrawn — package cancelled", constructionUsable: false, preliminary: false }))
+      .toBe("Drawing: withdrawn — package cancelled");
+    expect(stepDrawingLabel({ badge: "Withdrawn — package verified closed", constructionUsable: false, preliminary: false }))
+      .toBe("Drawing: withdrawn — package verified closed");
+  });
+});
+
+describe("preIfcTag", () => {
+  it("flags preliminary (IFA) drawings and nothing else", () => {
+    expect(preIfcTag({ badge: "IFA — In review", constructionUsable: false, preliminary: true })).toBe("PRE-IFC");
+    expect(preIfcTag({ badge: "IFA — Approved; IFC not issued", constructionUsable: false, preliminary: true })).toBe("PRE-IFC");
+    expect(preIfcTag({ badge: "IFC — Issued for construction", constructionUsable: true, preliminary: false })).toBe(null);
+    expect(preIfcTag({ badge: "Withdrawn — package cancelled", constructionUsable: false, preliminary: false })).toBe(null);
+    expect(preIfcTag({ badge: "Retired", constructionUsable: false, preliminary: false })).toBe(null);
+    expect(preIfcTag({ badge: "No issued revision", constructionUsable: false, preliminary: false })).toBe(null);
+    expect(preIfcTag(null)).toBe(null);
+    expect(preIfcTag(undefined)).toBe(null);
   });
 });
