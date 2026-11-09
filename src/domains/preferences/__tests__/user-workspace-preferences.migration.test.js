@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const sql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260902000100_add_user_workspace_preferences.sql"), "utf8").toLowerCase().replace(/\s+/g, " ");
+const favoriteSql = readFileSync(resolve(process.cwd(), "supabase/migrations/20261108220000_add_work_packages_favorite_workspace.sql"), "utf8").toLowerCase().replace(/\s+/g, " ");
 
 describe("user workspace preferences migration", () => {
   it("is keyed one row per user, cascading on account deletion", () => {
@@ -20,5 +21,12 @@ describe("user workspace preferences migration", () => {
     expect(sql).toContain("alter table public.user_workspace_preferences force row level security");
     expect(sql).toContain("using (user_id = auth.uid())");
     expect(sql).toContain("with check (user_id = auth.uid())");
+  });
+});
+
+describe("user workspace preferences favorite expansion (work-packages tile)", () => {
+  it("adds 'work-packages' to the favorite allowlist without dropping the existing ids", () => {
+    expect(favoriteSql).toContain("drop constraint if exists user_workspace_preferences_favorite_workspace_id_check");
+    expect(favoriteSql).toContain("'marketplace', 'rentals', 'forge', 'scheduling', 'dev', 'health', 'work-packages'");
   });
 });

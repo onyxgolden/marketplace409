@@ -96,7 +96,7 @@ export const FORGE_APPLICATIONS =
     }),
   ]);
 
-export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations", "/forge/charts"];
+export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations", "/forge/charts", "/forge/work", "/forge/work-packages"];
 
 export function isPromotedSubtree(pathname) {
   return PROMOTED_PREFIXES.some(

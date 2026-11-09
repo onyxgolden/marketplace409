@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { WORKSPACES, findActiveWorkspace, isWorkspaceActive } from "./workspaces";
 
 describe("WORKSPACES", () => {
-  it("lists Marketplace, Rentals, Private Financing, Reservations, Forge, Scheduling, Designer, then Dev, in that order", () => {
-    expect(WORKSPACES.map((w) => w.id)).toEqual(["marketplace", "rentals", "private-financing", "reservations", "forge", "scheduling", "designer", "dev"]);
+  it("lists Marketplace, Rentals, Private Financing, Reservations, Forge, Scheduling, Work Packages, Designer, then Dev, in that order", () => {
+    expect(WORKSPACES.map((w) => w.id)).toEqual(["marketplace", "rentals", "private-financing", "reservations", "forge", "scheduling", "work-packages", "designer", "dev"]);
   });
 
   it("is frozen, and gives every workspace an id, name, href, iconName, and description", () => {
@@ -26,7 +26,7 @@ describe("isWorkspaceActive", () => {
     expect(isWorkspaceActive("/forge/property/123", forge)).toBe(true);
   });
 
-  it("does not match Forge on subtrees promoted to their own workspace (rental, private-financing, reservations, developer, scheduling, designer)", () => {
+  it("does not match Forge on subtrees promoted to their own workspace (rental, private-financing, reservations, developer, scheduling, designer, work-packages)", () => {
     const forge = WORKSPACES.find((w) => w.id === "forge");
     expect(isWorkspaceActive("/forge/rental", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/rental/portal", forge)).toBe(false);
@@ -38,6 +38,9 @@ describe("isWorkspaceActive", () => {
     expect(isWorkspaceActive("/forge/scheduling/schedule_project_1", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/designer", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/designer/design_1", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/work", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/work/forge_wp_1", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/work-packages/forge_wp_1/takeoff", forge)).toBe(false);
   });
 
   it("matches Scheduling on its own root and nested project routes", () => {
@@ -53,6 +56,14 @@ describe("isWorkspaceActive", () => {
     expect(isWorkspaceActive("/forge/designer", designer)).toBe(true);
     expect(isWorkspaceActive("/forge/designer/design_1", designer)).toBe(true);
     expect(isWorkspaceActive("/forge/financial", designer)).toBe(false);
+  });
+
+  it("matches Work Packages on its own root, nested package routes, and takeoff routes", () => {
+    const workPackages = WORKSPACES.find((w) => w.id === "work-packages");
+    expect(isWorkspaceActive("/forge/work", workPackages)).toBe(true);
+    expect(isWorkspaceActive("/forge/work/forge_wp_1", workPackages)).toBe(true);
+    expect(isWorkspaceActive("/forge/work-packages/forge_wp_1/takeoff", workPackages)).toBe(true);
+    expect(isWorkspaceActive("/forge/financial", workPackages)).toBe(false);
   });
 
   it("returns false for an empty or missing pathname", () => {
@@ -75,6 +86,12 @@ describe("findActiveWorkspace", () => {
     expect(findActiveWorkspace("/forge/private-financing")?.id).toBe("private-financing");
     expect(findActiveWorkspace("/forge/private-financing/portal")?.id).toBe("private-financing");
     expect(findActiveWorkspace("/forge/reservations")?.id).toBe("reservations");
+  });
+
+  it("finds Work Packages for the planner list, a package route, and a takeoff route, not Forge", () => {
+    expect(findActiveWorkspace("/forge/work")?.id).toBe("work-packages");
+    expect(findActiveWorkspace("/forge/work/forge_wp_1")?.id).toBe("work-packages");
+    expect(findActiveWorkspace("/forge/work-packages/forge_wp_1/takeoff")?.id).toBe("work-packages");
   });
 
   it("finds Forge for an ordinary Forge route", () => {

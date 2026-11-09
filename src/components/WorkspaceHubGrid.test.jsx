@@ -9,8 +9,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const WORKSPACES = [
   { id: "marketplace", name: "Marketplace", href: "/market", iconName: "Store", description: "Buy and sell." },
   { id: "forge", name: "Forge", href: "/forge", iconName: "Hammer", description: "Operations." },
+  { id: "work-packages", name: "Work Packages", href: "/forge/work", iconName: "ClipboardList", description: "Planner." },
 ];
-const STATS = { marketplace: "12 listings", forge: "3 accounts" };
+const STATS = { marketplace: "12 listings", forge: "3 accounts", "work-packages": "2 packages" };
 
 function mount(ui) {
   const container = document.createElement("div");
@@ -43,6 +44,14 @@ describe("WorkspaceHubGrid", () => {
     mounted = mount(<WorkspaceHubGrid workspaces={WORKSPACES} stats={STATS} initialFavoriteWorkspaceId={null} />);
     expect(mounted.container.textContent).toContain("Marketplace");
     expect(mounted.container.textContent).toContain("Forge");
+    expect(mounted.container.textContent).toContain("Work Packages");
+  });
+
+  it("renders the Work Packages tile with its ClipboardList icon (no undefined Icon)", () => {
+    mounted = mount(<WorkspaceHubGrid workspaces={WORKSPACES} stats={STATS} initialFavoriteWorkspaceId={null} />);
+    const link = [...mounted.container.querySelectorAll("a")].find((a) => a.getAttribute("href") === "/forge/work");
+    expect(link).toBeDefined();
+    expect(link.querySelector("svg")).not.toBeNull();
   });
 
   it("marks the initial favorite's star as pressed and no others", () => {

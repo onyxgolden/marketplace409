@@ -45,6 +45,13 @@ export const WORKSPACES = Object.freeze([
     description: "Gantt chart wall-boards, calendars, and project templates.",
   }),
   Object.freeze({
+    id: "work-packages",
+    name: "Work Packages",
+    href: "/forge/work",
+    iconName: "ClipboardList",
+    description: "Work package planner — drawings, steps, manpower, and IFA-to-IFC review.",
+  }),
+  Object.freeze({
     id: "designer",
     name: "Designer",
     href: "/forge/designer",
@@ -64,7 +71,7 @@ export const WORKSPACES = Object.freeze([
 // sibling workspace (see that file's PROMOTED_PREFIXES) -- "Forge" must not
 // read as active on any of these even though they share the /forge/* URL
 // prefix, or the wrong tile would highlight.
-const PROMOTED_OUT_OF_FORGE = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations"];
+const PROMOTED_OUT_OF_FORGE = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations", "/forge/work", "/forge/work-packages"];
 
 export function isWorkspaceActive(pathname, workspace) {
   if (!pathname) return false;
@@ -76,6 +83,18 @@ export function isWorkspaceActive(pathname, workspace) {
       !PROMOTED_OUT_OF_FORGE.some(
         (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
       )
+    );
+  }
+
+  if (workspace.id === "work-packages") {
+    // The planner's list and detail pages live under /forge/work, but takeoff
+    // pages live under /forge/work-packages/[packageId]/takeoff -- both belong
+    // to this workspace, so the tile highlights on either prefix.
+    return (
+      pathname === workspace.href ||
+      pathname.startsWith(`${workspace.href}/`) ||
+      pathname === "/forge/work-packages" ||
+      pathname.startsWith("/forge/work-packages/")
     );
   }
 
