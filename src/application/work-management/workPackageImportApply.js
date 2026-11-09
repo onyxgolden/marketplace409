@@ -18,10 +18,13 @@
 // (sourceTrackingAvailable), created/updated rows are stamped with
 // (source_system, source_record_id) so the next import of the same
 // file updates them instead of duplicating them. Packages stamp
-// through their plain insert/update; steps stamp through a direct
-// column update because the step RPCs take no source parameters —
-// deliberately not a versioned content change (no revision row, no
-// version bump), so stamping never invalidates an in-flight edit.
+// through their plain insert/update; steps stamp through the
+// forge_work_step_stamp_source RPC — never a direct client write,
+// because authenticated has SELECT only on forge_work_steps (slice
+// 5 revoked insert/update/delete) and a direct UPDATE is denied in
+// production. The stamp is deliberately not a versioned content
+// change (no revision row, no version bump), so stamping never
+// invalidates an in-flight edit.
 import { createWorkPackage, updateWorkPackage, transitionWorkPackage, listPackagePropertyOptions } from "./workPackages.js";
 import { createWorkStep, updateWorkStep, listWorkSteps } from "./workSteps.js";
 
@@ -86,10 +89,14 @@ export async function loadImportContext(db, { ownerId, kind, packageId }) {
   return { ok: true, existingSteps: stepsResult.steps, sourceTrackingAvailable: tracked, properties: [] };
 }
 
-async function stampStepSource(db, { ownerId, stepId, sourceSystem, sourceRecordId }) {
-  const { error } = await db.from("forge_work_steps")
-    .update({ source_system: sourceSystem, source_record_id: sourceRecordId })
-    .eq("owner_id", ownerId).eq("id", stepId);
+async function stampStepSource(db, { ownerId, packageId, stepId, sourceSystem, sourceRecordId }) {
+  const { error } = await db.rpc("forge_work_step_stamp_source", {
+    p_owner_id: ownerId,
+    p_package_id: packageId,
+    p_step_id: stepId,
+    p_source_system: sourceSystem,
+    p_source_record_id: sourceRecordId,
+  });
   if (error) throw error;
 }
 
@@ -159,7 +166,7 @@ export async function applyWorkPackageImport(db, {
         if (trackSource && fields.sourceRecordId) {
           try {
             await stampStepSource(db, {
-              ownerId, stepId: step.id, sourceSystem, sourceRecordId: fields.sourceRecordId,
+              ownerId, packageId, stepId: step.id, sourceSystem, sourceRecordId: fields.sourceRecordId,
             });
           } catch (e) {
             results.warnings.push({
@@ -233,7 +240,7 @@ export async function applyWorkPackageImport(db, {
             && (current.sourceSystem !== sourceSystem || current.sourceRecordId !== fields.sourceRecordId)) {
           try {
             await stampStepSource(db, {
-              ownerId, stepId: item.id, sourceSystem, sourceRecordId: fields.sourceRecordId,
+              ownerId, packageId, stepId: item.id, sourceSystem, sourceRecordId: fields.sourceRecordId,
             });
             step = { ...step, sourceSystem, sourceRecordId: fields.sourceRecordId };
           } catch (e) {

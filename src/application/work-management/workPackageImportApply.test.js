@@ -43,6 +43,18 @@ function mockDb(chains = []) {
   };
 }
 
+// A db whose only write path is db.rpc: any direct table write throws,
+// so a test using it proves the apply layer stamps through the RPC
+// and never writes forge_work_steps directly (authenticated has
+// SELECT only on that table in production — a direct UPDATE is
+// denied, which is exactly the P1 this fix round closes).
+function rpcDb(rpcResult = { data: null, error: null }) {
+  return {
+    rpc: vi.fn().mockResolvedValue(rpcResult),
+    from: vi.fn(() => { throw new Error("apply must not write tables directly"); }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -214,13 +226,12 @@ describe("applyWorkPackageImport — packages", () => {
 });
 
 describe("applyWorkPackageImport — steps", () => {
-  it("creates a step at the file's position and stamps its source record", async () => {
+  it("creates a step at the file's position and stamps its source record through the RPC", async () => {
     createWorkStep.mockResolvedValue({
       ok: true,
       step: { id: "s_new", sequenceNo: 3, title: "Paint", version: 1 },
     });
-    const stamp = chain({ data: null, error: null });
-    const db = mockDb([stamp]);
+    const db = rpcDb({ data: { id: "s_new", source_system: "maximo", source_record_id: "WO-88" }, error: null });
     const plan = {
       creates: [{
         rowIndex: 0,
@@ -234,11 +245,44 @@ describe("applyWorkPackageImport — steps", () => {
       sourceSystem: "maximo", sourceTrackingAvailable: true,
     });
     expect(results.created).toHaveLength(1);
+    expect(results.warnings).toHaveLength(0);
     expect(createWorkStep).toHaveBeenCalledWith(db, expect.objectContaining({
       ownerId: "owner_1", packageId: "wp_1",
       input: expect.objectContaining({ title: "Paint", insertAt: 3 }),
     }));
-    expect(stamp.update).toHaveBeenCalledWith({ source_system: "maximo", source_record_id: "WO-88" });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_step_stamp_source", {
+      p_owner_id: "owner_1",
+      p_package_id: "wp_1",
+      p_step_id: "s_new",
+      p_source_system: "maximo",
+      p_source_record_id: "WO-88",
+    });
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("warns and keeps the row when the stamp RPC fails", async () => {
+    createWorkStep.mockResolvedValue({
+      ok: true,
+      step: { id: "s_new", sequenceNo: 3, title: "Paint", version: 1 },
+    });
+    const db = rpcDb({ data: null, error: { message: "WPP5_STEP_NOT_FOUND" } });
+    const plan = {
+      creates: [{
+        rowIndex: 0,
+        fields: { title: "Paint", sequenceNo: 3, sourceRecordId: "WO-88" },
+        statusTarget: null,
+      }],
+      updates: [],
+    };
+    const results = await applyWorkPackageImport(db, {
+      ownerId: "owner_1", actor: "user_9", kind: "steps", plan, packageId: "wp_1",
+      sourceSystem: "maximo", sourceTrackingAvailable: true,
+    });
+    expect(results.created).toHaveLength(1);
+    expect(results.errors).toHaveLength(0);
+    expect(results.warnings).toHaveLength(1);
+    expect(results.warnings[0].message).toContain("could not be saved");
+    expect(db.from).not.toHaveBeenCalled();
   });
 
   it("updates a changed step with its current version, and skips a no-change one", async () => {
@@ -281,5 +325,39 @@ describe("applyWorkPackageImport — steps", () => {
       stepId: "s1",
       patch: expect.objectContaining({ expectedVersion: 2, title: "Fabricate (revised)" }),
     }));
+  });
+
+  it("stamps an updated step through the RPC even when nothing else changed", async () => {
+    const db = rpcDb({ data: { id: "s2", source_system: "maximo", source_record_id: "WO-90" }, error: null });
+    const current = {
+      id: "s2", sequenceNo: 2, title: "Install", description: null,
+      craftLabel: "Welder", plannedDurationDays: 2, plannedPersonHours: 16,
+      version: 1, sourceSystem: null, sourceRecordId: null,
+    };
+    const plan = {
+      creates: [],
+      updates: [{
+        rowIndex: 0, id: "s2", matchKind: "sequence",
+        fields: { title: "Install", craftLabel: "Welder", plannedDurationDays: 2, plannedPersonHours: 16, sourceRecordId: "WO-90" },
+        statusTarget: null, version: 1, current,
+      }],
+    };
+    const results = await applyWorkPackageImport(db, {
+      ownerId: "owner_1", actor: "user_9", kind: "steps", plan, packageId: "wp_1",
+      sourceSystem: "maximo", sourceTrackingAvailable: true,
+    });
+    expect(results.updated).toHaveLength(1);
+    expect(results.warnings).toHaveLength(0);
+    // No content changed, so no versioned update runs — only the stamp.
+    expect(updateWorkStep).not.toHaveBeenCalled();
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_step_stamp_source", {
+      p_owner_id: "owner_1",
+      p_package_id: "wp_1",
+      p_step_id: "s2",
+      p_source_system: "maximo",
+      p_source_record_id: "WO-90",
+    });
+    expect(db.from).not.toHaveBeenCalled();
+    expect(results.updated[0].step).toMatchObject({ sourceSystem: "maximo", sourceRecordId: "WO-90" });
   });
 });
