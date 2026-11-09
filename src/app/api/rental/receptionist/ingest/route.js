@@ -11,18 +11,29 @@ import { resolveOperationOwner, verifyIngestSignature } from "@/lib/receptionist
 // tenant mutation happens here. No browser/client direct writes to these
 // tables. Operation -> owner mapping comes from server env, never the body.
 //
-// Replay safety (P2-1; lifecycle fix round 2, P1-2): the signed nonce
-// is CLAIMED by receptionist_claim_ingest_nonce before any write, but
-// claiming does not mark the delivery complete. The nonce carries
-// IN_PROGRESS -> COMMITTED | FAILED: only
-// receptionist_complete_ingest_nonce commits it, after every ingest
-// write lands. If any write fails, the nonce is marked FAILED, so an
+// Replay safety (P2-1; lifecycle fix round 2, P1-2; lease tokens fix
+// round 3, P1-1): the signed nonce is CLAIMED by
+// receptionist_claim_ingest_nonce before any write, but claiming does
+// not mark the delivery complete. The claim is an EXCLUSIVE 60-second
+// lease: the claimant gets a lease_token, and only that token may
+// complete or fail the claim. A concurrent duplicate while the lease
+// is live gets 'busy' and must NOT run the ingest — this route returns
+// an honest in-progress 409 instead of running the writes twice. An
+// expired lease is taken over with fencing: the old token can no longer
+// complete or fail. The nonce carries IN_PROGRESS -> COMMITTED |
+// FAILED: only receptionist_complete_ingest_nonce commits it, after
+// every ingest write lands, and only by the lease token. If any write
+// fails, the nonce is marked FAILED by its token holder, so an
 // identical retry re-runs the ingest instead of being told it is
 // already a duplicate. A committed replay returns the stored original
 // result; the same nonce with a different request hash is rejected
 // (409). The writes themselves are idempotent (call upsert, event
-// dedupe, draft upsert), so a concurrent duplicate collapses onto the
+// dedupe, draft upsert), so a retry after failure collapses onto the
 // same records.
+// Completion honesty (fix round 3, P1-2): the completion RPC returns a
+// boolean — the route checks it. An RPC error or a false return means
+// the commit is unconfirmed, so the route releases the claim (fenced
+// by its token) and returns a retryable 503, never success:true.
 // Callback privacy (P1-6): the callback number is AES-256-GCM encrypted
 // before insert; a missing encryption key fails the request closed
 // instead of storing plaintext.
@@ -57,9 +68,10 @@ export async function POST(request) {
     }
 
     const supabase = createReceptionistIngestClient();
-    // Claim the nonce (fresh / retry / committed / hash_mismatch).
+    // Claim the nonce (fresh / busy / retry / committed / hash_mismatch).
     // A claim is not a completion: only complete_ingest_nonce, called
-    // after every write below, commits the delivery.
+    // after every write below and only by the lease token this claim
+    // returns, commits the delivery.
     const requestHash = crypto.createHash("sha256").update(rawBody, "utf8").digest("hex");
     const { data: claim, error: claimError } = await supabase.rpc(
       "receptionist_claim_ingest_nonce",
@@ -70,11 +82,22 @@ export async function POST(request) {
       return NextResponse.json(
         { error: "Nonce already used with a different request." }, { status: 409 });
     }
+    if (claim?.status === "busy") {
+      // Another worker owns the live lease for this nonce: do NOT run
+      // the writes. The caller retries; once the lease expires or the
+      // owner fails, the retry takes the claim over.
+      return NextResponse.json(
+        { error: "Ingest already in progress for this nonce; retry the delivery." },
+        { status: 409 });
+    }
     if (claim?.status === "committed") {
       // Stable original result: the delivery already landed.
       return NextResponse.json(
         claim.result ?? { success: true, callId: claim.call_id ?? null, draftId: null });
     }
+    // The lease token this claim owns. Only this token may complete or
+    // fail the claim — a stale token changes nothing (fencing).
+    const leaseToken = claim?.lease_token ?? null;
 
     // fresh or retry: run the ingest. Any failure below marks the
     // nonce FAILED so an identical retry re-runs the writes.
@@ -183,26 +206,46 @@ export async function POST(request) {
       }
 
       const result = { success: true, callId: call.id, draftId };
-      // Commit the nonce. Best-effort: if completion itself fails, the
-      // records are already committed; an identical retry re-runs the
-      // idempotent writes and completes the nonce then.
-      const { error: completeError } = await supabase.rpc(
+      // Commit the nonce — and CHECK the boolean (fix round 3, P1-2).
+      // An RPC error, or a false return (no row transitioned: the
+      // lease was taken over, the nonce expired, or the row is gone),
+      // means the commit is unconfirmed. The records landed, but the
+      // caller must NOT be told success:true as if replay protection
+      // were committed: release the claim with our token (fenced — a
+      // stale token changes nothing) so an identical retry can re-run
+      // the idempotent writes and commit, and return an honest
+      // retryable 503.
+      const { data: completed, error: completeError } = await supabase.rpc(
         "receptionist_complete_ingest_nonce",
         { p_owner_id: ownerId, p_nonce: nonce, p_request_hash: requestHash,
-          p_call_id: call.id, p_result: result },
+          p_call_id: call.id, p_result: result, p_lease_token: leaseToken },
       );
-      if (completeError) {
-        console.error("Receptionist ingest nonce completion failed", completeError);
+      if (completeError || completed !== true) {
+        console.error("Receptionist ingest nonce completion failed",
+          completeError ?? new Error("complete_ingest_nonce returned false"));
+        try {
+          await supabase.rpc("receptionist_fail_ingest_nonce",
+            { p_owner_id: ownerId, p_nonce: nonce, p_request_hash: requestHash,
+              p_lease_token: leaseToken });
+        } catch {
+          // Best-effort only; the 503 below already reports the failure.
+        }
+        return NextResponse.json(
+          { error: "Ingest records saved but completion could not be confirmed; retry the delivery." },
+          { status: 503 });
       }
       return NextResponse.json(result);
     } catch (error) {
       // The delivery did not land: mark the nonce FAILED so an
       // identical retry re-runs the ingest instead of being told it is
-      // already a duplicate. Swallow completion-path errors here —
-      // the original error is the one the caller must see.
+      // already a duplicate. The fail is fenced by our lease token —
+      // if another worker took the lease over, it changes nothing.
+      // Swallow fail-path errors here — the original error is the one
+      // the caller must see.
       try {
         await supabase.rpc("receptionist_fail_ingest_nonce",
-          { p_owner_id: ownerId, p_nonce: nonce, p_request_hash: requestHash });
+          { p_owner_id: ownerId, p_nonce: nonce, p_request_hash: requestHash,
+            p_lease_token: leaseToken });
       } catch {
         // Best-effort only; the 500 below already reports the failure.
       }

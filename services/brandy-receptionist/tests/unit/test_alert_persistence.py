@@ -8,17 +8,22 @@ surfaced, never silently dropped. Two workers sharing one state file
 must not clobber each other's alerts, and an acknowledgment recorded
 by one worker must survive another worker's later persist.
 """
+import http.client
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import ThreadingHTTPServer
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from app.config import ReceptionistConfig
 from app.integrations.alerts import AlertDispatcher, FakeAlertTransport
+from app.server import ReceptionistServer, make_handler
 
 
 class FakeClock:
@@ -196,6 +201,55 @@ class TestRestartAndMultiWorker(unittest.TestCase):
             third = make_dispatcher(clock=clock, state_path=path)
             self.assertEqual(third.get("emg-p1-11")["state"], "ACKNOWLEDGED")
             self.assertIsNotNone(third.get("emg-p1-12"))
+
+
+class TestHealthEndpoint(unittest.TestCase):
+    """Residual qualification (fix round 2 verdict): GET /health must
+    mark persistence unavailable when no state_path is configured, and
+    live emergency handling must stay disabled. This exercises the real
+    HTTP handler, not just dispatcher.health()."""
+
+    def _serve(self, server):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(server))
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(server.shutdown)
+        return httpd.server_address[1]
+
+    def _get_health(self, port):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/health")
+        resp = conn.getresponse()
+        body = json.loads(resp.read())
+        conn.close()
+        return resp.status, body
+
+    def test_no_state_path_health_marks_persistence_unavailable(self):
+        dispatcher = make_dispatcher(state_path=None)
+        server = ReceptionistServer(config=ReceptionistConfig(), dispatcher=dispatcher)
+        port = self._serve(server)
+        status, body = self._get_health(port)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["alert_persistence"]["persistence"], "unavailable")
+        # Live emergency handling stays disabled by default.
+        self.assertFalse(body["outbound_alerts_enabled"])
+        self.assertFalse(body["telephony_enabled"])
+
+    def test_degraded_persistence_shows_in_health(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "alert-state.json")
+            dispatcher = make_dispatcher(state_path=path)
+            with mock.patch("os.replace", side_effect=OSError("disk full")):
+                dispatcher.dispatch_emergency("emg-health-1", "FIRE", "Fire.")
+            self.assertEqual(dispatcher.health()["persistence"], "degraded")
+            server = ReceptionistServer(config=ReceptionistConfig(), dispatcher=dispatcher)
+            port = self._serve(server)
+            status, body = self._get_health(port)
+            self.assertEqual(status, 200)
+            self.assertEqual(body["alert_persistence"]["persistence"], "degraded")
+            self.assertIn("disk full", body["alert_persistence"]["last_error"])
 
 
 if __name__ == "__main__":

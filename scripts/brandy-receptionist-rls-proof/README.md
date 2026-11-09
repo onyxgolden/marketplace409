@@ -37,12 +37,16 @@ Exits non-zero on any failed case. The script drops and recreates the
 - **P1-6** — `callback_e164_encrypted` is `bytea`, not `text`; a service
   blob stores. (The encrypt/decrypt roundtrip, access, log and rotation
   tests live in `src/lib/receptionist/__tests__/callbackCrypto.test.js`.)
-- **P2-1** — the nonce lifecycle (fix round 2, P1-2): claim returns
-  fresh / retry / committed / hash_mismatch; complete commits only from
-  IN_PROGRESS or FAILED with the matching hash and stores the result;
-  fail marks IN_PROGRESS failed and never un-completes; the old
-  commit-before-write consume RPC is gone; all three lifecycle RPCs are
-  service-only; stale rows are purged by the claim.
+- **P2-1** — the nonce lifecycle (fix round 2, P1-2; lease tokens fix
+  round 3, P1-1): claim returns fresh / busy / retry / committed /
+  hash_mismatch with a lease_token; a concurrent duplicate with a live
+  lease gets busy; only the owning token can complete or fail; an
+  expired lease is taken over with fencing (old token dead); a failed
+  claim re-claims with a fresh token; complete requires IN_PROGRESS +
+  the token and never un-completes; the old commit-before-write
+  consume RPC and the token-less complete/fail overloads are gone; all
+  three lifecycle RPCs are service-only; stale rows are purged by the
+  claim; fresh nonces carry a 600s replay expiry and a 60s lease.
 - **P1-3** — a conflict-ignored draft upsert returns zero rows (the
   `.single()` trap); the owner-scoped fallback SELECT finds exactly the
   one existing draft and the conflict path does not reset its state.

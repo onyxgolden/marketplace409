@@ -21,15 +21,22 @@
 --  * Events table is append-only (trigger rejects UPDATE/DELETE).
 --  * Composite owner FKs: child rows cannot reference another owner's
 --    call. Every composite FK target carries a matching UNIQUE key.
---  * Unique idempotency keys: duplicate/out-of-order provider events are
---    safe. Signed-ingest nonces carry a lifecycle (fix round 2, P1-2):
---    IN_PROGRESS -> COMMITTED | FAILED. Claiming a nonce does not mark
---    the delivery complete: only receptionist_complete_ingest_nonce
---    does, after every ingest write lands. A failed delivery is marked
---    FAILED so an identical retry re-runs the ingest instead of being
---    told it is already a duplicate. A committed replay returns the
---    stored original result; the same nonce with a different request
---    hash is rejected. Rows expire after the replay window.
+--  * Signed-ingest nonces carry a lifecycle (fix round 2, P1-2;
+--    lease tokens fix round 3): IN_PROGRESS -> COMMITTED | FAILED.
+--    Claiming a nonce does not mark the delivery complete: only
+--    receptionist_complete_ingest_nonce does, after every ingest
+--    write lands. A failed delivery is marked FAILED so an identical
+--    retry re-runs the ingest instead of being told it is already a
+--    duplicate. A committed replay returns the stored original
+--    result; the same nonce with a different request hash is
+--    rejected. Rows expire after the replay window.
+--  * The claim is an EXCLUSIVE 60-second lease (fix round 3, P1-1):
+--    the claimant receives a lease_token, and only that token may
+--    complete or fail the claim. A concurrent duplicate while the
+--    lease is live gets 'busy' and must NOT run the ingest. An
+--    expired lease can be taken over with fencing: the old token can
+--    no longer complete or fail. A FAILED claim releases the lease
+--    for an identical retry, which gets a fresh token.
 --  * callback_e164_encrypted holds AES-256-GCM ciphertext produced by
 --    the ingestion endpoint (format v1.<keyId>.<base64(iv||tag||ct)>);
 --    the key lives in server env only, never in this migration.
@@ -190,16 +197,21 @@ create table if not exists public.forge_rental_receptionist_delivery_outbox (
 );
 
 -- -------------------------------------------------- ingest nonce registry --
--- Signed-ingest replay protection (P2-1; lifecycle fix round 2, P1-2):
--- one row per (owner, nonce), with a state machine. The old
+-- Signed-ingest replay protection (P2-1; lifecycle fix round 2, P1-2;
+-- lease tokens fix round 3, P1-1): one row per (owner, nonce), with a
+-- state machine AND an exclusive claim lease. The old
 -- receptionist_consume_ingest_nonce committed the nonce BEFORE the
 -- ingest writes ran, so a failed delivery could never retry — an
 -- identical retry was told "duplicate" while its records were missing.
--- The new RPCs split the lifecycle: claim (fresh / retry / committed /
--- hash_mismatch), complete (only after every write lands), fail (so an
+-- The RPCs split the lifecycle: claim (fresh / busy / retry /
+-- committed / hash_mismatch), complete (only after every write lands,
+-- only by the lease token), fail (only by the lease token, so an
 -- identical retry re-runs the ingest). Same nonce + same hash retries
--- unfinished work; same nonce + different hash is rejected; a
--- committed replay returns the stored original result.
+-- unfinished work once its lease is free; same nonce + different hash
+-- is rejected; a committed replay returns the stored original result.
+-- A concurrent duplicate while the lease is live gets 'busy' and must
+-- NOT run the ingest writes. An expired lease is taken over with
+-- fencing: the old token can no longer complete or fail the claim.
 create table if not exists public.forge_rental_receptionist_ingest_nonces (
   owner_id uuid not null,
   nonce text not null,
@@ -208,6 +220,11 @@ create table if not exists public.forge_rental_receptionist_ingest_nonces (
     check (state in ('IN_PROGRESS', 'COMMITTED', 'FAILED')),
   call_id uuid,
   result jsonb,
+  -- Exclusive claim lease (fix round 3, P1-1): the uuid token issued
+  -- to the claimant, and the instant the lease expires (60s). Only
+  -- the holder of the current token may complete or fail the claim.
+  lease_token uuid,
+  lease_expires_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   expires_at timestamptz not null,
@@ -221,6 +238,10 @@ alter table public.forge_rental_receptionist_ingest_nonces
   add column if not exists call_id uuid;
 alter table public.forge_rental_receptionist_ingest_nonces
   add column if not exists result jsonb;
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists lease_token uuid;
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists lease_expires_at timestamptz;
 alter table public.forge_rental_receptionist_ingest_nonces
   add column if not exists updated_at timestamptz not null default now();
 
@@ -239,6 +260,7 @@ as $$
 declare
   v_row public.forge_rental_receptionist_ingest_nonces%rowtype;
   v_found boolean := false;
+  v_lease uuid;
 begin
   if p_owner_id is null or p_nonce is null or btrim(p_nonce) = '' then
     raise exception 'An owner id and a nonce are required.' using errcode = '22023';
@@ -246,18 +268,24 @@ begin
   delete from public.forge_rental_receptionist_ingest_nonces
     where expires_at <= now();
   -- One atomic claim: insert wins for a fresh nonce; on conflict the
-  -- existing row decides. Two attempts cover a purge race.
+  -- existing row decides. Two attempts cover a purge race. The
+  -- SELECT ... FOR UPDATE serializes concurrent claimants on the row,
+  -- so only one of them can take over an expired lease or re-claim a
+  -- FAILED row, and the busy/lease checks below read a stable row.
   for _attempt in 1..2 loop
+    v_lease := gen_random_uuid();
     insert into public.forge_rental_receptionist_ingest_nonces
-      (owner_id, nonce, request_hash, expires_at)
-      values (p_owner_id, p_nonce, coalesce(p_request_hash, ''), now() + interval '600 seconds')
+      (owner_id, nonce, request_hash, lease_token, lease_expires_at, expires_at)
+      values (p_owner_id, p_nonce, coalesce(p_request_hash, ''), v_lease,
+              now() + interval '60 seconds', now() + interval '600 seconds')
       on conflict (owner_id, nonce) do nothing
       returning * into v_row;
     if found then
-      return jsonb_build_object('status', 'fresh', 'call_id', null, 'result', null);
+      return jsonb_build_object('status', 'fresh', 'lease_token', v_lease,
+        'call_id', null, 'result', null);
     end if;
     select * into v_row from public.forge_rental_receptionist_ingest_nonces
-      where owner_id = p_owner_id and nonce = p_nonce;
+      where owner_id = p_owner_id and nonce = p_nonce for update;
     if found then
       v_found := true;
       exit;
@@ -274,17 +302,66 @@ begin
     return jsonb_build_object('status', 'committed',
       'call_id', v_row.call_id, 'result', v_row.result);
   end if;
-  -- IN_PROGRESS or FAILED with the same hash: retry the ingest. The
-  -- writes are idempotent (call upsert, event dedupe, draft upsert),
-  -- so a concurrent duplicate collapses onto the same records.
-  return jsonb_build_object('status', 'retry',
-    'call_id', v_row.call_id, 'result', null);
+  if v_row.state = 'FAILED' then
+    -- A failed delivery's claim is released: re-claim it with a fresh
+    -- lease token and a new 60s lease, back to IN_PROGRESS. The
+    -- UPDATE is guarded on state, so a concurrent claimant that took
+    -- it first wins and this caller falls through to the busy check.
+    v_lease := gen_random_uuid();
+    update public.forge_rental_receptionist_ingest_nonces
+      set state = 'IN_PROGRESS', lease_token = v_lease,
+          lease_expires_at = now() + interval '60 seconds', updated_at = now()
+      where owner_id = p_owner_id and nonce = p_nonce and state = 'FAILED';
+    if found then
+      return jsonb_build_object('status', 'retry', 'lease_token', v_lease,
+        'call_id', v_row.call_id, 'result', null);
+    end if;
+    select * into v_row from public.forge_rental_receptionist_ingest_nonces
+      where owner_id = p_owner_id and nonce = p_nonce for update;
+    if v_row.state = 'COMMITTED' then
+      return jsonb_build_object('status', 'committed',
+        'call_id', v_row.call_id, 'result', v_row.result);
+    end if;
+  end if;
+  -- IN_PROGRESS: the claim is EXCLUSIVE while its lease is live. A
+  -- concurrent duplicate gets 'busy' and must NOT run the ingest
+  -- writes — the writes are idempotent, but only one worker may own
+  -- the multi-step call/event/draft/link sequence at a time.
+  if v_row.state = 'IN_PROGRESS' then
+    if v_row.lease_expires_at is not null and v_row.lease_expires_at > now() then
+      return jsonb_build_object('status', 'busy',
+        'call_id', v_row.call_id, 'result', null);
+    end if;
+    -- Lease expired (worker crashed or stalled): fence the old token
+    -- out and take the claim over with a fresh lease token. The
+    -- UPDATE is guarded on the expired lease, so only one takeover
+    -- wins; the loser reports busy.
+    v_lease := gen_random_uuid();
+    update public.forge_rental_receptionist_ingest_nonces
+      set lease_token = v_lease,
+          lease_expires_at = now() + interval '60 seconds', updated_at = now()
+      where owner_id = p_owner_id and nonce = p_nonce and state = 'IN_PROGRESS'
+        and (lease_expires_at is null or lease_expires_at <= now());
+    if found then
+      return jsonb_build_object('status', 'retry', 'lease_token', v_lease,
+        'call_id', v_row.call_id, 'result', null);
+    end if;
+    return jsonb_build_object('status', 'busy',
+      'call_id', v_row.call_id, 'result', null);
+  end if;
+  raise exception 'Ingest nonce claim reached an unexpected state.' using errcode = '55000';
 end;
 $$;
 
+-- The round-2 token-less overloads are dropped: without a lease token
+-- any caller could finalize a claim it did not own. The new versions
+-- fence complete/fail to the current lease token.
+drop function if exists public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb);
+drop function if exists public.receptionist_fail_ingest_nonce(uuid, text, text);
+
 create or replace function public.receptionist_complete_ingest_nonce(
   p_owner_id uuid, p_nonce text, p_request_hash text,
-  p_call_id uuid, p_result jsonb
+  p_call_id uuid, p_result jsonb, p_lease_token uuid
 ) returns boolean
 language plpgsql
 security definer
@@ -292,18 +369,24 @@ set search_path = public
 set row_security = off
 as $$
 begin
+  -- Only the current lease holder, on an in-flight nonce, may commit.
+  -- A stale token (lease taken over, or already failed by another
+  -- worker) changes nothing; a COMMITTED nonce is never re-completed.
+  -- A FAILED row is never completed directly: the retry re-claims it
+  -- first and completes with the fresh token.
   update public.forge_rental_receptionist_ingest_nonces
     set state = 'COMMITTED', call_id = p_call_id, result = p_result,
         expires_at = now() + interval '600 seconds', updated_at = now()
     where owner_id = p_owner_id and nonce = p_nonce
       and request_hash = coalesce(p_request_hash, '')
-      and state in ('IN_PROGRESS', 'FAILED');
+      and state = 'IN_PROGRESS'
+      and lease_token = p_lease_token;
   return found;
 end;
 $$;
 
 create or replace function public.receptionist_fail_ingest_nonce(
-  p_owner_id uuid, p_nonce text, p_request_hash text
+  p_owner_id uuid, p_nonce text, p_request_hash text, p_lease_token uuid
 ) returns boolean
 language plpgsql
 security definer
@@ -311,13 +394,15 @@ set search_path = public
 set row_security = off
 as $$
 begin
-  -- Only an in-flight nonce can fail. A COMMITTED nonce is never
-  -- un-completed: its records already landed.
+  -- Only an in-flight nonce, failed by its own lease holder, can fail.
+  -- A stale token cannot fail another worker's live claim, and a
+  -- COMMITTED nonce is never un-completed.
   update public.forge_rental_receptionist_ingest_nonces
     set state = 'FAILED', updated_at = now()
     where owner_id = p_owner_id and nonce = p_nonce
       and request_hash = coalesce(p_request_hash, '')
-      and state = 'IN_PROGRESS';
+      and state = 'IN_PROGRESS'
+      and lease_token = p_lease_token;
   return found;
 end;
 $$;
@@ -395,8 +480,8 @@ revoke all on public.forge_rental_receptionist_delivery_outbox from public, anon
 revoke all on public.forge_rental_receptionist_ingest_nonces from public, anon, authenticated, service_role;
 revoke all on function public.forge_rental_receptionist_events_append_only() from public;
 revoke all on function public.receptionist_claim_ingest_nonce(uuid, text, text) from public;
-revoke all on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb) from public;
-revoke all on function public.receptionist_fail_ingest_nonce(uuid, text, text) from public;
+revoke all on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb, uuid) from public;
+revoke all on function public.receptionist_fail_ingest_nonce(uuid, text, text, uuid) from public;
 -- The append-only trigger must be able to FIRE for the roles that might
 -- ever hold UPDATE on events: without EXECUTE it would fail with a bare
 -- 42501 instead of the append-only message. The function only raises,
@@ -413,8 +498,8 @@ grant select, insert, update on public.forge_rental_receptionist_drafts to servi
 grant select, insert, update on public.forge_rental_receptionist_delivery_outbox to service_role;
 grant select, insert, delete on public.forge_rental_receptionist_ingest_nonces to service_role;
 grant execute on function public.receptionist_claim_ingest_nonce(uuid, text, text) to service_role;
-grant execute on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb) to service_role;
-grant execute on function public.receptionist_fail_ingest_nonce(uuid, text, text) to service_role;
+grant execute on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb, uuid) to service_role;
+grant execute on function public.receptionist_fail_ingest_nonce(uuid, text, text, uuid) to service_role;
 
 -- authenticated: SELECT everywhere, UPDATE on drafts only. No direct
 -- browser/client writes to calls, events, alerts, attempts or outbox.
