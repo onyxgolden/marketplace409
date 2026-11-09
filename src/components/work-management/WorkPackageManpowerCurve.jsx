@@ -250,6 +250,12 @@ export default function WorkPackageManpowerCurve({ packageId }) {
 
   const curve = data ?? null;
   const windowConfigured = curve?.windowConfigured === true;
+  // When no baseline is frozen the panel body below already states the
+  // frozen-baseline message, so the matching warning would print it a
+  // second time. Other warnings still render normally.
+  const visibleWarnings = (curve?.warnings ?? []).filter(
+    (warning) => windowConfigured || warning.code !== "BASELINE_NOT_FROZEN",
+  );
   const readOnly = curve?.packageStatus === "cancelled" || curve?.packageStatus === "verified_closed";
   const allocatableCrafts = useMemo(
     () => (curve?.crafts ?? []).filter((craft) => craft.craftKey !== null),
@@ -331,9 +337,9 @@ export default function WorkPackageManpowerCurve({ packageId }) {
 
       {curve && !curve.notApplied && (
         <>
-          {curve.warnings?.length > 0 && (
+          {visibleWarnings.length > 0 && (
             <ul className="mt-3 space-y-1">
-              {curve.warnings.map((warning) => (
+              {visibleWarnings.map((warning) => (
                 <li key={warning.code} className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   {warning.message}
                 </li>

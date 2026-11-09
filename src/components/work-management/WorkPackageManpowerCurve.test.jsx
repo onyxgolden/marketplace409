@@ -222,11 +222,20 @@ describe("WorkPackageManpowerCurve", () => {
         crafts: [], totals: { requiredHours: 0, assignedHours: 0, gapHours: 0, stepCount: 0 },
         excludedSteps: [{ ...STEP_1, reason: "baseline_not_frozen", detail: "Freeze/select a package baseline first." }],
         reconciliation: { requiredHoursTotal: 0, unallocatedKnownHours: 0, unclassifiedKnownHours: 0, knownActiveStepHours: 40, reconciled: false },
-        warnings: [{ code: "BASELINE_NOT_FROZEN", message: "Freeze/select a package baseline first." }],
+        warnings: [
+          { code: "BASELINE_NOT_FROZEN", message: "Freeze/select a package baseline first — the curve is drawn from the package's frozen baseline, and no dates are assumed." },
+          { code: "EXCLUDED_STEPS", message: "1 step could not be placed on the curve. See the excluded steps below — their hours are not silently dropped." },
+        ],
       }),
     });
     const { container } = await renderPanel();
     await waitFor(() => expect(container.textContent).toContain("Freeze/select a package baseline first"));
+    // The frozen-baseline sentence must appear exactly once: the panel
+    // body states it, so the matching warning banner item is suppressed.
+    const baselineMessage = "Freeze/select a package baseline first — the curve is drawn from the package's frozen baseline, and no dates are assumed.";
+    expect(container.textContent.split(baselineMessage).length - 1).toBe(1);
+    // Other warnings still render normally.
+    expect(container.textContent).toContain("1 step could not be placed on the curve.");
     // No outage-window form exists in this slice: the window comes from
     // the package's frozen baseline, never from a settings row.
     expect(buttonByText(container, "Set outage window")).toBeNull();
