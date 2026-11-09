@@ -274,7 +274,7 @@ export function mapDrawingReviewRpcError(error) {
     return { ok: false, httpStatus: 409, error: "This review is closed — open a new round to continue." };
   }
   if (message.includes("WPP7_DECISION_FORBIDDEN")) {
-    return { ok: false, httpStatus: 403, error: "Only the assigned reviewer can decide this review — the person who opened the round cannot close it when a different reviewer is assigned." };
+    return { ok: false, httpStatus: 403, error: "You are not authorized to decide this review — only the assigned reviewer, the round opener (when no independent reviewer is assigned), or an owner/co-owner may." };
   }
   if (message.includes("WPP7_REVIEW_NOT_APPROVED")) {
     return { ok: false, httpStatus: 409, error: "Only an approved review can issue an IFC revision." };

@@ -29,8 +29,10 @@
 //     references no slice-6 object, so its timestamp order against
 //     20261107030000 is safe either way.
 // Roles, the auth.uid() stub, workspace_members, and the
-// has_workspace_access() copy mirror production (see
-// 20260829000100_add_workspace_authorization_helpers.sql); the
+// has_workspace_access() copy mirror production as redefined by R17
+// (20261001060000_r17_roles_granular_permissions.sql): any active
+// member, not just owner/co-owner — which is why the decide RPC must
+// validate owner/co-owner status itself instead of relying on it; the
 // prerequisite packages/drawings/takeoff-lines tables are minimal
 // shapes with the exact keys the slice-3/4/5 foreign keys reference,
 // plus the status column the terminal-package rule reads.
@@ -56,6 +58,8 @@ const it60 = (name, fn) => it(name, fn, 60000);
 const OWNER_A = "11111111-1111-4111-8111-111111111111";
 const OWNER_B = "22222222-2222-4222-8222-222222222222";
 const MEMBER_C = "33333333-3333-4333-8333-333333333333";
+const MEMBER_D = "44444444-4444-4444-8444-444444444444";
+const MEMBER_M = "55555555-5555-4555-8555-555555555555";
 
 const SLICE3 = "20261107000000_forge_work_package_permit_annotations_slice3.sql";
 const SLICE4 = "20261107010000_forge_work_package_craft_assignments_slice4.sql";
@@ -97,7 +101,6 @@ const PREREQ_SQL = `
         where owner_id = p_owner_id
           and member_user_id = auth.uid()
           and status = 'active'
-          and role = 'co_owner'
       );
   $$;
   revoke all on function public.has_workspace_access(text) from public;
@@ -718,6 +721,73 @@ describe("slice 7 migration: lifecycle", () => {
       reviewId: round3.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Self-designated.",
     });
     expect(decided3.state).toBe("RETURNED");
+  });
+
+  // Fix round 2 (P1): decision authority is explicit — the
+  // designated reviewer, the opener (single-owner flow), or an
+  // owner/co-owner. An unrelated workspace member (a manager here)
+  // may not decide, even though has_workspace_access admits every
+  // active member since R17.
+  it60("decision authority: only the designated reviewer, the opener, or an owner/co-owner may decide", async () => {
+    await db.query(`
+      insert into workspace_members (owner_id, member_user_id, status, role) values
+        ('${OWNER_A}', '${MEMBER_D}', 'active', 'co_owner'),
+        ('${OWNER_A}', '${MEMBER_M}', 'active', 'manager');
+    `);
+    const { revision, review } = await openReviewedDrawing();
+    // Close round 1 first: one OPEN review per revision.
+    await decideReview(db, OWNER_A, {
+      reviewId: review.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Reset for the authority check.",
+    });
+    // Round 2 with a designated reviewer (the co-owner MEMBER_C),
+    // opened by the owner.
+    const round2 = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id, reviewerId: MEMBER_C,
+    });
+    // An unrelated workspace member may not decide.
+    await expect(decideReview(db, MEMBER_M, {
+      reviewId: round2.id, expectedVersion: 1, decision: "APPROVE", reason: "Not my call.",
+    })).rejects.toThrow(/WPP7_DECISION_FORBIDDEN/);
+    // A second co-owner — neither opener nor designated reviewer —
+    // may decide.
+    const decided2 = await decideReview(db, MEMBER_D, {
+      reviewId: round2.id, expectedVersion: 1, decision: "APPROVE", reason: "Checked as co-owner.",
+    });
+    expect(decided2.state).toBe("APPROVED");
+    expect(decided2.closed_by).toBe(MEMBER_D);
+    // No designated reviewer: the opener decides, an owner/co-owner
+    // may also decide, but an unrelated member may not.
+    const round3 = await createReview(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id,
+    });
+    await expect(decideReview(db, MEMBER_M, {
+      reviewId: round3.id, expectedVersion: 1, decision: "APPROVE", reason: "Not my call.",
+    })).rejects.toThrow(/WPP7_DECISION_FORBIDDEN/);
+    const decided3 = await decideReview(db, MEMBER_D, {
+      reviewId: round3.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Checked as co-owner.",
+    });
+    expect(decided3.state).toBe("RETURNED");
+    // A round opened by a co-owner with no designated reviewer: the
+    // opener decides, an unrelated member may not.
+    const round4 = await createReview(db, MEMBER_C, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id,
+    });
+    await expect(decideReview(db, MEMBER_M, {
+      reviewId: round4.id, expectedVersion: 1, decision: "APPROVE", reason: "Not my call.",
+    })).rejects.toThrow(/WPP7_DECISION_FORBIDDEN/);
+    const decided4 = await decideReview(db, MEMBER_C, {
+      reviewId: round4.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Opened it myself.",
+    });
+    expect(decided4.state).toBe("RETURNED");
+    // The primary owner may decide a round opened by someone else
+    // when no independent reviewer was designated.
+    const round5 = await createReview(db, MEMBER_C, {
+      packageId: "pkg_a", drawingId: "dwg_1", revisionId: revision.id,
+    });
+    const decided5 = await decideReview(db, OWNER_A, {
+      reviewId: round5.id, expectedVersion: 1, decision: "RETURN_TO_DRAFTER", reason: "Owner sign-off.",
+    });
+    expect(decided5.state).toBe("RETURNED");
   });
 
   it60("version guards reject stale decisions and resolutions", async () => {
@@ -1556,5 +1626,108 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
     await pgClient2.query("reset role;");
     const snap2 = await pgSnapshot("pkg_conc4");
     expect(snap2.drawings.find((d) => d.drawing_id === "dwg_c4").badge).toBe("Withdrawn — package cancelled");
+  });
+
+  // Fix round 2 (P1): review creation locks the package row before
+  // checking terminal status, so a cancellation racing a create
+  // serializes — whichever commits first, no OPEN review can survive
+  // in a terminal package.
+  it60("concurrent cancel and review creation serialize to no OPEN review in a terminal package", async () => {
+    // Direction 1: the create runs inside an open transaction, so it
+    // still holds the package row lock; the cancel on the second
+    // session blocks, then the trigger cancels the just-created round
+    // once the create commits.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_conc5', 'in_progress');
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id)
+        values ('${OWNER_A}', 'pkg_conc5', 'dwg_c5', 'P-501', 'p_id', 'Concurrent line 5', null);
+    `);
+    const { rows: revRows } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_revision_create(
+        '${OWNER_A}', 'pkg_conc5', 'dwg_c5', 'A', 's3://forge/c5-a.pdf', '${SHA_A}');
+    `);
+    const revision5 = revRows[0];
+    await pgClient.query(`set role authenticated; set app.test_uid = '${OWNER_A}'; begin;`);
+    const { rows: createRows } = await pgClient.query(`
+      select * from forge_wp_drawing_review_create(
+        '${OWNER_A}', 'pkg_conc5', 'dwg_c5', '${revision5.id}', null, 'conc-create-1', null);
+    `);
+    const createdReview = createRows[0];
+    expect(createdReview.state).toBe("OPEN");
+    const cancelPromise = pgClient2.query(`
+      reset role; set app.test_uid = '${OWNER_A}';
+      update forge_work_packages set status = 'cancelled'
+      where owner_id = '${OWNER_A}' and id = 'pkg_conc5';
+    `);
+    // Mark the rejection handled at creation: the rejection is
+    // observed by the `await cancelPromise` below, but if the
+    // lock-wait assertion above it ever throws first, an
+    // un-awaited rejection must not surface as an unhandled error.
+    cancelPromise.catch(() => {});
+    const lockWait1 = await waitForLockWait();
+    expect(lockWait1.seen, `no session reached a lock wait; backends: ${JSON.stringify(lockWait1.sample)}`).toBe(true);
+    await pgClient.query("commit; reset role;");
+    await cancelPromise;
+    await pgClient2.query("reset role;");
+    const { rows: reviewRows } = await pgClient.query(`
+      select state, closed_by, decision_reason from forge_wp_drawing_reviews where id = '${createdReview.id}';
+    `);
+    expect(reviewRows[0].state).toBe("CANCELLED");
+    expect(reviewRows[0].closed_by).toBe(OWNER_A);
+    expect(reviewRows[0].decision_reason).toBe("Package cancelled.");
+    const { rows: cancelEvents } = await pgClient.query(`
+      select event_type from forge_wp_drawing_review_events
+      where review_id = '${createdReview.id}' and event_type = 'REVIEW_CANCELLED';
+    `);
+    expect(cancelEvents).toHaveLength(1);
+    const { rows: openRows } = await pgClient.query(`
+      select count(*)::integer as n from forge_wp_drawing_reviews
+      where package_id = 'pkg_conc5' and state = 'OPEN';
+    `);
+    expect(openRows[0].n).toBe(0);
+    const snap = await pgSnapshot("pkg_conc5");
+    expect(snap.drawings.find((d) => d.drawing_id === "dwg_c5").badge).toBe("Withdrawn — package cancelled");
+
+    // Direction 2: the cancel holds the lock while the create waits;
+    // once the cancel commits, the create sees the terminal package
+    // and refuses.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status)
+        values ('${OWNER_A}', 'pkg_conc6', 'in_progress');
+      insert into forge_work_drawings (owner_id, package_id, id, drawing_number, drawing_type, title, p_id_drawing_id)
+        values ('${OWNER_A}', 'pkg_conc6', 'dwg_c6', 'P-502', 'p_id', 'Concurrent line 6', null);
+    `);
+    const { rows: revRows6 } = await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_wp_drawing_revision_create(
+        '${OWNER_A}', 'pkg_conc6', 'dwg_c6', 'A', 's3://forge/c6-a.pdf', '${SHA_A}');
+    `);
+    const revision6 = revRows6[0];
+    await pgClient.query(`reset role; set app.test_uid = '${OWNER_A}'; begin;`);
+    await pgClient.query(`
+      update forge_work_packages set status = 'cancelled'
+      where owner_id = '${OWNER_A}' and id = 'pkg_conc6';
+    `);
+    const createPromise = pgClient2.query(`
+      set role authenticated; set app.test_uid = '${OWNER_A}';
+      select * from forge_wp_drawing_review_create(
+        '${OWNER_A}', 'pkg_conc6', 'dwg_c6', '${revision6.id}', null, 'conc-create-2', null);
+    `);
+    // Same handled-at-creation guard as the cancel leg: the
+    // rejection is observed by the `expect().rejects` below, but a
+    // throw from the lock-wait assertion must not orphan it.
+    createPromise.catch(() => {});
+    const lockWait2 = await waitForLockWait();
+    expect(lockWait2.seen, `no session reached a lock wait; backends: ${JSON.stringify(lockWait2.sample)}`).toBe(true);
+    await pgClient.query("commit; reset role;");
+    await expect(createPromise).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
+    await pgClient2.query("reset role;");
+    const { rows: openRows6 } = await pgClient.query(`
+      select count(*)::integer as n from forge_wp_drawing_reviews
+      where package_id = 'pkg_conc6' and state = 'OPEN';
+    `);
+    expect(openRows6[0].n).toBe(0);
+    const snap2 = await pgSnapshot("pkg_conc6");
+    expect(snap2.drawings.find((d) => d.drawing_id === "dwg_c6").badge).toBe("Withdrawn — package cancelled");
   });
 });

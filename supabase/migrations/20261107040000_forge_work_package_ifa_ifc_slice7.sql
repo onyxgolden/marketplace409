@@ -550,9 +550,13 @@ $$;
 -- ---------------------------------------------------------------------------
 -- RPC: forge_wp_drawing_review_create
 -- Open one review round on an exact IFA revision. round_no is the next
--- per-revision round; the revision row is locked so two concurrent
--- opens serialize instead of racing the same round number. A retry
--- with the same idempotency key returns the original round.
+-- per-revision round; the package row is locked first (package-first
+-- lock order, before the revision row), so a concurrent package
+-- cancellation serializes against this create instead of racing it —
+-- whichever commits first, no OPEN review can survive in a terminal
+-- package. The revision row is locked so two concurrent opens
+-- serialize instead of racing the same round number. A retry with the
+-- same idempotency key returns the original round.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_wp_drawing_review_create(
@@ -612,9 +616,16 @@ begin
     end if;
   end if;
 
+  -- Lock the package row first: a concurrent package cancellation
+  -- (whose trigger cancels OPEN reviews) serializes against this
+  -- create instead of racing it — whichever commits first, no OPEN
+  -- review can survive in a terminal package. Package-first lock
+  -- order, before the revision row lock below; the revision-create
+  -- and IFC-release RPCs follow the same order.
   select status into v_status
   from public.forge_work_packages
-  where owner_id = p_owner_id and id = p_package_id;
+  where owner_id = p_owner_id and id = p_package_id
+  for update;
   if not found then
     raise exception 'WPP7_PACKAGE_NOT_FOUND';
   end if;
@@ -1075,6 +1086,7 @@ declare
   v_new_state text;
   v_event_type text;
   v_open_count integer;
+  v_is_owner_coowner boolean;
 begin
   if v_actor_id is null then
     raise exception 'WPP7_INVALID_ACTOR';
@@ -1103,16 +1115,41 @@ begin
     raise exception 'WPP7_VERSION_CONFLICT';
   end if;
 
-  -- Separation of duties: when a reviewer is designated on the round
-  -- and differs from the round opener, the opener may not decide
-  -- their own round — only the designated reviewer, or an
-  -- owner/co-owner other than the opener, may. With no designated
-  -- reviewer (or when the opener designated themself) the
-  -- single-owner flow is unchanged: the opener decides.
+  -- Separation of duties + explicit decision authority. A decision
+  -- may be made only by (a) the designated reviewer, (b) an
+  -- owner/co-owner other than the opener when a different reviewer
+  -- was designated, or (c) the opener themself when no independent
+  -- reviewer was designated (single-owner flow). Workspace
+  -- membership alone — manager, bookkeeper, read-only, or any other
+  -- member — is never decision authority: has_workspace_access
+  -- admits every active member since R17, so it cannot stand in for
+  -- this check; owner/co-owner status is validated here, directly
+  -- against workspace_members.
+  v_is_owner_coowner := v_actor_id = p_owner_id
+    or exists (
+      select 1 from public.workspace_members
+      where owner_id = p_owner_id
+        and member_user_id::text = v_actor_id
+        and status = 'active'
+        and role = 'co_owner'
+    );
   if v_review.reviewer_id is not null
-     and v_review.reviewer_id <> v_review.opened_by
-     and v_actor_id = v_review.opened_by then
-    raise exception 'WPP7_DECISION_FORBIDDEN';
+     and v_review.reviewer_id <> v_review.opened_by then
+    -- An independent reviewer was designated: the opener may not
+    -- decide their own round — only the designated reviewer, or an
+    -- owner/co-owner other than the opener, may.
+    if v_actor_id <> v_review.reviewer_id
+       and not (v_is_owner_coowner and v_actor_id <> v_review.opened_by) then
+      raise exception 'WPP7_DECISION_FORBIDDEN';
+    end if;
+  else
+    -- No independent reviewer (none designated, or the opener
+    -- designated themself): the single-owner flow — the opener
+    -- decides, and an owner/co-owner may also decide. Any other
+    -- workspace member may not.
+    if v_actor_id <> v_review.opened_by and not v_is_owner_coowner then
+      raise exception 'WPP7_DECISION_FORBIDDEN';
+    end if;
   end if;
 
   if p_decision = 'APPROVE' then
@@ -1406,9 +1443,14 @@ begin
     raise exception 'WPP7_REASON_REQUIRED';
   end if;
 
+  -- Lock the package row first: same race as review creation — a
+  -- concurrent package cancellation serializes against this capture
+  -- instead of racing it, so no new field-redline record can land
+  -- in a terminal package. Package-first lock order.
   select status into v_status
   from public.forge_work_packages
-  where owner_id = p_owner_id and id = p_package_id;
+  where owner_id = p_owner_id and id = p_package_id
+  for update;
   if not found then
     raise exception 'WPP7_PACKAGE_NOT_FOUND';
   end if;
