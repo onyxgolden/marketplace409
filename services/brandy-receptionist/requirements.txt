@@ -1,0 +1,10 @@
+twilio==9.13.0
+deepgram-sdk==7.17.0
+cartesia==4.2.0
+pipecat-ai==1.15.0
+openai==3.46.0
+# Pinned for go-live wiring only; versions verified to exist on PyPI on
+# 2026-11-08. The v1 synthetic build and its tests run on the Python 3.12
+# standard library alone; no vendor SDK is imported unless telephony is
+# explicitly enabled. Check licenses and security updates before
+# installation. No signup or spend is authorized by this file.
