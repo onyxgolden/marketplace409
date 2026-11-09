@@ -45,6 +45,19 @@ class ReceptionistConfig:
     emergency_ack_timeout_s: int = field(default_factory=lambda: _int("RECEPTIONIST_ACK_TIMEOUT_S", 30))
     alert_max_attempts_per_channel: int = field(default_factory=lambda: _int("RECEPTIONIST_ALERT_MAX_ATTEMPTS", 3))
     alert_retry_backoff_s: tuple = (5, 15, 60)
+    # Durable alert state (restart recovery): JSON file the dispatcher
+    # persists on every mutation. Default lives under the service's data/
+    # directory (gitignored); override with RECEPTIONIST_ALERT_STATE_PATH.
+    alert_state_path: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_ALERT_STATE_PATH",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                     "data", "alert-state.json")))
+    # Operator token for the authenticated /alerts/ack path. Server env
+    # only; empty means the authenticated path is disabled (fail closed).
+    operator_token: str = field(default_factory=lambda: os.environ.get("RECEPTIONIST_OPERATOR_TOKEN", ""))
+    # Single DTMF digit that counts as explicit acknowledgment on an alert
+    # call. The production alert TwiML gathers exactly this digit.
+    ack_digit: str = "1"
 
     # --- Budget caps (synthetic test spend; §10/§11.14) -----------------------
     max_synthetic_minutes: int = field(default_factory=lambda: _int("RECEPTIONIST_MAX_SYNTHETIC_MINUTES", 500))

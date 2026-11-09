@@ -3,16 +3,36 @@
 -- backup, and a post-apply ACL + RLS receipt. No live tenant data is
 -- seeded here; all rows arrive via the signed ingestion endpoint.
 --
--- Security posture (brief §11.13):
+-- Security posture (brief §11.13; fix round 1 for ChatGPT verdict
+-- NEEDS CHANGES, drop 716b1b6f):
 --  * RLS ENABLED + FORCED on every table; owner-scoped policies only.
+--  * Policies use the repo's proven predicate public.has_workspace_access
+--    (owner, or an ACTIVE co_owner member) tied to auth.uid(). The
+--    earlier app.current_owner_id session setting is NOT used anywhere:
+--    no route ever set it, so owner reads would have been denied.
 --  * Default Supabase grants are REVOKED explicitly (defaults grant ALL
 --    to anon/authenticated/service_role on new tables — a selective GRANT
---    alone does not remove them). Only the minimal service role needed by
---    the ingestion endpoint keeps INSERT/SELECT, and only through RLS.
+--    alone does not remove them).
+--  * service_role BYPASSES RLS in Supabase, so its writes are gated by
+--    relation ACLs alone: it gets only the minimal INSERT/SELECT/UPDATE
+--    the ingestion endpoint needs. authenticated gets SELECT on every
+--    table plus UPDATE on drafts (the review path) — no browser/client
+--    direct writes to calls, events, alerts, attempts or outbox.
 --  * Events table is append-only (trigger rejects UPDATE/DELETE).
---  * Composite owner FKs: child rows cannot reference another owner's call.
+--  * Composite owner FKs: child rows cannot reference another owner's
+--    call. Every composite FK target carries a matching UNIQUE key.
 --  * Unique idempotency keys: duplicate/out-of-order provider events are
---    safe. No PUBLIC/anon/authenticated grants anywhere in this file.
+--    safe. Signed-ingest nonces are consumed atomically by the
+--    receptionist_consume_ingest_nonce RPC (one row per nonce).
+--  * callback_e164_encrypted holds AES-256-GCM ciphertext produced by
+--    the ingestion endpoint (format v1.<keyId>.<base64(iv||tag||ct)>);
+--    the key lives in server env only, never in this migration.
+--  * No PUBLIC/anon/authenticated grants anywhere beyond the minimal
+--    SELECT/UPDATE listed below. This file is idempotent: policies are
+--    created behind pg_policies guards, so a second apply is a no-op.
+--  * Proven on real PostgreSQL 16 (scripts/brandy-receptionist-rls-proof):
+--    migration applies twice cleanly; owner/co-owner/service personas,
+--    cross-owner negatives, nonce consumption and draft idempotency.
 
 -- ---------------------------------------------------------------- calls ---
 create table if not exists public.forge_rental_receptionist_calls (
@@ -27,6 +47,10 @@ create table if not exists public.forge_rental_receptionist_calls (
   caller_ani_masked text,
   name_claimed text,
   need_excerpt text,
+  -- AES-256-GCM ciphertext (v1.<keyId>.<base64(iv||tag||ciphertext)>),
+  -- encrypted by the ingestion endpoint with a server-env key. Never
+  -- plaintext: the column name is a promise, enforced by the endpoint
+  -- (fail closed when no key is configured) and by tests.
   callback_e164_encrypted text,
   callback_confirmed boolean not null default false,
   callback_source text check (callback_source in ('spoken', 'ani_unverified')),
@@ -42,7 +66,10 @@ create table if not exists public.forge_rental_receptionist_calls (
   policy_version text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (owner_id, provider_call_sid)
+  unique (owner_id, provider_call_sid),
+  -- Composite-FK target for events/drafts: PostgreSQL requires a UNIQUE
+  -- key on (owner_id, id) before a child may reference those columns.
+  unique (owner_id, id)
 );
 
 -- --------------------------------------------------------------- events ---
@@ -132,6 +159,9 @@ create table if not exists public.forge_rental_receptionist_drafts (
   version integer not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- One draft per (owner, call, kind): a replayed signed ingest upserts
+  -- onto the existing draft instead of minting a duplicate PENDING draft.
+  unique (owner_id, call_id, draft_kind),
   foreign key (owner_id, call_id)
     references public.forge_rental_receptionist_calls (owner_id, id)
 );
@@ -153,6 +183,42 @@ create table if not exists public.forge_rental_receptionist_delivery_outbox (
   unique (owner_id, event_id, channel, recipient_role)
 );
 
+-- -------------------------------------------------- ingest nonce registry --
+-- Signed-ingest replay protection (P2-1): one row per (owner, nonce).
+-- Consumed atomically by receptionist_consume_ingest_nonce; a second
+-- consume of the same nonce returns false and the request is treated as
+-- a duplicate, never re-processed. Rows expire after the replay window.
+create table if not exists public.forge_rental_receptionist_ingest_nonces (
+  owner_id uuid not null,
+  nonce text not null,
+  request_hash text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  primary key (owner_id, nonce)
+);
+
+create or replace function public.receptionist_consume_ingest_nonce(
+  p_owner_id uuid, p_nonce text, p_request_hash text
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if p_owner_id is null or p_nonce is null or btrim(p_nonce) = '' then
+    raise exception 'An owner id and a nonce are required.' using errcode = '22023';
+  end if;
+  delete from public.forge_rental_receptionist_ingest_nonces
+    where expires_at <= now();
+  insert into public.forge_rental_receptionist_ingest_nonces
+    (owner_id, nonce, request_hash, expires_at)
+    values (p_owner_id, p_nonce, coalesce(p_request_hash, ''), now() + interval '600 seconds')
+    on conflict (owner_id, nonce) do nothing;
+  return found;
+end;
+$$;
+
 -- ------------------------------------------------------------------ RLS ---
 alter table public.forge_rental_receptionist_calls enable row level security;
 alter table public.forge_rental_receptionist_calls force row level security;
@@ -166,45 +232,86 @@ alter table public.forge_rental_receptionist_drafts enable row level security;
 alter table public.forge_rental_receptionist_drafts force row level security;
 alter table public.forge_rental_receptionist_delivery_outbox enable row level security;
 alter table public.forge_rental_receptionist_delivery_outbox force row level security;
+alter table public.forge_rental_receptionist_ingest_nonces enable row level security;
+alter table public.forge_rental_receptionist_ingest_nonces force row level security;
 
--- Owner-scoped policies. The effective owner id is supplied by the
--- authenticated session (set_config 'app.current_owner_id'); cross-owner
--- lookups return no rows and no existence information.
--- NOTE: policies reference the app.current_owner_id session setting, the
--- same pattern the Rental Manager uses for workspace scoping. The exact
--- setting name must be confirmed against the live schema at apply time.
-create policy receptionist_calls_owner on public.forge_rental_receptionist_calls
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
-create policy receptionist_events_owner on public.forge_rental_receptionist_events
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
-create policy receptionist_alerts_owner on public.forge_rental_receptionist_alerts
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
-create policy receptionist_alert_attempts_owner on public.forge_rental_receptionist_alert_attempts
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
-create policy receptionist_drafts_owner on public.forge_rental_receptionist_drafts
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
-create policy receptionist_outbox_owner on public.forge_rental_receptionist_delivery_outbox
-  for all using (owner_id = current_setting('app.current_owner_id', true)::uuid);
+-- Owner-scoped policies on the repo's proven predicate
+-- has_workspace_access(owner_id): the primary owner, or an ACTIVE
+-- co_owner member (auth.uid() based). Manager / bookkeeper / read-only
+-- members can never satisfy it, and cross-owner rows are invisible.
+-- Per-command policies: authenticated may SELECT every table and UPDATE
+-- drafts (the review path) — nothing else. The service role bypasses
+-- RLS, so its writes need no policy; relation ACLs are its only gate.
+-- Each policy is created behind a pg_policies guard so re-applying this
+-- migration is a no-op.
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_calls' and policyname = 'receptionist_calls_owner_select') then
+    create policy receptionist_calls_owner_select on public.forge_rental_receptionist_calls
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_events' and policyname = 'receptionist_events_owner_select') then
+    create policy receptionist_events_owner_select on public.forge_rental_receptionist_events
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_alerts' and policyname = 'receptionist_alerts_owner_select') then
+    create policy receptionist_alerts_owner_select on public.forge_rental_receptionist_alerts
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_alert_attempts' and policyname = 'receptionist_alert_attempts_owner_select') then
+    create policy receptionist_alert_attempts_owner_select on public.forge_rental_receptionist_alert_attempts
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_drafts' and policyname = 'receptionist_drafts_owner_select') then
+    create policy receptionist_drafts_owner_select on public.forge_rental_receptionist_drafts
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_drafts' and policyname = 'receptionist_drafts_owner_update') then
+    create policy receptionist_drafts_owner_update on public.forge_rental_receptionist_drafts
+      for update to authenticated using (public.has_workspace_access(owner_id))
+      with check (public.has_workspace_access(owner_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_delivery_outbox' and policyname = 'receptionist_outbox_owner_select') then
+    create policy receptionist_outbox_owner_select on public.forge_rental_receptionist_delivery_outbox
+      for select to authenticated using (public.has_workspace_access(owner_id));
+  end if;
+end $$;
 
 -- --------------------------------------------------------------- grants ---
 -- Close the Supabase default-grant hole explicitly, then grant the minimum.
--- The ingestion service role inserts calls/events/drafts/alerts and reads
--- nothing else; review actions run as the authenticated owner via RLS.
+-- The ingestion service role inserts calls/events/drafts/alerts, updates
+-- calls (upsert conflict leg + maintenance_draft_id) and drafts/outbox,
+-- and consumes ingest nonces; review actions run as the authenticated
+-- owner via RLS (SELECT everywhere, UPDATE on drafts only).
 revoke all on public.forge_rental_receptionist_calls from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_events from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_alerts from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_alert_attempts from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_drafts from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_delivery_outbox from public, anon, authenticated, service_role;
+revoke all on public.forge_rental_receptionist_ingest_nonces from public, anon, authenticated, service_role;
 revoke all on function public.forge_rental_receptionist_events_append_only() from public;
+revoke all on function public.receptionist_consume_ingest_nonce(uuid, text, text) from public;
+-- The append-only trigger must be able to FIRE for the roles that might
+-- ever hold UPDATE on events: without EXECUTE it would fail with a bare
+-- 42501 instead of the append-only message. The function only raises,
+-- so granting EXECUTE to the two application roles is safe.
+grant execute on function public.forge_rental_receptionist_events_append_only() to service_role, authenticated;
 
-grant select, insert on public.forge_rental_receptionist_calls to service_role;
+-- service_role needs UPDATE on calls: the ingest upsert's conflict leg
+-- and the maintenance_draft_id update both write an existing call row.
+grant select, insert, update on public.forge_rental_receptionist_calls to service_role;
 grant select, insert on public.forge_rental_receptionist_events to service_role;
 grant select, insert on public.forge_rental_receptionist_alerts to service_role;
 grant select, insert on public.forge_rental_receptionist_alert_attempts to service_role;
 grant select, insert, update on public.forge_rental_receptionist_drafts to service_role;
 grant select, insert, update on public.forge_rental_receptionist_delivery_outbox to service_role;
-grant select, insert, update, delete on public.forge_rental_receptionist_calls to authenticated;
+grant select, insert, delete on public.forge_rental_receptionist_ingest_nonces to service_role;
+grant execute on function public.receptionist_consume_ingest_nonce(uuid, text, text) to service_role;
+
+-- authenticated: SELECT everywhere, UPDATE on drafts only. No direct
+-- browser/client writes to calls, events, alerts, attempts or outbox.
+grant select on public.forge_rental_receptionist_calls to authenticated;
 grant select on public.forge_rental_receptionist_events to authenticated;
 grant select on public.forge_rental_receptionist_alerts to authenticated;
 grant select on public.forge_rental_receptionist_alert_attempts to authenticated;
@@ -212,3 +319,5 @@ grant select, update on public.forge_rental_receptionist_drafts to authenticated
 grant select on public.forge_rental_receptionist_delivery_outbox to authenticated;
 
 -- No UPDATE/DELETE grant on events for anyone: append-only at the ACL layer too.
+-- No grants at all on the nonce registry for authenticated: nonces are a
+-- service-side concern and invisible to browser clients.

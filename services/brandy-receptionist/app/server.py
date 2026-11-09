@@ -15,7 +15,9 @@ imported here.
 """
 from __future__ import annotations
 
+import hmac
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,11 +57,66 @@ class ReceptionistServer:
         self.config = config or ReceptionistConfig()
         self.dispatcher = dispatcher or AlertDispatcher(
             FakeAlertTransport(), ack_timeout_s=self.config.emergency_ack_timeout_s,
-            max_attempts=self.config.alert_max_attempts_per_channel)
+            max_attempts=self.config.alert_max_attempts_per_channel,
+            backoff_s=self.config.alert_retry_backoff_s,
+            state_path=self.config.alert_state_path)
         self.budget = BudgetGuard(self.config.max_synthetic_minutes)
         self.sessions: dict[str, CallSession] = {}
         self._seen_status_keys: set = set()
         self._lock = threading.Lock()
+
+    def shutdown(self) -> None:
+        """Stop the escalation scheduler thread (lets tests exit cleanly)."""
+        self.dispatcher.shutdown()
+
+    # -- emergency acknowledgment verification (P1-3) -------------------------
+    def verify_alert_ack(self, method: str, params: dict, headers,
+                         url: str) -> tuple[str, str | None, str | None]:
+        """Fail closed: return (method, call_sid, actor_ref) for a verified
+        acknowledgment, or raise ValueError. Two verified paths only:
+        - dtmf: Twilio-signed form callback, Digits == the configured ack
+          digit, CallSid bound to a recorded attempt for this event.
+        - authenticated: Bearer operator token from server env.
+        Anything else (unsigned, forged, wrong call, wrong digit, unknown
+        event) raises and changes no alert state."""
+        if method == "dtmf":
+            auth_token = os.environ.get("RECEPTIONIST_TWILIO_AUTH_TOKEN", "")
+            signature = headers.get("X-Twilio-Signature", "")
+            if not verify_twilio_signature(auth_token, url, params, signature):
+                raise ValueError("DTMF acknowledgment failed Twilio signature verification")
+            if params.get("Digits", "") != self.config.ack_digit:
+                raise ValueError("DTMF acknowledgment requires the configured ack digit")
+            call_sid = params.get("CallSid", "")
+            if not call_sid:
+                raise ValueError("DTMF acknowledgment requires the alert call SID")
+            return "dtmf", call_sid, f"twilio:{call_sid}"
+        if method == "authenticated":
+            token = self.config.operator_token
+            if not token:
+                raise ValueError("authenticated acknowledgment is not configured")
+            presented = (headers.get("Authorization", "") or "")
+            if not presented.startswith("Bearer "):
+                raise ValueError("authenticated acknowledgment requires a Bearer token")
+            if not hmac.compare_digest(presented[len("Bearer "):], token):
+                raise ValueError("authenticated acknowledgment failed operator token verification")
+            return "authenticated", None, "operator"
+        raise ValueError("acknowledgment requires explicit DTMF or authenticated confirmation")
+
+    def handle_alert_ack(self, params: dict, headers, url: str) -> dict:
+        """Verify, then acknowledge. Unknown events 404; every failed
+        verification is a 403 with no state change."""
+        event_id = params.get("emergency_event_id", "")
+        method = params.get("method", "")
+        if not event_id:
+            raise ValueError("emergency_event_id is required")
+        verified_method, call_sid, actor_ref = self.verify_alert_ack(
+            method, params, headers, url)
+        try:
+            alert = self.dispatcher.acknowledge(
+                event_id, verified_method, call_sid=call_sid, actor_ref=actor_ref)
+        except KeyError:
+            raise LookupError("no such emergency event") from None
+        return {"ok": True, "state": alert["state"]}
 
     # -- call lifecycle ---------------------------------------------------------
     def start_call(self, call_sid: str, ani: str | None = None, emergency: bool = False) -> CallSession:
@@ -113,6 +170,29 @@ def make_handler(server: ReceptionistServer):
             except ValueError:
                 return {}
 
+        def _read_ack_params(self) -> tuple[dict, str]:
+            """Ack callbacks arrive either as Twilio form-encoded POSTs
+            (DTMF: CallSid + Digits + X-Twilio-Signature) or as JSON
+            (authenticated operator confirmation). Returns (params, url)
+            where url is the exact public URL Twilio signed."""
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            content_type = self.headers.get("Content-Type", "")
+            if "application/x-www-form-urlencoded" in content_type:
+                params = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
+            else:
+                try:
+                    params = json.loads(raw or b"{}")
+                except ValueError:
+                    params = {}
+                params = {k: str(v) for k, v in params.items()}
+            # Query-string params (the alert TwiML carries emergency_event_id
+            # in the action URL) merge under body params.
+            query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            merged = {**query, **params}
+            url = f"https://{self.headers.get('Host', '')}{self.path}"
+            return merged, url
+
         def do_GET(self):
             if self.path == "/health":
                 return self._json(200, {"ok": True, **config.live_features(),
@@ -160,13 +240,15 @@ def make_handler(server: ReceptionistServer):
                 return self._json(200, server.handle_status_callback(
                     body.get("CallSid", ""), body.get("CallStatus", ""), body))
             if parsed.path == "/alerts/ack":
-                body = self._read_json()
+                # Verified acknowledgment only (P1-3): unsigned, forged,
+                # wrong-call or wrong-digit callbacks change nothing.
+                params, url = self._read_ack_params()
                 try:
-                    alert = server.dispatcher.acknowledge(
-                        body.get("emergency_event_id", ""), body.get("method", ""))
-                except (KeyError, ValueError) as exc:
-                    return self._json(400, {"error": str(exc)})
-                return self._json(200, {"ok": True, "state": alert["state"]})
+                    return self._json(200, server.handle_alert_ack(params, self.headers, url))
+                except LookupError as exc:
+                    return self._json(404, {"error": str(exc)})
+                except ValueError as exc:
+                    return self._json(403, {"error": str(exc)})
             return self._json(404, {"error": "not found"})
 
     return Handler
@@ -178,7 +260,10 @@ def serve(host: str = "127.0.0.1", port: int = 8080,
     httpd = ThreadingHTTPServer((host, port), make_handler(server))
     print(f"brandy-receptionist listening on {host}:{port} "
           f"(telephony_enabled={server.config.telephony_enabled})")
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        server.shutdown()
     return httpd
 
 

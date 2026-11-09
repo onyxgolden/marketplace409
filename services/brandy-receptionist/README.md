@@ -70,8 +70,11 @@ python3 -m app.server       # worker (telephony disabled; /health only until ena
    never silently substituted.
 5. Drafts are PENDING-only until Brandy approves in the Rental Manager
    inbox; approval is version-guarded (exactly-once).
-6. Latency is measured end to end on synthetic turns (p95 ≤ 800 ms
-   target); vendor numbers are never cited as proof.
+6. Latency is measured end to end on synthetic turns with fake providers
+   carrying scripted per-stage latencies — deterministic harness
+   measurements, NOT live-call proof (p95 ≤ 800 ms target; the live-call
+   bar stays unproven until real telephony trials run); vendor numbers are
+   never cited as proof.
 
 ## Go-live gates (NOT authorized by this build)
 

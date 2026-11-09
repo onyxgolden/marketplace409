@@ -81,6 +81,37 @@ def twiml_start_stream(stream_url: str, stream_token: str) -> str:
     )
 
 
+def twiml_alert_call(alert_ack_url: str, emergency_event_id: str,
+                     message: str, ack_digit: str = "1") -> str:
+    """TwiML for an outbound emergency alert call (P1-3 binding).
+
+    The call gathers exactly one DTMF digit and posts it to the alert
+    ack endpoint. The action URL carries the emergency_event_id, and
+    Twilio posts CallSid + Digits with its request signature, so the ack
+    handler can verify the callback is Twilio-signed AND bound to this
+    alert call. No other digit acknowledges; hanging up acknowledges
+    nothing."""
+    import html
+    import urllib.parse
+    action = (f"{alert_ack_url}?{urllib.parse.urlencode({'emergency_event_id': emergency_event_id})}"
+              if "?" not in alert_ack_url else
+              f"{alert_ack_url}&{urllib.parse.urlencode({'emergency_event_id': emergency_event_id})}")
+    safe_action = html.escape(action, quote=True)
+    safe_message = html.escape(message)
+    safe_digit = html.escape(ack_digit, quote=True)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f"<Say>{safe_message}</Say>"
+        f"<Gather action=\"{safe_action}\" method=\"POST\" "
+        f"numDigits=\"1\" timeout=\"10\">"
+        f"<Say>Press {safe_digit} to confirm you received this emergency alert.</Say>"
+        "</Gather>"
+        "<Say>No confirmation received. Goodbye.</Say>"
+        "</Response>"
+    )
+
+
 def require_telephony(config) -> None:
     if not config.telephony_enabled:
         raise DisabledError("telephony is disabled by default; enable explicitly and only with a go-live word.")

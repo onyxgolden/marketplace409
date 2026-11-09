@@ -60,12 +60,27 @@ class TestEmergencyAlerts(unittest.TestCase):
         transport = FakeAlertTransport()
         d = AlertDispatcher(transport)
         d.dispatch_emergency("emg-test-5", "LOCKOUT", "Lockout emergency.")
-        alert = d.acknowledge("emg-test-5", "dtmf")
+        # DTMF ack must name the provider SID of a recorded alert attempt.
+        voice_sid = next(a.provider_sid for a in d.get("emg-test-5")["attempts"]
+                         if a.channel == "VOICE")
+        alert = d.acknowledge("emg-test-5", "dtmf", call_sid=voice_sid)
         self.assertEqual(alert["state"], "ACKNOWLEDGED")
         self.assertIsNotNone(alert["human_ack_at"])
         self.assertEqual(alert["ack_method"], "dtmf")
         # Ack after the deadline is a no-op: already resolved.
         self.assertEqual(d.check_ack_timeout("emg-test-5")["state"], "ACKNOWLEDGED")
+
+    def test_unbound_dtmf_ack_is_rejected(self):
+        transport = FakeAlertTransport()
+        d = AlertDispatcher(transport)
+        d.dispatch_emergency("emg-test-5b", "LOCKOUT", "Lockout emergency.")
+        # No call SID, and a SID from no recorded attempt, both fail closed.
+        with self.assertRaises(ValueError):
+            d.acknowledge("emg-test-5b", "dtmf")
+        with self.assertRaises(ValueError):
+            d.acknowledge("emg-test-5b", "dtmf", call_sid="FAKE-not-an-attempt")
+        self.assertIsNone(d.get("emg-test-5b")["human_ack_at"])
+        self.assertEqual(d.get("emg-test-5b")["resolution_state"], "UNRESOLVED")
 
     def test_answering_alone_is_not_ack(self):
         transport = FakeAlertTransport()

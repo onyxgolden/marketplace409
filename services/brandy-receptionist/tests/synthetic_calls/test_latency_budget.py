@@ -1,12 +1,12 @@
-"""§11.10 latency (measured end-to-end on synthetic turns, never vendor
-numbers) + §11.14 budget cap + barge-in stop bound.
+"""§11.10 latency + §11.14 budget cap + barge-in stop bound.
 
-Latency model: end of caller speech -> first audible agent sample =
-STT endpointing + LLM first token + TTS first audio + playback buffering.
-Fake providers carry scripted per-stage latencies; the test measures the
-pipeline total over >=200 representative turns and asserts p95 <= 800 ms,
-reports p99, and asserts barge-in stop p95 <= 250 ms and emergency
-trigger -> alert-request p95 <= 2000 ms.
+DETERMINISTIC HARNESS MEASUREMENTS — NOT live-call proof. Fake providers
+carry scripted per-stage latencies; the numbers below measure the pipeline
+on this host over >=200 representative synthetic turns and assert
+p95 <= 800 ms, report p99, and assert barge-in stop p95 <= 250 ms and
+emergency trigger -> alert-request p95 <= 2000 ms. No PSTN, no real
+telephony, no vendor numbers: the p95 <= 800 ms LIVE-call bar remains
+unproven until real telephony trials run.
 """
 import os
 import statistics
