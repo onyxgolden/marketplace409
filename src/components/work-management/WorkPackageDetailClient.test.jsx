@@ -71,6 +71,15 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
       return { ok: true, json: async () => ({ projects: [] }) };
     }
+    if (url === `/api/work-packages/${BASE_PKG.id}/drawings/readiness`) {
+      return {
+        ok: true,
+        json: async () => ({
+          packageId: BASE_PKG.id, packageStatus: BASE_PKG.status, drawings: [],
+          counts: { drawingsTotal: 0, ifcReleased: 0, pendingReview: 0, returned: 0, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+        }),
+      };
+    }
     throw new Error(`unexpected fetch ${url}`);
   }));
   return { patches, deletes };

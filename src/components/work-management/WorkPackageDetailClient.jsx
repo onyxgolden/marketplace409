@@ -7,6 +7,7 @@ import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, fin
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
+import WorkPackageDrawingReadiness from "./WorkPackageDrawingReadiness.jsx";
 import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
@@ -508,6 +509,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
       <WorkPackagePermitAnnotations packageId={pkg.id} scope="package" />
 
       <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
+
+      <WorkPackageDrawingReadiness packageId={pkg.id} />
 
       <WorkPackageCraftAssignments packageId={pkg.id} />
 

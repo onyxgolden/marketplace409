@@ -126,13 +126,26 @@ describe("deleteDrawing", () => {
   const drawingChain = chain({ data: { id: "dwg_1", package_id: "pkg_1" }, error: null });
 
   it("deletes through the RPC (which retires attached annotations atomically) without touching tables directly", async () => {
-    const db = mockDb([], [{ data: true, error: null }]);
+    // Slice 7: after the RPC returns true the service re-reads the
+    // drawing row to tell a physical delete from a logical retire
+    // (a drawing with review history survives with retired_at set).
+    // Row gone here, so this is a physical delete.
+    const rereadChain = chain({ data: null, error: null });
+    const db = mockDb([rereadChain], [{ data: true, error: null }]);
     const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, retired: false });
     expect(db.rpc).toHaveBeenCalledWith("forge_work_permit_annotation_delete_drawing", {
       p_owner_id: OWNER, p_package_id: "pkg_1", p_drawing_id: "dwg_1",
     });
-    expect(db.from).not.toHaveBeenCalled();
+    expect(db.from).toHaveBeenCalledTimes(1);
+    expect(db.from).toHaveBeenCalledWith("forge_work_drawings");
+  });
+
+  it("reports retired when the RPC retires the drawing instead of deleting it (slice 7)", async () => {
+    const rereadChain = chain({ data: { id: "dwg_1", retired_at: "t2" }, error: null });
+    const db = mockDb([rereadChain], [{ data: true, error: null }]);
+    const result = await deleteDrawing(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result).toEqual({ ok: true, retired: true });
   });
 
   it("maps the RPC's children guard to 409", async () => {

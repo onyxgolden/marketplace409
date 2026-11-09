@@ -17,6 +17,7 @@
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { formatEstimate } from "@/domains/work-management/workSteps";
+import { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -194,6 +195,18 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   const links = data || [];
   const activeDrawingIds = new Set(links.filter((l) => !l.retiredAt && l.drawingId).map((l) => l.drawingId));
   const linkableDrawings = (drawings || []).filter((d) => !activeDrawingIds.has(d.id));
+  // Slice 7: the step's drawings carry their review badge from the
+  // shared readiness snapshot (same cache key as the readiness panel,
+  // so one fetch serves both). An IFA link is preliminary — it never
+  // authorizes construction use; only an IFC release does.
+  const { data: readinessData } = useStaleWhileRevalidate(
+    `work-packages:${packageId}:drawing-readiness`,
+    () => api(`/api/work-packages/${packageId}/drawings/readiness`),
+    { ttlMs: 10_000 },
+  );
+  const readinessByDrawingId = new Map(
+    (readinessData?.drawings || []).map((row) => [row.drawingId, row]),
+  );
 
   async function onLink(event) {
     event.preventDefault();
@@ -248,6 +261,17 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
           {links.map((link) => (
             <li key={link.id} className="text-xs text-slate-600">
               <span className="font-medium text-slate-900">{drawingDisplay(link)}</span>
+              {link.drawingId && readinessByDrawingId.get(link.drawingId) && (
+                <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${badgeClass(readinessByDrawingId.get(link.drawingId).badge)}`}>
+                  Drawing: {readinessByDrawingId.get(link.drawingId).badge}
+                </span>
+              )}
+              {link.drawingId && readinessByDrawingId.get(link.drawingId)?.constructionUsable === false && (
+                <span className="ml-2 text-slate-500">— preliminary</span>
+              )}
+              {link.drawingId && readinessByDrawingId.get(link.drawingId)?.constructionUsable === true && (
+                <span className="ml-2 text-slate-500">— construction issue</span>
+              )}
               {link.drawingId == null && (
                 <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-slate-600">Drawing deleted</span>
               )}
