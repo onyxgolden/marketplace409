@@ -44,6 +44,8 @@ function createFakeSupabase() {
     calls: [],
     events: [],
     drafts: [],
+    alerts: [],
+    attempts: [],
     rpcCalls: [],
     injectRpcError: {},
     completeFalseOnce: false,
@@ -193,6 +195,24 @@ function createFakeSupabase() {
           const row = { id: nextId(), ...q._row };
           state.drafts.push(row);
           return { data: [row], error: null };
+        }
+        if (table === "forge_rental_receptionist_alerts" && q._op === "upsert") {
+          const existing = state.alerts.find(
+            (a) => a.owner_id === q._row.owner_id && a.emergency_event_id === q._row.emergency_event_id);
+          if (existing) {
+            Object.assign(existing, q._row);
+            return { data: [existing], error: null };
+          }
+          const row = { id: nextId(), ...q._row };
+          state.alerts.push(row);
+          return { data: [row], error: null };
+        }
+        if (table === "forge_rental_receptionist_alert_attempts" && q._op === "insert") {
+          const dup = state.attempts.some(
+            (a) => a.owner_id === q._row.owner_id && a.dedupe_key === q._row.dedupe_key);
+          if (dup) return { data: null, error: { code: "23505", message: "duplicate" } };
+          state.attempts.push({ id: nextId(), ...q._row });
+          return { data: [q._row], error: null };
         }
         if (table === "forge_rental_receptionist_drafts" && q._op === null) {
           const found = state.drafts.find((d) => q._match(d)) || null;
@@ -526,5 +546,109 @@ describe("POST /api/rental/receptionist/ingest — draft conflict fetch (P1-3)",
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual(firstBody);
     expect(fake.state.drafts).toHaveLength(1);
+  });
+});
+
+describe("POST /api/rental/receptionist/ingest — go-live source, cost, alerts", () => {
+  let fake;
+
+  beforeEach(() => {
+    fake = createFakeSupabase();
+    mocks.createClient.mockReturnValue(fake);
+    mocks.encryptCallbackE164.mockImplementation(() => "v1.test-key.ABCDEFGHijklmnopQRSTUV==");
+    process.env.RECEPTIONIST_FORGE_INGEST_SECRET = "test-secret";
+    process.env.RECEPTIONIST_OPERATION_OWNERS = JSON.stringify({ [OP_ID]: OWNER_ID });
+  });
+
+  const alertBody = (overrides = {}) => ({
+    emergency_event_id: "emg-golive-1",
+    hazard: "WATER",
+    detected_at: 1762560000,
+    human_ack_at: null,
+    ack_method: null,
+    backup_attempted_at: null,
+    resolution_state: "UNRESOLVED",
+    refused_reason: null,
+    attempts: [
+      { attempt_id: "emg-golive-1:PRIMARY:VOICE:1", role: "PRIMARY", channel: "VOICE",
+        attempt: 1, state: "ACCEPTED", provider_sid: "CA-alert-1",
+        requested_at: 1762560000, provider_accepted_at: 1762560001 },
+      { attempt_id: "emg-golive-1:PRIMARY:SMS:1", role: "PRIMARY", channel: "SMS",
+        attempt: 1, state: "DELIVERED", provider_sid: "SM-alert-1",
+        requested_at: 1762560000, provider_accepted_at: 1762560001, delivered_at: 1762560002 },
+    ],
+    ...overrides,
+  });
+
+  it("source defaults to SYNTHETIC when absent and is stored on the call", async () => {
+    const res = await POST(post(baseBody()));
+    expect(res.status).toBe(200);
+    expect(fake.state.calls).toHaveLength(1);
+    expect(fake.state.calls[0].source).toBe("SYNTHETIC");
+  });
+
+  it("source TEST and per-call cost are stored on the call", async () => {
+    const res = await POST(post(baseBody({
+      source: "TEST", cost_estimate_usd: 0.1234, cost_rate_version: "1.0",
+    })));
+    expect(res.status).toBe(200);
+    expect(fake.state.calls[0].source).toBe("TEST");
+    expect(fake.state.calls[0].cost_estimate_usd).toBe(0.1234);
+    expect(fake.state.calls[0].cost_rate_version).toBe("1.0");
+  });
+
+  it("an unknown source is rejected (400) and writes nothing", async () => {
+    const res = await POST(post(baseBody({ source: "PROD" })));
+    expect(res.status).toBe(400);
+    expect(fake.state.calls).toHaveLength(0);
+  });
+
+  it("a negative or non-numeric cost is rejected (400) and writes nothing", async () => {
+    for (const bad of [-0.01, "0.12"]) {
+      const res = await POST(post(baseBody({ source: "TEST", cost_estimate_usd: bad }), { nonce: `nonce-cost-${String(bad)}` }));
+      expect(res.status).toBe(400);
+    }
+    expect(fake.state.calls).toHaveLength(0);
+  });
+
+  it("an explicit null cost is treated as absent, not an error", async () => {
+    // JSON cannot carry NaN, so a client that has no cost sends null/absent.
+    const res = await POST(post(baseBody({ source: "TEST", cost_estimate_usd: null })));
+    expect(res.status).toBe(200);
+    expect(fake.state.calls[0].cost_estimate_usd).toBeNull();
+  });
+
+  it("an attached alert upserts the alert row and its attempts", async () => {
+    const res = await POST(post(baseBody({ alert: alertBody() })));
+    expect(res.status).toBe(200);
+    expect(fake.state.alerts).toHaveLength(1);
+    expect(fake.state.alerts[0].emergency_event_id).toBe("emg-golive-1");
+    expect(fake.state.alerts[0].hazard).toBe("WATER");
+    expect(fake.state.alerts[0].resolution_state).toBe("UNRESOLVED");
+    expect(fake.state.attempts).toHaveLength(2);
+    expect(fake.state.attempts[0].dedupe_key).toBe("emg-golive-1:PRIMARY:VOICE:1");
+    expect(fake.state.attempts[1].state).toBe("DELIVERED");
+  });
+
+  it("a REFUSED alert lands with its reason", async () => {
+    const res = await POST(post(baseBody({
+      alert: alertBody({ resolution_state: "REFUSED", refused_reason: "activation mode OFF", attempts: [] }),
+    })));
+    expect(res.status).toBe(200);
+    expect(fake.state.alerts).toHaveLength(1);
+    expect(fake.state.alerts[0].resolution_state).toBe("REFUSED");
+    expect(fake.state.alerts[0].refused_reason).toBe("activation mode OFF");
+    expect(fake.state.attempts).toHaveLength(0);
+  });
+
+  it("a duplicate attempt insert is ignored (23505) and the ingest still succeeds", async () => {
+    const first = await POST(post(baseBody({ alert: alertBody() })));
+    expect(first.status).toBe(200);
+    expect(fake.state.attempts).toHaveLength(2);
+    // A second delivery (new nonce) carrying the same attempts collapses.
+    const second = await POST(post(baseBody({ alert: alertBody() }), { nonce: "nonce-2" }));
+    expect(second.status).toBe(200);
+    expect(fake.state.attempts).toHaveLength(2);
+    expect(fake.state.alerts).toHaveLength(1);
   });
 });

@@ -48,7 +48,8 @@ class TurnTrace:
 
 class CallSession:
     def __init__(self, call_sid: str, ani: str | None = None,
-                 config: ReceptionistConfig | None = None):
+                 config: ReceptionistConfig | None = None,
+                 source: str = "SYNTHETIC"):
         self.call_sid = call_sid
         self.config = config or ReceptionistConfig()
         self.dialogue = CallDialogue(call_sid, ani=ani, config=self.config)
@@ -58,6 +59,19 @@ class CallSession:
         self.traces: list[TurnTrace] = []
         self._seen_keys: set = set()
         self.cost_minutes = 0.0
+        # source: TEST | LIVE | SYNTHETIC. Labels every record the session
+        # produces so test traffic can never be mistaken for live traffic
+        # in the inbox or the ledger. Default SYNTHETIC (v1 behavior).
+        self.source = source
+        # Cost estimate for this call (USD, rate version), filled by the
+        # server from the CostLedger at session end.
+        self.cost_estimate_usd: float | None = None
+        self.cost_rate_version: str | None = None
+        # Alert record for this call's emergency (if any), attached by the
+        # server at session end from the dispatcher — the FORGE ingest
+        # route upserts it into the alerts table so the inbox timeline
+        # shows attempts + ACKs. None when no emergency was detected.
+        self.alert_record: dict | None = None
 
     def record_event(self, event_type: str, turn_id: str, payload: dict | None = None) -> dict:
         key = idempotency_key(self.call_sid, event_type, turn_id)
@@ -120,6 +134,11 @@ class CallSession:
             "emergency_event_id": self.dialogue.emergency_event_id,
             "emergency_type": s.get("emergency_type"),
             "consent_status": s.get("consent_status"),
+            "consent_disclosure_revision": s.get("disclosure_revision_id"),
+            "source": self.source,
+            "cost_estimate_usd": self.cost_estimate_usd,
+            "cost_rate_version": self.cost_rate_version,
+            "alert": self.alert_record,
             "processing_state": s.get("processing_state"),
             "policy_version": self.config.policy_version,
             "draft_kind": self.draft_kind(),

@@ -66,6 +66,8 @@ try:
 except ImportError:  # pragma: no cover - Windows has no fcntl
     fcntl = None
 
+from ..providers import ProviderAuthError, _clean_proxy_env
+
 logger = logging.getLogger(__name__)
 
 ACK_TIMEOUT_S_DEFAULT = 30
@@ -130,6 +132,144 @@ class AlertAttempt:
         return attempt
 
 
+class AlertRefused(RuntimeError):
+    """The live gate refused an alert send (mode OFF, kill switch engaged,
+    outbound alerts disabled, or no consented recipient). The alert record
+    is kept as REFUSED/UNRESOLVED — never silently dropped, never retried
+    against the provider."""
+
+
+class NoConsentError(RuntimeError):
+    """No recorded individual consent exists for this recipient/channel."""
+
+
+class RecipientAllowlist:
+    """Server-side recipient allowlist (go-live §4).
+
+    File-backed JSON (default data/recipients.json). Each entry records an
+    individual's EXPLICIT consent for a channel:
+      {"role": "PRIMARY", "name": "Brandy Morgan",
+       "voice_e164": "+1…", "sms_e164": "+1…",
+       "consent": {"voice": {"given": true, "given_at": "…", "recorded_by": "…"},
+                   "sms": {"given": true, ...}}}
+    resolve() returns the number ONLY when consent is recorded for that
+    channel. No consent exists yet — the file ships empty and the operator
+    adds entries with scripts/recipients.py — so no real recipient is
+    wired in this build and every send attempt fails closed with
+    "no_consented_recipient" instead of dialing anyone.
+    """
+
+    def __init__(self, entries: dict | None = None):
+        self.entries = entries or {}
+
+    @classmethod
+    def load(cls, path: str) -> "RecipientAllowlist":
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                return cls(data)
+        except (OSError, ValueError):
+            pass
+        return cls({})
+
+    def resolve(self, role: str, channel: str) -> str | None:
+        entry = self.entries.get(role)
+        if not isinstance(entry, dict):
+            return None
+        consent = entry.get("consent") or {}
+        channel_consent = consent.get(channel.lower())
+        if not isinstance(channel_consent, dict) or channel_consent.get("given") is not True:
+            return None
+        number = entry.get("voice_e164" if channel == "VOICE" else "sms_e164")
+        return number if isinstance(number, str) and number.startswith("+") else None
+
+    def is_consented(self, role: str, channel: str) -> bool:
+        return self.resolve(role, channel) is not None
+
+
+class TwilioAlertTransport:
+    """Real outbound voice+SMS via the Twilio SDK (twilio 9.x).
+
+    Lazy-imports `twilio`; the client is built only when a send is
+    attempted (and only when the dispatcher gate allowed it). The
+    constructor takes env-sourced credentials + the sender number — no
+    keys or numbers live in code. An optional injected `client` lets
+    tests prove the wiring without network. Accepted sends record their
+    estimated cost in the CostLedger when one is attached.
+    """
+
+    def __init__(self, account_sid: str, auth_token: str, from_number: str,
+                 *, alert_ack_url: str = "", ack_digit: str = "1",
+                 allowlist: RecipientAllowlist | None = None,
+                 client=None, cost_ledger=None, source: str = "TEST"):
+        if not account_sid or not auth_token:
+            raise ProviderAuthError("Twilio credentials missing")
+        if not from_number:
+            raise ValueError("Twilio sender number missing")
+        self.account_sid = account_sid
+        self.auth_token = auth_token
+        self.from_number = from_number
+        self.alert_ack_url = alert_ack_url
+        self.ack_digit = ack_digit
+        self.allowlist = allowlist or RecipientAllowlist()
+        self._client = client
+        self.cost_ledger = cost_ledger
+        self.source = source
+        self.calls: list = []
+
+    def _client_or_build(self):
+        if self._client is not None:
+            return self._client
+        from twilio.rest import Client
+        with _clean_proxy_env():
+            self._client = Client(self.account_sid, self.auth_token)
+        return self._client
+
+    def resolve_recipient(self, role: str, channel: str) -> str | None:
+        return self.allowlist.resolve(role, channel)
+
+    def send(self, role: str, channel: str, message: str, *,
+             emergency_event_id: str | None = None) -> dict:
+        """Send one alert attempt. Returns the FakeAlertTransport-shaped
+        dict (accepted, sid, answered, call_completed, delivered, ...).
+        No consented recipient => accepted False, failure_class
+        "no_consented_recipient", and NO provider call is made."""
+        from ..providers import classify_error
+        from ..telephony_twilio import twiml_alert_call
+        now = time.time()
+        to = self.resolve_recipient(role, channel)
+        if not to:
+            return {"accepted": False, "sid": None,
+                    "failure_class": "no_consented_recipient",
+                    "requested_at": now, "call_completed": True}
+        try:
+            client = self._client_or_build()
+            if channel == "VOICE":
+                twiml = twiml_alert_call(self.alert_ack_url,
+                                         emergency_event_id or "emg-unknown",
+                                         message, self.ack_digit)
+                call = client.calls.create(to=to, from_=self.from_number,
+                                           twiml=twiml)
+                sid = getattr(call, "sid", None)
+            else:
+                msg = client.messages.create(to=to, from_=self.from_number, body=message)
+                sid = getattr(msg, "sid", None)
+        except Exception as exc:  # noqa: BLE001 — mapped to the taxonomy
+            err = classify_error(exc)
+            return {"accepted": False, "sid": None,
+                    "failure_class": err.kind,
+                    "requested_at": now, "call_completed": True}
+        if self.cost_ledger is not None and emergency_event_id:
+            self.cost_ledger.record_alert(
+                emergency_event_id=emergency_event_id,
+                source=self.source, channel=channel)
+        self.calls.append({"role": role, "channel": channel, "sid": sid, "to": to})
+        return {"accepted": True, "sid": sid, "answered": False,
+                "call_completed": False,
+                "requested_at": now, "provider_accepted_at": now}
+
+
 class FakeAlertTransport:
     """Test transport with scripted outcomes. `outcomes` maps
     (role, channel) -> list of results consumed in order:
@@ -144,7 +284,8 @@ class FakeAlertTransport:
             queue = self.outcomes.get((role, channel), ["accepted"])
             return queue.pop(0) if queue else "accepted"
 
-    def send(self, role: str, channel: str, message: str) -> dict:
+    def send(self, role: str, channel: str, message: str, *,
+             emergency_event_id: str | None = None) -> dict:
         outcome = self._next(role, channel)
         sid = f"FAKE-{uuid.uuid4().hex[:8]}"
         with self._lock:
@@ -203,7 +344,10 @@ class EscalationScheduler:
         with self._cond:
             self._stopped = True
             self._cond.notify_all()
-        self._thread.join(timeout=2)
+        # The thread only starts when an alert is armed; joining a
+        # never-started thread raises, so skip the join in that case.
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
 
     def _run(self) -> None:
         while True:
@@ -231,7 +375,8 @@ class AlertDispatcher:
     def __init__(self, transport, *, ack_timeout_s: int = ACK_TIMEOUT_S_DEFAULT,
                  max_attempts: int = 3, allowlist: dict | None = None,
                  clock=time.time, backoff_s: tuple = (5, 15, 60),
-                 state_path: str | None = None, scheduler_enabled: bool = True):
+                 state_path: str | None = None, scheduler_enabled: bool = True,
+                 live_gate=None, recipient_allowlist: RecipientAllowlist | None = None):
         self.transport = transport
         self.ack_timeout_s = ack_timeout_s
         self.max_attempts = max_attempts
@@ -239,6 +384,16 @@ class AlertDispatcher:
         #             "BACKUP": {...}} — references only, resolved by the
         # transport from server config. No real numbers in code.
         self.allowlist = allowlist or {"PRIMARY": {}, "BACKUP": {}}
+        # live_gate: optional callable () -> None that raises AlertRefused
+        # when the activation mode / kill switch / outbound flag forbids
+        # sending. Checked on dispatch AND on every attempt (including
+        # backup/retry waves), so a kill mid-escalation stops the sends.
+        self.live_gate = live_gate
+        # recipient_allowlist: consent-gated RecipientAllowlist. When set,
+        # an attempt with no consented recipient for that role+channel is
+        # recorded FAILED ("no_consented_recipient") without any provider
+        # call. Unset (v1 tests) means no allowlist check.
+        self.recipient_allowlist = recipient_allowlist
         self.clock = clock
         self.backoff_s = backoff_s
         self.state_path = state_path
@@ -299,6 +454,7 @@ class AlertDispatcher:
         data.setdefault("backup_waves", 0)
         data.setdefault("next_retry_at", None)
         data.setdefault("actor_ref", None)
+        data.setdefault("refused_reason", None)
         data.setdefault("persistence_degraded", False)
         data["_dirty"] = False
         return data
@@ -455,11 +611,21 @@ class AlertDispatcher:
         if self._scheduler is not None:
             self._scheduler.stop()
 
+    def _check_live_gate(self) -> None:
+        """Raise AlertRefused when the live gate forbids sending."""
+        if self.live_gate is not None:
+            self.live_gate()
+
     def dispatch_emergency(self, emergency_event_id: str, hazard: str,
                            message: str) -> dict:
         """Start primary voice + SMS CONCURRENTLY. Returns the alert record.
         Idempotent per emergency_event_id: a second call for the same event
-        returns the existing record (no alert storm on STT partials)."""
+        returns the existing record (no alert storm on STT partials).
+
+        Go-live gate: the record is created FIRST (so the refusal is
+        durable and visible), then the live gate is checked. A refused
+        dispatch is recorded REFUSED/UNRESOLVED with the reason — never
+        silently dropped, never retried against the provider."""
         with self._lock:
             if emergency_event_id in self._alerts:
                 return self._alerts[emergency_event_id]
@@ -469,11 +635,21 @@ class AlertDispatcher:
                 "human_ack_at": None, "ack_method": None, "actor_ref": None,
                 "backup_attempted_at": None, "resolution_state": "UNRESOLVED",
                 "backup_claimed": False, "backup_waves": 0, "next_retry_at": None,
-                "persistence_degraded": False,
+                "persistence_degraded": False, "refused_reason": None,
                 "attempts": [],
             }
             alert["_dirty"] = True
             self._alerts[emergency_event_id] = alert
+        try:
+            self._check_live_gate()
+        except AlertRefused as exc:
+            with self._lock:
+                alert["state"] = "REFUSED"
+                alert["resolution_state"] = "UNRESOLVED"
+                alert["refused_reason"] = str(exc)
+                alert["_dirty"] = True
+            self._persist_safe()
+            return alert
         # Concurrent primary voice + SMS (separate provider request IDs).
         threads = []
         for channel in ("VOICE", "SMS"):
@@ -508,7 +684,34 @@ class AlertDispatcher:
     def _attempt(self, alert: dict, role: str, channel: str, message: str, n: int) -> AlertAttempt:
         attempt = AlertAttempt(alert["emergency_event_id"], role, channel, n)
         attempt.requested_at = self.clock()
-        result = self.transport.send(role, channel, message)
+        # Go-live gates, checked per attempt (retry waves included):
+        # 1. the live gate (mode/kill/flag) — a refusal records FAILED
+        #    "dispatch_refused" and never touches the provider;
+        # 2. the consent allowlist — no consented recipient records FAILED
+        #    "no_consented_recipient" and never touches the provider.
+        try:
+            self._check_live_gate()
+        except AlertRefused as exc:
+            attempt.state = "FAILED"
+            attempt.failed_at = self.clock()
+            attempt.failure_class = "dispatch_refused"
+            with self._lock:
+                alert["attempts"].append(attempt)
+                alert["refused_reason"] = str(exc)
+                alert["_dirty"] = True
+            self._persist_safe()
+            return attempt
+        if self.recipient_allowlist is not None and not self.recipient_allowlist.is_consented(role, channel):
+            attempt.state = "FAILED"
+            attempt.failed_at = self.clock()
+            attempt.failure_class = "no_consented_recipient"
+            with self._lock:
+                alert["attempts"].append(attempt)
+                alert["_dirty"] = True
+            self._persist_safe()
+            return attempt
+        result = self.transport.send(role, channel, message,
+                                     emergency_event_id=alert["emergency_event_id"])
         attempt.provider_sid = result.get("sid")
         attempt.answered = bool(result.get("answered", False))
         attempt.call_completed = bool(result.get("call_completed", False))
@@ -558,6 +761,19 @@ class AlertDispatcher:
             if alert["human_ack_at"] is not None:
                 return alert
             if alert["state"] == "DEAD_LETTER":
+                return alert
+            if alert["state"] == "REFUSED":
+                return alert  # gate-refused alerts never escalate to backup
+            # A kill / mode change since dispatch blocks the backup wave:
+            # the alert stays UNRESOLVED with the refusal recorded.
+            try:
+                self._check_live_gate()
+            except AlertRefused as exc:
+                alert["state"] = "REFUSED"
+                alert["resolution_state"] = "UNRESOLVED"
+                alert["refused_reason"] = str(exc)
+                alert["_dirty"] = True
+                self._persist_safe()
                 return alert
             if not alert["backup_claimed"]:
                 alert["backup_claimed"] = True

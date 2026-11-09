@@ -18,6 +18,8 @@ import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 MIGRATIONS = sorted(glob.glob(os.path.join(REPO_ROOT, "supabase", "migrations", "*brandy_receptionist*.sql")))
+V1_MIGRATION = os.path.join(REPO_ROOT, "supabase", "migrations", "20261108020000_brandy_receptionist_track2.sql")
+GOLIVE_MIGRATION = os.path.join(REPO_ROOT, "supabase", "migrations", "20261108230000_brandy_receptionist_golive.sql")
 PROOF_RUN = os.path.join(REPO_ROOT, "scripts", "brandy-receptionist-rls-proof", "run.sh")
 
 
@@ -42,8 +44,8 @@ class TestMigrationFile(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        assert MIGRATIONS, "brandy receptionist migration file missing"
-        cls.sql = open(MIGRATIONS[-1]).read()
+        assert os.path.exists(V1_MIGRATION), "v1 brandy receptionist migration file missing"
+        cls.sql = open(V1_MIGRATION).read()
         cls.lower = cls.sql.lower()
         # Code without -- comments, for grant assertions (comments mention
         # role names descriptively and must not trip the grant checks).
@@ -147,6 +149,49 @@ class TestMigrationFile(unittest.TestCase):
         self.assertIn("callback_e164_encrypted text", self.lower)
         self.assertIn("aes-256-gcm", self.lower)
         self.assertIn("v1.<keyid>.<base64", self.lower)
+
+
+class TestGoLiveMigrationFile(unittest.TestCase):
+    """Go-live migration (20261108230000): additive columns only, no
+    grants, no RLS changes, idempotent. The one exception to
+    "additive only" is the resolution_state CHECK widening: dropping +
+    re-adding the CHECK with 'REFUSED' added is a pure widening (every
+    value allowed before is still allowed)."""
+
+    @classmethod
+    def setUpClass(cls):
+        assert os.path.exists(GOLIVE_MIGRATION), "go-live migration file missing"
+        cls.sql = open(GOLIVE_MIGRATION).read()
+        cls.lower = cls.sql.lower()
+        cls.code = re.sub(r"--.*", "", cls.lower)
+
+    def test_additive_columns(self):
+        self.assertIn("add column if not exists source text", self.lower)
+        self.assertIn("check (source in ('test', 'live', 'synthetic'))", self.lower)
+        self.assertIn("add column if not exists cost_estimate_usd numeric(10, 4)", self.lower)
+        self.assertIn("add column if not exists cost_rate_version text", self.lower)
+        self.assertIn("add column if not exists refused_reason text", self.lower)
+
+    def test_no_destructive_statements(self):
+        for stmt in ("drop table", "drop column", "truncate", "delete from"):
+            self.assertNotIn(stmt, self.lower)
+        # Exactly one constraint drop: the resolution_state CHECK widening.
+        drops = re.findall(r"drop constraint if exists\s+([a-z0-9_]+)", self.code)
+        self.assertEqual(drops, ["forge_rental_receptionist_alerts_resolution_state_check"])
+
+    def test_refused_admitted_by_check(self):
+        self.assertIn("'refused'", self.lower)
+        self.assertIn("check (resolution_state in ('unresolved', 'acknowledged', 'dead_letter', 'refused'))", self.lower)
+
+    def test_no_grants_or_rls_changes(self):
+        self.assertNotIn("grant ", self.code)
+        self.assertNotIn("revoke ", self.code)
+        self.assertNotIn("row level security", self.code)
+        self.assertNotIn("create table", self.code)
+        self.assertNotIn("create function", self.code)
+
+    def test_source_backfills_synthetic(self):
+        self.assertIn("default 'synthetic'", self.lower)
 
 
 @unittest.skipUnless(_live_postgres_available(),

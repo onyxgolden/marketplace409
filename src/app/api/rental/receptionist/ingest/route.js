@@ -66,6 +66,24 @@ export async function POST(request) {
     if (typeof payload?.policy_version !== "string" || !payload.policy_version) {
       return NextResponse.json({ error: "policy_version is required." }, { status: 400 });
     }
+    // Go-live: source labels every call TEST | LIVE | SYNTHETIC so test
+    // traffic can never be mistaken for live traffic in the inbox.
+    // Absent (v1 payloads) defaults to SYNTHETIC; anything else 400s.
+    const source = payload?.source ?? "SYNTHETIC";
+    if (!["TEST", "LIVE", "SYNTHETIC"].includes(source)) {
+      return NextResponse.json({ error: "source must be TEST, LIVE, or SYNTHETIC." }, { status: 400 });
+    }
+    // Per-call cost estimate (USD, from the worker's versioned rate
+    // table). A non-number or negative value 400s — a bad cost must
+    // never land silently on the call row.
+    let costEstimateUsd = null;
+    if (payload?.cost_estimate_usd !== undefined && payload?.cost_estimate_usd !== null) {
+      if (typeof payload.cost_estimate_usd !== "number" || payload.cost_estimate_usd < 0) {
+        return NextResponse.json({ error: "cost_estimate_usd must be a non-negative number." }, { status: 400 });
+      }
+      costEstimateUsd = payload.cost_estimate_usd;
+    }
+    const costRateVersion = typeof payload?.cost_rate_version === "string" ? payload.cost_rate_version : null;
 
     const supabase = createReceptionistIngestClient();
     // Claim the nonce (fresh / busy / retry / committed / hash_mismatch).
@@ -126,6 +144,9 @@ export async function POST(request) {
         match_status: "REVIEW_REQUIRED",
         emergency_event_id: payload.emergency_event_id || null,
         consent_status: payload.consent_status || null,
+        source,
+        cost_estimate_usd: costEstimateUsd,
+        cost_rate_version: costRateVersion,
         processing_state: payload.processing_state || "IN_PROGRESS",
         policy_version: payload.policy_version,
       };
@@ -135,6 +156,57 @@ export async function POST(request) {
         .select("id")
         .single();
       if (callError) throw callError;
+
+      // Go-live: the worker attaches the emergency alert record (when
+      // the call had an emergency) so the inbox timeline shows attempts
+      // + ACKs. The alerts table was previously read but never written
+      // by any code path — this upsert is what populates it. Idempotent
+      // on (owner_id, emergency_event_id); the dispatcher is the source
+      // of truth, so a re-delivery carries its current state (a stale
+      // replay never reaches here — the nonce claim returns the
+      // committed result first). Attempts are idempotent on dedupe_key.
+      // REFUSED is a valid resolution_state (go-live migration widens
+      // the CHECK); refused_reason says why the gate refused the send.
+      const alertPayload = payload.alert;
+      if (alertPayload && typeof alertPayload.emergency_event_id === "string") {
+        const { error: alertError } = await supabase
+          .from("forge_rental_receptionist_alerts")
+          .upsert({
+            owner_id: ownerId,
+            emergency_event_id: alertPayload.emergency_event_id,
+            hazard: alertPayload.hazard || "UNKNOWN",
+            detected_at: alertPayload.detected_at ? new Date(alertPayload.detected_at * 1000).toISOString() : undefined,
+            human_ack_at: alertPayload.human_ack_at ? new Date(alertPayload.human_ack_at * 1000).toISOString() : null,
+            ack_method: alertPayload.ack_method || null,
+            backup_attempted_at: alertPayload.backup_attempted_at ? new Date(alertPayload.backup_attempted_at * 1000).toISOString() : null,
+            resolution_state: ["UNRESOLVED", "ACKNOWLEDGED", "DEAD_LETTER", "REFUSED"].includes(alertPayload.resolution_state)
+              ? alertPayload.resolution_state : "UNRESOLVED",
+            refused_reason: alertPayload.refused_reason || null,
+          }, { onConflict: "owner_id,emergency_event_id" });
+        if (alertError) throw alertError;
+        const attempts = Array.isArray(alertPayload.attempts) ? alertPayload.attempts : [];
+        for (const attempt of attempts) {
+          if (!attempt?.attempt_id) continue;
+          const { error: attemptError } = await supabase
+            .from("forge_rental_receptionist_alert_attempts")
+            .insert({
+              owner_id: ownerId,
+              emergency_event_id: alertPayload.emergency_event_id,
+              target_role: attempt.role,
+              channel: attempt.channel,
+              attempt_no: attempt.attempt || 1,
+              provider_sid: attempt.provider_sid || null,
+              state: ["PENDING", "ACCEPTED", "DELIVERED", "FAILED"].includes(attempt.state) ? attempt.state : "PENDING",
+              failure_class: attempt.failure_class || null,
+              requested_at: attempt.requested_at ? new Date(attempt.requested_at * 1000).toISOString() : null,
+              provider_accepted_at: attempt.provider_accepted_at ? new Date(attempt.provider_accepted_at * 1000).toISOString() : null,
+              delivered_at: attempt.delivered_at ? new Date(attempt.delivered_at * 1000).toISOString() : null,
+              failed_at: attempt.failed_at ? new Date(attempt.failed_at * 1000).toISOString() : null,
+              dedupe_key: attempt.attempt_id,
+            });
+          if (attemptError && attemptError.code !== "23505") throw attemptError;
+        }
+      }
 
       const events = Array.isArray(payload.events) ? payload.events : [];
       for (const event of events) {

@@ -364,6 +364,36 @@ run_bool "policy inventory: outbox select policy exists" t \
 run_bool "policy inventory: no INSERT/UPDATE/DELETE policy on calls" f \
   "select exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'forge_rental_receptionist_calls' and cmd in ('INSERT', 'UPDATE', 'DELETE'));"
 
+# --- go-live migration (20261108230000): additive columns + REFUSED ------
+GOLIVE_MIGRATION="$REPO_ROOT/supabase/migrations/20261108230000_brandy_receptionist_golive.sql"
+$PSQL -f "$GOLIVE_MIGRATION" > /tmp/rls-golive-1.log 2>&1 \
+  && echo "PASS: go-live migration applies cleanly" && PASS=$((PASS+1)) || { echo "FAIL: go-live migration first apply"; cat /tmp/rls-golive-1.log; FAIL=$((FAIL+1)); }
+$PSQL -f "$GOLIVE_MIGRATION" > /tmp/rls-golive-2.log 2>&1 \
+  && echo "PASS: go-live migration re-applies cleanly (idempotent)" && PASS=$((PASS+1)) || { echo "FAIL: go-live migration second apply"; cat /tmp/rls-golive-2.log; FAIL=$((FAIL+1)); }
+run_bool "go-live calls.source column exists" t \
+  "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'forge_rental_receptionist_calls' and column_name = 'source');"
+run_bool "go-live calls.cost_estimate_usd column exists" t \
+  "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'forge_rental_receptionist_calls' and column_name = 'cost_estimate_usd');"
+run_bool "go-live calls.cost_rate_version column exists" t \
+  "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'forge_rental_receptionist_calls' and column_name = 'cost_rate_version');"
+run_bool "go-live alerts.refused_reason column exists" t \
+  "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'forge_rental_receptionist_alerts' and column_name = 'refused_reason');"
+run_bool "go-live existing calls backfill to SYNTHETIC" t \
+  "select count(*) = 0 from forge_rental_receptionist_calls where source is distinct from 'SYNTHETIC';"
+run_bool "go-live resolution_state CHECK admits REFUSED" t \
+  "select pg_get_constraintdef(oid) like '%REFUSED%' from pg_constraint where conrelid = 'forge_rental_receptionist_alerts'::regclass and conname = 'forge_rental_receptionist_alerts_resolution_state_check';"
+run_case "go-live service can insert a REFUSED alert" ok \
+  "$(as_service "insert into forge_rental_receptionist_alerts (owner_id, emergency_event_id, hazard, resolution_state, refused_reason) values ('$A', 'emg-golive-refused', 'WATER', 'REFUSED', 'activation mode OFF');")"
+run_bool "go-live REFUSED alert row reads back with its reason" t \
+  "select resolution_state = 'REFUSED' and refused_reason = 'activation mode OFF' from forge_rental_receptionist_alerts where emergency_event_id = 'emg-golive-refused';"
+run_bool "go-live service can store a TEST source + cost on a call" t \
+  "$(as_service "update forge_rental_receptionist_calls set source = 'TEST', cost_estimate_usd = 0.1234, cost_rate_version = '1.0' where id = '$CALL_A' returning true;")"
+run_bool "go-live TEST source + cost read back" t \
+  "select source = 'TEST' and cost_estimate_usd = 0.1234 and cost_rate_version = '1.0' from forge_rental_receptionist_calls where id = '$CALL_A';"
+run_update_unchanged "go-live authenticated UPDATE calls still leaves row unchanged" \
+  "$(as_uid "$A" "update forge_rental_receptionist_calls set source = 'LIVE' where id = '$CALL_A';")" \
+  "select source from forge_rental_receptionist_calls where id = '$CALL_A';" "TEST"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

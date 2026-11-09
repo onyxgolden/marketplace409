@@ -14,7 +14,7 @@ export async function GET(request) {
 
     let query = supabaseClient
       .from("forge_rental_receptionist_calls")
-      .select("id, provider_call_sid, started_at, ended_at, intent, caller_ani_masked, name_claimed, need_excerpt, callback_confirmed, emergency_event_id, processing_state, policy_version")
+      .select("id, provider_call_sid, started_at, ended_at, intent, caller_ani_masked, name_claimed, need_excerpt, callback_confirmed, emergency_event_id, processing_state, policy_version, source, cost_estimate_usd, cost_rate_version, consent_status")
       .eq("owner_id", effectiveOwnerId)
       .order("started_at", { ascending: false })
       .limit(100);
