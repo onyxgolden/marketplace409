@@ -7,7 +7,7 @@ import { clearStepPlacement, listPlacementRevisions } from "@/application/work-m
 // placement (the step reverts to the unsequenced baseline) — it needs the
 // current version and a reason.
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId, placementId } = await params;
   try {
@@ -32,7 +32,7 @@ export async function GET(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId, placementId } = await params;
   try {

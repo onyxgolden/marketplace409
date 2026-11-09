@@ -51,10 +51,7 @@ describe("createAuthenticatedFinancialApplication", () => {
           eq: vi.fn(function eq() {
             return this;
           }),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: null,
-            error: null,
-          }),
+          then: (resolve) => resolve({ data: [], error: null }),
         })),
       })),
     };
@@ -127,10 +124,8 @@ describe("createAuthenticatedFinancialApplication", () => {
           eq: vi.fn(function eq() {
             return this;
           }),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: { owner_id: "primary-owner-uuid" },
-            error: null,
-          }),
+          then: (resolve) =>
+            resolve({ data: [{ owner_id: "primary-owner-uuid", role: "co_owner" }], error: null }),
         })),
       })),
     };

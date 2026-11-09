@@ -3,7 +3,7 @@ import { ok, fail, serverError, workAuth } from "../../../work-packages/_lib/aut
 
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const result = await recheckLink(auth.db, {
       ownerId: auth.ownerId, linkId: params.linkId,

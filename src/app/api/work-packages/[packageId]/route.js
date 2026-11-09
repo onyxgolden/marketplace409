@@ -5,7 +5,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../_lib/auth.js";
 
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const result = await getWorkPackageDetail(auth.db, {
@@ -20,7 +20,7 @@ export async function GET(request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);
@@ -45,7 +45,7 @@ export async function PATCH(request, { params }) {
 // dependency class at mutation time.
 export async function DELETE(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

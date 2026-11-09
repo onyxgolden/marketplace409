@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError, readJson } from "../../../../../_lib/a
 import { updateTakeoffLine, deleteTakeoffLine } from "@/application/work-management/takeoff";
 
 export async function PATCH(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, lineId } = await params;
@@ -16,7 +16,7 @@ export async function PATCH(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, lineId } = await params;

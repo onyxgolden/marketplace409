@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth
 import { createTakeoffLine, listTakeoffLinesForDrawing } from "@/application/work-management/takeoff";
 
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
@@ -15,7 +15,7 @@ export async function GET(request, { params }) {
 }
 
 export async function POST(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;

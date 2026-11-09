@@ -12,12 +12,28 @@ import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
+import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
+
+// UI-density redesign: 8 tabs (the Milestones tab is a placeholder until
+// slice 9 builds it — see the tabset correction). Tab order: the schedule
+// spine (Work steps, then Milestones) follows the package overview; Budget
+// & Change Orders sits after the IFA→IFC redlines per the brief.
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "steps", label: "Work steps" },
+  { id: "milestones", label: "Milestones" },
+  { id: "permits", label: "Permits" },
+  { id: "redlines", label: "IFA→IFC redlines" },
+  { id: "budget", label: "Budget & Change Orders" },
+  { id: "documents", label: "Documents" },
+  { id: "activity", label: "Activity / Audit" },
+];
 
 // Friendly labels for the canonical gate keys (WP_GATES). The selector is
 // driven by defaultGatesFor(package_type); labels are display-only.
@@ -48,7 +64,7 @@ function editFormFromPackage(p) {
   };
 }
 
-export default function WorkPackageDetailClient({ initial, initialLinks = [] }) {
+export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
   const [transitions, setTransitions] = useState(initial.transitions);
@@ -76,6 +92,22 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const [deleteError, setDeleteError] = useState("");
   const deleteTriggerRef = useRef(null);
   const deleteBusyRef = useRef(false);
+  // UI-density redesign: tab state, initialized from the server-resolved
+  // ?tab= deep link (unknown values fall back to Overview). Switching tabs
+  // updates the URL (router.replace, no refetch of the already-loaded
+  // package data) and preserves the ?workspace= selection when one is active.
+  const [activeTab, setActiveTab] = useState(
+    TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview",
+  );
+
+  function switchTab(tab) {
+    setActiveTab(tab);
+    const params = new URLSearchParams();
+    if (tab !== "overview") params.set("tab", tab);
+    if (workspaceParam) params.set("workspace", workspaceParam);
+    const query = params.toString();
+    router.replace(query ? `${window.location.pathname}?${query}` : window.location.pathname, { scroll: false });
+  }
 
   const allowed = allowedTransitionsFrom(pkg);
   const target = transitionTarget ? findTransition(pkg, transitionTarget) : null;
@@ -83,7 +115,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   async function call(path, method, body) {
     setBusy(true);
     setError("");
-    const response = await fetch(path, {
+    const response = await fetch(withWorkspaceQuery(path), {
       method,
       headers: { "content-type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
@@ -100,7 +132,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   // package — the slug itself is the fallback label.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/work-packages/property-options")
+    fetch(withWorkspaceQuery("/api/work-packages/property-options"))
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Unable to load properties.");
@@ -199,7 +231,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     deleteBusyRef.current = true;
     setDeleteError("");
     try {
-      const response = await fetch(`/api/work-packages/${pkg.id}`, {
+      const response = await fetch(withWorkspaceQuery(`/api/work-packages/${pkg.id}`), {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -305,377 +337,438 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const isTerminal = pkg.status === WP_STATUS.VERIFIED_CLOSED || pkg.status === WP_STATUS.CANCELLED;
 
   return (
-    <div className="mt-6 space-y-6">
+    <div className="mt-6">
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Package</h2>
-          {!isTerminal && !editing && (
-            <button className={btnGhost} onClick={onStartEdit} disabled={busy}>Edit</button>
-          )}
+      <div role="tablist" aria-label="Work package sections" className="sticky top-0 z-20 -mx-4 border-b border-slate-200 bg-white px-4">
+        <div className="flex flex-wrap gap-1 py-2">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              onClick={() => switchTab(tab.id)}
+              className={
+                activeTab === tab.id
+                  ? "rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+                  : "rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-        {editing ? (
-          <form onSubmit={onSaveEdit} className="mt-4 space-y-4">
-            <div>
-              <label className={label}>Title</label>
-              <input className={input} value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} required />
-            </div>
-            <div>
-              <label className={label}>Scope description</label>
-              <textarea className={input} rows={3} value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
-            </div>
-            <div>
-              <label className={label} htmlFor="edit_project_id">Project (optional)</label>
-              <input id="edit_project_id" className={input} value={editForm.project_id} onChange={(e) => setEditForm({ ...editForm, project_id: e.target.value })} />
-            </div>
-            <div>
-              <label className={label}>Planned finish</label>
-              <input type="date" className={input} value={editForm.planned_finish} onChange={(e) => setEditForm({ ...editForm, planned_finish: e.target.value })} />
-            </div>
-            <div>
-              <label className={label} htmlFor="edit_property_id">Property (optional)</label>
-              <select id="edit_property_id" className={input} value={editForm.property_id}
-                onChange={(e) => setEditForm({ ...editForm, property_id: e.target.value })}
-                disabled={properties === null && !propertiesError}>
-                <option value="">No property assigned</option>
-                {editForm.property_id && !(properties || []).some((property) => property.slug === editForm.property_id) && (
-                  <option value={editForm.property_id}>{editForm.property_id} (current)</option>
-                )}
-                {(properties || []).map((property) => (
-                  <option key={property.slug} value={property.slug}>{property.label}</option>
-                ))}
-              </select>
-              {properties === null && !propertiesError && (
-                <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
-              )}
-              {propertiesError && (
-                <p className="mt-1 text-xs text-red-700">
-                  Properties could not be loaded ({propertiesError}) — the current assignment is shown by its saved name below.
-                </p>
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="mt-6 space-y-6">
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">Package</h2>
+              {!isTerminal && !editing && (
+                <button className={btnGhost} onClick={onStartEdit} disabled={busy}>Edit</button>
               )}
             </div>
-            <div className="flex gap-2">
-              <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
-              <button type="button" className={btnGhost} onClick={onCancelEdit} disabled={busy}>Cancel</button>
-            </div>
-          </form>
-        ) : (
-          <dl className="mt-4 grid gap-4 sm:grid-cols-3">
-            <Field title="Title" value={pkg.title} />
-            <Field title="Type" value={pkg.package_type?.replace(/_/g, " ")} />
-            <Field title="Priority" value={pkg.priority} />
-            <Field title="Project" value={pkg.project_id} />
-            <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
-            <div>
-              <dt className="text-xs font-medium text-slate-500">Property</dt>
-              <dd className="mt-0.5 text-sm text-slate-900">
-                {pkg.property_id ? (
-                  <Link
-                    href={`/forge/rental?recordType=property&recordId=${encodeURIComponent(pkg.property_id)}&propertyId=${encodeURIComponent(pkg.property_id)}`}
-                    className="font-medium text-blue-700 hover:underline"
-                  >
-                    {propertyLabel}
-                  </Link>
-                ) : (
-                  "No property assigned"
-                )}
-              </dd>
-            </div>
-            <Field title="Planned start" value={pkg.planned_start} />
-            <Field title="Planned finish" value={pkg.planned_finish} />
-            <Field title="Actual start" value={pkg.actual_start} />
-            <Field title="Actual finish" value={pkg.actual_finish} />
-            <Field title="Progress" value={pkg.percent_complete != null ? `${pkg.percent_complete}% (${pkg.progress_basis || "unknown basis"})` : "unknown"} />
-            <Field title="Equipment tag" value={pkg.equipment_tag} />
-            <Field title="Unit / Area / System" value={[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || null} />
-            <Field title="Work order ref" value={pkg.work_order_ref} />
-          </dl>
-        )}
-        {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
-      </section>
-
-      <WorkPackageBudgetPanel
-        packageId={pkg.id}
-        isTerminal={isTerminal}
-        refreshKey={costRefreshKey}
-      />
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <h2 className="text-sm font-semibold text-slate-900">Lifecycle</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Current status: <span className="font-semibold">{pkg.status.replace(/_/g, " ")}</span>
-        </p>
-        {pkg.blocked_reason && (
-          <p className="mt-2 text-sm text-red-700">Blocked: {pkg.blocked_reason}</p>
-        )}
-        {allowed.length > 0 ? (
-          <div className="mt-4 space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {allowed.map((to) => (
-                <button
-                  key={to}
-                  className={transitionTarget === to ? btnPrimary : btnGhost}
-                  onClick={() => setTransitionTarget(transitionTarget === to ? "" : to)}
-                  disabled={busy}
-                >
-                  {to.replace(/_/g, " ")}
-                </button>
-              ))}
-            </div>
-            {target?.requires && (
-              <p className="text-xs text-slate-500">
-                Requires: {target.requires.join(", ")}
-              </p>
-            )}
-            {transitionTarget && (
-              <div className="flex gap-2">
-                <input
-                  className={input}
-                  placeholder='Context as JSON, e.g. {"userConfirmedStart": true}. Gates, verifier identity, and reopen/override authority are derived server-side.'
-                  value={transitionCtx}
-                  onChange={(e) => setTransitionCtx(e.target.value)}
-                />
-                <button className={btnPrimary} onClick={onTransition} disabled={busy}>
-                  {busy ? "…" : "Confirm"}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-slate-500">Terminal state — no further transitions.</p>
-        )}
-        {transitions.length > 0 && (
-          <ul className="mt-4 space-y-1 text-xs text-slate-500">
-            {transitions.map((t) => (
-              <li key={t.id}>
-                {new Date(t.at).toLocaleString()} — {t.from_status} → {t.to_status}
-                {t.reason ? ` — ${t.reason}` : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <h2 className="text-sm font-semibold text-slate-900">Readiness attestations</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Human attestations feed the Readiness Review → Ready interim rule (Rung 1).
-        </p>
-        <form onSubmit={onAttest} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div>
-            <label className={label}>Gate</label>
-            <select className={`${input} sm:w-44`} value={attestation.gate} onChange={(e) => setAttestation({ ...attestation, gate: e.target.value })} required>
-              <option value="">Gate…</option>
-              {defaultGatesFor(pkg.package_type).map((g) => (
-                <option key={g} value={g}>{GATE_LABELS[g] || g}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex-1">
-            <label className={label}>Statement</label>
-            <input className={input} placeholder="Statement" value={attestation.statement} onChange={(e) => setAttestation({ ...attestation, statement: e.target.value })} required />
-          </div>
-          <label className="flex items-center gap-1 text-xs text-slate-600">
-            <input type="checkbox" checked={!!attestation.notApplicable} onChange={(e) => setAttestation({ ...attestation, notApplicable: e.target.checked })} />
-            N/A
-          </label>
-          {attestation.notApplicable && (
-            <div className="flex-1">
-              <label className={label}>N/A reason</label>
-              <input className={input} placeholder="Why not applicable" value={attestation.naReason || ""} onChange={(e) => setAttestation({ ...attestation, naReason: e.target.value })} required />
-            </div>
-          )}
-          <button type="submit" className={btnPrimary} disabled={busy}>Attest</button>
-        </form>
-        {attestations.length > 0 && (
-          <ul className="mt-3 space-y-1 text-xs text-slate-500">
-            {attestations.map((a) => (
-              <li key={a.id}>
-                {new Date(a.at).toLocaleString()} — <span className="font-medium">{GATE_LABELS[a.gate] || a.gate}</span>
-                {a.not_applicable ? " (N/A)" : ""} — {a.statement}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <WorkPackageLinks
-        packageId={pkg.id}
-        initialLinks={initialLinks}
-        onLinksChanged={() => setCostRefreshKey((key) => key + 1)}
-      />
-
-      <WorkPackagePermitAnnotations packageId={pkg.id} scope="package" />
-
-      <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
-
-      <WorkPackageDrawingReadiness packageId={pkg.id} />
-
-      <WorkPackageCraftAssignments packageId={pkg.id} />
-
-      <WorkPackageSteps packageId={pkg.id} />
-
-      <WorkPackageManpowerCurve packageId={pkg.id} />
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <h2 className="text-sm font-semibold text-slate-900">Scope baseline</h2>
-        {baselines.length === 0 ? (
-          <div className="mt-3">
-            <p className="text-xs text-slate-500">No frozen baseline yet. Freeze an immutable version:</p>
-            <textarea className={`${input} mt-2`} rows={4}
-              placeholder='[{"key": "BUNDLE-01", "description": "Pull bundle", "quantity": 1, "unit": "each"}]'
-              value={baselineItems} onChange={(e) => setBaselineItems(e.target.value)} />
-            <button className={`${btnPrimary} mt-2`} onClick={onFreeze} disabled={busy}>Freeze baseline</button>
-          </div>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {baselines.map((b) => (
-              <div key={b.id} className="rounded border border-slate-100 p-3 text-xs text-slate-600">
-                <span className="font-semibold">Version {b.version}</span> — frozen {new Date(b.frozen_at).toLocaleString()} — {b.membership.length} items
-                <span className="ml-2 font-mono text-slate-400">{b.membership_hash}</span>
-                {b.supersedes_id && <span className="ml-2 text-slate-400">supersedes v{b.version - 1}</span>}
-              </div>
-            ))}
-            <form onSubmit={onPropose} className="mt-2 space-y-2 border-t border-slate-100 pt-3">
-              <p className="text-xs font-medium text-slate-600">Propose a post-freeze change</p>
-              <select className={input} value={changeForm.changeType} onChange={(e) => setChangeForm({ ...changeForm, changeType: e.target.value })}>
-                {["addition", "removal", "substitution"].map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <textarea className={input} rows={2} placeholder="Describe the change" value={changeForm.description}
-                onChange={(e) => setChangeForm({ ...changeForm, description: e.target.value })} required />
-              <button type="submit" className={btnGhost} disabled={busy}>Propose change</button>
-            </form>
-            {changes.length > 0 && (
-              <ul className="space-y-2">
-                {changes.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between rounded border border-slate-100 p-2 text-xs">
-                    <span><span className="font-medium">{c.change_type}</span> — {c.description} — {c.status}</span>
-                    {c.status === "proposed" && (
-                      <span className="flex gap-1">
-                        <button className={btnGhost} onClick={() => onDecide(c.id, true)} disabled={busy}>Approve</button>
-                        <button className={btnGhost} onClick={() => onDecide(c.id, false)} disabled={busy}>Reject</button>
-                      </span>
+            {editing ? (
+              <form onSubmit={onSaveEdit} className="mt-4 space-y-4">
+                <div>
+                  <label className={label}>Title</label>
+                  <input className={input} value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} required />
+                </div>
+                <div>
+                  <label className={label}>Scope description</label>
+                  <textarea className={input} rows={3} value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+                </div>
+                <div>
+                  <label className={label} htmlFor="edit_project_id">Project (optional)</label>
+                  <input id="edit_project_id" className={input} value={editForm.project_id} onChange={(e) => setEditForm({ ...editForm, project_id: e.target.value })} />
+                </div>
+                <div>
+                  <label className={label}>Planned finish</label>
+                  <input type="date" className={input} value={editForm.planned_finish} onChange={(e) => setEditForm({ ...editForm, planned_finish: e.target.value })} />
+                </div>
+                <div>
+                  <label className={label} htmlFor="edit_property_id">Property (optional)</label>
+                  <select id="edit_property_id" className={input} value={editForm.property_id}
+                    onChange={(e) => setEditForm({ ...editForm, property_id: e.target.value })}
+                    disabled={properties === null && !propertiesError}>
+                    <option value="">No property assigned</option>
+                    {editForm.property_id && !(properties || []).some((property) => property.slug === editForm.property_id) && (
+                      <option value={editForm.property_id}>{editForm.property_id} (current)</option>
                     )}
+                    {(properties || []).map((property) => (
+                      <option key={property.slug} value={property.slug}>{property.label}</option>
+                    ))}
+                  </select>
+                  {properties === null && !propertiesError && (
+                    <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
+                  )}
+                  {propertiesError && (
+                    <p className="mt-1 text-xs text-red-700">
+                      Properties could not be loaded ({propertiesError}) — the current assignment is shown by its saved name below.
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
+                  <button type="button" className={btnGhost} onClick={onCancelEdit} disabled={busy}>Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <dl className="mt-4 grid gap-4 sm:grid-cols-3">
+                <Field title="Title" value={pkg.title} />
+                <Field title="Type" value={pkg.package_type?.replace(/_/g, " ")} />
+                <Field title="Priority" value={pkg.priority} />
+                <Field title="Project" value={pkg.project_id} />
+                <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
+                <div>
+                  <dt className="text-xs font-medium text-slate-500">Property</dt>
+                  <dd className="mt-0.5 text-sm text-slate-900">
+                    {pkg.property_id ? (
+                      <Link
+                        href={`/forge/rental?recordType=property&recordId=${encodeURIComponent(pkg.property_id)}&propertyId=${encodeURIComponent(pkg.property_id)}`}
+                        className="font-medium text-blue-700 hover:underline"
+                      >
+                        {propertyLabel}
+                      </Link>
+                    ) : (
+                      "No property assigned"
+                    )}
+                  </dd>
+                </div>
+                <Field title="Planned start" value={pkg.planned_start} />
+                <Field title="Planned finish" value={pkg.planned_finish} />
+                <Field title="Actual start" value={pkg.actual_start} />
+                <Field title="Actual finish" value={pkg.actual_finish} />
+                <Field title="Progress" value={pkg.percent_complete != null ? `${pkg.percent_complete}% (${pkg.progress_basis || "unknown basis"})` : "unknown"} />
+                <Field title="Equipment tag" value={pkg.equipment_tag} />
+                <Field title="Unit / Area / System" value={[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || null} />
+                <Field title="Work order ref" value={pkg.work_order_ref} />
+              </dl>
+            )}
+            {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
+          </section>
+
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Lifecycle</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Current status: <span className="font-semibold">{pkg.status.replace(/_/g, " ")}</span>
+            </p>
+            {pkg.blocked_reason && (
+              <p className="mt-2 text-sm text-red-700">Blocked: {pkg.blocked_reason}</p>
+            )}
+            {allowed.length > 0 ? (
+              <div className="mt-4 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {allowed.map((to) => (
+                    <button
+                      key={to}
+                      className={transitionTarget === to ? btnPrimary : btnGhost}
+                      onClick={() => setTransitionTarget(transitionTarget === to ? "" : to)}
+                      disabled={busy}
+                    >
+                      {to.replace(/_/g, " ")}
+                    </button>
+                  ))}
+                </div>
+                {target?.requires && (
+                  <p className="text-xs text-slate-500">
+                    Requires: {target.requires.join(", ")}
+                  </p>
+                )}
+                {transitionTarget && (
+                  <div className="flex gap-2">
+                    <input
+                      className={input}
+                      placeholder='Context as JSON, e.g. {"userConfirmedStart": true}. Gates, verifier identity, and reopen/override authority are derived server-side.'
+                      value={transitionCtx}
+                      onChange={(e) => setTransitionCtx(e.target.value)}
+                    />
+                    <button className={btnPrimary} onClick={onTransition} disabled={busy}>
+                      {busy ? "…" : "Confirm"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">Terminal state — no further transitions.</p>
+            )}
+            {transitions.length > 0 && (
+              <ul className="mt-4 space-y-1 text-xs text-slate-500">
+                {transitions.map((t) => (
+                  <li key={t.id}>
+                    {new Date(t.at).toLocaleString()} — {t.from_status} → {t.to_status}
+                    {t.reason ? ` — ${t.reason}` : ""}
                   </li>
                 ))}
               </ul>
             )}
-          </div>
-        )}
-      </section>
+          </section>
 
-      {deletionEligibility?.isOwner && (
-        <section aria-label="Danger zone" className="rounded-lg border border-red-200 bg-white p-5">
-          <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
-          <h3 className="mt-3 text-sm font-medium text-slate-900">Delete work package</h3>
-          {deletionEligibility.canDelete ? (
-            <>
-              <p className="mt-1 text-sm text-slate-600">
-                This draft package has no budget, links, or history yet, so it can be
-                deleted permanently. A short audit record of the deletion is kept.
-              </p>
-              <button
-                ref={deleteTriggerRef}
-                type="button"
-                className={`${btn} mt-3 bg-red-600 text-white hover:bg-red-500`}
-                onClick={openDeleteDialog}
-              >
-                Delete work package
-              </button>
-            </>
-          ) : (
-            <div className="mt-1 text-sm text-slate-600">
-              <p>This package can&apos;t be deleted:</p>
-              {deletionEligibility.status !== WP_STATUS.DRAFT && (
-                <p className="mt-2">
-                  Only draft packages can be deleted — this package is{" "}
-                  <span className="font-medium">
-                    {deletionEligibility.status.replace(/_/g, " ")}
-                  </span>
-                  . If it is no longer needed, cancel it instead of deleting it.
-                </p>
-              )}
-              {deletionEligibility.blockers.length > 0 && (
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {deletionEligibility.blockers.map((blocker) => (
-                    <li key={blocker.type}>
-                      <span className="font-medium">{blocker.label}</span> ({blocker.count})
-                      {" — "}
-                      {blocker.action}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          {!deleteOpen && deleteError && (
-            <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-              {deleteError}
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Readiness attestations</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Human attestations feed the Readiness Review → Ready interim rule (Rung 1).
             </p>
-          )}
-        </section>
+            <form onSubmit={onAttest} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div>
+                <label className={label}>Gate</label>
+                <select className={`${input} sm:w-44`} value={attestation.gate} onChange={(e) => setAttestation({ ...attestation, gate: e.target.value })} required>
+                  <option value="">Gate…</option>
+                  {defaultGatesFor(pkg.package_type).map((g) => (
+                    <option key={g} value={g}>{GATE_LABELS[g] || g}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1">
+                <label className={label}>Statement</label>
+                <input className={input} placeholder="Statement" value={attestation.statement} onChange={(e) => setAttestation({ ...attestation, statement: e.target.value })} required />
+              </div>
+              <label className="flex items-center gap-1 text-xs text-slate-600">
+                <input type="checkbox" checked={!!attestation.notApplicable} onChange={(e) => setAttestation({ ...attestation, notApplicable: e.target.checked })} />
+                N/A
+              </label>
+              {attestation.notApplicable && (
+                <div className="flex-1">
+                  <label className={label}>N/A reason</label>
+                  <input className={input} placeholder="Why not applicable" value={attestation.naReason || ""} onChange={(e) => setAttestation({ ...attestation, naReason: e.target.value })} required />
+                </div>
+              )}
+              <button type="submit" className={btnPrimary} disabled={busy}>Attest</button>
+            </form>
+            {attestations.length > 0 && (
+              <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                {attestations.map((a) => (
+                  <li key={a.id}>
+                    {new Date(a.at).toLocaleString()} — <span className="font-medium">{GATE_LABELS[a.gate] || a.gate}</span>
+                    {a.not_applicable ? " (N/A)" : ""} — {a.statement}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Scope baseline</h2>
+            {baselines.length === 0 ? (
+              <div className="mt-3">
+                <p className="text-xs text-slate-500">No frozen baseline yet. Freeze an immutable version:</p>
+                <textarea className={`${input} mt-2`} rows={4}
+                  placeholder='[{"key": "BUNDLE-01", "description": "Pull bundle", "quantity": 1, "unit": "each"}]'
+                  value={baselineItems} onChange={(e) => setBaselineItems(e.target.value)} />
+                <button className={`${btnPrimary} mt-2`} onClick={onFreeze} disabled={busy}>Freeze baseline</button>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {baselines.map((b) => (
+                  <div key={b.id} className="rounded border border-slate-100 p-3 text-xs text-slate-600">
+                    <span className="font-semibold">Version {b.version}</span> — frozen {new Date(b.frozen_at).toLocaleString()} — {b.membership.length} items
+                    <span className="ml-2 font-mono text-slate-400">{b.membership_hash}</span>
+                    {b.supersedes_id && <span className="ml-2 text-slate-400">supersedes v{b.version - 1}</span>}
+                  </div>
+                ))}
+                <form onSubmit={onPropose} className="mt-2 space-y-2 border-t border-slate-100 pt-3">
+                  <p className="text-xs font-medium text-slate-600">Propose a post-freeze change</p>
+                  <select className={input} value={changeForm.changeType} onChange={(e) => setChangeForm({ ...changeForm, changeType: e.target.value })}>
+                    {["addition", "removal", "substitution"].map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <textarea className={input} rows={2} placeholder="Describe the change" value={changeForm.description}
+                    onChange={(e) => setChangeForm({ ...changeForm, description: e.target.value })} required />
+                  <button type="submit" className={btnGhost} disabled={busy}>Propose change</button>
+                </form>
+                {changes.length > 0 && (
+                  <ul className="space-y-2">
+                    {changes.map((c) => (
+                      <li key={c.id} className="flex items-center justify-between rounded border border-slate-100 p-2 text-xs">
+                        <span><span className="font-medium">{c.change_type}</span> — {c.description} — {c.status}</span>
+                        {c.status === "proposed" && (
+                          <span className="flex gap-1">
+                            <button className={btnGhost} onClick={() => onDecide(c.id, true)} disabled={busy}>Approve</button>
+                            <button className={btnGhost} onClick={() => onDecide(c.id, false)} disabled={busy}>Reject</button>
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+
+          <WorkPackageLinks
+            packageId={pkg.id}
+            initialLinks={initialLinks}
+            onLinksChanged={() => setCostRefreshKey((key) => key + 1)}
+          />
+        </div>
       )}
 
-      {deleteOpen && deletionEligibility?.isOwner && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) closeDeleteDialog();
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-package-title"
-            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
-          >
-            <h2 id="delete-package-title" className="text-base font-semibold text-slate-900">
-              Delete work package
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
-              This permanently deletes the draft package. A short audit record (code,
-              title, who deleted it, and when) is kept. This can&apos;t be undone.
+      {activeTab === "steps" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageSteps packageId={pkg.id} />
+          <WorkPackageManpowerCurve packageId={pkg.id} />
+          <WorkPackageCraftAssignments packageId={pkg.id} />
+        </div>
+      )}
+
+      {activeTab === "milestones" && (
+        <div className="mt-6 space-y-6">
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Milestones</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Milestone tracking arrives with slice 9: the 14-milestone timing backbone from the
+              milestone tracker, per-package planned and actual dates, percent complete, and the
+              ±7-day late flag. This tab is a placeholder until that slice lands — nothing to
+              fill in here yet.
             </p>
-            <div className="mt-4">
-              <label className={label} htmlFor="delete_confirm_code">
-                Type the package code ({pkg.code}) to confirm
-              </label>
-              <input
-                id="delete_confirm_code"
-                className={input}
-                value={deleteConfirmCode}
-                onChange={(event) => setDeleteConfirmCode(event.target.value)}
-                disabled={deleteBusy}
-                autoComplete="off"
-              />
-            </div>
-            {deleteError && (
-              <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-                {deleteError}
-              </p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                className={btnGhost}
-                onClick={closeDeleteDialog}
-                disabled={deleteBusy}
-                autoFocus
+          </section>
+        </div>
+      )}
+
+      {activeTab === "permits" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackagePermitAnnotations packageId={pkg.id} scope="package" />
+        </div>
+      )}
+
+      {activeTab === "redlines" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageDrawingReadiness packageId={pkg.id} />
+        </div>
+      )}
+
+      {activeTab === "budget" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageBudgetPanel
+            packageId={pkg.id}
+            isTerminal={isTerminal}
+            refreshKey={costRefreshKey}
+          />
+        </div>
+      )}
+
+      {activeTab === "documents" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
+        </div>
+      )}
+
+      {activeTab === "activity" && (
+        <div className="mt-6 space-y-6">
+          {deletionEligibility?.isOwner && (
+            <section aria-label="Danger zone" className="rounded-lg border border-red-200 bg-white p-5">
+              <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
+              <h3 className="mt-3 text-sm font-medium text-slate-900">Delete work package</h3>
+              {deletionEligibility.canDelete ? (
+                <>
+                  <p className="mt-1 text-sm text-slate-600">
+                    This draft package has no budget, links, or history yet, so it can be
+                    deleted permanently. A short audit record of the deletion is kept.
+                  </p>
+                  <button
+                    ref={deleteTriggerRef}
+                    type="button"
+                    className={`${btn} mt-3 bg-red-600 text-white hover:bg-red-500`}
+                    onClick={openDeleteDialog}
+                  >
+                    Delete work package
+                  </button>
+                </>
+              ) : (
+                <div className="mt-1 text-sm text-slate-600">
+                  <p>This package can&apos;t be deleted:</p>
+                  {deletionEligibility.status !== WP_STATUS.DRAFT && (
+                    <p className="mt-2">
+                      Only draft packages can be deleted — this package is{" "}
+                      <span className="font-medium">
+                        {deletionEligibility.status.replace(/_/g, " ")}
+                      </span>
+                      . If it is no longer needed, cancel it instead of deleting it.
+                    </p>
+                  )}
+                  {deletionEligibility.blockers.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {deletionEligibility.blockers.map((blocker) => (
+                        <li key={blocker.type}>
+                          <span className="font-medium">{blocker.label}</span> ({blocker.count})
+                          {" — "}
+                          {blocker.action}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {!deleteOpen && deleteError && (
+                <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  {deleteError}
+                </p>
+              )}
+            </section>
+          )}
+
+          {deleteOpen && deletionEligibility?.isOwner && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) closeDeleteDialog();
+              }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="delete-package-title"
+                className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className={`${btn} bg-red-600 text-white hover:bg-red-500`}
-                onClick={onConfirmDelete}
-                disabled={deleteBusy || deleteConfirmCode !== pkg.code}
-              >
-                {deleteBusy ? "Deleting…" : "Delete"}
-              </button>
+                <h2 id="delete-package-title" className="text-base font-semibold text-slate-900">
+                  Delete work package
+                </h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
+                  This permanently deletes the draft package. A short audit record (code,
+                  title, who deleted it, and when) is kept. This can&apos;t be undone.
+                </p>
+                <div className="mt-4">
+                  <label className={label} htmlFor="delete_confirm_code">
+                    Type the package code ({pkg.code}) to confirm
+                  </label>
+                  <input
+                    id="delete_confirm_code"
+                    className={input}
+                    value={deleteConfirmCode}
+                    onChange={(event) => setDeleteConfirmCode(event.target.value)}
+                    disabled={deleteBusy}
+                    autoComplete="off"
+                  />
+                </div>
+                {deleteError && (
+                  <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    {deleteError}
+                  </p>
+                )}
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className={btnGhost}
+                    onClick={closeDeleteDialog}
+                    disabled={deleteBusy}
+                    autoFocus
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className={`${btn} bg-red-600 text-white hover:bg-red-500`}
+                    onClick={onConfirmDelete}
+                    disabled={deleteBusy || deleteConfirmCode !== pkg.code}
+                  >
+                    {deleteBusy ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

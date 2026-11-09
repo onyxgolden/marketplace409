@@ -653,7 +653,11 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
 }
 
 export async function listWorkPackages(db, { ownerId, status, packageType, propertyId }) {
-  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,updated_at")
+  // UI-density redesign: the dense grid also shows the estimate (Budget /
+  // Actual column reads planned_cost_cents pre-slice-8, Actual blank) and
+  // the Owner team (responsible_party.display_name, written by the create
+  // form as { domain, type, display_name }).
+  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,planned_cost_cents,responsible_party,updated_at")
     .eq("owner_id", ownerId).order("updated_at", { ascending: false });
   if (status) q = q.eq("status", status);
   if (packageType) q = q.eq("package_type", packageType);

@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError, readJson } from "../../../../../../../
 import { resolveRedline } from "@/application/work-management/drawingReviews";
 
 export async function PATCH(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, reviewId, redlineId } = await params;

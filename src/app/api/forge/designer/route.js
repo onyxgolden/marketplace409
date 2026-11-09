@@ -9,9 +9,18 @@ function ownerIdOf(authenticated) {
 }
 
 // GET /api/forge/designer — list the caller's saved designs (newest first).
-export async function GET() {
+// UI-density redesign: ?workspace=<ownerId> selects a workspace the actor
+// can act within, validated the same way as the work API (own id or an
+// active membership only; anything else falls back to the default).
+export async function GET(request) {
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    let requestedOwnerId = null;
+    try {
+      requestedOwnerId = new URL(request.url).searchParams.get("workspace");
+    } catch {
+      requestedOwnerId = null;
+    }
+    const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId });
     if (authenticated.response) return authenticated.response;
     const { data, error } = await authenticated.supabaseClient
       .from("designer_projects")

@@ -5,7 +5,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js
 //        nonCompletionReasons? }: record a weekly PPC result.
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

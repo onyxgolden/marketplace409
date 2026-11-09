@@ -5,7 +5,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js
 // stamped from the caller's JWT by the DB trigger — never from the body.
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const body = await readJson(request);

@@ -1,9 +1,9 @@
 import { createAsset } from "@/application/work-management/workPackages";
 import { ok, fail, serverError, workAuth, readJson } from "../work-packages/_lib/auth.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { data, error } = await auth.db.from("forge_work_assets").select(
       "id,asset_tag,asset_type,name,unit,area,system,updated_at")
@@ -17,7 +17,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const body = await readJson(request);
     const result = await createAsset(auth.db, {

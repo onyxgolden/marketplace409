@@ -5,9 +5,9 @@ import { ok, serverError, workAuth } from "../_lib/auth.js";
 // canonical residential property in the caller's workspace (aliases
 // deduped). Read-only and owner-scoped via workAuth — the effective owner
 // is resolved server-side, never taken from the client.
-export async function GET() {
+export async function GET(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const result = await listPackagePropertyOptions(auth.db, { ownerId: auth.ownerId });
     return ok(result);

@@ -3,7 +3,7 @@ import { ok, fail, serverError, workAuth, readJson } from "./_lib/auth.js";
 
 export async function GET(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const url = new URL(request.url);
     const result = await listWorkPackages(auth.db, {
@@ -20,7 +20,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const body = await readJson(request);
     const result = await createWorkPackage(auth.db, {

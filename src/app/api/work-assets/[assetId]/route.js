@@ -3,7 +3,7 @@ import { ok, serverError, workAuth } from "../../work-packages/_lib/auth.js";
 // GET: asset with its stable component breakdown.
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { assetId } = await params;
     const [asset, components] = await Promise.all([

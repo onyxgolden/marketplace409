@@ -9,7 +9,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 // verdicts from attestations alone (see migration).
 export async function GET(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const readiness = await getPackageReadiness(auth.db, {
@@ -28,7 +28,7 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
     const results = await runGateEvaluations(auth.db, {

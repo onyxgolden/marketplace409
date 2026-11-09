@@ -49,10 +49,7 @@ function buildSupabaseClient(user) {
         eq: vi.fn(function eq() {
           return this;
         }),
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: null,
-          error: null,
-        }),
+        then: (resolve) => resolve({ data: [], error: null }),
       })),
     })),
   };

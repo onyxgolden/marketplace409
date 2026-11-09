@@ -6,7 +6,7 @@ import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js
 // supersedes_id, package pointer advances with a concurrency check.
 export async function POST(request, { params }) {
   try {
-    const auth = await workAuth();
+    const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { changeId } = await params;
     const body = await readJson(request);

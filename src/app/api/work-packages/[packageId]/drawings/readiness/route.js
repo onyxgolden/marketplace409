@@ -7,7 +7,7 @@ import { getDrawingReadiness } from "@/application/work-management/drawingReview
 // open-required-redline count, plus package counts. Read-only; the
 // badge rules live in the snapshot RPC and the domain module.
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
   try {

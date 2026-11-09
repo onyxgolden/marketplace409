@@ -2,7 +2,7 @@ import { workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
 import { getPermitAnnotationHistory } from "@/application/work-management/permitAnnotations";
 
 export async function GET(request, { params }) {
-  const auth = await workAuth();
+  const auth = await workAuth(request);
   if (auth.error) return auth.error;
   try {
     const { packageId, annotationId } = await params;
