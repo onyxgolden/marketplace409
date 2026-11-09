@@ -195,9 +195,13 @@ def make_handler(server: ReceptionistServer):
 
         def do_GET(self):
             if self.path == "/health":
+                # Alert persistence health is fail-loud (fix round 2,
+                # P1-1): a degraded/unavailable dispatcher shows up
+                # here instead of silently losing emergency state.
                 return self._json(200, {"ok": True, **config.live_features(),
                                         "budget_used_minutes": round(server.budget.used_minutes, 2),
-                                        "active_calls": len(server.sessions)})
+                                        "active_calls": len(server.sessions),
+                                        "alert_persistence": server.dispatcher.health()})
             if self.path == "/config":
                 return self._json(200, config.live_features())
             return self._json(404, {"error": "not found"})

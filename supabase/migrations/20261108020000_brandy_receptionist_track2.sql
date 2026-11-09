@@ -22,8 +22,14 @@
 --  * Composite owner FKs: child rows cannot reference another owner's
 --    call. Every composite FK target carries a matching UNIQUE key.
 --  * Unique idempotency keys: duplicate/out-of-order provider events are
---    safe. Signed-ingest nonces are consumed atomically by the
---    receptionist_consume_ingest_nonce RPC (one row per nonce).
+--    safe. Signed-ingest nonces carry a lifecycle (fix round 2, P1-2):
+--    IN_PROGRESS -> COMMITTED | FAILED. Claiming a nonce does not mark
+--    the delivery complete: only receptionist_complete_ingest_nonce
+--    does, after every ingest write lands. A failed delivery is marked
+--    FAILED so an identical retry re-runs the ingest instead of being
+--    told it is already a duplicate. A committed replay returns the
+--    stored original result; the same nonce with a different request
+--    hash is rejected. Rows expire after the replay window.
 --  * callback_e164_encrypted holds AES-256-GCM ciphertext produced by
 --    the ingestion endpoint (format v1.<keyId>.<base64(iv||tag||ct)>);
 --    the key lives in server env only, never in this migration.
@@ -184,20 +190,119 @@ create table if not exists public.forge_rental_receptionist_delivery_outbox (
 );
 
 -- -------------------------------------------------- ingest nonce registry --
--- Signed-ingest replay protection (P2-1): one row per (owner, nonce).
--- Consumed atomically by receptionist_consume_ingest_nonce; a second
--- consume of the same nonce returns false and the request is treated as
--- a duplicate, never re-processed. Rows expire after the replay window.
+-- Signed-ingest replay protection (P2-1; lifecycle fix round 2, P1-2):
+-- one row per (owner, nonce), with a state machine. The old
+-- receptionist_consume_ingest_nonce committed the nonce BEFORE the
+-- ingest writes ran, so a failed delivery could never retry — an
+-- identical retry was told "duplicate" while its records were missing.
+-- The new RPCs split the lifecycle: claim (fresh / retry / committed /
+-- hash_mismatch), complete (only after every write lands), fail (so an
+-- identical retry re-runs the ingest). Same nonce + same hash retries
+-- unfinished work; same nonce + different hash is rejected; a
+-- committed replay returns the stored original result.
 create table if not exists public.forge_rental_receptionist_ingest_nonces (
   owner_id uuid not null,
   nonce text not null,
   request_hash text not null,
+  state text not null default 'IN_PROGRESS'
+    check (state in ('IN_PROGRESS', 'COMMITTED', 'FAILED')),
+  call_id uuid,
+  result jsonb,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   expires_at timestamptz not null,
   primary key (owner_id, nonce)
 );
 
-create or replace function public.receptionist_consume_ingest_nonce(
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists state text not null default 'IN_PROGRESS'
+    check (state in ('IN_PROGRESS', 'COMMITTED', 'FAILED'));
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists call_id uuid;
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists result jsonb;
+alter table public.forge_rental_receptionist_ingest_nonces
+  add column if not exists updated_at timestamptz not null default now();
+
+-- The pre-fix consume RPC is dropped: its commit-before-write semantics
+-- are the P1-2 bug. Nothing calls it after this migration.
+drop function if exists public.receptionist_consume_ingest_nonce(uuid, text, text);
+
+create or replace function public.receptionist_claim_ingest_nonce(
+  p_owner_id uuid, p_nonce text, p_request_hash text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  v_row public.forge_rental_receptionist_ingest_nonces%rowtype;
+  v_found boolean := false;
+begin
+  if p_owner_id is null or p_nonce is null or btrim(p_nonce) = '' then
+    raise exception 'An owner id and a nonce are required.' using errcode = '22023';
+  end if;
+  delete from public.forge_rental_receptionist_ingest_nonces
+    where expires_at <= now();
+  -- One atomic claim: insert wins for a fresh nonce; on conflict the
+  -- existing row decides. Two attempts cover a purge race.
+  for _attempt in 1..2 loop
+    insert into public.forge_rental_receptionist_ingest_nonces
+      (owner_id, nonce, request_hash, expires_at)
+      values (p_owner_id, p_nonce, coalesce(p_request_hash, ''), now() + interval '600 seconds')
+      on conflict (owner_id, nonce) do nothing
+      returning * into v_row;
+    if found then
+      return jsonb_build_object('status', 'fresh', 'call_id', null, 'result', null);
+    end if;
+    select * into v_row from public.forge_rental_receptionist_ingest_nonces
+      where owner_id = p_owner_id and nonce = p_nonce;
+    if found then
+      v_found := true;
+      exit;
+    end if;
+  end loop;
+  if not v_found then
+    raise exception 'Ingest nonce claim failed for an unknown reason.' using errcode = '55000';
+  end if;
+  if v_row.request_hash <> coalesce(p_request_hash, '') then
+    return jsonb_build_object('status', 'hash_mismatch',
+      'call_id', v_row.call_id, 'result', v_row.result);
+  end if;
+  if v_row.state = 'COMMITTED' then
+    return jsonb_build_object('status', 'committed',
+      'call_id', v_row.call_id, 'result', v_row.result);
+  end if;
+  -- IN_PROGRESS or FAILED with the same hash: retry the ingest. The
+  -- writes are idempotent (call upsert, event dedupe, draft upsert),
+  -- so a concurrent duplicate collapses onto the same records.
+  return jsonb_build_object('status', 'retry',
+    'call_id', v_row.call_id, 'result', null);
+end;
+$$;
+
+create or replace function public.receptionist_complete_ingest_nonce(
+  p_owner_id uuid, p_nonce text, p_request_hash text,
+  p_call_id uuid, p_result jsonb
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  update public.forge_rental_receptionist_ingest_nonces
+    set state = 'COMMITTED', call_id = p_call_id, result = p_result,
+        expires_at = now() + interval '600 seconds', updated_at = now()
+    where owner_id = p_owner_id and nonce = p_nonce
+      and request_hash = coalesce(p_request_hash, '')
+      and state in ('IN_PROGRESS', 'FAILED');
+  return found;
+end;
+$$;
+
+create or replace function public.receptionist_fail_ingest_nonce(
   p_owner_id uuid, p_nonce text, p_request_hash text
 ) returns boolean
 language plpgsql
@@ -206,15 +311,13 @@ set search_path = public
 set row_security = off
 as $$
 begin
-  if p_owner_id is null or p_nonce is null or btrim(p_nonce) = '' then
-    raise exception 'An owner id and a nonce are required.' using errcode = '22023';
-  end if;
-  delete from public.forge_rental_receptionist_ingest_nonces
-    where expires_at <= now();
-  insert into public.forge_rental_receptionist_ingest_nonces
-    (owner_id, nonce, request_hash, expires_at)
-    values (p_owner_id, p_nonce, coalesce(p_request_hash, ''), now() + interval '600 seconds')
-    on conflict (owner_id, nonce) do nothing;
+  -- Only an in-flight nonce can fail. A COMMITTED nonce is never
+  -- un-completed: its records already landed.
+  update public.forge_rental_receptionist_ingest_nonces
+    set state = 'FAILED', updated_at = now()
+    where owner_id = p_owner_id and nonce = p_nonce
+      and request_hash = coalesce(p_request_hash, '')
+      and state = 'IN_PROGRESS';
   return found;
 end;
 $$;
@@ -291,7 +394,9 @@ revoke all on public.forge_rental_receptionist_drafts from public, anon, authent
 revoke all on public.forge_rental_receptionist_delivery_outbox from public, anon, authenticated, service_role;
 revoke all on public.forge_rental_receptionist_ingest_nonces from public, anon, authenticated, service_role;
 revoke all on function public.forge_rental_receptionist_events_append_only() from public;
-revoke all on function public.receptionist_consume_ingest_nonce(uuid, text, text) from public;
+revoke all on function public.receptionist_claim_ingest_nonce(uuid, text, text) from public;
+revoke all on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb) from public;
+revoke all on function public.receptionist_fail_ingest_nonce(uuid, text, text) from public;
 -- The append-only trigger must be able to FIRE for the roles that might
 -- ever hold UPDATE on events: without EXECUTE it would fail with a bare
 -- 42501 instead of the append-only message. The function only raises,
@@ -307,7 +412,9 @@ grant select, insert on public.forge_rental_receptionist_alert_attempts to servi
 grant select, insert, update on public.forge_rental_receptionist_drafts to service_role;
 grant select, insert, update on public.forge_rental_receptionist_delivery_outbox to service_role;
 grant select, insert, delete on public.forge_rental_receptionist_ingest_nonces to service_role;
-grant execute on function public.receptionist_consume_ingest_nonce(uuid, text, text) to service_role;
+grant execute on function public.receptionist_claim_ingest_nonce(uuid, text, text) to service_role;
+grant execute on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb) to service_role;
+grant execute on function public.receptionist_fail_ingest_nonce(uuid, text, text) to service_role;
 
 -- authenticated: SELECT everywhere, UPDATE on drafts only. No direct
 -- browser/client writes to calls, events, alerts, attempts or outbox.

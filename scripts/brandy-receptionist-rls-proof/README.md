@@ -1,4 +1,4 @@
-# Brandy receptionist RLS + FK proof (fix round 1)
+# Brandy receptionist RLS + FK proof (fix round 2)
 
 Behavioral proof for `supabase/migrations/20261108000000_rental_receptionist_calls_events_drafts.sql`
 on a real PostgreSQL 16 scratch cluster. Mirrors
@@ -37,8 +37,15 @@ Exits non-zero on any failed case. The script drops and recreates the
 - **P1-6** — `callback_e164_encrypted` is `bytea`, not `text`; a service
   blob stores. (The encrypt/decrypt roundtrip, access, log and rotation
   tests live in `src/lib/receptionist/__tests__/callbackCrypto.test.js`.)
-- **P2-1** — the nonce RPC consumes once (true, then false), is scoped
-  per owner, is denied to authenticated, and purges stale rows.
+- **P2-1** — the nonce lifecycle (fix round 2, P1-2): claim returns
+  fresh / retry / committed / hash_mismatch; complete commits only from
+  IN_PROGRESS or FAILED with the matching hash and stores the result;
+  fail marks IN_PROGRESS failed and never un-completes; the old
+  commit-before-write consume RPC is gone; all three lifecycle RPCs are
+  service-only; stale rows are purged by the claim.
+- **P1-3** — a conflict-ignored draft upsert returns zero rows (the
+  `.single()` trap); the owner-scoped fallback SELECT finds exactly the
+  one existing draft and the conflict path does not reset its state.
 - **P2-2** — duplicate draft upsert keeps exactly one draft; a plain
   duplicate insert fails the unique; owner APPROVE is a preliminary
   decision with `maintenance_request_id` still null (no canonical record).

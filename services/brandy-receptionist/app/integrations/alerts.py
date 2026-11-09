@@ -17,15 +17,29 @@ Sequence (brief §4):
 5. Idempotent event/attempt IDs prevent duplicated alert storms on STT
    partials, reconnects and webhook retries.
 
-Escalation durability (fix round 1, P1-4): the ack deadline is armed on a
-dedicated scheduler thread the moment an alert dispatches — no external
-caller is needed to start backup. Backup escalation is claimed exactly
-once (atomic backup-once claim); repeated timeout checks collapse to the
-same wave. Alert state persists to a JSON file on every mutation, so a
-worker restart reloads unresolved alerts and re-arms their deadlines
-instead of dropping them. Retries are bounded by max_attempts per
-channel; an alert that exhausts them becomes DEAD_LETTER, still
-UNRESOLVED, never silently closed.
+Escalation durability (fix round 1, P1-4; hardened fix round 2, P1-1):
+the ack deadline is armed on a dedicated scheduler thread the moment an
+alert dispatches — no external caller is needed to start backup. Backup
+escalation is claimed exactly once (atomic backup-once claim); repeated
+timeout checks collapse to the same wave. Alert state persists to a JSON
+file on every mutation, so a worker restart reloads unresolved alerts and
+re-arms their deadlines instead of dropping them. Retries are bounded by
+max_attempts per channel; an alert that exhausts them becomes
+DEAD_LETTER, still UNRESOLVED, never silently closed.
+
+Persistence is fail-LOUD, never best-effort (fix round 2, P1-1): a
+write/rename/fsync failure raises AlertPersistenceError, is logged at
+CRITICAL, and sticks in dispatcher health until a later persist
+succeeds; the affected alert records carry persistence_degraded. The
+alert attempt itself still goes out (fail-open for the human alert, per
+the brief) — but nothing may claim the alert was safely persisted when
+it was not. Persists are serialized across processes with a lock file
+and merge disk state under the lock, so a second worker cannot clobber
+the first worker's alerts; terminal states (ACKNOWLEDGED, DEAD_LETTER)
+always win a merge. A corrupt state file is preserved aside
+(<path>.corrupt-<ts>) and surfaced in health, never silently dropped.
+No state_path means persistence is UNAVAILABLE, also visible in
+health — in-memory-only operation is honest about that.
 
 Acknowledgment binding (fix round 1, P1-3): a DTMF ack is only accepted
 when it names the provider SID of a recorded alert attempt for that
@@ -39,13 +53,29 @@ real numbers in code.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import threading
 import time
 import uuid
 
+try:
+    import fcntl  # POSIX cross-process state lock; absent on Windows.
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
+
+logger = logging.getLogger(__name__)
+
 ACK_TIMEOUT_S_DEFAULT = 30
+
+
+class AlertPersistenceError(RuntimeError):
+    """Alert state could not be persisted durably. Raised by
+    AlertDispatcher._persist; callers that must keep the human alert
+    flowing catch it via _persist_safe, which leaves the failure sticky
+    in health() instead of swallowing it."""
 
 
 class AlertAttempt:
@@ -213,46 +243,204 @@ class AlertDispatcher:
         self.backoff_s = backoff_s
         self.state_path = state_path
         self._alerts: dict = {}
-        self._lock = threading.Lock()
+        # RLock: _persist takes it while merging/serializing and is also
+        # called from check_ack_timeout while the lock is already held.
+        self._lock = threading.RLock()
+        # Fail-loud persistence state (fix round 2, P1-1): sticky until
+        # a later persist succeeds. Never reset silently.
+        self._persistence_error: str | None = None
+        self._persistence_error_at: float | None = None
+        self._load_error: str | None = None
         self._scheduler = EscalationScheduler(self) if scheduler_enabled else None
         self._load_state()
 
     # -- durable state ---------------------------------------------------------
+    def health(self) -> dict:
+        """Persistence health for /health and operators. 'ok' means the
+        last persist succeeded; 'degraded' means a persist or load failed
+        and the failure is still sticky (a load error stays sticky even
+        after later persists succeed, because prior alerts may have been
+        lost); 'unavailable' means no state_path was configured, so
+        nothing is durable at all."""
+        if not self.state_path:
+            persistence = "unavailable"
+        elif self._persistence_error is not None or self._load_error is not None:
+            persistence = "degraded"
+        else:
+            persistence = "ok"
+        unresolved = sum(
+            1 for a in self._alerts.values()
+            if a.get("human_ack_at") is None and a.get("state") != "DEAD_LETTER")
+        return {"persistence": persistence,
+                "state_path": self.state_path,
+                "locking": "fcntl" if fcntl is not None else "unavailable",
+                "alerts": len(self._alerts),
+                "unresolved": unresolved,
+                "last_error": self._persistence_error or self._load_error,
+                "last_error_at": self._persistence_error_at}
+
+    def _record_persistence_error(self, message: str) -> None:
+        self._persistence_error = message
+        self._persistence_error_at = self.clock()
+        for alert in self._alerts.values():
+            alert["persistence_degraded"] = True
+        logger.critical("brandy-receptionist alert persistence failed: %s", message)
+
     def _serialize_alert(self, alert: dict) -> dict:
-        data = {k: v for k, v in alert.items() if k != "attempts"}
+        data = {k: v for k, v in alert.items()
+                if k != "attempts" and not k.startswith("_")}
         data["attempts"] = [a.as_dict() for a in alert["attempts"]]
         return data
 
-    def _persist(self) -> None:
-        if not self.state_path:
+    def _deserialize_alert(self, data: dict) -> dict:
+        attempts = [AlertAttempt.from_dict(a) for a in data.pop("attempts", [])]
+        data["attempts"] = attempts
+        data.setdefault("backup_claimed", False)
+        data.setdefault("backup_waves", 0)
+        data.setdefault("next_retry_at", None)
+        data.setdefault("actor_ref", None)
+        data.setdefault("persistence_degraded", False)
+        data["_dirty"] = False
+        return data
+
+    @contextlib.contextmanager
+    def _state_lock(self):
+        """Exclusive cross-process lock on <state_path>.lock (POSIX
+        fcntl). Without fcntl (Windows) there is no cross-process
+        serialization; health() reports locking as unavailable."""
+        if fcntl is None or not self.state_path:
+            yield
             return
+        lock_path = f"{self.state_path}.lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            directory = os.path.dirname(self.state_path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            tmp = f"{self.state_path}.tmp"
-            with open(tmp, "w") as fh:
-                json.dump([self._serialize_alert(a) for a in self._alerts.values()], fh)
-            os.replace(tmp, self.state_path)
-        except OSError:
-            pass  # persistence is best-effort; in-memory state still works
+            deadline = time.time() + 5
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.time() >= deadline:
+                        raise AlertPersistenceError(
+                            f"timed out waiting for alert state lock {lock_path}")
+                    time.sleep(0.01)
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+
+    def _read_state_file(self) -> list:
+        """Raw alert records from disk. Missing file is a fresh start.
+        A corrupt file is preserved aside (<path>.corrupt-<ts>) and
+        recorded as a load error — never silently dropped, never
+        allowed to brick later persists."""
+        if not self.state_path or not os.path.exists(self.state_path):
+            return []
+        try:
+            with open(self.state_path) as fh:
+                records = json.load(fh)
+            if not isinstance(records, list):
+                raise ValueError("alert state file is not a JSON list")
+            return records
+        except (ValueError, OSError) as exc:
+            self._load_error = f"alert state file unreadable: {exc}"
+            self._persistence_error_at = self.clock()
+            logger.critical("brandy-receptionist %s", self._load_error)
+            try:
+                aside = f"{self.state_path}.corrupt-{int(time.time())}"
+                os.replace(self.state_path, aside)
+            except OSError:
+                pass  # the corrupt file stays; the error is already sticky
+            return []
+
+    def _merge_disk_records(self, records: list) -> None:
+        """Merge disk records into memory. Disk-only alerts are adopted.
+        For a shared alert, a terminal disk state (ACKNOWLEDGED or
+        DEAD_LETTER) always wins — an ack must never be lost to a stale
+        in-memory copy. Otherwise a dirty in-memory alert wins; a clean
+        in-memory alert yields to disk (another worker changed it)."""
+        for raw in records:
+            if not isinstance(raw, dict) or "emergency_event_id" not in raw:
+                continue
+            event_id = raw["emergency_event_id"]
+            disk = self._deserialize_alert(dict(raw))
+            memory = self._alerts.get(event_id)
+            if memory is None:
+                self._alerts[event_id] = disk
+            elif disk.get("state") in ("ACKNOWLEDGED", "DEAD_LETTER") \
+                    and memory.get("state") not in ("ACKNOWLEDGED", "DEAD_LETTER"):
+                self._alerts[event_id] = disk
+            elif memory.get("_dirty"):
+                pass  # this worker changed it since load; memory wins
+            else:
+                self._alerts[event_id] = disk
+
+    def _fsync_dir(self, directory: str) -> None:
+        if not directory:
+            return
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def _persist(self) -> None:
+        """Durably write all alerts: lock, reload + merge disk state
+        (so a second worker's alerts are not clobbered), write tmp,
+        fsync file, atomic replace, fsync directory. Raises
+        AlertPersistenceError on any failure — never swallows it. A
+        missing state_path records persistence as unavailable. The
+        in-process lock is held throughout so the merge, the payload
+        snapshot and the dirty-flag clearing are one atomic step."""
+        if not self.state_path:
+            self._persistence_error = (
+                "persistence unavailable: no state_path configured")
+            self._persistence_error_at = self.clock()
+            return
+        with self._lock:
+            try:
+                with self._state_lock():
+                    self._merge_disk_records(self._read_state_file())
+                    payload = [self._serialize_alert(a)
+                               for a in self._alerts.values()]
+                    directory = os.path.dirname(self.state_path)
+                    if directory:
+                        os.makedirs(directory, exist_ok=True)
+                    tmp = f"{self.state_path}.tmp"
+                    with open(tmp, "w") as fh:
+                        json.dump(payload, fh)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp, self.state_path)
+                    self._fsync_dir(directory)
+            except AlertPersistenceError:
+                raise
+            except OSError as exc:
+                self._record_persistence_error(f"alert state persist failed: {exc}")
+                raise AlertPersistenceError(str(exc)) from exc
+            for alert in self._alerts.values():
+                alert["_dirty"] = False
+            self._persistence_error = None
+            self._persistence_error_at = None
+
+    def _persist_safe(self) -> bool:
+        """Persist, fail-open for the human alert itself: a persistence
+        failure must not stop the phone call, but the failure is sticky
+        in health() and flagged on the alert records. Returns False
+        when persistence failed."""
+        try:
+            self._persist()
+        except AlertPersistenceError:
+            return False
+        return True
 
     def _load_state(self) -> None:
         if not self.state_path or not os.path.exists(self.state_path):
             return
-        try:
-            with open(self.state_path) as fh:
-                records = json.load(fh)
-        except (ValueError, OSError):
-            return
-        for data in records:
-            attempts = [AlertAttempt.from_dict(a) for a in data.pop("attempts", [])]
-            data["attempts"] = attempts
-            data.setdefault("backup_claimed", False)
-            data.setdefault("backup_waves", 0)
-            data.setdefault("next_retry_at", None)
-            data.setdefault("actor_ref", None)
-            self._alerts[data["emergency_event_id"]] = data
+        self._merge_disk_records(self._read_state_file())
         # Re-arm deadlines for anything still unresolved: a restart must
         # resume escalation, never silently drop a pending alert.
         if self._scheduler is not None:
@@ -281,8 +469,10 @@ class AlertDispatcher:
                 "human_ack_at": None, "ack_method": None, "actor_ref": None,
                 "backup_attempted_at": None, "resolution_state": "UNRESOLVED",
                 "backup_claimed": False, "backup_waves": 0, "next_retry_at": None,
+                "persistence_degraded": False,
                 "attempts": [],
             }
+            alert["_dirty"] = True
             self._alerts[emergency_event_id] = alert
         # Concurrent primary voice + SMS (separate provider request IDs).
         threads = []
@@ -294,7 +484,10 @@ class AlertDispatcher:
         for t in threads:
             t.join(timeout=5)
         alert["alert_requested_at"] = alert["detected_at"]
-        self._persist()
+        alert["_dirty"] = True
+        # Fail-open for the human alert: a persistence failure must not
+        # stop the call, but it is sticky in health() — never silent.
+        self._persist_safe()
         # Arm the ack deadline: backup starts on the scheduler even if no
         # other code ever calls check_ack_timeout.
         if self._scheduler is not None:
@@ -330,13 +523,15 @@ class AlertDispatcher:
                 attempt.delivered_at = result.get("delivered_at")
         with self._lock:
             alert["attempts"].append(attempt)
-        self._persist()
+            alert["_dirty"] = True
+        self._persist_safe()
         return attempt
 
     def _start_backup_wave(self, alert: dict) -> None:
         """One backup voice + SMS wave. Caller must already hold the
         backup-once claim and have incremented backup_waves."""
         alert["backup_attempted_at"] = self.clock()
+        alert["_dirty"] = True
         attempt_no = 1 + alert["backup_waves"]
         threads = []
         for channel in ("VOICE", "SMS"):
@@ -392,7 +587,8 @@ class AlertDispatcher:
                 alert["next_retry_at"] = self.clock() + backoff
                 if self._scheduler is not None:
                     self._scheduler.arm(emergency_event_id, alert["next_retry_at"])
-            self._persist()
+            alert["_dirty"] = True
+            self._persist_safe()
             return alert
 
     def acknowledge(self, emergency_event_id: str, method: str, *,
@@ -421,9 +617,10 @@ class AlertDispatcher:
         alert["actor_ref"] = actor_ref or (f"twilio:{call_sid}" if call_sid else "operator")
         alert["state"] = "ACKNOWLEDGED"
         alert["resolution_state"] = "ACKNOWLEDGED"
+        alert["_dirty"] = True
         if self._scheduler is not None:
             self._scheduler.disarm(emergency_event_id)
-        self._persist()
+        self._persist_safe()
         return alert
 
     def get(self, emergency_event_id: str) -> dict | None:

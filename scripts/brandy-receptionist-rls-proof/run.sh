@@ -1,6 +1,6 @@
 #!/bin/bash
 # Behavioral RLS + FK + encryption-shape proof for
-# 20261108020000_brandy_receptionist_track2.sql (fix round 1).
+# 20261108020000_brandy_receptionist_track2.sql (fix round 2).
 # Self-contained: drops/recreates the scratch rlsproof database on the local
 # PG16 cluster (socket /tmp, port 5444 — see README.md), applies setup.sql,
 # applies the real migration twice, then proves the post-fix authorization
@@ -203,22 +203,67 @@ run_bool "P1-6 stored value keeps the v1 format" t \
 run_bool "P1-6 stored value is not a phone number" f \
   "select callback_e164_encrypted ~ '^\\+?[0-9]{7,15}$' from forge_rental_receptionist_calls where id = '$CALL_A';"
 
-# --- P2-1: nonce RPC ---------------------------------------------------------
-run_bool "P2-1 nonce consume (1st) returns true" t \
-  "$(as_service "select receptionist_consume_ingest_nonce('$A'::uuid, 'nonce-proof-1', 'hash-1');")"
-run_bool "P2-1 nonce consume (replay) returns false" f \
-  "$(as_service "select receptionist_consume_ingest_nonce('$A'::uuid, 'nonce-proof-1', 'hash-1');")"
+# --- P2-1: nonce lifecycle (fix round 2, P1-2) ------------------------------
+# Claim does not commit: only complete_ingest_nonce does, after the
+# ingest writes land. A failed delivery is marked FAILED so an identical
+# retry re-runs the ingest; a committed replay returns the stored
+# original result; a different hash is rejected.
+run_bool "P2-1 claim fresh nonce returns status fresh" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1') ->> 'status') = 'fresh';")"
+run_bool "P2-1 claim same nonce+hash before complete returns retry" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1') ->> 'status') = 'retry';")"
+run_bool "P2-1 claim same nonce+different hash returns hash_mismatch" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-2') ->> 'status') = 'hash_mismatch';")"
+run_bool "P2-1 fail marks the in-progress nonce FAILED" t \
+  "$(as_service "select receptionist_fail_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1');")"
+run_bool "P2-1 claim after fail with same hash returns retry" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1') ->> 'status') = 'retry';")"
+run_bool "P2-1 complete commits the nonce" t \
+  "$(as_service "select receptionist_complete_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1', '$CALL_A', '{\"success\": true, \"callId\": \"$CALL_A\"}'::jsonb);")"
+run_bool "P2-1 claim after complete returns committed with stored result" t \
+  "$(as_service "select (c ->> 'status') = 'committed' and (c -> 'result' ->> 'callId') = '$CALL_A' from (select receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1') as c) s;")"
+run_bool "P2-1 complete twice: second returns false" f \
+  "$(as_service "select receptionist_complete_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1', '$CALL_A', '{}'::jsonb);")"
+run_bool "P2-1 fail after complete returns false (never un-completes)" f \
+  "$(as_service "select receptionist_fail_ingest_nonce('$A'::uuid, 'nonce-lc-1', 'hash-1');")"
+run_bool "P2-1 claim fresh nonce-lc-3 returns fresh" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-3', 'hash-3') ->> 'status') = 'fresh';")"
+run_bool "P2-1 complete with wrong hash returns false" f \
+  "$(as_service "select receptionist_complete_ingest_nonce('$A'::uuid, 'nonce-lc-3', 'hash-wrong', '$CALL_A', '{}'::jsonb);")"
+run_bool "P2-1 fail with wrong hash returns false" f \
+  "$(as_service "select receptionist_fail_ingest_nonce('$A'::uuid, 'nonce-lc-3', 'hash-wrong');")"
+run_bool "P2-1 complete after fail commits (FAILED -> COMMITTED allowed)" t \
+  "$(as_service "select receptionist_fail_ingest_nonce('$A'::uuid, 'nonce-lc-3', 'hash-3') and receptionist_complete_ingest_nonce('$A'::uuid, 'nonce-lc-3', 'hash-3', '$CALL_A', '{}'::jsonb);")"
 run_bool "P2-1 same nonce for another owner is independent" t \
-  "$(as_service "select receptionist_consume_ingest_nonce('$B'::uuid, 'nonce-proof-1', 'hash-1');")"
-run_case "P2-1 nonce RPC denied to authenticated" deny \
-  "$(as_uid "$A" "select receptionist_consume_ingest_nonce('$A'::uuid, 'nonce-proof-2', 'hash-2');")"
+  "$(as_service "select (receptionist_claim_ingest_nonce('$B'::uuid, 'nonce-lc-1', 'hash-1') ->> 'status') = 'fresh';")"
+run_case "P2-1 claim RPC denied to authenticated" deny \
+  "$(as_uid "$A" "select receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-proof-2', 'hash-2');")"
+run_case "P2-1 complete RPC denied to authenticated" deny \
+  "$(as_uid "$A" "select receptionist_complete_ingest_nonce('$A'::uuid, 'nonce-proof-2', 'hash-2', '$CALL_A', '{}'::jsonb);")"
+run_case "P2-1 fail RPC denied to authenticated" deny \
+  "$(as_uid "$A" "select receptionist_fail_ingest_nonce('$A'::uuid, 'nonce-proof-2', 'hash-2');")"
 $PSQL -c "$(as_service "insert into forge_rental_receptionist_ingest_nonces (owner_id, nonce, request_hash, expires_at) values ('$A', 'nonce-stale', 'h', now() - interval '10 minutes');")" > /dev/null 2>&1
-run_bool "P2-1 nonce consume still works with a stale row present" t \
-  "$(as_service "select receptionist_consume_ingest_nonce('$A'::uuid, 'nonce-proof-3', 'hash-3');")"
-run_count "P2-1 stale nonce purged by the RPC" 0 \
+run_bool "P2-1 nonce claim still works with a stale row present" t \
+  "$(as_service "select (receptionist_claim_ingest_nonce('$A'::uuid, 'nonce-lc-4', 'hash-4') ->> 'status') = 'fresh';")"
+run_count "P2-1 stale nonce purged by the claim" 0 \
   "select count(*) from forge_rental_receptionist_ingest_nonces where nonce = 'nonce-stale';"
 run_bool "P2-1 fresh nonce carries a 600s expiry" t \
-  "select expires_at > created_at + interval '590 seconds' from forge_rental_receptionist_ingest_nonces where nonce = 'nonce-proof-3';"
+  "select expires_at > created_at + interval '590 seconds' from forge_rental_receptionist_ingest_nonces where nonce = 'nonce-lc-4';"
+run_bool "P2-1 old commit-before-write consume RPC is gone" f \
+  "select exists (select 1 from pg_proc where proname = 'receptionist_consume_ingest_nonce');"
+run_bool "P2-1 nonce row carries a lifecycle state" t \
+  "select state = 'COMMITTED' from forge_rental_receptionist_ingest_nonces where owner_id = '$A' and nonce = 'nonce-lc-1';"
+
+# --- P1-3: conflict-ignored draft upsert returns zero rows ------------------
+# ON CONFLICT DO NOTHING returns no row, so .single() 500s on the
+# conflict path. The route now reads the id back owner-scoped; these
+# cases prove the DB shape the fix relies on.
+run_count "P1-3 conflict-ignored draft upsert returns zero rows" 0 \
+  "$(as_service "with ins as (insert into forge_rental_receptionist_drafts (owner_id, call_id, draft_kind, proposed_payload) values ('$A', '$CALL_A', 'MAINTENANCE_INTAKE', '{}') on conflict (owner_id, call_id, draft_kind) do nothing returning id) select count(*) from ins;")"
+run_count "P1-3 fallback SELECT finds exactly the one existing draft" 1 \
+  "$(as_service "select count(*) from forge_rental_receptionist_drafts where owner_id = '$A' and call_id = '$CALL_A' and draft_kind = 'MAINTENANCE_INTAKE';")"
+run_bool "P1-3 conflict path did not reset the draft state" t \
+  "$(as_service "select review_state = 'PENDING' from forge_rental_receptionist_drafts where owner_id = '$A' and call_id = '$CALL_A' and draft_kind = 'MAINTENANCE_INTAKE';")"
 
 # --- P2-2: draft uniqueness + preliminary review -----------------------------
 $PSQL -c "$(as_service "insert into forge_rental_receptionist_drafts (owner_id, call_id, draft_kind, proposed_payload) values ('$A', '$CALL_A', 'MAINTENANCE_INTAKE', '{}') on conflict (owner_id, call_id, draft_kind) do nothing;")" > /dev/null 2>&1
@@ -262,8 +307,12 @@ run_bool "grants authenticated INSERT on events denied" f "select has_table_priv
 run_bool "grants authenticated UPDATE on events denied" f "select has_table_privilege('authenticated', 'public.forge_rental_receptionist_events', 'UPDATE');"
 run_bool "grants service UPDATE on events denied" f "select has_table_privilege('service_role', 'public.forge_rental_receptionist_events', 'UPDATE');"
 run_bool "grants anon SELECT on calls denied" f "select has_table_privilege('anon', 'public.forge_rental_receptionist_calls', 'SELECT');"
-run_bool "grants authenticated EXECUTE nonce RPC denied" f "select has_function_privilege('authenticated', 'public.receptionist_consume_ingest_nonce(uuid, text, text)', 'EXECUTE');"
-run_bool "grants service EXECUTE nonce RPC" t "select has_function_privilege('service_role', 'public.receptionist_consume_ingest_nonce(uuid, text, text)', 'EXECUTE');"
+run_bool "grants authenticated EXECUTE claim RPC denied" f "select has_function_privilege('authenticated', 'public.receptionist_claim_ingest_nonce(uuid, text, text)', 'EXECUTE');"
+run_bool "grants service EXECUTE claim RPC" t "select has_function_privilege('service_role', 'public.receptionist_claim_ingest_nonce(uuid, text, text)', 'EXECUTE');"
+run_bool "grants authenticated EXECUTE complete RPC denied" f "select has_function_privilege('authenticated', 'public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb)', 'EXECUTE');"
+run_bool "grants service EXECUTE complete RPC" t "select has_function_privilege('service_role', 'public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb)', 'EXECUTE');"
+run_bool "grants authenticated EXECUTE fail RPC denied" f "select has_function_privilege('authenticated', 'public.receptionist_fail_ingest_nonce(uuid, text, text)', 'EXECUTE');"
+run_bool "grants service EXECUTE fail RPC" t "select has_function_privilege('service_role', 'public.receptionist_fail_ingest_nonce(uuid, text, text)', 'EXECUTE');"
 run_bool "grants authenticated any access to nonce table denied" f "select has_table_privilege('authenticated', 'public.forge_rental_receptionist_ingest_nonces', 'SELECT');"
 run_bool "grants service EXECUTE append-only trigger fn" t "select has_function_privilege('service_role', 'public.forge_rental_receptionist_events_append_only()', 'EXECUTE');"
 run_count "policy inventory: exactly the 7 expected policies" 7 \

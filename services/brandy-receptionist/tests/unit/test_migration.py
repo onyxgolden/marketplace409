@@ -119,9 +119,17 @@ class TestMigrationFile(unittest.TestCase):
         self.assertIn("references public.forge_rental_receptionist_calls (owner_id, id)", self.lower)
 
     def test_nonce_rpc(self):
-        # P2-1: atomic consume, service-only EXECUTE.
-        self.assertIn("receptionist_consume_ingest_nonce", self.lower)
-        self.assertIn("grant execute on function public.receptionist_consume_ingest_nonce(uuid, text, text) to service_role", self.code)
+        # P2-1 + fix round 2 P1-2: claim/complete/fail lifecycle, the
+        # old commit-before-write consume RPC is dropped, service-only
+        # EXECUTE on all three lifecycle RPCs.
+        self.assertIn("receptionist_claim_ingest_nonce", self.lower)
+        self.assertIn("receptionist_complete_ingest_nonce", self.lower)
+        self.assertIn("receptionist_fail_ingest_nonce", self.lower)
+        self.assertIn("drop function if exists public.receptionist_consume_ingest_nonce(uuid, text, text)", self.lower)
+        self.assertIn("grant execute on function public.receptionist_claim_ingest_nonce(uuid, text, text) to service_role", self.code)
+        self.assertIn("grant execute on function public.receptionist_complete_ingest_nonce(uuid, text, text, uuid, jsonb) to service_role", self.code)
+        self.assertIn("grant execute on function public.receptionist_fail_ingest_nonce(uuid, text, text) to service_role", self.code)
+        self.assertIn("state in ('in_progress', 'committed', 'failed')", self.lower)
 
     def test_callback_column_is_versioned_ciphertext(self):
         # P1-6: the column holds AES-256-GCM ciphertext in a versioned
