@@ -122,6 +122,9 @@ export function mapPermitAnnotationRpcError(error) {
   if (message.includes("WPP3_RETIRED")) {
     return { ok: false, httpStatus: 409, error: "Retired permit links cannot be changed." };
   }
+  if (message.includes("WPP7_DRAWING_RETIRED")) {
+    return { ok: false, httpStatus: 409, error: "This drawing is already retired." };
+  }
   if (message.includes("WPP3_INVALID_TARGET")) {
     return { ok: false, httpStatus: 400, error: "Permit links attach to a package or a drawing." };
   }

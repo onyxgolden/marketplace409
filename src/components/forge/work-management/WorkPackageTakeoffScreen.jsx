@@ -13,6 +13,7 @@ import { useState } from "react";
 import { ForgeLoadingState, ForgeErrorState, ForgeEmptyState } from "@/components/forge/ForgeStates";
 import { forgeTheme } from "@/components/forge/theme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { preIfcTag } from "@/domains/work-management/drawingReviews.js";
 import WorkPackagePermitAnnotations from "@/components/work-management/WorkPackagePermitAnnotations";
 
 const DRAWING_TYPE_LABELS = { p_id: "P&ID", cut_sheet: "Cut sheet", isometric: "Isometric" };
@@ -501,7 +502,7 @@ function EntryHistoryList({ packageId, entryId }) {
   );
 }
 
-function ProgressEntryRow({ packageId, entry, lineLabel, onChanged }) {
+function ProgressEntryRow({ packageId, entry, lineLabel, preIfc, onChanged }) {
   const [mode, setMode] = useState(null);
   const [quantity, setQuantity] = useState(String(entry.installedQuantity));
   const [workDate, setWorkDate] = useState(entry.workDate);
@@ -552,7 +553,10 @@ function ProgressEntryRow({ packageId, entry, lineLabel, onChanged }) {
   return (
     <tr className="border-b border-slate-200 text-sm dark:border-slate-800">
       <td className="py-2 pr-3">{entry.workDate}</td>
-      <td className="py-2 pr-3">{lineLabel}</td>
+      <td className="py-2 pr-3">{lineLabel}{preIfc && (
+        <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+          title="Recorded against a preliminary (IFA) drawing — not yet issued for construction. Historic actuals are unchanged.">{preIfc}</span>
+      )}</td>
       <td className="py-2 pr-3">{entry.installedQuantity}</td>
       <td className="py-2 pr-3">{entry.voidedAt ? "Voided" : `Version ${entry.version}`}</td>
       <td className="py-2">
@@ -681,6 +685,19 @@ function ProgressSectionBody({ packageId }) {
     () => api(`/api/work-packages/${packageId}/progress`).then((b) => b.entries),
     { ttlMs: 10_000 },
   );
+  // Slice 7: the same shared readiness snapshot the steps list and
+  // the readiness panel read (same cache key, so one fetch serves
+  // all three). The PRE-IFC flag is display only — a failed or
+  // pre-migration readiness read simply shows no flag, and the
+  // progress history keeps rendering.
+  const { data: readinessData } = useStaleWhileRevalidate(
+    `work-packages:${packageId}:drawing-readiness`,
+    () => api(`/api/work-packages/${packageId}/drawings/readiness`),
+    { ttlMs: 10_000 },
+  );
+  const readinessByDrawingId = new Map(
+    (readinessData?.drawings || []).map((row) => [row.drawingId, row]),
+  );
 
   function bump(message) {
     if (message) setConfirmation(message);
@@ -771,9 +788,11 @@ function ProgressSectionBody({ packageId }) {
               <tbody>
                 {entries.map((entry) => {
                   const line = linesById.get(entry.takeoffLineId);
+                  const readiness = line?.drawingId ? readinessByDrawingId.get(line.drawingId) : null;
                   return (
                     <ProgressEntryRow key={entry.id} packageId={packageId} entry={entry}
                       lineLabel={line ? line.description : entry.takeoffLineId}
+                      preIfc={preIfcTag(readiness)}
                       onChanged={(message) => bump(message)} />
                   );
                 })}

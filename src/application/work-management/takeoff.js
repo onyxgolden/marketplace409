@@ -25,6 +25,8 @@ function toCamelDrawing(row) {
     drawingType: row.drawing_type,
     title: row.title ?? null,
     pIdDrawingId: row.p_id_drawing_id ?? null,
+    retiredAt: row.retired_at ?? null,
+    retiredBy: row.retired_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -136,6 +138,14 @@ export async function listDrawingsForPackage(db, { ownerId, packageId }) {
  * package, no child drawings rolled up, no takeoff lines), with the
  * same 404/409 contract.
  *
+ * Slice 7: a drawing WITH review history (an issued revision exists)
+ * is RETIRED by that RPC instead of physically deleted — its rounds,
+ * redlines, releases and field-redline evidence stay on file. The
+ * RPC still returns true, so the service re-reads the drawing row
+ * afterwards to tell the caller which happened: { retired: true }
+ * when the row survives with retired_at set, { retired: false }
+ * when the row is gone.
+ *
  * Pre-migration fallback: the code deploys on merge while the slice-3
  * migration applies on a separate word. Until it applies the RPC does
  * not exist — and neither does the annotation table, so no annotation
@@ -158,7 +168,10 @@ export async function deleteDrawing(db, { ownerId, packageId, drawingId }) {
   if (data !== true && !(Array.isArray(data) && data[0] === true)) {
     throw new Error("Permit annotation delete-drawing RPC returned an unexpected result.");
   }
-  return { ok: true };
+  const { data: after, error: afterError } = await db.from("forge_work_drawings")
+    .select("id, retired_at").eq("owner_id", ownerId).eq("id", drawingId).maybeSingle();
+  if (afterError) throw afterError;
+  return { ok: true, retired: after != null && after.retired_at != null };
 }
 
 /**

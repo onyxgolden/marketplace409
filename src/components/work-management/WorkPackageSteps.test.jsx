@@ -191,6 +191,19 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, linkRevisi
         }),
       };
     }
+    if (parsed.pathname === "/api/work-packages/pkg_1/drawings/readiness" && !options.method) {
+      return {
+        ok: true,
+        json: async () => ({
+          packageId: "pkg_1", packageStatus: "in_progress",
+          drawings: [
+            { drawingId: "dwg_1", drawingNumber: "P-101", drawingType: "p_id", title: "Main line", badge: "IFA — In review", constructionUsable: false, preliminary: true, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+            { drawingId: "dwg_2", drawingNumber: "C-201", drawingType: "cut_sheet", title: "Spool sheet", badge: "IFC — Issued for construction", constructionUsable: true, preliminary: false, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+          ],
+          counts: { drawingsTotal: 2, ifcReleased: 1, pendingReview: 1, returned: 0, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+        }),
+      };
+    }
     throw new Error(`unexpected fetch ${options.method || "GET"} ${url}`);
   }));
   return { calls, getSteps: () => currentSteps, getLinks: () => links };
@@ -537,6 +550,17 @@ describe("WorkPackageSteps", () => {
     await act(async () => {});
     expect(container.textContent).toContain("P-101 (p_id) — Main line");
     expect(container.textContent).toContain("Per P&ID rev C");
+  });
+
+  it("shows the drawing review badge next to a linked drawing (slice 7)", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await act(async () => { buttonByText(container, "Drawings").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // An IFA link is preliminary — it never authorizes construction use.
+    expect(container.textContent).toContain("Drawing: IFA — In review");
+    expect(container.textContent).toContain("preliminary");
   });
 
   it("hides retired steps unless asked, and offers them as supersession candidates", async () => {
