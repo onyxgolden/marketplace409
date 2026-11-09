@@ -75,6 +75,23 @@ class CallDialogue:
         self.additional_intents: list = []
         self.refused_callback = False
 
+    def mark_twiml_disclosure_played(self, revision_id: str) -> dict:
+        """Go-live: the inbound TwiML already spoke the disclosure (the
+        <Say> in twiml_start_stream) before the Media Stream opened, so
+        the dialogue must NOT speak it a second time in-stream. Call this
+        once at stream start: it moves ANSWER -> DISCLOSE_AI_AND_RECORDING
+        with the played revision recorded, so the first caller turn flows
+        straight into intent capture (consent recorded as "disclosed"
+        unless the caller then refuses recording). Returns revision info.
+        Only valid from ANSWER; any other state is a programming error."""
+        if self.state != "ANSWER":
+            raise RuntimeError(
+                f"mark_twiml_disclosure_played requires ANSWER, got {self.state}")
+        self.slots["disclosure_revision_id"] = revision_id
+        self.slots["consent_status"] = "disclosed"
+        self.state = "DISCLOSE_AI_AND_RECORDING"
+        return {"disclosure_spoken_via": "twiml", "revision_id": revision_id}
+
     # -- speech ----------------------------------------------------------------
     def _speak(self, template_id: str = None, model_text: str = None,
                response_class: str = None, is_readback: bool = False) -> dict:

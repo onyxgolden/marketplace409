@@ -16,6 +16,27 @@ from dataclasses import dataclass, field
 from .config import ReceptionistConfig
 from .policy.dialogue import CallDialogue
 
+# The ONLY source labels a call record may carry (ingest route + DB
+# CHECK enforce the same set). Activation modes are NOT sources.
+CALL_SOURCES = ("TEST", "LIVE", "SYNTHETIC")
+
+# Canonical activation-mode -> call-source mapping, applied at the
+# gateway boundary (media_stream._start_session). A TEST_ONLY session
+# is a TEST call; a LIVE_APPROVED session is a LIVE call. OFF has no
+# session at all — passing it here is a caller bug, not a label.
+MODE_TO_SOURCE = {"TEST_ONLY": "TEST", "LIVE_APPROVED": "LIVE"}
+
+
+def canonical_source(mode: str) -> str:
+    """Map an activation mode to the call-source label its sessions
+    carry. Raises ValueError for OFF (no session) or an unknown mode —
+    a mode value must never reach a call record, an ingest payload, or
+    the inbox badge unmapped (fix round 1, P1-1)."""
+    try:
+        return MODE_TO_SOURCE[mode]
+    except KeyError:
+        raise ValueError(f"activation mode {mode!r} has no call source") from None
+
 
 def mask_e164(e164: str | None) -> str | None:
     if not e164:
@@ -48,7 +69,15 @@ class TurnTrace:
 
 class CallSession:
     def __init__(self, call_sid: str, ani: str | None = None,
-                 config: ReceptionistConfig | None = None):
+                 config: ReceptionistConfig | None = None,
+                 source: str = "SYNTHETIC"):
+        if source not in CALL_SOURCES:
+            # Defense in depth: the gateway canonicalizes the mode
+            # before constructing a session; a mode value (TEST_ONLY,
+            # LIVE_APPROVED, OFF) reaching here is a bug, and the
+            # ingest route + DB CHECK would 400 it anyway.
+            raise ValueError(
+                f"call source must be one of {CALL_SOURCES}, got {source!r}")
         self.call_sid = call_sid
         self.config = config or ReceptionistConfig()
         self.dialogue = CallDialogue(call_sid, ani=ani, config=self.config)
@@ -58,6 +87,19 @@ class CallSession:
         self.traces: list[TurnTrace] = []
         self._seen_keys: set = set()
         self.cost_minutes = 0.0
+        # source: TEST | LIVE | SYNTHETIC. Labels every record the session
+        # produces so test traffic can never be mistaken for live traffic
+        # in the inbox or the ledger. Default SYNTHETIC (v1 behavior).
+        self.source = source
+        # Cost estimate for this call (USD, rate version), filled by the
+        # server from the CostLedger at session end.
+        self.cost_estimate_usd: float | None = None
+        self.cost_rate_version: str | None = None
+        # Alert record for this call's emergency (if any), attached by the
+        # server at session end from the dispatcher — the FORGE ingest
+        # route upserts it into the alerts table so the inbox timeline
+        # shows attempts + ACKs. None when no emergency was detected.
+        self.alert_record: dict | None = None
 
     def record_event(self, event_type: str, turn_id: str, payload: dict | None = None) -> dict:
         key = idempotency_key(self.call_sid, event_type, turn_id)
@@ -120,6 +162,11 @@ class CallSession:
             "emergency_event_id": self.dialogue.emergency_event_id,
             "emergency_type": s.get("emergency_type"),
             "consent_status": s.get("consent_status"),
+            "consent_disclosure_revision": s.get("disclosure_revision_id"),
+            "source": self.source,
+            "cost_estimate_usd": self.cost_estimate_usd,
+            "cost_rate_version": self.cost_rate_version,
+            "alert": self.alert_record,
             "processing_state": s.get("processing_state"),
             "policy_version": self.config.policy_version,
             "draft_kind": self.draft_kind(),

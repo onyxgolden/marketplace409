@@ -11,7 +11,7 @@ export async function GET() {
     const { supabaseClient, effectiveOwnerId } = authenticated;
     const { data: alerts, error } = await supabaseClient
       .from("forge_rental_receptionist_alerts")
-      .select("id, emergency_event_id, hazard, detected_at, human_ack_at, ack_method, backup_attempted_at, resolution_state")
+      .select("id, emergency_event_id, hazard, detected_at, human_ack_at, ack_method, backup_attempted_at, resolution_state, refused_reason")
       .eq("owner_id", effectiveOwnerId)
       .order("detected_at", { ascending: false })
       .limit(100);
