@@ -826,8 +826,10 @@ describe("slice 7 migration: lifecycle", () => {
     // transition RPC runs SECURITY DEFINER as the table owner (the
     // app role holds SELECT only on forge_work_packages), with the
     // caller's JWT set — so the status change here runs as the
-    // superuser with app.test_uid set, never as `authenticated`.
-    await db.exec(`set app.test_uid = '${OWNER_A}';`);
+    // table owner with app.test_uid set, never as `authenticated`.
+    // The explicit `reset role` states that precondition instead of
+    // relying on the previous helper's `finally` having run.
+    await db.exec(`reset role; set app.test_uid = '${OWNER_A}';`);
     await db.query(`update forge_work_packages set status = '${status}' where owner_id = '${OWNER_A}' and id = 'pkg_a';`);
     return { review, round2 };
   }
@@ -1395,19 +1397,30 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
   async function waitForLockWait() {
     // True concurrency proof: the second session must actually be
     // blocked on a lock (not merely slow). Poll pg_stat_activity
-    // for up to 5s; the loop is the assertion's precondition. The
+    // for up to 10s; the loop is the assertion's precondition. The
     // poll runs on the superuser diag connection: pg_stat_activity
     // masks state/wait_event for other roles' backends, so a poll
     // issued as `authenticated` would never see the wait.
-    for (let i = 0; i < 50; i += 1) {
+    // Returns the last observed sample so a failure names what the
+    // backends were actually doing instead of just "false".
+    let sample = [];
+    for (let i = 0; i < 100; i += 1) {
       const { rows } = await pgDiag.query(`
-        select pid from pg_stat_activity
+        select pid, usename, state, wait_event_type, wait_event,
+               left(query, 80) as query
+        from pg_stat_activity
         where pid <> pg_backend_pid() and wait_event_type = 'Lock' and state = 'active';
       `);
-      if (rows.length > 0) return true;
+      sample = rows;
+      if (rows.length > 0) return { seen: true, sample };
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return false;
+    const { rows: allRows } = await pgDiag.query(`
+      select pid, usename, state, wait_event_type, wait_event,
+             left(query, 80) as query
+      from pg_stat_activity where pid <> pg_backend_pid();
+    `);
+    return { seen: false, sample: allRows };
   }
 
   it60("concurrent same-key redline creation stores one redline and one event", async () => {
@@ -1490,11 +1503,17 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
         '${OWNER_A}', 'pkg_conc3', 'dwg_c3', '${review.id}', 'C', 's3://forge/c3-c.pdf', '${SHA_C}', null);
     `);
     const cancelPromise = pgClient2.query(`
-      set app.test_uid = '${OWNER_A}';
+      reset role; set app.test_uid = '${OWNER_A}';
       update forge_work_packages set status = 'cancelled'
       where owner_id = '${OWNER_A}' and id = 'pkg_conc3';
     `);
-    expect(await waitForLockWait()).toBe(true);
+    // Mark the rejection handled at creation: the rejection is
+    // observed by the `await cancelPromise` below, but if the
+    // lock-wait assertion above it ever throws first, an
+    // un-awaited rejection must not surface as an unhandled error.
+    cancelPromise.catch(() => {});
+    const lockWait1 = await waitForLockWait();
+    expect(lockWait1.seen, `no session reached a lock wait; backends: ${JSON.stringify(lockWait1.sample)}`).toBe(true);
     await pgClient.query("commit; reset role;");
     await cancelPromise;
     await pgClient2.query("reset role;");
@@ -1516,7 +1535,7 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
       select * from forge_wp_drawing_review_decide(
         '${OWNER_A}', '${second.review.id}', 1, 'APPROVE', 'Checked.');
     `);
-    await pgClient.query(`set app.test_uid = '${OWNER_A}'; begin;`);
+    await pgClient.query(`reset role; set app.test_uid = '${OWNER_A}'; begin;`);
     await pgClient.query(`
       update forge_work_packages set status = 'cancelled'
       where owner_id = '${OWNER_A}' and id = 'pkg_conc4';
@@ -1526,7 +1545,12 @@ describe.skipIf(!HAS_REAL_PG)("slice 7 migration: real-PostgreSQL subset", () =>
       select * from forge_wp_drawing_ifc_release(
         '${OWNER_A}', 'pkg_conc4', 'dwg_c4', '${second.review.id}', 'C', 's3://forge/c4-c.pdf', '${SHA_C}', null);
     `);
-    expect(await waitForLockWait()).toBe(true);
+    // Same handled-at-creation guard as the cancel leg: the
+    // rejection is observed by the `expect().rejects` below, but a
+    // throw from the lock-wait assertion must not orphan it.
+    releasePromise.catch(() => {});
+    const lockWait2 = await waitForLockWait();
+    expect(lockWait2.seen, `no session reached a lock wait; backends: ${JSON.stringify(lockWait2.sample)}`).toBe(true);
     await pgClient.query("commit; reset role;");
     await expect(releasePromise).rejects.toThrow(/WPP7_PACKAGE_TERMINAL/);
     await pgClient2.query("reset role;");
