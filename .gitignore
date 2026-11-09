@@ -68,3 +68,7 @@ mobile/android/build/
 mobile/android/app/build/
 mobile/android/local.properties
 mobile/android/captures/
+
+# Python (brandy receptionist service)
+__pycache__/
+*.pyc
