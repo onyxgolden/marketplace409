@@ -75,6 +75,15 @@ describe("HubPage (Choose a workspace)", () => {
     mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: null });
   });
 
+  it("shows the Work Packages tile, linking to /forge/work, to an ordinary authenticated user", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "ordinary-1", email: "ordinary@example.com" } } });
+    const markup = renderToStaticMarkup(await HubPage());
+
+    expect(markup).toContain("Work Packages");
+    expect(markup).toContain('href="/forge/work"');
+    expect(markup).toContain("Work package planner");
+  });
+
   it("shows no Health tile to anyone -- the health shortcut was removed from the hub", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
     const markup = renderToStaticMarkup(await HubPage());

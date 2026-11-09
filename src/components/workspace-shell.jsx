@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Bell,
   Building2,
+  ClipboardList,
   Code2,
   DraftingCompass,
   GanttChart,
@@ -29,7 +30,7 @@ import ThemeToggle from "@/components/theme/ThemeToggle";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
 import CommandPaletteHost, { CommandPaletteTrigger } from "@/components/forge/CommandPalette";
 
-const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, Landmark, Tent };
+const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, Landmark, Tent, ClipboardList };
 
 // Named export so ForgeApplicationRail can render the identical
 // cross-workspace switcher above its own Forge-internal sub-nav, instead
