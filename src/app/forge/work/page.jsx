@@ -98,6 +98,12 @@ export default async function WorkPackagesPage({ searchParams }) {
             Document library
           </Link>
           <Link
+            href="/forge/work/admin"
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Admin
+          </Link>
+          <Link
             href={`/forge/work/new${workspaceQuery}`}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
