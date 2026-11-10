@@ -3,6 +3,7 @@ import { createRentalTenant } from "@/domains/rental-tenant";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
 import { badRequest, id, readOnlyWriteBlocked } from "./shared.js";
+import { requireRentalAdminKeyOrWorkspaceAccess } from "@/lib/rental/adminRoleAuthorization";
 
 export async function saveTenant({ authenticated, body, application, effectiveOwnerId, timestamp }) {
   const input = body.tenant;
@@ -74,6 +75,15 @@ export async function updateTenantEmail({ authenticated, body, effectiveOwnerId,
 
 export async function sendTenantInvite({ authenticated, body, effectiveOwnerId, timestamp }) {
   if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot send tenant invites." }, { status: 403 });
+  // Slice 1 (admin roles): sending an invite needs rental.tenants.invite
+  // (or the existing owner/co-owner access). Checked BEFORE the email is
+  // sent, so a denied caller cannot trigger a send whose stamp update
+  // would then fail.
+  const inviteGate = await requireRentalAdminKeyOrWorkspaceAccess({
+    authenticated,
+    key: "rental.tenants.invite",
+  });
+  if (inviteGate.response) return inviteGate.response;
   if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
   const tenantId = body.tenantId.trim();
   // Owner-scoped lookup: a tenant from another workspace resolves to 404,

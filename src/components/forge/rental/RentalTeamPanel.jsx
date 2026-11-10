@@ -454,6 +454,14 @@ export default function RentalTeamPanel() {
           check exactly what a team member experiences — previewing is read-only and every session
           is logged below.
         </p>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+          For fine-grained access — custom roles, per-role permissions, and the grant/change
+          log — use{" "}
+          <a href="/forge/rental/settings/permissions" className="font-bold underline">
+            Roles &amp; Permissions
+          </a>
+          .
+        </p>
       </div>
 
       {notice && (

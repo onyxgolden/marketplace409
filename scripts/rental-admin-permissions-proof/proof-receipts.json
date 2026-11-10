@@ -1,0 +1,277 @@
+{
+  "role_table_acl": [
+    {
+      "table_name": "rental_role_audit",
+      "relacl": "{postgres=arwdDxt/postgres,authenticated=r/postgres}",
+      "rls": true,
+      "force_rls": true
+    },
+    {
+      "table_name": "rental_role_capabilities",
+      "relacl": "{postgres=arwdDxt/postgres,authenticated=r/postgres}",
+      "rls": true,
+      "force_rls": true
+    },
+    {
+      "table_name": "rental_roles",
+      "relacl": "{postgres=arwdDxt/postgres,authenticated=r/postgres}",
+      "rls": true,
+      "force_rls": true
+    },
+    {
+      "table_name": "rental_user_roles",
+      "relacl": "{postgres=arwdDxt/postgres,authenticated=r/postgres}",
+      "rls": true,
+      "force_rls": true
+    }
+  ],
+  "function_acl": [
+    {
+      "proname": "rental_admin_caller_has_key",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_catalog_keys",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_ceiling_ok",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_is_privileged",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_owner_only_keys",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_require_key",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_require_manager",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_starter_role_keys",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_user_role_json",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_admin_validate_keys",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_assign_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_create_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_ensure_starter_roles",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_get_my_effective_permissions",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_get_role_audit",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_get_user_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_list_roles",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_lookup_user",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_retire_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_revoke_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "proname": "rental_update_role",
+      "proacl": "{postgres=X/postgres,authenticated=X/postgres}"
+    }
+  ],
+  "new_policies": [
+    {
+      "schemaname": "public",
+      "tablename": "rent_schedule_collection_cutover_audit",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_billing_settings",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_billing_settings_audit",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_convenience_fee_audit",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_late_fee_settings_audit",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_maintenance_requests",
+      "policyname": "rental_maintenance_requests_admin_insert",
+      "cmd": "INSERT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_maintenance_requests",
+      "policyname": "rental_maintenance_requests_admin_read",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_maintenance_requests",
+      "policyname": "rental_maintenance_requests_admin_update",
+      "cmd": "UPDATE",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_maintenance_work_orders",
+      "policyname": "rental_maintenance_work_orders_admin_insert",
+      "cmd": "INSERT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_maintenance_work_orders",
+      "policyname": "rental_maintenance_work_orders_admin_update",
+      "cmd": "UPDATE",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_payment_policy_audit",
+      "policyname": "billing_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_role_audit",
+      "policyname": "rental_role_audit_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_role_capabilities",
+      "policyname": "rental_role_capabilities_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_roles",
+      "policyname": "rental_roles_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_tenants",
+      "policyname": "rental_tenants_admin_insert",
+      "cmd": "INSERT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_tenants",
+      "policyname": "rental_tenants_admin_read",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_tenants",
+      "policyname": "rental_tenants_admin_update",
+      "cmd": "UPDATE",
+      "roles": "{authenticated}"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "rental_user_roles",
+      "policyname": "rental_user_roles_owner_select",
+      "cmd": "SELECT",
+      "roles": "{authenticated}"
+    }
+  ],
+  "billing_753_policies": [
+    {
+      "tablename": "rent_schedule_collection_cutover_audit",
+      "policyname": "rent_schedule_cutover_audit_owner_insert"
+    },
+    {
+      "tablename": "rental_billing_settings",
+      "policyname": "rental_billing_settings_owner_insert"
+    },
+    {
+      "tablename": "rental_billing_settings",
+      "policyname": "rental_billing_settings_owner_update"
+    },
+    {
+      "tablename": "rental_billing_settings_audit",
+      "policyname": "rental_billing_settings_audit_owner_insert"
+    },
+    {
+      "tablename": "rental_convenience_fee_audit",
+      "policyname": "convenience_fee_audit_owner_insert"
+    },
+    {
+      "tablename": "rental_late_fee_settings_audit",
+      "policyname": "late_fee_settings_audit_owner_insert"
+    },
+    {
+      "tablename": "rental_payment_policy_audit",
+      "policyname": "payment_policy_audit_owner_insert"
+    }
+  ],
+  "has_workspace_access_live_shape": [
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.has_workspace_access(p_owner_id text)\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\n SET row_security TO 'off'\nAS $function$\n    select p_owner_id = auth.uid()::text\n        or exists (\n            select 1 from workspace_members\n            where owner_id = p_owner_id\n              and member_user_id = auth.uid()\n              and status = 'active'\n              and role = 'co_owner'\n        );\n$function$\n"
+    }
+  ]
+}

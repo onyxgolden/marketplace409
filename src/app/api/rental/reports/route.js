@@ -19,6 +19,7 @@ import { buildVendorLedgerReport, vendorLedgerReportToCsv } from "@/application/
 import { scopeRentalDataToProperty } from "@/application/rental/scopeRentalDataToProperty";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { requireRentalReportAccess } from "@/lib/rental/adminRoleAuthorization";
 
 // rent_schedules is required by every core report that classifies a charge's collection authority
 // (buildRentalOperatingReport, buildDelinquentTenantsReport) — without it, those builders have no
@@ -184,6 +185,18 @@ export async function GET(request) {
     const a = await createAuthenticatedForgeApplication();
     if (a.response) return a.response;
     const url = new URL(request.url);
+
+    // Slice 1 (admin roles): a report view needs rental.reports.read and a
+    // download needs rental.reports.export — OR the existing workspace
+    // visibility, which preserves current access for every existing user.
+    // The key alone does not yet grant data to a caller without visibility
+    // (the underlying tables are not re-policied in slice 1).
+    const format = url.searchParams.get("format") || "";
+    const reportGate = await requireRentalReportAccess({
+      authenticated: a,
+      key: format === "csv" || format === "tax-csv" ? "rental.reports.export" : "rental.reports.read",
+    });
+    if (reportGate.response) return reportGate.response;
 
     if (url.searchParams.get("format") === "tax-csv") {
       const taxYear = Number(url.searchParams.get("taxYear"));
