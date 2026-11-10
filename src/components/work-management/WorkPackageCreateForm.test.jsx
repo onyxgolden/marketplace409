@@ -207,6 +207,70 @@ describe("WorkPackageCreateForm Project field (D3)", () => {
   });
 });
 
+describe("WorkPackageCreateForm mode selector", () => {
+  function modeButton(container, mode) {
+    return [...container.querySelectorAll('[role="radio"]')].find((b) => b.textContent === mode);
+  }
+
+  it("defaults to Industrial: shows Unit/Area/System, hides Property, submits mode: industrial", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    expect(container.querySelector("#unit")).not.toBeNull();
+    expect(container.querySelector("#area")).not.toBeNull();
+    expect(container.querySelector("#system")).not.toBeNull();
+    expect(container.querySelector("#property_id")).toBeNull();
+    expect(modeButton(container, "industrial").getAttribute("aria-checked")).toBe("true");
+    await submitCreate(container);
+    expect(posts[0].mode).toBe("industrial");
+  });
+
+  it("honors initialMode=commercial: shows Property, hides Unit/Area/System, submits mode: commercial", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm({ initialMode: "commercial" });
+    await settle();
+    expect(container.querySelector("#property_id")).not.toBeNull();
+    expect(container.querySelector("#unit")).toBeNull();
+    expect(container.querySelector("#area")).toBeNull();
+    expect(container.querySelector("#system")).toBeNull();
+    expect(modeButton(container, "commercial").getAttribute("aria-checked")).toBe("true");
+    await submitCreate(container);
+    expect(posts[0].mode).toBe("commercial");
+  });
+
+  it("clicking the mode toggle swaps the visible fields and the offered package types live", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    // Industrial by default: Type dropdown offers industrial-only values.
+    let typeSelect = container.querySelector("#package_type");
+    let typeValues = [...typeSelect.querySelectorAll("option")].map((o) => o.value);
+    expect(typeValues).toEqual(["engineering", "industrial", "capital_project", "other"]);
+    act(() => { modeButton(container, "commercial").click(); });
+    expect(container.querySelector("#property_id")).not.toBeNull();
+    expect(container.querySelector("#unit")).toBeNull();
+    typeSelect = container.querySelector("#package_type");
+    typeValues = [...typeSelect.querySelectorAll("option")].map((o) => o.value);
+    expect(typeValues).toEqual(["remodel", "rental_turn", "maintenance_repair", "new_construction_phase", "other"]);
+    // Switching back to Industrial restores the Unit/Area/System fields.
+    act(() => { modeButton(container, "industrial").click(); });
+    expect(container.querySelector("#unit")).not.toBeNull();
+    expect(container.querySelector("#property_id")).toBeNull();
+  });
+
+  it("resets package_type to 'other' on a mode toggle so the dropdown's value is never left pointing at a hidden option", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    const typeSelect = container.querySelector("#package_type");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(typeSelect, "engineering");
+    act(() => { typeSelect.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.querySelector("#package_type").value).toBe("engineering");
+    act(() => { modeButton(container, "commercial").click(); });
+    expect(container.querySelector("#package_type").value).toBe("other");
+  });
+});
+
 describe("WorkPackageCreateForm Cancel (D4)", () => {
   function cancelLink(container) {
     return [...container.querySelectorAll("a")].find(
