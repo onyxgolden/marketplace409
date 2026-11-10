@@ -69,9 +69,13 @@ afterEach(() => {
 });
 
 describe("WorkPackageCreateForm property picker (Slice 2)", () => {
+  // The Property select is Commercial-mode-only since the mode selector
+  // slice (default Industrial shows Unit/Area/System instead) — these
+  // tests are about the picker itself, unrelated to mode, so they render
+  // in Commercial mode explicitly to keep testing the same picker.
   it("offers 'No property assigned' plus one option per canonical house", async () => {
     stubFetch({ properties: CANONICAL_OPTIONS });
-    const { container } = renderForm();
+    const { container } = renderForm({ initialMode: "commercial" });
     await settle();
     const select = container.querySelector("#property_id");
     const options = [...select.querySelectorAll("option")].map((option) => ({
@@ -98,7 +102,7 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
 
   it("submits the canonical slug when a property is chosen", async () => {
     const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
-    const { container } = renderForm();
+    const { container } = renderForm({ initialMode: "commercial" });
     await settle();
     selectProperty(container, "4800-kent-ave");
     await submitCreate(container);
@@ -108,21 +112,21 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
 
   it("preselects the property the owner came from (alias slug matched canonically)", async () => {
     stubFetch({ properties: CANONICAL_OPTIONS });
-    const { container } = renderForm({ initialPropertyId: "1900-west-decker" });
+    const { container } = renderForm({ initialPropertyId: "1900-west-decker", initialMode: "commercial" });
     await settle();
     expect(container.querySelector("#property_id").value).toBe("1900-w-decker");
   });
 
   it("never preselects a property the owner does not have", async () => {
     stubFetch({ properties: CANONICAL_OPTIONS });
-    const { container } = renderForm({ initialPropertyId: "someone-elses-house" });
+    const { container } = renderForm({ initialPropertyId: "someone-elses-house", initialMode: "commercial" });
     await settle();
     expect(container.querySelector("#property_id").value).toBe("");
   });
 
   it("shows a plain empty state when the owner has no properties", async () => {
     stubFetch({ properties: [] });
-    const { container } = renderForm();
+    const { container } = renderForm({ initialMode: "commercial" });
     await settle();
     const select = container.querySelector("#property_id");
     expect([...select.querySelectorAll("option")]).toHaveLength(1);
@@ -131,7 +135,7 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
 
   it("shows an inline error and stays unassigned when properties fail to load", async () => {
     const { posts } = stubFetch({ failOptions: true });
-    const { container } = renderForm();
+    const { container } = renderForm({ initialMode: "commercial" });
     await settle();
     expect(container.textContent).toMatch(/Properties could not be loaded/);
     await submitCreate(container);
@@ -192,7 +196,7 @@ describe("WorkPackageCreateForm Project field (D3)", () => {
 
   it("keeps Project and Property independent in the payload", async () => {
     const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
-    const { container } = renderForm();
+    const { container } = renderForm({ initialMode: "commercial" });
     await settle();
     setProject(container, "Decker refresh");
     selectProperty(container, "1900-w-decker");

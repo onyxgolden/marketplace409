@@ -142,15 +142,20 @@ afterEach(() => {
 });
 
 describe("WorkPackageDetailClient property display (Slice 2)", () => {
+  // The Property field is Commercial-mode-only since the mode selector
+  // slice (Industrial shows Unit/Area/System instead; BASE_PKG's
+  // package_type "other" is ambiguous and infers Industrial by
+  // default) — these tests are about the Property field itself,
+  // unrelated to mode, so they set mode: "commercial" explicitly.
   it("shows 'No property assigned' when unassigned", () => {
     stubFetch();
-    const { container } = renderDetail();
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial" });
     expect(propertyField(container).textContent).toBe("No property assigned");
   });
 
   it("shows the linked property label with a link back to the property page", async () => {
     stubFetch();
-    const { container } = renderDetail({ ...BASE_PKG, property_id: "1900-w-decker" });
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial", property_id: "1900-w-decker" });
     await settle();
     const field = propertyField(container);
     expect(field.textContent).toBe("1900 W. Decker");
@@ -162,7 +167,7 @@ describe("WorkPackageDetailClient property display (Slice 2)", () => {
 
   it("keeps the edit picker faithful to the current assignment", async () => {
     const { patches } = stubFetch();
-    const { container } = renderDetail({ ...BASE_PKG, property_id: "1900-w-decker" });
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial", property_id: "1900-w-decker" });
     await settle();
     const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
     act(() => { editButton.click(); });
