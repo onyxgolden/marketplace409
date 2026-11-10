@@ -38,7 +38,7 @@ export async function POST(request) {
 
     const now = new Date().toISOString();
     const resource = {
-      owner_id: authenticated.user.id,
+      owner_id: authenticated.effectiveOwnerId,
       id: `resource_${crypto.randomUUID()}`,
       name,
       resource_type: body.resourceType,

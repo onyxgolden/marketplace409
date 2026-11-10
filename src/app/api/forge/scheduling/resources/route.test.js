@@ -28,7 +28,7 @@ describe("GET /api/forge/scheduling/resources", () => {
   it("lists the owner's resources, RLS-scoped, no explicit project filter", async () => {
     const rows = [{ id: "resource_1", name: "Framing Crew", resource_type: "labor" }];
     const db = mockDb({ resources: rows });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -41,7 +41,7 @@ describe("POST /api/forge/scheduling/resources", () => {
 
   it("creates a resource with sane defaults for optional fields", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Framing Crew", resourceType: "labor" }));
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -53,21 +53,21 @@ describe("POST /api/forge/scheduling/resources", () => {
 
   it("rejects a blank name", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "  ", resourceType: "labor" }));
     expect(response.status).toBe(400);
   });
 
   it("rejects an invalid resourceType", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Bad Resource", resourceType: "role" }));
     expect(response.status).toBe(400);
   });
 
   it("returns 409 with a clear message on a duplicate resource name", async () => {
     const db = mockDb({ insertError: { code: "23505", message: "duplicate key" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Framing Crew", resourceType: "labor" }));
     expect(response.status).toBe(409);
     const body = await response.json();

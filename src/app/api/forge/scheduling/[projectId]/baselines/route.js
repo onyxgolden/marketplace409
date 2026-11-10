@@ -43,14 +43,14 @@ export async function POST(request, { params }) {
     // Capturing a baseline is a write, unlike viewing the board -- a non-owner (the shared example's
     // read-only viewers) never gets to snapshot someone else's schedule, matching the owner check
     // every other write in this API already does.
-    if (relational.project.owner_id !== authenticated.user.id) {
+    if (relational.project.owner_id !== authenticated.effectiveOwnerId) {
       return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
     }
 
     const { cpmBlocks } = await computeAndPersistCpm(authenticated.supabaseClient, relational.project, relational);
     const baselineId = `baseline_${crypto.randomUUID()}`;
     const { baseline, baselineBlocks } = captureBaseline({
-      project: relational.project, blocks: cpmBlocks, name, ownerId: authenticated.user.id,
+      project: relational.project, blocks: cpmBlocks, name, ownerId: authenticated.effectiveOwnerId,
       baselineId, createdAt: new Date().toISOString(),
     });
 

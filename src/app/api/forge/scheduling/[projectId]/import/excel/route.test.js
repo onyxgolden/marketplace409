@@ -60,7 +60,7 @@ describe("POST /api/forge/scheduling/[projectId]/import/excel", () => {
 
   it("parses a valid file into patches without writing anything", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const buffer = await workbookBuffer([{ taskCode: "A1010", taskName: "Renamed", lane: "Engineering", durationWeeks: 3, percentComplete: 40 }]);
 
     const response = await POST(requestWithBody(buffer), { params });
@@ -73,7 +73,7 @@ describe("POST /api/forge/scheduling/[projectId]/import/excel", () => {
 
   it("returns validation errors for an unknown task code, without a 500", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const buffer = await workbookBuffer([{ taskCode: "A9999" }]);
 
     const response = await POST(requestWithBody(buffer), { params });
@@ -85,7 +85,7 @@ describe("POST /api/forge/scheduling/[projectId]/import/excel", () => {
 
   it("rejects a file with no Task Code column", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Activities");
     worksheet.addRow(["Not A Header"]);
@@ -99,14 +99,14 @@ describe("POST /api/forge/scheduling/[projectId]/import/excel", () => {
 
   it("rejects a non-.xlsx upload cleanly", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(requestWithBody(Buffer.from("not a workbook")), { params });
     expect(response.status).toBe(400);
   });
 
   it("404s for a project the caller doesn't own", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "someone_else" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const buffer = await workbookBuffer([{ taskCode: "A1010" }]);
     const response = await POST(requestWithBody(buffer), { params });
     expect(response.status).toBe(404);

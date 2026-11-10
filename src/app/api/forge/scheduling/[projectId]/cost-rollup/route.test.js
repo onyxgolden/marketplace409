@@ -52,7 +52,7 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
     const assignments = [{ owner_id: "user_1", id: "assignment_1", block_id: "block_1", resource_id: "resource_1", budgeted_units: 40, actual_units: 10, rate_override: null }];
     const expenses = [{ owner_id: "user_1", id: "expense_1", block_id: "block_1", budgeted_cost: 500, actual_cost: 100 }];
     const db = mockDb({ assignments, expenses });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
 
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
@@ -68,7 +68,7 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
       { owner_id: "user_1", id: "assignment_2", block_id: "block_2", resource_id: "resource_1", budgeted_units: 40, actual_units: 0, rate_override: null },
     ];
     const db = mockDb({ blocks: [BLOCK_ROW, overloadedBlock], assignments });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
 
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
@@ -78,7 +78,7 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
 
   it("returns zeroed cost data for a project with no resources assigned", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.project).toEqual({ budgeted_cost: 0, actual_cost: 0, remaining_cost: 0 });
@@ -87,14 +87,14 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
 
   it("404s a non-owner requesting cost data on the shared example project", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
 
   it("404s when the project doesn't exist", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
@@ -104,7 +104,7 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
     const assignments = [{ owner_id: "user_1", id: "assignment_1", block_id: "block_1", resource_id: "resource_1", budgeted_units: 40, actual_units: 0, rate_override: null, cost_account_id: "acct_po" }];
     const expenses = [{ owner_id: "user_1", id: "expense_1", block_id: "block_1", budgeted_cost: 100, actual_cost: 0, cost_account_id: null }];
     const db = mockDb({ costAccounts, assignments, expenses });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
 
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
@@ -121,7 +121,7 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
       { owner_id: "user_1", id: "assignment_2", block_id: "block_2", resource_id: "resource_1", budgeted_units: 10, actual_units: 0, rate_override: null, cost_account_id: "acct_wo" },
     ];
     const db = mockDb({ blocks: [BLOCK_ROW, otherBlock], assignments });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
 
     const response = await GET(new Request("https://test?costAccountId=acct_po"), { params });
     const body = await response.json();

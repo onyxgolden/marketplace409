@@ -39,7 +39,7 @@ export async function PATCH(request, { params }) {
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_expenses")
-      .update(patch).eq("id", expenseId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .update(patch).eq("id", expenseId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Expense not found, or you don't own this project." }, { status: 404 });
     return NextResponse.json({ success: true });
@@ -56,7 +56,7 @@ export async function DELETE(request, { params }) {
     const { expenseId } = await params;
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_expenses")
-      .delete().eq("id", expenseId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .delete().eq("id", expenseId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Expense not found, or you don't own this project." }, { status: 404 });
     return NextResponse.json({ success: true });

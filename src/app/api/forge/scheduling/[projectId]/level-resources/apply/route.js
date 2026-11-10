@@ -24,7 +24,7 @@ export async function POST(request, { params }) {
 
     const relational = await loadProjectRelational(authenticated.supabaseClient, projectId);
     if (!relational.project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
-    if (relational.project.owner_id !== authenticated.user.id) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
+    if (relational.project.owner_id !== authenticated.effectiveOwnerId) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
 
     const { cpmBlocks } = await computeAndPersistCpm(authenticated.supabaseClient, relational.project, relational);
     const { resources, assignments } = await loadResourceCostData(authenticated.supabaseClient, relational);
@@ -41,7 +41,7 @@ export async function POST(request, { params }) {
     await Promise.all(movedBlocks.map(async (block) => {
       const { error } = await authenticated.supabaseClient.from("schedule_blocks")
         .update({ constraint_type: "start_on", constraint_date: block.leveled_start })
-        .eq("owner_id", authenticated.user.id).eq("id", block.id);
+        .eq("owner_id", authenticated.effectiveOwnerId).eq("id", block.id);
       if (error) console.error("Leveling apply persist error for block", block.id, error);
     }));
 

@@ -28,7 +28,7 @@ describe("PATCH /api/forge/scheduling/resources/[resourceId]", () => {
 
   it("updates the requested fields", async () => {
     const db = mockDb({ data: { id: "resource_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({ stdRate: 75, isActive: false }), { params });
     expect(response.status).toBe(200);
     expect(db.node.update).toHaveBeenCalledWith(expect.objectContaining({ std_rate: 75, is_active: false }));
@@ -36,14 +36,14 @@ describe("PATCH /api/forge/scheduling/resources/[resourceId]", () => {
 
   it("404s a resource that doesn't exist or isn't this owner's", async () => {
     const db = mockDb({ data: null, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({ stdRate: 75 }), { params });
     expect(response.status).toBe(404);
   });
 
   it("rejects an empty patch", async () => {
     const db = mockDb({ data: { id: "resource_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({}), { params });
     expect(response.status).toBe(400);
   });
@@ -54,14 +54,14 @@ describe("DELETE /api/forge/scheduling/resources/[resourceId]", () => {
 
   it("deletes an unused resource", async () => {
     const db = mockDb({ data: { id: "resource_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await DELETE(new Request("https://test"), { params });
     expect(response.status).toBe(200);
   });
 
   it("returns a clear 409 when the resource still has assignments (FK restrict)", async () => {
     const db = mockDb({ data: null, error: { code: "23503", message: "foreign key violation" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await DELETE(new Request("https://test"), { params });
     expect(response.status).toBe(409);
     const body = await response.json();

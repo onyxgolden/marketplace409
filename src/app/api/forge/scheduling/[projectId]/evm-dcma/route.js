@@ -32,7 +32,7 @@ export async function GET(request, { params }) {
 
     const relational = await loadProjectRelational(authenticated.supabaseClient, projectId);
     if (!relational.project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
-    if (relational.project.owner_id !== authenticated.user.id) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
+    if (relational.project.owner_id !== authenticated.effectiveOwnerId) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
 
     if (!baselineId) {
       const { data: latestBaseline, error: latestBaselineError } = await authenticated.supabaseClient

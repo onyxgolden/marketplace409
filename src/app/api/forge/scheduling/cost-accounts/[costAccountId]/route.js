@@ -29,7 +29,7 @@ export async function PATCH(request, { params }) {
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_cost_accounts")
-      .update(patch).eq("id", costAccountId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .update(patch).eq("id", costAccountId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) {
       if (error.code === UNIQUE_VIOLATION) return NextResponse.json({ error: "A cost code with that code already exists." }, { status: 409 });
       throw error;
@@ -53,7 +53,7 @@ export async function DELETE(request, { params }) {
     const { costAccountId } = await params;
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_cost_accounts")
-      .delete().eq("id", costAccountId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .delete().eq("id", costAccountId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Cost code not found." }, { status: 404 });
     return NextResponse.json({ success: true });

@@ -65,7 +65,7 @@ describe("GET /api/forge/scheduling/[projectId]/export/project-xml", () => {
 
   it("returns a downloadable Project XML file with the right headers and content", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/xml");
@@ -78,7 +78,7 @@ describe("GET /api/forge/scheduling/[projectId]/export/project-xml", () => {
   it("includes a holiday from the fetched calendar_holidays as a calendar Exception", async () => {
     const holidays = [{ calendar_id: "cal_1", holiday_date: "2026-07-04" }];
     const db = mockDb({ holidays });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.text();
     expect(body).toContain("2026-07-04T00:00:00");
@@ -87,7 +87,7 @@ describe("GET /api/forge/scheduling/[projectId]/export/project-xml", () => {
   it("fetches and includes a global calendar referenced by the project but not scoped to it", async () => {
     const globalCalendar = { id: "cal_global", name: "Global 7-Day", working_days: [0, 1, 2, 3, 4, 5, 6], schedule_project_id: null };
     const db = mockDb({ project: { ...PROJECT_ROW, default_calendar_id: "cal_global" }, scopedCalendars: [], extraCalendars: [globalCalendar] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.text();
     expect(body).toContain("<Name>Global 7-Day</Name>");
@@ -95,14 +95,14 @@ describe("GET /api/forge/scheduling/[projectId]/export/project-xml", () => {
 
   it("404s a non-owner requesting an export of the shared example project", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
 
   it("404s when the project doesn't exist", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
