@@ -1349,14 +1349,14 @@ describe.skipIf(!HAS_REAL_PG)("slice 8 migration: real-PostgreSQL subset", () =>
       expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
       const numbers = results
         .filter((r) => r.status === "fulfilled")
-        .map((r) => r.value.rows[0].changeOrderNumber)
+        .map((r) => r.value.rows[0].change_order_number)
         .sort();
       expect(numbers).toEqual([1, 2]);
       const { rows } = await pgClient.query(`
         select change_order_number from forge_work_change_orders
         where owner_id = '${OWNER_A}' and work_package_id = 'pkg_real' order by change_order_number;
       `);
-      expect(rows.map((r) => r.changeOrderNumber)).toEqual([1, 2]);
+      expect(rows.map((r) => r.change_order_number)).toEqual([1, 2]);
     } finally {
       await clientA.end().catch(() => {});
       await clientB.end().catch(() => {});
