@@ -90,6 +90,11 @@ export async function POST(request) {
     if (sourceSystem && !IMPORT_SOURCE_SYSTEMS.includes(sourceSystem)) {
       return NextResponse.json({ error: `sourceSystem must be one of: ${IMPORT_SOURCE_SYSTEMS.join(", ")}.` }, { status: 400 });
     }
+    // Mode selector: only meaningful for packages (steps are identical
+    // in both modes). Validated against the real WP_MODES list so a
+    // malformed value never silently falls through to "no mode check".
+    const modeRaw = kind === "packages" ? form.get("mode") : null;
+    const mode = modeRaw === "industrial" || modeRaw === "commercial" ? modeRaw : null;
     const file = form.get("file");
     if (!file || typeof file.arrayBuffer !== "function") {
       return NextResponse.json({ error: "Choose a file to import." }, { status: 400 });
@@ -153,12 +158,14 @@ export async function POST(request) {
       sourceSystem,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
       properties: context.properties,
+      mode,
     });
     return ok({
       success: plan.success,
       kind,
       packageId,
       sourceSystem,
+      mode,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
       columns: mapping,
       rows: mapped,

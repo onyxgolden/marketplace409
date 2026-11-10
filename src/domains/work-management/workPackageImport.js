@@ -12,7 +12,7 @@
 // package matches by its number, a step by its sequence number,
 // otherwise by title when the title is unique. Ambiguous rows are
 // errors in the plan, never silently picked.
-import { WP_STATUS, WP_PACKAGE_TYPES, IMPORT_SOURCE_SYSTEMS } from "./workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, IMPORT_SOURCE_SYSTEMS } from "./workPackage.js";
 
 export { IMPORT_SOURCE_SYSTEMS };
 
@@ -144,6 +144,13 @@ export function validateAndPlanWorkPackageImport({
   sourceSystem = null,
   sourceTrackingAvailable = false,
   properties = [],
+  // Mode selector: when the caller names an active mode, a row's Scope
+  // value must be one of that mode's package types, not just any of
+  // the full WP_PACKAGE_TYPES list — reusing this function's existing
+  // "Scope \"X\" is not a package type" error shape, extended to name
+  // the active mode. A caller that omits mode (e.g. an older client)
+  // still gets the full-list check, unchanged — no regression.
+  mode = null,
 }) {
   const errors = [];
   const creates = [];
@@ -192,6 +199,11 @@ export function validateAndPlanWorkPackageImport({
       if (packageType !== "") {
         if (!WP_PACKAGE_TYPES.includes(packageType)) {
           errors.push({ rowIndex, message: `Row ${rowIndex + 1}: Scope "${packageType}" is not a package type.` });
+          return;
+        }
+        const subset = mode ? WP_PACKAGE_TYPES_BY_MODE[mode] : null;
+        if (subset && !subset.includes(packageType)) {
+          errors.push({ rowIndex, message: `Row ${rowIndex + 1}: Scope "${packageType}" is not a ${mode} package type.` });
           return;
         }
         fields.packageType = packageType;
