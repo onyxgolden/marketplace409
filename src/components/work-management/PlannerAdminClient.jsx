@@ -61,9 +61,11 @@ export default function PlannerAdminClient() {
   const [assignTarget, setAssignTarget] = useState(null); // staff row being assigned
   const [assignRoleId, setAssignRoleId] = useState("");
 
+  const [auditOpen, setAuditOpen] = useState(false);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditError, setAuditError] = useState("");
   const [auditOffset, setAuditOffset] = useState(0);
+  const [auditLoading, setAuditLoading] = useState(false);
   const AUDIT_PAGE_SIZE = 25;
 
   // One generic confirm modal reused for every mutating action (capability
@@ -85,10 +87,12 @@ export default function PlannerAdminClient() {
   }
 
   async function loadAudit(offset = 0) {
+    setAuditLoading(true);
     setAuditError("");
     const { response, data } = await callJson(
       `/api/work-packages/admin/audit?limit=${AUDIT_PAGE_SIZE}&offset=${offset}`,
     );
+    setAuditLoading(false);
     if (!response.ok) {
       setAuditError(data.error || "Unable to load the audit log.");
       return;
@@ -97,11 +101,24 @@ export default function PlannerAdminClient() {
     setAuditOffset(offset);
   }
 
-  // Mount-time load: inline fetch chains with a cancellation guard (this
+  // Opened on demand only — the audit timeline is a secondary, research-only
+  // panel. It never fetches until a reviewer actually asks to see it (Jason,
+  // 2026-11-10: never render it open by default, never assume it's wanted).
+  function openAuditTimeline() {
+    setAuditOpen(true);
+    loadAudit(0);
+  }
+
+  function closeAuditTimeline() {
+    setAuditOpen(false);
+  }
+
+  // Mount-time load: inline fetch chain with a cancellation guard (this
   // directory's established pattern for effect-triggered loads — see
   // WorkPackageDetailClient's property-options effect) rather than calling
-  // the reusable loadSnapshot/loadAudit helpers directly from the effect
-  // body, since those set state synchronously as their first statement.
+  // the reusable loadSnapshot helper directly from the effect body, since it
+  // sets state synchronously as its first statement. The audit timeline is
+  // not fetched here — it only loads once a reviewer opens it.
   useEffect(() => {
     let cancelled = false;
     callJson("/api/work-packages/admin/roles").then(({ response, data }) => {
@@ -112,15 +129,6 @@ export default function PlannerAdminClient() {
         return;
       }
       setSnapshot(data.snapshot);
-    });
-    callJson(`/api/work-packages/admin/audit?limit=${AUDIT_PAGE_SIZE}&offset=0`).then(({ response, data }) => {
-      if (cancelled) return;
-      if (!response.ok) {
-        setAuditError(data.error || "Unable to load the audit log.");
-        return;
-      }
-      setAuditEntries(data.entries || []);
-      setAuditOffset(0);
     });
     return () => { cancelled = true; };
   }, []);
@@ -162,6 +170,17 @@ export default function PlannerAdminClient() {
       trigger?.focus();
     };
   }, [confirm, busy]);
+
+  // Escape closes the audit screen too, matching the confirm dialog's
+  // existing convention in this component.
+  useEffect(() => {
+    if (!auditOpen) return undefined;
+    function onKeyDown(event) {
+      if (event.key === "Escape") closeAuditTimeline();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [auditOpen]);
 
   function askConfirm({ title, body, onConfirm }, triggerEl) {
     confirmTriggerRef.current = triggerEl || null;
@@ -336,6 +355,12 @@ export default function PlannerAdminClient() {
         <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{staleWarning}</p>
       )}
 
+      <div className="flex justify-end">
+        <button type="button" className={btnGhost} onClick={openAuditTimeline}>
+          View audit timeline
+        </button>
+      </div>
+
       {roles.length === 0 ? (
         <section className="rounded-lg border border-dashed border-slate-300 p-6 text-center">
           <p className="text-slate-600">No roles exist yet for this workspace.</p>
@@ -505,35 +530,50 @@ export default function PlannerAdminClient() {
         </section>
       )}
 
-      <section aria-labelledby="planner-admin-audit-heading">
-        <h2 id="planner-admin-audit-heading" className="text-lg font-semibold">Audit timeline</h2>
-        {auditError && <p role="alert" className="mt-2 text-sm text-red-700">{auditError}</p>}
-        {!auditError && auditEntries.length === 0 && (
-          <p className="mt-2 text-sm text-slate-500">No role or permission changes recorded yet.</p>
-        )}
-        {auditEntries.length > 0 && (
-          <>
-            <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {auditEntries.map((entry) => (
-                <li key={entry.id} className="px-3 py-2 text-sm text-slate-700">
-                  <span className="text-xs font-mono text-slate-400">{new Date(entry.recorded_at).toLocaleString()}</span>{" "}
-                  — <span className="font-medium">{entry.action.replace(/_/g, " ")}</span> by {entry.actor_id}
-                  {entry.target_user_id ? ` on ${entry.target_user_id}` : ""}
-                  {entry.reason ? <span className="text-slate-500"> — &ldquo;{entry.reason}&rdquo;</span> : null}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-2 flex gap-2">
-              <button type="button" className={btnGhost} disabled={auditOffset === 0} onClick={() => loadAudit(Math.max(0, auditOffset - AUDIT_PAGE_SIZE))}>
-                Newer
-              </button>
-              <button type="button" className={btnGhost} disabled={auditEntries.length < AUDIT_PAGE_SIZE} onClick={() => loadAudit(auditOffset + AUDIT_PAGE_SIZE)}>
-                Older
+      {auditOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="planner-admin-audit-heading"
+          className="fixed inset-0 z-40 overflow-y-auto bg-white"
+        >
+          <div className="mx-auto max-w-3xl px-4 py-6">
+            <div className="flex items-center justify-between">
+              <h2 id="planner-admin-audit-heading" className="text-lg font-semibold">Audit timeline</h2>
+              <button type="button" className={btnGhost} onClick={closeAuditTimeline}>
+                Back to admin
               </button>
             </div>
-          </>
-        )}
-      </section>
+            {auditLoading && <p className="mt-4 text-sm text-slate-500">Loading…</p>}
+            {auditError && <p role="alert" className="mt-4 text-sm text-red-700">{auditError}</p>}
+            {!auditLoading && !auditError && auditEntries.length === 0 && (
+              <p className="mt-4 text-sm text-slate-500">No role or permission changes recorded yet.</p>
+            )}
+            {!auditLoading && auditEntries.length > 0 && (
+              <>
+                <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {auditEntries.map((entry) => (
+                    <li key={entry.id} className="px-3 py-2 text-sm text-slate-700">
+                      <span className="text-xs font-mono text-slate-400">{new Date(entry.recorded_at).toLocaleString()}</span>{" "}
+                      — <span className="font-medium">{entry.action.replace(/_/g, " ")}</span> by {entry.actor_id}
+                      {entry.target_user_id ? ` on ${entry.target_user_id}` : ""}
+                      {entry.reason ? <span className="text-slate-500"> — &ldquo;{entry.reason}&rdquo;</span> : null}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" className={btnGhost} disabled={auditOffset === 0} onClick={() => loadAudit(Math.max(0, auditOffset - AUDIT_PAGE_SIZE))}>
+                    Newer
+                  </button>
+                  <button type="button" className={btnGhost} disabled={auditEntries.length < AUDIT_PAGE_SIZE} onClick={() => loadAudit(auditOffset + AUDIT_PAGE_SIZE)}>
+                    Older
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {confirm && (
         <div

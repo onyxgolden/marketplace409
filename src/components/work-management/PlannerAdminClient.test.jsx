@@ -90,7 +90,8 @@ describe("PlannerAdminClient", () => {
     expect(text).toContain("Read-only");
     expect(text).toContain("Owner");
     expect(text).toContain("View work packages");
-    expect(text).toContain("Audit timeline");
+    expect(text).toContain("View audit timeline");
+    expect(text).not.toContain("Audit timeline");
   });
 
   it("offers to provision starter roles when none exist yet, and never shows the matrix in that state", async () => {
@@ -256,14 +257,38 @@ describe("PlannerAdminClient", () => {
     expect(roleCallCount).toBe(2); // refetched after the 409
   });
 
-  it("renders audit entries with actor, action, and reason, once loaded", async () => {
+  it("does not fetch the audit log until the audit timeline is opened", async () => {
     const audit = [{ id: "forge_pa_1", actor_id: "user_1", action: "capability_add", target_role_id: "forge_pr_2", target_user_id: null, reason: "widen reporting access", recorded_at: "2026-11-10T01:00:00Z" }];
-    stubFetch({ audit });
+    const { calls } = stubFetch({ audit });
     const { container } = renderClient();
     await settle();
+
+    expect(calls.some((c) => c.url.startsWith("/api/work-packages/admin/audit"))).toBe(false);
+    expect(container.querySelector('[aria-labelledby="planner-admin-audit-heading"]')).toBeNull();
+
+    clickByText(container, "View audit timeline");
+    await settle();
+
+    expect(calls.some((c) => c.url.startsWith("/api/work-packages/admin/audit"))).toBe(true);
     expect(container.textContent).toContain("capability add");
     expect(container.textContent).toContain("user_1");
     expect(container.textContent).toContain("widen reporting access");
+  });
+
+  it("closes the audit timeline and returns to the admin page with the roles matrix intact", async () => {
+    stubFetch();
+    const { container } = renderClient();
+    await settle();
+
+    clickByText(container, "View audit timeline");
+    await settle();
+    expect(container.querySelector('[aria-labelledby="planner-admin-audit-heading"]')).not.toBeNull();
+
+    clickByText(container, "Back to admin");
+    await settle();
+    expect(container.querySelector('[aria-labelledby="planner-admin-audit-heading"]')).toBeNull();
+    expect(container.textContent).toContain("Planner Admin");
+    expect(container.querySelector("table")).not.toBeNull();
   });
 
   it("shows the not-applied message distinctly when the migration has not run yet", async () => {
