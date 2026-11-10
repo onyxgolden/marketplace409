@@ -129,8 +129,22 @@ export default function WorkPackageImportDialog({ kind, packageId, onImported, o
   const plan = preview?.plan;
   const canConfirm = stage === "preview" && plan && plan.summary.errorCount === 0;
 
+  function handleDialogKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-label={`Import ${label}`}>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Import ${label}`}
+      onKeyDown={handleDialogKeyDown}
+    >
       <div className="mt-10 w-full max-w-3xl rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>

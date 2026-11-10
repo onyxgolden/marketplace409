@@ -243,6 +243,18 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
       setError("Give the new change order a description first — the row stays as a draft until it has one.");
       return;
     }
+    // D17: "Reason for grid changes" sits above this single shared grid
+    // (existing rows AND blank add-rows together) and is labeled required
+    // on every edit, but only onCommitCell (editing an existing row)
+    // enforced it — adding a new row through a blank row did not. Gate
+    // creation the same way; still client-side only, matching the create
+    // endpoint, which has no reason field to persist.
+    try {
+      requirePanelReason();
+    } catch (e) {
+      setError(e.message);
+      return;
+    }
     let estimatedCents = null;
     if (draft.estimatedCostCents !== "") {
       const parsed = parseDollarsToCents(draft.estimatedCostCents);

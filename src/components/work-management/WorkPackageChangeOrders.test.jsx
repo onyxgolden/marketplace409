@@ -43,6 +43,16 @@ function stubFetch({ summary = SUMMARY, changeOrders = [ORDER], packageStatus = 
   const calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : undefined });
+    if (url === "/api/work-packages/pkg_1/change-orders" && options.method === "POST") {
+      const created = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({
+          changeOrder: { ...ORDER, id: "forge_wco_new", changeOrderNumber: 2, version: 1, ...created },
+          packageStatus,
+        }),
+      };
+    }
     if (url === "/api/work-packages/pkg_1/change-orders") {
       return { ok: true, json: async () => ({ summary, changeOrders, packageStatus }) };
     }
@@ -168,5 +178,59 @@ describe("WorkPackageChangeOrders", () => {
     }));
     expect(container.textContent).toContain("Change order #1 saved — Rework spool 7.");
     expect(input).toBeDefined();
+  });
+
+  it("D17: blocks creating a change order from a blank row until a reason is given", async () => {
+    const { calls } = stubFetch();
+    const { container } = renderPanel();
+    await settle();
+
+    // Reason box left empty on purpose.
+    const cell = container.querySelector('[aria-label="Description for new change order 1"]');
+    expect(cell).not.toBe(null);
+    await act(async () => {
+      cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = cell.querySelector("input");
+    expect(editor).not.toBe(null);
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(editor, "New scope item");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle();
+
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(container.textContent).toContain("Enter a reason for changes above first");
+  });
+
+  it("D17: creates the change order from a blank row once a reason is given", async () => {
+    const { calls } = stubFetch();
+    const { container } = renderPanel();
+    await settle();
+
+    setInputValue(container.querySelector("#co-panel-reason"), "Owner-requested scope addition");
+    const cell = container.querySelector('[aria-label="Description for new change order 1"]');
+    await act(async () => {
+      cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = cell.querySelector("input");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(editor, "New scope item");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle();
+
+    const post = calls.find((c) => c.method === "POST");
+    expect(post).toBeDefined();
+    expect(post.body).toEqual(expect.objectContaining({ description: "New scope item" }));
+    expect(container.textContent).toContain("Change order #2 added — New scope item.");
   });
 });

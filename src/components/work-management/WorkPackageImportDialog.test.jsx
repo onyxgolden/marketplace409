@@ -54,6 +54,15 @@ afterEach(() => {
 });
 
 describe("WorkPackageImportDialog", () => {
+  it("closes on Escape, same as the command palette", async () => {
+    const { container, onClose } = await renderDialog();
+    const dialog = container.querySelector('[role="dialog"]');
+    await act(async () => {
+      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("previews a file, shows the plan, and confirms the import", async () => {
     const calls = [];
     vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {

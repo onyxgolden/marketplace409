@@ -99,10 +99,18 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
   return { patches, deletes, freezeRequests };
 }
 
+// D9: the unsaved-changes guard attaches a document-level click listener
+// in a useEffect cleanup — unlike this file's other effects, that outlives
+// a bare `document.body.innerHTML = ""` (clears nodes, not React's own
+// commit/cleanup lifecycle) and keeps firing in later tests unless the
+// root is actually unmounted first.
+const activeRoots = [];
+
 function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, transitions = [] } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  activeRoots.push(root);
   act(() => {
     root.render(
       <WorkPackageDetailClient
@@ -138,7 +146,14 @@ function propertyField(container) {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  while (activeRoots.length > 0) {
+    act(() => { activeRoots.pop().unmount(); });
+  }
   document.body.innerHTML = "";
+  // D10's fix writes real window.location via the native History API —
+  // reset it so one test's tab/workspace query string never leaks into
+  // the next (jsdom's window/location persist across tests in a file).
+  window.history.replaceState(null, "", "/");
 });
 
 describe("WorkPackageDetailClient property display (Slice 2)", () => {
@@ -577,8 +592,11 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(container.textContent).toContain("Milestone tracking arrives with slice 9");
     expect(headings(container)).not.toContain("Package");
     expect(headings(container)).not.toContain("Lifecycle");
-    // Deep-linkable: the switch updates the URL without a refetch.
-    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=milestones", { scroll: false });
+    // Deep-linkable: the switch updates the URL without a refetch. D10: a
+    // plain router.replace() observably lagged the address bar by one
+    // click, so the switch now writes via the native History API, which
+    // jsdom reflects onto window.location synchronously with the click.
+    expect(window.location.search).toBe("?tab=milestones");
   });
 
   it("switching back to Overview restores the package panels", () => {
@@ -587,7 +605,7 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     act(() => { tabButton(container, "Milestones").click(); });
     act(() => { tabButton(container, "Overview").click(); });
     expect(headings(container)).toContain("Package");
-    expect(routerMocks.replace).toHaveBeenCalledWith("/", { scroll: false });
+    expect(window.location.search).toBe("");
   });
 
   it("honors an initial tab from the server-resolved ?tab= deep link", () => {
@@ -613,16 +631,112 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(container.querySelector('section[aria-label="Danger zone"]')).toBeNull();
     act(() => { tabButton(container, "Activity / Audit").click(); });
     expect(container.querySelector('section[aria-label="Danger zone"]')).not.toBeNull();
-    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=activity", { scroll: false });
+    expect(window.location.search).toBe("?tab=activity");
   });
 
   it("preserves the workspace selection in the tab URL when one is active", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG, { workspaceParam: "owner_2" });
     act(() => { tabButton(container, "Milestones").click(); });
-    expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=milestones&workspace=owner_2", { scroll: false });
+    expect(window.location.search).toBe("?tab=milestones&workspace=owner_2");
     act(() => { tabButton(container, "Overview").click(); });
-    expect(routerMocks.replace).toHaveBeenCalledWith("/?workspace=owner_2", { scroll: false });
+    expect(window.location.search).toBe("?workspace=owner_2");
+  });
+
+  it("D10: the URL updates synchronously with each tab click — never one click behind", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    act(() => { tabButton(container, "Milestones").click(); });
+    expect(window.location.search).toBe("?tab=milestones");
+    act(() => { tabButton(container, "Permits").click(); });
+    // Previously this read "?tab=milestones" here (one click behind) until
+    // the next click. It must reflect the just-clicked tab immediately.
+    expect(window.location.search).toBe("?tab=permits");
+  });
+});
+
+describe("WorkPackageDetailClient unsaved-changes guard (D9)", () => {
+  function openEdit(container) {
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+  }
+
+  function typeScope(container, value) {
+    const textarea = container.querySelector("textarea");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    act(() => {
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function addOutsideLink(href, label) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.textContent = label;
+    document.body.appendChild(link);
+    return link;
+  }
+
+  it("prompts before leaving via another link (e.g. the sidebar) once an open edit has unsaved changes, and blocks on cancel", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    typeScope(container, "Changed scope, not yet saved");
+    const navLink = addOutsideLink("/forge/work/documents", "Document library");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    let event;
+    act(() => {
+      event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      navLink.dispatchEvent(event);
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("lets the navigation through once the user confirms leaving an unsaved edit", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    typeScope(container, "Changed scope, not yet saved");
+    const navLink = addOutsideLink("/forge/work/documents", "Document library");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let event;
+    act(() => {
+      event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      navLink.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("never prompts for the edit form's own Cancel button", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    typeScope(container, "Changed scope, not yet saved");
+    const cancelButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    const confirmSpy = vi.spyOn(window, "confirm");
+    act(() => { cancelButton.click(); });
+    expect(confirmSpy).not.toHaveBeenCalled();
+    // Cancel still discards, per the existing contract: the edit form
+    // closes and the Edit button reappears.
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Edit")).toBe(true);
+  });
+
+  it("never prompts when Edit is open but nothing has actually changed yet", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    const navLink = addOutsideLink("/forge/work/documents", "Document library");
+    const confirmSpy = vi.spyOn(window, "confirm");
+    act(() => {
+      navLink.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 });
 

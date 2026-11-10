@@ -168,6 +168,42 @@ describe("/forge/work list filters (D5)", () => {
     expect(html).toContain('href="/forge/work/wp_2"');
   });
 
+  // D7's other half (stale Status/Property select values left in the DOM
+  // after Clear/Apply) is a client-side React-reconciliation bug: an
+  // uncontrolled <select defaultValue> keeps its first-mount value when
+  // React reuses the same DOM node across a client navigation. The fix
+  // (keying each select to the active filters so React remounts it fresh
+  // whenever they change) is not observable from renderToStaticMarkup output
+  // — key is never serialized to HTML and this harness never hydrates or
+  // navigates — so it is verified by inspection of React's documented
+  // key/remount semantics, not by a test here. NOT EXECUTED as a live
+  // click-through in this build environment (no Supabase credentials);
+  // owed before/at merge per BUILD_CONTRACT.md §7.
+
+  it("D7: blank add-rows follow the same filter rule as real rows — hidden under a non-matching status/property filter, shown when the filter matches a draft/unassigned shape", async () => {
+    // A filter that cannot match a blank row's shape (status != draft):
+    // zero real matches too, so the page must show "no matches", not blank rows.
+    const nonMatching = await renderPage({ status: "in_progress", propertyId: "__unassigned__" });
+    expect(nonMatching).not.toContain("New package title");
+    expect(nonMatching).toContain("No work packages match these filters");
+
+    // status=draft matches a blank row's shape (draft, no property) even
+    // though real draft packages also exist — blank rows must still show.
+    const draftFilter = await renderPage({ status: "draft" });
+    expect(draftFilter).toContain("New package title");
+    expect(draftFilter).toContain("Decker turnover");
+
+    // A property filter excludes blank rows (no property assigned) even
+    // though real packages match that property.
+    const propertyFilter = await renderPage({ propertyId: "1900-w-decker" });
+    expect(propertyFilter).not.toContain("New package title");
+    expect(propertyFilter).toContain("Decker turnover");
+
+    // The unassigned-property sentinel matches a blank row's shape.
+    const unassignedFilter = await renderPage({ propertyId: "__unassigned__" });
+    expect(unassignedFilter).toContain("New package title");
+  });
+
   it("never leaks another owner's packages: filtering runs only over the owner-scoped read", async () => {
     const html = await renderPage({ propertyId: "4800-kent-ave" });
     expect(html).not.toContain("Decker turnover");

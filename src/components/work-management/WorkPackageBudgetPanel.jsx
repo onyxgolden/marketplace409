@@ -26,6 +26,7 @@ export default function WorkPackageBudgetPanel({
   isTerminal = false,
   refreshKey = 0,
   onBudgetSaved = null,
+  onNavigateToLinks = null,
 }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -143,9 +144,12 @@ export default function WorkPackageBudgetPanel({
     <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="Budget and spending">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900">Budget and spending</h2>
-        <a href="#work-package-links" className="text-sm font-medium text-blue-700 hover:underline">
-          Review linked records
-        </a>
+        {onNavigateToLinks && (
+          <button type="button" onClick={onNavigateToLinks}
+            className="text-sm font-medium text-blue-700 hover:underline">
+            Review linked records
+          </button>
+        )}
       </div>
 
       {loading && <p className="mt-3 text-sm text-slate-500">Loading budget and spending…</p>}

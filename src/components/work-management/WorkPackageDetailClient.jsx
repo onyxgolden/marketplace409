@@ -14,6 +14,7 @@ import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -114,13 +115,32 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview",
   );
 
+  // D16: "Review linked records" on the Budget tab was a dead anchor
+  // (#work-package-links only exists in the DOM while Overview is the
+  // active tab — tabs are conditionally rendered, not merely hidden).
+  // Switch to Overview first, then scroll to the Links section once it
+  // mounts.
+  function navigateToLinks() {
+    switchTab("overview");
+    requestAnimationFrame(() => {
+      document.getElementById("work-package-links")?.scrollIntoView({ block: "start" });
+    });
+  }
+
   function switchTab(tab) {
     setActiveTab(tab);
     const params = new URLSearchParams();
     if (tab !== "overview") params.set("tab", tab);
     if (workspaceParam) params.set("workspace", workspaceParam);
     const query = params.toString();
-    router.replace(query ? `${window.location.pathname}?${query}` : window.location.pathname, { scroll: false });
+    const url = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    // D10: router.replace() goes through the App Router's navigation
+    // transition machinery, which observably lagged the visible URL by one
+    // click (clicking tab B showed B's content with the URL still reading
+    // tab A, updating to B only on the next click). This write has no data
+    // dependency — the package is already loaded — so the native History
+    // API updates the address bar synchronously with the click instead.
+    window.history.replaceState(window.history.state, "", url);
   }
 
   const allowed = allowedTransitionsFrom(pkg);
@@ -209,6 +229,15 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     setError("");
     setEditing(false);
   }
+
+  // D9: only warn once the open edit actually differs from the package's
+  // current values — opening Edit and immediately leaving with no typing
+  // is not "unsaved work." onCancelEdit itself is a plain <button>, never
+  // an <a>, so the guard's link-click intercept never sees it and Cancel
+  // keeps discarding without a prompt, same as every other form here.
+  const hasUnsavedEdit = editing
+    && JSON.stringify(editForm) !== JSON.stringify(editFormFromPackage(pkg));
+  useUnsavedChangesGuard(hasUnsavedEdit);
 
   // -- D7 delete ------------------------------------------------------------
   function openDeleteDialog() {
@@ -668,6 +697,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             packageId={pkg.id}
             isTerminal={isTerminal}
             refreshKey={costRefreshKey}
+            onNavigateToLinks={navigateToLinks}
           />
           <WorkPackageChangeOrders
             packageId={pkg.id}
