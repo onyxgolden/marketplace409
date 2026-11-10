@@ -183,7 +183,7 @@ describe("evaluateCapability", () => {
 describe("evaluateAll", () => {
   it("returns one verdict per registry capability", async () => {
     const results = await evaluateAll({ now: NOW, deps: {} });
-    expect(results.length).toBe(21);
+    expect(results.length).toBe(20);
     for (const r of results) {
       expect(["covered", "gap", "unknown"]).toContain(r.verdict);
       expect(typeof r.reason).toBe("string");

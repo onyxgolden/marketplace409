@@ -159,20 +159,6 @@ export const ADAPTER_SPECS = Object.freeze([
     ],
   },
   {
-    capability_id: "rental-tenant-invite",
-    adapters: [
-      {
-        type: "supabase-table",
-        table: "rental_tenants",
-        timeColumn: "invited_at",
-        windowHours: DAILY_WINDOW_HOURS,
-        attribution: "sweep-exclusive",
-        attribution_basis: "Only the invite sweep stamps invited_at; the time column IS the discriminator.",
-      },
-      { type: "github-actions", workflowFile: "rental-cron-sweeps.yml", attribution: "corroborating-only" },
-    ],
-  },
-  {
     capability_id: "pf-payment-receipt-notifications",
     adapters: [
       {
