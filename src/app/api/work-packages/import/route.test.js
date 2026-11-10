@@ -159,13 +159,55 @@ describe("POST /api/work-packages/import/confirm", () => {
 });
 
 describe("GET /api/work-packages/import/template", () => {
-  it("returns the package template CSV", async () => {
+  // The package template is mode-aware (Industrial / Commercial mode
+  // selector): with no ?mode=, it defaults to Industrial — the
+  // planner's primary purpose, same default as a newly created
+  // package — not the old hardcoded real-estate example.
+  it("returns the package template CSV, Industrial example by default", async () => {
     const response = await templateGet(new Request("https://test/api/work-packages/import/template?kind=packages"));
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/csv");
     const text = await response.text();
-    expect(text.split("\n")[0]).toContain("Title,Package #,Status,Property,Scope");
+    const lines = text.trim().split("\n");
+    expect(lines[0]).toBe("Title,Package #,Status,Property,Scope,Planned start,Planned finish,Description,Source record ID");
+    expect(text).toContain("Fabricate pipe spool");
+    expect(text).not.toContain("Kitchen remodel");
+    // The example row has one field per header column (I4 alignment
+    // fix) — Package # (col 2) and Property (col 4) are both blank for
+    // the industrial example, so a naive split must still yield 9 cells.
+    const exampleCells = lines[1].split(",");
+    expect(exampleCells).toHaveLength(9);
+  });
+
+  it("returns the Commercial example row with ?mode=commercial, correctly aligned", async () => {
+    const response = await templateGet(new Request("https://test/api/work-packages/import/template?kind=packages&mode=commercial"));
+    const text = await response.text();
+    const lines = text.trim().split("\n");
     expect(text).toContain("Kitchen remodel");
+    expect(text).not.toContain("Fabricate pipe spool");
+    const exampleCells = lines[1].split(",");
+    expect(exampleCells).toHaveLength(9);
+    // I4: the live column order is Title, Package #, Status, Property,
+    // Scope, Planned start, Planned finish, Description, Source record
+    // ID — the pre-fix row had Status in the Package # slot and so on.
+    expect(exampleCells[0]).toBe("Kitchen remodel"); // Title
+    expect(exampleCells[1]).toBe(""); // Package # — server-assigned, never imported
+    expect(exampleCells[2]).toBe("draft"); // Status
+    expect(exampleCells[3]).toBe("4800 Kent Ave"); // Property
+    expect(exampleCells[4]).toBe("remodel"); // Scope
+  });
+
+  it("an unrecognized ?mode= value falls back to Industrial rather than erroring", async () => {
+    const response = await templateGet(new Request("https://test/api/work-packages/import/template?kind=packages&mode=residential"));
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("Fabricate pipe spool");
+  });
+
+  it("mode has no effect on the steps template — identical in both modes", async () => {
+    const industrial = await (await templateGet(new Request("https://test/api/work-packages/import/template?kind=steps&mode=industrial"))).text();
+    const commercial = await (await templateGet(new Request("https://test/api/work-packages/import/template?kind=steps&mode=commercial"))).text();
+    expect(industrial).toBe(commercial);
   });
 
   it("returns the step template CSV", async () => {
