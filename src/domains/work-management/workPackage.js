@@ -27,6 +27,19 @@ export const WP_PACKAGE_TYPES = Object.freeze([
   "engineering", "industrial", "capital_project", "other",
 ]);
 
+// Industrial / Commercial mode selector. `mode` is a display/validation
+// lens stored per package (default industrial) — it never removes a
+// value from the domain-level WP_PACKAGE_TYPES list itself (callers that
+// don't send mode context, e.g. existing internal callers, still see the
+// full list accepted by validatePackageInput below). The UI/import layer
+// is what narrows the offered/validated subset per mode.
+export const WP_MODES = Object.freeze(["industrial", "commercial"]);
+
+export const WP_PACKAGE_TYPES_BY_MODE = Object.freeze({
+  industrial: Object.freeze(["engineering", "industrial", "capital_project", "other"]),
+  commercial: Object.freeze(["remodel", "rental_turn", "maintenance_repair", "new_construction_phase", "other"]),
+});
+
 export const WP_PRIORITIES = Object.freeze(["low", "normal", "high", "critical"]);
 
 // Source systems a package or step may have been imported from (file
@@ -323,6 +336,13 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
   }
   if (input.package_type !== undefined && !WP_PACKAGE_TYPES.includes(input.package_type)) {
     errors.push(`package_type must be one of: ${WP_PACKAGE_TYPES.join(", ")}.`);
+  }
+  // Mode-based package_type narrowing (which subset is OFFERED/VALID for
+  // the active mode) is enforced by the application layer, not here —
+  // this keeps the full WP_PACKAGE_TYPES list valid for any caller that
+  // sends package_type without mode context, per the no-regression gate.
+  if (input.mode !== undefined && !WP_MODES.includes(input.mode)) {
+    errors.push(`mode must be one of: ${WP_MODES.join(", ")}.`);
   }
   if (input.priority !== undefined && !WP_PRIORITIES.includes(input.priority)) {
     errors.push(`priority must be one of: ${WP_PRIORITIES.join(", ")}.`);

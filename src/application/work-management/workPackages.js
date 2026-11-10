@@ -10,7 +10,7 @@
 // production here; they need Jason's separate word like every migration.
 
 import {
-  WP_STATUS, WP_GATES, validatePackageInput, validateTransition, findTransition,
+  WP_STATUS, WP_GATES, WP_MODES, WP_PACKAGE_TYPES_BY_MODE, validatePackageInput, validateTransition, findTransition,
   derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
 } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
@@ -55,12 +55,25 @@ const EDITABLE_FIELDS = [
   "title", "description", "package_type", "priority", "project_id", "property_id",
   "responsible_party", "planned_start", "planned_finish",
   "asset_id", "equipment_tag", "unit", "area", "system", "location_id",
-  "work_order_ref", "workscope_code",
+  "work_order_ref", "workscope_code", "mode",
   "planned_qty", "planned_unit", "planned_manhours",
   "earned_qty", "earned_manhours", "actual_manhours",
   "progress_basis", "progress_updated_by",
   "source_system", "source_record_id",
 ];
+
+// Mode is a display/validation lens (default industrial), never a data
+// rewrite: toggling it changes which fields a package's own views show,
+// it never clears unit/area/system/property_id/package_type. The
+// package_type-by-mode subset restriction applies here (create/edit),
+// not inside validatePackageInput, so a caller that sends package_type
+// without mode context still sees the full WP_PACKAGE_TYPES list accepted.
+function validatePackageTypeForMode(packageType, mode) {
+  if (!packageType) return null;
+  const subset = WP_PACKAGE_TYPES_BY_MODE[mode];
+  if (!subset || subset.includes(packageType)) return null;
+  return `"${packageType.replace(/_/g, " ")}" is not a ${mode} package type. ${mode} packages use: ${subset.map((t) => t.replace(/_/g, " ")).join(", ")}.`;
+}
 
 // Maps a database error on the import-tracking columns to the honest
 // client-facing result: a duplicate source key is a re-import of an
@@ -143,6 +156,9 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
   // when the caller bypasses the UI picker; absent/empty means unassigned.
   const property = await resolvePackageProperty(db, ownerId, input.property_id);
   if (!property.ok) return property;
+  const mode = input.mode ?? "industrial";
+  const packageTypeError = validatePackageTypeForMode(input.package_type, mode);
+  if (packageTypeError) return { ok: false, httpStatus: 400, error: packageTypeError };
   const { data: seqNum, error: seqError } = await db.rpc("forge_work_next_package_number", { p_owner_id: ownerId });
   if (seqError) throw seqError;
   const now = new Date().toISOString();
@@ -153,6 +169,7 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     title: input.title.trim(),
     description: input.description ?? null,
     package_type: input.package_type ?? "other",
+    mode,
     priority: input.priority ?? "normal",
     project_id: input.project_id ?? null,
     property_id: property.propertyId,
@@ -305,6 +322,14 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   }
+  // The merged candidate's package_type must be valid for the merged
+  // candidate's mode — checked against the FULLY MERGED values (never
+  // the patch alone), same discipline as the earned/planned checks
+  // above: a patch that only sends { mode: "commercial" } against a
+  // stored industrial-only package_type must be rejected, not silently
+  // left inconsistent.
+  const modePackageTypeError = validatePackageTypeForMode(merged.package_type, merged.mode || "industrial");
+  if (modePackageTypeError) return { ok: false, httpStatus: 400, error: modePackageTypeError };
   // designated_verifier is owner-only and travels outside EDITABLE_FIELDS.
   let verifierChange = null;
   if (patch.designated_verifier !== undefined) {
@@ -729,15 +754,18 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
   return result;
 }
 
-export async function listWorkPackages(db, { ownerId, status, packageType, propertyId }) {
+export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode }) {
   // UI-density redesign: the dense grid also shows the estimate (Budget /
   // Actual column reads planned_cost_cents pre-slice-8, Actual blank) and
   // the Owner team (responsible_party.display_name, written by the create
   // form as { domain, type, display_name }).
-  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,planned_cost_cents,responsible_party,updated_at")
+  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,updated_at")
     .eq("owner_id", ownerId).order("updated_at", { ascending: false });
   if (status) q = q.eq("status", status);
   if (packageType) q = q.eq("package_type", packageType);
+  // Mode filter: never a bulk rewrite — a pure read-side narrowing of
+  // which packages the list returns, same shape as status/packageType.
+  if (mode) q = q.eq("mode", mode);
   // Property filter: the input is canonicalized, then matched with exact
   // equality at the database. Packages store canonical slugs only (write
   // path canonicalizes), so equality returns exactly that property's
