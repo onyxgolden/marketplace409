@@ -730,3 +730,72 @@ $$;
 
 revoke all on function public.forge_planner_roles_provision_starter_set(text, text) from public, anon, service_role;
 grant execute on function public.forge_planner_roles_provision_starter_set(text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- RPC: forge_planner_staff_search — the admin page's "find a person to
+-- assign a role to" lookup. Exact match only (user id OR verified email,
+-- never both, never a partial/ILIKE match) and a uniformly EMPTY result
+-- for every non-match reason (no such id, no such email, email exists
+-- but is unverified, caller passed neither/both params) — this is the
+-- "no account enumeration" requirement: a caller must never be able to
+-- distinguish "that email isn't registered" from "that email is
+-- registered but unverified" from "you're not allowed to see that".
+-- Gated the same as the role tables themselves (owner/co-owner or a
+-- planner.staff.read/roles.manage holder) -- unauthorized callers get a
+-- thrown exception (that reveals only their OWN authorization state,
+-- never anything about the target), authorized callers with no match
+-- get zero rows, never an exception.
+--
+-- Queries auth.users directly from a trusted, row_security=off
+-- SECURITY DEFINER function -- the same sanctioned pattern this repo
+-- already uses for invite_workspace_member (20261001060000), not the
+-- JS admin client's listUsers (deliberately not used anywhere in this
+-- app per src/lib/auth/serverAuthTransport.js's own header note).
+-- ---------------------------------------------------------------------------
+
+create or replace function public.forge_planner_staff_search(
+  p_owner_id text, p_user_id text default null, p_email text default null
+)
+returns table (user_id text, email text)
+language plpgsql
+stable
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  v_normalized_email text := lower(btrim(coalesce(p_email, '')));
+  v_user_id text := nullif(btrim(coalesce(p_user_id, '')), '');
+begin
+  if not (
+    public.has_workspace_access(p_owner_id)
+    or public.has_planner_permission(p_owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(p_owner_id, 'planner.staff.read')
+  ) then
+    raise exception 'PADM1_FORBIDDEN';
+  end if;
+
+  -- Exactly one of the two search params, or no rows at all -- never
+  -- guess which one the caller meant.
+  if (v_user_id is null) = (v_normalized_email = '') then
+    return;
+  end if;
+
+  if v_user_id is not null then
+    return query
+      select u.id::text, u.email::text
+      from auth.users u
+      where u.id::text = v_user_id;
+    return;
+  end if;
+
+  return query
+    select u.id::text, u.email::text
+    from auth.users u
+    where lower(btrim(u.email)) = v_normalized_email
+      and u.email_confirmed_at is not null;
+end;
+$$;
+
+revoke all on function public.forge_planner_staff_search(text, text, text) from public, anon, service_role;
+grant execute on function public.forge_planner_staff_search(text, text, text) to authenticated;

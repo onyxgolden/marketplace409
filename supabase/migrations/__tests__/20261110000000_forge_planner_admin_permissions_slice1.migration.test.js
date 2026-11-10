@@ -39,6 +39,18 @@ const SETUP_SQL = `
     select nullif(current_setting('test.actor', true), '')
   $$;
 
+  -- Minimal auth.users, matching the shape forge_planner_staff_search and
+  -- the real invite_workspace_member both read (id, email,
+  -- email_confirmed_at). Fixture ids are plain text here (not real
+  -- uuids) to match this harness's test.actor convention everywhere
+  -- else; the migration casts both sides to text so this is fine.
+  create table auth.users (
+    id text primary key,
+    email text,
+    email_confirmed_at timestamptz
+  );
+  grant select on auth.users to authenticated;
+
   -- Matches the real workspace_members shape has_workspace_access and
   -- this slice's own forge_planner role-bypass both read against. Must
   -- exist before has_workspace_access is defined below.
@@ -148,6 +160,14 @@ beforeAll(async () => {
     values ('owner_1', 'dwg_pid1', 'pkg_1', 'P-101', 'p_id')
   `);
   await exec(`insert into workspace_members (owner_id, member_user_id, status, role) values ('owner_1', 'coowner_1', 'active', 'co_owner')`);
+
+  await exec(`
+    insert into auth.users (id, email, email_confirmed_at) values
+      ('owner_1', 'owner1@example.com', now()),
+      ('staff_1', 'staff1@example.com', now()),
+      ('staff_2', 'staff2@example.com', now()),
+      ('unverified_1', 'unverified1@example.com', null)
+  `);
 });
 
 describe("fixture sanity (the hostile-default detector)", () => {
@@ -440,6 +460,7 @@ describe("effective ACL / RLS / function EXECUTE receipts — the explicit-REVOK
       "forge_planner_role_assign(text,text,text,text,text)",
       "forge_planner_role_assignment_revoke(text,text,integer,text,text)",
       "forge_planner_roles_provision_starter_set(text,text)",
+      "forge_planner_staff_search(text,text,text)",
     ];
     for (const sig of signatures) {
       expect(await functionPrivilege("anon", sig)).toBe(false);
@@ -618,6 +639,70 @@ describe("starter-role provisioning — forge_planner_roles_provision_starter_se
       exec(`select forge_planner_roles_provision_starter_set('owner_3', null)`),
       /PADM1_REQUEST_ID_REQUIRED/,
     );
+  });
+});
+
+describe("forge_planner_staff_search — exact match only, no account enumeration", () => {
+  it("finds an existing user by exact id", async () => {
+    await asAuthenticated();
+    await asActor("owner_1");
+    const rows = await query(`select * from forge_planner_staff_search('owner_1', 'staff_1', null)`);
+    expect(rows).toEqual([{ user_id: "staff_1", email: "staff1@example.com" }]);
+  });
+
+  it("finds an existing user by exact, verified email (case-insensitive)", async () => {
+    await asAuthenticated();
+    await asActor("owner_1");
+    const rows = await query(`select * from forge_planner_staff_search('owner_1', null, 'STAFF1@Example.com')`);
+    expect(rows).toEqual([{ user_id: "staff_1", email: "staff1@example.com" }]);
+  });
+
+  it("a non-existent id and a non-existent email both return zero rows, identically", async () => {
+    await asAuthenticated();
+    await asActor("owner_1");
+    const byId = await query(`select * from forge_planner_staff_search('owner_1', 'no_such_user', null)`);
+    const byEmail = await query(`select * from forge_planner_staff_search('owner_1', null, 'nobody@example.com')`);
+    expect(byId).toEqual([]);
+    expect(byEmail).toEqual([]);
+  });
+
+  it("an unverified email returns zero rows, same as a non-existent one (no way to tell them apart)", async () => {
+    await asAuthenticated();
+    await asActor("owner_1");
+    const rows = await query(`select * from forge_planner_staff_search('owner_1', null, 'unverified1@example.com')`);
+    expect(rows).toEqual([]);
+  });
+
+  it("passing neither or both search params returns zero rows rather than guessing", async () => {
+    await asAuthenticated();
+    await asActor("owner_1");
+    expect(await query(`select * from forge_planner_staff_search('owner_1', null, null)`)).toEqual([]);
+    expect(await query(`select * from forge_planner_staff_search('owner_1', 'staff_1', 'staff1@example.com')`)).toEqual([]);
+  });
+
+  it("an unauthorized caller is rejected outright, never silently given zero rows that could be confused with 'no match'", async () => {
+    await asAuthenticated();
+    await asActor("stranger_search_1");
+    await expectRejected(
+      exec(`select * from forge_planner_staff_search('owner_1', 'staff_1', null)`),
+      /PADM1_FORBIDDEN/,
+    );
+  });
+
+  it("a non-owner admin holding planner.staff.read can search too", async () => {
+    await asOwner();
+    await exec(`
+      insert into forge_planner_roles (owner_id, id, role_key, name, created_by, updated_by)
+      values ('owner_1', 'role_staff_reader', 'staff_reader', 'Staff Reader', 'owner_1', 'owner_1');
+      insert into forge_planner_role_capabilities (owner_id, id, role_id, capability_key, created_by)
+      values ('owner_1', 'cap_sr1', 'role_staff_reader', 'planner.staff.read', 'owner_1');
+      insert into forge_planner_user_role_assignments (owner_id, id, assignee_user_id, role_id, assigned_by, updated_by)
+      values ('owner_1', 'assign_sr1', 'staff_reader_1', 'role_staff_reader', 'owner_1', 'owner_1');
+    `);
+    await asAuthenticated();
+    await asActor("staff_reader_1");
+    const rows = await query(`select * from forge_planner_staff_search('owner_1', 'staff_1', null)`);
+    expect(rows).toEqual([{ user_id: "staff_1", email: "staff1@example.com" }]);
   });
 });
 
