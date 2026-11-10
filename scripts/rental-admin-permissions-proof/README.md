@@ -15,6 +15,12 @@ proves, on real Postgres (not PGlite):
   `supabase/migrations/__tests__/20261110010000_rental_admin_roles_slice1.migration.test.js`).
 - Effective ACL / RLS / function EXECUTE receipts
   (`proof-receipts.json`, written next to this script).
+- The proof sets Supabase-like default privileges before applying the
+  slice-1 migration (PR #766 P1): production's `pg_default_acl` grants
+  function EXECUTE to the named roles anon/authenticated/service_role
+  with no PUBLIC entry, so a `REVOKE ... FROM public` alone is a no-op.
+  G3/G5 assert against that shape — G5 proves anon cannot execute
+  `rental_admin_user_role_json` at all.
 
 ## Run
 

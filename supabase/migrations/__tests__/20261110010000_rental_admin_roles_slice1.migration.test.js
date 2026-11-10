@@ -4,12 +4,18 @@
 // has_workspace_access matching the LIVE definitions, and roles
 // authenticated/anon/service_role.
 //
-// Hostile-default fixture (the Nov 4 lesson): before the migration, default
-// privileges grant ALL on new tables to authenticated, simulating Supabase's
-// project defaults. A deliberately naive table (selective GRANT only, no
-// REVOKE) proves the fixture detects the widening; the role tables must
-// then show NO widened privilege in their effective ACL, proving the
-// migration's explicit REVOKEs do the job.
+// Hostile-default fixture (the Nov 4 lesson, sharpened Nov 10 by the
+// PR #766 P1): before the migration, default privileges grant ALL on new
+// tables to authenticated, simulating Supabase's project defaults. A
+// deliberately naive table (selective GRANT only, no REVOKE) proves the
+// fixture detects the widening; the role tables must then show NO widened
+// privilege in their effective ACL, proving the migration's explicit
+// REVOKEs do the job. The same hostile shape applies to FUNCTIONS:
+// production's pg_default_acl grants EXECUTE on new functions to the NAMED
+// roles anon/authenticated/service_role with no PUBLIC entry, so a
+// REVOKE ... FROM public alone is a no-op — the migration must revoke
+// from the named roles explicitly, and the RPC ACL test below asserts
+// no anon/service_role entry survives.
 //
 // VERIFIED LIVE BEFORE WRITING (see the build result file): the live
 // has_workspace_access admits ONLY the primary owner or an active co_owner.
@@ -210,6 +216,18 @@ beforeAll(async () => {
       );
     end $$;
   `);
+  // Hostile FUNCTION defaults too (PR #766 P1): production grants EXECUTE
+  // on new functions to the named roles anon/authenticated/service_role
+  // with no PUBLIC entry. Functions created by the migration must carry
+  // no anon/service_role entry after its explicit REVOKEs.
+  await db.exec(`
+    do $$ begin
+      execute format(
+        'alter default privileges for role %I in schema public grant execute on functions to anon, authenticated, service_role',
+        current_user
+      );
+    end $$;
+  `);
   // Naive table: selective GRANT only, no REVOKE — the widening detector.
   await db.exec(`create table naive_widen (id text not null primary key)`);
   await db.exec(`grant select, insert, update on naive_widen to authenticated`);
@@ -293,7 +311,7 @@ describe("rental admin roles slice 1 migration", () => {
     }
   });
 
-  it("RPCs are executable by authenticated only, not by PUBLIC", async () => {
+  it("RPCs are executable by authenticated only, not by PUBLIC/anon/service_role", async () => {
     const rows = await query(`
       select proname, proacl from pg_proc
       where proname like 'rental_%'
@@ -304,6 +322,10 @@ describe("rental admin roles slice 1 migration", () => {
       const acl = Array.isArray(row.proacl) ? row.proacl : [String(row.proacl)];
       expect(acl).toContain("authenticated=X/postgres");
       expect(acl.some((entry) => entry === "=X/postgres" || entry.startsWith("public="))).toBe(false);
+      // PR #766 P1: production's defaults grant EXECUTE to the NAMED roles,
+      // so a REVOKE ... FROM public alone leaves anon/service_role entries.
+      expect(acl.some((entry) => entry.startsWith("anon="))).toBe(false);
+      expect(acl.some((entry) => entry.startsWith("service_role="))).toBe(false);
     }
   });
 

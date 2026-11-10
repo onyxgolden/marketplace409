@@ -18,7 +18,10 @@
 //   F. RLS tenant/maintenance spot checks per role (the full matrix lives
 //      in the PGlite migration test).
 //   G. Effective ACL / RLS / function EXECUTE receipts (written to
-//      proof-receipts.json next to this script).
+//      proof-receipts.json next to this script). The proof sets
+//      Supabase-like default privileges before applying the slice-1
+//      migration (PR #766 P1), so G3/G5 assert against the production ACL
+//      shape instead of passing vacuously on a defaults-free cluster.
 //
 // Usage (from the repo root, with a scratch cluster running):
 //   PGHOST=/tmp/rental-admin-pg16 PGPORT=54399 PGUSER=postgres PGDATABASE=postgres \
@@ -210,6 +213,23 @@ async function main() {
     // Real #753 billing migration, then this slice's migration.
     await admin.query(readMigration("20261108000000_rental_billing_audit_insert_policies.sql"));
     check("A2 real #753 billing migration applies", true);
+    // Supabase-like default privileges (the PR #766 P1): production's
+    // pg_default_acl grants function EXECUTE to the NAMED roles
+    // anon/authenticated/service_role with no PUBLIC entry, so a
+    // REVOKE ... FROM public alone is a no-op. Set them here, before the
+    // slice-1 migration, so G3/G5 assert against the production ACL shape
+    // instead of passing vacuously on a defaults-free cluster. (Set after
+    // the NO-GO fix / #753 applies so only the slice-1 objects under test
+    // pick the defaults up.)
+    await admin.query(`
+      do $$ begin
+        execute format(
+          'alter default privileges for role %I in schema public grant execute on functions to anon, authenticated, service_role',
+          current_user
+        );
+      end $$;
+    `);
+    check("A2b Supabase-like function defaults set (anon/authenticated/service_role)", true);
     await admin.query(readMigration("20261110010000_rental_admin_roles_slice1.sql"));
     check("A3 slice-1 migration applies on top of the real priors", true);
 
@@ -402,6 +422,18 @@ async function main() {
     check("G4 all seven #753 billing policies still exist",
       receipts.billing_753_policies.length === 7,
       `${receipts.billing_753_policies.length} found`);
+    // G5: the P1 regression — anon must not be able to EXECUTE the
+    // disclosure-prone RPC at all (privilege revoked, not just
+    // auth-checked inside the body). With the pre-fix migration this
+    // call returned a real user's email + roles.
+    const asAnon = await pool.connect();
+    await asAnon.query("set role anon");
+    const anonCall = await expectRejected(
+      asAnon.query("select rental_admin_user_role_json($1, $2)", [OWNER, MANAGER]),
+      /permission denied for function/);
+    check("G5 anon cannot execute rental_admin_user_role_json (EXECUTE revoked)",
+      anonCall.threw, anonCall.message);
+    asAnon.release();
 
     for (const client of [asManager, asBookkeeper, asReadOnly, asOwner, asCoOwner, asOutsider]) client.release();
   } finally {

@@ -30,20 +30,26 @@
 --   * has_rental_permission(text, text) ALREADY EXISTS (NO-GO fix). This
 --     migration extends it with the new-key branch; the legacy branch is
 --     reproduced verbatim.
---   * The five PR #753 billing RPC gates (billing-settings / late-fee /
---     payment-policy / convenience-fee audit INSERT + rental_billing_settings
---     INSERT + UPDATE, all gated on has_workspace_access) are untouched by
---     this migration: no table, policy, or function they use is modified.
+--   * The seven PR #753 billing gates (cutover audit INSERT +
+--     billing-settings / late-fee / payment-policy / convenience-fee audit
+--     INSERTs + rental_billing_settings INSERT + UPDATE, all gated on
+--     has_workspace_access) are untouched by this migration: no table,
+--     policy, or function they use is modified.
 --   * No user gains permissions from this migration alone: the role tables
 --     start empty, starter roles are materialized only by the
 --     rental_ensure_starter_roles RPC (owner/co-owner only), and the new
 --     policies grant nothing until an admin assigns a role.
 --
--- Supabase default-privileges note (the Nov 4 lesson): new public tables land
--- with ALL granted to anon/authenticated/service_role and new functions land
--- with EXECUTE to anon. Every object below therefore gets an explicit REVOKE
--- ALL followed by the minimal GRANT, and the migration test asserts the
--- effective ACLs. No sequences are created (text ids / gen_random_uuid()).
+-- Supabase default-privileges note (the Nov 4 lesson, sharpened Nov 10 by
+-- the PR #766 P1): new public tables land with ALL granted to
+-- anon/authenticated/service_role and new functions land with EXECUTE to
+-- anon, authenticated, service_role — via NAMED-ROLE default privileges
+-- (pg_default_acl has no PUBLIC entry), so REVOKE ... FROM public alone
+-- removes nothing. Every object below therefore gets an explicit REVOKE ALL
+-- from public, anon, authenticated, service_role followed by the minimal
+-- GRANT, and the migration test + real-PostgreSQL proof assert the effective
+-- ACLs under Supabase-like defaults. No sequences are created (text ids /
+-- gen_random_uuid()).
 
 -- ============================================================================
 -- 1. Role framework tables.
@@ -1258,32 +1264,38 @@ end;
 $$;
 
 -- ============================================================================
--- 5. Function privileges: revoke the Supabase default EXECUTE-to-anon, grant
+-- 5. Function privileges: revoke the Supabase default EXECUTE, grant
 --    EXECUTE to authenticated only. The RPCs enforce the actor checks
---    themselves; no function is callable by anon.
+--    themselves; no function is callable by anon. The revoke MUST name the
+--    roles explicitly (public, anon, authenticated, service_role):
+--    production's default privileges grant EXECUTE to the named roles with
+--    no PUBLIC entry, so REVOKE ... FROM public alone is a no-op and anon
+--    keeps EXECUTE (PR #766 P1 — the original from-public-only form passed
+--    the proof 20/20 on a clean cluster and failed G3 under Supabase-like
+--    defaults, and anon could call rental_admin_user_role_json).
 -- ============================================================================
 
-revoke all on function public.rental_admin_catalog_keys() from public;
-revoke all on function public.rental_admin_owner_only_keys() from public;
-revoke all on function public.rental_admin_starter_role_keys(text) from public;
-revoke all on function public.rental_admin_is_privileged(text) from public;
-revoke all on function public.rental_get_my_effective_permissions(text) from public;
-revoke all on function public.rental_admin_caller_has_key(text, text) from public;
-revoke all on function public.rental_admin_validate_keys(text[]) from public;
-revoke all on function public.rental_admin_ceiling_ok(text, text[]) from public;
-revoke all on function public.rental_admin_require_manager(text) from public;
-revoke all on function public.rental_admin_require_key(text, text) from public;
-revoke all on function public.rental_ensure_starter_roles(text) from public;
-revoke all on function public.rental_list_roles(text) from public;
-revoke all on function public.rental_lookup_user(text, text) from public;
-revoke all on function public.rental_admin_user_role_json(text, uuid) from public;
-revoke all on function public.rental_get_user_role(text, uuid) from public;
-revoke all on function public.rental_assign_role(text, uuid, text, text) from public;
-revoke all on function public.rental_revoke_role(text, uuid, text) from public;
-revoke all on function public.rental_update_role(text, text, text[], text[], integer, text) from public;
-revoke all on function public.rental_create_role(text, text, text, text[], text) from public;
-revoke all on function public.rental_retire_role(text, text, text, text) from public;
-revoke all on function public.rental_get_role_audit(text, integer) from public;
+revoke all on function public.rental_admin_catalog_keys() from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_owner_only_keys() from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_starter_role_keys(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_is_privileged(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_get_my_effective_permissions(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_caller_has_key(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_validate_keys(text[]) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_ceiling_ok(text, text[]) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_require_manager(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_require_key(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_ensure_starter_roles(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_list_roles(text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_lookup_user(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_admin_user_role_json(text, uuid) from public, anon, authenticated, service_role;
+revoke all on function public.rental_get_user_role(text, uuid) from public, anon, authenticated, service_role;
+revoke all on function public.rental_assign_role(text, uuid, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_revoke_role(text, uuid, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_update_role(text, text, text[], text[], integer, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_create_role(text, text, text, text[], text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_retire_role(text, text, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.rental_get_role_audit(text, integer) from public, anon, authenticated, service_role;
 
 grant execute on function public.rental_admin_catalog_keys() to authenticated;
 grant execute on function public.rental_admin_owner_only_keys() to authenticated;
