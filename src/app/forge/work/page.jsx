@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { listWorkPackages, listPackagePropertyOptions } from "@/application/work-management/workPackages";
-import { WP_STATUS, WP_MODES } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackageListGrid from "@/components/work-management/WorkPackageListGrid.jsx";
@@ -47,7 +47,7 @@ function parseFilters(searchParams) {
 function filterPackages(packages, { status, propertyId, mode }) {
   return packages.filter((pkg) => {
     if (status !== "all" && pkg.status !== status) return false;
-    if (mode !== "all" && (pkg.mode || "industrial") !== mode) return false;
+    if (mode !== "all" && inferEffectiveMode(pkg) !== mode) return false;
     if (propertyId === UNASSIGNED) return pkg.property_id == null;
     if (propertyId !== "all") {
       // Packages store canonical slugs already; comparing canonical forms

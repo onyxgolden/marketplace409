@@ -24,7 +24,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
@@ -393,7 +393,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 onCommit={(next) => commitStatus(pkg, next)}
                 onError={(text) => report(text)}
               />
-              {(pkg.mode || "industrial") === "commercial" ? (
+              {inferEffectiveMode(pkg) === "commercial" ? (
                 <EditableGridCell
                   value={pkg.property_id || ""}
                   display={pkg.property_id ? (propertyLabelBySlug.get(pkg.property_id) || pkg.property_id) : "—"}
@@ -423,7 +423,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               <EditableGridCell
                 value={pkg.package_type}
                 display={[pkg.package_type, pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" · ") || "—"}
-                editor="select" options={scopeOptionsForMode(pkg.mode)} ariaLabel={`Scope for ${pkg.code}`}
+                editor="select" options={scopeOptionsForMode(inferEffectiveMode(pkg))} ariaLabel={`Scope for ${pkg.code}`}
                 readOnly={terminal}
                 onCommit={(next) => commitField(pkg, { package_type: next })}
                 onError={(text) => report(text)}

@@ -21,6 +21,25 @@
 alter table forge_work_packages
   add column if not exists mode text not null default 'industrial';
 
+-- Smarter backfill than the bare column default: every row that existed
+-- before this migration was created under the real-estate-only code
+-- path (Industrial mode is new), so a package already carrying a
+-- commercial-only package_type (remodel / rental_turn /
+-- maintenance_repair / new_construction_phase) is, in fact, a
+-- Commercial package today — its Property field is live data a real
+-- owner is looking at right now. Leaving it on the column default
+-- ('industrial') would hide that Property field and show an empty
+-- Unit/Area/System section instead: a real regression, not a neutral
+-- default. Ambiguous/industrial-flavored types (engineering, industrial,
+-- capital_project, other) keep the 'industrial' default untouched. This
+-- runs once, only for rows that predate the column (every row has
+-- 'industrial' from the ADD COLUMN default at this point), so it is
+-- safe to reapply: a second run finds nothing left to flip because
+-- every row is already correctly classified from the first run.
+update forge_work_packages
+  set mode = 'commercial'
+  where package_type in ('remodel', 'rental_turn', 'maintenance_repair', 'new_construction_phase');
+
 -- Idempotent CHECK add: a plain `ADD CONSTRAINT` (this repo's usual
 -- pattern, e.g. 20261109000000's chk_forge_work_packages_source_pair)
 -- is NOT safe to reapply as-is — Postgres has no

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
@@ -62,7 +62,7 @@ function editFormFromPackage(p) {
     title: p.title, description: p.description || "",
     project_id: p.project_id || "",
     planned_finish: p.planned_finish || "", property_id: p.property_id || "",
-    mode: p.mode || "industrial",
+    mode: inferEffectiveMode(p),
   };
 }
 
@@ -464,8 +464,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <Field title="Priority" value={pkg.priority} />
                 <Field title="Project" value={pkg.project_id} />
                 <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
-                <Field title="Mode" value={(pkg.mode || "industrial").replace(/^./, (c) => c.toUpperCase())} />
-                {(pkg.mode || "industrial") === "commercial" ? (
+                <Field title="Mode" value={inferEffectiveMode(pkg).replace(/^./, (c) => c.toUpperCase())} />
+                {inferEffectiveMode(pkg) === "commercial" ? (
                   <div>
                     <dt className="text-xs font-medium text-slate-500">Property</dt>
                     <dd className="mt-0.5 text-sm text-slate-900">

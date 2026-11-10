@@ -11,7 +11,7 @@
 
 import {
   WP_STATUS, WP_GATES, WP_MODES, WP_PACKAGE_TYPES_BY_MODE, validatePackageInput, validateTransition, findTransition,
-  derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
+  derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus, inferEffectiveMode,
 } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import {
@@ -156,7 +156,12 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
   // when the caller bypasses the UI picker; absent/empty means unassigned.
   const property = await resolvePackageProperty(db, ownerId, input.property_id);
   if (!property.ok) return property;
-  const mode = input.mode ?? "industrial";
+  // A caller that sends package_type but not mode (an older client, or a
+  // test written before mode existed) gets mode inferred from the
+  // package_type it sent, not a blind "industrial" default — same rule
+  // as the migration's backfill, so "rental_turn" without an explicit
+  // mode still creates a Commercial package instead of being refused.
+  const mode = input.mode ?? inferEffectiveMode({ package_type: input.package_type });
   const packageTypeError = validatePackageTypeForMode(input.package_type, mode);
   if (packageTypeError) return { ok: false, httpStatus: 400, error: packageTypeError };
   const { data: seqNum, error: seqError } = await db.rpc("forge_work_next_package_number", { p_owner_id: ownerId });
@@ -328,7 +333,7 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   // above: a patch that only sends { mode: "commercial" } against a
   // stored industrial-only package_type must be rejected, not silently
   // left inconsistent.
-  const modePackageTypeError = validatePackageTypeForMode(merged.package_type, merged.mode || "industrial");
+  const modePackageTypeError = validatePackageTypeForMode(merged.package_type, inferEffectiveMode(merged));
   if (modePackageTypeError) return { ok: false, httpStatus: 400, error: modePackageTypeError };
   // designated_verifier is owner-only and travels outside EDITABLE_FIELDS.
   let verifierChange = null;
