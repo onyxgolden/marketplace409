@@ -162,6 +162,17 @@ pub struct RedactionCandidate {
     pub disposition_event_id: Option<String>,
 }
 
+/// C2-P3 verification consumption: the canonical `ocr_status` value
+/// [`crate::sop_workspace::populate_review_candidates_if_current`] (the
+/// only production writer of that field) stores once detection has
+/// actually run to completion on a frame — the independent "a complete
+/// scan happened" receipt C2P3-004 requires, so a legitimately empty
+/// candidate inventory (real zero detections) can be told apart from
+/// "detection never ran" or "detection failed partway." `ocr_status ==
+/// None` (the field's default, and every value before this slice) means
+/// "no recorded scan" and must never be read as a successful empty scan.
+pub const OCR_SCAN_COMPLETE: &str = "ocr_scan_complete";
+
 /// Brief §4 `SourceFrame`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,6 +198,18 @@ pub struct SourceFrame {
     pub window_title: Option<String>,
     pub original_storage: SourceStorage,
     pub ocr_status: Option<String>,
+    /// C2-P3 verification consumption: the count of detections from the
+    /// most recent [`crate::sop_redaction::detect_and_bind_all_candidates`]
+    /// run on this frame that could not be bound to any candidate at all
+    /// (`BindingResult::unbound_matches.len()`) — durable, so a later
+    /// verification pass can see it without re-running detection.
+    /// `#[serde(default)]` so a session written before this field existed
+    /// still parses (as `0`), but a `0` on such a legacy, pre-field session
+    /// means "never recorded," not "proven zero" — see
+    /// [`OCR_SCAN_COMPLETE`]'s own doc comment for the paired signal that
+    /// distinguishes the two.
+    #[serde(default)]
+    pub unbound_match_count: u64,
     pub redacted_derivative_relative_path: Option<String>,
     pub redacted_derivative_sha256: Option<String>,
     pub redaction_candidates: Vec<RedactionCandidate>,
@@ -321,6 +344,19 @@ pub enum EditOperation {
         /// parses (as `None`), rather than failing to load at all.
         #[serde(default)]
         authority: Option<OverrideAuthority>,
+        /// C2-P3 verification consumption: the HMAC-SHA256 hex
+        /// [`crate::sop_redaction::mint_visual_review_token`] produced for
+        /// this exact disposition change, verified by
+        /// [`crate::sop_redaction::visual_review_token_is_valid`] before
+        /// this event was ever constructed (see
+        /// [`crate::sop_redaction::build_redaction_change_event`]).
+        /// `#[serde(default)]` (empty string) so a session written before
+        /// this field existed still parses -- an empty value here always
+        /// means "predates this schema, no visual-review evidence was
+        /// ever recorded for this event," the same way `authority: None`
+        /// means "not an override, or predates that schema."
+        #[serde(default)]
+        visual_review_token: String,
     },
     /// Resets a step's text back to its original, immutable model
     /// suggestion. Brief §4: "revert to AI suggestion remains possible."
@@ -1374,6 +1410,7 @@ mod tests {
             window_title: None,
             original_storage: storage,
             ocr_status: None,
+            unbound_match_count: 0,
             redacted_derivative_relative_path: None,
             redacted_derivative_sha256: None,
             redaction_candidates: vec![],
@@ -1736,7 +1773,7 @@ mod tests {
         f.redacted_derivative_relative_path = Some("derivatives/f1.png".to_string());
         f.redacted_derivative_sha256 = Some("c".repeat(64));
         s.source_frames.push(f);
-        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None });
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() });
         s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
         assert!(validate_session(&s).is_ok(), "{:?}", validate_session(&s));
@@ -1768,7 +1805,7 @@ mod tests {
         f.redaction_candidates.push(c);
         // Deliberately no redacted_derivative_relative_path/sha256.
         s.source_frames.push(f);
-        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None });
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() });
         s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
         assert_eq!(
@@ -1827,6 +1864,7 @@ mod tests {
             candidate_id: "c1".to_string(),
             disposition: Disposition::Redact,
             authority: None,
+            visual_review_token: String::new(),
         });
         s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
@@ -1849,7 +1887,7 @@ mod tests {
         // A rewrite AFTER the redaction change re-affirms the caption, so
         // it is no longer treated as invalidated.
         let events = vec![
-            event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None }),
+            event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() }),
             event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "Click Save (reviewed)".to_string() }),
         ];
         s.edit_events = with_correct_digests(&s.captions, events);
@@ -2168,7 +2206,7 @@ mod tests {
     #[test]
     fn edit_chain_rejects_a_redaction_change_on_an_unknown_frame() {
         let mut s = session_with_captions(&["s1"]);
-        let e0 = event(0, EditOperation::RedactionChange { frame_id: "ghost".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None });
+        let e0 = event(0, EditOperation::RedactionChange { frame_id: "ghost".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() });
         let event_id = e0.event_id.clone();
         s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
@@ -2179,7 +2217,7 @@ mod tests {
     fn edit_chain_rejects_a_redaction_change_on_an_unknown_candidate() {
         let mut s = session_with_captions(&["s1"]);
         s.source_frames.push(frame("f1", SourceStorage::SessionEncrypted));
-        let e0 = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "ghost".to_string(), disposition: Disposition::Redact, authority: None });
+        let e0 = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "ghost".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() });
         let event_id = e0.event_id.clone();
         s.edit_events = with_correct_digests(&s.captions, vec![e0]);
         s.revision = 1;
@@ -2218,7 +2256,7 @@ mod tests {
         c.disposition_event_id = Some("ev-0".to_string());
         f.redaction_candidates.push(c);
         s.source_frames.push(f);
-        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None });
+        let redaction_event = event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() });
         s.edit_events = with_correct_digests(&s.captions, vec![redaction_event]);
         s.revision = 1;
         assert!(validate_edit_chain(&s).is_ok(), "{:?}", validate_edit_chain(&s));
@@ -2303,7 +2341,7 @@ mod tests {
     #[test]
     fn a_redaction_change_invalidates_the_caption_bound_to_that_frame() {
         let captions = vec![valid_caption_for("s1", "f1", "Click Save")];
-        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None })];
+        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() })];
         let invalidated = invalidated_step_ids(&captions, &events);
         assert!(invalidated.contains("s1"));
     }
@@ -2312,7 +2350,7 @@ mod tests {
     fn a_rewrite_after_a_redaction_change_un_invalidates_the_caption() {
         let captions = vec![valid_caption_for("s1", "f1", "Click Save")];
         let events = vec![
-            event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None }),
+            event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() }),
             event(1, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "Click the Save button".to_string() }),
         ];
         let invalidated = invalidated_step_ids(&captions, &events);
@@ -2324,7 +2362,7 @@ mod tests {
         let captions = vec![valid_caption_for("s1", "f1", "Click Save")];
         let events = vec![
             event(0, EditOperation::Rewrite { step_id: "s1".to_string(), new_text: "Click the Save button".to_string() }),
-            event(1, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None }),
+            event(1, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() }),
         ];
         let invalidated = invalidated_step_ids(&captions, &events);
         assert!(invalidated.contains("s1"));
@@ -2333,7 +2371,7 @@ mod tests {
     #[test]
     fn a_caption_bound_to_an_untouched_frame_is_never_invalidated() {
         let captions = vec![valid_caption_for("s1", "f1", "Click Save")];
-        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f2".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None })];
+        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f2".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() })];
         let invalidated = invalidated_step_ids(&captions, &events);
         assert!(invalidated.is_empty());
     }
@@ -2579,7 +2617,7 @@ mod tests {
     #[test]
     fn redaction_change_event_carries_no_step_text_and_leaves_projection_unaffected() {
         let captions = vec![caption("s1", "A")];
-        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None })];
+        let events = vec![event(0, EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None, visual_review_token: String::new() })];
         assert_eq!(project_steps(&captions, &events), vec![("s1".to_string(), "A".to_string())]);
     }
 

@@ -1078,6 +1078,7 @@ pub fn apply_review_action_if_current(
     expected_model_manifest_sha256: Option<&str>,
     event_id: String,
     local_timestamp: String,
+    visual_review_token: &str,
 ) -> Result<u64, ApplyReviewActionError> {
     use forge_capture_core::sop_redaction::{build_redaction_change_event, confirmation_digest, ReviewActionRequest};
     use forge_capture_core::sop_session::parse_session;
@@ -1157,8 +1158,15 @@ pub fn apply_review_action_if_current(
         return Err(ApplyReviewActionError::DuplicateEventId(event_id));
     }
 
-    let event = build_redaction_change_event(&session, &request, event_id.clone(), local_timestamp.clone(), &authority_key)
-        .map_err(ApplyReviewActionError::Validation)?;
+    let event = build_redaction_change_event(
+        &session,
+        &request,
+        event_id.clone(),
+        local_timestamp.clone(),
+        &authority_key,
+        visual_review_token,
+    )
+    .map_err(ApplyReviewActionError::Validation)?;
 
     // `build_redaction_change_event` already re-ran `validate_review_action`
     // against this exact `session` above, so the frame/candidate it
@@ -1176,9 +1184,47 @@ pub fn apply_review_action_if_current(
     candidate.disposition = new_disposition;
     candidate.disposition_event_id = Some(event_id);
 
+    // C2-P3 verification consumption: captured here, while `frame`'s
+    // borrow is still the live one above — never re-derived after the
+    // `session.edit_events.push` below, which takes a fresh `&mut
+    // session` that would otherwise conflict with it.
+    let source_relative_path = frame.source_relative_path.clone();
+    let frame_id_owned = frame.frame_id.clone();
+
     session.revision = event.session_revision_after;
     session.updated_at = local_timestamp;
     session.edit_events.push(event);
+
+    // Recompute this frame's verification state in the same atomic
+    // write as the disposition change that just landed on it, rather
+    // than leaving `verification` stale until some separate call gets
+    // around to it. Source-binding freshness is checked against the
+    // source file this same lock already lets us read cheaply (a local
+    // file, not a sidecar round trip) — never against a cached digest.
+    // Deliberately soft-fails to `None` (never aborts this whole write)
+    // on any resolve/read error: a reviewer's real disposition decision
+    // must still be durably recorded even if the source file has since
+    // gone missing or unreadable — `frame_verification_evidence` folds
+    // "could not verify" into `identities_verified = false`, which
+    // correctly blocks verification (C2P3-004) without blocking the
+    // review action itself.
+    let actual_source_sha256: Option<String> = resolve_confined_path(confined.workspace_root(), &source_relative_path)
+        .ok()
+        .and_then(|sc| fs::read(sc.path()).ok())
+        .map(|bytes| forge_capture_core::sop_session::sha256_hex(&bytes));
+    let frame_for_evidence = session
+        .source_frames
+        .iter()
+        .find(|f| f.frame_id == frame_id_owned)
+        .expect("this frame was just mutated above under the same session");
+    let evidence = frame_verification_evidence(&session, frame_for_evidence, &authority_key, actual_source_sha256.as_deref());
+    let new_verification = forge_capture_core::sop_redaction::compute_frame_verification(&evidence);
+    session
+        .source_frames
+        .iter_mut()
+        .find(|f| f.frame_id == frame_id_owned)
+        .expect("this frame was just mutated above under the same session")
+        .verification = new_verification;
 
     // C6A-003 (round-4 re-review): "validate the final mutated document
     // before the atomic write" — the duplicate-ID check above is the
@@ -1217,6 +1263,171 @@ pub enum ApplyReviewActionError {
     PostMutationInvalid(forge_capture_core::sop_session::EditChainError),
     /// GS-C6 fix-round-8 (P1 #2): the workspace's authority key could
     /// not be loaded or minted under the session lock.
+    AuthorityKey(AuthorityKeyError),
+    Io(String),
+}
+
+/// C2-P3 verification consumption: gathers the real evidence
+/// [`forge_capture_core::sop_redaction::compute_frame_verification`]
+/// needs for `frame`, as it stands at this exact point in the caller's
+/// already-open session/lock — `session` and `authority_key` are the
+/// caller's own current values, never re-read, so this never races
+/// whatever the caller is doing.
+///
+/// `identities_verified` is checked against `actual_source_sha256` —
+/// freshly computed by the caller from the real file it is about to
+/// trust, never a cached digest (mirrors
+/// [`forge_capture_core::sop_session::check_source_binding`]'s own doc
+/// comment). `None` means the caller could not even read the source
+/// file to compute it (missing, confinement failure, I/O error) — that
+/// counts as a failed identity check, not a skipped one: C2P3-004 is
+/// exactly "incomplete evidence is never treated as a vacuous pass."
+///
+/// Pixel/removal proof (C2P3-002/003), the vacuous-pass judgment call:
+/// [`forge_capture_core::sop_redaction::verify_pixel_proof`]/
+/// [`forge_capture_core::sop_redaction::verify_removal_proof`] both need
+/// a real redacted derivative to check — nothing in this codebase
+/// produces one yet (apply/export/redacted-image-generation is out of
+/// scope for this slice; `redacted_derivative_relative_path` is set only
+/// by hand in test fixtures today, never by any production code path —
+/// confirmed by inspection, not assumed). So: a frame with zero
+/// `Redact`-dispositioned candidates has nothing a derivative could ever
+/// need to paint over — there is truly nothing outstanding to prove, a
+/// real vacuous pass, not a missing-evidence one (C2P3-004's actual
+/// concern). A frame with at least one `Redact` candidate DOES require a
+/// derivative to satisfy these proofs; its absence there is a real
+/// failure (`pixel_proof_passed = false`), never a vacuous pass. In that
+/// failing branch `removal_proof`'s value is moot —
+/// `pixel_proof_passed = false` alone already forces `Blocked` in
+/// `compute_frame_verification`'s own `||` chain — and is set to `Clean`
+/// only because [`forge_capture_core::sop_redaction::RemovalProofResult`]
+/// has no "not applicable" variant to hold instead. Once apply/export
+/// exists and can set a real derivative, this is the one branch a future
+/// slice needs to replace with an actual `verify_pixel_proof`/
+/// `verify_removal_proof` call — not routed around here.
+fn frame_verification_evidence(
+    session: &forge_capture_core::sop_session::SopSessionV1,
+    frame: &forge_capture_core::sop_session::SourceFrame,
+    authority_key: &[u8],
+    actual_source_sha256: Option<&str>,
+) -> forge_capture_core::sop_redaction::FrameVerificationEvidence {
+    use forge_capture_core::sop_redaction::{verify_coverage_proof, FrameVerificationEvidence, RemovalProofResult};
+    use forge_capture_core::sop_session::{check_source_binding, Disposition, SourceBinding, OCR_SCAN_COMPLETE};
+
+    let coverage_failures = verify_coverage_proof(session, frame, authority_key);
+    let ocr_succeeded = frame.ocr_status.as_deref() == Some(OCR_SCAN_COMPLETE);
+    let unbound_match_count = frame.unbound_match_count as usize;
+    let identities_verified = actual_source_sha256
+        .map(|hash| matches!(check_source_binding(frame, hash), SourceBinding::Fresh))
+        .unwrap_or(false);
+
+    let requires_derivative = frame.redaction_candidates.iter().any(|c| c.disposition == Disposition::Redact);
+    let pixel_proof_passed = !requires_derivative;
+    let removal_proof = RemovalProofResult::Clean;
+
+    FrameVerificationEvidence {
+        pixel_proof_passed,
+        removal_proof,
+        coverage_failures,
+        ocr_succeeded,
+        unbound_match_count,
+        // C2P3: no caller in this codebase can honestly set this true
+        // yet — structural/UIA capture-time instrumentation and the
+        // context-dependent detector pass are both still outstanding
+        // follow-up slices (see this field's own doc comment in
+        // `sop_redaction.rs`). Hardcoded, never computed, so `Verified`
+        // stays genuinely unreachable until they land.
+        required_detectors_complete: false,
+        identities_verified,
+    }
+}
+
+/// C2-P3 verification consumption: the standalone, Tauri-invokable
+/// counterpart to the inline recompute
+/// [`apply_review_action_if_current`] already does after every
+/// disposition change — for recomputing a frame's verification state on
+/// its own, most usefully right after
+/// [`populate_review_candidates_if_current`] ingests a frame's
+/// candidates (so a frame that already has an unbound match, a failed
+/// OCR scan, or an identity mismatch shows as `Blocked` immediately,
+/// rather than sitting at its `Pending` default until a reviewer happens
+/// to touch some candidate on it). Takes the same
+/// [`session_lock`]/[`CrossProcessSessionLock`]/authority-key-under-lock
+/// ordering as every other guarded mutator in this module. Does not
+/// touch `session.revision` or `edit_events` — `verification` is a
+/// derived, non-edit field, exactly like
+/// [`populate_review_candidates_if_current`]'s own candidate ingestion.
+pub fn recompute_frame_verification_if_current(
+    confined: &ConfinedPath<'_>,
+    frame_id: &str,
+    expected_session_revision: u64,
+) -> Result<forge_capture_core::sop_session::FrameVerification, RecomputeVerificationError> {
+    use forge_capture_core::sop_session::parse_session;
+
+    let lock = session_lock(confined.lock_path());
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _cross_process_guard =
+        CrossProcessSessionLock::acquire(confined.lock_path()).map_err(RecomputeVerificationError::Io)?;
+
+    let authority_key = load_or_create_authority_key(confined.workspace_root().canonical_path())
+        .map_err(RecomputeVerificationError::AuthorityKey)?;
+
+    let bytes = match fs::read(confined.path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RecomputeVerificationError::SessionNotFound),
+        Err(e) => return Err(RecomputeVerificationError::Io(format!("cannot read session file: {e}"))),
+    };
+    let mut session = parse_session(&bytes).map_err(RecomputeVerificationError::SessionParse)?;
+
+    if session.revision != expected_session_revision {
+        return Err(RecomputeVerificationError::StaleRevision { expected: expected_session_revision, current: session.revision });
+    }
+
+    let source_relative_path = session
+        .source_frames
+        .iter()
+        .find(|f| f.frame_id == frame_id)
+        .ok_or_else(|| RecomputeVerificationError::FrameNotFound(frame_id.to_string()))?
+        .source_relative_path
+        .clone();
+
+    // Soft-fails to `None` on any resolve/read error — see
+    // `frame_verification_evidence`'s own doc comment on why that is a
+    // failed identity check (`Blocked`), never an aborted recompute.
+    let actual_source_sha256: Option<String> = resolve_confined_path(confined.workspace_root(), &source_relative_path)
+        .ok()
+        .and_then(|sc| fs::read(sc.path()).ok())
+        .map(|bytes| forge_capture_core::sop_session::sha256_hex(&bytes));
+
+    let frame = session
+        .source_frames
+        .iter()
+        .find(|f| f.frame_id == frame_id)
+        .expect("checked above");
+    let evidence = frame_verification_evidence(&session, frame, &authority_key, actual_source_sha256.as_deref());
+    let new_verification = forge_capture_core::sop_redaction::compute_frame_verification(&evidence);
+
+    session
+        .source_frames
+        .iter_mut()
+        .find(|f| f.frame_id == frame_id)
+        .expect("checked above")
+        .verification = new_verification;
+
+    let bytes =
+        serde_json::to_vec(&session).map_err(|e| RecomputeVerificationError::Io(format!("cannot serialize session: {e}")))?;
+    cleanup_orphaned_temp_files(confined.path());
+    confined.atomic_write_with_fsync(&bytes).map_err(RecomputeVerificationError::Io)?;
+
+    Ok(new_verification)
+}
+
+#[derive(Debug)]
+pub enum RecomputeVerificationError {
+    SessionNotFound,
+    SessionParse(forge_capture_core::sop_session::SessionError),
+    FrameNotFound(String),
+    StaleRevision { expected: u64, current: u64 },
     AuthorityKey(AuthorityKeyError),
     Io(String),
 }
@@ -1344,6 +1555,16 @@ pub fn populate_review_candidates_if_current(
     }
     frame.redaction_candidates = candidates;
 
+    // C2-P3 verification consumption: the two durable signals
+    // `compute_frame_verification` (via `recompute_frame_verification_if_current`)
+    // needs to tell "detection ran and found nothing" apart from
+    // "detection never ran" (C2P3-004), and to see an unbound hit without
+    // re-running `detect_and_bind_all_candidates` (C2P3-001). Both are
+    // recorded from this exact binding run, in the same atomic write as
+    // the candidates themselves — never a separate, laggable write.
+    frame.unbound_match_count = unbound_count as u64;
+    frame.ocr_status = Some(forge_capture_core::sop_session::OCR_SCAN_COMPLETE.to_string());
+
     // Defense in depth, same as apply_review_action_if_current: the exact
     // document this function is about to make durable must itself be
     // structurally valid, not just "the inputs looked fine." Nothing is
@@ -1440,6 +1661,17 @@ pub struct ReviewCandidateView {
     pub disposition: forge_capture_core::sop_session::Disposition,
     pub original_box: (i64, i64, u64, u64),
     pub expanded_box: (i64, i64, u64, u64),
+    /// C2-P3 verification consumption: a
+    /// [`forge_capture_core::sop_redaction::mint_visual_review_token`]
+    /// output, bound to this exact candidate's current box, this frame's
+    /// current raster, and the session's current revision — minted here
+    /// (the trusted app-layer read path), under the same session lock
+    /// that guards every write, so a value this projection returns always
+    /// reflects state a concurrent write cannot have moved out from under
+    /// it. The frontend's only job is echoing this back unmodified with
+    /// its eventual disposition-change submission; see
+    /// [`crate::sop_review::review_disposition_change`].
+    pub visual_review_token: String,
 }
 
 /// C2-P6A frontend review UI: one frame's candidates plus every value
@@ -1478,6 +1710,10 @@ pub enum ReadReviewCandidatesError {
     /// [`MAX_REVIEW_RESPONSE_BYTES`] — caught while accumulating, before
     /// the oversized response is ever fully built or returned.
     ResponseTooLarge { max_bytes: usize },
+    /// C2-P3 verification consumption: cannot load or mint the workspace
+    /// authority key the visual-review token requires — same error shape
+    /// as [`ApplyReviewActionError::AuthorityKey`].
+    AuthorityKey(AuthorityKeyError),
     Io(String),
 }
 
@@ -1508,12 +1744,23 @@ pub enum ReadReviewCandidatesError {
 /// ([`forge_capture_core::sop_session::validate_session`]) as part of
 /// parsing — there is no separate validation step to add here.
 pub fn read_review_candidates_snapshot(confined: &ConfinedPath<'_>, frame_id: &str) -> Result<ReviewCandidatesSnapshot, ReadReviewCandidatesError> {
+    use forge_capture_core::sop_redaction::mint_visual_review_token;
     use forge_capture_core::sop_session::parse_session;
 
     let lock = session_lock(confined.lock_path());
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     let _cross_process_guard =
         CrossProcessSessionLock::acquire(confined.lock_path()).map_err(ReadReviewCandidatesError::Io)?;
+
+    // C2-P3 verification consumption: sourced under the same two locks
+    // guarding this whole read, same ordering reason
+    // `apply_review_action_if_current` loads it under its own locks
+    // (GS-C6 fix-round-8, P1 #2) — a first-ever read on a brand-new
+    // workspace and a first-ever write race the same single-winner
+    // `load_or_create_authority_key` path, serialized by the identical
+    // lock pair both functions take.
+    let authority_key =
+        load_or_create_authority_key(confined.workspace_root().canonical_path()).map_err(ReadReviewCandidatesError::AuthorityKey)?;
 
     match fs::metadata(confined.path()) {
         Ok(meta) if meta.len() > MAX_SESSION_FILE_BYTES => {
@@ -1554,6 +1801,15 @@ pub fn read_review_candidates_snapshot(confined: &ConfinedPath<'_>, frame_id: &s
     let mut candidates = Vec::with_capacity(frame.redaction_candidates.len());
     let mut running_bytes = 0usize;
     for c in &frame.redaction_candidates {
+        let visual_review_token = mint_visual_review_token(
+            &authority_key,
+            &session.session_id,
+            frame_id,
+            &c.candidate_id,
+            c.original_box,
+            &frame.raster_sha256,
+            session.revision,
+        );
         let view = ReviewCandidateView {
             candidate_id: c.candidate_id.clone(),
             detector_id: c.detector_id.clone(),
@@ -1561,6 +1817,7 @@ pub fn read_review_candidates_snapshot(confined: &ConfinedPath<'_>, frame_id: &s
             disposition: c.disposition,
             original_box: c.original_box,
             expanded_box: c.expanded_box,
+            visual_review_token,
         };
         running_bytes += serde_json::to_vec(&view).map(|b| b.len()).unwrap_or(0);
         if running_bytes > MAX_REVIEW_RESPONSE_BYTES {
@@ -3118,6 +3375,7 @@ mod tests {
             window_title: None,
             original_storage: SourceStorage::SessionEncrypted,
             ocr_status: None,
+            unbound_match_count: 0,
             redacted_derivative_relative_path: None,
             redacted_derivative_sha256: None,
             redaction_candidates: candidates,
@@ -3145,6 +3403,34 @@ mod tests {
         }
     }
 
+    /// C2-P3 verification consumption: the token
+    /// `apply_review_action_if_current` now requires for every call,
+    /// matching whatever key that function's own internal
+    /// `load_or_create_authority_key` call will see. Loads (or creates,
+    /// if this is the first touch of this workspace) that same key
+    /// itself first, under no lock -- `load_or_create_authority_key` has
+    /// none of its own -- so tests whose whole point is racing concurrent
+    /// *first* key creation (search this file for "concurrent first use")
+    /// call it ahead of their own race instead, with a comment explaining
+    /// why: a mandatory visual-review token means a real reviewer must
+    /// already have read this candidate (which creates the key as a side
+    /// effect, same as this helper does) before any disposition change
+    /// can succeed, so the write path's own former bare first-use race is
+    /// no longer reachable from production traffic.
+    fn test_mint_token(confined: &ConfinedPath<'_>, frame_id: &str, candidate_id: &str, session_revision: u64) -> String {
+        let key = load_or_create_authority_key(confined.workspace_root().canonical_path())
+            .expect("test fixture: authority key must load or create cleanly");
+        forge_capture_core::sop_redaction::mint_visual_review_token(
+            &key,
+            "sess-1",
+            frame_id,
+            candidate_id,
+            (0, 0, 5, 5),
+            &"a".repeat(64),
+            session_revision,
+        )
+    }
+
     fn write_review_session(confined: &ConfinedPath<'_>, session: &SopSessionV1) {
         confined.atomic_write_with_fsync(&serde_json::to_vec(session).unwrap()).unwrap();
     }
@@ -3168,6 +3454,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("Redact never needs a reason or confirmation");
         assert_eq!(new_revision, 1);
@@ -3200,6 +3487,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         );
         assert!(matches!(
             result,
@@ -3233,6 +3521,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("a real confirmed signal must be accepted");
         assert_eq!(new_revision, 1);
@@ -3271,6 +3560,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("setup: the first action at revision 0 must succeed");
 
@@ -3286,6 +3576,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c2", 0),
         );
         assert!(matches!(
             result,
@@ -3323,6 +3614,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         );
         assert!(matches!(
             result,
@@ -3363,6 +3655,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("first confirmed action at revision 0 must succeed");
 
@@ -3378,6 +3671,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         );
         assert!(matches!(
             result,
@@ -3407,6 +3701,7 @@ mod tests {
             None,
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         );
         assert!(matches!(result, Err(ApplyReviewActionError::SessionNotFound)));
         drop(confined);
@@ -3445,6 +3740,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("first action with a fresh event id must succeed");
         let bytes_after_first = fs::read(confined.path()).unwrap();
@@ -3463,6 +3759,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c2", 1),
         );
         assert!(matches!(result, Err(ApplyReviewActionError::DuplicateEventId(ref id)) if id == "evt-1"), "{result:?}");
 
@@ -3513,6 +3810,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c1", 0),
         )
         .expect("the first confirmed MarkNonSensitive action must succeed");
         assert_eq!(revision_after_c1, 1);
@@ -3542,6 +3840,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-2".to_string(),
             "2026-10-29T12:06:00Z".to_string(),
+            &test_mint_token(&confined, "f1", "c2", 1),
         )
         .expect("the second, independent confirmed action must also succeed");
         assert_eq!(revision_after_c2, 2);
@@ -3591,19 +3890,31 @@ mod tests {
             )]),
         );
 
-        // No `AUTHORITY_KEY_FILE_NAME` exists under `root` yet — both
-        // threads below race the real "not found -> generate ->
-        // atomic-write" path inside `load_or_create_authority_key`,
-        // each from its own call to `apply_review_action_if_current`,
-        // serialized only by that function's own in-process/cross-
-        // process session locks, exactly as two real concurrent first
-        // actions on a brand-new workspace would be. Both sides retry
-        // on a stale-revision rejection — the session lock guarantees
-        // one of these two always wins the *first* attempt at
-        // `expected_session_revision: 0`, and the loser is rejected for
-        // being stale, not for anything to do with the key — so both
-        // sides are written symmetrically rather than assuming an
-        // ordering.
+        // C2-P3 verification consumption: `apply_review_action_if_current`
+        // now also requires a caller-supplied `visual_review_token`,
+        // minted (see `test_mint_token`) against whatever key is already
+        // on disk at call time -- unlike that function's own internal
+        // `load_or_create_authority_key` call (made once, under its own
+        // session lock), minting a token has no lock of its own. Racing
+        // token-minting concurrently with this test's real subject (two
+        // callers racing the key's *first-ever* creation) would reopen
+        // exactly the split-brain `load_or_create_authority_key`'s own
+        // doc comment names: two racing creators can each durably
+        // overwrite the other's key, so a token minted against one
+        // in-memory copy could silently stop matching whichever copy
+        // `apply_review_action_if_current` loads moments later. In real
+        // usage this can never happen: a token only ever exists because a
+        // reviewer already fetched this candidate through the read path,
+        // which itself loads-or-creates the same key first -- so by the
+        // time any disposition change is ever submitted, the key is
+        // already durable. Reproducing that real precondition here (one
+        // deterministic creation, before either side's race begins) keeps
+        // this test's actual subject -- two concurrent first *writes*
+        // converging cleanly -- intact, without reintroducing a key race
+        // this slice's new requirement makes unreachable from production
+        // traffic.
+        load_or_create_authority_key(ws.canonical_path()).expect("deterministic pre-creation for this test's token minting");
+
         fn apply_with_revision_retry(
             confined: &ConfinedPath<'_>,
             candidate_id: &str,
@@ -3616,6 +3927,7 @@ mod tests {
                     Ok(bytes) => parse_session(&bytes).unwrap().revision,
                     Err(_) => 0,
                 };
+                let token = test_mint_token(confined, "f1", candidate_id, current_revision);
                 let result = apply_review_action_if_current(
                     confined,
                     "f1",
@@ -3628,6 +3940,7 @@ mod tests {
                     Some("model-manifest-v1"),
                     event_id.to_string(),
                     local_timestamp.to_string(),
+                    &token,
                 );
                 if matches!(result, Err(ApplyReviewActionError::Validation(_))) {
                     continue;
@@ -3707,12 +4020,17 @@ mod tests {
         let confined_b = confine_session(&ws_b, "session-b.json");
         write_review_session(&confined_b, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
 
-        // No `AUTHORITY_KEY_FILE_NAME` exists under `root` yet. Each
-        // session file is independent (separate revision counters, no
-        // shared `expected_session_revision` precondition to collide
+        // Each session file is independent (separate revision counters,
+        // no shared `expected_session_revision` precondition to collide
         // on), so — unlike the same-session-file race above — neither
-        // side needs to retry; the only thing being raced is first-use
-        // key creation.
+        // side needs to retry. C2-P3 verification consumption: the key is
+        // pre-created here, deterministically, for the same reason the
+        // retry-based test above does — see that test's own comment for
+        // the full split-brain explanation (`test_mint_token`'s minting
+        // has no lock of its own, unlike `apply_review_action_if_current`'s
+        // internal, session-locked `load_or_create_authority_key` call).
+        load_or_create_authority_key(ws_a.canonical_path()).expect("deterministic pre-creation for this test's token minting");
+
         let root_for_thread = root.clone();
         let handle = std::thread::spawn(move || {
             let ws_b2 = workspace_root(&root_for_thread);
@@ -3729,6 +4047,7 @@ mod tests {
                 Some("model-manifest-v1"),
                 "evt-b".to_string(),
                 "2026-10-29T12:05:00Z".to_string(),
+                &test_mint_token(&confined_b2, "f1", "c1", 0),
             )
         });
 
@@ -3744,6 +4063,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-a".to_string(),
             "2026-10-29T12:05:01Z".to_string(),
+            &test_mint_token(&confined_a, "f1", "c1", 0),
         );
         result_a.expect("session-a's action must succeed");
         handle.join().unwrap().expect("session-b's action must succeed");
@@ -3768,6 +4088,284 @@ mod tests {
 
         drop(confined_a);
         drop(confined_b);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // --- C2-P3 verification consumption: frame_verification_evidence /
+    // recompute_frame_verification_if_current / the inline recompute
+    // apply_review_action_if_current now does after every disposition
+    // change ---
+
+    use forge_capture_core::sop_redaction::{FrameVerificationEvidence, RemovalProofResult};
+    use forge_capture_core::sop_session::OCR_SCAN_COMPLETE;
+
+    #[test]
+    fn frame_verification_evidence_fails_identities_when_the_source_sha256_could_not_be_computed() {
+        let session = review_session(vec![review_frame("f1", vec![])]);
+        let frame = &session.source_frames[0];
+        let key = b"k";
+        let evidence = frame_verification_evidence(&session, frame, key, None);
+        assert!(!evidence.identities_verified, "a missing/unreadable source file must fail identity verification, never skip it");
+    }
+
+    #[test]
+    fn frame_verification_evidence_identities_verified_tracks_an_exact_raster_sha256_match() {
+        let session = review_session(vec![review_frame("f1", vec![])]);
+        let frame = &session.source_frames[0]; // raster_sha256 == "a".repeat(64), per review_frame
+        let key = b"k";
+
+        let matching = "a".repeat(64);
+        assert!(frame_verification_evidence(&session, frame, key, Some(&matching)).identities_verified);
+
+        let mismatched = "b".repeat(64);
+        assert!(!frame_verification_evidence(&session, frame, key, Some(&mismatched)).identities_verified);
+    }
+
+    #[test]
+    fn frame_verification_evidence_ocr_succeeded_requires_the_exact_scan_complete_marker() {
+        let key = b"k";
+        let mut frame_done = review_frame("f1", vec![]);
+        frame_done.ocr_status = Some(OCR_SCAN_COMPLETE.to_string());
+        let session_done = review_session(vec![frame_done.clone()]);
+        assert!(frame_verification_evidence(&session_done, &frame_done, key, Some(&"a".repeat(64))).ocr_succeeded);
+
+        let frame_never_scanned = review_frame("f1", vec![]); // ocr_status: None, the default
+        let session_never = review_session(vec![frame_never_scanned.clone()]);
+        assert!(!frame_verification_evidence(&session_never, &frame_never_scanned, key, Some(&"a".repeat(64))).ocr_succeeded);
+
+        let mut frame_other = review_frame("f1", vec![]);
+        frame_other.ocr_status = Some("some-other-value".to_string());
+        let session_other = review_session(vec![frame_other.clone()]);
+        assert!(
+            !frame_verification_evidence(&session_other, &frame_other, key, Some(&"a".repeat(64))).ocr_succeeded,
+            "only the exact OCR_SCAN_COMPLETE marker counts as a successful scan, not just any Some(_)"
+        );
+    }
+
+    #[test]
+    fn frame_verification_evidence_unbound_match_count_is_read_straight_from_the_frame_field() {
+        let key = b"k";
+        let mut frame = review_frame("f1", vec![]);
+        frame.unbound_match_count = 3;
+        let session = review_session(vec![frame.clone()]);
+        assert_eq!(frame_verification_evidence(&session, &frame, key, Some(&"a".repeat(64))).unbound_match_count, 3);
+    }
+
+    #[test]
+    fn frame_verification_evidence_pixel_and_removal_proof_pass_vacuously_with_no_redact_candidates() {
+        let key = b"k";
+        let frame = review_frame("f1", vec![review_candidate("c1", Disposition::MarkNonSensitive), review_candidate("c2", Disposition::Pending)]);
+        let session = review_session(vec![frame.clone()]);
+        let evidence = frame_verification_evidence(&session, &frame, key, Some(&"a".repeat(64)));
+        assert!(evidence.pixel_proof_passed, "nothing on this frame is dispositioned Redact, so there is nothing a derivative could ever need to paint over");
+        assert_eq!(evidence.removal_proof, RemovalProofResult::Clean);
+    }
+
+    #[test]
+    fn frame_verification_evidence_pixel_proof_fails_when_a_redact_candidate_exists_with_no_derivative() {
+        let key = b"k";
+        let frame = review_frame("f1", vec![review_candidate("c1", Disposition::Redact)]);
+        let session = review_session(vec![frame.clone()]);
+        assert!(frame.redacted_derivative_relative_path.is_none(), "this is the real, current state: nothing in this codebase ever produces one");
+        let evidence = frame_verification_evidence(&session, &frame, key, Some(&"a".repeat(64)));
+        assert!(
+            !evidence.pixel_proof_passed,
+            "C2P3-004: a Redact candidate makes a derivative genuinely required, so its absence is a real failure, never a vacuous pass"
+        );
+    }
+
+    #[test]
+    fn frame_verification_evidence_required_detectors_complete_is_always_false() {
+        // C2P3: structural/UIA capture-time instrumentation and the
+        // context-dependent detector pass are still outstanding
+        // follow-up slices — no caller in this codebase can honestly set
+        // this true yet (see FrameVerificationEvidence's own doc
+        // comment). This test exists so a future accidental flip gets
+        // caught here, not discovered by a reviewer reading the wiring.
+        let key = b"k";
+        let frame = review_frame("f1", vec![review_candidate("c1", Disposition::MarkNonSensitive)]);
+        let session = review_session(vec![frame.clone()]);
+        assert!(!frame_verification_evidence(&session, &frame, key, Some(&"a".repeat(64))).required_detectors_complete);
+    }
+
+    #[test]
+    fn frame_verification_evidence_surfaces_coverage_proof_failures_from_the_real_primitive_unchanged() {
+        let key = b"k";
+        // An undispositioned (Pending) candidate is exactly what
+        // verify_coverage_proof flags as UndispositionedCandidate.
+        let frame = review_frame("f1", vec![review_candidate("c1", Disposition::Pending)]);
+        let session = review_session(vec![frame.clone()]);
+        let evidence = frame_verification_evidence(&session, &frame, key, Some(&"a".repeat(64)));
+        assert_eq!(
+            evidence.coverage_failures,
+            forge_capture_core::sop_redaction::verify_coverage_proof(&session, &frame, key),
+            "frame_verification_evidence must thread verify_coverage_proof's real result through unchanged, never recompute or approximate it"
+        );
+        assert!(!evidence.coverage_failures.is_empty());
+    }
+
+    #[test]
+    fn frame_verification_evidence_feeds_compute_frame_verification_to_blocked_even_when_every_other_check_passes() {
+        // The one honest, currently-surprising consequence of
+        // required_detectors_complete being hardcoded false: even a
+        // frame with a clean OCR scan, zero unbound matches, a fresh
+        // source binding, no Redact candidates, and full coverage still
+        // computes to Blocked today, never ReviewRequired or Verified —
+        // stated plainly here rather than discovered later.
+        let key = b"k";
+        let mut frame = review_frame("f1", vec![review_candidate("c1", Disposition::MarkNonSensitive)]);
+        frame.ocr_status = Some(OCR_SCAN_COMPLETE.to_string());
+        frame.unbound_match_count = 0;
+        // Give this MarkNonSensitive candidate real coverage so
+        // verify_coverage_proof reports no failures: resolve it through
+        // a real disposition_event_id pointing at a matching edit event.
+        let authority_key = b"evidence-feeds-blocked-key".to_vec();
+        let digest = forge_capture_core::sop_redaction::confirmation_digest(
+            "sess-1", "f1", "c1", Disposition::MarkNonSensitive, "verified", &frame.raster_sha256, None, "policy-v1", Some("model-manifest-v1"), 0,
+        );
+        let token = forge_capture_core::sop_redaction::mint_visual_review_token(&authority_key, "sess-1", "f1", "c1", (0, 0, 5, 5), &frame.raster_sha256, 0);
+        let request = forge_capture_core::sop_redaction::ReviewActionRequest {
+            frame_id: "f1",
+            candidate_id: "c1",
+            new_disposition: Disposition::MarkNonSensitive,
+            reason: "verified",
+            confirmation_digest: Some(&digest),
+            expected_session_revision: 0,
+            expected_policy_version: "policy-v1",
+            expected_model_manifest_sha256: Some("model-manifest-v1"),
+        };
+        let mut session = review_session(vec![frame]);
+        let event = forge_capture_core::sop_redaction::build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-11-09T00:00:00Z".to_string(), &authority_key, &token)
+            .expect("a well-formed MarkNonSensitive request with a valid digest and token must build cleanly");
+        session.source_frames[0].redaction_candidates[0].disposition = Disposition::MarkNonSensitive;
+        session.source_frames[0].redaction_candidates[0].disposition_event_id = Some(event.event_id.clone());
+        session.revision = event.session_revision_after;
+        session.edit_events.push(event);
+
+        let frame = &session.source_frames[0];
+        let evidence = frame_verification_evidence(&session, frame, &authority_key, Some(&frame.raster_sha256));
+        assert!(evidence.coverage_failures.is_empty(), "the override is now properly evidenced, so coverage must be clean");
+        assert!(evidence.ocr_succeeded);
+        assert_eq!(evidence.unbound_match_count, 0);
+        assert!(evidence.pixel_proof_passed);
+        assert!(evidence.identities_verified);
+
+        assert_eq!(
+            forge_capture_core::sop_redaction::compute_frame_verification(&evidence),
+            FrameVerification::Blocked,
+            "required_detectors_complete alone must still force Blocked, never ReviewRequired or Verified, however clean everything else is"
+        );
+    }
+
+    #[test]
+    fn apply_review_action_if_current_persists_blocked_verification_after_a_redact_disposition() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+
+        apply_review_action_if_current(
+            &confined, "f1", "c1", Disposition::Redact, "", false, 0, "policy-v1", Some("model-manifest-v1"), "evt-1".to_string(),
+            "2026-11-09T00:00:00Z".to_string(), &test_mint_token(&confined, "f1", "c1", 0),
+        )
+        .expect("Redact never needs a reason or confirmation");
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(
+            on_disk.source_frames[0].verification, FrameVerification::Blocked,
+            "the disposition change must atomically recompute and persist this frame's verification state, not leave it at its Pending default"
+        );
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_review_action_if_current_still_succeeds_when_the_source_frame_file_does_not_exist_on_disk() {
+        // Regression guard for the exact failure this inline recompute
+        // must never cause: the verification-evidence gathering reads
+        // the real source file to check identity freshness, but a
+        // reviewer's real disposition decision must still be durably
+        // recorded even when that file is missing (every `review_frame`
+        // fixture in this module never creates a real file at its
+        // `source_relative_path` — if this regressed to a hard error,
+        // every other test in this section would also fail).
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![review_candidate("c1", Disposition::Pending)])]));
+        assert!(!ws.canonical_path().join("frames").join("f1.png").exists());
+
+        let result = apply_review_action_if_current(
+            &confined, "f1", "c1", Disposition::Redact, "", false, 0, "policy-v1", Some("model-manifest-v1"), "evt-1".to_string(),
+            "2026-11-09T00:00:00Z".to_string(), &test_mint_token(&confined, "f1", "c1", 0),
+        );
+        assert!(result.is_ok(), "a missing source file must degrade verification to Blocked, never abort the disposition write: {result:?}");
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.source_frames[0].redaction_candidates[0].disposition, Disposition::Redact);
+        assert_eq!(on_disk.source_frames[0].verification, FrameVerification::Blocked);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recompute_frame_verification_if_current_persists_the_computed_state() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        let mut frame = review_frame("f1", vec![review_candidate("c1", Disposition::Pending)]);
+        frame.ocr_status = Some(OCR_SCAN_COMPLETE.to_string());
+        write_review_session(&confined, &review_session(vec![frame]));
+
+        let result = recompute_frame_verification_if_current(&confined, "f1", 0).expect("a current frame on a current revision must recompute cleanly");
+        assert_eq!(result, FrameVerification::Blocked);
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.source_frames[0].verification, FrameVerification::Blocked);
+        assert_eq!(on_disk.revision, 0, "verification is a derived, non-edit field — recompute must never advance the session revision or edit chain");
+        assert_eq!(on_disk.edit_events.len(), 0);
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recompute_frame_verification_if_current_refuses_a_stale_expected_revision_and_writes_nothing() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let result = recompute_frame_verification_if_current(&confined, "f1", 7);
+        assert!(matches!(result, Err(RecomputeVerificationError::StaleRevision { expected: 7, current: 0 })));
+
+        let on_disk = parse_session(&fs::read(confined.path()).unwrap()).unwrap();
+        assert_eq!(on_disk.source_frames[0].verification, FrameVerification::Pending, "nothing must be written on a stale-revision refusal");
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recompute_frame_verification_if_current_refuses_an_unknown_frame() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+        write_review_session(&confined, &review_session(vec![review_frame("f1", vec![])]));
+
+        let result = recompute_frame_verification_if_current(&confined, "no-such-frame", 0);
+        assert!(matches!(result, Err(RecomputeVerificationError::FrameNotFound(id)) if id == "no-such-frame"));
+        drop(confined);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recompute_frame_verification_if_current_refuses_when_no_session_exists_yet() {
+        let root = temp_root();
+        let ws = workspace_root(&root);
+        let confined = confine_session(&ws, "session.json");
+
+        let result = recompute_frame_verification_if_current(&confined, "f1", 0);
+        assert!(matches!(result, Err(RecomputeVerificationError::SessionNotFound)));
+        drop(confined);
         fs::remove_dir_all(&root).ok();
     }
 
@@ -4113,6 +4711,12 @@ mod tests {
             disposition: Disposition::Pending,
             original_box: (0, 0, 5, 5),
             expanded_box: (0, 0, 5, 5),
+            // A real minted token is a fixed-length 64-character
+            // HMAC-SHA256 hex string, never empty — matching that exact
+            // length here, not `String::new()`, is what keeps this
+            // probe's measured `base_bytes` consistent with every real
+            // candidate's actual serialized size below.
+            visual_review_token: "a".repeat(64),
         };
         let base_bytes = serde_json::to_vec(&probe).unwrap().len();
         assert!(per_candidate_bytes >= base_bytes, "requested size must be reachable by padding reason_code upward only");
@@ -4261,6 +4865,7 @@ mod tests {
                     Ok(bytes) => parse_session(&bytes).unwrap().revision,
                     Err(_) => 0,
                 };
+                let token = test_mint_token(&confined2, "f1", "c1", current_revision);
                 let _ = apply_review_action_if_current(
                     &confined2,
                     "f1",
@@ -4273,6 +4878,7 @@ mod tests {
                     Some("model-manifest-v1"),
                     format!("evt-{i}"),
                     "2026-10-29T12:05:00Z".to_string(),
+                    &token,
                 );
             }
         });

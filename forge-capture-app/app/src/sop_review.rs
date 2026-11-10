@@ -37,9 +37,9 @@ use forge_capture_core::sop_session::{sha256_hex, Disposition, OcrToken};
 
 use crate::ai_sidecar_client::SidecarSession;
 use crate::sop_workspace::{
-    apply_review_action_if_current, populate_review_candidates_if_current, read_review_candidates_snapshot, resolve_confined_path,
-    ApplyReviewActionError, IngestedReviewCandidates, PopulateReviewCandidatesError, ReadReviewCandidatesError, ReviewCandidatesSnapshot,
-    WorkspaceRoot,
+    apply_review_action_if_current, populate_review_candidates_if_current, read_review_candidates_snapshot,
+    recompute_frame_verification_if_current, resolve_confined_path, ApplyReviewActionError, IngestedReviewCandidates,
+    PopulateReviewCandidatesError, ReadReviewCandidatesError, RecomputeVerificationError, ReviewCandidatesSnapshot, WorkspaceRoot,
 };
 
 /// Parses a [`Disposition`]'s stable wire code (`"PENDING"`, `"REDACT"`,
@@ -90,6 +90,7 @@ fn review_disposition_change_impl(
     expected_model_manifest_sha256: Option<&str>,
     event_id: String,
     local_timestamp: String,
+    visual_review_token: &str,
     confirm: impl FnOnce(&str) -> bool,
 ) -> Result<u64, String> {
     let new_disposition = parse_disposition_wire_code(new_disposition_wire)?;
@@ -130,6 +131,7 @@ fn review_disposition_change_impl(
         expected_model_manifest_sha256,
         event_id,
         local_timestamp,
+        visual_review_token,
     )
     .map_err(apply_review_action_error_to_string)
 }
@@ -148,6 +150,7 @@ fn get_review_candidates_error_to_string(err: ReadReviewCandidatesError) -> Stri
         ReadReviewCandidatesError::ResponseTooLarge { max_bytes } => {
             format!("review-limit refused: this frame's candidates are too large to return in one review response (max {max_bytes} bytes)")
         }
+        ReadReviewCandidatesError::AuthorityKey(e) => format!("cannot load or mint workspace authority key: {e:?}"),
         ReadReviewCandidatesError::Io(msg) => msg,
     }
 }
@@ -179,6 +182,61 @@ fn get_review_candidates_impl(workspace_root: &std::path::Path, session_relative
 #[allow(non_snake_case)]
 pub fn get_review_candidates(workspaceRoot: String, sessionRelativePath: String, frameId: String) -> Result<ReviewCandidatesSnapshot, String> {
     get_review_candidates_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId)
+}
+
+fn recompute_frame_verification_error_to_string(err: RecomputeVerificationError) -> String {
+    match err {
+        RecomputeVerificationError::SessionNotFound => "no session exists yet at that path".to_string(),
+        RecomputeVerificationError::SessionParse(e) => format!("session file is not a valid session: {e:?}"),
+        RecomputeVerificationError::FrameNotFound(id) => format!("no frame with id {id} in this session"),
+        RecomputeVerificationError::StaleRevision { expected, current } => {
+            format!("stale: expected revision {expected}, session is actually at {current} — reload and try again")
+        }
+        RecomputeVerificationError::AuthorityKey(e) => format!("cannot load or mint workspace authority key: {e:?}"),
+        RecomputeVerificationError::Io(msg) => msg,
+    }
+}
+
+/// The real work behind [`recompute_frame_verification`], factored out
+/// the same way [`get_review_candidates_impl`] is.
+fn recompute_frame_verification_impl(
+    workspace_root: &std::path::Path,
+    session_relative_path: &str,
+    frame_id: &str,
+    expected_session_revision: u64,
+) -> Result<forge_capture_core::sop_session::FrameVerification, String> {
+    let root = WorkspaceRoot::open(workspace_root).map_err(|e| format!("cannot open workspace root: {e:?}"))?;
+    let confined = resolve_confined_path(&root, session_relative_path).map_err(|e| format!("cannot resolve session path: {e:?}"))?;
+    recompute_frame_verification_if_current(&confined, frame_id, expected_session_revision)
+        .map_err(recompute_frame_verification_error_to_string)
+}
+
+/// Tauri command (C2-P3 verification consumption): recomputes and
+/// persists one frame's [`forge_capture_core::sop_session::FrameVerification`]
+/// from its current real evidence — see
+/// [`crate::sop_workspace::recompute_frame_verification_if_current`]'s own
+/// doc comment. [`review_disposition_change`] already does this inline
+/// after every disposition change; this standalone command exists for
+/// recomputing a frame's state without going through a disposition
+/// change at all — most usefully right after
+/// [`ingest_review_candidates`]/[`run_ocr_and_ingest_review_candidates`]
+/// populates a frame's candidates, so a frame that already fails some
+/// evidence check (an unbound match, a failed OCR scan, a stale source
+/// binding) shows that immediately rather than sitting at `Pending`
+/// until a reviewer happens to act on some candidate.
+///
+/// Tauri matches invoke argument names to Rust parameter names exactly
+/// (no case conversion), so these are camelCase to match what the JS UI
+/// sends — see [`get_review_candidates`] for the same convention.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn recompute_frame_verification(
+    workspaceRoot: String,
+    sessionRelativePath: String,
+    frameId: String,
+    expectedSessionRevision: u64,
+) -> Result<forge_capture_core::sop_session::FrameVerification, String> {
+    recompute_frame_verification_impl(std::path::Path::new(&workspaceRoot), &sessionRelativePath, &frameId, expectedSessionRevision)
 }
 
 fn populate_review_candidates_error_to_string(err: PopulateReviewCandidatesError) -> String {
@@ -420,6 +478,7 @@ pub fn review_disposition_change(
     expectedModelManifestSha256: Option<String>,
     eventId: String,
     localTimestamp: String,
+    visualReviewToken: String,
 ) -> Result<u64, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -435,6 +494,7 @@ pub fn review_disposition_change(
         expectedModelManifestSha256.as_deref(),
         eventId,
         localTimestamp,
+        &visualReviewToken,
         |reason| {
             // C6A-001B: a real, OS-native modal — not a webview element
             // the frontend could script, read in advance, or answer on
@@ -496,6 +556,7 @@ mod tests {
                 window_title: None,
                 original_storage: SourceStorage::SessionEncrypted,
                 ocr_status: None,
+                unbound_match_count: 0,
                 redacted_derivative_relative_path: None,
                 redacted_derivative_sha256: None,
                 redaction_candidates: vec![RedactionCandidate {
@@ -520,6 +581,19 @@ mod tests {
         std::fs::write(root.join(relative_path), serde_json::to_vec(&session).unwrap()).unwrap();
     }
 
+    /// C2-P3 verification consumption: mints the token
+    /// `review_disposition_change_impl` now requires, matching
+    /// `write_minimal_session`'s own fixed fixture (session id
+    /// `"sess-1"`, candidate box `(0, 0, 5, 5)`, frame
+    /// `raster_sha256: "a".repeat(64)`) — same approach as
+    /// `sop_workspace.rs`'s own `test_mint_token`, duplicated here rather
+    /// than shared because this module's callers pass a bare workspace
+    /// root path, not a `ConfinedPath`.
+    fn test_mint_token(root: &std::path::Path, frame_id: &str, candidate_id: &str, session_revision: u64) -> String {
+        let key = crate::sop_workspace::load_or_create_authority_key(root).expect("test fixture: authority key must load or create cleanly");
+        forge_capture_core::sop_redaction::mint_visual_review_token(&key, "sess-1", frame_id, candidate_id, (0, 0, 5, 5), &"a".repeat(64), session_revision)
+    }
+
     #[test]
     fn parse_disposition_wire_code_round_trips_every_variant() {
         assert_eq!(parse_disposition_wire_code("PENDING"), Ok(Disposition::Pending));
@@ -537,6 +611,7 @@ mod tests {
         let root = temp_root();
         write_minimal_session(&root, "session.json");
         let mut confirm_was_called = false;
+        let token = test_mint_token(&root, "f1", "c1", 0);
         let result = review_disposition_change_impl(
             &root,
             "session.json",
@@ -549,6 +624,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &token,
             |_reason| {
                 confirm_was_called = true;
                 true
@@ -563,6 +639,7 @@ mod tests {
     fn mark_non_sensitive_is_refused_when_the_confirm_closure_declines() {
         let root = temp_root();
         write_minimal_session(&root, "session.json");
+        let token = test_mint_token(&root, "f1", "c1", 0);
         let result = review_disposition_change_impl(
             &root,
             "session.json",
@@ -575,6 +652,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &token,
             |_reason| false,
         );
         assert!(result.is_err(), "declining the real confirmation dialog must refuse the override");
@@ -586,6 +664,7 @@ mod tests {
         let root = temp_root();
         write_minimal_session(&root, "session.json");
         let mut shown_reason = None;
+        let token = test_mint_token(&root, "f1", "c1", 0);
         let result = review_disposition_change_impl(
             &root,
             "session.json",
@@ -598,6 +677,7 @@ mod tests {
             Some("model-manifest-v1"),
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            &token,
             |reason| {
                 shown_reason = Some(reason.to_string());
                 true
@@ -626,6 +706,9 @@ mod tests {
             None,
             "evt-1".to_string(),
             "2026-10-29T12:05:00Z".to_string(),
+            // The unrecognized wire code fails before this value is ever
+            // looked at — any string is fine here.
+            "",
             |_reason| true,
         );
         assert!(result.is_err());
@@ -714,6 +797,7 @@ mod tests {
                 window_title: None,
                 original_storage: SourceStorage::SessionEncrypted,
                 ocr_status: None,
+                unbound_match_count: 0,
                 redacted_derivative_relative_path: None,
                 redacted_derivative_sha256: None,
                 redaction_candidates: vec![],

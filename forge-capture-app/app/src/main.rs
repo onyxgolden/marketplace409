@@ -6400,6 +6400,7 @@ fn main() {
             sop_review::get_review_candidates,
             sop_review::ingest_review_candidates,
             sop_review::run_ocr_and_ingest_review_candidates,
+            sop_review::recompute_frame_verification,
             get_capture_upload_payload,
             get_capture_preview_payload,
             copy_text_to_clipboard,

@@ -2525,6 +2525,99 @@ fn authority_mac_is_valid(
     mac.verify_slice(&stored_mac_bytes).is_ok()
 }
 
+/// C2-P3 verification consumption: domain separator for the visual-
+/// review token -- distinct from [`CONFIRMATION_DIGEST_DOMAIN_V1`] and
+/// [`AUTHORITY_MAC_DOMAIN_V1`] so a value computed under this domain can
+/// never be confused with (or substituted for) either of those, even
+/// though all three are built the same length-prefixed way.
+const VISUAL_REVIEW_TOKEN_DOMAIN_V1: &str = "forge-capture-sop-visual-review-token-v1";
+
+/// The exact canonical byte string a visual-review token is minted and
+/// verified over: the frame/candidate identity, the candidate's own
+/// `original_box` (so a token minted for one region can never cover a
+/// different one on the same candidate id), the frame's current
+/// `raster_sha256`, and the session's current `revision`. Shared by
+/// [`mint_visual_review_token`] and [`visual_review_token_is_valid`] so
+/// the two can never drift apart on field order.
+fn visual_review_token_canonical(
+    session_id: &str,
+    frame_id: &str,
+    candidate_id: &str,
+    original_box: (i64, i64, u64, u64),
+    raster_sha256: &str,
+    session_revision: u64,
+) -> String {
+    length_prefixed_canonical(&[
+        VISUAL_REVIEW_TOKEN_DOMAIN_V1,
+        session_id,
+        frame_id,
+        candidate_id,
+        &original_box.0.to_string(),
+        &original_box.1.to_string(),
+        &original_box.2.to_string(),
+        &original_box.3.to_string(),
+        raster_sha256,
+        &session_revision.to_string(),
+    ])
+}
+
+/// C2-P3 verification consumption: mints the one proof
+/// [`DispositionChangeError::MissingVisualConfirmation`] requires on
+/// every disposition change -- an HMAC-SHA256 over
+/// [`visual_review_token_canonical`], keyed with the same trusted
+/// confirmation-boundary secret [`authority_mac`] already uses (the
+/// DPAPI-protected authority key in `app/src/sop_workspace.rs`). This is
+/// never minted from inside `forge_capture_core` itself in production --
+/// only the app-layer read path that actually serves a candidate's
+/// current frame/box/revision to a reviewer (see
+/// `app/src/sop_review.rs::get_review_candidates`) holds the key and
+/// calls this, so a value satisfying [`visual_review_token_is_valid`]
+/// proves that trusted read path was actually exercised for this exact
+/// frame/candidate/box/raster/revision -- not that a human's eyes
+/// actually looked at the rendered image (no code can prove that; see
+/// this module's existing `confirmation_digest`/`authority_mac` doc
+/// comments for the same, deliberately honest, distinction), only that
+/// the bare-enum-with-no-fetch-at-all gap this slice closes is closed.
+pub fn mint_visual_review_token(
+    key: &[u8],
+    session_id: &str,
+    frame_id: &str,
+    candidate_id: &str,
+    original_box: (i64, i64, u64, u64),
+    raster_sha256: &str,
+    session_revision: u64,
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let canonical = visual_review_token_canonical(session_id, frame_id, candidate_id, original_box, raster_sha256, session_revision);
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(canonical.as_bytes());
+    hex_encode(&mac.finalize().into_bytes())
+}
+
+/// Verifies a `mint_visual_review_token` output against `key` using
+/// constant-time comparison, the same discipline
+/// [`authority_mac_is_valid`] already uses. Malformed (non-hex,
+/// wrong-length) `token_hex` fails closed rather than panicking.
+pub fn visual_review_token_is_valid(
+    key: &[u8],
+    session_id: &str,
+    frame_id: &str,
+    candidate_id: &str,
+    original_box: (i64, i64, u64, u64),
+    raster_sha256: &str,
+    session_revision: u64,
+    token_hex: &str,
+) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let Some(token_bytes) = hex_decode(token_hex) else { return false };
+    let canonical = visual_review_token_canonical(session_id, frame_id, candidate_id, original_box, raster_sha256, session_revision);
+    let Ok(mut mac) = <Hmac<Sha256>>::new_from_slice(key) else { return false };
+    mac.update(canonical.as_bytes());
+    mac.verify_slice(&token_bytes).is_ok()
+}
+
 /// GS-C6 (C2-P6 review UI safety blocker): why a reviewer-facing
 /// disposition change was refused, caught *before* an
 /// [`crate::sop_session::EditOperation::RedactionChange`] is even
@@ -2564,6 +2657,18 @@ pub enum DispositionChangeError {
     /// GS-C6: "bind to current... candidate" — names a candidate not
     /// present in the supplied current candidate list.
     UnknownCandidate { candidate_id: String },
+    /// C2-P3 verification consumption: every disposition change (Redact
+    /// included, which previously needed no justification at all) now
+    /// requires a `visual_review_token` that
+    /// [`visual_review_token_is_valid`] accepts against this exact
+    /// request's current frame/candidate/session state. Brief section 2:
+    /// "no second model is required or accepted as a substitute" for
+    /// independent verification, and "a bare enum... is never proof" --
+    /// this closes the gap where a Redact decision previously carried no
+    /// evidence that a reviewer had even fetched the candidate's current
+    /// state before submitting it. Absent, malformed, or stale (wrong
+    /// frame/candidate/box/raster/revision) token both fail identically.
+    MissingVisualConfirmation,
 }
 
 /// GS-C6's review-action safety gate — the one authoritative check
@@ -2670,14 +2775,46 @@ pub fn validate_review_action(session: &SopSessionV1, request: &ReviewActionRequ
 /// `authority_mac` is minted with it, so [`verify_coverage_proof`] can
 /// later refuse any record a party without this key could have forged
 /// by recomputing only the public [`confirmation_digest`].
+///
+/// C2-P3 verification consumption: `visual_review_token` must be a
+/// [`mint_visual_review_token`] output [`visual_review_token_is_valid`]
+/// accepts against this exact request's current frame/candidate/box/
+/// raster/session-revision state -- checked here, unconditionally, for
+/// every disposition (`Redact` included), before an event is ever
+/// constructed. `Err(MissingVisualConfirmation)` otherwise.
 pub fn build_redaction_change_event(
     session: &SopSessionV1,
     request: &ReviewActionRequest,
     event_id: String,
     local_timestamp: String,
     authority_key: &[u8],
+    visual_review_token: &str,
 ) -> Result<EditEvent, DispositionChangeError> {
     validate_review_action(session, request)?;
+    // Looked up fresh from `session`/`request`, never trusted from a
+    // caller-supplied box/digest -- the same discipline
+    // `validate_review_action` above already applied to find this exact
+    // frame/candidate. Both `.expect()`s are safe: `validate_review_action`
+    // just proved both exist.
+    let visual_review_frame =
+        session.source_frames.iter().find(|f| f.frame_id == request.frame_id).expect("validate_review_action already proved this frame exists");
+    let visual_review_candidate = visual_review_frame
+        .redaction_candidates
+        .iter()
+        .find(|c| c.candidate_id == request.candidate_id)
+        .expect("validate_review_action already proved this candidate exists");
+    if !visual_review_token_is_valid(
+        authority_key,
+        &session.session_id,
+        request.frame_id,
+        request.candidate_id,
+        visual_review_candidate.original_box,
+        &visual_review_frame.raster_sha256,
+        session.revision,
+        visual_review_token,
+    ) {
+        return Err(DispositionChangeError::MissingVisualConfirmation);
+    }
     let sequence = session.edit_events.iter().map(|e| e.sequence).max().map_or(0, |s| s + 1);
     let digest = crate::sop_session::canonical_state_digest(&crate::sop_session::project_steps(
         &session.captions,
@@ -2763,6 +2900,7 @@ pub fn build_redaction_change_event(
             candidate_id: request.candidate_id.to_string(),
             disposition: request.new_disposition,
             authority,
+            visual_review_token: visual_review_token.to_string(),
         },
         before_digest: Some(digest.clone()),
         after_digest: Some(digest),
@@ -4412,7 +4550,7 @@ mod tests {
             event_id: event_id.to_string(),
             session_revision_before: sequence,
             session_revision_after: sequence + 1,
-            operation: EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: candidate_id.to_string(), disposition, authority },
+            operation: EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: candidate_id.to_string(), disposition, authority, visual_review_token: String::new() },
             before_digest: None,
             after_digest: None,
             local_timestamp: "2026-10-28T00:00:00Z".to_string(),
@@ -4752,6 +4890,7 @@ mod tests {
             window_title: None,
             original_storage: SourceStorage::SessionEncrypted,
             ocr_status: None,
+            unbound_match_count: 0,
             redacted_derivative_relative_path: None,
             redacted_derivative_sha256: None,
             redaction_candidates: candidates,
@@ -4809,6 +4948,16 @@ mod tests {
             expected_policy_version: "policy-v1",
             expected_model_manifest_sha256: Some("model-manifest-v1"),
         }
+    }
+
+    /// The [`mint_visual_review_token`] output `build_redaction_change_event`
+    /// will accept for a candidate built by [`gs_c6_candidate`] (always
+    /// `original_box: (0, 0, 5, 5)`) on a frame built by [`gs_c6_frame`]
+    /// (always `raster_sha256: "a".repeat(64)`) inside a session built by
+    /// [`gs_c6_session`] (always `session_id: "sess-1"`), still at its
+    /// starting `revision: 0`.
+    fn gs_c6_visual_token(frame_id: &str, candidate_id: &str) -> String {
+        mint_visual_review_token(TEST_AUTHORITY_KEY, "sess-1", frame_id, candidate_id, (0, 0, 5, 5), &"a".repeat(64), 0)
     }
 
     #[test]
@@ -4953,13 +5102,19 @@ mod tests {
     fn build_redaction_change_event_constructs_a_well_formed_event_on_a_valid_request() {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")).unwrap();
         assert_eq!(event.sequence, 0);
         assert_eq!(event.session_revision_before, 0);
         assert_eq!(event.session_revision_after, 1);
         assert_eq!(
             event.operation,
-            EditOperation::RedactionChange { frame_id: "f1".to_string(), candidate_id: "c1".to_string(), disposition: Disposition::Redact, authority: None }
+            EditOperation::RedactionChange {
+                frame_id: "f1".to_string(),
+                candidate_id: "c1".to_string(),
+                disposition: Disposition::Redact,
+                authority: None,
+                visual_review_token: gs_c6_visual_token("f1", "c1"),
+            }
         );
     }
 
@@ -4977,7 +5132,7 @@ mod tests {
             local_timestamp: "2026-10-29T12:00:00Z".to_string(),
         });
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")).unwrap();
         assert_eq!(event.sequence, 6);
     }
 
@@ -4992,7 +5147,7 @@ mod tests {
         // `MissingDigestLink` on literally every call.
         let mut session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")).unwrap();
         assert!(event.before_digest.is_some());
         assert_eq!(event.before_digest, event.after_digest, "RedactionChange carries no step text, so the projected state is unchanged");
         session.edit_events.push(event);
@@ -5007,7 +5162,7 @@ mod tests {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.payment_card", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "a reason", true);
         assert_eq!(
-            build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY),
+            build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")),
             Err(DispositionChangeError::ProtectedCredentialNonOverridable { detector_id: "det.payment_card".to_string() })
         );
     }
@@ -5022,7 +5177,7 @@ mod tests {
         // for a disposition that was never gated on one.
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::Redact, "", false);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")).unwrap();
         assert!(matches!(event.operation, EditOperation::RedactionChange { authority: None, .. }));
     }
 
@@ -5030,7 +5185,7 @@ mod tests {
     fn build_redaction_change_event_durably_records_the_authority_for_mark_non_sensitive() {
         let session = gs_c6_session(vec![gs_c6_frame("f1", vec![gs_c6_candidate("c1", "det.ssn", Disposition::Pending)])]);
         let request = gs_c6_request("f1", "c1", Disposition::MarkNonSensitive, "verified with the customer by phone", true);
-        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY).unwrap();
+        let event = build_redaction_change_event(&session, &request, "evt-1".to_string(), "2026-10-29T12:05:00Z".to_string(), TEST_AUTHORITY_KEY, &gs_c6_visual_token("f1", "c1")).unwrap();
         let EditOperation::RedactionChange { disposition, authority, .. } = &event.operation else {
             panic!("expected a RedactionChange operation");
         };
@@ -5565,6 +5720,7 @@ mod tests {
                     candidate_id: "c1".to_string(),
                     disposition: Disposition::MarkNonSensitive,
                     authority: Some(authority_1),
+                    visual_review_token: mint_visual_review_token(TEST_AUTHORITY_KEY, "sess-1", "f1", "c1", (0, 0, 5, 5), &"a".repeat(64), 1),
                 },
                 before_digest: None,
                 after_digest: None,
@@ -5580,6 +5736,7 @@ mod tests {
                     candidate_id: "c1".to_string(),
                     disposition: Disposition::MarkNonSensitive,
                     authority: Some(authority_2),
+                    visual_review_token: mint_visual_review_token(TEST_AUTHORITY_KEY, "sess-1", "f2", "c1", (0, 0, 5, 5), &"a".repeat(64), 2),
                 },
                 before_digest: None,
                 after_digest: None,
