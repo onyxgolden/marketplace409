@@ -135,6 +135,7 @@ const DRAFT_LEASE = { id: "lease_draft", unit_id: "unit_1", start_date: "2026-11
 describe("generalized tenant-invite sweep", () => {
   beforeEach(() => {
     process.env.CRON_SECRET = "cron-secret";
+    process.env.TENANT_INVITE_ENABLED = "true";
     mocks.send.mockResolvedValue({ id: "resend_1" });
     updateCalls = [];
     vi.clearAllMocks();
@@ -144,6 +145,26 @@ describe("generalized tenant-invite sweep", () => {
   it("rejects callers without the cron secret", async () => {
     const response = await GET(new Request("http://localhost/api/rental/cron/tenant-invite"));
     expect(response.status).toBe(401);
+  });
+
+  it("returns disabled and sends nothing when TENANT_INVITE_ENABLED is not true (owner halt 2026-11-09)", async () => {
+    delete process.env.TENANT_INVITE_ENABLED;
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    const response = await GET(authedRequest());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.action).toBe("disabled");
+    expect(body.sent).toEqual([]);
+    expect(body.failed).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(DB.rental_tenants[0].invited_at).toBeNull();
+    expect(DB.scheduled_send_ledger).toEqual([]);
+    expect(updateCalls).toEqual([]);
   });
 
   it("sends to an eligible tenant on an active lease and stamps invited_at + status", async () => {
