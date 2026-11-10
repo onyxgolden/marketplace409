@@ -92,6 +92,7 @@ describe("buildReviewActionPayload", () => {
       reason: "",
       eventId: "evt-fixed-1",
       localTimestamp: "2026-11-02T00:00:00Z",
+      visualReviewToken: "token-c1",
     });
     expect(payload).toEqual({
       workspaceRoot: "C:/ws",
@@ -105,6 +106,7 @@ describe("buildReviewActionPayload", () => {
       expectedModelManifestSha256: "model-manifest-v1",
       eventId: "evt-fixed-1",
       localTimestamp: "2026-11-02T00:00:00Z",
+      visualReviewToken: "token-c1",
     });
   });
 
@@ -117,6 +119,7 @@ describe("buildReviewActionPayload", () => {
       reason: "  verified with the customer  ",
       eventId: "evt-fixed-2",
       localTimestamp: "2026-11-02T00:00:01Z",
+      visualReviewToken: "token-c2",
     });
     expect(payload.reason).toBe("verified with the customer");
     expect(payload.expectedSessionRevision).toBe(3);
@@ -142,11 +145,21 @@ describe("buildReviewActionPayload", () => {
     );
   });
 
+  it("refuses a missing visual review token before building any payload", () => {
+    const view = buildLoadedViewState({ workspaceRoot: "C:/ws", sessionRelativePath: "session.json", snapshot: snapshot() });
+    expect(() => buildReviewActionPayload({ snapshot: view, candidateId: "c1", newDisposition: DISPOSITIONS.REDACT, reason: "", eventId: "e", localTimestamp: "t" })).toThrow(
+      ReviewError,
+    );
+    expect(() => buildReviewActionPayload({ snapshot: view, candidateId: "c1", newDisposition: DISPOSITIONS.REDACT, reason: "", eventId: "e", localTimestamp: "t", visualReviewToken: "" })).toThrow(
+      ReviewError,
+    );
+  });
+
   it("uses the loaded view's own frozen context, never a later mutation of the inputs", () => {
     const mutableSnapshot = snapshot({ sessionRevision: 1 });
     const view = buildLoadedViewState({ workspaceRoot: "C:/ws", sessionRelativePath: "session.json", snapshot: mutableSnapshot });
     mutableSnapshot.sessionRevision = 99; // the panel's own later mutation must not leak backward.
-    const payload = buildReviewActionPayload({ snapshot: view, candidateId: "c1", newDisposition: DISPOSITIONS.REDACT, reason: "", eventId: "e", localTimestamp: "t" });
+    const payload = buildReviewActionPayload({ snapshot: view, candidateId: "c1", newDisposition: DISPOSITIONS.REDACT, reason: "", eventId: "e", localTimestamp: "t", visualReviewToken: "token-c1" });
     expect(payload.expectedSessionRevision).toBe(1);
     expect(() => {
       view.sessionRevision = 100;

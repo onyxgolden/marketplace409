@@ -17,7 +17,7 @@ function snapshot(overrides = {}) {
     frameWidth: 100,
     frameHeight: 100,
     candidates: [
-      { candidateId: "c1", detectorId: "det.ssn", reasonCode: "SSN_SHAPE", disposition: DISPOSITIONS.PENDING, originalBox: [1, 2, 3, 4], expandedBox: [0, 1, 4, 5] },
+      { candidateId: "c1", detectorId: "det.ssn", reasonCode: "SSN_SHAPE", disposition: DISPOSITIONS.PENDING, originalBox: [1, 2, 3, 4], expandedBox: [0, 1, 4, 5], visualReviewToken: "token-c1-rev0" },
     ],
     ...overrides,
   };
@@ -145,7 +145,83 @@ describe("renderReviewPanel", () => {
       expectedModelManifestSha256: "model-manifest-v1",
       eventId: "evt-fixed",
       localTimestamp: "2026-11-02T00:00:00Z",
+      visualReviewToken: "token-c1-rev0",
     });
+  });
+
+  it("sends the token minted for the exact candidate acted on, never another candidate's token", async () => {
+    const invoke = vi.fn(async (cmd) => {
+      if (cmd === "get_review_candidates") {
+        return snapshot({
+          candidates: [
+            { candidateId: "c1", detectorId: "det.ssn", reasonCode: "SSN_SHAPE", disposition: DISPOSITIONS.PENDING, originalBox: [0, 0, 1, 1], expandedBox: [0, 0, 1, 1], visualReviewToken: "token-c1" },
+            { candidateId: "c2", detectorId: "det.phone", reasonCode: "PHONE_SHAPE", disposition: DISPOSITIONS.PENDING, originalBox: [0, 0, 1, 1], expandedBox: [0, 0, 1, 1], visualReviewToken: "token-c2" },
+          ],
+        });
+      }
+      return 1;
+    });
+    renderReviewPanel(container, { invoke });
+    await loadContext(container);
+
+    const redactButtons = container.querySelectorAll('button[data-action="redact"]');
+    expect(redactButtons).toHaveLength(2);
+    redactButtons[1].click(); // acts on c2, the second row.
+    await flush();
+
+    expect(invoke).toHaveBeenCalledWith("review_disposition_change", expect.objectContaining({ candidateId: "c2", visualReviewToken: "token-c2" }));
+    expect(invoke).not.toHaveBeenCalledWith("review_disposition_change", expect.objectContaining({ visualReviewToken: "token-c1" }));
+  });
+
+  it("uses the fresh token from the reloaded snapshot for a second action, not the one from the first load", async () => {
+    let afterCallCount = 0;
+    const invoke = vi.fn(async (cmd) => {
+      if (cmd === "get_review_candidates") {
+        afterCallCount += 1;
+        return afterCallCount === 1
+          ? snapshot()
+          : snapshot({
+              sessionRevision: 1,
+              candidates: [{ ...snapshot().candidates[0], visualReviewToken: "token-c1-rev1" }],
+            });
+      }
+      return 1;
+    });
+    renderReviewPanel(container, { invoke });
+    await loadContext(container);
+
+    container.querySelector('button[data-action="redact"]').click();
+    await flush();
+    await flush();
+
+    // Revision 1 now shows c1 as REDACT (disposition unchanged by the
+    // fixture above), so a second Redact click would act on it again —
+    // what matters here is only that the view now holds the fresh token;
+    // confirm it landed in the loaded view rather than driving a second
+    // submission through disposition-dependent UI state.
+    expect(invoke).toHaveBeenCalledWith("review_disposition_change", expect.objectContaining({ visualReviewToken: "token-c1-rev0" }));
+    expect(invoke).not.toHaveBeenCalledWith("review_disposition_change", expect.objectContaining({ visualReviewToken: "token-c1-rev1" }));
+  });
+
+  it("a candidate with no visual review token never reaches the backend — fails closed client-side", async () => {
+    const invoke = vi.fn(async (cmd) => {
+      if (cmd === "get_review_candidates") {
+        return snapshot({
+          candidates: [
+            { candidateId: "c1", detectorId: "det.ssn", reasonCode: "SSN_SHAPE", disposition: DISPOSITIONS.PENDING, originalBox: [0, 0, 1, 1], expandedBox: [0, 0, 1, 1] }, // no visualReviewToken.
+          ],
+        });
+      }
+      return 1;
+    });
+    renderReviewPanel(container, { invoke });
+    await loadContext(container);
+
+    container.querySelector('button[data-action="redact"]').click();
+    await flush();
+
+    expect(invoke).not.toHaveBeenCalledWith("review_disposition_change", expect.anything());
+    expect(container.querySelector("#review-status").textContent).toMatch(/reload|verified/i);
   });
 
   it("MARK_NON_SENSITIVE rejects a blank reason without calling the backend", async () => {

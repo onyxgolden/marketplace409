@@ -79,14 +79,30 @@ export function isBlankReason(reason) {
  * review.js builds this merged object once, at load time, and holds it
  * immutable for the lifetime of that loaded view (see
  * `buildLoadedViewState` below).
+ *
+ * `visualReviewToken` is NOT part of `snapshot` — it is per-candidate
+ * (bound to that one candidate's current box; see
+ * `ReviewCandidateView.visual_review_token` in sop_workspace.rs), so the
+ * caller looks it up from the current candidate list for `candidateId`
+ * and passes it in here explicitly, fresh from whichever snapshot it
+ * came from (the initial load or a post-action reload — never carried
+ * forward from an older one). Required, same as the other backend
+ * invariants this function already fails closed on (blank reason,
+ * unrecognized disposition, no snapshot): the backend refuses a missing
+ * token anyway, but refusing here means no round trip is even attempted
+ * for a submission that cannot succeed, matching how every other
+ * client-checkable precondition in this function already behaves.
  */
-export function buildReviewActionPayload({ snapshot, candidateId, newDisposition, reason, eventId, localTimestamp }) {
+export function buildReviewActionPayload({ snapshot, candidateId, newDisposition, reason, eventId, localTimestamp, visualReviewToken }) {
   if (!snapshot) throw new ReviewError("unknown", "no snapshot to act against");
   if (!Object.values(DISPOSITIONS).includes(newDisposition)) {
     throw new ReviewError("unknown", `unrecognized disposition: ${newDisposition}`);
   }
   if (newDisposition === DISPOSITIONS.MARK_NON_SENSITIVE && isBlankReason(reason)) {
     throw new ReviewError("blank-reason", "a reason is required to mark a candidate not sensitive");
+  }
+  if (typeof visualReviewToken !== "string" || visualReviewToken.length === 0) {
+    throw new ReviewError("missing-token", "no visual review token for this candidate — reload and try again");
   }
   return {
     workspaceRoot: snapshot.workspaceRoot,
@@ -100,6 +116,7 @@ export function buildReviewActionPayload({ snapshot, candidateId, newDisposition
     expectedModelManifestSha256: snapshot.modelManifestSha256,
     eventId,
     localTimestamp,
+    visualReviewToken,
   };
 }
 
@@ -124,6 +141,14 @@ export function buildSnapshotRequestPayload({ workspaceRoot, sessionRelativePath
 const CATEGORY_PATTERNS = [
   ["stale-revision", /StaleSessionRevision|PolicyVersionMismatch|ModelManifestMismatch/],
   ["confirmation-declined", /MissingExplicitConfirmation/],
+  // The backend's own fail-closed refusal for an absent, malformed, or
+  // stale visual-review token (DispositionChangeError::MissingVisualConfirmation
+  // in sop_redaction.rs) — distinct from MissingExplicitConfirmation above
+  // (the native-dialog-cancelled case). Reuses the client-side
+  // "missing-token" category/label: same user-facing remedy either way
+  // (reload and try again), whether the client caught it before sending
+  // or the backend caught it after.
+  ["missing-token", /MissingVisualConfirmation/],
   ["blank-reason", /MissingReason/],
   ["protected-credential", /ProtectedCredentialNonOverridable/],
   ["not-found", /UnknownFrame|UnknownCandidate|no session exists yet|no frame with id/],
@@ -135,9 +160,9 @@ const CATEGORY_PATTERNS = [
 /**
  * Maps a raw backend error string (from `review_disposition_change` or
  * `get_review_candidates`) to one of a small fixed set of UI categories:
- * "stale-revision", "confirmation-declined", "blank-reason",
- * "protected-credential", "not-found", "review-limit", "malformed",
- * "duplicate-event", or "unknown" (the fallback — never invented from
+ * "stale-revision", "confirmation-declined", "missing-token",
+ * "blank-reason", "protected-credential", "not-found", "review-limit",
+ * "malformed", "duplicate-event", or "unknown" (the fallback — never invented from
  * nothing, and never displayed as raw parse/debug content per the scope
  * review's "safe display" requirement; the caller chooses the
  * human-facing wording per category, this function only classifies).
@@ -154,6 +179,7 @@ const CATEGORY_LABELS = Object.freeze({
   "stale-revision": "This frame changed since you loaded it. Reload and try again — your action was not applied.",
   "confirmation-declined": "The confirmation dialog was cancelled. Nothing was changed.",
   "blank-reason": "A reason is required to mark a candidate not sensitive.",
+  "missing-token": "This candidate could not be verified. Reload and try again — your action was not applied.",
   "protected-credential": "This candidate is a protected credential type and cannot be marked not sensitive.",
   "not-found": "This frame or candidate could not be found — it may have been removed.",
   "review-limit": "This frame has too much review data to load here.",
