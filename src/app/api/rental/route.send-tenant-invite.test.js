@@ -23,10 +23,15 @@ function chainable(table) {
   return chain;
 }
 const application = {};
+// Slice 1 (admin roles): sendTenantInvite gates on rental.tenants.invite
+// OR the existing workspace access. The mock caller is the owner, so the
+// access leg answers true by default; the rpc mock is module-level so
+// gate tests can re-point it per test.
+const rpc = vi.fn(async (name) => (name === "has_workspace_access" ? { data: true, error: null } : { data: [], error: null }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(async () => ({
     application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
-    supabaseClient: { from: (table) => chainable(table) },
+    supabaseClient: { from: (table) => chainable(table), rpc },
   })),
 }));
 
@@ -42,6 +47,7 @@ const tenant = { id: "tenant_1", display_name: "Eric Carrillo", email: "eric@exa
 describe("send-tenant-invite", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    rpc.mockImplementation(async (name) => (name === "has_workspace_access" ? { data: true, error: null } : { data: [], error: null }));
     maybeSingleResults = {};
     updateCalls.length = 0;
     mocks.send.mockResolvedValue({ id: "resend_1" });
@@ -140,5 +146,26 @@ describe("send-tenant-invite", () => {
     const second = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
     expect(second.status).toBe(200);
     expect(mocks.send.mock.calls[0][0].id).toBe(firstId);
+  });
+
+  // Slice 1 (admin roles): the invite gate runs BEFORE the email is sent —
+  // a denied caller must not trigger a send, and a staff caller holding
+  // rental.tenants.invite passes on the key leg alone.
+  it("denies a caller with neither the invite key nor workspace access, and sends nothing", async () => {
+    maybeSingleResults = { rental_tenants: tenant };
+    rpc.mockImplementation(async () => ({ data: false, error: null }));
+    const response = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(response.status).toBe(403);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("allows a staff caller holding rental.tenants.invite without workspace access", async () => {
+    maybeSingleResults = { rental_tenants: tenant };
+    rpc.mockImplementation(async (name) =>
+      name === "rental_get_my_effective_permissions" ? { data: ["rental.tenants.invite"], error: null } : { data: false, error: null });
+    const response = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(response.status).toBe(200);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
   });
 });

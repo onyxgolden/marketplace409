@@ -1,5 +1,5 @@
-import{beforeEach,describe,expect,it,vi}from"vitest";const from=vi.fn();
-vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},effectiveOwnerId:"owner_1",supabaseClient:{from}}))}));
+import{beforeEach,describe,expect,it,vi}from"vitest";const from=vi.fn();const rpc=vi.fn(async(name)=>name==="has_workspace_visibility"?{data:true,error:null}:{data:[],error:null});
+vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},effectiveOwnerId:"owner_1",supabaseClient:{from,rpc}}))}));
 vi.mock("@/infrastructure/billing/StripeBillingProvider",()=>({createStripeBillingProvider:vi.fn(()=>({mode:"test"}))}));
 import{GET}from"./route.js";
 import{excludeOffModeStripePayments}from"./route.js";
@@ -118,9 +118,48 @@ it("loads financial events under the canonical owner id for an active co-owner",
   const eqCalls=[];
   const chain={select:vi.fn(()=>chain),eq:vi.fn((...args)=>{eqCalls.push(args);return chain;}),range:vi.fn(()=>Promise.resolve({data:[],error:null}))};
   const {createAuthenticatedForgeApplication}=await import("@/lib/supabase/createAuthenticatedForgeApplication");
-  createAuthenticatedForgeApplication.mockResolvedValueOnce({user:{id:"brandy_co_owner"},effectiveOwnerId:"jason_owner",supabaseClient:{from:()=>chain}});
+  createAuthenticatedForgeApplication.mockResolvedValueOnce({user:{id:"brandy_co_owner"},effectiveOwnerId:"jason_owner",supabaseClient:{from:()=>chain,rpc:async(name)=>name==="has_workspace_visibility"?{data:true,error:null}:{data:[],error:null}}});
   const response=await GET(new Request("https://example.test/api/rental/reports?report=account-ledger"));
   expect(response.status).toBe(200);
   expect(eqCalls).toContainEqual(["owner_id","jason_owner"]);
   expect(eqCalls).not.toContainEqual(["owner_id","brandy_co_owner"]);
+});
+
+// Slice 1 (admin roles): the reports gate allows a caller who holds the
+// report key OR has the existing workspace visibility. These tests pin the
+// OR: existing users keep access, a caller with neither is denied, and a
+// key holder passes even without visibility. The export format needs the
+// export key, not just the read key.
+describe("rental reports route — slice-1 report gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    from.mockImplementation((table) => table === "financial_events" ? financialEventsChain() : { select: vi.fn(async () => ({ data: tables[table], error: null })) });
+    rpc.mockImplementation(async (name) => name === "has_workspace_visibility" ? { data: true, error: null } : { data: [], error: null });
+  });
+  it("a caller with workspace visibility but no new-framework key still loads a report", async () => {
+    const response = await GET(new Request("https://example.test/api/rental/reports"));
+    expect(response.status).toBe(200);
+  });
+  it("a caller with neither the key nor visibility is denied with a plain 403", async () => {
+    rpc.mockImplementation(async () => ({ data: false, error: null }));
+    const response = await GET(new Request("https://example.test/api/rental/reports"));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/Missing permission/);
+  });
+  it("a caller holding rental.reports.read passes without workspace visibility", async () => {
+    rpc.mockImplementation(async (name) => name === "rental_get_my_effective_permissions" ? { data: ["rental.reports.read"], error: null } : { data: false, error: null });
+    const response = await GET(new Request("https://example.test/api/rental/reports"));
+    expect(response.status).toBe(200);
+  });
+  it("a caller holding only rental.reports.read is denied a CSV export without visibility", async () => {
+    rpc.mockImplementation(async (name) => name === "rental_get_my_effective_permissions" ? { data: ["rental.reports.read"], error: null } : { data: false, error: null });
+    const response = await GET(new Request("https://example.test/api/rental/reports?format=csv"));
+    expect(response.status).toBe(403);
+  });
+  it("a caller holding rental.reports.export can export without workspace visibility", async () => {
+    rpc.mockImplementation(async (name) => name === "rental_get_my_effective_permissions" ? { data: ["rental.reports.export"], error: null } : { data: false, error: null });
+    const response = await GET(new Request("https://example.test/api/rental/reports?format=csv"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/csv");
+  });
 });
