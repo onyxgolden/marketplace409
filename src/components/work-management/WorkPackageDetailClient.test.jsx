@@ -85,7 +85,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
   return { patches, deletes };
 }
 
-function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam } = {}) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, transitions = [] } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -96,7 +96,7 @@ function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspa
         workspaceParam={workspaceParam}
         initial={{
           package: pkg,
-          transitions: [],
+          transitions,
           attestations: [],
           baselines: [],
           currentBaseline: null,
@@ -609,5 +609,95 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(routerMocks.replace).toHaveBeenCalledWith("/?tab=milestones&workspace=owner_2", { scroll: false });
     act(() => { tabButton(container, "Overview").click(); });
     expect(routerMocks.replace).toHaveBeenCalledWith("/?workspace=owner_2", { scroll: false });
+  });
+});
+
+// D20: the Activity / Audit tab showed only the Danger zone, with no
+// activity or audit history at all. The status-transition history (real,
+// already tracked -- it used to render under Overview -> Lifecycle) now
+// shows there instead.
+describe("WorkPackageDetailClient Activity / Audit status history (D20)", () => {
+  function tabButton(container, label) {
+    return [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent === label);
+  }
+
+  it("shows the status-transition history on the Activity tab, not Overview", () => {
+    stubFetch();
+    const transitions = [{ id: "t1", at: "2026-11-01T00:00:00Z", from_status: "draft", to_status: "planned", reason: "scheduled" }];
+    const { container } = renderDetail(BASE_PKG, { transitions });
+    // Not shown on Overview (the default tab) any more.
+    expect(container.textContent).not.toContain("draft → planned");
+    act(() => { tabButton(container, "Activity / Audit").click(); });
+    expect(container.textContent).toContain("Status history");
+    expect(container.textContent).toContain("draft → planned");
+    expect(container.textContent).toContain("scheduled");
+  });
+
+  it("shows a plain-words empty state when there is no transition history yet", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { transitions: [] });
+    act(() => { tabButton(container, "Activity / Audit").click(); });
+    expect(container.textContent).toContain("No status changes recorded yet.");
+  });
+});
+
+// D14: a client-side "invalid JSON" message from Freeze baseline used to
+// set the page-wide `error` state, so it kept showing on every other tab
+// (no dismiss control) until a full reload. It is now scoped to the
+// baseline section itself, with its own dismiss control.
+describe("WorkPackageDetailClient Freeze baseline error scoping (D14)", () => {
+  function tabButton(container, label) {
+    return [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent === label);
+  }
+  function setTextarea(container, value) {
+    const textarea = container.querySelector("textarea");
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  function freezeButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Freeze baseline");
+  }
+
+  it("shows the invalid-JSON message locally and never on the top-level banner", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, "not json");
+    act(() => { freezeButton(container).click(); });
+    expect(container.textContent).toContain("Scope items must be valid JSON");
+    // Only the baseline section's own local banner renders this -- the
+    // page-wide `error` state (which would duplicate it at the top of the
+    // page, above the tablist) is never touched by this path.
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
+  it("does not persist the message across a tab switch, and can be dismissed", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, "not json");
+    act(() => { freezeButton(container).click(); });
+    expect(container.textContent).toContain("Scope items must be valid JSON");
+    act(() => { tabButton(container, "Permits").click(); });
+    expect(container.textContent).not.toContain("Scope items must be valid JSON");
+    act(() => { tabButton(container, "Overview").click(); });
+    // Still showing on return to Overview (local state survives the tab
+    // switch, unlike the old global-banner bug where it leaked onto OTHER
+    // tabs) -- now dismiss it explicitly.
+    expect(container.textContent).toContain("Scope items must be valid JSON");
+    const dismiss = [...container.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Dismiss");
+    act(() => { dismiss.click(); });
+    expect(container.textContent).not.toContain("Scope items must be valid JSON");
+  });
+
+  it("clears the error as soon as the textarea is edited again", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, "not json");
+    act(() => { freezeButton(container).click(); });
+    expect(container.textContent).toContain("Scope items must be valid JSON");
+    setTextarea(container, "[]");
+    expect(container.textContent).not.toContain("Scope items must be valid JSON");
   });
 });

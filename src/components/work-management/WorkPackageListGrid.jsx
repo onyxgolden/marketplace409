@@ -35,7 +35,10 @@ export const BLANK_ROWS = 10;
 // Columns fit one desktop screen: the min widths plus gaps stay
 // under the page's 80rem container, so no horizontal scroll at
 // 1919px (the #758 table forced one with min-w-[80rem]).
-export const GRID_COLS = "grid-cols-[4.5rem_minmax(9rem,2fr)_6.5rem_8rem_7rem_7rem_9rem_3.75rem_minmax(7rem,1.3fr)_5rem]";
+// D12: "% Complete" (uppercase, tracking-wide) wrapped and overlapped
+// "Scope" at the old 3.75rem — widened to 5.5rem, Scope's minmax lower
+// bound trimmed by the same amount so the row's total minimum is unchanged.
+export const GRID_COLS = "grid-cols-[4.5rem_minmax(9rem,2fr)_6.5rem_8rem_7rem_7rem_9rem_5.5rem_minmax(5.25rem,1.3fr)_5rem]";
 
 const STATUS_STYLES = {
   draft: "bg-slate-100 text-slate-700",
@@ -180,12 +183,78 @@ function BlankWindowCell({ draft, onDraftChange }) {
   );
 }
 
+// D6: landing headers looked clickable but did nothing. Each sortable
+// column gets a key function pulling a comparable value off a row; sort
+// state is {key, direction}, toggled asc -> desc -> unsorted on repeated
+// clicks on the same header. Draft (blank) rows are never part of the sort
+// — they are new-row editors, not data — so they always render after the
+// sorted real rows, same order as before.
+const SORT_KEYS = {
+  code: (pkg) => pkg.code || "",
+  title: (pkg) => (pkg.title || "").toLowerCase(),
+  status: (pkg) => pkg.status || "",
+  property: (pkg, labelBySlug) => (pkg.property_id ? (labelBySlug.get(pkg.property_id) || pkg.property_id) : ""),
+  ownerTeam: (pkg) => pkg.responsible_party?.display_name || "",
+  budget: (pkg) => pkg.planned_cost_cents ?? -1,
+  window: (pkg) => pkg.planned_start || "",
+  percentComplete: (pkg) => pkg.percent_complete ?? -1,
+  scope: (pkg) => pkg.package_type || "",
+  updated: (pkg) => pkg.updated_at || "",
+};
+
+function sortRows(rows, sort, labelBySlug) {
+  if (!sort) return rows;
+  const keyFn = SORT_KEYS[sort.key];
+  if (!keyFn) return rows;
+  const withIndex = rows.map((row, index) => ({ row, index }));
+  withIndex.sort((a, b) => {
+    const av = keyFn(a.row, labelBySlug);
+    const bv = keyFn(b.row, labelBySlug);
+    let cmp;
+    if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+    else cmp = String(av).localeCompare(String(bv));
+    if (cmp === 0) cmp = a.index - b.index; // stable: original order as tiebreak.
+    return sort.direction === "desc" ? -cmp : cmp;
+  });
+  return withIndex.map((entry) => entry.row);
+}
+
+// aria-sort belongs on the columnheader element itself, never on a nested
+// button (jsx-a11y/role-supports-aria-props) -- callers apply this to the
+// wrapping `role="columnheader"` div, not to SortHeader's own button.
+function sortAttr(sortKey, sort) {
+  if (sort?.key !== sortKey) return "none";
+  return sort.direction === "asc" ? "ascending" : "descending";
+}
+
+function SortHeader({ children, sortKey, sort, onSort }) {
+  const active = sort?.key === sortKey;
+  const nextDirection = active && sort.direction === "asc" ? "desc" : "asc";
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey, nextDirection)}
+      className="flex items-center gap-1 text-left hover:text-slate-800"
+    >
+      {children}
+      <span aria-hidden="true" className={active ? "text-slate-700" : "text-slate-300"}>
+        {active ? (sort.direction === "asc" ? "▲" : "▼") : "▲"}
+      </span>
+    </button>
+  );
+}
+
 export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "" }) {
   const [rows, setRows] = useState(initialPackages || []);
   const [drafts, setDrafts] = useState(() => Array.from({ length: BLANK_ROWS }, emptyDraft));
   const [selectedId, setSelectedId] = useState(null);
   const [message, setMessage] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [sort, setSort] = useState(null);
+
+  function onSort(key, direction) {
+    setSort((current) => (current?.key === key && current.direction === "desc" ? null : { key, direction }));
+  }
 
   const propertyLabelBySlug = new Map((properties || []).map((p) => [p.slug, p.label]));
   const propertyOptions = [
@@ -271,18 +340,18 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
       )}
       <div role="table" aria-label="Work packages" className="border-t border-slate-300">
         <div role="row" className={`sticky top-0 z-10 grid ${GRID_COLS} items-center gap-x-2 border-b-2 border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500`}>
-          <div role="columnheader">Package #</div>
-          <div role="columnheader">Title</div>
-          <div role="columnheader">Status</div>
-          <div role="columnheader">Property</div>
-          <div role="columnheader">Owner team</div>
-          <div role="columnheader">Budget / Actual</div>
-          <div role="columnheader">Effective window</div>
-          <div role="columnheader">% Complete</div>
-          <div role="columnheader">Scope</div>
-          <div role="columnheader">Updated</div>
+          <div role="columnheader" aria-sort={sortAttr("code", sort)}><SortHeader sortKey="code" sort={sort} onSort={onSort}>Package #</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("title", sort)}><SortHeader sortKey="title" sort={sort} onSort={onSort}>Title</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("status", sort)}><SortHeader sortKey="status" sort={sort} onSort={onSort}>Status</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("property", sort)}><SortHeader sortKey="property" sort={sort} onSort={onSort}>Property</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("ownerTeam", sort)}><SortHeader sortKey="ownerTeam" sort={sort} onSort={onSort}>Owner team</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("budget", sort)}><SortHeader sortKey="budget" sort={sort} onSort={onSort}>Budget / Actual</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("window", sort)}><SortHeader sortKey="window" sort={sort} onSort={onSort}>Effective window</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("percentComplete", sort)}><SortHeader sortKey="percentComplete" sort={sort} onSort={onSort}>% Complete</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("scope", sort)}><SortHeader sortKey="scope" sort={sort} onSort={onSort}>Scope</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("updated", sort)}><SortHeader sortKey="updated" sort={sort} onSort={onSort}>Updated</SortHeader></div>
         </div>
-        {rows.map((pkg) => {
+        {sortRows(rows, sort, propertyLabelBySlug).map((pkg) => {
           const terminal = isTerminalStatus(pkg.status);
           return (
             <div key={pkg.id} role="row"
@@ -359,7 +428,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               placeholder="New package title"
               onCommit={(next) => commitBlank(index, "title", next)}
               onError={(text) => report(text)}
-              className="font-medium text-slate-400"
+              className="font-medium text-slate-400 dark:text-slate-300"
             />
             <div role="cell" className="min-w-0 truncate">
               <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500">draft</span>

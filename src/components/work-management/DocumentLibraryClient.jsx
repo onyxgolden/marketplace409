@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { DOCUMENT_KIND_SUGGESTIONS, DOCUMENT_KIND_LABELS } from "@/domains/work-management/workDocuments.js";
 
-const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
+// D11: neither color nor background was set here, so native selects/inputs
+// fell back to whatever the browser does under this app's `color-scheme:
+// dark` (inconsistent across browsers -- the audit found the Kind filter's
+// selected value unreadable). Forcing both explicitly removes that
+// variance entirely, regardless of browser-native dark-mode rendering.
+const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;

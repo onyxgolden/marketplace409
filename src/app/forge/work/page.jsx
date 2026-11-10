@@ -91,15 +91,20 @@ export default async function WorkPackagesPage({ searchParams }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* D11: these two links had no dark: overrides at all -- a
+             dark-gray border and dark-gray text on the page's dark
+             background rendered as near-invisible "grey-on-dark", unlike
+             New package's solid dark-pill/white-text style below, which
+             stays readable in either theme without an override. */}
           <Link
             href="/forge/work/documents"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Document library
           </Link>
           <Link
             href="/forge/work/admin"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Admin
           </Link>
@@ -127,10 +132,15 @@ export default async function WorkPackagesPage({ searchParams }) {
           {requestedWorkspace && ownerId === requestedWorkspace && (
             <input type="hidden" name="workspace" value={requestedWorkspace} />
           )}
+          {/* D11: a bare <select> has no text/background color of its own
+             in dark mode; it inherited the page's white text with the
+             browser's native (white) control background, rendering a
+             selected value as an invisible white-on-white box. Forcing
+             both colors explicitly fixes it regardless of browser. */}
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-600" htmlFor="filter-status">Status</label>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-status">Status</label>
             <select id="filter-status" name="status" defaultValue={filters.status}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
               <option value="all">All statuses</option>
               {STATUS_VALUES.map((status) => (
                 <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
@@ -138,9 +148,9 @@ export default async function WorkPackagesPage({ searchParams }) {
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-600" htmlFor="filter-property">Property</label>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-property">Property</label>
             <select id="filter-property" name="propertyId" defaultValue={filters.propertyId}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
               <option value="all">All properties</option>
               <option value={UNASSIGNED}>No property assigned</option>
               {properties.map((property) => (
@@ -152,7 +162,7 @@ export default async function WorkPackagesPage({ searchParams }) {
             Apply filters
           </button>
           {hasFilters && (
-            <Link href={clearHref} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <Link href={clearHref} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
               Clear filters
             </Link>
           )}

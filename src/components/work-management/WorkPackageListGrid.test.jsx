@@ -180,4 +180,56 @@ describe("WorkPackageListGrid", () => {
     expect(container.textContent).toContain("Import packages from a file");
     expect(container.textContent).toContain("Download the CSV template");
   });
+
+  // D6: the column headers looked clickable but did nothing. Real rows
+  // (not the blank add-rows, which stay unsorted at the bottom) must
+  // reorder on click, toggle direction on a second click, and clear back
+  // to the server's original order on a third.
+  describe("D6 sortable headers", () => {
+    const ALPHA = { ...PKG, id: "wp_a", code: "WP-0001", title: "Alpha job" };
+    const ZETA = { ...PKG, id: "wp_z", code: "WP-0002", title: "Zeta job" };
+
+    function codeOrder(container) {
+      return [...container.querySelectorAll('[role="row"]')]
+        .slice(1) // skip the header row
+        .map((row) => row.querySelector('[role="cell"] a')?.textContent)
+        .filter(Boolean);
+    }
+
+    it("sorts ascending on first click, by Title", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const { container } = await renderGrid({ initialPackages: [ZETA, ALPHA] });
+      expect(codeOrder(container)).toEqual(["WP-0002", "WP-0001"]); // original order first.
+      const header = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Title"));
+      const columnheader = header.closest('[role="columnheader"]');
+      await act(async () => { header.click(); });
+      expect(codeOrder(container)).toEqual(["WP-0001", "WP-0002"]); // Alpha before Zeta.
+      expect(columnheader.getAttribute("aria-sort")).toBe("ascending");
+    });
+
+    it("toggles to descending on a second click, then clears on a third", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const { container } = await renderGrid({ initialPackages: [ALPHA, ZETA] });
+      const header = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Title"));
+      const columnheader = header.closest('[role="columnheader"]');
+      await act(async () => { header.click(); }); // asc
+      await act(async () => { header.click(); }); // desc
+      expect(codeOrder(container)).toEqual(["WP-0002", "WP-0001"]);
+      expect(columnheader.getAttribute("aria-sort")).toBe("descending");
+      await act(async () => { header.click(); }); // cleared -- back to original.
+      expect(codeOrder(container)).toEqual(["WP-0001", "WP-0002"]);
+      expect(columnheader.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("never reorders the blank draft rows relative to the sorted real rows", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const { container } = await renderGrid({ initialPackages: [ZETA, ALPHA] });
+      const header = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Title"));
+      await act(async () => { header.click(); });
+      const rows = [...container.querySelectorAll('[role="row"]')];
+      const draftIndex = rows.findIndex((r) => r.textContent.includes("New package title"));
+      const lastRealIndex = rows.findIndex((r) => r.textContent.includes("WP-0002"));
+      expect(draftIndex).toBeGreaterThan(lastRealIndex);
+    });
+  });
 });
