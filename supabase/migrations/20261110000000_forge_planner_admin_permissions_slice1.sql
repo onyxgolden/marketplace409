@@ -382,7 +382,7 @@ declare
 begin
   if v_actor is null then raise exception 'PADM1_INVALID_ACTOR'; end if;
   if not (p_owner_id = v_actor or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = v_actor and status = 'active' and role = 'co_owner'
   )) then
     raise exception 'PADM1_OWNER_ONLY';
   end if;
@@ -438,7 +438,7 @@ begin
   if p_request_id is null or trim(p_request_id) = '' then raise exception 'PADM1_REQUEST_ID_REQUIRED'; end if;
 
   v_is_owner := (p_owner_id = v_actor) or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = v_actor and status = 'active' and role = 'co_owner'
   );
 
   select * into v_role from public.forge_planner_roles
@@ -537,14 +537,14 @@ begin
   -- the owner and names themselves as assignee, the more specific
   -- owner/co-owner reason must win, not the generic one.
   if p_assignee_user_id = p_owner_id or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = p_assignee_user_id and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = p_assignee_user_id and status = 'active' and role = 'co_owner'
   ) then
     raise exception 'PADM1_CANNOT_ASSIGN_OWNER_OR_COOWNER';
   end if;
   if p_assignee_user_id = v_actor then raise exception 'PADM1_CANNOT_EDIT_OWN_ROLE'; end if;
 
   v_is_owner := (p_owner_id = v_actor) or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = v_actor and status = 'active' and role = 'co_owner'
   );
 
   select * into v_role from public.forge_planner_roles where owner_id = p_owner_id and id = p_role_id and retired_at is null;
@@ -630,7 +630,7 @@ begin
   if v_row.version <> p_expected_version then raise exception 'PADM1_VERSION_CONFLICT'; end if;
 
   v_is_owner := (p_owner_id = v_actor) or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = v_actor and status = 'active' and role = 'co_owner'
   );
   if not v_is_owner and not public.has_planner_permission(p_owner_id, 'planner.roles.manage') then
     raise exception 'PADM1_FORBIDDEN';
@@ -693,7 +693,7 @@ begin
   if p_request_id is null or trim(p_request_id) = '' then raise exception 'PADM1_REQUEST_ID_REQUIRED'; end if;
 
   v_is_owner := (p_owner_id = v_actor) or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id::text = v_actor and status = 'active' and role = 'co_owner'
   );
   if not v_is_owner then
     raise exception 'PADM1_OWNER_ONLY';
