@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { listWorkPackages, listPackagePropertyOptions } from "@/application/work-management/workPackages";
-import { WP_STATUS } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_MODES } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackageListGrid from "@/components/work-management/WorkPackageListGrid.jsx";
@@ -22,6 +22,7 @@ const UNASSIGNED = "__unassigned__";
 function parseFilters(searchParams) {
   const rawStatus = typeof searchParams?.status === "string" ? searchParams.status : "";
   const rawProperty = typeof searchParams?.propertyId === "string" ? searchParams.propertyId : "";
+  const rawMode = typeof searchParams?.mode === "string" ? searchParams.mode : "";
 
   const status = rawStatus && rawStatus !== "all" && STATUS_VALUES.includes(rawStatus)
     ? rawStatus
@@ -34,12 +35,19 @@ function parseFilters(searchParams) {
     propertyId = canonicalPropertySlug(rawProperty);
   }
 
-  return { status, propertyId };
+  // Mode filter: "all" shows every package regardless of mode — the
+  // mode toggle only narrows the list and sets the default for "New
+  // package" when a specific mode is chosen, it never hides packages
+  // by default (unlike status/property, which also default to "all").
+  const mode = WP_MODES.includes(rawMode) ? rawMode : "all";
+
+  return { status, propertyId, mode };
 }
 
-function filterPackages(packages, { status, propertyId }) {
+function filterPackages(packages, { status, propertyId, mode }) {
   return packages.filter((pkg) => {
     if (status !== "all" && pkg.status !== status) return false;
+    if (mode !== "all" && (pkg.mode || "industrial") !== mode) return false;
     if (propertyId === UNASSIGNED) return pkg.property_id == null;
     if (propertyId !== "all") {
       // Packages store canonical slugs already; comparing canonical forms
@@ -76,9 +84,13 @@ export default async function WorkPackagesPage({ searchParams }) {
 
   const filters = parseFilters(params);
   const filtered = ok ? filterPackages(packages, filters) : [];
-  const hasFilters = filters.status !== "all" || filters.propertyId !== "all";
+  const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all";
   const properties = propertyResult.ok ? propertyResult.properties : [];
   const clearHref = workspaceQuery ? `/forge/work${workspaceQuery}` : "/forge/work";
+  // "New package" carries the active mode filter so a package created
+  // while viewing Industrial defaults to Industrial (and likewise for
+  // Commercial); "all" carries nothing, leaving the form's own default.
+  const newPackageModeQuery = filters.mode !== "all" ? `${workspaceQuery ? "&" : "?"}mode=${filters.mode}` : "";
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8">
@@ -109,7 +121,7 @@ export default async function WorkPackagesPage({ searchParams }) {
             Admin
           </Link>
           <Link
-            href={`/forge/work/new${workspaceQuery}`}
+            href={`/forge/work/new${workspaceQuery}${newPackageModeQuery}`}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
             New package
@@ -124,6 +136,7 @@ export default async function WorkPackagesPage({ searchParams }) {
         preserveParams={{
           status: filters.status !== "all" ? filters.status : "",
           propertyId: filters.propertyId !== "all" ? filters.propertyId : "",
+          mode: filters.mode !== "all" ? filters.mode : "",
         }}
       />
 
@@ -158,6 +171,16 @@ export default async function WorkPackagesPage({ searchParams }) {
               ))}
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600" htmlFor="filter-mode">Mode</label>
+            <select id="filter-mode" name="mode" defaultValue={filters.mode}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <option value="all">All modes</option>
+              {WP_MODES.map((option) => (
+                <option key={option} value={option} className="capitalize">{option}</option>
+              ))}
+            </select>
+          </div>
           <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
             Apply filters
           </button>
@@ -188,6 +211,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           initialPackages={filtered}
           properties={properties}
           workspaceQuery={workspaceQuery}
+          activeMode={filters.mode !== "all" ? filters.mode : "industrial"}
         />
       )}
     </main>

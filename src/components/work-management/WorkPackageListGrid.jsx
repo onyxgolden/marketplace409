@@ -24,7 +24,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { WP_STATUS, WP_PACKAGE_TYPES, isTerminalStatus } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus } from "@/domains/work-management/workPackage.js";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
@@ -74,8 +74,8 @@ function emptyDraft() {
   return { title: "", propertyId: "", packageType: "other", plannedStart: "", plannedFinish: "" };
 }
 
-function createBody(draft) {
-  const body = { title: draft.title.trim() };
+function createBody(draft, mode) {
+  const body = { title: draft.title.trim(), mode };
   if (draft.packageType && draft.packageType !== "other") body.package_type = draft.packageType;
   if (draft.propertyId) body.property_id = draft.propertyId;
   if (draft.plannedStart) body.planned_start = draft.plannedStart;
@@ -244,7 +244,7 @@ function SortHeader({ children, sortKey, sort, onSort }) {
   );
 }
 
-export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "" }) {
+export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", activeMode = "industrial" }) {
   const [rows, setRows] = useState(initialPackages || []);
   const [drafts, setDrafts] = useState(() => Array.from({ length: BLANK_ROWS }, emptyDraft));
   const [selectedId, setSelectedId] = useState(null);
@@ -262,7 +262,18 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
     ...(properties || []).map((p) => ({ value: p.slug, label: p.label })),
   ];
   const statusOptions = STATUS_VALUES.map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
-  const scopeOptions = WP_PACKAGE_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }));
+  // Each row's Scope dropdown offers the package_type subset for THAT
+  // row's own stored mode (not the page-level filter) — a mixed-mode
+  // list (filter = "all") must still offer the right options per row.
+  function scopeOptionsForMode(mode) {
+    return WP_PACKAGE_TYPES_BY_MODE[mode || "industrial"].map((t) => ({ value: t, label: t.replace(/_/g, " ") }));
+  }
+  // The Property/location column slot's header follows the page's active
+  // filter mode (industrial by default, or commercial when filtered to
+  // it) — the per-row CELL content below still follows each row's own
+  // mode regardless of the header, so a mixed-mode list never shows a
+  // wrong value, only a header that favors the active filter.
+  const locationHeader = activeMode === "commercial" ? "Property" : "Functional location / Unit / Area / System";
 
   function report(text, kind = "error") {
     setMessage({ text, kind });
@@ -296,7 +307,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
     }
     try {
       const body = await api("/api/work-packages", {
-        method: "POST", body: JSON.stringify(createBody(draft)),
+        method: "POST", body: JSON.stringify(createBody(draft, activeMode)),
       });
       const created = body.package;
       setRows((current) => [created, ...current]);
@@ -343,7 +354,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
           <div role="columnheader" aria-sort={sortAttr("code", sort)}><SortHeader sortKey="code" sort={sort} onSort={onSort}>Package #</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("title", sort)}><SortHeader sortKey="title" sort={sort} onSort={onSort}>Title</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("status", sort)}><SortHeader sortKey="status" sort={sort} onSort={onSort}>Status</SortHeader></div>
-          <div role="columnheader" aria-sort={sortAttr("property", sort)}><SortHeader sortKey="property" sort={sort} onSort={onSort}>Property</SortHeader></div>
+          <div role="columnheader" aria-sort={sortAttr("property", sort)}><SortHeader sortKey="property" sort={sort} onSort={onSort}>{locationHeader}</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("ownerTeam", sort)}><SortHeader sortKey="ownerTeam" sort={sort} onSort={onSort}>Owner team</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("budget", sort)}><SortHeader sortKey="budget" sort={sort} onSort={onSort}>Budget / Actual</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("window", sort)}><SortHeader sortKey="window" sort={sort} onSort={onSort}>Effective window</SortHeader></div>
@@ -382,15 +393,21 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 onCommit={(next) => commitStatus(pkg, next)}
                 onError={(text) => report(text)}
               />
-              <EditableGridCell
-                value={pkg.property_id || ""}
-                display={pkg.property_id ? (propertyLabelBySlug.get(pkg.property_id) || pkg.property_id) : "—"}
-                editor="select" options={propertyOptions} ariaLabel={`Property for ${pkg.code}`}
-                readOnly={terminal}
-                onCommit={(next) => commitField(pkg, { property_id: next || null })}
-                onError={(text) => report(text)}
-                className="text-slate-700"
-              />
+              {(pkg.mode || "industrial") === "commercial" ? (
+                <EditableGridCell
+                  value={pkg.property_id || ""}
+                  display={pkg.property_id ? (propertyLabelBySlug.get(pkg.property_id) || pkg.property_id) : "—"}
+                  editor="select" options={propertyOptions} ariaLabel={`Property for ${pkg.code}`}
+                  readOnly={terminal}
+                  onCommit={(next) => commitField(pkg, { property_id: next || null })}
+                  onError={(text) => report(text)}
+                  className="text-slate-700"
+                />
+              ) : (
+                <div role="cell" className="min-w-0 truncate text-slate-700" title="Edit on the package detail page">
+                  {[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || "—"}
+                </div>
+              )}
               <div role="cell" className="min-w-0 truncate text-slate-700">
                 {pkg.responsible_party?.display_name || "—"}
               </div>
@@ -406,7 +423,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               <EditableGridCell
                 value={pkg.package_type}
                 display={[pkg.package_type, pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" · ") || "—"}
-                editor="select" options={scopeOptions} ariaLabel={`Scope for ${pkg.code}`}
+                editor="select" options={scopeOptionsForMode(pkg.mode)} ariaLabel={`Scope for ${pkg.code}`}
                 readOnly={terminal}
                 onCommit={(next) => commitField(pkg, { package_type: next })}
                 onError={(text) => report(text)}
@@ -433,20 +450,24 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
             <div role="cell" className="min-w-0 truncate">
               <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500">draft</span>
             </div>
-            <EditableGridCell
-              value={draft.propertyId} display={draft.propertyId ? (propertyLabelBySlug.get(draft.propertyId) || draft.propertyId) : "—"}
-              editor="select" options={propertyOptions} ariaLabel={`Property for new package row ${index + 1}`}
-              onCommit={(next) => commitBlank(index, "propertyId", next)}
-              onError={(text) => report(text)}
-              className="text-slate-700"
-            />
+            {activeMode === "commercial" ? (
+              <EditableGridCell
+                value={draft.propertyId} display={draft.propertyId ? (propertyLabelBySlug.get(draft.propertyId) || draft.propertyId) : "—"}
+                editor="select" options={propertyOptions} ariaLabel={`Property for new package row ${index + 1}`}
+                onCommit={(next) => commitBlank(index, "propertyId", next)}
+                onError={(text) => report(text)}
+                className="text-slate-700"
+              />
+            ) : (
+              <div role="cell" className="min-w-0 truncate text-slate-400" title="Set Unit / Area / System on the package detail page after creating it">—</div>
+            )}
             <div role="cell" className="min-w-0 truncate text-slate-400">—</div>
             <div role="cell" className="min-w-0 truncate text-slate-400">— / —</div>
             <BlankWindowCell draft={draft} onDraftChange={(patch) => updateDraft(index, patch)} />
             <div role="cell" className="min-w-0 truncate text-slate-400">—</div>
             <EditableGridCell
               value={draft.packageType} display={draft.packageType.replace(/_/g, " ")}
-              editor="select" options={scopeOptions} ariaLabel={`Scope for new package row ${index + 1}`}
+              editor="select" options={scopeOptionsForMode(activeMode)} ariaLabel={`Scope for new package row ${index + 1}`}
               onCommit={(next) => commitBlank(index, "packageType", next)}
               onError={(text) => report(text)}
               className="text-xs leading-snug text-slate-500"
@@ -458,6 +479,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
       {importOpen && (
         <WorkPackageImportDialog
           kind="packages"
+          mode={activeMode}
           onImported={onImported}
           onClose={() => setImportOpen(false)}
         />
