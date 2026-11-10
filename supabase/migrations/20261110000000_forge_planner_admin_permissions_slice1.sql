@@ -186,60 +186,19 @@ create index if not exists forge_planner_permission_audit_user_idx
   where target_user_id is not null;
 
 -- ---------------------------------------------------------------------------
--- RLS: owner-scoped SELECT only via has_workspace_access (the existing,
--- unmodified authorization boundary — this slice adds a NEW, narrower
--- gate for planner capability checks; it never broadens the existing
--- owner/co-owner boundary). No write policies: every write goes through
--- the SECURITY DEFINER RPCs below.
--- ---------------------------------------------------------------------------
-
-alter table public.forge_planner_roles enable row level security;
-alter table public.forge_planner_roles force row level security;
-alter table public.forge_planner_role_capabilities enable row level security;
-alter table public.forge_planner_role_capabilities force row level security;
-alter table public.forge_planner_user_role_assignments enable row level security;
-alter table public.forge_planner_user_role_assignments force row level security;
-alter table public.forge_planner_permission_audit enable row level security;
-alter table public.forge_planner_permission_audit force row level security;
-
-drop policy if exists forge_planner_roles_select on public.forge_planner_roles;
-create policy forge_planner_roles_select
-  on public.forge_planner_roles for select to authenticated
-  using (public.has_workspace_access(owner_id));
-
-drop policy if exists forge_planner_role_capabilities_select on public.forge_planner_role_capabilities;
-create policy forge_planner_role_capabilities_select
-  on public.forge_planner_role_capabilities for select to authenticated
-  using (public.has_workspace_access(owner_id));
-
-drop policy if exists forge_planner_user_role_assignments_select on public.forge_planner_user_role_assignments;
-create policy forge_planner_user_role_assignments_select
-  on public.forge_planner_user_role_assignments for select to authenticated
-  using (public.has_workspace_access(owner_id));
-
-drop policy if exists forge_planner_permission_audit_select on public.forge_planner_permission_audit;
-create policy forge_planner_permission_audit_select
-  on public.forge_planner_permission_audit for select to authenticated
-  using (public.has_workspace_access(owner_id));
-
-revoke all on table public.forge_planner_roles from public, anon, service_role, authenticated;
-grant select on table public.forge_planner_roles to authenticated;
-revoke all on table public.forge_planner_role_capabilities from public, anon, service_role, authenticated;
-grant select on table public.forge_planner_role_capabilities to authenticated;
-revoke all on table public.forge_planner_user_role_assignments from public, anon, service_role, authenticated;
-grant select on table public.forge_planner_user_role_assignments to authenticated;
-revoke all on table public.forge_planner_permission_audit from public, anon, service_role, authenticated;
-grant select on table public.forge_planner_permission_audit to authenticated;
-
--- ---------------------------------------------------------------------------
--- has_planner_permission — the gate every planner write RPC must use.
+-- has_planner_permission — the gate every planner write RPC must use, and
+-- (below) that the SELECT policies on these same four tables also use.
 -- Owner and active co-owner bypass the role table entirely (structural
 -- "ultimate authority," immune to role-table corruption or deletion).
 -- Anyone else: looked up via their single active role assignment and
 -- that role's granted capabilities. No capability_key outside the fixed
 -- catalog can ever match (the CHECK constraint on
 -- forge_planner_role_capabilities.capability_key makes an invalid key
--- structurally unrepresentable, not just unlikely).
+-- structurally unrepresentable, not just unlikely). Defined BEFORE the
+-- RLS policies below, since they call it; `row_security = off` is
+-- required so this trusted lookup isn't itself blocked by the very RLS
+-- it's deciding (same established pattern as has_workspace_access /
+-- has_rental_permission elsewhere in this repo).
 -- ---------------------------------------------------------------------------
 
 create or replace function public.has_planner_permission(p_owner_id text, p_capability_key text)
@@ -248,6 +207,7 @@ language sql
 stable
 security definer
 set search_path = public
+set row_security = off
 as $$
   select
     case
@@ -270,8 +230,79 @@ as $$
     end;
 $$;
 
-revoke all on function public.has_planner_permission(text, text) from public;
+revoke all on function public.has_planner_permission(text, text) from public, anon, service_role;
 grant execute on function public.has_planner_permission(text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- RLS: owner-scoped SELECT via has_workspace_access (the existing,
+-- unmodified authorization boundary) OR a planner-specific reader via
+-- has_planner_permission (new, additive, app-scoped — never broadens
+-- has_workspace_access itself). No write policies: every write goes
+-- through the SECURITY DEFINER RPCs below.
+-- ---------------------------------------------------------------------------
+
+alter table public.forge_planner_roles enable row level security;
+alter table public.forge_planner_roles force row level security;
+alter table public.forge_planner_role_capabilities enable row level security;
+alter table public.forge_planner_role_capabilities force row level security;
+alter table public.forge_planner_user_role_assignments enable row level security;
+alter table public.forge_planner_user_role_assignments force row level security;
+alter table public.forge_planner_permission_audit enable row level security;
+alter table public.forge_planner_permission_audit force row level security;
+
+-- Read access: the coarse owner/co-owner boundary (has_workspace_access)
+-- OR a planner-specific reader. A non-owner "Planner Admin" who holds
+-- planner.roles.manage/.read must be able to see the role catalog and
+-- assignments to administer them -- has_workspace_access alone would
+-- lock every non-co-owner admin out of their own admin page. A user may
+-- always see their own assignment row (so staff can see their own
+-- effective role) even without planner.staff.read.
+drop policy if exists forge_planner_roles_select on public.forge_planner_roles;
+create policy forge_planner_roles_select
+  on public.forge_planner_roles for select to authenticated
+  using (
+    public.has_workspace_access(owner_id)
+    or public.has_planner_permission(owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(owner_id, 'planner.roles.read')
+  );
+
+drop policy if exists forge_planner_role_capabilities_select on public.forge_planner_role_capabilities;
+create policy forge_planner_role_capabilities_select
+  on public.forge_planner_role_capabilities for select to authenticated
+  using (
+    public.has_workspace_access(owner_id)
+    or public.has_planner_permission(owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(owner_id, 'planner.roles.read')
+  );
+
+drop policy if exists forge_planner_user_role_assignments_select on public.forge_planner_user_role_assignments;
+create policy forge_planner_user_role_assignments_select
+  on public.forge_planner_user_role_assignments for select to authenticated
+  using (
+    public.has_workspace_access(owner_id)
+    or assignee_user_id = auth.uid()::text
+    or public.has_planner_permission(owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(owner_id, 'planner.roles.read')
+    or public.has_planner_permission(owner_id, 'planner.staff.read')
+  );
+
+drop policy if exists forge_planner_permission_audit_select on public.forge_planner_permission_audit;
+create policy forge_planner_permission_audit_select
+  on public.forge_planner_permission_audit for select to authenticated
+  using (
+    public.has_workspace_access(owner_id)
+    or public.has_planner_permission(owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(owner_id, 'planner.audit.read')
+  );
+
+revoke all on table public.forge_planner_roles from public, anon, service_role, authenticated;
+grant select on table public.forge_planner_roles to authenticated;
+revoke all on table public.forge_planner_role_capabilities from public, anon, service_role, authenticated;
+grant select on table public.forge_planner_role_capabilities to authenticated;
+revoke all on table public.forge_planner_user_role_assignments from public, anon, service_role, authenticated;
+grant select on table public.forge_planner_user_role_assignments to authenticated;
+revoke all on table public.forge_planner_permission_audit from public, anon, service_role, authenticated;
+grant select on table public.forge_planner_permission_audit to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RPC: forge_planner_roles_snapshot — one statement, the whole admin
@@ -291,7 +322,11 @@ as $$
 declare
   v_result jsonb;
 begin
-  if not public.has_workspace_access(p_owner_id) then
+  if not (
+    public.has_workspace_access(p_owner_id)
+    or public.has_planner_permission(p_owner_id, 'planner.roles.manage')
+    or public.has_planner_permission(p_owner_id, 'planner.roles.read')
+  ) then
     raise exception 'PADM1_WORKSPACE_FORBIDDEN';
   end if;
 
@@ -323,7 +358,7 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_planner_roles_snapshot(text) from public;
+revoke all on function public.forge_planner_roles_snapshot(text) from public, anon, service_role;
 grant execute on function public.forge_planner_roles_snapshot(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -367,7 +402,7 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_planner_role_create(text, text, text, text, text) from public;
+revoke all on function public.forge_planner_role_create(text, text, text, text, text) from public, anon, service_role;
 grant execute on function public.forge_planner_role_create(text, text, text, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -463,7 +498,7 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_planner_role_capability_set(text, text, text, boolean, integer, text, text) from public;
+revoke all on function public.forge_planner_role_capability_set(text, text, text, boolean, integer, text, text) from public, anon, service_role;
 grant execute on function public.forge_planner_role_capability_set(text, text, text, boolean, integer, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -495,18 +530,22 @@ begin
   if v_actor is null then raise exception 'PADM1_INVALID_ACTOR'; end if;
   if p_assignee_user_id is null or trim(p_assignee_user_id) = '' then raise exception 'PADM1_ASSIGNEE_REQUIRED'; end if;
   if p_request_id is null or trim(p_request_id) = '' then raise exception 'PADM1_REQUEST_ID_REQUIRED'; end if;
-  if p_assignee_user_id = v_actor then raise exception 'PADM1_CANNOT_EDIT_OWN_ROLE'; end if;
 
-  v_is_owner := (p_owner_id = v_actor) or exists (
-    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
-  );
   -- Never assign a role to the real owner or an active co-owner through
   -- this path — their authority is structural, not role-table-driven.
+  -- Checked BEFORE the generic self-edit guard below: when the actor IS
+  -- the owner and names themselves as assignee, the more specific
+  -- owner/co-owner reason must win, not the generic one.
   if p_assignee_user_id = p_owner_id or exists (
     select 1 from workspace_members where owner_id = p_owner_id and member_user_id = p_assignee_user_id and status = 'active' and role = 'co_owner'
   ) then
     raise exception 'PADM1_CANNOT_ASSIGN_OWNER_OR_COOWNER';
   end if;
+  if p_assignee_user_id = v_actor then raise exception 'PADM1_CANNOT_EDIT_OWN_ROLE'; end if;
+
+  v_is_owner := (p_owner_id = v_actor) or exists (
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+  );
 
   select * into v_role from public.forge_planner_roles where owner_id = p_owner_id and id = p_role_id and retired_at is null;
   if not found then raise exception 'PADM1_ROLE_NOT_FOUND'; end if;
@@ -557,7 +596,7 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_planner_role_assign(text, text, text, text, text) from public;
+revoke all on function public.forge_planner_role_assign(text, text, text, text, text) from public, anon, service_role;
 grant execute on function public.forge_planner_role_assign(text, text, text, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -609,24 +648,85 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_planner_role_assignment_revoke(text, text, integer, text, text) from public;
+revoke all on function public.forge_planner_role_assignment_revoke(text, text, integer, text, text) from public, anon, service_role;
 grant execute on function public.forge_planner_role_assignment_revoke(text, text, integer, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Seed data: the five editable starter roles (Owner is NOT seeded as an
--- assignable row here — owner authority is the structural bypass above;
--- seeding an 'owner' role row per workspace would need a workspace to
--- seed it into, which this slice's migration does not iterate. The
--- is_builtin + role_key='owner' immutability guard in
--- forge_planner_role_capability_set covers the case where a future
--- per-workspace provisioning step does create one.)
---
--- These starter-role INSERTs are deliberately NOT included as global
--- seed rows: owner_id is per-workspace, and this migration has no
--- workspace to attach them to. Provisioning the five starter roles
--- (Planner Admin, Planner, Scheduler, Reviewer, Read-only) for a given
--- owner_id happens via forge_planner_role_create, called once per
--- workspace the first time its admin page is opened (application-layer
--- responsibility, not this migration's) — documented here so the gap
--- is explicit, not silently assumed solved by this file.
+-- RPC: forge_planner_roles_provision_starter_set — owner/co-owner only.
+-- Creates the five editable starter roles (Planner Admin, Planner,
+-- Scheduler, Reviewer, Read-only) with the exact capability sets from
+-- the scope brief's "Editable starter roles" section, idempotently: a
+-- role_key that already exists for this owner (in any state) is left
+-- untouched, so calling this twice never duplicates or resets a role an
+-- owner has since customized. 'owner' is deliberately never seeded as a
+-- row here — owner authority is the structural bypass in
+-- has_planner_permission above; seeding a literal 'owner' row is a
+-- future per-workspace provisioning concern, not this migration's, and
+-- the role_key='owner' immutability guard in
+-- forge_planner_role_capability_set already covers that row if one is
+-- ever created.
 -- ---------------------------------------------------------------------------
+
+create or replace function public.forge_planner_roles_provision_starter_set(
+  p_owner_id text, p_request_id text
+)
+returns setof public.forge_planner_roles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor text := auth.uid()::text;
+  v_is_owner boolean;
+  v_starter jsonb := '[
+    {"role_key":"planner_admin","name":"Planner Admin","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.packages.create","planner.packages.edit","planner.packages.close","planner.packages.cancel","planner.steps.create","planner.steps.edit","planner.steps.reorder","planner.steps.retire","planner.crafts.assign","planner.crafts.reassign","planner.crafts.clear","planner.manpower.placements.edit","planner.progress.add","planner.progress.correct","planner.progress.void","planner.permits.annotations.link","planner.permits.annotations.unlink","planner.drawings.upload","planner.drawings.link","planner.drawings.delete","planner.baselines.freeze","planner.baselines.select"]},
+    {"role_key":"planner","name":"Planner","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.packages.edit","planner.steps.edit","planner.crafts.assign","planner.manpower.placements.edit","planner.progress.add","planner.drawings.link"]},
+    {"role_key":"scheduler","name":"Scheduler","capabilities":["planner.packages.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.crafts.assign","planner.manpower.placements.edit"]},
+    {"role_key":"reviewer","name":"Reviewer","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.reports.export"]},
+    {"role_key":"read_only","name":"Read-only","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read"]}
+  ]'::jsonb;
+  v_def jsonb;
+  v_role_id text;
+  v_cap text;
+begin
+  if v_actor is null then raise exception 'PADM1_INVALID_ACTOR'; end if;
+  if p_request_id is null or trim(p_request_id) = '' then raise exception 'PADM1_REQUEST_ID_REQUIRED'; end if;
+
+  v_is_owner := (p_owner_id = v_actor) or exists (
+    select 1 from workspace_members where owner_id = p_owner_id and member_user_id = v_actor and status = 'active' and role = 'co_owner'
+  );
+  if not v_is_owner then
+    raise exception 'PADM1_OWNER_ONLY';
+  end if;
+
+  for v_def in select * from jsonb_array_elements(v_starter)
+  loop
+    if exists (select 1 from public.forge_planner_roles where owner_id = p_owner_id and role_key = v_def->>'role_key') then
+      continue;
+    end if;
+
+    v_role_id := 'forge_pr_' || replace(gen_random_uuid()::text, '-', '');
+    insert into public.forge_planner_roles (owner_id, id, role_key, name, is_builtin, created_by, updated_by)
+    values (p_owner_id, v_role_id, v_def->>'role_key', v_def->>'name', true, v_actor, v_actor);
+
+    for v_cap in select jsonb_array_elements_text(v_def->'capabilities')
+    loop
+      insert into public.forge_planner_role_capabilities (owner_id, id, role_id, capability_key, created_by)
+      values (p_owner_id, 'forge_prc_' || replace(gen_random_uuid()::text, '-', ''), v_role_id, v_cap, v_actor);
+    end loop;
+
+    insert into public.forge_planner_permission_audit (owner_id, id, actor_id, action, target_role_id, old_values, new_values, reason, request_id)
+    values (p_owner_id, 'forge_pa_' || replace(gen_random_uuid()::text, '-', ''), v_actor, 'role_create', v_role_id,
+            null, jsonb_build_object('role_key', v_def->>'role_key', 'name', v_def->>'name', 'capabilities', v_def->'capabilities'),
+            'starter role provisioning', p_request_id);
+  end loop;
+
+  return query
+    select * from public.forge_planner_roles
+    where owner_id = p_owner_id and is_builtin = true and retired_at is null
+    order by role_key;
+end;
+$$;
+
+revoke all on function public.forge_planner_roles_provision_starter_set(text, text) from public, anon, service_role;
+grant execute on function public.forge_planner_roles_provision_starter_set(text, text) to authenticated;
