@@ -266,7 +266,11 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
   // row's own stored mode (not the page-level filter) — a mixed-mode
   // list (filter = "all") must still offer the right options per row.
   function scopeOptionsForMode(mode) {
-    return WP_PACKAGE_TYPES_BY_MODE[mode || "industrial"].map((t) => ({ value: t, label: t.replace(/_/g, " ") }));
+    // Anything other than a real "commercial" value — undefined, a row
+    // that predates the mode column, or the page filter's "all"
+    // sentinel — falls back to industrial, never an undefined lookup.
+    return WP_PACKAGE_TYPES_BY_MODE[mode === "commercial" ? "commercial" : "industrial"]
+      .map((t) => ({ value: t, label: t.replace(/_/g, " ") }));
   }
   // The Property/location column slot's header follows the page's active
   // filter mode (industrial by default, or commercial when filtered to

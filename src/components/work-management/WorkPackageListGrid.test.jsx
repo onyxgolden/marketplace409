@@ -233,3 +233,64 @@ describe("WorkPackageListGrid", () => {
     });
   });
 });
+
+describe("WorkPackageListGrid mode selector", () => {
+  // PKG's package_type is "rental_turn" with no explicit mode field —
+  // inferEffectiveMode classifies it as commercial, so its own row
+  // keeps showing the Property select regardless of the page's active
+  // filter mode. An industrial-mode package (its OWN mode, not the
+  // page filter) shows the read-only Unit/Area/System display instead.
+  const INDUSTRIAL_PKG = {
+    ...PKG, id: "wp_2", code: "WP-0002", title: "Spool fab", package_type: "engineering",
+    mode: "industrial", property_id: null, unit: "A-12", area: "Unit 3", system: "Piping",
+  };
+
+  it("header follows the page's active filter mode", async () => {
+    setupFetch(async () => ({ body: {} }));
+    const { container } = await renderGrid({ activeMode: "industrial" });
+    expect(container.textContent).toContain("Functional location / Unit / Area / System");
+    document.body.innerHTML = "";
+    const { container: commercialContainer } = await renderGrid({ activeMode: "commercial" });
+    expect(commercialContainer.textContent).toContain("Property");
+  });
+
+  it("each row's own mode decides its cell content, independent of the page filter", async () => {
+    setupFetch(async () => ({ body: {} }));
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(container2);
+    await act(async () => {
+      root.render(
+        <WorkPackageListGrid initialPackages={[PKG, INDUSTRIAL_PKG]} properties={PROPERTIES} activeMode="all" />,
+      );
+    });
+    await act(async () => {});
+    // The commercial row (PKG) still shows its Property.
+    expect(container2.textContent).toContain("1900 W. Decker");
+    // The industrial row shows its Unit/Area/System, not a Property select.
+    expect(container2.textContent).toContain("A-12 / Unit 3 / Piping");
+    expect(container2.querySelector('[aria-label="Property for WP-0002"]')).toBeNull();
+  });
+
+  it("the blank quick-add row's location slot follows the active filter mode", async () => {
+    setupFetch(async () => ({ body: {} }));
+    const { container } = await renderGrid({ activeMode: "industrial" });
+    // No Property select offered on the blank rows in Industrial mode.
+    expect(container.querySelectorAll('[aria-label^="Property for new package row"]')).toHaveLength(0);
+  });
+
+  it("creating from a blank row in Industrial mode sends mode: industrial", async () => {
+    const calls = setupFetch(async ({ method }) => {
+      if (method === "POST") return { body: { package: { ...PKG, id: "wp_new", code: "WP-0099", mode: "industrial" } } };
+      return { body: {} };
+    });
+    const { container } = await renderGrid({ activeMode: "industrial" });
+    const titleInput = container.querySelector('[aria-label="Title for new package row 1"]');
+    await act(async () => { titleInput.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+    setInput(container, "Title for new package row 1", "New spool package");
+    await pressEnter(container.querySelector('input[aria-label="Title for new package row 1"]'));
+    const post = calls.find((c) => c.method === "POST");
+    expect(JSON.parse(post.body).mode).toBe("industrial");
+  });
+});
