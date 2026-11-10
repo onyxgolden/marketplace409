@@ -916,6 +916,29 @@ describe("getWorkPackageDeletionEligibility (D7)", () => {
     ]);
   });
 
+  // 20261110070000 fix round: steps and drawings previously fell through to
+  // the generic "kept for audit and can't be removed" fallback -- wrong for
+  // both (steps clear by retiring; drawings have their own delete path).
+  it("gives steps and drawings their own actionable copy, not the generic audit fallback", async () => {
+    const db = mockDb(
+      [chain({ data: { ...PKG, status: "planned" }, error: null })],
+      rpcReturning([
+        { type: "steps", count: 1 },
+        { type: "drawings", count: 2 },
+      ]),
+    );
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_1",
+    });
+    expect(result.eligibility.blockers).toEqual([
+      { type: "steps", count: 1, label: "Active work steps",
+        action: "Retire the work step(s) in Work Steps, then try again." },
+      { type: "drawings", count: 2, label: "Drawings",
+        action: "Delete each drawing in the Drawings section; a drawing kept for review history can't be removed yet." },
+    ]);
+    expect(result.eligibility.blockers.every((b) => !b.action.startsWith("These records"))).toBe(true);
+  });
+
   it("attaches deletionEligibility to detail only when an actor is given", async () => {
     const detailChains = () => [
       chain({ data: PKG, error: null }),

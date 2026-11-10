@@ -561,6 +561,48 @@ const DELETION_BLOCKER_INFO = Object.freeze({
     label: "Manpower records",
     action: "Manpower records are kept for audit and can't be removed.",
   },
+  // Added for the 20261110040000/20261110070000 blocker-count fixes.
+  // These are the only blocker classes with a real, user-reachable next
+  // step today (steps) or a partially-real one (drawings) -- the rest are
+  // retire-only with no delete path at all, so the generic fallback
+  // message below is already accurate for them and they are not
+  // duplicated here.
+  steps: {
+    label: "Active work steps",
+    action: "Retire the work step(s) in Work Steps, then try again.",
+  },
+  drawings: {
+    label: "Drawings",
+    action: "Delete each drawing in the Drawings section; a drawing kept for review history can't be removed yet.",
+  },
+  progress_entries: {
+    label: "Progress entries",
+    action: "Progress entries are kept for audit and can't be removed.",
+  },
+  permit_annotations: {
+    label: "Permit annotations",
+    action: "Permit annotations are kept for audit and can't be removed.",
+  },
+  craft_assignments: {
+    label: "Craft assignments",
+    action: "Craft assignments are kept for audit and can't be removed.",
+  },
+  control_estimates: {
+    label: "Control estimate",
+    action: "The control estimate is kept for audit and can't be removed.",
+  },
+  change_orders: {
+    label: "Change orders",
+    action: "Change orders are kept for audit and can't be removed.",
+  },
+  craft_rates: {
+    label: "Craft rates",
+    action: "Craft rate history is kept for audit and can't be removed.",
+  },
+  step_revisions: {
+    label: "Work step history",
+    action: "Retire the work step(s) in Work Steps, then try again.",
+  },
 });
 
 // Annotate raw {type, count} blockers from the database with display copy.
