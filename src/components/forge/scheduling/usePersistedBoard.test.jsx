@@ -14,7 +14,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 // used for PropertyOperatingCostsPanel/PropertyConditionAssessmentPanel, so a regression here
 // fails with the same error path a real autosave loop would hit.
 function Harness({ projectId }) {
-  const { board, setBoard, isOwner, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
+  const { board, setBoard, isOwner, isLoading, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
   return (
     <div>
       <span data-testid="projectName">{board.projectName}</span>
@@ -24,6 +24,7 @@ function Harness({ projectId }) {
       <span data-testid="conflictMessage">{conflictMessage}</span>
       <span data-testid="loadError">{loadError || ""}</span>
       <span data-testid="isOwner">{isOwner ? "owner" : "readonly"}</span>
+      <span data-testid="isLoading">{isLoading ? "loading" : "loaded"}</span>
       <button type="button" data-testid="edit" onClick={() => setBoard((c) => ({ ...c, projectName: `${c.projectName}!` }))}>edit</button>
       <button type="button" data-testid="reload" onClick={reload}>reload</button>
     </div>
@@ -196,6 +197,50 @@ describe("usePersistedBoard -- SCHED-20 optimistic concurrency", () => {
 
     expect(text(mounted.container, "conflict")).toBe("ok");
     expect(text(mounted.container, "revision")).toBe("9");
+    unmount(mounted);
+  });
+});
+
+// Live audit 2026-11-10 ~15:21 CST (scheduling-board-hydration-loading-state): a project
+// board rendered the empty-default state (projectName "New Project", today's dates, zero
+// blocks) while its data was still loading, indistinguishable from a genuinely empty
+// project -- UI state pretending to be saved data. isLoading is the fix's one new signal:
+// true from the moment there is a real project id to fetch, false once that fetch settles
+// (success or failure), so the UI can tell "still loading" apart from "loaded and empty".
+describe("usePersistedBoard -- isLoading", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is true while a real project's fetch is still pending, then false once it resolves", async () => {
+    let resolveFetch;
+    global.fetch = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; }));
+
+    const mounted = mount(<Harness projectId="p1" />);
+    // Non-vacuous: assert the pending state BEFORE resolving, not just the end state.
+    expect(text(mounted.container, "isLoading")).toBe("loading");
+
+    await act(async () => { resolveFetch(await jsonResponse({ success: true, board: boardFixture(), isOwner: true })); });
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
+    unmount(mounted);
+  });
+
+  it("becomes false even when the load fails, so an error state is never stuck behind a permanent loading state", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }));
+
+    const mounted = mount(<Harness projectId="p1" />);
+    expect(text(mounted.container, "isLoading")).toBe("loading");
+
+    await flushMicrotasks();
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
+    expect(text(mounted.container, "loadError")).toBe("Unable to load this project.");
+    unmount(mounted);
+  });
+
+  it("starts false with no project id -- there is nothing to load, so no loading state is owed", () => {
+    global.fetch = vi.fn(() => new Promise(() => {})); // never resolves; must not matter
+    const mounted = mount(<Harness projectId={undefined} />);
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
     unmount(mounted);
   });
 });
