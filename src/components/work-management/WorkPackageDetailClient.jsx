@@ -12,6 +12,7 @@ import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
+import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
@@ -644,6 +645,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             packageId={pkg.id}
             isTerminal={isTerminal}
             refreshKey={costRefreshKey}
+          />
+          <WorkPackageChangeOrders
+            packageId={pkg.id}
+            refreshKey={costRefreshKey}
+            onChanged={() => setCostRefreshKey((key) => key + 1)}
           />
         </div>
       )}
