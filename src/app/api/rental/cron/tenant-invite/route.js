@@ -16,8 +16,11 @@ export const runtime = "nodejs";
 
 // Generalized tenant-invite sweep (replaces the 2026-09-26 Eric Carrillo
 // one-shot, which hardcoded one tenant, one lease, and a go-live cutoff and
-// has been a no-op ever since). Every run invites exactly the tenants who
-// are ready and have never been invited:
+// has been a no-op ever since). DISABLED by owner order 2026-11-09 — the
+// gate in GET returns action:"disabled" unless TENANT_INVITE_ENABLED=true,
+// so no invite goes out to anyone until the owner says otherwise. When
+// enabled, every run invites exactly the tenants who are ready and have
+// never been invited:
 //
 //   * on an ACTIVE lease (draft/preparing/cancelled leases never invite),
 //   * with a valid email on the tenant record,
@@ -88,6 +91,22 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
+
+  // OWNER HALT (Jason, 2026-11-09): the automated tenant-invite sweep is
+  // OFF. No invite email goes out to anyone — not to tenants who already
+  // received one, not to tenants who never got one. The sweep sent
+  // unsolicited invites on its own (nobody pressed send); the owner
+  // stopped it. Re-enable only on the owner's explicit word, by setting
+  // TENANT_INVITE_ENABLED=true in the deployment environment — no code
+  // change needed. The manual panel invite (sendTenantInvite) is
+  // unaffected: a tenant who asks to switch can still be invited by hand.
+  // The disabled response is success:true with failed:0 so the GitHub
+  // workflow run goes green and no watchdog refire is triggered.
+  if (process.env.TENANT_INVITE_ENABLED !== "true") {
+    return NextResponse.json({ success: true, action: "disabled", sent: [], reconciled: [], wouldSend: [],
+      skipped: { noEmail: 0, noActiveLease: 0, ledgerDeferred: 0, failed: 0 }, failures: [], failed: 0, dryRun });
+  }
+
   const asOfDate = todayISODate();
   const runId = `tenant_invite_${randomUUID()}`;
   // RDL-002B: freeze the scheduled slot once per run (a run straddling a
