@@ -319,6 +319,11 @@ export function renderReviewPanel(container, deps = {}) {
 
   async function submitAction(candidateId, newDisposition, reason) {
     if (busy || !view) return;
+    // The token minted for this exact candidate, from the current loaded
+    // view — never carried forward from an earlier load/reload. Looked
+    // up fresh on every submission so a post-action reload's new token
+    // is always what gets sent, not a stale one captured earlier.
+    const candidate = view.candidates.find((c) => c.candidateId === candidateId);
     let payload;
     try {
       payload = buildReviewActionPayload({
@@ -328,6 +333,7 @@ export function renderReviewPanel(container, deps = {}) {
         reason,
         eventId: genUuid(),
         localTimestamp: nowIso(),
+        visualReviewToken: candidate ? candidate.visualReviewToken : undefined,
       });
     } catch (e) {
       if (e instanceof ReviewError) {
