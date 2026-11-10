@@ -60,7 +60,7 @@ describe("GET /api/forge/scheduling/[projectId]/level-resources", () => {
       { owner_id: "user_1", id: "a2", block_id: "block_2", resource_id: "resource_1", budgeted_units: 16, actual_units: 0, rate_override: null },
     ];
     const db = mockDb({ assignments });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -72,21 +72,21 @@ describe("GET /api/forge/scheduling/[projectId]/level-resources", () => {
 
   it("passes allowExtension through from the query string", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request("?allowExtension=true"), { params });
     expect(response.status).toBe(200);
   });
 
   it("404s a non-owner requesting a leveling preview on the shared example project", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(404);
   });
 
   it("404s when the project doesn't exist", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(404);
   });

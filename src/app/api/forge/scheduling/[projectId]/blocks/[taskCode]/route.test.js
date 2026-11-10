@@ -20,7 +20,7 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]", () => {
 
   it("updates percent complete, clamped to 0-100", async () => {
     const db = mutateQuery({ id: "p1_b1" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(request({ percentComplete: 150 }), { params });
     expect(response.status).toBe(200);
     expect(db.query.update).toHaveBeenCalledWith({ percent_complete: 100 });
@@ -31,7 +31,7 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]", () => {
 
   it("updates actual start and finish dates together", async () => {
     const db = mutateQuery({ id: "p1_b1" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(request({ actualStart: "2026-01-05", actualFinish: "2026-01-10" }), { params });
     expect(response.status).toBe(200);
     expect(db.query.update).toHaveBeenCalledWith({ actual_start: "2026-01-05", actual_finish: "2026-01-10" });
@@ -39,14 +39,14 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]", () => {
 
   it("clears an actual date when given an empty string", async () => {
     const db = mutateQuery({ id: "p1_b1" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     await PATCH(request({ actualFinish: "" }), { params });
     expect(db.query.update).toHaveBeenCalledWith({ actual_finish: null });
   });
 
   it("rejects a body with nothing recognized to update", async () => {
     const db = mutateQuery({ id: "p1_b1" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(request({ label: "Renamed" }), { params });
     expect(response.status).toBe(400);
     expect(db.query.update).not.toHaveBeenCalled();
@@ -54,7 +54,7 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]", () => {
 
   it("404s when the block doesn't exist or the caller doesn't own the project", async () => {
     const db = mutateQuery(null);
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(request({ percentComplete: 50 }), { params });
     expect(response.status).toBe(404);
   });

@@ -28,7 +28,7 @@ describe("GET /api/forge/scheduling/[projectId]/blocks/[taskCode]/expenses", () 
   it("lists expenses for the resolved block", async () => {
     const rows = [{ id: "expense_1", block_id: "block_1", name: "Permit", budgeted_cost: 500 }];
     const db = mockDb({ expenses: rows });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -41,7 +41,7 @@ describe("POST /api/forge/scheduling/[projectId]/blocks/[taskCode]/expenses", ()
 
   it("adds an expense, defaulting accrualType to uniform", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Permit", budgetedCost: 500 }), { params });
     expect(response.status).toBe(200);
     expect(db.nodes.schedule_expenses.insert).toHaveBeenCalledWith(expect.objectContaining({
@@ -51,21 +51,21 @@ describe("POST /api/forge/scheduling/[projectId]/blocks/[taskCode]/expenses", ()
 
   it("rejects a blank name", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "  ", budgetedCost: 500 }), { params });
     expect(response.status).toBe(400);
   });
 
   it("rejects a negative budgetedCost", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Permit", budgetedCost: -5 }), { params });
     expect(response.status).toBe(400);
   });
 
   it("404s when the block doesn't exist or isn't this owner's", async () => {
     const db = mockDb({ block: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Permit", budgetedCost: 500 }), { params });
     expect(response.status).toBe(404);
   });

@@ -25,7 +25,7 @@ export async function POST(request, { params }) {
 
     const relational = await loadProjectRelational(authenticated.supabaseClient, projectId);
     if (!relational.project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
-    if (relational.project.owner_id !== authenticated.user.id) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
+    if (relational.project.owner_id !== authenticated.effectiveOwnerId) return NextResponse.json({ error: "You don't own this project." }, { status: 404 });
 
     const bytes = await request.arrayBuffer();
     if (!bytes || bytes.byteLength === 0) return NextResponse.json({ error: "No file was uploaded." }, { status: 400 });

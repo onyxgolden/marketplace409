@@ -32,7 +32,7 @@ export async function PATCH(request, { params }) {
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_resource_assignments")
-      .update(patch).eq("id", assignmentId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .update(patch).eq("id", assignmentId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Assignment not found, or you don't own this project." }, { status: 404 });
     return NextResponse.json({ success: true });
@@ -49,7 +49,7 @@ export async function DELETE(request, { params }) {
     const { assignmentId } = await params;
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_resource_assignments")
-      .delete().eq("id", assignmentId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .delete().eq("id", assignmentId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Assignment not found, or you don't own this project." }, { status: 404 });
     return NextResponse.json({ success: true });

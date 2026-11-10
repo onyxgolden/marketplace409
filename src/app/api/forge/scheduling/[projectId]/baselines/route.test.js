@@ -56,7 +56,7 @@ describe("GET /api/forge/scheduling/[projectId]/baselines", () => {
   it("lists a project's captured baselines, newest first", async () => {
     const rows = [{ id: "baseline_2", name: "Second", created_at: "2026-02-01T00:00:00.000Z" }, { id: "baseline_1", name: "First", created_at: "2026-01-01T00:00:00.000Z" }];
     const db = mockDb({ baselinesList: rows });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -72,7 +72,7 @@ describe("POST /api/forge/scheduling/[projectId]/baselines", () => {
 
   it("captures a baseline from the project's current CPM-computed state", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Kickoff plan" }), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -84,14 +84,14 @@ describe("POST /api/forge/scheduling/[projectId]/baselines", () => {
 
   it("rejects a blank name", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "   " }), { params });
     expect(response.status).toBe(400);
   });
 
   it("404s a non-owner attempting to capture a baseline on the shared example project", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Sneaky" }), { params });
     expect(response.status).toBe(404);
     expect(db.nodes.schedule_baselines.insert).not.toHaveBeenCalled();
@@ -99,7 +99,7 @@ describe("POST /api/forge/scheduling/[projectId]/baselines", () => {
 
   it("returns 409 with a clear message on a duplicate baseline name", async () => {
     const db = mockDb({ baselineInsertError: { code: "23505", message: "duplicate key" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Kickoff plan" }), { params });
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -108,7 +108,7 @@ describe("POST /api/forge/scheduling/[projectId]/baselines", () => {
 
   it("404s when the project doesn't exist", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ name: "Kickoff plan" }), { params });
     expect(response.status).toBe(404);
   });

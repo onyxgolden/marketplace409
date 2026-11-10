@@ -23,7 +23,7 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]/assignments/
 
   it("updates budgetedUnits/actualUnits/rateOverride", async () => {
     const db = mockDb({ data: { id: "assignment_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({ budgetedUnits: 60, actualUnits: 10, rateOverride: 90 }), { params });
     expect(response.status).toBe(200);
     expect(db.node.update).toHaveBeenCalledWith(expect.objectContaining({ budgeted_units: 60, actual_units: 10, rate_override: 90 }));
@@ -31,14 +31,14 @@ describe("PATCH /api/forge/scheduling/[projectId]/blocks/[taskCode]/assignments/
 
   it("rejects a negative actualUnits", async () => {
     const db = mockDb({ data: { id: "assignment_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({ actualUnits: -1 }), { params });
     expect(response.status).toBe(400);
   });
 
   it("404s an assignment that doesn't exist or isn't this owner's", async () => {
     const db = mockDb({ data: null, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PATCH(patchRequest({ budgetedUnits: 60 }), { params });
     expect(response.status).toBe(404);
   });
@@ -49,7 +49,7 @@ describe("DELETE /api/forge/scheduling/[projectId]/blocks/[taskCode]/assignments
 
   it("removes the assignment", async () => {
     const db = mockDb({ data: { id: "assignment_1" }, error: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await DELETE(new Request("https://test"), { params });
     expect(response.status).toBe(200);
   });

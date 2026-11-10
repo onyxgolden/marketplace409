@@ -59,7 +59,7 @@ describe("GET /api/forge/scheduling/[projectId]/evm-dcma", () => {
 
   it("computes EVM and DCMA metrics using the most recently captured baseline by default", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request("?asOfDate=2026-01-10"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -73,7 +73,7 @@ describe("GET /api/forge/scheduling/[projectId]/evm-dcma", () => {
 
   it("uses an explicit baselineId from the query string instead of auto-selecting", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     await GET(request("?baselineId=baseline_explicit"), { params });
     // No auto-select lookup should be needed once an id is supplied explicitly.
     expect(db.nodes.schedule_baselines.select).not.toHaveBeenCalled();
@@ -81,7 +81,7 @@ describe("GET /api/forge/scheduling/[projectId]/evm-dcma", () => {
 
   it("degrades gracefully with zero planned value and a null CPLI when the project has no baseline yet", async () => {
     const db = mockDb({ latestBaseline: null, baselineBlocks: [] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -93,7 +93,7 @@ describe("GET /api/forge/scheduling/[projectId]/evm-dcma", () => {
 
   it("defaults asOfDate to today when not supplied", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     const body = await response.json();
     expect(body.asOfDate).toBe(new Date().toISOString().slice(0, 10));
@@ -101,14 +101,14 @@ describe("GET /api/forge/scheduling/[projectId]/evm-dcma", () => {
 
   it("404s a non-owner requesting EVM/DCMA on the shared example project", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(404);
   });
 
   it("404s when the project doesn't exist", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(request(), { params });
     expect(response.status).toBe(404);
   });

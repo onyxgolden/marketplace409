@@ -40,7 +40,7 @@ export async function POST(request) {
 
     const now = new Date().toISOString();
     const costAccount = {
-      owner_id: authenticated.user.id,
+      owner_id: authenticated.effectiveOwnerId,
       id: `cost_account_${crypto.randomUUID()}`,
       code, name,
       created_at: now, updated_at: now,

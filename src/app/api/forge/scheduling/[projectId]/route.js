@@ -32,7 +32,7 @@ export async function GET(request, { params }) {
     return NextResponse.json({
       success: true,
       board: { ...board, cpm: { byTaskCode, criticalTaskCodes, conflicts, cycleDiagnoses: boardCycleDiagnoses } },
-      isOwner: relational.project.owner_id === authenticated.user.id,
+      isOwner: relational.project.owner_id === authenticated.effectiveOwnerId,
     });
   } catch (error) {
     console.error("Scheduling project load error", error);
@@ -60,7 +60,7 @@ export async function PUT(request, { params }) {
     const updatedAt = new Date().toISOString();
 
     const { data, error } = await authenticated.supabaseClient.rpc("save_schedule_project_board", {
-      p_owner_id: authenticated.user.id,
+      p_owner_id: authenticated.effectiveOwnerId,
       p_project_id: projectId,
       p_board: { ...board, updatedAt },
       p_expected_revision: expectedRevision,
@@ -90,7 +90,7 @@ export async function DELETE(request, { params }) {
     if (authenticated.response) return authenticated.response;
     const { projectId } = await params;
     const { data, error } = await authenticated.supabaseClient.from("forge_scheduling_projects")
-      .delete().eq("id", projectId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .delete().eq("id", projectId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Project not found, or you don't own it." }, { status: 404 });
 
@@ -99,7 +99,7 @@ export async function DELETE(request, { params }) {
     // from schedule_projects, though, so this one delete is enough. Logged, not fatal: the row the
     // user asked to delete is already gone by the point this runs.
     const { error: relationalDeleteError } = await authenticated.supabaseClient.from("schedule_projects")
-      .delete().eq("id", projectId).eq("owner_id", authenticated.user.id);
+      .delete().eq("id", projectId).eq("owner_id", authenticated.effectiveOwnerId);
     if (relationalDeleteError) console.error("Scheduling relational delete error", relationalDeleteError);
 
     return NextResponse.json({ success: true });

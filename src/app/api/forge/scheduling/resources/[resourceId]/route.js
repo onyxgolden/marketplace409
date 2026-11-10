@@ -38,7 +38,7 @@ export async function PATCH(request, { params }) {
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_resources")
-      .update(patch).eq("id", resourceId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .update(patch).eq("id", resourceId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) {
       if (error.code === UNIQUE_VIOLATION) return NextResponse.json({ error: "A resource with that name already exists." }, { status: 409 });
       throw error;
@@ -58,7 +58,7 @@ export async function DELETE(request, { params }) {
     const { resourceId } = await params;
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_resources")
-      .delete().eq("id", resourceId).eq("owner_id", authenticated.user.id).select("id").maybeSingle();
+      .delete().eq("id", resourceId).eq("owner_id", authenticated.effectiveOwnerId).select("id").maybeSingle();
     if (error) {
       if (error.code === FOREIGN_KEY_VIOLATION) {
         return NextResponse.json({ error: "This resource has assignments on one or more activities -- remove those first, or deactivate the resource instead of deleting it." }, { status: 409 });

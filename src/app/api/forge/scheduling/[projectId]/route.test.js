@@ -62,7 +62,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
 
   it("reconstructs the board from the relational tables (not forge_scheduling_projects.board) and reports ownership", async () => {
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -75,7 +75,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
 
   it("attaches real CPM output keyed by task_code, not the old board-level stand-in", async () => {
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.board.cpm.byTaskCode.A1010).toMatchObject({ earlyStart: "2026-01-01", isCritical: expect.any(Boolean) });
@@ -87,7 +87,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
     const lane = { id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: "p1_cal_1", sort_order: 0 };
     const holiday = { id: "p1_h1", calendar_id: "p1_cal_1", holiday_date: "2026-01-01" }; // PROJECT_ROW.start_date itself, a Thursday
     const db = mockDb({ calendars: [calendar], lanes: [lane], holidays: [holiday] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.board.cpm.byTaskCode.A1010.earlyStart).toBe("2026-01-02"); // rolled past the holiday, not "2026-01-01"
@@ -96,7 +96,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
   it("SCHED-21A: a real blackout window shifts the live CPM output, proving PR #140's blackoutWindows support reaches the live page, not just the verify script", async () => {
     const blackoutWindows = [{ id: "p1_bw1", schedule_project_id: "p1", label: "Test", start_date: "2026-01-01", end_date: "2026-01-01" }];
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }], blackoutWindows });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.board.cpm.byTaskCode.A1010.earlyStart).toBe("2026-01-02"); // rolled past the blackout day, not "2026-01-01"
@@ -110,7 +110,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
       { id: "p1_dep2", predecessor_id: "p1_b2", successor_id: "p1_b1", relationship_type: "SS", lag_days: 0 },
     ];
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }], blocks: [blockA, blockB], dependencies });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
 
@@ -125,27 +125,27 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
 
   it("persists the computed early/late/float/critical dates back onto schedule_blocks", async () => {
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     await GET(new Request("https://test"), { params });
     expect(db.nodes.schedule_blocks.update).toHaveBeenCalledWith(expect.objectContaining({ early_start: expect.any(String), is_critical: expect.any(Boolean) }));
   });
 
   it("flags a project as read-only when the caller isn't the owner (the shared example)", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "example" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const body = await (await GET(new Request("https://test"), { params })).json();
     expect(body.isOwner).toBe(false);
   });
 
   it("404s when the project row doesn't exist or isn't visible to the caller", async () => {
     const db = mockDb({ project: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     expect((await GET(new Request("https://test"), { params })).status).toBe(404);
   });
 
   it("skips the CPM run entirely for a board with no Gantt blocks, rather than erroring", async () => {
     const db = mockDb({ blocks: [] });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -154,7 +154,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
 
   it("surfaces board_revision as board.boardRevision, the token the client must echo back on its next save", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, board_revision: 7 } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const body = await (await GET(new Request("https://test"), { params })).json();
     expect(body.board.boardRevision).toBe(7);
   });
@@ -165,7 +165,7 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
 
   it("saves through the atomic save_schedule_project_board RPC instead of a separate update+best-effort-sync pair", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(200);
     expect(db.rpc).toHaveBeenCalledWith("save_schedule_project_board", {
@@ -183,14 +183,14 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
 
   it("sends the client's last-known boardRevision as p_expected_revision, not always 0", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     await PUT(request({ ...BOARD, boardRevision: 5 }), { params });
     expect(db.rpc).toHaveBeenCalledWith("save_schedule_project_board", expect.objectContaining({ p_expected_revision: 5 }));
   });
 
   it("returns 409 with a reload-before-saving message when the RPC reports a stale revision, instead of silently overwriting someone else's save", async () => {
     const db = mockDb({ rpcError: { message: "SCHEDULE_SAVE_CONFLICT" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request({ ...BOARD, boardRevision: 5 }), { params });
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -200,14 +200,14 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
 
   it("404s instead of silently succeeding when the caller doesn't own the row (e.g. the shared example)", async () => {
     const db = mockDb({ rpcError: { message: "SCHEDULE_SAVE_NOT_FOUND" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(404);
   });
 
   it("500s (rather than reporting a false success) on any other RPC error, since a relational-sync failure must now roll back the whole save", async () => {
     const db = mockDb({ rpcError: { message: "constraint violation" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(500);
   });
@@ -218,7 +218,7 @@ describe("DELETE /api/forge/scheduling/[projectId]", () => {
 
   it("deletes both the jsonb project row and its relational mirror (schedule_projects has no FK back to forge_scheduling_projects, so nothing cascades automatically)", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(200);
     expect(db.nodes.forge_scheduling_projects.delete).toHaveBeenCalled();
     expect(db.nodes.schedule_projects.delete).toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe("DELETE /api/forge/scheduling/[projectId]", () => {
 
   it("404s when the caller doesn't own the row", async () => {
     const db = mockDb({ deleteRow: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(404);
   });
 });

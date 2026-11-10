@@ -47,7 +47,7 @@ describe("GET /api/forge/scheduling/[projectId]/export/excel", () => {
 
   it("returns a downloadable .xlsx with an Activities sheet containing the project's tasks", async () => {
     const db = mockDb();
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("spreadsheetml.sheet");
@@ -65,7 +65,7 @@ describe("GET /api/forge/scheduling/[projectId]/export/excel", () => {
 
   it("404s for a project the caller doesn't own", async () => {
     const db = mockDb({ project: { ...PROJECT_ROW, owner_id: "someone_else" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });

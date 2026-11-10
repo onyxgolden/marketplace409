@@ -27,7 +27,7 @@ export async function PATCH(request, { params }) {
     // an attempt to edit the shared example -- or anyone else's project -- affect 0 rows instead of
     // erroring, so it comes back as a clean 404, matching every other write in this API.
     const { data, error } = await authenticated.supabaseClient.from("schedule_blocks")
-      .update(patch).eq("schedule_project_id", projectId).eq("task_code", taskCode).eq("owner_id", authenticated.user.id)
+      .update(patch).eq("schedule_project_id", projectId).eq("task_code", taskCode).eq("owner_id", authenticated.effectiveOwnerId)
       .select("id").maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Block not found, or you don't own this project." }, { status: 404 });

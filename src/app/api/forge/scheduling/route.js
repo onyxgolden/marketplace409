@@ -20,7 +20,7 @@ export async function GET() {
     const projects = (data || []).map((row) => ({
       id: row.id, name: row.project_name, startDate: row.start_date, endDate: row.end_date,
       createdAt: row.created_at, updatedAt: row.updated_at,
-      isOwner: row.owner_id === authenticated.user.id, isPublic: row.is_public,
+      isOwner: row.owner_id === authenticated.effectiveOwnerId, isPublic: row.is_public,
     }));
     return NextResponse.json({ success: true, projects });
   } catch (error) {
@@ -40,7 +40,7 @@ export async function POST(request) {
     // never an error, just some reasonable starter content.
     const board = defaultBoardState(undefined, body.templateId);
     const record = {
-      owner_id: authenticated.user.id, id: board.id, project_name: board.projectName,
+      owner_id: authenticated.effectiveOwnerId, id: board.id, project_name: board.projectName,
       start_date: board.startDate, end_date: board.endDate, board,
       created_at: board.createdAt, updated_at: board.updatedAt,
     };
@@ -53,7 +53,7 @@ export async function POST(request) {
     // exists yet). Not best-effort here, unlike the PUT route's sync call: a failure means the
     // project the caller just asked to create isn't actually usable yet, so it should surface.
     const { error: syncError } = await authenticated.supabaseClient.rpc("sync_schedule_project_from_board", {
-      p_owner_id: authenticated.user.id, p_project_id: data.id,
+      p_owner_id: authenticated.effectiveOwnerId, p_project_id: data.id,
     });
     if (syncError) throw syncError;
 

@@ -31,7 +31,7 @@ describe("GET /api/forge/scheduling/[projectId]/baselines/[baselineId]/variance"
       baselineBlocks: [{ owner_id: "user_1", id: "baseline_1_A1010", baseline_id: "baseline_1", block_task_code: "A1010", label: "Task", block_type: "task", baseline_start: "2026-01-01", baseline_finish: "2026-01-07", baseline_duration_days: 7, percent_complete: 0, total_float_days: 0, is_critical: true }],
       currentBlocks: [{ owner_id: "user_1", id: "p1_b1", task_code: "A1010", schedule_project_id: "p1", lane_id: "p1_lane_1", label: "Task", early_start: "2026-01-01", early_finish: "2026-01-10", actual_start: null, actual_finish: null }],
     });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -44,7 +44,7 @@ describe("GET /api/forge/scheduling/[projectId]/baselines/[baselineId]/variance"
       baselineBlocks: [{ owner_id: "user_1", id: "baseline_1_A1010", baseline_id: "baseline_1", block_task_code: "A1010", label: "Task", block_type: "task", baseline_start: "2026-01-01", baseline_finish: "2026-01-07", baseline_duration_days: 7, percent_complete: 0, total_float_days: 0, is_critical: true }],
       currentBlocks: [{ owner_id: "user_1", id: "p1_b1", task_code: "A1010", schedule_project_id: "p1", lane_id: "p1_lane_1", label: "Task", early_start: "2026-01-01", early_finish: "2026-01-07", actual_start: "2026-01-01", actual_finish: "2026-01-12" }],
     });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.compared[0]).toMatchObject({ finishVarianceDays: 5, usedActualFinish: true });
@@ -58,7 +58,7 @@ describe("GET /api/forge/scheduling/[projectId]/baselines/[baselineId]/variance"
         { owner_id: "user_1", id: "p1_b2", task_code: "A1020", schedule_project_id: "p1", lane_id: "p1_lane_1", label: "New scope", early_start: "2026-01-08", early_finish: "2026-01-14", actual_start: null, actual_finish: null },
       ],
     });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     const body = await response.json();
     expect(body.addedSinceBaseline).toEqual([{ taskCode: "A1020", label: "New scope" }]);
@@ -67,14 +67,14 @@ describe("GET /api/forge/scheduling/[projectId]/baselines/[baselineId]/variance"
 
   it("404s when the baseline has no blocks and no matching baseline row exists", async () => {
     const db = mockDb({ baselineBlocks: [], baselineRow: null });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
 
   it("does not 404 a genuinely empty baseline (captured from a board with no blocks yet)", async () => {
     const db = mockDb({ baselineBlocks: [], baselineRow: { id: "baseline_1" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
   });

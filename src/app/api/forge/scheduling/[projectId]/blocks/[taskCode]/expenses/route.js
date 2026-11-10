@@ -13,7 +13,7 @@ export async function GET(request, { params }) {
     const authenticated = await authenticatedContext();
     if (authenticated.response) return authenticated.response;
     const { projectId, taskCode } = await params;
-    const block = await resolveOwnedBlock(authenticated.supabaseClient, authenticated.user.id, projectId, taskCode);
+    const block = await resolveOwnedBlock(authenticated.supabaseClient, authenticated.effectiveOwnerId, projectId, taskCode);
     if (!block) return NextResponse.json({ error: "Block not found, or you don't own this project." }, { status: 404 });
 
     const { data, error } = await authenticated.supabaseClient.from("schedule_expenses").select("*").eq("block_id", block.id);
@@ -38,12 +38,12 @@ export async function POST(request, { params }) {
     if (!Number.isFinite(budgetedCost) || budgetedCost < 0) return NextResponse.json({ error: "Budgeted cost must be a non-negative number." }, { status: 400 });
     const accrualType = ACCRUAL_TYPES.includes(body.accrualType) ? body.accrualType : "uniform";
 
-    const block = await resolveOwnedBlock(authenticated.supabaseClient, authenticated.user.id, projectId, taskCode);
+    const block = await resolveOwnedBlock(authenticated.supabaseClient, authenticated.effectiveOwnerId, projectId, taskCode);
     if (!block) return NextResponse.json({ error: "Block not found, or you don't own this project." }, { status: 404 });
 
     const now = new Date().toISOString();
     const expense = {
-      owner_id: authenticated.user.id,
+      owner_id: authenticated.effectiveOwnerId,
       id: `expense_${crypto.randomUUID()}`,
       block_id: block.id,
       cost_account_id: body.costAccountId || null,

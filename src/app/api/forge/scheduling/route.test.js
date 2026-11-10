@@ -29,7 +29,7 @@ describe("GET /api/forge/scheduling", () => {
       { id: "schedule_project_example", owner_id: "example", project_name: "Example project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: true, created_at: "a", updated_at: "b" },
     ];
     const db = listQuery(rows);
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -51,7 +51,7 @@ describe("POST /api/forge/scheduling", () => {
 
   it("creates a new project owned by the caller and returns its id, defaulting to the capital template with no body", async () => {
     const db = insertQuery({ id: "schedule_project_new" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest(undefined));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true, id: "schedule_project_new" });
@@ -62,7 +62,7 @@ describe("POST /api/forge/scheduling", () => {
 
   it("seeds the requested template's lanes and starter chips", async () => {
     const db = insertQuery({ id: "schedule_project_new" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest({ templateId: "home_remodel" }));
     expect(response.status).toBe(200);
     const savedBoard = db.query.insert.mock.calls[0][0].board;
@@ -72,14 +72,14 @@ describe("POST /api/forge/scheduling", () => {
 
   it("syncs the new project's relational rows immediately -- GET reads from schedule_projects, so a newly-created project must be usable on its very first load", async () => {
     const db = insertQuery({ id: "schedule_project_new" });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     await POST(postRequest(undefined));
     expect(db.rpc).toHaveBeenCalledWith("sync_schedule_project_from_board", { p_owner_id: "user_1", p_project_id: "schedule_project_new" });
   });
 
   it("fails the request (unlike the PUT route's best-effort sync) when the relational sync errors, since the project wouldn't be usable otherwise", async () => {
     const db = insertQuery({ id: "schedule_project_new" }, { rpcError: { message: "sync failed" } });
-    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await POST(postRequest(undefined));
     expect(response.status).toBe(500);
   });
