@@ -425,7 +425,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                   </select>
                   <p className="mt-1 text-xs text-slate-500">
                     Switches which optional fields this package shows (Unit/Area/System vs Property) — it never
-                    changes the package's Scope/type, Unit/Area/System, or Property values themselves.
+                    changes the package&apos;s Scope/type, Unit/Area/System, or Property values themselves.
                   </p>
                 </div>
                 {editForm.mode === "commercial" && (
