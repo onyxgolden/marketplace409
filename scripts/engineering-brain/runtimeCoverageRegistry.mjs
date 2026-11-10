@@ -326,22 +326,6 @@ export const CAPABILITIES = Object.freeze([
     monitoring_note: "Firing is checked daily; reconciliation completeness is not independently verified.",
   },
   {
-    id: "rental-tenant-invite",
-    name: "Tenant invite sweep",
-    execution_path:
-      "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/tenant-invite",
-    trigger: { kind: "schedule", cron: "0 15 * * *", chicago_label: "10:00 AM CDT / 9:00 AM CST daily", dst: "fixed-utc" },
-    moves_money: false,
-    durable_evidence: [
-      "rental_tenants (Supabase, verified; invite state columns)",
-      "rental_lease_tenants (Supabase, verified)",
-      "GitHub Actions run log",
-    ],
-    expected_cadence: "daily",
-    monitoring_status: "partially-covered",
-    monitoring_note: "Firing is checked daily; the exact write column was not traced (gap noted for Slice 2).",
-  },
-  {
     id: "rental-tenant-payment-receipts",
     name: "Tenant payment receipts",
     execution_path:
