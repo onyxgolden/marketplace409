@@ -27,10 +27,27 @@ function ledgerChainable() {
   const obj = {
     _filters: [],
     _patch: null,
+    _order: null,
+    _limit: null,
     select() { return obj; },
     eq(col, val) { obj._filters.push({ op: "eq", col, val }); return obj; },
+    in(col, val) { obj._filters.push({ op: "in", col, val }); return obj; },
+    order(col, { ascending = true } = {}) { obj._order = { col, ascending }; return obj; },
+    limit(n) { obj._limit = n; return obj; },
     async maybeSingle() {
-      return { data: rows.find((r) => matches(r, obj._filters)) ?? null, error: null };
+      let found = rows.filter((r) => matches(r, obj._filters));
+      if (obj._order) {
+        const { col, ascending } = obj._order;
+        found = [...found].sort((a, b) => {
+          const av = a[col] ?? "";
+          const bv = b[col] ?? "";
+          if (av < bv) return ascending ? -1 : 1;
+          if (av > bv) return ascending ? 1 : -1;
+          return 0;
+        });
+      }
+      if (obj._limit != null) found = found.slice(0, obj._limit);
+      return { data: found[0] ?? null, error: null };
     },
     upsert(row, options) {
       const exists = rows.some((r) => keyOf(r) === keyOf(row));
@@ -73,6 +90,12 @@ function chainable(table) {
     then(resolve) {
       if (!obj._patch) return resolve({ data: rows.filter((r) => matches(r, obj._filters)), error: null });
       const matched = rows.filter((r) => matches(r, obj._filters));
+      // Update-error injection: tenants in DB.failUpdateFor resolve a
+      // PostgREST error instead of applying the patch, mirroring a
+      // production stamp failure (e.g. 42501).
+      if (table === "rental_tenants" && DB.failUpdateFor && matched.some((r) => DB.failUpdateFor.has(r.id))) {
+        return resolve({ data: null, error: { message: "permission denied for table rental_tenants", code: "42501" } });
+      }
       for (const row of matched) Object.assign(row, obj._patch);
       updateCalls.push({ table, patch: obj._patch, ids: matched.map((r) => r.id) });
       return resolve({ data: matched, error: null });
@@ -86,7 +109,7 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
 }));
 
 function tenant(id, overrides = {}) {
-  return { id, display_name: `Tenant ${id}`, email: `${id}@example.com`, status: "inactive",
+  return { id, owner_id: "owner_1", display_name: `Tenant ${id}`, email: `${id}@example.com`, status: "inactive",
     auth_user_id: null, invited_at: null, ...overrides };
 }
 
@@ -134,6 +157,7 @@ describe("generalized tenant-invite sweep", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.sent).toEqual(["tenant_1"]);
+    expect(body.failed).toBe(0);
     expect(mocks.send).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ recipient: "tenant_1@example.com" }));
     expect(DB.rental_tenants[0].invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -254,6 +278,54 @@ describe("generalized tenant-invite sweep", () => {
     const sweepRow = DB.scheduled_send_ledger.find((r) => r.recipient_allowlist_id === "_sweep");
     expect(sweepRow).toBeDefined();
     expect(sweepRow.state).toBe(LEDGER_STATES.NO_OP);
+  });
+
+  it("records a stamp failure instead of throwing, and later tenants still send", async () => {
+    seed({
+      tenants: [tenant("tenant_bad"), tenant("tenant_ok")],
+      memberships: [
+        { tenant_id: "tenant_bad", lease_id: "lease_active" },
+        { tenant_id: "tenant_ok", lease_id: "lease_active" },
+      ],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    DB.failUpdateFor = new Set(["tenant_bad"]);
+    const response = await GET(authedRequest());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.sent).toEqual(["tenant_ok"]);
+    expect(body.failed).toBe(1);
+    expect(body.skipped.failed).toBe(1);
+    expect(body.failures).toHaveLength(1);
+    expect(body.failures[0].tenantId).toBe("tenant_bad");
+    expect(body.failures[0].reason).toContain("42501");
+    // Both emails went out — the stamp failure blocks nothing after it.
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ recipient: "tenant_bad@example.com" }));
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ recipient: "tenant_ok@example.com" }));
+    expect(DB.rental_tenants.find((t) => t.id === "tenant_bad").invited_at).toBeNull();
+    expect(DB.rental_tenants.find((t) => t.id === "tenant_ok").invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("does NOT resend to a tenant with a prior-slot provider_accepted row — it reconciles", async () => {
+    seed({
+      tenants: [tenant("tenant_1")],
+      memberships: [{ tenant_id: "tenant_1", lease_id: "lease_active" }],
+      leases: [ACTIVE_LEASE],
+      units: [{ id: "unit_1", label: "4225 Barnhill" }],
+    });
+    DB.scheduled_send_ledger.push({
+      id: "ledger_earlier", schedule_name: "tenant_invite", scheduled_slot: "2026-11-01",
+      recipient_allowlist_id: "tenant_1", run_id: "earlier_run", state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      provider_request_key: "key_earlier", payload_digest: "digest_earlier",
+    });
+    const body = await (await GET(authedRequest())).json();
+    expect(body.reconciled).toEqual(["tenant_1"]);
+    expect(body.sent).toEqual([]);
+    expect(body.failed).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(DB.rental_tenants[0].invited_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("fails a tenant closed on a provider error without aborting the run", async () => {

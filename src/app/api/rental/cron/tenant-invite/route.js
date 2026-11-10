@@ -52,6 +52,37 @@ function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Stamp invited_at after a send. Returns the PostgREST error (or null).
+// Identical to the manual panel path (sendTenantInvite in
+// src/app/api/rental/_actions/tenants.js): same three columns, same
+// owner_id + id filter — the panel path is the proven-working copy of
+// this write.
+async function stampTenantInvite(db, tenant, timestamp) {
+  const { error } = await db.from("rental_tenants")
+    .update({ invited_at: timestamp, status: "invited", updated_at: timestamp })
+    .eq("owner_id", tenant.owner_id).eq("id", tenant.id);
+  return error ?? null;
+}
+
+// Cross-slot dedup: the ledger's per-slot claim stops a resend within one
+// day, but a tenant whose stamp never lands is a fresh candidate under
+// every new slot. Positive send evidence for this tenant in ANY slot
+// means "already sent" — reconcile (retry the stamp) instead of sending
+// a second email. Throws on a ledger read error: the ledger is the safety
+// mechanism, so an unreadable ledger fails closed.
+async function findPriorTenantInviteSend(db, tenantId) {
+  const { data, error } = await db.from("scheduled_send_ledger")
+    .select("id,state,scheduled_slot")
+    .eq("schedule_name", SCHEDULE_NAMES.TENANT_INVITE)
+    .eq("recipient_allowlist_id", tenantId)
+    .in("state", [LEDGER_STATES.PROVIDER_ACCEPTED, LEDGER_STATES.DELIVERED])
+    .order("scheduled_slot", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
 export async function GET(request) {
   if (!process.env.CRON_SECRET || request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`)
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
@@ -70,7 +101,7 @@ export async function GET(request) {
     // Candidates: never invited, never claimed. Email validity and lease
     // activity are checked below (Supabase cannot regex-filter email).
     const { data: candidates, error: tenantError } = await db.from("rental_tenants")
-      .select("id, display_name, email, status, auth_user_id, invited_at")
+      .select("id, owner_id, display_name, email, status, auth_user_id, invited_at")
       .is("invited_at", null).is("auth_user_id", null);
     if (tenantError) throw tenantError;
 
@@ -122,6 +153,21 @@ export async function GET(request) {
         startDate: lease.start_date,
       } : null;
 
+      // Already sent on an earlier day (stamp lost): never send twice.
+      // Reconcile the stamp instead; if the stamp still fails, skip.
+      const priorSend = await findPriorTenantInviteSend(db, tenant.id);
+      if (priorSend) {
+        const timestamp = new Date().toISOString();
+        const stampError = await stampTenantInvite(db, tenant, timestamp);
+        if (stampError) {
+          skipped.ledgerDeferred += 1;
+          failures.push({ tenantId: tenant.id, reason: `invite stamp failed: ${stampError.message ?? "unknown"} (${stampError.code ?? "no-code"})` });
+        } else {
+          reconciled.push(tenant.id);
+        }
+        continue;
+      }
+
       const rendered = buildTenantInviteEmail({
         tenantName: tenant.display_name,
         tenantEmail: email,
@@ -159,9 +205,12 @@ export async function GET(request) {
           // Provider accepted before the local stamp was lost: reconcile
           // the stamp, never resend.
           const timestamp = new Date().toISOString();
-          const { error: stampError } = await db.from("rental_tenants")
-            .update({ invited_at: timestamp, status: "invited", updated_at: timestamp }).eq("id", tenant.id);
-          if (stampError) throw stampError;
+          const stampError = await stampTenantInvite(db, tenant, timestamp);
+          if (stampError) {
+            skipped.ledgerDeferred += 1;
+            failures.push({ tenantId: tenant.id, reason: `invite stamp failed: ${stampError.message ?? "unknown"} (${stampError.code ?? "no-code"})` });
+            continue;
+          }
           reconciled.push(tenant.id);
           continue;
         } else {
@@ -213,9 +262,16 @@ export async function GET(request) {
       }).catch(() => {});
 
       const timestamp = new Date().toISOString();
-      const { error: updateError } = await db.from("rental_tenants")
-        .update({ invited_at: timestamp, status: "invited", updated_at: timestamp }).eq("id", tenant.id);
-      if (updateError) throw updateError;
+      const updateError = await stampTenantInvite(db, tenant, timestamp);
+      if (updateError) {
+        // The email is already sent: a stamp failure must never fail the
+        // run (and must never block the remaining tenants). Record it with
+        // the PostgREST code so the next failure is diagnosable from the
+        // workflow step log, and keep going.
+        skipped.failed += 1;
+        failures.push({ tenantId: tenant.id, reason: `invite stamp failed: ${updateError.message ?? "unknown"} (${updateError.code ?? "no-code"})` });
+        continue;
+      }
       sent.push(tenant.id);
     }
 
@@ -239,7 +295,7 @@ export async function GET(request) {
       }
     }
 
-    return NextResponse.json({ success: true, action: dryRun ? "would_send" : (sent.length || reconciled.length ? "sent" : "no_candidates"), sent, reconciled, wouldSend, skipped, failures, dryRun });
+    return NextResponse.json({ success: true, action: dryRun ? "would_send" : (sent.length || reconciled.length ? "sent" : "no_candidates"), sent, reconciled, wouldSend, skipped, failures, failed: failures.length, dryRun });
   } catch (error) {
     console.error("Tenant invite cron failed", { error: error?.message || "unknown" });
     return NextResponse.json({ error: "The tenant invite run failed." }, { status: 500 });
