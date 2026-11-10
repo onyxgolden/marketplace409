@@ -203,7 +203,8 @@ export function validateAndPlanWorkPackageImport({
         }
         const subset = mode ? WP_PACKAGE_TYPES_BY_MODE[mode] : null;
         if (subset && !subset.includes(packageType)) {
-          errors.push({ rowIndex, message: `Row ${rowIndex + 1}: Scope "${packageType}" is not a ${mode} package type.` });
+          const article = mode === "industrial" ? "an" : "a";
+          errors.push({ rowIndex, message: `Row ${rowIndex + 1}: Scope "${packageType}" is not ${article} ${mode} package type.` });
           return;
         }
         fields.packageType = packageType;

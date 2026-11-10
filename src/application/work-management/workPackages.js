@@ -72,7 +72,8 @@ function validatePackageTypeForMode(packageType, mode) {
   if (!packageType) return null;
   const subset = WP_PACKAGE_TYPES_BY_MODE[mode];
   if (!subset || subset.includes(packageType)) return null;
-  return `"${packageType.replace(/_/g, " ")}" is not a ${mode} package type. ${mode} packages use: ${subset.map((t) => t.replace(/_/g, " ")).join(", ")}.`;
+  const article = mode === "industrial" ? "an" : "a";
+  return `"${packageType.replace(/_/g, " ")}" is not ${article} ${mode} package type. ${mode.replace(/^./, (c) => c.toUpperCase())} packages use: ${subset.map((t) => t.replace(/_/g, " ")).join(", ")}.`;
 }
 
 // Maps a database error on the import-tracking columns to the honest

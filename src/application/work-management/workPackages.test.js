@@ -62,6 +62,59 @@ describe("createWorkPackage", () => {
   });
 });
 
+describe("createWorkPackage mode selector", () => {
+  it("defaults mode to industrial and writes it on the insert row", async () => {
+    const insertChain = chain({ data: { ...PKG, package_type: "engineering", mode: "industrial" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Spool fab", package_type: "engineering" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ mode: "industrial" }));
+  });
+  it("infers commercial from a commercial-exclusive package_type when mode is not sent — no regression for older callers", async () => {
+    const insertChain = chain({ data: { ...PKG, package_type: "rental_turn", mode: "commercial" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", package_type: "rental_turn" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ mode: "commercial" }));
+  });
+  it("accepts an explicit mode with a matching package_type", async () => {
+    const insertChain = chain({ data: { ...PKG, package_type: "capital_project", mode: "industrial" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnaround", package_type: "capital_project", mode: "industrial" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ mode: "industrial", package_type: "capital_project" }));
+  });
+  it("rejects a package_type outside the explicit mode's subset, naming the mode, before touching the sequence", async () => {
+    const db = mockDb([]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Spool fab", package_type: "engineering", mode: "commercial" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/not a commercial package type/);
+    expect(result.error).toMatch(/remodel/); // names the valid subset
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+  it("rejects a commercial-only package_type explicitly paired with industrial mode", async () => {
+    const db = mockDb([]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", package_type: "remodel", mode: "industrial" } });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/not an industrial package type/);
+  });
+  it("'other' is valid in either explicit mode", async () => {
+    for (const mode of ["industrial", "commercial"]) {
+      const insertChain = chain({ data: { ...PKG, package_type: "other", mode }, error: null });
+      const db = mockDb([insertChain]);
+      const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+        input: { title: "Misc", package_type: "other", mode } });
+      expect(result.ok).toBe(true);
+    }
+  });
+});
+
 // --- Residential Slice 2: package <-> property association ----------------
 // rental_units rows for owner_1: one canonical slug, one alias of Decker
 // stored raw, one unrelated house, one inactive unit (options exclude it).
@@ -189,6 +242,58 @@ describe("package property association (Slice 2)", () => {
     expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
       property_id: "1900-w-decker",
     }));
+  });
+});
+
+describe("updateWorkPackage mode selector", () => {
+  it("switches mode alone when the stored package_type is valid in the new mode ('other')", async () => {
+    const getChain = chain({ data: { ...PKG, package_type: "other", mode: "industrial" }, error: null });
+    const updateChain = chain({ data: { ...PKG, package_type: "other", mode: "commercial" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { mode: "commercial" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({ mode: "commercial" }));
+  });
+  it("rejects a mode switch that would leave the stored package_type invalid for the new mode — merged candidate, patch alone would look fine", async () => {
+    // The patch itself is just { mode: "commercial" } — the rejection
+    // only shows up once merged against the package's STORED
+    // package_type ("engineering", industrial-only), same discipline as
+    // the earned/planned merged-candidate checks elsewhere in this file.
+    const getChain = chain({ data: { ...PKG, package_type: "engineering", mode: "industrial" }, error: null });
+    const db = mockDb([getChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { mode: "commercial" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/not a commercial package type/);
+  });
+  it("accepts mode and package_type changed together to a compatible pair", async () => {
+    const getChain = chain({ data: { ...PKG, package_type: "engineering", mode: "industrial" }, error: null });
+    const updateChain = chain({ data: { ...PKG, package_type: "remodel", mode: "commercial" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { mode: "commercial", package_type: "remodel" } });
+    expect(result.ok).toBe(true);
+  });
+  it("leaves mode unchanged on the stored row when the patch never mentions it", async () => {
+    const getChain = chain({ data: { ...PKG, package_type: "rental_turn", mode: "commercial" }, error: null });
+    const updateChain = chain({ data: { ...PKG, title: "Renamed", package_type: "rental_turn", mode: "commercial" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Renamed" } });
+    expect(result.ok).toBe(true);
+    const patchArg = updateChain.update.mock.calls[0][0];
+    expect(patchArg).not.toHaveProperty("mode");
+  });
+  it("infers the stored row's mode from package_type when the row predates the mode column (test fixture / pre-apply), so an unrelated edit on a rental_turn package is not wrongly refused", async () => {
+    // PKG itself has package_type "rental_turn" and no mode field at all.
+    const getChain = chain({ data: PKG, error: null });
+    const updateChain = chain({ data: { ...PKG, title: "Renamed" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Renamed" } });
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -563,6 +668,23 @@ describe("listWorkPackages", () => {
     const result = await listWorkPackages(db, { ownerId: "owner_1", status: "draft" });
     expect(result.ok).toBe(true);
     expect(result.packages).toHaveLength(1);
+  });
+  it("selects the mode column", async () => {
+    const listChain = chain({ data: [PKG], error: null });
+    const db = mockDb([listChain]);
+    await listWorkPackages(db, { ownerId: "owner_1" });
+    expect(listChain.select).toHaveBeenCalledWith(expect.stringContaining("mode"));
+  });
+  it("filters by mode when provided, and not at all when omitted", async () => {
+    const withMode = chain({ data: [PKG], error: null });
+    const db1 = mockDb([withMode]);
+    await listWorkPackages(db1, { ownerId: "owner_1", mode: "commercial" });
+    expect(withMode.eq).toHaveBeenCalledWith("mode", "commercial");
+
+    const withoutMode = chain({ data: [PKG], error: null });
+    const db2 = mockDb([withoutMode]);
+    await listWorkPackages(db2, { ownerId: "owner_1" });
+    expect(withoutMode.eq).not.toHaveBeenCalledWith("mode", expect.anything());
   });
 });
 
