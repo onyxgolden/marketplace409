@@ -245,6 +245,34 @@ function SortHeader({ children, sortKey, sort, onSort }) {
 export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", blankRowCount = BLANK_ROWS }) {
   const [rows, setRows] = useState(initialPackages || []);
   const [drafts, setDrafts] = useState(() => Array.from({ length: blankRowCount }, emptyDraft));
+
+  // `useState(initialPackages)` / `useState(() => ...blankRowCount)` only
+  // seed the FIRST mount. A client-side navigation that changes the
+  // filter query (e.g. "Clear filters") keeps this grid mounted and
+  // re-runs the server component with new `initialPackages`/
+  // `blankRowCount` values, but React preserves the already-initialized
+  // `rows`/`drafts` state across that re-render — so without the checks
+  // below, the grid keeps showing the filtered row set (D7 follow-up,
+  // 2026-11-11) and the stale blank-row count (ChatGPT's PR #778
+  // post-merge review) forever, until a hard reload remounts it. This is
+  // React's own "adjust state during render" pattern for resetting state
+  // when a prop changes — not a `useEffect`, which would cost an extra
+  // render and trip `react-hooks/set-state-in-effect`. `force-dynamic` on
+  // the page guarantees a fresh array/number identity per navigation, so
+  // these only fire on a real filter change, never on an optimistic
+  // local edit (those mutate `rows`/`drafts` directly and never touch
+  // these props).
+  const [seenInitialPackages, setSeenInitialPackages] = useState(initialPackages);
+  if (initialPackages !== seenInitialPackages) {
+    setSeenInitialPackages(initialPackages);
+    setRows(initialPackages || []);
+  }
+  const [seenBlankRowCount, setSeenBlankRowCount] = useState(blankRowCount);
+  if (blankRowCount !== seenBlankRowCount) {
+    setSeenBlankRowCount(blankRowCount);
+    setDrafts(Array.from({ length: blankRowCount }, emptyDraft));
+  }
+
   const [selectedId, setSelectedId] = useState(null);
   const [message, setMessage] = useState(null);
   const [importOpen, setImportOpen] = useState(false);

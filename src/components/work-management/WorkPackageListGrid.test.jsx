@@ -232,4 +232,107 @@ describe("WorkPackageListGrid", () => {
       expect(draftIndex).toBeGreaterThan(lastRealIndex);
     });
   });
+
+  // D7 follow-up (2026-11-11) + ChatGPT's PR #778 post-merge review: both
+  // `rows` (seeded from `initialPackages`) and `drafts` (seeded from
+  // `blankRowCount`) were read only once, in a `useState` initializer.
+  // Clicking "Clear filters" keeps this grid mounted across the
+  // server-component re-render that follows — a new `initialPackages`
+  // array and a new `blankRowCount` arrive as props on the SAME
+  // component instance, not a remount — so the grid kept showing the
+  // filtered row set and the stale blank-row count until a hard reload.
+  // These tests simulate that exact prop-only re-render in both
+  // directions, for both pieces of state, the way React actually
+  // delivers it (`root.render` again, not a fresh mount).
+  describe("prop-driven refresh across a filter navigation (no remount)", () => {
+    const WP0006 = { ...PKG, id: "wp_6", code: "WP-0006", title: "Cancelled QA package", status: "cancelled" };
+
+    it("picks up rows that were missing under a filter once the filter is cleared", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const filtered = [PKG];
+      const unfiltered = [PKG, WP0006];
+      const { container, root } = await renderGrid({ initialPackages: filtered });
+      expect(container.textContent).toContain("WP-0001");
+      expect(container.textContent).not.toContain("WP-0006");
+
+      // "Clear filters": same grid instance, new initialPackages prop.
+      await act(async () => {
+        root.render(<WorkPackageListGrid initialPackages={unfiltered} properties={PROPERTIES} />);
+      });
+      await act(async () => {});
+
+      expect(container.textContent).toContain("WP-0001");
+      expect(container.textContent).toContain("WP-0006"); // previously stuck missing until reload.
+    });
+
+    it("narrows rows when a filter is applied to an already-mounted grid", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const unfiltered = [PKG, WP0006];
+      const filtered = [PKG];
+      const { container, root } = await renderGrid({ initialPackages: unfiltered });
+      expect(container.textContent).toContain("WP-0006");
+
+      await act(async () => {
+        root.render(<WorkPackageListGrid initialPackages={filtered} properties={PROPERTIES} />);
+      });
+      await act(async () => {});
+
+      expect(container.textContent).not.toContain("WP-0006");
+      expect(container.textContent).toContain("WP-0001");
+    });
+
+    it("regrows blank add-rows when blankRowCount goes from 0 back to BLANK_ROWS on the same instance", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const { container, root } = await renderGrid({ initialPackages: [PKG], blankRowCount: 0 });
+      expect(container.querySelectorAll('[aria-label^="Title for new package row"]')).toHaveLength(0);
+
+      // Filter that excluded blank rows (e.g. Status=cancelled) is cleared.
+      await act(async () => {
+        root.render(<WorkPackageListGrid initialPackages={[PKG]} properties={PROPERTIES} blankRowCount={BLANK_ROWS} />);
+      });
+      await act(async () => {});
+
+      expect(container.querySelectorAll('[aria-label^="Title for new package row"]')).toHaveLength(BLANK_ROWS);
+    });
+
+    it("drops blank add-rows when blankRowCount goes from BLANK_ROWS to 0 on the same instance", async () => {
+      setupFetch(async () => ({ body: {} }));
+      const { container, root } = await renderGrid({ initialPackages: [PKG], blankRowCount: BLANK_ROWS });
+      expect(container.querySelectorAll('[aria-label^="Title for new package row"]')).toHaveLength(BLANK_ROWS);
+
+      await act(async () => {
+        root.render(<WorkPackageListGrid initialPackages={[PKG]} properties={PROPERTIES} blankRowCount={0} />);
+      });
+      await act(async () => {});
+
+      expect(container.querySelectorAll('[aria-label^="Title for new package row"]')).toHaveLength(0);
+    });
+
+    it("does not discard an in-progress optimistic edit on an unrelated re-render", async () => {
+      // Guards against over-eager reconciliation: a re-render that passes
+      // the SAME initialPackages array reference and the same
+      // blankRowCount (no real navigation) must not clobber a row
+      // already updated locally via setRows.
+      const calls = setupFetch(async ({ method, body }) => {
+        if (method === "PATCH") return { body: { package: { ...PKG, ...JSON.parse(body) } } };
+        return { body: {} };
+      });
+      const sameRef = [PKG];
+      const { container, root } = await renderGrid({ initialPackages: sameRef });
+      const cell = container.querySelector('[aria-label="Title for WP-0001"]');
+      await act(async () => { cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+      setInput(container, "Title for WP-0001", "Decker turnover (revised)");
+      await pressEnter(container.querySelector('input[aria-label="Title for WP-0001"]'));
+      expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+      expect(container.textContent).toContain("Decker turnover (revised)");
+
+      // Re-render with the identical array reference and count -- not a navigation.
+      await act(async () => {
+        root.render(<WorkPackageListGrid initialPackages={sameRef} properties={PROPERTIES} />);
+      });
+      await act(async () => {});
+
+      expect(container.textContent).toContain("Decker turnover (revised)");
+    });
+  });
 });
