@@ -41,12 +41,15 @@
 //   baseline, never as a sourced vapor maximum.
 // - O2 transitions/loads (brief item 4; digest §3.8): a support
 //   immediately adjacent to every direction/elevation change, bound
-//   to the transition by index — a remote support never counts
-//   because it sits inside a span maximum. A vertical leg needs both
-//   transition elbows supported; an up/down jog has four transition
-//   locations. Heavy valves/flanged assemblies need an adjacent
-//   scheduled load support; distributed-load spans do not clear
-//   concentrated loads.
+//   to the transition by index AND by contact station within the
+//   transition-adjacency tolerance (0.5 in, the adopted fitting-face
+//   tolerance) — a remote support never counts because it sits inside
+//   a span maximum, and an index alone proves nothing. A vertical leg
+//   needs both transition elbows supported; an up/down jog has four
+//   transition locations. Heavy valves/flanged assemblies need an
+//   adjacent scheduled load support; distributed-load spans do not
+//   clear concentrated loads. A valve station with no authored route
+//   station is explicitly unverified, never cleared by index alone.
 // - Nozzle ends and risers (brief item 5; digest §3.7, §3.10): a
 //   nozzle never carries pipe weight. The last support before a
 //   nozzle comes from the authored support schedule — the named
@@ -64,8 +67,10 @@
 //   the profile assignment is explicit and source-linked, and a
 //   missing classification is SPACING_PROFILE_UNVERIFIED — no
 //   diameter threshold is invented. At a flange station the
-//   governing 1-in flange clearance applies; overlapping flange
-//   stations use flange/flange envelopes. Nominal bore is not OD.
+//   governing 1-in flange clearance applies plus the authored
+//   expansion allowances of both lines; overlapping flange
+//   stations use flange/flange envelopes plus both allowances.
+//   Nominal bore is not OD.
 // - Rack organization (brief item 7; digest §2.4–2.7): stable
 //   rack-local line coordinates, guides/shoes as scheduled, authored
 //   reserve (a missing reserve definition is
@@ -129,6 +134,16 @@ import { findSymbol } from "./symbolRegistry";
 
 /** Face-contact tolerance (in): single source is pipeCrossings. */
 export const SUPPORT_FACE_TOLERANCE_IN = CONNECTION_FACE_TOLERANCE_IN;
+/**
+ * Transition-adjacency tolerance (in): a transition support's
+ * contact station must sit within this of the transition station.
+ * Reuses the adopted 0.5-in fitting-face tolerance (brief D10-01;
+ * the flange loadRef binding uses the same value) — no new number
+ * is invented. A trunnion/bracket whose contact point sits farther
+ * from the elbow does not clear the transition: its connection to
+ * that elbow is not modeled, so the index alone proves nothing.
+ */
+export const TRANSITION_ADJACENCY_IN = SUPPORT_FACE_TOLERANCE_IN;
 /** Numerical axis epsilon (in): representation policy, from D10-01. */
 export const SUPPORT_AXIS_EPSILON_IN = ROUTE_AXIS_EPSILON_IN;
 /** Station epsilon (in): two stations closer than this are the same station. */
@@ -204,6 +219,7 @@ export const SUPPORT_CODES = Object.freeze({
   GROUND_NOT_SUPPORT: "GROUND_NOT_SUPPORT",
   TRANSITION_SUPPORT_MISSING: "TRANSITION_SUPPORT_MISSING",
   CONCENTRATED_LOAD_UNSUPPORTED: "CONCENTRATED_LOAD_UNSUPPORTED",
+  CONCENTRATED_LOAD_UNVERIFIED: "CONCENTRATED_LOAD_UNVERIFIED",
   NOZZLE_SUPPORT_UNVERIFIED: "NOZZLE_SUPPORT_UNVERIFIED",
   NOZZLE_SUPPORT_UNRESOLVED: "NOZZLE_SUPPORT_UNRESOLVED",
   NOZZLE_SUPPORT_NOT_LAST: "NOZZLE_SUPPORT_NOT_LAST",
@@ -1134,32 +1150,47 @@ export function verticalLegs(design, run) {
  * O2 transition/load verification (brief item 4; digest §3.8). Every
  * direction/elevation change needs a support immediately adjacent in
  * the modeled fitting assembly: a weight-carrying support bound to
- * the transition vertex by index, with a verified carrier. A remote
- * support never counts because it sits inside a span maximum, and a
- * trunnion/bracket that transfers weight through real geometry
- * counts when its connection to the elbow verifies (the binding).
+ * the transition vertex by index, whose contact station sits within
+ * the transition-adjacency tolerance of the transition station, with
+ * a verified carrier. A remote support never counts because it sits
+ * inside a span maximum, and a trunnion/bracket that transfers
+ * weight through real geometry counts only when its contact point is
+ * at the elbow (the binding) — the index alone proves nothing.
  * Heavy valves and flanged assemblies need an adjacent scheduled
- * load support bound by valve index or flange station; distributed
- * load spans do not clear concentrated loads.
+ * load support bound by valve index AND station, or flange station;
+ * distributed-load spans do not clear concentrated loads. A valve
+ * station with no authored route station is explicitly unverified.
  */
 export function validateTransitionSupports(design, run) {
   const runId = run?.id ?? "(unknown)";
   if (!Array.isArray(run?.points) || run.points.length < 2) {
     return { state: "NOT_APPLICABLE", findings: [] };
   }
-  const { totalIn, route } = routeStations(design, run);
+  const { stations, totalIn, route } = routeStations(design, run);
   const { contacts, findings } = classifySupports(design, run, route, totalIn);
   const transitions = transitionVertices(design, run);
   for (const t of transitions) {
-    const bound = contacts.find((c) => c.transitionIndex === t.vertexIndex);
+    const station = stations[t.vertexIndex]?.stationIn;
+    // Adjacency is geometry, not a label: the bound support's
+    // contact station must sit within the transition-adjacency
+    // tolerance of the transition station. An index match at a
+    // remote station is a remote support and does not count.
+    const bound =
+      isFiniteNumber(station) &&
+      contacts.find(
+        (c) => c.transitionIndex === t.vertexIndex && Math.abs(c.stationIn - station) <= TRANSITION_ADJACENCY_IN,
+      );
     if (!bound) {
+      const remote = contacts.find((c) => c.transitionIndex === t.vertexIndex);
       findings.push(
         finding(
           SUPPORT_CODES.TRANSITION_SUPPORT_MISSING,
           runId,
-          `Pipe run ${runId} ${t.kind} change at vertex ${t.vertexIndex} has no adjacent support bound to the transition; ` +
-            `a remote support inside a span maximum does not count.`,
-          { vertexIndex: t.vertexIndex, kind: t.kind },
+          remote
+            ? `Pipe run ${runId} ${t.kind} change at vertex ${t.vertexIndex} (station ${station} in) has a support bound by index at station ${remote.stationIn} in, ${Math.abs(remote.stationIn - station).toFixed(3)} in away — outside the ${TRANSITION_ADJACENCY_IN}-in transition-adjacency tolerance; the index alone does not prove adjacency.`
+            : `Pipe run ${runId} ${t.kind} change at vertex ${t.vertexIndex} has no adjacent support bound to the transition; ` +
+                `a remote support inside a span maximum does not count.`,
+          { vertexIndex: t.vertexIndex, kind: t.kind, stationIn: station },
         ),
       );
     }
@@ -1167,17 +1198,40 @@ export function validateTransitionSupports(design, run) {
   // Concentrated loads: valve stations (by index) and mid-route
   // flange stations (by station; end flanges are the nozzle rule's).
   const valves = Array.isArray(run.valveStations) ? run.valveStations : [];
-  valves.forEach((_, index) => {
+  valves.forEach((valve, index) => {
+    // Valve stations carry no route station in the current schema
+    // (pipeRoutingRules: { parallelTo, operatorSide } only), so an
+    // index-only binding cannot prove adjacency: the result is
+    // explicitly unverified, never a pass on the label alone. When a
+    // station IS authored, the load support must match it by index
+    // AND station, like the flange binding below.
+    const station = isPlainObject(valve) ? valve.stationIn : undefined;
+    if (!isFiniteNumber(station)) {
+      findings.push(
+        finding(
+          SUPPORT_CODES.CONCENTRATED_LOAD_UNVERIFIED,
+          runId,
+          `Pipe run ${runId} valve station ${index} is a concentrated load with no authored route station; adjacency of any load support cannot verify — the valve index alone proves nothing.`,
+          { loadKind: "valve", index },
+        ),
+      );
+      return;
+    }
     const bound = contacts.find(
-      (c) => isPlainObject(c.loadRef) && c.loadRef.kind === "valve" && c.loadRef.index === index,
+      (c) =>
+        isPlainObject(c.loadRef) &&
+        c.loadRef.kind === "valve" &&
+        c.loadRef.index === index &&
+        isFiniteNumber(c.loadRef.stationIn) &&
+        Math.abs(c.loadRef.stationIn - station) <= FACE,
     );
     if (!bound) {
       findings.push(
         finding(
           SUPPORT_CODES.CONCENTRATED_LOAD_UNSUPPORTED,
           runId,
-          `Pipe run ${runId} valve station ${index} is a concentrated load with no adjacent scheduled load support; distributed-load spans do not clear it.`,
-          { loadKind: "valve", index },
+          `Pipe run ${runId} valve station ${index} at ${station} in is a concentrated load with no adjacent scheduled load support; distributed-load spans do not clear it.`,
+          { loadKind: "valve", index, stationIn: station },
         ),
       );
     }
@@ -1451,11 +1505,14 @@ export function requiredPairCenters(runA, runB, options = {}) {
  * parallel pairs: centers >= (OD/2 + insulation) each side + the
  * selected clear gap + authored expansion allowances. At a flange
  * station the governing check is flange radius + adjacent effective
- * pipe radius + 1 in; overlapping flange stations use
- * flange/flange envelopes + 1 in. The governing maximum of pipe and
- * fitting checks rules; the 1-in flange gap is never substituted
- * for the pipe clearance everywhere. Runs joined by a verified
- * junction are not a spacing pair (they meet by design).
+ * pipe radius + 1 in + the authored expansion allowances of both
+ * lines (each line may move toward the other, so a flange that
+ * governs can still understate required centers without them);
+ * overlapping flange stations use flange/flange envelopes + 1 in +
+ * both allowances. The governing maximum of pipe and fitting checks
+ * rules; the 1-in flange gap is never substituted for the pipe
+ * clearance everywhere. Runs joined by a verified junction are not
+ * a spacing pair (they meet by design).
  */
 export function validatePairSpacing(design, runA, runB, options = {}) {
   const runId = `${runA?.id ?? "(unknown)"}/${runB?.id ?? "(unknown)"}`;
@@ -1518,9 +1575,14 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
       const overlapping = flangesY.find(
         (other) => isPlainObject(other) && isFiniteNumber(other.stationIn) && Math.abs(other.stationIn - closest.stationIn) <= FACE && isFiniteNumber(other.flangeRadiusIn),
       );
+      // Both lines' authored expansion allowances add to the fitting
+      // envelope, exactly as they add to the ordinary pipe envelope
+      // above: each line may move toward the other. (Expansion values
+      // are finite here — requiredPairCenters already refused the
+      // pair when either is unknown.)
       const required = overlapping
-        ? flange.flangeRadiusIn + overlapping.flangeRadiusIn + FLANGE_GAP_IN
-        : flange.flangeRadiusIn + (runY.outsideDiameterIn / 2 + runY.insulationIn) + FLANGE_GAP_IN;
+        ? flange.flangeRadiusIn + overlapping.flangeRadiusIn + FLANGE_GAP_IN + runX.expansionAllowanceIn + runY.expansionAllowanceIn
+        : flange.flangeRadiusIn + (runY.outsideDiameterIn / 2 + runY.insulationIn) + FLANGE_GAP_IN + runX.expansionAllowanceIn + runY.expansionAllowanceIn;
       if (required > governingIn) {
         governingIn = required;
       }
@@ -1530,8 +1592,8 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
             SUPPORT_CODES.SPACING_TOO_CLOSE,
             runId,
             overlapping
-              ? `Pipe runs ${runX.id} / ${runY.id} flange stations overlap at ${closest.distance.toFixed(3)} in apart; overlapping flange envelopes need ${required.toFixed(3)} in (flange radii ${flange.flangeRadiusIn}/${overlapping.flangeRadiusIn} in + ${FLANGE_GAP_IN} in clear).`
-              : `Pipe run ${runX.id} flange at ${flange.stationIn} in is ${closest.distance.toFixed(3)} in from run ${runY.id}; the flange envelope needs ${required.toFixed(3)} in (flange radius ${flange.flangeRadiusIn} in + adjacent effective radius ${(runY.outsideDiameterIn / 2 + runY.insulationIn).toFixed(3)} in + ${FLANGE_GAP_IN} in clear).`,
+              ? `Pipe runs ${runX.id} / ${runY.id} flange stations overlap at ${closest.distance.toFixed(3)} in apart; overlapping flange envelopes need ${required.toFixed(3)} in (flange radii ${flange.flangeRadiusIn}/${overlapping.flangeRadiusIn} in + ${FLANGE_GAP_IN} in clear + expansion ${runX.expansionAllowanceIn}/${runY.expansionAllowanceIn} in).`
+              : `Pipe run ${runX.id} flange at ${flange.stationIn} in is ${closest.distance.toFixed(3)} in from run ${runY.id}; the flange envelope needs ${required.toFixed(3)} in (flange radius ${flange.flangeRadiusIn} in + adjacent effective radius ${(runY.outsideDiameterIn / 2 + runY.insulationIn).toFixed(3)} in + ${FLANGE_GAP_IN} in clear + expansion ${runX.expansionAllowanceIn}/${runY.expansionAllowanceIn} in).`,
             { requiredIn: required, actualIn: closest.distance },
           ),
         );
@@ -2396,7 +2458,14 @@ export function applySupportProposal(design, pipeId, proposal) {
     }
     const next = detach(raw);
     if (typeof next.id !== "string" || next.id === "" || existingIds.has(next.id)) {
-      const fresh = nextSupportId();
+      // Loop until the candidate is absent from both the existing
+      // ids and the ids already prepared in this proposal: a single
+      // generation can itself collide (e.g. after resetSupportIds a
+      // run that already holds support-1 makes nextSupportId return
+      // support-1 again). The nozzle-reference remap follows the
+      // final fresh id.
+      let fresh = nextSupportId();
+      while (existingIds.has(fresh)) fresh = nextSupportId();
       if (typeof next.id === "string" && next.id !== "") remap.set(next.id, fresh);
       next.id = fresh;
     }

@@ -19,6 +19,7 @@ import {
   STRUCTURE_CLEARANCE_IN,
   SUPPORT_CODES,
   SUPPORT_SPAN_TABLE_IN,
+  TRANSITION_ADJACENCY_IN,
   addPipeSupport,
   applySupportProposal,
   deletePipeSupport,
@@ -440,6 +441,57 @@ describe("validateTransitionSupports (O2)", () => {
     expect(transitionVertices(design, run)).toHaveLength(1);
   });
 
+  it("a support bound by index but remote from the transition station does not clear it", () => {
+    // The verdict's counterexample: a foundation support at station 0
+    // — or anywhere far from the elbow — must not clear a transition
+    // merely by carrying the right transitionIndex. Here the elbow is
+    // at vertex 1 (station 60) and the bound trunnion sits at 100.
+    const remote = lRoute({
+      supports: [
+        sup(0, "s1"),
+        sup(120, "s2"),
+        { id: "t1", type: "trunnion", stationIn: 100, transitionIndex: 1, carrier: { kind: "foundation" } },
+      ],
+    });
+    expect(codes(validateTransitionSupports(remote.design, remote.run).findings)).toEqual([
+      "TRANSITION_SUPPORT_MISSING",
+    ]);
+    expect(validateTransitionSupports(remote.design, remote.run).findings[0].message).toMatch(
+      /outside the 0\.5-in transition-adjacency tolerance/,
+    );
+    // Boundary: exactly at the named tolerance passes, 0.001 past it fails.
+    const atTolerance = lRoute({
+      supports: [
+        sup(0, "s1"),
+        sup(120, "s2"),
+        {
+          id: "t1",
+          type: "trunnion",
+          stationIn: 60 + TRANSITION_ADJACENCY_IN,
+          transitionIndex: 1,
+          carrier: { kind: "foundation" },
+        },
+      ],
+    });
+    expect(validateTransitionSupports(atTolerance.design, atTolerance.run).state).toBe("PASS");
+    const pastTolerance = lRoute({
+      supports: [
+        sup(0, "s1"),
+        sup(120, "s2"),
+        {
+          id: "t1",
+          type: "trunnion",
+          stationIn: 60 + TRANSITION_ADJACENCY_IN + 0.001,
+          transitionIndex: 1,
+          carrier: { kind: "foundation" },
+        },
+      ],
+    });
+    expect(codes(validateTransitionSupports(pastTolerance.design, pastTolerance.run).findings)).toEqual([
+      "TRANSITION_SUPPORT_MISSING",
+    ]);
+  });
+
   it("a verified trunnion bound to the transition passes; a nearby-only support does not", () => {
     const bound = lRoute({
       supports: [
@@ -521,7 +573,7 @@ describe("validateTransitionSupports (O2)", () => {
       diameterIn: 2,
       spanProfile: water(2),
       supports: [sup(0, "s1"), sup(100, "s2"), sup(200, "s3")],
-      valveStations: [{ parallelTo: "rack", operatorSide: true }],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
     });
     expect(codes(validateTransitionSupports(valve.design, valve.run).findings)).toEqual([
       "CONCENTRATED_LOAD_UNSUPPORTED",
@@ -533,9 +585,15 @@ describe("validateTransitionSupports (O2)", () => {
         sup(0, "s1"),
         sup(100, "s2"),
         sup(200, "s3"),
-        { id: "v1", type: "bracket", stationIn: 100, loadRef: { kind: "valve", index: 0 }, carrier: { kind: "foundation" } },
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 100,
+          loadRef: { kind: "valve", index: 0, stationIn: 100 },
+          carrier: { kind: "foundation" },
+        },
       ],
-      valveStations: [{ parallelTo: "rack", operatorSide: true }],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
     });
     expect(validateTransitionSupports(valveSupported.design, valveSupported.run).state).toBe("PASS");
     // A mid-route flange without a load support; an end flange is the
@@ -550,6 +608,58 @@ describe("validateTransitionSupports (O2)", () => {
       ],
     });
     expect(codes(validateTransitionSupports(flange.design, flange.run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNSUPPORTED",
+    ]);
+  });
+
+  it("a valve station with no authored route station is unverified, never cleared by index alone", () => {
+    // Valve stations carry no route station in the current schema, so
+    // an index-matched load support cannot prove adjacency: the check
+    // must say so explicitly instead of passing on the label.
+    const indexMatched = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        { id: "v1", type: "bracket", stationIn: 100, loadRef: { kind: "valve", index: 0 }, carrier: { kind: "foundation" } },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true }],
+    });
+    expect(codes(validateTransitionSupports(indexMatched.design, indexMatched.run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNVERIFIED",
+    ]);
+    const noSupport = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [sup(0, "s1"), sup(100, "s2"), sup(200, "s3")],
+      valveStations: [{ parallelTo: "rack", operatorSide: true }],
+    });
+    expect(codes(validateTransitionSupports(noSupport.design, noSupport.run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNVERIFIED",
+    ]);
+  });
+
+  it("a valve load support must match the valve station, not just the index", () => {
+    const mismatched = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 150,
+          loadRef: { kind: "valve", index: 0, stationIn: 150 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+    });
+    expect(codes(validateTransitionSupports(mismatched.design, mismatched.run).findings)).toEqual([
       "CONCENTRATED_LOAD_UNSUPPORTED",
     ]);
   });
@@ -828,6 +938,42 @@ describe("validatePairSpacing (O3)", () => {
     expect(validatePairSpacing(boundary(1.001).design, boundary(1.001).a, boundary(1.001).b).state).toBe(
       "PASS",
     );
+  });
+
+  it("flange envelopes include both lines' expansion allowances; the flange check governs with movement", () => {
+    // Runs 7 in apart, flange radius 4 on A, expansion 1 in on A and
+    // 0.5 in on B. Pipe check needs 1.1875 + 1.1875 + 3 + 1 + 0.5 =
+    // 6.875 (passes at 7), but the flange check needs
+    // 4 + 1.1875 + 1 + 1 + 0.5 = 7.6875 — the flange governs, and
+    // without the allowances it would need only 6.1875 and pass.
+    const moving = (distanceIn) =>
+      pairAt(
+        distanceIn,
+        { flangeStations: [{ stationIn: 100, flangeRadiusIn: 4 }], expansionAllowanceIn: 1 },
+        { expansionAllowanceIn: 0.5 },
+      );
+    expect(validatePairSpacing(moving(7).design, moving(7).a, moving(7).b).state).toBe(
+      "SPACING_TOO_CLOSE",
+    );
+    expect(validatePairSpacing(moving(7.687).design, moving(7.687).a, moving(7.687).b).state).toBe(
+      "SPACING_TOO_CLOSE",
+    );
+    expect(validatePairSpacing(moving(7.6875).design, moving(7.6875).a, moving(7.6875).b).state).toBe(
+      "PASS",
+    );
+    // Overlapping flanges with movement: 3 + 3 + 1 + 0.5 + 0.5 = 8.
+    const overlapMoving = (distanceIn) =>
+      pairAt(
+        distanceIn,
+        { flangeStations: [{ stationIn: 100, flangeRadiusIn: 3 }], expansionAllowanceIn: 0.5 },
+        { flangeStations: [{ stationIn: 100, flangeRadiusIn: 3 }], expansionAllowanceIn: 0.5 },
+      );
+    expect(
+      validatePairSpacing(overlapMoving(7.999).design, overlapMoving(7.999).a, overlapMoving(7.999).b).state,
+    ).toBe("SPACING_TOO_CLOSE");
+    expect(
+      validatePairSpacing(overlapMoving(8).design, overlapMoving(8).a, overlapMoving(8).b).state,
+    ).toBe("PASS");
   });
 
   it("overlapping flange stations use flange/flange envelopes + 1 in", () => {
@@ -1496,6 +1642,46 @@ describe("editable workflow (brief item 10)", () => {
     expect(again.pipes.find((p) => p.id === "p1").supports).toHaveLength(3);
     const ids = again.pipes.find((p) => p.id === "p1").supports.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("collision remapping loops until the fresh id is free, even right after a generator reset", () => {
+    // The verdict's counterexample: after resetSupportIds, the first
+    // generated id is support-1 — which already exists on this run.
+    // A single generation would hand back the duplicate.
+    const { design } = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [sup(0, "support-1")],
+    });
+    resetSupportIds();
+    const applied = applySupportProposal(design, "p1", {
+      supports: [{ id: "support-1", type: "stanchion", stationIn: 100, carrier: { kind: "foundation" } }],
+      nozzleSupports: { start: { supportId: "support-1" } },
+    });
+    const appliedRun = applied.pipes.find((p) => p.id === "p1");
+    const ids = appliedRun.supports.map((s) => s.id);
+    expect(ids).toEqual(["support-1", "support-2"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The nozzle schedule follows the fresh id, not the collided one.
+    expect(appliedRun.nozzleSupports.start.supportId).toBe("support-2");
+    // Two colliding proposals in one batch also land unique: the
+    // second generation must skip both the existing id and the id
+    // already prepared in this proposal.
+    const { design: design2 } = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [sup(0, "support-1")],
+    });
+    resetSupportIds();
+    const applied2 = applySupportProposal(design2, "p1", {
+      supports: [
+        { id: "support-1", type: "stanchion", stationIn: 60, carrier: { kind: "foundation" } },
+        { id: "support-1", type: "stanchion", stationIn: 140, carrier: { kind: "foundation" } },
+      ],
+    });
+    const ids2 = applied2.pipes.find((p) => p.id === "p1").supports.map((s) => s.id);
+    expect(ids2).toEqual(["support-1", "support-2", "support-3"]);
+    expect(new Set(ids2).size).toBe(ids2.length);
   });
 
   it("preview subdivides overlong spans and names the last support before an attached nozzle", () => {
