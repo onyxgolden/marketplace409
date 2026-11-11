@@ -294,9 +294,14 @@ export function headNozzleScheduleEntryProblems(entry, ctx) {
     );
   }
   // Position: top or bottom on the vertical center plane. No lateral
-  // ("side") placement exists for end-head nozzles.
+  // ("side") placement exists for end-head nozzles. An unset position
+  // is a missing authored fact, reported as missing — never defaulted.
   const position = entry.position;
-  if (position !== "top" && position !== "bottom") {
+  if (position === undefined || position === null || position === "") {
+    problems.push(
+      `nozzle "${id}": position is missing — select top or bottom on the vertical center plane.`,
+    );
+  } else if (position !== "top" && position !== "bottom") {
     problems.push(
       `nozzle "${id}": position "${position}" is not a head position — end-head nozzles sit top or bottom on the vertical center plane, never the sides.`,
     );

@@ -76,13 +76,15 @@ export default function HeadNozzleScheduleSection({ design, symbol, instance, di
       sizeIn: spec.sizeIn,
       rating: { status: "unknown" },
       surface,
-      position: "top",
+      // No position here: top/bottom is an operator-authored physical
+      // fact and stays unset until the operator selects it (fix round
+      // 1 — the inspector must never invent a position).
       orientationDeg: headSurfaceOrientationDeg(surface),
     };
     const next = { ...base, ...patch };
     // Blank fields are absent, never zero — validation reports them
     // as missing instead of the editor inventing a value.
-    for (const key of ["sizeIn", "elevationIn", "projectionIn"]) {
+    for (const key of ["sizeIn", "position", "elevationIn", "projectionIn"]) {
       if (next[key] === undefined) delete next[key];
     }
     if (next.rating?.status === "unknown") next.rating = { status: "unknown" };
@@ -135,10 +137,13 @@ export default function HeadNozzleScheduleSection({ design, symbol, instance, di
               <label className="block flex-1 text-[11px] text-gray-400">
                 Position
                 <select
-                  value={entry?.position || "top"}
+                  value={entry?.position || ""}
                   onChange={(e) => patchEntry(spec, { position: e.target.value })}
                   className={selectClass}
                 >
+                  <option value="" disabled>
+                    Select position
+                  </option>
                   <option value="top">Top</option>
                   <option value="bottom">Bottom</option>
                 </select>
