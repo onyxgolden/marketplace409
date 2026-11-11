@@ -759,3 +759,74 @@ describe("WorkPackageDetailClient Freeze baseline success (D1)", () => {
     expect(container.textContent).toContain("already frozen");
   });
 });
+
+// D1 follow-up — live verification on WP-0006 found Freeze baseline still
+// fails on an UNTOUCHED form: the example JSON shown in the box is only the
+// textarea's placeholder, never its value, so clicking Freeze without typing
+// anything sends JSON.parse("") and throws the "must be valid JSON" message
+// on a form nobody put invalid input into. There is no stored "current
+// scope" anywhere on the package to pre-fill the box with -- freezing a
+// baseline for the first time IS how a package's scope items get defined,
+// and the backend's freezeScopeBaseline requires at least one item -- so a
+// blank box is now sent through as an empty array and the server's own
+// plain-words rejection ("A baseline needs at least one scope item.") is
+// what the user sees, scoped locally like every other baseline error (D14).
+describe("WorkPackageDetailClient Freeze baseline on an untouched form (D1 follow-up)", () => {
+  function freezeButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Freeze baseline");
+  }
+  function setTextarea(container, value) {
+    const textarea = container.querySelector("textarea");
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("sends an empty array (not a parse error) when the form is never touched", async () => {
+    const { freezeRequests } = stubFetch({
+      freezeImpl: async (body) => ({ ok: false, json: async () => ({ error: "A baseline needs at least one scope item." }) }),
+    });
+    const { container } = renderDetail(BASE_PKG);
+    expect(container.querySelector("textarea").value).toBe("");
+    await act(async () => { freezeButton(container).click(); });
+    await act(async () => {});
+    expect(freezeRequests).toHaveLength(1);
+    expect(freezeRequests[0]).toEqual({ action: "freeze", membership: [] });
+    expect(container.textContent).toContain("A baseline needs at least one scope item.");
+    expect(container.textContent).not.toContain("Scope items must be valid JSON");
+    expect(container.textContent).toContain("No frozen baseline yet");
+  });
+
+  it("treats whitespace-only input the same as blank", async () => {
+    const { freezeRequests } = stubFetch({
+      freezeImpl: async () => ({ ok: false, json: async () => ({ error: "A baseline needs at least one scope item." }) }),
+    });
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, "   ");
+    await act(async () => { freezeButton(container).click(); });
+    await act(async () => {});
+    expect(freezeRequests[0]).toEqual({ action: "freeze", membership: [] });
+    expect(container.textContent).toContain("A baseline needs at least one scope item.");
+  });
+
+  it("scopes the server's rejection locally, same as the client-side JSON error (D14)", async () => {
+    stubFetch({
+      freezeImpl: async () => ({ ok: false, json: async () => ({ error: "A baseline needs at least one scope item." }) }),
+    });
+    const { container } = renderDetail(BASE_PKG);
+    await act(async () => { freezeButton(container).click(); });
+    await act(async () => {});
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
+  it("still shows the client-side JSON-parse error for genuinely malformed non-empty input", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, "not json");
+    await act(async () => { freezeButton(container).click(); });
+    expect(container.textContent).toContain("Scope items must be valid JSON");
+    expect(container.textContent).not.toContain("A baseline needs at least one scope item.");
+  });
+});

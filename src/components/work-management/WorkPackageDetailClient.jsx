@@ -307,12 +307,27 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   async function onFreeze() {
     setBaselineError("");
     setFreezeMessage("");
+    // D1 follow-up: the box's example JSON is only a placeholder, never the
+    // textarea's value, so an untouched form's value is "" -- JSON.parse("")
+    // always throws, producing a confusing "must be valid JSON" message on a
+    // form nobody actually typed anything invalid into. There is no stored
+    // "current scope" anywhere on the package to pre-fill from (freezing IS
+    // the act of defining the scope for the first time -- the backend's own
+    // freezeScopeBaseline requires membership.length > 0), so a blank box is
+    // treated as "nothing entered yet" and sent through as an empty array,
+    // letting the server's own plain-words rule ("A baseline needs at least
+    // one scope item.") be the message the user sees -- never the parse error.
+    const trimmed = baselineItems.trim();
     let membership;
-    try {
-      membership = JSON.parse(baselineItems);
-    } catch {
-      setBaselineError("Scope items must be valid JSON: an array of {key, description, quantity, unit}.");
-      return;
+    if (trimmed === "") {
+      membership = [];
+    } else {
+      try {
+        membership = JSON.parse(trimmed);
+      } catch {
+        setBaselineError("Scope items must be valid JSON: an array of {key, description, quantity, unit}.");
+        return;
+      }
     }
     const { response, data } = await call(`/api/work-packages/${pkg.id}/scope`, "POST", { action: "freeze", membership });
     if (response.ok) {
@@ -325,7 +340,13 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
       // result even if a slow refresh is still in flight.
       await refresh();
       setFreezeMessage(`Froze baseline version ${data.baseline.version}.`);
+      return;
     }
+    // Keep this section's own errors scoped locally (D14) even when the
+    // failure comes from the server rather than a client-side parse -- call()
+    // already set the page-wide `error` state; move the message here instead.
+    setError("");
+    setBaselineError(data.error || "Unable to freeze the baseline.");
   }
 
   async function onPropose(event) {
