@@ -77,10 +77,11 @@
 //   covered by validateRouteOrthogonality and outside-envelope clearance
 //   by the existing findPipeCrossings resolved flag (requiredSeparationIn);
 //   elevation-changing preview/repair results carry a revalidate marker
-//   naming the D10-02 support and D10-03 access registries, which do not
-//   exist yet. The buried-firewater jog-direction policy (bounded
-//   underpass vs default upward jog) needs the burial-envelope data model
-//   from D10-02 and is not changed here.
+//   naming the D10-02 support registry (pipeSupports.js, landed in PR B)
+//   and the D10-03 access registry, which does not exist yet. The buried-
+//   firewater jog-direction policy (bounded underpass vs default upward
+//   jog) needs the burial-envelope data model from D10-02 and is not
+//   changed here.
 // - Rack/tier ownership and packing (D10-02), access zones/crossovers
 //   (D10-03) and vessel end-head placement (D10-04) are out of scope.
 
@@ -552,9 +553,10 @@ export function validateBranchTakeoff(designOrRun, maybeRun) {
  *   operatorSide: boolean }]. parallelTo "other" is a mismatch;
  *   operatorSide must be a real boolean — the string "false" is
  *   unverified, never a PASS. Valve arrangement identity binding to a
- *   real rack/centerline object is deferred to the D10-02 rack
- *   registry (no racks exist in PR A); this check judges only the
- *   authored arrangement fields.
+ *   real rack/centerline object lives in the D10-02 rack registry
+ *   (pipeSupports.js: routeIntervals name the rack, tier and
+ *   rack-local offset); this check judges only the authored
+ *   arrangement fields.
  *
  * Call shape is (design, run); a lone run argument is normalized to
  * (null design, run). Flexibility and valve checks need no design, but
