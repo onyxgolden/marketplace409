@@ -11,6 +11,14 @@
 // (4) the previously-uncounted step_drawing_links table (a second raw-FK
 // gap found while tracing this fix) never throws, retired or active,
 // (5) nothing from 20261110040000's other 8 types regresses.
+//
+// Fix round 1: the original version of this test created a link with NO
+// revision row, so it proved nothing about the real schema -- every real
+// link has >=1 revision row (creation always inserts one), and
+// forge_work_step_drawing_link_revisions has its own ON DELETE RESTRICT
+// FK back to the link, reproduced as a raw FK error on real PostgreSQL
+// 16.15. The fixture now creates that table with the real FK shape, and
+// every link-touching test inserts a revision row with it.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -165,6 +173,16 @@ const SETUP_SQL = `
     foreign key (owner_id, work_package_id, drawing_id)
       references forge_work_drawings (owner_id, package_id, id) on delete restrict
   );
+  -- Real shape (20261107020000): every link has >=1 revision row (creation
+  -- always inserts one), and this FK is ON DELETE RESTRICT -- the exact
+  -- shape whose absence from the fixture made the original PR's link test
+  -- vacuous (fix round 1, P1).
+  create table forge_work_step_drawing_link_revisions (
+    owner_id text not null, id text not null, link_id text not null,
+    primary key (owner_id, id),
+    foreign key (owner_id, link_id)
+      references forge_work_step_drawing_links (owner_id, id) on delete restrict
+  );
   create table forge_work_control_estimates (
     owner_id text not null, id text not null, work_package_id text not null,
     primary key (owner_id, id),
@@ -254,7 +272,12 @@ async function stepFamilyRowCounts(packageId) {
        or step_id like 'forge_wstep%${packageId}%'
   `);
   const links = await query(`select count(*)::int as count from forge_work_step_drawing_links where work_package_id = '${packageId}'`);
-  return { steps: steps[0].count, order: order[0].count, revisions: revisions[0].count, links: links[0].count };
+  const linkRevisions = await query(`
+    select count(*)::int as count from forge_work_step_drawing_link_revisions
+    where link_id in (select id from forge_work_step_drawing_links where work_package_id = '${packageId}')
+       or link_id like 'forge_wsdl%${packageId}%'
+  `);
+  return { steps: steps[0].count, order: order[0].count, revisions: revisions[0].count, links: links[0].count, linkRevisions: linkRevisions[0].count };
 }
 
 describe("migration fix: retired steps no longer block package deletion forever", () => {
@@ -278,7 +301,7 @@ describe("migration fix: retired steps no longer block package deletion forever"
     expect(await packageCount(pkg.id)).toBe(0);
 
     const remaining = await stepFamilyRowCounts(pkg.id);
-    expect(remaining).toEqual({ steps: 0, order: 0, revisions: 0, links: 0 });
+    expect(remaining).toEqual({ steps: 0, order: 0, revisions: 0, links: 0, linkRevisions: 0 });
   });
 
   it("a draft package with an ACTIVE step still refuses cleanly, naming it (PR #770's own case, unchanged)", async () => {
@@ -328,27 +351,66 @@ describe("migration fix: retired steps no longer block package deletion forever"
     expect(result.ok).toBe(true);
   });
 
-  it("step_drawing_links (retired or active) never throw a raw FK error on delete -- purged with the step", async () => {
+  it("step_drawing_links with a revision row never throw a raw FK error on delete -- fix round 1, P1, the real-PG16-reproduced case", async () => {
+    // Every real link has >=1 revision row (link creation always inserts
+    // one) and forge_work_step_drawing_link_revisions has an ON DELETE
+    // RESTRICT FK back to the link. The original PR's own version of this
+    // test never created a revision row, so it was vacuous -- it proved
+    // the purge worked only in a schema where that FK didn't exist. This
+    // is the actual S3 case the reviewer reproduced on real PostgreSQL 16:
+    // a retired step + a link (drawing_id null, its drawing already
+    // deleted) + one 'create' revision row.
     await asActor("owner_1", "owner_1");
     const pkg = await seedPackage("owner_1");
     const stepId = `forge_wstep_link_${pkg.id}`;
+    const linkId = `forge_wsdl_${pkg.id}`;
     await db.exec(`
       insert into forge_work_steps (owner_id, id, work_package_id, retired_at)
       values ('owner_1', '${stepId}', '${pkg.id}', now());
       insert into forge_work_step_drawing_links (owner_id, id, work_package_id, step_id, drawing_id)
-      values ('owner_1', 'forge_wsdl_${pkg.id}', '${pkg.id}', '${stepId}', null);
+      values ('owner_1', '${linkId}', '${pkg.id}', '${stepId}', null);
+      insert into forge_work_step_drawing_link_revisions (owner_id, id, link_id)
+      values ('owner_1', 'forge_wsdlrev_${pkg.id}', '${linkId}');
     `);
     // Blocker check passes (the step is retired); the delete RPC itself
-    // must not hit the step_drawing_links -> forge_work_steps restrict FK.
+    // must not hit the step_drawing_link_revisions -> step_drawing_links
+    // restrict FK (fix round 1) or the step_drawing_links -> steps
+    // restrict FK (original PR).
     expect(await callBlockers("owner_1", pkg.id)).toEqual([]);
     const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
     expect(result.ok).toBe(true);
+    expect(await packageCount(pkg.id)).toBe(0);
+    expect(await stepFamilyRowCounts(pkg.id)).toEqual({ steps: 0, order: 0, revisions: 0, links: 0, linkRevisions: 0 });
   });
 
-  it("an all-retired step family fully disappears -- no orphaned steps/order/revisions/links survive the package", async () => {
+  it("an ACTIVE step with a link+revision still blocks on the active step, never reaching the purge (non-regression)", async () => {
+    await asActor("owner_1", "owner_1");
+    const pkg = await seedPackage("owner_1");
+    const stepId = `forge_wstep_linkact_${pkg.id}`;
+    const linkId = `forge_wsdl_act_${pkg.id}`;
+    await db.exec(`
+      insert into forge_work_steps (owner_id, id, work_package_id)
+      values ('owner_1', '${stepId}', '${pkg.id}');
+      insert into forge_work_step_drawing_links (owner_id, id, work_package_id, step_id, drawing_id)
+      values ('owner_1', '${linkId}', '${pkg.id}', '${stepId}', null);
+      insert into forge_work_step_drawing_link_revisions (owner_id, id, link_id)
+      values ('owner_1', 'forge_wsdlrev_act_${pkg.id}', '${linkId}');
+    `);
+    expect(await callBlockers("owner_1", pkg.id)).toEqual([{ type: "steps", count: 1 }]);
+    const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("blocked");
+    expect(await packageCount(pkg.id)).toBe(1);
+    // The link and its revision must survive -- the delete never ran.
+    const links = await query(`select count(*)::int as count from forge_work_step_drawing_links where id = '${linkId}'`);
+    expect(links[0].count).toBe(1);
+  });
+
+  it("an all-retired step family fully disappears -- no orphaned steps/order/revisions/links/link_revisions survive the package", async () => {
     await asActor("owner_1", "owner_1");
     const pkg = await seedPackage("owner_1");
     const stepId = `forge_wstep_full_${pkg.id}`;
+    const linkId = `forge_wsdl_full_${pkg.id}`;
     await db.exec(`
       insert into forge_work_steps (owner_id, id, work_package_id, retired_at)
       values ('owner_1', '${stepId}', '${pkg.id}', now());
@@ -358,11 +420,13 @@ describe("migration fix: retired steps no longer block package deletion forever"
       values ('owner_1', 'forge_wsrev_full1_${pkg.id}', '${stepId}'),
              ('owner_1', 'forge_wsrev_full2_${pkg.id}', '${stepId}');
       insert into forge_work_step_drawing_links (owner_id, id, work_package_id, step_id, drawing_id)
-      values ('owner_1', 'forge_wsdl_full_${pkg.id}', '${pkg.id}', '${stepId}', null);
+      values ('owner_1', '${linkId}', '${pkg.id}', '${stepId}', null);
+      insert into forge_work_step_drawing_link_revisions (owner_id, id, link_id)
+      values ('owner_1', 'forge_wsdlrev_full_${pkg.id}', '${linkId}');
     `);
     const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
     expect(result.ok).toBe(true);
-    expect(await stepFamilyRowCounts(pkg.id)).toEqual({ steps: 0, order: 0, revisions: 0, links: 0 });
+    expect(await stepFamilyRowCounts(pkg.id)).toEqual({ steps: 0, order: 0, revisions: 0, links: 0, linkRevisions: 0 });
   });
 
   it("a truly empty draft still deletes and tombstones (no regression)", async () => {

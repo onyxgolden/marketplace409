@@ -34,6 +34,15 @@
 -- meaning without its step, which already blocks if active) -- scope is
 -- "make the delete never throw," not "add a new blocking type."
 --
+-- Fix round 1: the purge below originally deleted forge_work_step_drawing_
+-- links without first deleting their forge_work_step_drawing_link_revisions
+-- rows. Every link has >=1 revision row (creation always inserts one), and
+-- the revisions table has an ON DELETE RESTRICT FK back to the links table
+-- -- so any package whose retired step had a link (even one whose drawing
+-- was since deleted, drawing_id null) threw a raw FK error on delete. Fixed
+-- by purging the revisions rows first (children before parents, same
+-- discipline as the step purge below).
+--
 -- Disclosed, NOT fixed by this migration: the identical retire-only /
 -- no-hard-delete pattern (confirmed by reading each table's own grants)
 -- also exists for forge_work_permit_annotations, forge_work_craft_
@@ -228,6 +237,8 @@ begin
     return jsonb_build_object('ok', false, 'error', 'not_found');
   end if;
 
+  -- Primary-owner authority, revalidated against the locked row's
+  -- workspace. Members are forbidden; non-members learn nothing.
   if v_caller <> p_owner_id then
     if has_workspace_access(p_owner_id) then
       return jsonb_build_object('ok', false, 'error', 'forbidden');
@@ -257,7 +268,17 @@ begin
     -- Step-family cleanup: by construction, every remaining step row for
     -- this package (if any) is retired -- an active one would have shown
     -- up in v_blockers above and we would never reach this line. Purge
-    -- children before parents.
+    -- children before parents. step_drawing_link_revisions before
+    -- step_drawing_links (link_revisions.link_id -> links.id ON DELETE
+    -- RESTRICT, and every link has >=1 revision row, so the parent row
+    -- can never be deleted first without throwing).
+    delete from forge_work_step_drawing_link_revisions
+    where owner_id = p_owner_id
+      and link_id in (
+        select id from forge_work_step_drawing_links
+        where owner_id = p_owner_id and work_package_id = p_package_id
+      );
+
     delete from forge_work_step_drawing_links
     where owner_id = p_owner_id and work_package_id = p_package_id;
 
@@ -274,6 +295,12 @@ begin
     delete from forge_work_step_order
     where owner_id = p_owner_id and work_package_id = p_package_id;
 
+    -- Mutation claim: tombstone insert + version-fenced delete in one
+    -- subtransaction. The DELETE itself re-proves the checked version at the
+    -- mutation boundary; unless exactly one row is deleted the sentinel
+    -- exception rolls the whole claim back (tombstone included) and the
+    -- caller gets version_conflict — a concurrent package UPDATE is never
+    -- silently lost to a stale delete.
     insert into forge_work_package_deletions
       (owner_id, package_id, code, title, prior_status, package_version,
        deleted_by)
