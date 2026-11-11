@@ -70,6 +70,9 @@ export default function ProjectsScreen() {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+        <Link href="/forge/scheduling/settings/permissions" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
+          Roles &amp; permissions
+        </Link>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
           Template
           <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} title={PROJECT_TEMPLATES.find((t) => t.id === templateId)?.description}
