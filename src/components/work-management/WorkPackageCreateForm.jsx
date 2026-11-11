@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -27,6 +28,10 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
   const [propertiesError, setPropertiesError] = useState("");
   const [propertyId, setPropertyId] = useState("");
   const [mode, setMode] = useState(initialMode === "commercial" ? "commercial" : "industrial");
+  // D9: any real user edit (not the initialPropertyId auto-preselect
+  // below, which is not something the user typed) arms the unsaved-
+  // changes guard. Cleared once the create actually succeeds.
+  const [touched, setTouched] = useState(false);
   const [form, setForm] = useState({
     title: "", description: "", package_type: "other", priority: "normal",
     project_id: "",
@@ -70,8 +75,17 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
   }, [initialPropertyId]);
 
   function set(key) {
-    return (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
+    return (event) => {
+      setTouched(true);
+      setForm((prev) => ({ ...prev, [key]: event.target.value }));
+    };
   }
+
+  // No containerRef: the guard must catch a click on the shared
+  // PlannerNavBar too, which lives in the layout outside this form's own
+  // DOM subtree — a container scoped to the form itself would never see
+  // that click. Document-level capture is intentional here.
+  useUnsavedChangesGuard(touched && !saving);
 
   async function onSubmit(event) {
     event.preventDefault();
@@ -159,11 +173,11 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
           </div>
           <div>
             <label className={label} htmlFor="planned_start">Planned start</label>
-            <input id="planned_start" type="date" className={input} value={form.planned_start} onChange={set("planned_start")} />
+            <input id="planned_start" type="date" className={`${input} min-w-[11rem]`} value={form.planned_start} onChange={set("planned_start")} />
           </div>
           <div>
             <label className={label} htmlFor="planned_finish">Planned finish</label>
-            <input id="planned_finish" type="date" className={input} value={form.planned_finish} onChange={set("planned_finish")} />
+            <input id="planned_finish" type="date" className={`${input} min-w-[11rem]`} value={form.planned_finish} onChange={set("planned_finish")} />
           </div>
           <div className="sm:col-span-2">
             <label className={label} htmlFor="responsible_party">Responsible party</label>
@@ -173,7 +187,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
             <div className="sm:col-span-2">
               <label className={label} htmlFor="property_id">Property (optional)</label>
               <select id="property_id" className={input} value={propertyId}
-                onChange={(event) => setPropertyId(event.target.value)}
+                onChange={(event) => { setTouched(true); setPropertyId(event.target.value); }}
                 disabled={properties === null && !propertiesError}>
                 <option value="">No property assigned</option>
                 {(properties || []).map((property) => (
@@ -236,6 +250,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
             is in flight it is inert so a stray click cannot race the create. */}
         <Link
           href="/forge/work"
+          data-discard-link
           aria-disabled={saving || undefined}
           tabIndex={saving ? -1 : undefined}
           className={`rounded-lg border border-slate-300 px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50${

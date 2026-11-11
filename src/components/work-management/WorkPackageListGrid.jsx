@@ -147,7 +147,7 @@ function WindowCell({ pkg, readOnly, onCommit, onError }) {
 
   return (
     <div role="gridcell" ref={wrapRef} onBlur={onBlur}
-      className="flex min-w-0 items-center gap-1"
+      className="flex min-w-0 flex-col gap-0.5"
       onKeyDown={(event) => {
         if (event.key === "Escape") setEditing(false);
         if (event.key === "Enter") {
@@ -158,11 +158,10 @@ function WindowCell({ pkg, readOnly, onCommit, onError }) {
     >
       <input type="date" aria-label="Planned start" autoFocus value={start}
         onChange={(e) => setStart(e.target.value)}
-        className="w-full min-w-0 rounded border border-blue-600 bg-white px-1 py-0.5 text-xs text-slate-900" />
-      <span className="text-slate-400">–</span>
+        className="w-full rounded border border-blue-600 bg-white px-1 py-0.5 text-xs text-slate-900" />
       <input type="date" aria-label="Planned finish" value={finish}
         onChange={(e) => setFinish(e.target.value)}
-        className="w-full min-w-0 rounded border border-blue-600 bg-white px-1 py-0.5 text-xs text-slate-900" />
+        className="w-full rounded border border-blue-600 bg-white px-1 py-0.5 text-xs text-slate-900" />
     </div>
   );
 }
@@ -171,14 +170,13 @@ function WindowCell({ pkg, readOnly, onCommit, onError }) {
 // bound to the draft instead of a stored package.
 function BlankWindowCell({ draft, onDraftChange }) {
   return (
-    <div role="gridcell" className="flex min-w-0 items-center gap-1">
+    <div role="gridcell" className="flex min-w-0 flex-col gap-0.5">
       <input type="date" aria-label="Planned start" value={draft.plannedStart}
         onChange={(e) => onDraftChange({ plannedStart: e.target.value })}
-        className="w-full min-w-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900" />
-      <span className="text-slate-400">–</span>
+        className="w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900" />
       <input type="date" aria-label="Planned finish" value={draft.plannedFinish}
         onChange={(e) => onDraftChange({ plannedFinish: e.target.value })}
-        className="w-full min-w-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900" />
+        className="w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900" />
     </div>
   );
 }
@@ -244,9 +242,9 @@ function SortHeader({ children, sortKey, sort, onSort }) {
   );
 }
 
-export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", activeMode = "industrial" }) {
+export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", activeMode = "industrial", blankRowCount = BLANK_ROWS }) {
   const [rows, setRows] = useState(initialPackages || []);
-  const [drafts, setDrafts] = useState(() => Array.from({ length: BLANK_ROWS }, emptyDraft));
+  const [drafts, setDrafts] = useState(() => Array.from({ length: blankRowCount }, emptyDraft));
   const [selectedId, setSelectedId] = useState(null);
   const [message, setMessage] = useState(null);
   const [importOpen, setImportOpen] = useState(false);

@@ -50,6 +50,17 @@ export function usePersistedBoard(projectId) {
     // the same fetch for the conflict banner's manual retry, which -- run from a click
     // handler, never inside an effect -- isn't subject to that rule at all.
     async function load() {
+      // SCHED-20 project-switch follow-up: a project switch (projectId changing on an
+      // already-mounted instance -- App Router's soft client-side navigation does not
+      // remount this component) must show the loading state immediately, not leave the
+      // PREVIOUS project's board on screen with isLoading still false. isLoading's own
+      // initializer above only runs once at mount, so without this, switching projects
+      // left stale data visible (and editable, autosaving against the new projectId) until
+      // the new fetch resolved. These run before the first `await` below, same as every
+      // other setState call in this function -- nested inside load(), not directly in the
+      // effect body, for the same react-hooks/set-state-in-effect reason noted above.
+      if (projectId) setIsLoading(true);
+      setLoadError(null);
       try {
         const response = await fetch(`/api/forge/scheduling/${projectId}`);
         if (cancelled) return;
@@ -79,7 +90,11 @@ export function usePersistedBoard(projectId) {
   }, [projectId]);
 
   useEffect(() => {
-    if (loadError || conflict) return;
+    // isLoading guard (project-switch follow-up): a load in flight means `board` and
+    // `lastLoadedBoardRef` may both still be the PREVIOUS project's data while this
+    // instance is about to be handed a different one -- no save should ever be scheduled
+    // from that transient state, regardless of which project's data it would carry.
+    if (isLoading || loadError || conflict) return;
     if (!lastLoadedBoardRef.current || board === lastLoadedBoardRef.current) return;
     if (!isOwner) return;
     setSaveStatus("Saving…");
@@ -106,7 +121,7 @@ export function usePersistedBoard(projectId) {
       }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [board, isOwner, loadError, conflict]);
+  }, [board, isOwner, loadError, conflict, isLoading]);
 
   const reload = useCallback(async () => {
     try {

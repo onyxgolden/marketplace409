@@ -381,6 +381,26 @@ describe("WorkPackageSteps", () => {
     });
   });
 
+  it("D21: disables Move up/down at the list boundary instead of a silent no-op", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await waitFor(() => { expect(stepRows(container)).toHaveLength(2); });
+    // First step: up is disabled (nothing above it); down is enabled.
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool up").disabled).toBe(true);
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool down").disabled).toBe(false);
+    // Last step: down is disabled (nothing below it); up is enabled.
+    expect(buttonByAriaLabel(container, "Move Install supports down").disabled).toBe(true);
+    expect(buttonByAriaLabel(container, "Move Install supports up").disabled).toBe(false);
+  });
+
+  it("D21: a single-step list disables both Move up and Move down", async () => {
+    setupFetch({ list: [STEP_1] });
+    const { container } = await renderPanel();
+    await waitFor(() => { expect(stepRows(container)).toHaveLength(1); });
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool up").disabled).toBe(true);
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool down").disabled).toBe(true);
+  });
+
   it("loads a 201-step schedule completely and moves without a permutation", async () => {
     const many = Array.from({ length: 201 }, (_, i) => ({
       ...STEP_1, id: `forge_wps_${i + 1}`, title: `Step ${i + 1}`, sequenceNo: i + 1,

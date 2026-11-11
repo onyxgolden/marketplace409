@@ -741,9 +741,11 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   // One schedule row plus its expandable detail rows (full edit form,
   // retire confirm, drawings, history). Retired rows are read-only:
   // their cells never edit and only Drawings / History are offered.
-  function renderStepRow(step) {
+  function renderStepRow(step, activeIndex) {
     const retired = !!step.retiredAt;
     const cellError = (text) => setError(text);
+    const isFirstActive = activeIndex === 0;
+    const isLastActive = activeIndex === activeSteps.length - 1;
     return (
       <Fragment key={step.id}>
         <div role="row" data-step-id={step.id}
@@ -813,13 +815,15 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
           <div role="cell" className="flex min-w-0 flex-wrap gap-1">
             {!retired && !isTerminal && (
               <>
-                <button className={btnGhost} disabled={busy}
+                <button className={btnGhost} disabled={busy || isFirstActive}
                   onClick={() => onMove(step, -1)}
+                  title={isFirstActive ? "Already the first step" : undefined}
                   aria-label={`Move ${step.title} up`}>
                   ↑
                 </button>
-                <button className={btnGhost} disabled={busy}
+                <button className={btnGhost} disabled={busy || isLastActive}
                   onClick={() => onMove(step, 1)}
+                  title={isLastActive ? "Already the last step" : undefined}
                   aria-label={`Move ${step.title} down`}>
                   ↓
                 </button>
@@ -849,7 +853,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
             <div role="cell" className="col-span-7">
               <form onSubmit={(e) => onSaveEdit(e, step)} className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input className={`${input} flex-1`} aria-label="Step title" value={editForm.title}
+                  <input className={`${input} min-w-[14rem] flex-1`} aria-label="Step title" value={editForm.title}
                     onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
                     required maxLength={160} />
                   <input className={input} aria-label="Craft" list="step-craft-suggestions"
@@ -1066,7 +1070,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
           {isTerminal && steps.length === 0 && (
             <p className="px-3 py-3 text-xs text-slate-500">This package is closed — no work steps were added.</p>
           )}
-          {activeSteps.map((step) => renderStepRow(step))}
+          {activeSteps.map((step, index) => renderStepRow(step, index))}
           {!isTerminal && drafts.map((draft, index) => (
             <div key={`blank-${index}`} role="row" data-blank-row={index}
               className={`grid ${STEPS_GRID_COLS} items-center gap-x-2 border-b border-dashed border-slate-200 bg-slate-50/60 px-3 py-2 text-sm`}>

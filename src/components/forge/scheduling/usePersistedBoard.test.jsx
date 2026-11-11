@@ -45,6 +45,9 @@ function unmount({ container, root }) {
   act(() => root.unmount());
   container.remove();
 }
+function rerender({ root }, ui) {
+  act(() => root.render(ui));
+}
 async function flushMicrotasks() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
@@ -241,6 +244,83 @@ describe("usePersistedBoard -- isLoading", () => {
     global.fetch = vi.fn(() => new Promise(() => {})); // never resolves; must not matter
     const mounted = mount(<Harness projectId={undefined} />);
     expect(text(mounted.container, "isLoading")).toBe("loaded");
+    unmount(mounted);
+  });
+});
+
+// Follow-up to the above (scheduling-board-project-switch-stale-flash, PR #776 review):
+// App Router's soft navigation keeps this component mounted across a project switch --
+// `projectId` changes as a prop, the instance does not remount -- so isLoading's
+// mount-only initializer never re-fires on its own. Without resetting isLoading/loadError
+// when `projectId` changes, the PREVIOUS project's board stayed on screen, apparently
+// "loaded", for the whole new fetch.
+describe("usePersistedBoard -- project switch", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("goes back to loading immediately when projectId changes, not left showing the previous project's board", async () => {
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: boardFixture({ id: "p1", projectName: "First" }), isOwner: true }));
+    const mounted = mount(<Harness projectId="p1" />);
+    await flushMicrotasks();
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
+    expect(text(mounted.container, "projectName")).toBe("First");
+
+    let resolveSecond;
+    global.fetch = vi.fn(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    rerender(mounted, <Harness projectId="p2" />);
+    // Non-vacuous: assert the switch is in-flight BEFORE the second project resolves --
+    // this is exactly the window the previous code left showing project 1's stale board
+    // with isLoading already (wrongly) false.
+    expect(text(mounted.container, "isLoading")).toBe("loading");
+    expect(text(mounted.container, "projectName")).toBe("First");
+
+    await act(async () => { resolveSecond(await jsonResponse({ success: true, board: boardFixture({ id: "p2", projectName: "Second" }), isOwner: true })); });
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
+    expect(text(mounted.container, "projectName")).toBe("Second");
+    unmount(mounted);
+  });
+
+  it("clears a stale loadError from the previous project when switching, instead of carrying it over", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) }));
+    const mounted = mount(<Harness projectId="p1" />);
+    await flushMicrotasks();
+    expect(text(mounted.container, "loadError")).toBe("Project not found.");
+
+    let resolveSecond;
+    global.fetch = vi.fn(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    rerender(mounted, <Harness projectId="p2" />);
+    expect(text(mounted.container, "loadError")).toBe("");
+
+    await act(async () => { resolveSecond(await jsonResponse({ success: true, board: boardFixture({ id: "p2" }), isOwner: true })); });
+    expect(text(mounted.container, "loadError")).toBe("");
+    unmount(mounted);
+  });
+
+  it("an edit made during the switch window schedules no save at all -- the stale-data autosave this follow-up closes", async () => {
+    vi.useFakeTimers();
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: boardFixture({ id: "p1", projectName: "First" }), isOwner: true }));
+    const mounted = mount(<Harness projectId="p1" />);
+    await flushMicrotasks();
+
+    let resolveSecond;
+    global.fetch = vi.fn((url, init) => {
+      if (init?.method === "PUT") throw new Error("must not save during a switch");
+      return new Promise((resolve) => { resolveSecond = resolve; });
+    });
+    rerender(mounted, <Harness projectId="p2" />);
+    expect(text(mounted.container, "isLoading")).toBe("loading");
+
+    // Simulate an edit landing in the switch window, before project 2 has resolved --
+    // without the isLoading guard, this schedules a PUT keyed to the stale board 500ms out.
+    act(() => { mounted.container.querySelector('[data-testid="edit"]').click(); });
+    await advanceAndFlush(500);
+    // The 500ms timer has fired with no PUT thrown (the global.fetch above throws if one is
+    // attempted) -- the isLoading guard skipped scheduling the save entirely.
+
+    await act(async () => { resolveSecond(await jsonResponse({ success: true, board: boardFixture({ id: "p2", projectName: "Second" }), isOwner: true })); });
+    expect(text(mounted.container, "isLoading")).toBe("loaded");
+    vi.useRealTimers();
     unmount(mounted);
   });
 });

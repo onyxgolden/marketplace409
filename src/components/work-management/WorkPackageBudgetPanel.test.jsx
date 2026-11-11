@@ -86,7 +86,25 @@ describe("WorkPackageBudgetPanel (Slice 3)", () => {
     expect(container.textContent).toContain("$200.00 recorded");
     expect(container.textContent).toContain("Over budget by $50.00");
     expect(container.textContent).toContain("2 linked financial events included.");
-    expect(container.querySelector('a[href="#work-package-links"]')).not.toBeNull();
+  });
+
+  it("D16: 'Review linked records' actually navigates instead of a dead #work-package-links anchor", async () => {
+    stubFetch();
+    const onNavigateToLinks = vi.fn();
+    const { container } = renderPanel({ onNavigateToLinks });
+    await settle();
+    const button = [...container.querySelectorAll("button")].find((b) => b.textContent === "Review linked records");
+    expect(button).toBeTruthy();
+    expect(button.tagName).toBe("BUTTON");
+    act(() => { button.click(); });
+    expect(onNavigateToLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it("D16: renders no 'Review linked records' control when no navigation handler is given", async () => {
+    stubFetch();
+    const { container } = renderPanel();
+    await settle();
+    expect([...container.querySelectorAll("button, a")].some((el) => el.textContent === "Review linked records")).toBe(false);
   });
 
   it("distinguishes no budget and $0.00 recorded from no linked events", async () => {
