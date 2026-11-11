@@ -1204,7 +1204,11 @@ export function validateTransitionSupports(design, run) {
     // index-only binding cannot prove adjacency: the result is
     // explicitly unverified, never a pass on the label alone. When a
     // station IS authored, the load support must match it by index
-    // AND station, like the flange binding below.
+    // AND by its actual contact station — the geometry, not the
+    // loadRef label. loadRef.stationIn is descriptive only: a
+    // bracket physically at station 150 that claims station 100
+    // does not clear a valve at 100, and a bracket at 100 clears
+    // it even when its label claims another station.
     const station = isPlainObject(valve) ? valve.stationIn : undefined;
     if (!isFiniteNumber(station)) {
       findings.push(
@@ -1222,8 +1226,7 @@ export function validateTransitionSupports(design, run) {
         isPlainObject(c.loadRef) &&
         c.loadRef.kind === "valve" &&
         c.loadRef.index === index &&
-        isFiniteNumber(c.loadRef.stationIn) &&
-        Math.abs(c.loadRef.stationIn - station) <= FACE,
+        Math.abs(c.stationIn - station) <= TRANSITION_ADJACENCY_IN,
     );
     if (!bound) {
       findings.push(
@@ -1240,12 +1243,16 @@ export function validateTransitionSupports(design, run) {
   flanges.forEach((flange, index) => {
     if (!isPlainObject(flange) || !isFiniteNumber(flange.stationIn)) return;
     if (flange.stationIn <= FACE || flange.stationIn >= totalIn - FACE) return;
+    // Same rule as the valve binding above: the load support clears
+    // a flange only when its actual contact station sits within the
+    // adopted tolerance of the flange station. loadRef.stationIn is
+    // descriptive only — a remote bracket that claims the flange
+    // station does not clear it.
     const bound = contacts.find(
       (c) =>
         isPlainObject(c.loadRef) &&
         c.loadRef.kind === "flange" &&
-        isFiniteNumber(c.loadRef.stationIn) &&
-        Math.abs(c.loadRef.stationIn - flange.stationIn) <= FACE,
+        Math.abs(c.stationIn - flange.stationIn) <= FACE,
     );
     if (!bound) {
       findings.push(
@@ -2364,12 +2371,16 @@ export function previewSupportProposal(design, run) {
   flanges.forEach((flange) => {
     if (!isPlainObject(flange) || !isFiniteNumber(flange.stationIn)) return;
     if (flange.stationIn <= FACE || flange.stationIn >= totalIn - FACE) return;
+    // A flange is already bound only when a load support's actual
+    // contact station sits at the flange station; a remote bracket
+    // whose loadRef merely claims the flange station must not
+    // suppress the proposal (same label-vs-geometry rule as the
+    // validation binding above).
     const bound = contacts.some(
       (c) =>
         isPlainObject(c.loadRef) &&
         c.loadRef.kind === "flange" &&
-        isFiniteNumber(c.loadRef.stationIn) &&
-        Math.abs(c.loadRef.stationIn - flange.stationIn) <= FACE,
+        Math.abs(c.stationIn - flange.stationIn) <= FACE,
     );
     if (bound) return;
     propose({

@@ -664,6 +664,161 @@ describe("validateTransitionSupports (O2)", () => {
     ]);
   });
 
+  it("a valve load support is bound by its contact station, not its loadRef label", () => {
+    // The verdict's counterexample: a bracket physically at station
+    // 150 whose loadRef claims station 100 must NOT clear a valve
+    // at 100 — the label alone proves nothing. And the reverse: a
+    // bracket at 100 clears the valve even when its label claims
+    // 150, because loadRef.stationIn is descriptive, never
+    // authoritative.
+    const divergent = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 150,
+          loadRef: { kind: "valve", index: 0, stationIn: 100 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+    });
+    expect(codes(validateTransitionSupports(divergent.design, divergent.run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNSUPPORTED",
+    ]);
+    const labelWrongButContactRight = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 100,
+          loadRef: { kind: "valve", index: 0, stationIn: 150 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+    });
+    expect(
+      validateTransitionSupports(labelWrongButContactRight.design, labelWrongButContactRight.run).state,
+    ).toBe("PASS");
+  });
+
+  it("valve load support adjacency uses the adopted 0.5-in tolerance boundary", () => {
+    // Exactly at the tolerance clears; 0.001 in beyond it does not.
+    // TRANSITION_ADJACENCY_IN is the adopted 0.5-in fitting-face
+    // tolerance — no new number. The label always claims the valve
+    // station, so only the contact station distinguishes the cases.
+    const atContactStation = (contactStation) =>
+      flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+        diameterIn: 2,
+        spanProfile: water(2),
+        supports: [
+          sup(0, "s1"),
+          sup(200, "s2"),
+          {
+            id: "v1",
+            type: "bracket",
+            stationIn: contactStation,
+            loadRef: { kind: "valve", index: 0, stationIn: 100 },
+            carrier: { kind: "foundation" },
+          },
+        ],
+        valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+      });
+    expect(
+      validateTransitionSupports(atContactStation(100.5).design, atContactStation(100.5).run).state,
+    ).toBe("PASS");
+    expect(
+      codes(
+        validateTransitionSupports(atContactStation(100.501).design, atContactStation(100.501).run)
+          .findings,
+      ),
+    ).toEqual(["CONCENTRATED_LOAD_UNSUPPORTED"]);
+  });
+
+  it("a flange load support is bound by its contact station, not its loadRef label", () => {
+    // Same label-vs-geometry rule as the valve binding, in the
+    // adjacent flange branch: a bracket at 150 whose loadRef claims
+    // the flange station 100 does not clear the flange, and a
+    // bracket at 100 clears it even when its label claims 150.
+    const divergent = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 150,
+          loadRef: { kind: "flange", stationIn: 100 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      flangeStations: [{ stationIn: 100, flangeRadiusIn: 3 }],
+    });
+    expect(codes(validateTransitionSupports(divergent.design, divergent.run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNSUPPORTED",
+    ]);
+    const labelWrongButContactRight = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(100, "s2"),
+        sup(200, "s3"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 100,
+          loadRef: { kind: "flange", stationIn: 150 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      flangeStations: [{ stationIn: 100, flangeRadiusIn: 3 }],
+    });
+    expect(
+      validateTransitionSupports(labelWrongButContactRight.design, labelWrongButContactRight.run).state,
+    ).toBe("PASS");
+  });
+
+  it("preview does not let a remote flange bracket suppress a needed load-support proposal", () => {
+    // A bracket at 150 whose loadRef claims the flange station 100
+    // is not at the flange: the preview must still propose a
+    // bracket at 100.
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(200, "s2"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 150,
+          loadRef: { kind: "flange", stationIn: 100 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      flangeStations: [{ stationIn: 100, flangeRadiusIn: 3 }],
+    });
+    const { proposal } = previewSupportProposal(design, run);
+    expect(proposal.supports).toContainEqual(
+      expect.objectContaining({ type: "bracket", stationIn: 100 }),
+    );
+  });
+
   it("a straight run with no transitions, valves or flanges is not applicable", () => {
     const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
       diameterIn: 2,
