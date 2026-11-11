@@ -756,7 +756,7 @@ function deepDetachMetadata(value) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations, spanProfile, sizeChanges, routeIntervals, supports, restraints, nozzleSupports, spacingProfile, outsideDiameterIn, insulationIn, expansionAllowanceIn, flangeStations, structureClearance } = {}) {
   assertDesign(design);
   const clean = dedupeConsecutivePoints(points);
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
@@ -824,6 +824,38 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     run.meterStraightDownstreamIn = meterStraightDownstreamIn;
   }
   if (valveStations !== undefined && valveStations !== null) run.valveStations = deepDetachMetadata(valveStations);
+  // D10-02 support/spacing metadata: scheduled, authored fields
+  // validated by pipeSupports. Absence yields a named NOT_VERIFIED
+  // state, never a default; unknown shapes are stored as-is
+  // (detached) so the validators classify them rather than the
+  // admission layer inventing a rule. Numeric envelope fields must
+  // be finite numbers when given.
+  if (spanProfile !== undefined && spanProfile !== null) run.spanProfile = deepDetachMetadata(spanProfile);
+  if (sizeChanges !== undefined && sizeChanges !== null) run.sizeChanges = deepDetachMetadata(sizeChanges);
+  if (routeIntervals !== undefined && routeIntervals !== null) run.routeIntervals = deepDetachMetadata(routeIntervals);
+  if (supports !== undefined && supports !== null) run.supports = deepDetachMetadata(supports);
+  if (restraints !== undefined && restraints !== null) run.restraints = deepDetachMetadata(restraints);
+  if (nozzleSupports !== undefined && nozzleSupports !== null) run.nozzleSupports = deepDetachMetadata(nozzleSupports);
+  if (spacingProfile !== undefined && spacingProfile !== null) {
+    if (spacingProfile !== "ordinary" && spacingProfile !== "largest-line") {
+      throw new Error(`Unknown spacing profile: ${spacingProfile}.`);
+    }
+    run.spacingProfile = spacingProfile;
+  }
+  if (outsideDiameterIn !== undefined && outsideDiameterIn !== null) {
+    if (!Number.isFinite(outsideDiameterIn)) throw new Error("Pipe outside diameter must be a number.");
+    run.outsideDiameterIn = outsideDiameterIn;
+  }
+  if (insulationIn !== undefined && insulationIn !== null) {
+    if (!Number.isFinite(insulationIn)) throw new Error("Pipe insulation must be a number.");
+    run.insulationIn = insulationIn;
+  }
+  if (expansionAllowanceIn !== undefined && expansionAllowanceIn !== null) {
+    if (!Number.isFinite(expansionAllowanceIn)) throw new Error("Pipe expansion allowance must be a number.");
+    run.expansionAllowanceIn = expansionAllowanceIn;
+  }
+  if (flangeStations !== undefined && flangeStations !== null) run.flangeStations = deepDetachMetadata(flangeStations);
+  if (structureClearance !== undefined && structureClearance !== null) run.structureClearance = deepDetachMetadata(structureClearance);
   return { ...design, pipes: [...(design.pipes || []), run] };
 }
 

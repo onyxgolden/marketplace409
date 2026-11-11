@@ -14,6 +14,15 @@ import {
 } from "@/domains/roomDesigner/designSystems";
 import { setRackParams } from "@/domains/roomDesigner/rackGeometry";
 import {
+  addPipeSupport,
+  applySupportProposal,
+  deletePipeSupport,
+  setPipeSupportData,
+  setRackReserve,
+  setRouteIntervals,
+  updatePipeSupport,
+} from "@/domains/roomDesigner/pipeSupports";
+import {
   addSavedEstimate,
   removeSavedEstimate,
 } from "@/domains/roomDesigner/cabinetPriceBooks";
@@ -590,6 +599,62 @@ export function documentSlice(state, action) {
     case "SET_PIPE_FIELDS":
       if (!findPipeRun(state.design, action.pipeId)) return state;
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
+
+    // D10-02: the support/spacing authoring workflow, wired as
+    // undoable document actions. Each soft-fails (returns the same
+    // state) when the domain command rejects the edit — an inspector
+    // control can never corrupt the document with a bad value. Apply
+    // is only by the caller (APPLY_SUPPORT_PROPOSAL applies a
+    // previewed proposal in one transaction); nothing here repacks,
+    // clamps or moves existing data.
+    case "SET_PIPE_SUPPORT_DATA":
+      try {
+        return touch(state, setPipeSupportData(state.design, action.pipeId, action.fields ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "SET_ROUTE_INTERVALS":
+      try {
+        return touch(state, setRouteIntervals(state.design, action.pipeId, action.intervals ?? []));
+      } catch {
+        return state;
+      }
+
+    case "ADD_PIPE_SUPPORT":
+      try {
+        return touch(state, addPipeSupport(state.design, action.pipeId, action.support ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "UPDATE_PIPE_SUPPORT":
+      try {
+        return touch(state, updatePipeSupport(state.design, action.pipeId, action.supportId, action.patch ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "DELETE_PIPE_SUPPORT":
+      try {
+        return touch(state, deletePipeSupport(state.design, action.pipeId, action.supportId));
+      } catch {
+        return state;
+      }
+
+    case "APPLY_SUPPORT_PROPOSAL":
+      try {
+        return touch(state, applySupportProposal(state.design, action.pipeId, action.proposal ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "SET_RACK_RESERVE":
+      try {
+        return touch(state, setRackReserve(state.design, action.rackId, action.reserve ?? {}));
+      } catch {
+        return state;
+      }
 
     // R9: the D8/D9 authoring and repair commands, wired as undoable
     // document actions. Each soft-fails (returns the same state) when

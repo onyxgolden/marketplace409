@@ -23,7 +23,9 @@ export const RACK_LIMITS = Object.freeze({
 const FIELDS = Object.freeze(["tiers", "elevationIn", "tierSpacingIn", "bentSpacingIn"]);
 
 // Nominal steel sizes (inches) — planning geometry, not a structural design.
-const STEEL = Object.freeze({ column: 10, beamDepth: 12, beamFlange: 8, strutDepth: 8, strutWidth: 6, brace: 5, sleeper: 12, pier: 18 });
+/** Beam depth (in) of a rack tier beam; D10-02 tier separation reads it. */
+export const RACK_BEAM_DEPTH_IN = 12;
+const STEEL = Object.freeze({ column: 10, beamDepth: RACK_BEAM_DEPTH_IN, beamFlange: 8, strutDepth: 8, strutWidth: 6, brace: 5, sleeper: 12, pier: 18 });
 
 function inRange(kind, field, value) {
   const [lo, hi] = RACK_LIMITS[kind][field];
