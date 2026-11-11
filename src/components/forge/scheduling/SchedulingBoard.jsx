@@ -65,7 +65,7 @@ function formatWeek(iso) {
 }
 
 export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
-  const { board, setBoard, isOwner, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
+  const { board, setBoard, isOwner, isLoading, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
   const [clipboardStatus, setClipboardStatus] = useState("");
   const [importExcelStatus, setImportExcelStatus] = useState(null); // { type: "success" | "error", message } | null
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -700,6 +700,14 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     }
   }
 
+  if (isLoading) {
+    return (
+      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-loading>
+        <p className="text-sm font-bold text-slate-500">Loading project…</p>
+      </section>
+    );
+  }
+
   if (loadError) {
     return (
       <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-load-error>
@@ -716,9 +724,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         <Field label="Project"><input value={board.projectName} onChange={(e) => setBoard((c) => ({ ...c, projectName: e.target.value }))}
           className="min-w-[180px] rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white" /></Field>
         <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); handleApplyDates(e); }}>
-          <Field label="Start date"><input name="startDate" type="date" defaultValue={board.startDate}
+          <Field label="Start date"><input key={`start-${board.startDate}`} name="startDate" type="date" defaultValue={board.startDate}
             className="rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-white" /></Field>
-          <Field label="End date"><input name="endDate" type="date" defaultValue={board.endDate}
+          <Field label="End date"><input key={`end-${board.endDate}`} name="endDate" type="date" defaultValue={board.endDate}
             className="rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-white" /></Field>
           <button type="submit" className="rounded bg-amber-500 px-3 py-1.5 text-sm font-bold text-slate-950">Apply dates</button>
         </form>

@@ -5,6 +5,11 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import SchedulingBoard from "./SchedulingBoard";
+import { defaultBoardState } from "./schedulingBoardState";
+
+function projectBoardFixture(overrides = {}) {
+  return { ...defaultBoardState("schedule_project_1"), boardRevision: 1, ...overrides };
+}
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -128,16 +133,22 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("All Projects");
   });
 
-  it("offers a WBS link under Menu when explicitly enabled, into this same project's WBS page", () => {
-    const markup = renderToStaticMarkup(<SchedulingBoard projectId="schedule_project_1" wbsEnabled />);
-    expect(markup).toContain('href="/forge/scheduling/schedule_project_1/wbs"');
-    expect(markup).toContain(">WBS<");
+  it("offers a WBS link under Menu when explicitly enabled, into this same project's WBS page", async () => {
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: projectBoardFixture(), isOwner: true }));
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" wbsEnabled />);
+    await flush();
+    expect(mounted.container.innerHTML).toContain('href="/forge/scheduling/schedule_project_1/wbs"');
+    expect(mounted.container.innerHTML).toContain(">WBS<");
+    unmount(mounted);
   });
 
-  it("hides the WBS link by default (held back from production until it's ready)", () => {
-    const markup = renderToStaticMarkup(<SchedulingBoard projectId="schedule_project_1" />);
-    expect(markup).not.toContain("/wbs");
-    expect(markup).not.toContain(">WBS<");
+  it("hides the WBS link by default (held back from production until it's ready)", async () => {
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: projectBoardFixture(), isOwner: true }));
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+    expect(mounted.container.innerHTML).not.toContain("/wbs");
+    expect(mounted.container.innerHTML).not.toContain(">WBS<");
+    unmount(mounted);
   });
 
   it("renders a help button but not the help modal until it's opened", () => {
@@ -274,6 +285,76 @@ function unmount({ container, root }) {
 async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
+
+// Live audit 2026-11-10 ~15:21 CST (scheduling-board-hydration-loading-state): a project
+// board rendered the empty-default state -- "New Project", today's dates, zero blocks, the
+// "Drag a block..." prompt -- while its data was still loading, indistinguishable from a
+// genuinely empty project. Non-vacuous proof: the pending-fetch case is asserted BEFORE
+// resolving the fetch, not inferred from the end state alone.
+describe("SchedulingBoard -- hydration loading state", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows an explicit loading state, never the empty-project prompt or the New Project/today's-date defaults, while the real project is still loading", async () => {
+    global.fetch = vi.fn(() => new Promise(() => {})); // never resolves within this test
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+
+    expect(mounted.container.innerHTML).toContain("data-scheduling-loading");
+    expect(mounted.container.innerHTML).not.toContain("Drag a block from the left panel");
+    expect(mounted.container.innerHTML).not.toContain("New Project");
+    unmount(mounted);
+  });
+
+  it("shows the real loaded project name, dates, and blocks once the load resolves -- not the loading placeholder", async () => {
+    const loaded = projectBoardFixture({
+      projectName: "Turnaround 2027",
+      startDate: "2027-08-18",
+      endDate: "2028-02-14",
+      blocks: [{ id: "b1", taskCode: "A1010", label: "Kickoff", category: "gov", milestone: true, duration: 0, startIdx: 0, laneId: "lane_ms", fontSize: null, textColor: null, bold: true }],
+    });
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: loaded, isOwner: true }));
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+
+    expect(mounted.container.innerHTML).not.toContain("data-scheduling-loading");
+    expect(mounted.container.innerHTML).toContain("Turnaround 2027");
+    expect(mounted.container.innerHTML).not.toContain("Drag a block from the left panel"); // genuinely has a block now
+    const startInput = mounted.container.querySelector('input[name="startDate"]');
+    const endInput = mounted.container.querySelector('input[name="endDate"]');
+    expect(startInput.value).toBe("2027-08-18");
+    expect(endInput.value).toBe("2028-02-14");
+    unmount(mounted);
+  });
+
+  it("still shows the empty-project prompt once loaded, if the project genuinely has zero blocks -- loading never hides a real empty state forever", async () => {
+    const loaded = projectBoardFixture({ projectName: "Brand New Project", startDate: "2027-01-01", endDate: "2027-12-31" });
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: loaded, isOwner: true }));
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+
+    expect(mounted.container.innerHTML).not.toContain("data-scheduling-loading");
+    expect(mounted.container.innerHTML).toContain("Drag a block from the left panel");
+    unmount(mounted);
+  });
+
+  it("binds the header start/end date inputs to the loaded project's own dates, not the mount-time defaults they can no longer change on their own", async () => {
+    // Regression for the companion cosmetic bug: defaultValue on an uncontrolled input only
+    // applies at mount -- without the remount key, these inputs would freeze at the
+    // mount-time board.startDate/endDate (today's date, from the pre-load default board)
+    // forever, never picking up the real dates the fetch resolves with moments later.
+    const loaded = projectBoardFixture({ startDate: "2026-08-19", endDate: "2027-08-18" });
+    global.fetch = vi.fn(() => jsonResponse({ success: true, board: loaded, isOwner: true }));
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+
+    const startInput = mounted.container.querySelector('input[name="startDate"]');
+    const endInput = mounted.container.querySelector('input[name="endDate"]');
+    expect(startInput.value).toBe("2026-08-19");
+    expect(endInput.value).toBe("2027-08-18");
+    unmount(mounted);
+  });
+});
 
 // Regression test for a real production incident: DependencyDrawer (the block-detail drawer
 // opened by clicking any placed block) rendered <BlockResourcesPanel costAccounts={costAccounts} />

@@ -26,6 +26,10 @@ export const SAVE_CONFLICT_MESSAGE = "This schedule changed elsewhere; reload be
 export function usePersistedBoard(projectId) {
   const [board, setBoard] = useState(() => defaultBoardState(projectId));
   const [isOwner, setIsOwner] = useState(true);
+  // There is nothing to load without a project id (no fetch is ever attempted below in
+  // that case), so isLoading starts false then -- only a real id puts the hook in a
+  // genuinely pending state the UI needs to show a loading indicator for.
+  const [isLoading, setIsLoading] = useState(() => Boolean(projectId));
   const [loadError, setLoadError] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   // Set the instant the server reports a stale-revision (409) save -- another tab or user
@@ -51,6 +55,7 @@ export function usePersistedBoard(projectId) {
         if (cancelled) return;
         if (!response.ok) {
           setLoadError(response.status === 404 ? "Project not found." : "Unable to load this project.");
+          setIsLoading(false);
           return;
         }
         const body = await response.json();
@@ -61,8 +66,12 @@ export function usePersistedBoard(projectId) {
         setIsOwner(body.isOwner);
         setLoadError(null);
         setConflict(false);
+        setIsLoading(false);
       } catch {
-        if (!cancelled) setLoadError("Unable to load this project.");
+        if (!cancelled) {
+          setLoadError("Unable to load this project.");
+          setIsLoading(false);
+        }
       }
     }
     load();
@@ -118,5 +127,5 @@ export function usePersistedBoard(projectId) {
     }
   }, [projectId]);
 
-  return { board, setBoard, isOwner, loadError, saveStatus, conflict, conflictMessage: SAVE_CONFLICT_MESSAGE, reload };
+  return { board, setBoard, isOwner, isLoading, loadError, saveStatus, conflict, conflictMessage: SAVE_CONFLICT_MESSAGE, reload };
 }
