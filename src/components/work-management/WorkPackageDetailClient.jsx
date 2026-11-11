@@ -89,6 +89,13 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   // reload. Scoped to its own section's local state, cleared on any new
   // attempt, so it can never outlive the section it belongs to.
   const [baselineError, setBaselineError] = useState("");
+  // D1: the live audit found Freeze baseline producing no visible effect and
+  // no message — root cause was an un-awaited refresh() racing the optimistic
+  // setBaselines update (whichever resolved last silently won, with nothing
+  // shown either way). freezeMessage is the plain-words confirmation the
+  // Build Contract requires ("every save confirms... naming names, not raw
+  // IDs"); refresh() is now awaited so the final state is deterministic.
+  const [freezeMessage, setFreezeMessage] = useState("");
   const [costRefreshKey, setCostRefreshKey] = useState(0);
   // D7 delete affordance: server-derived eligibility (display only — the
   // delete RPC revalidates everything). Owner-only section; null hides it.
@@ -299,6 +306,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
   async function onFreeze() {
     setBaselineError("");
+    setFreezeMessage("");
     let membership;
     try {
       membership = JSON.parse(baselineItems);
@@ -308,9 +316,15 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     }
     const { response, data } = await call(`/api/work-packages/${pkg.id}/scope`, "POST", { action: "freeze", membership });
     if (response.ok) {
-      setBaselines((prev) => [...prev, data.baseline].sort((a, b) => a.version - b.version));
       setBaselineItems("");
-      refresh();
+      // Awaited: refresh() must settle before this handler returns, so its
+      // GET can never race the optimistic update and silently overwrite a
+      // confirmed success with contradictory (e.g. stale) state. The
+      // version number comes from the POST's own response, not from
+      // whatever refresh() later finds, so the confirmation names the real
+      // result even if a slow refresh is still in flight.
+      await refresh();
+      setFreezeMessage(`Froze baseline version ${data.baseline.version}.`);
     }
   }
 
@@ -554,6 +568,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
           <section className="rounded-lg border border-slate-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-slate-900">Scope baseline</h2>
+            {freezeMessage && <p className="mt-2 rounded-lg bg-green-50 p-2 text-xs text-green-700">{freezeMessage}</p>}
             {baselines.length === 0 ? (
               <div className="mt-3">
                 <p className="text-xs text-slate-500">No frozen baseline yet. Freeze an immutable version:</p>

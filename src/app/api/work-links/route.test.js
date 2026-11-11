@@ -85,14 +85,18 @@ describe("POST /api/work-links", () => {
 describe("GET /api/work-links/[linkId]", () => {
   it("returns the link with confirmation history", async () => {
     getLinkDetail.mockResolvedValue({ ok: true, link: { id: "forge_wlink_1" }, confirmations: [] });
-    const response = await GET_ONE(request(null), { params: PARAMS });
+    const response = await GET_ONE(request(null), { params: Promise.resolve(PARAMS) });
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.link.id).toBe("forge_wlink_1");
+    // Next.js 16 passes params as a Promise; awaiting it (not reading it
+    // synchronously) is what makes linkId resolve to the real route segment
+    // instead of undefined.
+    expect(getLinkDetail).toHaveBeenCalledWith({}, { ownerId: "owner_1", linkId: "forge_wlink_1" });
   });
   it("maps a missing link to 404", async () => {
     getLinkDetail.mockResolvedValue({ ok: false, httpStatus: 404, error: "Link not found." });
-    const response = await GET_ONE(request(null), { params: PARAMS });
+    const response = await GET_ONE(request(null), { params: Promise.resolve(PARAMS) });
     expect(response.status).toBe(404);
   });
 });
@@ -100,10 +104,11 @@ describe("GET /api/work-links/[linkId]", () => {
 describe("DELETE /api/work-links/[linkId]", () => {
   it("unlinks and returns the id", async () => {
     unlinkWorkLink.mockResolvedValue({ ok: true, unlinked: "forge_wlink_1" });
-    const response = await DELETE_ONE(request(null, "DELETE"), { params: PARAMS });
+    const response = await DELETE_ONE(request(null, "DELETE"), { params: Promise.resolve(PARAMS) });
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.unlinked).toBe("forge_wlink_1");
+    expect(unlinkWorkLink).toHaveBeenCalledWith({}, { ownerId: "owner_1", linkId: "forge_wlink_1" });
   });
 });
 
@@ -112,7 +117,7 @@ describe("POST /api/work-links/[linkId]/confirm", () => {
     confirmLink.mockResolvedValue({ ok: true,
       link: { id: "forge_wlink_1", provenance: "user_confirmed" },
       confirmation: { id: "forge_wlconf_1" } });
-    const response = await POST_CONFIRM(request({ note: "Checked." }, "POST"), { params: PARAMS });
+    const response = await POST_CONFIRM(request({ note: "Checked." }, "POST"), { params: Promise.resolve(PARAMS) });
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.confirmation.id).toBe("forge_wlconf_1");
@@ -125,19 +130,21 @@ describe("POST /api/work-links/[linkId]/confirm", () => {
 describe("POST /api/work-links/[linkId]/recheck", () => {
   it("re-resolves the link", async () => {
     recheckLink.mockResolvedValue({ ok: true, link: { id: "forge_wlink_1", status: "active" } });
-    const response = await POST_RECHECK(request(null, "POST"), { params: PARAMS });
+    const response = await POST_RECHECK(request(null, "POST"), { params: Promise.resolve(PARAMS) });
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.link.status).toBe("active");
+    expect(recheckLink).toHaveBeenCalledWith({}, { ownerId: "owner_1", linkId: "forge_wlink_1" });
   });
 });
 
 describe("POST /api/work-links/[linkId]/flag-stale", () => {
   it("flags the link stale", async () => {
     flagLinkStale.mockResolvedValue({ ok: true, link: { id: "forge_wlink_1", status: "stale" } });
-    const response = await POST_STALE(request({ reason: "Rev superseded." }, "POST"), { params: PARAMS });
+    const response = await POST_STALE(request({ reason: "Rev superseded." }, "POST"), { params: Promise.resolve(PARAMS) });
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.link.status).toBe("stale");
+    expect(flagLinkStale).toHaveBeenCalledWith({}, { ownerId: "owner_1", linkId: "forge_wlink_1", reason: "Rev superseded." });
   });
 });

@@ -6,9 +6,10 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const body = await readJson(request);
+    const { linkId } = await params;
     const result = await confirmLink(auth.db, {
       ownerId: auth.ownerId, actor: auth.actor,
-      linkId: params.linkId, note: body?.note,
+      linkId, note: body?.note,
     });
     if (!result.ok) return fail(result);
     return ok({ success: true, link: result.link, confirmation: result.confirmation });

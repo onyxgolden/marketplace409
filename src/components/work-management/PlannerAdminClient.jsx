@@ -409,7 +409,15 @@ export default function PlannerAdminClient() {
                         </th>
                         {roles.map((role) => {
                           const granted = capabilitiesByRole.get(role.id)?.has(cap.key) ?? false;
-                          const editable = !role.is_builtin;
+                          // D3: is_builtin marks the 5 starter roles (seeded
+                          // true by forge_planner_roles_provision_starter_set)
+                          // -- it is NOT a proxy for "immutable." The backend
+                          // (capability_set RPC) only refuses role_key ===
+                          // "owner", which never has a row in practice (owner
+                          // authority is structural, not role-data-dependent
+                          // -- see PR #767). The old `!role.is_builtin` check
+                          // disabled editing every real role in the system.
+                          const editable = role.role_key !== "owner";
                           return (
                             <td key={role.id} className="px-3 py-1.5">
                               <input
@@ -492,7 +500,12 @@ export default function PlannerAdminClient() {
                 aria-label="Role to assign"
               >
                 <option value="">Choose a role…</option>
-                {roles.filter((r) => !r.is_builtin).map((role) => (
+                {/* D3: assignable roles are every real role (the 5 starter
+                    roles AND any custom roles) -- excluding only a literal
+                    "owner" row, which never exists in practice. The old
+                    `!r.is_builtin` filter excluded every starter role,
+                    leaving nothing to assign. */}
+                {roles.filter((r) => r.role_key !== "owner").map((role) => (
                   <option key={role.id} value={role.id}>{roleDisplayName(role)}</option>
                 ))}
               </select>
@@ -509,11 +522,11 @@ export default function PlannerAdminClient() {
           )}
 
           <h3 className="mt-6 text-sm font-semibold text-slate-700">Currently assigned</h3>
-          {roles.filter((r) => !r.is_builtin).every((r) => !(assignmentsByRole.get(r.id) || []).length) ? (
+          {roles.filter((r) => r.role_key !== "owner").every((r) => !(assignmentsByRole.get(r.id) || []).length) ? (
             <p className="mt-1 text-sm text-slate-500">No one has been assigned a role yet.</p>
           ) : (
             <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {roles.filter((r) => !r.is_builtin).flatMap((role) =>
+              {roles.filter((r) => r.role_key !== "owner").flatMap((role) =>
                 (assignmentsByRole.get(role.id) || []).map((a) => (
                   <li key={a.id} className="flex items-center justify-between px-3 py-2">
                     <span className="text-sm text-slate-700">

@@ -6,8 +6,9 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const body = await readJson(request);
+    const { linkId } = await params;
     const result = await flagLinkStale(auth.db, {
-      ownerId: auth.ownerId, linkId: params.linkId, reason: body?.reason,
+      ownerId: auth.ownerId, linkId, reason: body?.reason,
     });
     if (!result.ok) return fail(result);
     return ok({ success: true, link: result.link });
