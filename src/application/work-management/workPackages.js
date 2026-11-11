@@ -579,29 +579,54 @@ const DELETION_BLOCKER_INFO = Object.freeze({
     label: "Progress entries",
     action: "Progress entries are kept for audit and can't be removed.",
   },
+  // Added for the 20261111000000 retired-records cleanup (permit
+  // annotations, craft assignments, control estimate, change orders,
+  // craft rates): retire-only, no delete path, but unlike the generic
+  // fallback these five now have a real retire action once retired rows
+  // stop blocking -- mirrors the steps/drawings precedent above.
   permit_annotations: {
     label: "Permit annotations",
-    action: "Permit annotations are kept for audit and can't be removed.",
+    action: "Retire the permit annotation(s) in Permits, then try again.",
   },
   craft_assignments: {
     label: "Craft assignments",
-    action: "Craft assignments are kept for audit and can't be removed.",
+    action: "Retire the craft assignment(s) in Work steps, then try again.",
   },
   control_estimates: {
     label: "Control estimate",
-    action: "The control estimate is kept for audit and can't be removed.",
+    action: "Retire the control estimate in Budget & Change Orders, then try again.",
   },
   change_orders: {
     label: "Change orders",
-    action: "Change orders are kept for audit and can't be removed.",
+    action: "Retire the change order(s) in Budget & Change Orders, then try again.",
   },
   craft_rates: {
     label: "Craft rates",
-    action: "Craft rate history is kept for audit and can't be removed.",
+    action: "Retire the craft rate(s) in Budget & Change Orders, then try again.",
   },
   step_revisions: {
     label: "Work step history",
     action: "Retire the work step(s) in Work Steps, then try again.",
+  },
+  permit_annotation_revisions: {
+    label: "Permit annotation history",
+    action: "Retire the permit annotation(s) in Permits, then try again.",
+  },
+  craft_assignment_revisions: {
+    label: "Craft assignment history",
+    action: "Retire the craft assignment(s) in Work steps, then try again.",
+  },
+  control_estimate_revisions: {
+    label: "Control estimate history",
+    action: "Retire the control estimate in Budget & Change Orders, then try again.",
+  },
+  change_order_revisions: {
+    label: "Change order history",
+    action: "Retire the change order(s) in Budget & Change Orders, then try again.",
+  },
+  craft_rate_revisions: {
+    label: "Craft rate history",
+    action: "Retire the craft rate(s) in Budget & Change Orders, then try again.",
   },
 });
 
