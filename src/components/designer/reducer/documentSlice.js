@@ -23,6 +23,13 @@ import {
   updatePipeSupport,
 } from "@/domains/roomDesigner/pipeSupports";
 import {
+  addCrossover,
+  applyCrossoverProposal,
+  deleteCrossover,
+  setAccessData,
+  updateCrossover,
+} from "@/domains/roomDesigner/pipeAccess";
+import {
   addSavedEstimate,
   removeSavedEstimate,
 } from "@/domains/roomDesigner/cabinetPriceBooks";
@@ -652,6 +659,48 @@ export function documentSlice(state, action) {
     case "SET_RACK_RESERVE":
       try {
         return touch(state, setRackReserve(state.design, action.rackId, action.reserve ?? {}));
+      } catch {
+        return state;
+      }
+
+    // D10-03: the access authoring workflow, wired as undoable
+    // document actions. Each soft-fails (returns the same state)
+    // when the domain command rejects the edit — an inspector
+    // control can never corrupt the document with a bad value.
+    // Apply is only by the caller (APPLY_CROSSOVER_PROPOSAL applies
+    // a previewed proposal in one transaction); nothing here
+    // repacks, clamps or moves existing data.
+    case "SET_ACCESS_DATA":
+      try {
+        return touch(state, setAccessData(state.design, action.fields ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "ADD_CROSSOVER":
+      try {
+        return touch(state, addCrossover(state.design, action.barrierId, action.crossover ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "UPDATE_CROSSOVER":
+      try {
+        return touch(state, updateCrossover(state.design, action.crossoverId, action.patch ?? {}));
+      } catch {
+        return state;
+      }
+
+    case "DELETE_CROSSOVER":
+      try {
+        return touch(state, deleteCrossover(state.design, action.crossoverId));
+      } catch {
+        return state;
+      }
+
+    case "APPLY_CROSSOVER_PROPOSAL":
+      try {
+        return touch(state, applyCrossoverProposal(state.design, action.barrierId, action.proposal ?? {}));
       } catch {
         return state;
       }
