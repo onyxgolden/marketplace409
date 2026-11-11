@@ -40,6 +40,16 @@
 //   removal/pull/lift volume must be clear of pipe runs and other
 //   equipment. No thermal/process/maintenance plan is invented from
 //   geometry. A valid pipe route can still fail access.
+//   Binding is three-dimensional, never plan-only: a node satisfies
+//   a subject only when its standing point is AT the subject's
+//   actual face/manway/station coordinate in plan AND its standing
+//   elevation is AT the face elevation (or the manway's platform
+//   elevation) or it declares an explicit ladder/stairs connection
+//   from its standing elevation up to that elevation. A node with
+//   no elevation stands at grade; a face whose elevation is not
+//   modeled (a TEMA anchor) can never be proven reached. No
+//   universal reach radius is invented: standing above or below the
+//   face without an explicit connection fails closed.
 // - O6 crossovers (brief item 5; digest §5.4): where a
 //   ground/sleeper corridor separates people from required
 //   equipment, usable platformed crossings are required on a
@@ -99,6 +109,7 @@ import {
   gradeElevationIn,
   manwayLocal,
   manwaySpec,
+  manwayWorld,
 } from "./vesselAccess";
 import { findSymbol } from "./symbolRegistry";
 import { rackTopIn } from "./rackGeometry";
@@ -1420,6 +1431,22 @@ function validateAccessRecord(kind, value) {
       if (value.anchorId !== undefined && typeof value.anchorId !== "string") {
         fail("anchorId must be a string");
       }
+      // An explicit vertical connection (fix round 3): a ladder or
+      // stairs run from the node's standing elevation up to
+      // topElevationIn. The kind and the top elevation are shape;
+      // whether the run actually reaches a face is binding, not
+      // record validity — a connection that goes nowhere fails
+      // closed there, never at authoring time.
+      if (value.verticalAccess !== undefined) {
+        if (!isPlainObject(value.verticalAccess)) fail("verticalAccess must be an object");
+        if (
+          value.verticalAccess.kind !== "ladder" &&
+          value.verticalAccess.kind !== "stairs"
+        ) {
+          fail("verticalAccess.kind must be 'ladder' or 'stairs'");
+        }
+        finite(value.verticalAccess.topElevationIn, "verticalAccess.topElevationIn");
+      }
       break;
     case "paths":
       if (!ACCESS_PATH_KINDS.has(value.kind)) fail(`unknown path kind ${value.kind}`);
@@ -1751,19 +1778,25 @@ export function expectedAccessSubjects(design) {
  *   could report PASS on a node that is never attached or reached;
  * - geometrically bound: the node's authored standing point
  *   (x, y) is at the subject's actual access geometry, not merely
- *   copied onto a clear path somewhere else on the plot (see
- *   nodeIsBoundToSubject).
+ *   copied onto a clear path somewhere else on the plot, AND its
+ *   standing elevation reaches the subject's access elevation (see
+ *   nodeBindingDetail) — plan coincidence alone never clears an
+ *   elevated face.
  *
  * Returns { satisfied: true, node } or
- * { satisfied: false, reason, node } with reason one of:
+ * { satisfied: false, reason, node, detail } with reason one of:
  * - "none": no node names this subject at all;
  * - "unlinked": a node names the equipment but not this anchor
  *   (nozzle subjects only — it names no anchorId, or another
  *   anchor's);
  * - "optional-only": every node naming this subject is optional
  *   (required === false);
- * - "unbound": a required node names this subject but its standing
- *   point is not at the access geometry.
+ * - "unbound": a required node names this subject but is not
+ *   bound to it; `detail` names why (nodeBindingDetail):
+ *   "plan" (standing point not at the access geometry),
+ *   "vertical" (standing elevation does not reach the face, or a
+ *   declared ladder run exceeds the adopted 360-in maximum),
+ *   "vertical-unknown" (the face elevation is not modeled).
  * The first node found in each failing class is kept so the finding
  * can name it.
  */
@@ -1782,12 +1815,15 @@ function subjectBinding(design, subject) {
       if (!optional) optional = node;
       continue;
     }
-    if (nodeIsBoundToSubject(design, node, subject)) {
+    const detail = nodeBindingDetail(design, node, subject);
+    if (detail.bound) {
       return { satisfied: true, node };
     }
-    if (!unbound) unbound = node;
+    if (!unbound) unbound = { node, detail };
   }
-  if (unbound) return { satisfied: false, reason: "unbound", node: unbound };
+  if (unbound) {
+    return { satisfied: false, reason: "unbound", node: unbound.node, detail: unbound.detail };
+  }
   if (optional) return { satisfied: false, reason: "optional-only", node: optional };
   if (unlinked) return { satisfied: false, reason: "unlinked", node: unlinked };
   return { satisfied: false, reason: "none", node: null };
@@ -1806,14 +1842,6 @@ function nodeNamesSubject(node, subject) {
   if (!nodeNamesSubjectLoosely(node, subject)) return false;
   if (subject.kind === "nozzle") return node.anchorId === subject.anchorId;
   return true;
-}
-
-/** Rotate a plan direction by the instance rotation (degrees). */
-function rotateDir(x, y, deg) {
-  const rad = (deg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return { x: x * cos - y * sin, y: x * sin + y * cos };
 }
 
 /**
@@ -1835,65 +1863,191 @@ function nodeBindingTolerance(design, node) {
 }
 
 /**
- * Whether a valve-station node's standing point is at the station:
- * within the binding tolerance of the route point at the subject's
- * stationIn (pointAtStation, D10-02). A station-less subject has
- * no position to bind to and can never be satisfied.
+ * The elevation an operator stands at at an access node: the
+ * node's authored elevationIn, or the design's grade elevation
+ * when none is authored. Walk paths are grade-level polylines, so
+ * a node with no authored elevation stands at grade — that is the
+ * design's own datum, not an invented reach. A node that stands
+ * on a platform authors that platform's deck elevation here.
  */
-function valveStationBinding(design, node, subject) {
-  if (subject.stationIn === undefined) return false;
-  const run = (design?.pipes || []).find((r) => r?.id === subject.runId);
-  if (!run) return false;
-  const route = physicalRouteIn(design, run);
-  if (!Array.isArray(route) || route.length === 0) return false;
-  const stationPoint = pointAtStation(route, subject.stationIn);
-  if (!stationPoint) return false;
-  return (
-    Math.hypot(node.x - stationPoint.x, node.y - stationPoint.y) <=
-    nodeBindingTolerance(design, node) + EPS
-  );
+export function nodeStandingElevationIn(design, node) {
+  return isFiniteNumber(node?.elevationIn) ? node.elevationIn : gradeElevationIn(design);
 }
 
 /**
- * Whether a required node's standing point is geometrically bound
- * to its subject's actual access geometry:
+ * The elevation an operator must stand at to reach a derived
+ * subject, in the design's absolute elevation frame — or null when
+ * the subject's access elevation is not modeled at all. The
+ * required standing elevation is the access point's own elevation:
+ * - nozzle: the connection face's elevationIn (connectionFaceForAnchor);
+ *   null for a TEMA anchor, which carries no modeled elevation;
+ * - manway: the platform that serves it — the effective platform
+ *   (authored, else the legacy D5 deck) when one exists, else the
+ *   §5.3 reference platform (centerline − 30), floored at paving:
+ *   a platform cannot ride below grade, so a low manway is
+ *   operated from grade;
+ * - valve station: the 3D route point at its stationIn
+ *   (physicalRouteIn + pointAtStation);
+ * - valve / instrument symbol: the instance's base elevation — the
+ *   symbol sits at its base, and no handwheel height above the
+ *   base is modeled (the brief invents none).
+ */
+export function subjectStandingElevationIn(design, subject) {
+  if (subject.runId !== undefined) {
+    if (subject.stationIn === undefined) return null;
+    const run = (design?.pipes || []).find((r) => r?.id === subject.runId);
+    if (!run) return null;
+    const route = physicalRouteIn(design, run);
+    if (!Array.isArray(route) || route.length === 0) return null;
+    const point = pointAtStation(route, subject.stationIn);
+    return point ? point.zIn : null;
+  }
+  const inst = (design?.symbols || []).find((s) => s?.id === subject.symbolId);
+  if (!inst) return null;
+  if (subject.kind === "manway") return manwayStandingElevationIn(design, inst);
+  if (subject.kind === "nozzle") {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol) return null;
+    const face = connectionFaceForAnchor(symbol, inst, subject.anchorId);
+    if (!face) return null;
+    return face.elevationIn;
+  }
+  return baseElevationIn(inst);
+}
+
+/** The elevation an operator must stand at to reach a manway: the
+ * platform that serves it — the effective platform (authored, else
+ * the legacy D5 deck) when one exists, else the §5.3 reference
+ * platform (centerline − 30), floored at paving. Null when the
+ * manway geometry is incomplete. */
+function manwayStandingElevationIn(design, inst) {
+  const effective = effectiveManwayPlatform(design, inst);
+  if (effective) return effective.elevationIn;
+  const ref = manwayReferencePlatform(design, inst);
+  if (!ref) return null;
+  return Math.max(gradeElevationIn(design), ref.platformElevationIn);
+}
+
+/**
+ * Whether a node's standing elevation reaches a required standing
+ * elevation: the operator stands AT the required elevation
+ * (representation epsilon — no invented reach radius), or the node
+ * declares an explicit ladder/stairs connection from its standing
+ * elevation up to exactly that elevation. A ladder run over the
+ * adopted 360-in §5.3 maximum needs an intermediate platform and
+ * does not reach; stairs carry no adopted cap. Standing above the
+ * required elevation without a connection fails closed — there is
+ * no reach-down rule in the book.
+ */
+function verticalDetail(design, node, required) {
+  const standing = nodeStandingElevationIn(design, node);
+  if (Math.abs(standing - required) <= EPS) return { bound: true };
+  const va = node?.verticalAccess;
+  if (
+    isPlainObject(va) &&
+    (va.kind === "ladder" || va.kind === "stairs") &&
+    isFiniteNumber(va.topElevationIn) &&
+    Math.abs(va.topElevationIn - required) <= EPS &&
+    va.topElevationIn > standing + EPS
+  ) {
+    if (va.kind === "ladder" && va.topElevationIn - standing > LADDER_RUN_MAX_IN + EPS) {
+      return {
+        bound: false,
+        reason: "vertical",
+        standing,
+        required,
+        ladderRunExceeded: true,
+      };
+    }
+    return { bound: true };
+  }
+  return { bound: false, reason: "vertical", standing, required };
+}
+
+/**
+ * Whether a required node's standing point is bound to its
+ * subject's actual access geometry — in plan AND in elevation.
+ * Plan is checked first, so a remote node fails as "plan" however
+ * its elevation reads:
+ * - valve station: within the binding tolerance of the 3D route
+ *   point at the subject's stationIn, and standing at that
+ *   point's elevation. A station-less subject has no position to
+ *   bind to and can never be satisfied;
+ * - manway: within the binding tolerance of the manway's actual
+ *   plan coordinate (manwayWorld — the opening's center on the
+ *   shell), and standing at the manway's platform elevation;
+ * - nozzle anchor: within the binding tolerance of the anchor's
+ *   actual connection-face coordinate (connectionFaceForAnchor),
+ *   and standing at the face elevation. The face coordinate is
+ *   compared, never the equipment interior: a point at the
+ *   equipment center is at the face only for a top nozzle, whose
+ *   face IS the center in plan. A face with no modeled elevation
+ *   (TEMA) can never be proven reached;
  * - valve / instrument: inside the symbol instance's plan
  *   footprint — the symbol IS the valve/instrument, so its own
- *   footprint is the access zone;
- * - manway: inside the footprint AND on the manway's side of the
- *   equipment centerline (manwayLocal direction, rotated by the
- *   instance rotation). A centerline point is side-neutral and
- *   binds; a point on the opposite side does not;
- * - nozzle anchor: inside the footprint AND, when the anchor's
- *   connection face carries a plan normal, on the anchor's side of
- *   the centerline. A top nozzle (vertical face) and a TEMA anchor
- *   carry no plan normal, so the footprint alone binds them.
- * A point outside the footprint is remote from the equipment,
- * however clearly its walk path runs.
+ *   footprint is the access zone — and standing at the instance's
+ *   base elevation.
+ * A point outside the tolerance is remote from the equipment,
+ * however clearly its walk path runs. Returns { bound: true } or
+ * { bound: false, reason, ... } with reason "plan",
+ * "vertical", or "vertical-unknown".
  */
-function nodeIsBoundToSubject(design, node, subject) {
-  if (!isFiniteNumber(node?.x) || !isFiniteNumber(node?.y)) return false;
-  if (subject.runId !== undefined) return valveStationBinding(design, node, subject);
+function nodeBindingDetail(design, node, subject) {
+  if (!isFiniteNumber(node?.x) || !isFiniteNumber(node?.y)) {
+    return { bound: false, reason: "plan" };
+  }
+  if (subject.runId !== undefined) {
+    if (subject.stationIn === undefined) return { bound: false, reason: "plan" };
+    const run = (design?.pipes || []).find((r) => r?.id === subject.runId);
+    if (!run) return { bound: false, reason: "plan" };
+    const route = physicalRouteIn(design, run);
+    if (!Array.isArray(route) || route.length === 0) return { bound: false, reason: "plan" };
+    const stationPoint = pointAtStation(route, subject.stationIn);
+    if (!stationPoint) return { bound: false, reason: "plan" };
+    if (
+      Math.hypot(node.x - stationPoint.x, node.y - stationPoint.y) >
+      nodeBindingTolerance(design, node) + EPS
+    ) {
+      return { bound: false, reason: "plan" };
+    }
+    return verticalDetail(design, node, stationPoint.zIn);
+  }
   const inst = (design?.symbols || []).find((s) => s?.id === subject.symbolId);
-  if (!inst) return false;
+  if (!inst) return { bound: false, reason: "plan" };
   const symbol = findSymbol(inst.domain, inst.symbolId);
-  if (!symbol) return false;
+  if (!symbol) return { bound: false, reason: "plan" };
   const point = { x: node.x, y: node.y };
-  if (!pointInPolygon(point, instanceFootprint(inst, symbol))) return false;
-  const cx = inst.x || 0;
-  const cy = inst.y || 0;
   if (subject.kind === "manway") {
-    const local = manwayLocal(symbol, inst);
-    if (!local) return false;
-    const dir = rotateDir(local.dirX, local.dirY, inst.rotationDeg || 0);
-    return (point.x - cx) * dir.x + (point.y - cy) * dir.y >= -EPS;
+    const world = manwayWorld(symbol, inst);
+    if (!world) return { bound: false, reason: "plan" };
+    if (
+      Math.hypot(point.x - world.x, point.y - world.y) >
+      nodeBindingTolerance(design, node) + EPS
+    ) {
+      return { bound: false, reason: "plan" };
+    }
+    const required = manwayStandingElevationIn(design, inst);
+    if (required === null) return { bound: false, reason: "vertical-unknown" };
+    return verticalDetail(design, node, required);
   }
   if (subject.kind === "nozzle") {
     const face = connectionFaceForAnchor(symbol, inst, subject.anchorId);
-    if (!face || !face.normal) return true;
-    return (point.x - cx) * face.normal.x + (point.y - cy) * face.normal.y >= -EPS;
+    if (!face) return { bound: false, reason: "plan" };
+    if (
+      Math.hypot(point.x - face.x, point.y - face.y) >
+      nodeBindingTolerance(design, node) + EPS
+    ) {
+      return { bound: false, reason: "plan" };
+    }
+    if (face.elevationIn === null || face.elevationIn === undefined) {
+      return { bound: false, reason: "vertical-unknown" };
+    }
+    return verticalDetail(design, node, face.elevationIn);
   }
-  return true;
+  if (!pointInPolygon(point, instanceFootprint(inst, symbol))) {
+    return { bound: false, reason: "plan" };
+  }
+  return verticalDetail(design, node, baseElevationIn(inst));
 }
 
 /** Plain-words name of a subject for findings. */
@@ -1908,20 +2062,22 @@ function subjectName(subject) {
   return `${subject.kind === "instrument" ? "Instrument" : "Valve"} ${subject.label}`;
 }
 
-/** How to author a node that models this subject. */
+/** How to author a node that models this subject: at the actual
+ * face/manway/station coordinate, standing at the face elevation
+ * (or with a ladder/stairs connection up to it). */
 function subjectAuthorInstruction(subject) {
   if (subject.kind === "manway") {
-    return `author an access node of kind "manway" for ${subject.symbolId}`;
+    return `author an access node of kind "manway" for ${subject.symbolId} at the manway, standing at the manway's platform elevation (or with a ladder or stairs connection up to it)`;
   }
   if (subject.kind === "nozzle") {
-    return `author an access node of kind "nozzle" for ${subject.symbolId} with anchorId "${subject.anchorId}" at that nozzle`;
+    return `author an access node of kind "nozzle" for ${subject.symbolId} with anchorId "${subject.anchorId}" at that nozzle's face, standing at the face elevation (or with a ladder or stairs connection up to it)`;
   }
   if (subject.runId !== undefined) {
     return subject.stationIn !== undefined
-      ? `author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex} at that station`
+      ? `author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex} at that station, standing at the station elevation (or with a ladder or stairs connection up to it)`
       : `author the station, then an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}`;
   }
-  return `author an access node of kind "${subject.kind}" for ${subject.symbolId}`;
+  return `author an access node of kind "${subject.kind}" for ${subject.symbolId} standing at the instance's base elevation (or with a ladder or stairs connection up to it)`;
 }
 
 /**
@@ -1930,8 +2086,9 @@ function subjectAuthorInstruction(subject) {
  * validateWalkGraph so the two agree — and accessCheckStates
  * dedupes the identical findings into one. The message names WHY
  * the subject is unmodeled (no node / wrong anchor / optional-only
- * / standing point not at the access geometry) so the repair is
- * explicit.
+ * / standing point not at the access geometry / standing elevation
+ * not reaching the face / face elevation not modeled) so the
+ * repair is explicit.
  */
 function missingAccessSubjectFindings(design) {
   const findings = [];
@@ -1970,15 +2127,43 @@ function missingAccessSubjectFindings(design) {
         ),
       );
     } else {
-      // "unbound": a required node names the subject but stands elsewhere.
+      // "unbound": a required node names the subject but is not
+      // bound to it — plan, vertical, or vertical-unknown.
       const node = binding.node;
-      findings.push(
-        finding(
-          ACCESS_CODES.ACCESS_NOT_MODELED,
-          subject.subjectId,
-          `${name} has no modeled operator access node: access node ${node.id} is authored for it but its standing point (${node.x}, ${node.y}) is not at the access point — move the node to the access point or ${instruction} as a required node.`,
-        ),
-      );
+      const detail = binding.detail || { reason: "plan" };
+      if (detail.reason === "vertical-unknown") {
+        findings.push(
+          finding(
+            ACCESS_CODES.ACCESS_NOT_MODELED,
+            subject.subjectId,
+            `${name} has no modeled operator access node: its face elevation is not modeled, so no access node can prove it is reached — model the face elevation first.`,
+          ),
+        );
+      } else if (detail.reason === "vertical" && detail.ladderRunExceeded) {
+        findings.push(
+          finding(
+            ACCESS_CODES.ACCESS_NOT_MODELED,
+            subject.subjectId,
+            `${name} has no modeled operator access node: access node ${node.id} stands at ${detail.standing} in and declares a ladder up to ${detail.required} in, but that ${detail.required - detail.standing}-in run exceeds the adopted 360-in ladder-run maximum — add an intermediate platform and split the climb.`,
+          ),
+        );
+      } else if (detail.reason === "vertical") {
+        findings.push(
+          finding(
+            ACCESS_CODES.ACCESS_NOT_MODELED,
+            subject.subjectId,
+            `${name} has no modeled operator access node: access node ${node.id} stands at ${detail.standing} in but the access point is at ${detail.required} in — stand the node at ${detail.required} in (a platform at that elevation), or declare a ladder or stairs connection from ${detail.standing} in up to ${detail.required} in.`,
+          ),
+        );
+      } else {
+        findings.push(
+          finding(
+            ACCESS_CODES.ACCESS_NOT_MODELED,
+            subject.subjectId,
+            `${name} has no modeled operator access node: access node ${node.id} is authored for it but its standing point (${node.x}, ${node.y}) is not at the access point — move the node to the access point or ${instruction} as a required node.`,
+          ),
+        );
+      }
     }
   }
   return findings;
@@ -2083,15 +2268,22 @@ function crossoverCoversPoint(design, barrier, point) {
  * paths; edges are consecutive path vertices plus usable,
  * both-sides-connected crossover decks. Returns { vertices, edges,
  * attached, reachable, findings } where attached maps entry/node/
- * landing ids to vertex ids and reachable is the set of vertex ids
- * reached from any entry. A bridge not connected on both sides
- * contributes no edge.
+ * landing ids to vertex ids (and nodeStandingElevationIn maps each
+ * attached node's id to its standing elevation as provenance) and
+ * reachable is the set of vertex ids reached from any entry. A
+ * bridge not connected on both sides contributes no edge.
  */
 export function buildWalkGraph(design) {
   const findings = [];
   const vertices = new Map();
   const edges = [];
-  const attached = { entries: {}, nodes: {}, landings: {} };
+  // attached.nodeStandingElevationIn records the vertical datum of
+  // every attached node (its authored elevationIn, else the
+  // design's grade elevation) as provenance on the attachment —
+  // the graph itself is plan connectivity (paths are plan
+  // polylines), and the vertical binding is validated by
+  // missingAccessSubjectFindings, which both validators consult.
+  const attached = { entries: {}, nodes: {}, landings: {}, nodeStandingElevationIn: {} };
   const paths = accessList(design, "paths").filter(
     (p) => Array.isArray(p?.points) && p.points.length >= 2,
   );
@@ -2177,7 +2369,10 @@ export function buildWalkGraph(design) {
   for (const node of accessList(design, "nodes")) {
     if (!isFiniteNumber(node?.x) || !isFiniteNumber(node?.y)) continue;
     const vertexId = attachPoint("node", node.id, { x: node.x, y: node.y }, node.pathId ?? null);
-    if (vertexId) attached.nodes[node.id] = vertexId;
+    if (vertexId) {
+      attached.nodes[node.id] = vertexId;
+      attached.nodeStandingElevationIn[node.id] = nodeStandingElevationIn(design, node);
+    }
   }
   // Crossover deck edges: both landings attached, crossover usable.
   for (const crossover of accessList(design, "crossovers")) {

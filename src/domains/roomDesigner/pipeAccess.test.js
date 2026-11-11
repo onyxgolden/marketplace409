@@ -32,11 +32,13 @@ import {
   manwayCenterlineAbovePavingIn,
   manwayProfileCompatibility,
   manwayReferencePlatform,
+  nodeStandingElevationIn,
   pipeAccessRuleErrors,
   previewCrossoverProposal,
   resetAccessIds,
   resolvePathProfile,
   setAccessData,
+  subjectStandingElevationIn,
   suggestCrossoverStations,
   updateCrossover,
   validateClearanceEnvelope,
@@ -89,11 +91,60 @@ const VESSEL_ANCHORS = [
   "utility-plant-air",
   "utility-nitrogen",
 ];
-/** One required nozzle node per vessel anchor, all standing at (x, y). */
-const vesselNozzleNodes = (x, y, first = 2) =>
-  VESSEL_ANCHORS.map((anchorId, i) =>
-    nodeAt(x, y, `n${first + i}`, { kind: "nozzle", symbolId: "v1", anchorId }),
-  );
+/**
+ * Face geometry of the vertical vessel (48 x 48 x 120, base 0,
+ * grade 0) — pinned literally, not computed from
+ * connectionFaceForAnchor, so the binding is tested rather than
+ * re-derived. Top nozzle face at the center in plan, 126 in
+ * (120 + 6 neck); side nozzles at 74.4 in (120 x 0.62); utility
+ * ports at 24 in; the manway face (center of the opening on the
+ * shell) at (cx, cy + 24), served by the legacy D5 deck at 30 in.
+ */
+const VESSEL_FACES = {
+  manway: { dx: 0, dy: 24, elevationIn: 30 },
+  "top-out": { dx: 0, dy: 0, elevationIn: 126 },
+  "side-in": { dx: -24, dy: 0, elevationIn: 74.4 },
+  "side-out": { dx: 24, dy: 0, elevationIn: 74.4 },
+  "bottom-out": { dx: 10.8, dy: 10.8, elevationIn: 74.4 },
+  "utility-plant-water": { dx: -14.4, dy: 24, elevationIn: 24 },
+  "utility-plant-air": { dx: 4.8, dy: 24, elevationIn: 24 },
+  "utility-nitrogen": { dx: 14.4, dy: 24, elevationIn: 24 },
+};
+/** One required nozzle node per vessel anchor, standing AT that
+ * anchor's face with the face elevation (platform evidence). */
+const vesselFaceNodes = (cx, cy, anchorIds = VESSEL_ANCHORS, first = 2) =>
+  anchorIds.map((anchorId, i) => {
+    const f = VESSEL_FACES[anchorId];
+    return nodeAt(cx + f.dx, cy + f.dy, `n${first + i}`, {
+      kind: "nozzle",
+      symbolId: "v1",
+      anchorId,
+      elevationIn: f.elevationIn,
+    });
+  });
+/** The manway node, standing at the manway face on the legacy D5 deck. */
+const vesselManwayFaceNode = (cx, cy, id = "n1", extra = {}) =>
+  nodeAt(cx + VESSEL_FACES.manway.dx, cy + VESSEL_FACES.manway.dy, id, {
+    kind: "manway",
+    symbolId: "v1",
+    elevationIn: VESSEL_FACES.manway.elevationIn,
+    ...extra,
+  });
+/**
+ * Walk path that visits every face of a vertical vessel at (cx, 0):
+ * along y = 0 past both side faces, then up the east side and back
+ * west along y = 24 past the manway and utility faces. Every face
+ * node attaches to it, and every sub-segment that touches the
+ * vessel footprint or the manway deck ends at a vessel node, so
+ * the footprint exemption holds for the whole path.
+ */
+const vesselFacePath = (cx, id = "w1") =>
+  walkPath(id, [
+    { x: cx - 1000, y: 0 },
+    { x: cx + 100, y: 0 },
+    { x: cx, y: 24 },
+    { x: cx - 1000, y: 24 },
+  ]);
 
 /** Sleeper rack at (0, 0): 480 long (x -240..240), 120 wide, top 18 in. */
 const withSleeper = (design, id = "r1", x = 0, y = 0) =>
@@ -867,15 +918,13 @@ describe("walk graph", () => {
     design = placeSymbol(design, D, "vertical-vessel", 0, 0, { id: "v1" });
     design = setAccessData(design, {
       entries: [entryAt(-500, 0)],
-      paths: [walkPath()],
-      // The vessel's manway and nozzle subjects are modeled, so the
-      // completeness gate passes and this tests the footprint exemption.
-      nodes: [
-        nodeAt(0, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        ...vesselNozzleNodes(0, 0),
-      ],
+      paths: [vesselFacePath(0)],
+      // The vessel's manway and nozzle subjects are modeled at their
+      // faces, so the completeness gate passes and this tests the
+      // footprint exemption.
+      nodes: [vesselManwayFaceNode(0, 0), ...vesselFaceNodes(0, 0)],
     });
-    // The nodes sit on the vessel: the final approach is exempt.
+    // The nodes sit at the vessel faces: the final approach is exempt.
     expect(validateWalkGraph(design).state).toBe("PASS");
     let blocked = createEmptyDesign("Plan");
     blocked = placeSymbol(blocked, D, "vertical-vessel", 0, 0, { id: "v1" });
@@ -883,18 +932,26 @@ describe("walk graph", () => {
       entries: [entryAt(-500, 0), entryAt(0, 300, "e2")],
       paths: [
         walkPath(),
-        // A spur path approaches the vessel from the north so its
-        // subjects are modeled there; the through-path's destination
-        // is not the vessel, so its footprint is not exempt.
-        walkPath("w2", [{ x: 0, y: 300 }, { x: 0, y: 24 }]),
+        // A spur path approaches the vessel from the north and
+        // visits every face, so its subjects are modeled there;
+        // the through-path's destination is not the vessel, so its
+        // footprint is not exempt.
+        walkPath("w2", [
+          { x: 0, y: 300 },
+          { x: 0, y: 24 },
+          { x: 0, y: 0 },
+          { x: 24, y: 0 },
+          { x: 24, y: 24 },
+          { x: -24, y: 24 },
+          { x: -24, y: 0 },
+        ]),
       ],
-      // Nodes at (0, 20): inside the 48-in footprint (its edge is
-      // y = 24, and a point on the boundary is not "at" the
-      // equipment) and within reach of the spur path's end.
+      // All vessel nodes ride the spur (pathId "w2") so the
+      // through-path keeps no vessel attachment.
       nodes: [
         nodeAt(500, 0, "n1"),
-        nodeAt(0, 20, "n2", { kind: "manway", symbolId: "v1" }),
-        ...vesselNozzleNodes(0, 20, 3),
+        vesselManwayFaceNode(0, 0, "n2", { pathId: "w2" }),
+        ...vesselFaceNodes(0, 0, VESSEL_ANCHORS, 3).map((n) => ({ ...n, pathId: "w2" })),
       ],
     });
     expect(validateWalkGraph(blocked).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
@@ -1201,13 +1258,16 @@ describe("access completeness", () => {
       "nozzle",
       "nozzle",
     ]);
+    // Every node stands AT its face with the face elevation — the
+    // manway on the legacy D5 deck at 30 in, the top nozzle at
+    // 126 in, the side nozzles at 74.4 in, the utility ports at
+    // 24 in — and the walk path threads past every face.
     vessel = setAccessData(vessel, {
-      nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        ...vesselNozzleNodes(500, 0),
-      ],
+      paths: [vesselFacePath(500)],
+      nodes: [vesselManwayFaceNode(500, 0), ...vesselFaceNodes(500, 0)],
     });
     expect(validateOperatorAccess(vessel).state).toBe("PASS");
+    expect(validateWalkGraph(vessel).state).toBe("PASS");
 
     let stationed = entryAndPathOnly();
     stationed = addPipeRun(stationed, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
@@ -1216,23 +1276,33 @@ describe("access completeness", () => {
       elevationIn: 200,
       valveStations: [{ stationIn: 500 }],
     });
+    // The valve station sits 200 in above grade, but its node
+    // carries no elevation, platform or vertical connection — a
+    // grade walk reaching the same plan coordinate is not proof
+    // an operator can reach the valve, so both validators fail.
     stationed = setAccessData(stationed, {
       nodes: [nodeAt(0, 0, "n1", { kind: "valve", runId: "p1", valveIndex: 0 })],
     });
     expect(expectedAccessSubjects(stationed)).toHaveLength(1);
-    expect(validateOperatorAccess(stationed).state).toBe("PASS");
-    expect(validateWalkGraph(stationed).state).toBe("PASS");
+    expect(validateOperatorAccess(stationed).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(validateWalkGraph(stationed).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    const stationMissing = validateOperatorAccess(stationed).findings.filter(
+      (f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED,
+    );
+    expect(stationMissing).toHaveLength(1);
+    expect(stationMissing[0].message).toContain("stands at 0 in but the access point is at 200 in");
   });
 
   it("a required subject is not satisfied by an optional node", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
-    // Every subject is modeled, but the manway node is optional —
+    // Every subject is modeled at its face, but the manway node is optional —
     // optional nodes are never attached or reached.
     design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
       nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1", required: false }),
-        ...vesselNozzleNodes(500, 0),
+        vesselManwayFaceNode(500, 0, "n1", { required: false }),
+        ...vesselFaceNodes(500, 0),
       ],
     });
     const { findings } = validateOperatorAccess(design);
@@ -1245,12 +1315,11 @@ describe("access completeness", () => {
     let required = entryAndPathOnly();
     required = placeSymbol(required, D, "vertical-vessel", 500, 0, { id: "v1" });
     required = setAccessData(required, {
-      nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        ...vesselNozzleNodes(500, 0),
-      ],
+      paths: [vesselFacePath(500)],
+      nodes: [vesselManwayFaceNode(500, 0), ...vesselFaceNodes(500, 0)],
     });
     expect(validateOperatorAccess(required).state).toBe("PASS");
+    expect(validateWalkGraph(required).state).toBe("PASS");
   });
 
   it("a matching node placed remotely does not satisfy its subject", () => {
@@ -1287,12 +1356,11 @@ describe("access completeness", () => {
     let vessel = entryAndPathOnly();
     vessel = placeSymbol(vessel, D, "vertical-vessel", 500, 0, { id: "v1" });
     vessel = setAccessData(vessel, {
+      paths: [vesselFacePath(500)],
       nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        vesselManwayFaceNode(500, 0),
         nodeAt(0, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
-        ...VESSEL_ANCHORS.filter((a) => a !== "side-out").map((anchorId, i) =>
-          nodeAt(500, 0, `n${i + 3}`, { kind: "nozzle", symbolId: "v1", anchorId }),
-        ),
+        ...vesselFaceNodes(500, 0, VESSEL_ANCHORS.filter((a) => a !== "side-out"), 3),
       ],
     });
     const vesselMissing = validateOperatorAccess(vessel).findings.filter(
@@ -1307,9 +1375,15 @@ describe("access completeness", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
     design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
       nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
+        vesselManwayFaceNode(500, 0),
+        nodeAt(524, 0, "n2", {
+          kind: "nozzle",
+          symbolId: "v1",
+          anchorId: "side-out",
+          elevationIn: 74.4,
+        }),
       ],
     });
     const { findings } = validateOperatorAccess(design);
@@ -1321,20 +1395,30 @@ describe("access completeness", () => {
     expect(missing.some((f) => f.message.includes("Nozzle side-out on"))).toBe(false);
   });
 
-  it("a node on the wrong side does not satisfy its nozzle or manway", () => {
+  it("a node not at the face does not satisfy its nozzle or manway", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
     // side-out faces east (+x), side-in faces west (-x), the manway faces south (+y).
     // All three nodes sit inside the footprint and on the walk path, but the
-    // manway and side-out nodes stand on the wrong side of the vessel.
+    // manway node stands 34 in from its face and the side-out node 34 in west
+    // of its face — both beyond the 15.5-in standing tolerance — while the
+    // side-in node stands 14 in from its face, inside the tolerance.
     design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
       nodes: [
         nodeAt(500, -10, "n1", { kind: "manway", symbolId: "v1" }),
         nodeAt(490, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
-        nodeAt(490, 0, "n3", { kind: "nozzle", symbolId: "v1", anchorId: "side-in" }),
-        ...VESSEL_ANCHORS.filter((a) => a !== "side-out" && a !== "side-in").map(
-          (anchorId, i) =>
-            nodeAt(500, 0, `n${i + 4}`, { kind: "nozzle", symbolId: "v1", anchorId }),
+        nodeAt(490, 0, "n3", {
+          kind: "nozzle",
+          symbolId: "v1",
+          anchorId: "side-in",
+          elevationIn: 74.4,
+        }),
+        ...vesselFaceNodes(
+          500,
+          0,
+          VESSEL_ANCHORS.filter((a) => a !== "side-out" && a !== "side-in"),
+          4,
         ),
       ],
     });
@@ -1343,7 +1427,7 @@ describe("access completeness", () => {
     expect(missing).toHaveLength(2);
     expect(missing.some((f) => f.message.includes("Manway on"))).toBe(true);
     expect(missing.some((f) => f.message.includes("Nozzle side-out on"))).toBe(true);
-    // side-in IS satisfied by the west-side node; the rest by center nodes.
+    // side-in IS satisfied by the node 14 in from its face; the rest by face nodes.
     expect(missing.some((f) => f.message.includes("Nozzle side-in on"))).toBe(false);
   });
 
@@ -1351,8 +1435,9 @@ describe("access completeness", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
     design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
       nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        vesselManwayFaceNode(500, 0),
         nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
       ],
     });
@@ -1364,9 +1449,15 @@ describe("access completeness", () => {
     let wrong = entryAndPathOnly();
     wrong = placeSymbol(wrong, D, "vertical-vessel", 500, 0, { id: "v1" });
     wrong = setAccessData(wrong, {
+      paths: [vesselFacePath(500)],
       nodes: [
-        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-in" }),
+        vesselManwayFaceNode(500, 0),
+        nodeAt(476, 0, "n2", {
+          kind: "nozzle",
+          symbolId: "v1",
+          anchorId: "side-in",
+          elevationIn: 74.4,
+        }),
       ],
     });
     const wrongMissing = validateOperatorAccess(wrong).findings.filter(
@@ -1376,6 +1467,200 @@ describe("access completeness", () => {
     expect(
       wrongMissing.some((f) => f.message.includes('names anchor "side-in", not "side-out"')),
     ).toBe(true);
+  });
+
+  // ---- Vertical access datum (fix round 3) ---------------------------------
+  // Binding is three-dimensional: a node satisfies a subject only
+  // when its standing point is AT the face in plan AND its standing
+  // elevation reaches the face elevation — or it declares an
+  // explicit ladder/stairs connection up to it. Plan coincidence
+  // alone never clears an elevated face.
+
+  /** A valve station on a vertical run at x = 0, station at (0, 0, elevation). */
+  const stationedAt = (elevationIn, nodeExtra = {}) => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn,
+      valveStations: [{ stationIn: 500 }],
+    });
+    return setAccessData(design, {
+      nodes: [nodeAt(0, 0, "n1", { kind: "valve", runId: "p1", valveIndex: 0, ...nodeExtra })],
+    });
+  };
+
+  it("a node standing at the station elevation satisfies an elevated valve station", () => {
+    const design = stationedAt(200, { elevationIn: 200 });
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  it("a ladder from grade up to the station elevation satisfies an elevated valve station", () => {
+    const design = stationedAt(200, {
+      verticalAccess: { kind: "ladder", topElevationIn: 200 },
+    });
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  it("stairs from grade up to a 400-in station satisfy it: stairs carry no adopted cap", () => {
+    const design = stationedAt(400, {
+      verticalAccess: { kind: "stairs", topElevationIn: 400 },
+    });
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  it("a ladder run over the adopted 360-in maximum does not reach the station", () => {
+    const design = stationedAt(400, {
+      verticalAccess: { kind: "ladder", topElevationIn: 400 },
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(1);
+    expect(missing[0].message).toContain("exceeds the adopted 360-in ladder-run maximum");
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("an elevated top nozzle with no platform or vertical connection fails", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    // Every subject is modeled at its face — except the top nozzle,
+    // whose node stands at the face in plan but at grade, with no
+    // ladder or stairs up to the 126-in face.
+    design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
+      nodes: [
+        vesselManwayFaceNode(500, 0),
+        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "top-out" }),
+        ...vesselFaceNodes(500, 0, VESSEL_ANCHORS.filter((a) => a !== "top-out"), 3),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(1);
+    expect(missing[0].message).toContain("Nozzle top-out on");
+    expect(missing[0].message).toContain("stands at 0 in but the access point is at 126 in");
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("a center point inside the footprint does not satisfy a side nozzle", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    // The side-out node stands at the vessel center — inside the
+    // footprint, on the right side, at the right elevation — but
+    // 24 in from the actual face, beyond the 15.5-in tolerance.
+    design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
+      nodes: [
+        vesselManwayFaceNode(500, 0),
+        nodeAt(500, 0, "n2", {
+          kind: "nozzle",
+          symbolId: "v1",
+          anchorId: "side-out",
+          elevationIn: 74.4,
+        }),
+        ...vesselFaceNodes(500, 0, VESSEL_ANCHORS.filter((a) => a !== "side-out"), 3),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(1);
+    expect(missing[0].message).toContain("Nozzle side-out on");
+    expect(missing[0].message).toContain("standing point (500, 0) is not at");
+  });
+
+  it("a TEMA nozzle's face elevation is not modeled, so no node can prove it reached", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "tema-exchanger", 500, 0, { id: "hx" });
+    // Nodes stand AT each TEMA face in plan (faces pinned from the
+    // catalog geometry: tube anchors at x 414.29, shell anchors at
+    // 446.99 / 551.54, all at y ±21) — but the faces carry no
+    // elevation, so the binding fails closed.
+    design = setAccessData(design, {
+      entries: [entryAt(400, -21)],
+      paths: [
+        walkPath("w1", [
+          { x: 400, y: -21 },
+          { x: 560, y: -21 },
+          { x: 560, y: 21 },
+          { x: 400, y: 21 },
+        ]),
+      ],
+      nodes: [
+        nodeAt(414.29, -21, "n1", {
+          kind: "nozzle",
+          symbolId: "hx",
+          anchorId: "tube-in",
+          elevationIn: 0,
+        }),
+        nodeAt(414.29, 21, "n2", {
+          kind: "nozzle",
+          symbolId: "hx",
+          anchorId: "tube-out",
+          elevationIn: 0,
+        }),
+        nodeAt(446.99, -21, "n3", {
+          kind: "nozzle",
+          symbolId: "hx",
+          anchorId: "shell-in",
+          elevationIn: 0,
+        }),
+        nodeAt(551.54, 21, "n4", {
+          kind: "nozzle",
+          symbolId: "hx",
+          anchorId: "shell-out",
+          elevationIn: 0,
+        }),
+      ],
+    });
+    const subjects = expectedAccessSubjects(design);
+    expect(subjects).toHaveLength(4);
+    expect(subjects.every((s) => subjectStandingElevationIn(design, s) === null)).toBe(true);
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(4);
+    expect(missing.every((f) => f.message.includes("face elevation is not modeled"))).toBe(true);
+  });
+
+  it("subjectStandingElevationIn: manway platform, nozzle face, station, base", () => {
+    let vessel = createEmptyDesign("Plan");
+    vessel = placeSymbol(vessel, D, "vertical-vessel", 500, 0, { id: "v1" });
+    const subjects = expectedAccessSubjects(vessel);
+    const byId = Object.fromEntries(subjects.map((s) => [s.subjectId, s]));
+    expect(subjectStandingElevationIn(vessel, byId["v1"])).toBe(30); // the manway subject
+    expect(subjectStandingElevationIn(vessel, byId["v1/nozzle-top-out"])).toBe(126);
+    expect(subjectStandingElevationIn(vessel, byId["v1/nozzle-side-in"])).toBeCloseTo(74.4, 6);
+    let stationed = createEmptyDesign("Plan");
+    stationed = addPipeRun(stationed, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    expect(subjectStandingElevationIn(stationed, expectedAccessSubjects(stationed)[0])).toBe(200);
+    let valve = createEmptyDesign("Plan");
+    valve = placeSymbol(valve, D, "control-valve", 500, 0, { id: "v1" });
+    expect(subjectStandingElevationIn(valve, expectedAccessSubjects(valve)[0])).toBe(0);
+  });
+
+  it("nodeStandingElevationIn: authored elevation, else grade", () => {
+    const design = createEmptyDesign("Plan");
+    expect(nodeStandingElevationIn(design, { elevationIn: 200 })).toBe(200);
+    expect(nodeStandingElevationIn(design, {})).toBe(0);
+  });
+
+  it("buildWalkGraph records each attached node's standing elevation as provenance", () => {
+    let design = entryAndPathOnly();
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(0, 0, "n1", { kind: "valve", symbolId: "v1" }),
+        nodeAt(100, 0, "n2", { kind: "valve", symbolId: "v1", elevationIn: 200 }),
+      ],
+    });
+    const graph = buildWalkGraph(design);
+    expect(graph.attached.nodeStandingElevationIn).toEqual({ n1: 0, n2: 200 });
   });
 });
 
@@ -1393,6 +1678,36 @@ describe("editable workflow", () => {
     design = setAccessData(design, { paths: null });
     expect(design.access.paths).toEqual([]);
     expect(() => setAccessData(design, { paths: "nope" })).toThrow();
+  });
+
+  it("setAccessData validates verticalAccess shape", () => {
+    let design = createEmptyDesign("Plan");
+    expect(() =>
+      setAccessData(design, {
+        nodes: [
+          nodeAt(0, 0, "n1", { verticalAccess: { kind: "elevator", topElevationIn: 200 } }),
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      setAccessData(design, {
+        nodes: [nodeAt(0, 0, "n1", { verticalAccess: { kind: "ladder", topElevationIn: NaN } })],
+      }),
+    ).toThrow();
+    expect(() =>
+      setAccessData(design, {
+        nodes: [nodeAt(0, 0, "n1", { verticalAccess: "ladder" })],
+      }),
+    ).toThrow();
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(0, 0, "n1", { verticalAccess: { kind: "stairs", topElevationIn: 200 } }),
+      ],
+    });
+    expect(design.access.nodes[0].verticalAccess).toEqual({
+      kind: "stairs",
+      topElevationIn: 200,
+    });
   });
 
   it("add / update / delete crossover round-trips, with generated ids", () => {
