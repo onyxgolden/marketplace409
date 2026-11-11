@@ -920,7 +920,9 @@ export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial,
   // Nozzle flange discs at every anchor, from the SHARED face model
   // (D668-005): the disc sits exactly at the flange face validation
   // checks. Top nozzles get a neck stub up from the roof; side nozzles
-  // a disc facing the outward normal.
+  // a disc facing the outward normal; scheduled head nozzles (D10-04)
+  // a neck stub from the modeled tangent line to the face, along the
+  // axial normal.
   for (const flange of nozzleFlangeDescriptors(design, inst.id)) {
     const dims = flangeDims(flange.sizeIn);
     if (flange.vertical) {
@@ -935,6 +937,15 @@ export function buildEquipmentComponentsGroup(design, instanceId, { stdMaterial,
       );
       addDisc(flange.x, flange.yIn, flange.z, dims.odIn / 2, dims.thicknessIn, new THREE.Vector3(0, 1, 0), steel);
     } else if (flange.normal) {
+      if (flange.kind === "head" && flange.neckBase) {
+        // Head nozzle: neck stub from the tangent line to the face.
+        addCylinder(
+          { x: flange.neckBase.x, y: flange.neckBase.elevationIn, z: flange.neckBase.y },
+          { x: flange.x, y: flange.yIn, z: flange.z },
+          Math.max(1, (flange.sizeIn ?? 2) / 2),
+          steel,
+        );
+      }
       const dir = new THREE.Vector3(flange.normal.x, 0, flange.normal.y);
       addDisc(flange.x, flange.yIn, flange.z, dims.odIn / 2, dims.thicknessIn, dir, steel);
     }

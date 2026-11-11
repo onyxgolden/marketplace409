@@ -38,6 +38,7 @@
 import {
   createEmptyDesign,
   DESIGN_VERSION,
+  markHeadNozzleScheduleCurrent,
   validateDesign,
 } from "./designerDocument";
 // Slice 4: the estimate envelope (unit costs in integer cents) normalizes
@@ -150,7 +151,13 @@ export function createHomeProject(name, options = {}) {
     version: HOME_PROJECT_VERSION,
     name: String(name || "Untitled project"),
     units,
-    levels: [makeLevel(levelName, createEmptyDesign(levelName))],
+    // A new project's first level is authored now (D10-04): its empty
+    // design carries the current head-nozzle-schedule marker, so
+    // vessels placed into it are current and fail closed without a
+    // schedule. (Builds that fill the level with pre-schedule content
+    // — the FCCU sample — replace this design with their own
+    // unversioned one via updateLevelDesign.)
+    levels: [makeLevel(levelName, markHeadNozzleScheduleCurrent(createEmptyDesign(levelName)))],
     currentLevelId: null,
     building: normalizeBuilding(opts.building),
     // Slice 4: every project carries an (initially empty) estimate envelope.
@@ -238,7 +245,9 @@ export function addLevel(project, name) {
   const levelName =
     typeof name === "string" && name.trim() !== "" ? name : defaultLevelName(project);
   const takenIds = new Set(project.levels.map((l) => l.id));
-  const level = makeLevel(levelName, createEmptyDesign(levelName), takenIds);
+  // A new level is authored now (D10-04): same current marker as a
+  // new project's first level.
+  const level = makeLevel(levelName, markHeadNozzleScheduleCurrent(createEmptyDesign(levelName)), takenIds);
   return touch(project, { levels: [...project.levels, level] });
 }
 
