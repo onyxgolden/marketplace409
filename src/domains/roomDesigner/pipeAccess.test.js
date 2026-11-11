@@ -35,9 +35,11 @@ import {
   nodeStandingElevationIn,
   pipeAccessRuleErrors,
   previewCrossoverProposal,
+  reachableElevationsIn,
   resetAccessIds,
   resolvePathProfile,
   setAccessData,
+  standingReachableDetail,
   subjectStandingElevationIn,
   suggestCrossoverStations,
   updateCrossover,
@@ -110,8 +112,10 @@ const VESSEL_FACES = {
   "utility-plant-air": { dx: 4.8, dy: 24, elevationIn: 24 },
   "utility-nitrogen": { dx: 14.4, dy: 24, elevationIn: 24 },
 };
-/** One required nozzle node per vessel anchor, standing AT that
- * anchor's face with the face elevation (platform evidence). */
+/** One required nozzle node per vessel anchor, standing at grade
+ * with a modeled ladder up to that anchor's face — a node may not
+ * merely author the face elevation (fix round 4): the climb from
+ * grade is the evidence. */
 const vesselFaceNodes = (cx, cy, anchorIds = VESSEL_ANCHORS, first = 2) =>
   anchorIds.map((anchorId, i) => {
     const f = VESSEL_FACES[anchorId];
@@ -119,15 +123,16 @@ const vesselFaceNodes = (cx, cy, anchorIds = VESSEL_ANCHORS, first = 2) =>
       kind: "nozzle",
       symbolId: "v1",
       anchorId,
-      elevationIn: f.elevationIn,
+      verticalAccess: { kind: "ladder", topElevationIn: f.elevationIn },
     });
   });
-/** The manway node, standing at the manway face on the legacy D5 deck. */
+/** The manway node, standing at grade with a modeled ladder up to
+ * the manway's platform elevation on the legacy D5 deck. */
 const vesselManwayFaceNode = (cx, cy, id = "n1", extra = {}) =>
   nodeAt(cx + VESSEL_FACES.manway.dx, cy + VESSEL_FACES.manway.dy, id, {
     kind: "manway",
     symbolId: "v1",
-    elevationIn: VESSEL_FACES.manway.elevationIn,
+    verticalAccess: { kind: "ladder", topElevationIn: VESSEL_FACES.manway.elevationIn },
     ...extra,
   });
 /**
@@ -1258,10 +1263,12 @@ describe("access completeness", () => {
       "nozzle",
       "nozzle",
     ]);
-    // Every node stands AT its face with the face elevation — the
-    // manway on the legacy D5 deck at 30 in, the top nozzle at
-    // 126 in, the side nozzles at 74.4 in, the utility ports at
-    // 24 in — and the walk path threads past every face.
+    // Every node stands at grade with a modeled ladder up to its
+    // face — the manway to the legacy D5 deck at 30 in, the top
+    // nozzle to 126 in, the side nozzles to 74.4 in, the utility
+    // ports to 24 in — and the walk path threads past every face.
+    // Merely authoring the face elevation is not evidence (fix
+    // round 4): the climb from grade is.
     vessel = setAccessData(vessel, {
       paths: [vesselFacePath(500)],
       nodes: [vesselManwayFaceNode(500, 0), ...vesselFaceNodes(500, 0)],
@@ -1382,7 +1389,7 @@ describe("access completeness", () => {
           kind: "nozzle",
           symbolId: "v1",
           anchorId: "side-out",
-          elevationIn: 74.4,
+          verticalAccess: { kind: "ladder", topElevationIn: 74.4 },
         }),
       ],
     });
@@ -1412,7 +1419,7 @@ describe("access completeness", () => {
           kind: "nozzle",
           symbolId: "v1",
           anchorId: "side-in",
-          elevationIn: 74.4,
+          verticalAccess: { kind: "ladder", topElevationIn: 74.4 },
         }),
         ...vesselFaceNodes(
           500,
@@ -1456,7 +1463,7 @@ describe("access completeness", () => {
           kind: "nozzle",
           symbolId: "v1",
           anchorId: "side-in",
-          elevationIn: 74.4,
+          verticalAccess: { kind: "ladder", topElevationIn: 74.4 },
         }),
       ],
     });
@@ -1490,8 +1497,88 @@ describe("access completeness", () => {
     });
   };
 
-  it("a node standing at the station elevation satisfies an elevated valve station", () => {
+  // Fix round 4: an authored standing elevation is not evidence.
+  // A node that merely sets elevationIn to the subject elevation,
+  // with no platform and no climb from grade, does not satisfy
+  // the subject — and does not attach to the walk graph, so both
+  // validators fail. The finding names the missing climb, and the
+  // unattached node draws its own "no walk route" finding, so
+  // these tests assert the subject message, not an exact count.
+  it("a node whose elevationIn is set directly to the 200-in station, with no platform or climb, does not satisfy it", () => {
     const design = stationedAt(200, { elevationIn: 200 });
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(
+      operator.findings.some((f) => f.message.includes("not reachable from grade")),
+    ).toBe(true);
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(walk.findings.some((f) => f.message.includes("not reachable from grade"))).toBe(true);
+    // The graph itself refuses the attachment: no vertex, no
+    // provenance for the unreachable stand.
+    const graph = buildWalkGraph(design);
+    expect(graph.attached.nodes.n1).toBeUndefined();
+    expect(graph.attached.nodeStandingElevationIn).toEqual({});
+  });
+
+  it("an invented intermediate elevation with only the final ladder leg does not reach a 400-in station", () => {
+    const design = stationedAt(400, {
+      elevationIn: 100,
+      verticalAccess: { kind: "ladder", topElevationIn: 400 },
+    });
+    // The declared 300-in leg is within the 360-in cap, but the
+    // 100-in stand it starts from is itself unreached: no
+    // platform at 100 in and no climb to 100 in is modeled, so
+    // the lower climb disappears and the chain fails.
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(
+      operator.findings.some((f) => f.message.includes("not reachable from grade")),
+    ).toBe(true);
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(walk.findings.some((f) => f.message.includes("not reachable from grade"))).toBe(true);
+    expect(buildWalkGraph(design).attached.nodes.n1).toBeUndefined();
+  });
+
+  it("a complete platform and ladder chain reaches a 400-in station through a 200-in platform", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    // n1 climbs a 200-in ladder from grade to the 200-in station;
+    // its ladder also proves 200 in is reachable, so the modeled
+    // platform at 200 in is a standable datum, and n2 stands on
+    // it with a second 200-in ladder up to the 400-in station.
+    // Every ladder edge in the chain is within the 360-in cap.
+    design = setAccessData(design, {
+      platforms: [{ id: "pf1", elevationIn: 200 }],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(300, 0, "n2", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+      ],
+    });
+    expect(expectedAccessSubjects(design)).toHaveLength(2);
     expect(validateOperatorAccess(design).state).toBe("PASS");
     expect(validateWalkGraph(design).state).toBe("PASS");
   });
@@ -1549,8 +1636,10 @@ describe("access completeness", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
     // The side-out node stands at the vessel center — inside the
-    // footprint, on the right side, at the right elevation — but
-    // 24 in from the actual face, beyond the 15.5-in tolerance.
+    // footprint, on the right side — but 24 in from the actual
+    // face, beyond the 15.5-in tolerance. It stands at grade, so
+    // the failure reported is the plan distance (plan is checked
+    // before vertical).
     design = setAccessData(design, {
       paths: [vesselFacePath(500)],
       nodes: [
@@ -1559,7 +1648,6 @@ describe("access completeness", () => {
           kind: "nozzle",
           symbolId: "v1",
           anchorId: "side-out",
-          elevationIn: 74.4,
         }),
         ...vesselFaceNodes(500, 0, VESSEL_ANCHORS.filter((a) => a !== "side-out"), 3),
       ],
@@ -1653,14 +1741,112 @@ describe("access completeness", () => {
 
   it("buildWalkGraph records each attached node's standing elevation as provenance", () => {
     let design = entryAndPathOnly();
+    // n2 stands at 200 in on a modeled platform reached by n0's
+    // ladder from grade — an authored elevation alone is never
+    // attached (fix round 4), so the platform and the ladder are
+    // part of the fixture, not the assertion.
     design = setAccessData(design, {
+      platforms: [{ id: "pf1", elevationIn: 200 }],
       nodes: [
         nodeAt(0, 0, "n1", { kind: "valve", symbolId: "v1" }),
         nodeAt(100, 0, "n2", { kind: "valve", symbolId: "v1", elevationIn: 200 }),
+        nodeAt(-100, 0, "n0", {
+          kind: "valve",
+          symbolId: "v1",
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
       ],
     });
     const graph = buildWalkGraph(design);
-    expect(graph.attached.nodeStandingElevationIn).toEqual({ n1: 0, n2: 200 });
+    expect(graph.attached.nodeStandingElevationIn).toEqual({ n1: 0, n2: 200, n0: 0 });
+  });
+
+  it("buildWalkGraph does not attach a node standing at an unreachable elevation", () => {
+    let design = entryAndPathOnly();
+    design = setAccessData(design, {
+      nodes: [nodeAt(0, 0, "n1", { kind: "valve", symbolId: "v1", elevationIn: 200 })],
+    });
+    const graph = buildWalkGraph(design);
+    expect(graph.attached.nodes.n1).toBeUndefined();
+    expect(graph.attached.nodeStandingElevationIn).toEqual({});
+  });
+
+  it("reachableElevationsIn follows a complete ladder chain and stops at an over-cap run", () => {
+    let design = entryAndPathOnly();
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          symbolId: "v1",
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(100, 0, "n2", {
+          kind: "valve",
+          symbolId: "v1",
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(200, 0, "n3", {
+          kind: "valve",
+          symbolId: "v1",
+          elevationIn: 400,
+          verticalAccess: { kind: "ladder", topElevationIn: 800 },
+        }),
+      ],
+    });
+    // 200 in from grade, then 400 in from 200 in; 800 in is not
+    // reached — the 400-in run from 400 in exceeds the 360-in cap.
+    // (The n2/n3 stands themselves are unproven here — no platform
+    // is modeled — so this tests the chain alone, not attachment.)
+    expect(reachableElevationsIn(design)).toEqual([0, 200, 400]);
+  });
+
+  it("standingReachableDetail: grade is reachable; an elevated stand needs both a platform and a chain", () => {
+    let design = entryAndPathOnly();
+    design = setAccessData(design, {
+      platforms: [{ id: "pf1", elevationIn: 200 }],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          symbolId: "v1",
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(100, 0, "n2", { kind: "valve", symbolId: "v1", elevationIn: 200 }),
+      ],
+    });
+    const [n1, n2] = design.access.nodes;
+    expect(standingReachableDetail(design, n1).reachable).toBe(true); // grade
+    expect(standingReachableDetail(design, n2)).toMatchObject({
+      reachable: true,
+      standing: 200,
+    });
+    // Platform alone, no chain: the stand is unproven.
+    let platformOnly = entryAndPathOnly();
+    platformOnly = setAccessData(platformOnly, {
+      platforms: [{ id: "pf1", elevationIn: 200 }],
+      nodes: [nodeAt(100, 0, "n2", { kind: "valve", symbolId: "v1", elevationIn: 200 })],
+    });
+    const lone = standingReachableDetail(platformOnly, platformOnly.access.nodes[0]);
+    expect(lone.reachable).toBe(false);
+    expect(lone.platformAtStanding).toBe(true);
+    expect(lone.chainReachesStanding).toBe(false);
+    // Chain alone, no platform: the climb exists but there is no
+    // modeled place to stand at its top.
+    let chainOnly = entryAndPathOnly();
+    chainOnly = setAccessData(chainOnly, {
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          symbolId: "v1",
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(100, 0, "n2", { kind: "valve", symbolId: "v1", elevationIn: 200 }),
+      ],
+    });
+    const climbed = standingReachableDetail(chainOnly, chainOnly.access.nodes[1]);
+    expect(climbed.reachable).toBe(false);
+    expect(climbed.platformAtStanding).toBe(false);
+    expect(climbed.chainReachesStanding).toBe(true);
   });
 });
 

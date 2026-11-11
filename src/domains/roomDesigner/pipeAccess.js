@@ -49,7 +49,15 @@
 //   no elevation stands at grade; a face whose elevation is not
 //   modeled (a TEMA anchor) can never be proven reached. No
 //   universal reach radius is invented: standing above or below the
-//   face without an explicit connection fails closed.
+//   face without an explicit connection fails closed. And the
+//   standing elevation itself must be reachable: grade, or a
+//   platform at that elevation reached by a complete chain of
+//   allowed vertical runs from grade (standingReachableDetail) —
+//   an authored elevation with no platform and no climb is just a
+//   number, and a node standing there attaches to no walk path.
+//   The 360-in ladder cap applies to every modeled ladder edge in
+//   that chain, so an invented intermediate elevation cannot hide
+//   the unmodeled climb below it.
 // - O6 crossovers (brief item 5; digest §5.4): where a
 //   ground/sleeper corridor separates people from required
 //   equipment, usable platformed crossings are required on a
@@ -1794,7 +1802,8 @@ export function expectedAccessSubjects(design) {
  * - "unbound": a required node names this subject but is not
  *   bound to it; `detail` names why (nodeBindingDetail):
  *   "plan" (standing point not at the access geometry),
- *   "vertical" (standing elevation does not reach the face, or a
+ *   "vertical" (standing elevation does not reach the face, the
+ *   standing elevation itself is not reachable from grade, or a
  *   declared ladder run exceeds the adopted 360-in maximum),
  *   "vertical-unknown" (the face elevation is not modeled).
  * The first node found in each failing class is kept so the finding
@@ -1875,6 +1884,105 @@ export function nodeStandingElevationIn(design, node) {
 }
 
 /**
+ * Every elevation a modeled vertical run can reach from grade:
+ * the fixpoint over all access nodes' declared ladder/stairs
+ * runs, starting at the design's grade elevation. A run counts
+ * only from a bottom that is itself reachable, and a ladder run
+ * counts only within the adopted 360-in §5.3 maximum (stairs
+ * carry no adopted cap); a run that ends at or below its bottom,
+ * or a ladder over the cap, contributes nothing. A modeled run is
+ * design evidence whichever node declares it — the climb exists
+ * in the design whether the node at its top is the one that
+ * declares it or another node stands on the platform it reaches.
+ * An authored elevation with no run reaching it is never in the
+ * set: reachability is proven by the chain, not by the number.
+ */
+export function reachableElevationsIn(design) {
+  const grade = gradeElevationIn(design);
+  const reached = [grade];
+  const has = (elevation) => reached.some((r) => Math.abs(r - elevation) <= EPS);
+  // Runs are re-read every pass: a run whose bottom becomes
+  // reachable only in a later pass still fires.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of accessList(design, "nodes")) {
+      const va = node?.verticalAccess;
+      if (!isPlainObject(va) || (va.kind !== "ladder" && va.kind !== "stairs")) continue;
+      if (!isFiniteNumber(va.topElevationIn)) continue;
+      const bottom = nodeStandingElevationIn(design, node);
+      if (!(va.topElevationIn > bottom + EPS)) continue;
+      if (va.kind === "ladder" && va.topElevationIn - bottom > LADDER_RUN_MAX_IN + EPS) {
+        continue;
+      }
+      if (!has(bottom) || has(va.topElevationIn)) continue;
+      reached.push(va.topElevationIn);
+      changed = true;
+    }
+  }
+  return reached;
+}
+
+/**
+ * Whether a platform is modeled at an elevation for a node: an
+ * authored platform record in access.platforms at that elevation
+ * — platform records carry no plan coordinates, so the match is
+ * by elevation only, scoped to the node's symbol when the record
+ * names one — or, for a symbol-bound node, the symbol instance's
+ * effective manway platform (authored, else the legacy D5 deck)
+ * at that elevation. A platform is a place to stand; whether the
+ * climb to it is modeled is the chain's job, not the platform's.
+ */
+function platformAtElevationIn(design, node, elevation) {
+  if (
+    accessList(design, "platforms").some(
+      (p) =>
+        isFiniteNumber(p?.elevationIn) &&
+        Math.abs(p.elevationIn - elevation) <= EPS &&
+        (p.symbolId === undefined || p.symbolId === node?.symbolId),
+    )
+  ) {
+    return true;
+  }
+  if (node?.symbolId === undefined) return false;
+  const inst = (design?.symbols || []).find((s) => s?.id === node.symbolId);
+  if (!inst) return false;
+  const effective = effectiveManwayPlatform(design, inst);
+  return Boolean(effective && Math.abs(effective.elevationIn - elevation) <= EPS);
+}
+
+/**
+ * Whether an operator can actually stand at a node's standing
+ * elevation (fix round 4: the walk graph was plan-only, so an
+ * authored elevation was treated as reachable from a grade path
+ * with no vertical evidence). Grade is reachable by definition:
+ * paths are grade-level polylines. An elevated standing elevation
+ * is reachable only when a platform is modeled at it AND a
+ * complete chain of allowed vertical runs reaches it from grade
+ * (reachableElevationsIn): a platform alone proves a place to
+ * stand, not the climb to it, and an authored elevation with
+ * neither is just a number. Returns { reachable, standing,
+ * platformAtStanding, chainReachesStanding }.
+ */
+export function standingReachableDetail(design, node) {
+  const standing = nodeStandingElevationIn(design, node);
+  const grade = gradeElevationIn(design);
+  if (Math.abs(standing - grade) <= EPS) {
+    return { reachable: true, standing, platformAtStanding: false, chainReachesStanding: true };
+  }
+  const platformAtStanding = platformAtElevationIn(design, node, standing);
+  const chainReachesStanding = reachableElevationsIn(design).some(
+    (e) => Math.abs(e - standing) <= EPS,
+  );
+  return {
+    reachable: platformAtStanding && chainReachesStanding,
+    standing,
+    platformAtStanding,
+    chainReachesStanding,
+  };
+}
+
+/**
  * The elevation an operator must stand at to reach a derived
  * subject, in the design's absolute elevation frame — or null when
  * the subject's access elevation is not modeled at all. The
@@ -1938,9 +2046,27 @@ function manwayStandingElevationIn(design, inst) {
  * does not reach; stairs carry no adopted cap. Standing above the
  * required elevation without a connection fails closed — there is
  * no reach-down rule in the book.
+ *
+ * Standing reachability is checked FIRST (fix round 4): a node
+ * that stands at an elevation no modeled climb reaches cannot
+ * bind, however exactly its standing elevation matches the
+ * required one — an authored number is not a platform, and the
+ * climb below an invented intermediate elevation is not modeled
+ * by the final leg alone. A standing elevation that cannot be
+ * stood on is the more fundamental failure, so it dominates the
+ * ladder-cap failure.
  */
 function verticalDetail(design, node, required) {
   const standing = nodeStandingElevationIn(design, node);
+  if (!standingReachableDetail(design, node).reachable) {
+    return {
+      bound: false,
+      reason: "vertical",
+      standing,
+      required,
+      standingUnreachable: true,
+    };
+  }
   if (Math.abs(standing - required) <= EPS) return { bound: true };
   const va = node?.verticalAccess;
   if (
@@ -2064,20 +2190,23 @@ function subjectName(subject) {
 
 /** How to author a node that models this subject: at the actual
  * face/manway/station coordinate, standing at the face elevation
- * (or with a ladder/stairs connection up to it). */
+ * on a modeled platform at that elevation reached by a ladder or
+ * stairs chain from grade (or with a ladder/stairs connection up
+ * to it from grade). An authored elevation alone is not evidence:
+ * the climb to it must be modeled. */
 function subjectAuthorInstruction(subject) {
   if (subject.kind === "manway") {
-    return `author an access node of kind "manway" for ${subject.symbolId} at the manway, standing at the manway's platform elevation (or with a ladder or stairs connection up to it)`;
+    return `author an access node of kind "manway" for ${subject.symbolId} at the manway, standing at the manway's platform elevation on a modeled platform at that elevation reached by a ladder or stairs chain from grade (or with a ladder or stairs connection up to it)`;
   }
   if (subject.kind === "nozzle") {
-    return `author an access node of kind "nozzle" for ${subject.symbolId} with anchorId "${subject.anchorId}" at that nozzle's face, standing at the face elevation (or with a ladder or stairs connection up to it)`;
+    return `author an access node of kind "nozzle" for ${subject.symbolId} with anchorId "${subject.anchorId}" at that nozzle's face, standing at the face elevation on a modeled platform at that elevation reached by a ladder or stairs chain from grade (or with a ladder or stairs connection up to it)`;
   }
   if (subject.runId !== undefined) {
     return subject.stationIn !== undefined
-      ? `author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex} at that station, standing at the station elevation (or with a ladder or stairs connection up to it)`
+      ? `author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex} at that station, standing at the station elevation on a modeled platform at that elevation reached by a ladder or stairs chain from grade (or with a ladder or stairs connection up to it)`
       : `author the station, then an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}`;
   }
-  return `author an access node of kind "${subject.kind}" for ${subject.symbolId} standing at the instance's base elevation (or with a ladder or stairs connection up to it)`;
+  return `author an access node of kind "${subject.kind}" for ${subject.symbolId} standing at the instance's base elevation on a modeled platform at that elevation reached by a ladder or stairs chain from grade (or with a ladder or stairs connection up to it)`;
 }
 
 /**
@@ -2139,6 +2268,14 @@ function missingAccessSubjectFindings(design) {
             `${name} has no modeled operator access node: its face elevation is not modeled, so no access node can prove it is reached — model the face elevation first.`,
           ),
         );
+      } else if (detail.reason === "vertical" && detail.standingUnreachable) {
+        findings.push(
+          finding(
+            ACCESS_CODES.ACCESS_NOT_MODELED,
+            subject.subjectId,
+            `${name} has no modeled operator access node: access node ${node.id} stands at ${detail.standing} in, but that elevation is not reachable from grade — no modeled ladder, stairs, or platform chain reaches it. Stand the node at grade and declare a ladder or stairs connection up to ${detail.required} in, or model a platform at ${detail.standing} in reached by a complete ladder or stairs chain from grade.`,
+          ),
+        );
       } else if (detail.reason === "vertical" && detail.ladderRunExceeded) {
         findings.push(
           finding(
@@ -2152,7 +2289,7 @@ function missingAccessSubjectFindings(design) {
           finding(
             ACCESS_CODES.ACCESS_NOT_MODELED,
             subject.subjectId,
-            `${name} has no modeled operator access node: access node ${node.id} stands at ${detail.standing} in but the access point is at ${detail.required} in — stand the node at ${detail.required} in (a platform at that elevation), or declare a ladder or stairs connection from ${detail.standing} in up to ${detail.required} in.`,
+            `${name} has no modeled operator access node: access node ${node.id} stands at ${detail.standing} in but the access point is at ${detail.required} in — stand the node at grade and declare a ladder or stairs connection from grade up to ${detail.required} in, or stand it on a modeled platform at ${detail.required} in reached by a complete ladder or stairs chain from grade.`,
           ),
         );
       } else {
@@ -2279,10 +2416,18 @@ export function buildWalkGraph(design) {
   const edges = [];
   // attached.nodeStandingElevationIn records the vertical datum of
   // every attached node (its authored elevationIn, else the
-  // design's grade elevation) as provenance on the attachment —
-  // the graph itself is plan connectivity (paths are plan
-  // polylines), and the vertical binding is validated by
-  // missingAccessSubjectFindings, which both validators consult.
+  // design's grade elevation) as provenance on the attachment.
+  // Attachment itself is gated on standing reachability (fix
+  // round 4): a node attaches only when an operator can actually
+  // stand at its standing elevation — grade, or an elevated datum
+  // proven by a platform and a complete vertical chain from grade
+  // (standingReachableDetail). An unreachable node gets no vertex,
+  // no attached entry and no provenance: the graph is plan
+  // connectivity FROM a reachable datum, and a grade path never
+  // connects directly to an elevated stand with no climb. The
+  // vertical binding is validated by missingAccessSubjectFindings,
+  // which both validators consult. Entries and crossover landings
+  // are grade-level by construction and are not gated.
   const attached = { entries: {}, nodes: {}, landings: {}, nodeStandingElevationIn: {} };
   const paths = accessList(design, "paths").filter(
     (p) => Array.isArray(p?.points) && p.points.length >= 2,
@@ -2368,6 +2513,10 @@ export function buildWalkGraph(design) {
   }
   for (const node of accessList(design, "nodes")) {
     if (!isFiniteNumber(node?.x) || !isFiniteNumber(node?.y)) continue;
+    // Fix round 4: a node standing at an elevation no modeled
+    // climb reaches does not attach — its plan position is on a
+    // grade path it cannot stand on.
+    if (!standingReachableDetail(design, node).reachable) continue;
     const vertexId = attachPoint("node", node.id, { x: node.x, y: node.y }, node.pathId ?? null);
     if (vertexId) {
       attached.nodes[node.id] = vertexId;
