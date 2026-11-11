@@ -115,6 +115,27 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview",
   );
 
+  // Redlines-tab link-controls bug: a soft client-side navigation to a
+  // different package (e.g. clicking a row in the Work Packages list, or
+  // any Link to this same dynamic route) re-runs the server page with a
+  // fresh `initialTab`, but React keeps this client component mounted and
+  // the `useState` initializer above only ran once, on first mount — so
+  // `activeTab` stayed on whatever tab the user was last viewing instead of
+  // the newly-requested one. The symptom this produced in production: one
+  // package's "Documents" tab content (Link existing / Designer-project
+  // picker) kept rendering under a URL that now read `?tab=redlines` for a
+  // different package, until some other interaction happened to reset the
+  // state. The IFA→IFC redlines tab itself never had those controls — they
+  // belong to Documents (see WorkPackageDocuments.jsx). Resynced during
+  // render (same pattern as CaptureEditorHost's prevSelectionId / PlanCanvas's
+  // prevTool in this codebase) rather than in an effect, so the sync happens
+  // before the stale tab ever paints.
+  const [prevInitialTab, setPrevInitialTab] = useState(initialTab);
+  if (initialTab !== prevInitialTab) {
+    setPrevInitialTab(initialTab);
+    setActiveTab(TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview");
+  }
+
   // D16: "Review linked records" on the Budget tab was a dead anchor
   // (#work-package-links only exists in the DOM while Overview is the
   // active tab — tabs are conditionally rendered, not merely hidden).

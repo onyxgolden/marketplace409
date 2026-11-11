@@ -623,6 +623,42 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(headings(container)).toContain("Package");
   });
 
+  it("resyncs the active tab when a soft navigation updates initialTab without remounting (redlines link-controls bug)", () => {
+    // Production symptom: a client-side navigation to this same route (a
+    // different package, or any Link carrying a new ?tab=) re-runs the
+    // server page and hands this already-mounted component a new
+    // `initialTab` prop, but React does not remount it — only the
+    // `useState` initializer ran, once, on first mount. Without the
+    // resync effect, `activeTab` stays on whatever tab was active before,
+    // so a navigation that asked for "redlines" kept rendering the
+    // previous tab's content (e.g. Documents' "Link existing" controls)
+    // under a URL that now read ?tab=redlines. A single renderDetail()
+    // call can never catch this — it always mounts fresh, matching props
+    // to initial state by construction. This test re-renders the SAME
+    // root with a new initialTab, exactly the no-remount scenario.
+    stubFetch();
+    const { container, root } = renderDetail(BASE_PKG, { initialTab: "documents" });
+    expect(tabButton(container, "Documents").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Link existing");
+
+    act(() => {
+      root.render(
+        <WorkPackageDetailClient
+          initialTab="redlines"
+          initial={{
+            package: BASE_PKG, transitions: [], attestations: [], baselines: [],
+            currentBaseline: null, scopeChanges: [], observations: [],
+          }}
+          initialLinks={[]}
+        />,
+      );
+    });
+
+    expect(tabButton(container, "IFA→IFC redlines").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).not.toContain("Link existing");
+    expect(headings(container)).toContain("Drawing readiness");
+  });
+
   it("shows the danger zone only on the Activity / Audit tab", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG, {
