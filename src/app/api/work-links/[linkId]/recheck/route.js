@@ -5,8 +5,9 @@ export async function POST(request, { params }) {
   try {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
+    const { linkId } = await params;
     const result = await recheckLink(auth.db, {
-      ownerId: auth.ownerId, linkId: params.linkId,
+      ownerId: auth.ownerId, linkId,
     });
     if (!result.ok) return fail(result);
     return ok({ success: true, link: result.link });

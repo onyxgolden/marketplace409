@@ -6,8 +6,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import PlannerAdminClient from "./PlannerAdminClient.jsx";
 
-const ROLE_PLANNER_ADMIN = { id: "forge_pr_1", role_key: "planner_admin", name: "Planner Admin", is_builtin: false, version: 1 };
-const ROLE_READ_ONLY = { id: "forge_pr_2", role_key: "read_only", name: "Read-only", is_builtin: false, version: 1 };
+// D3: the real migration (forge_planner_roles_provision_starter_set)
+// hardcodes is_builtin=true for every one of the 5 starter roles -- these
+// fixtures previously had it backwards (false), which is exactly why the
+// is_builtin-based exclusion bug (every starter role filtered out of the
+// assign dropdown and the capability matrix's editable check) was never
+// caught: the fixture's is_builtin never matched what real data looks like.
+const ROLE_PLANNER_ADMIN = { id: "forge_pr_1", role_key: "planner_admin", name: "Planner Admin", is_builtin: true, version: 1 };
+const ROLE_READ_ONLY = { id: "forge_pr_2", role_key: "read_only", name: "Read-only", is_builtin: true, version: 1 };
+// A literal "owner" row never exists in practice (owner authority is
+// structural -- see PR #767); this fixture exists only to prove the UI
+// defensively excludes one by role_key if it ever did.
 const ROLE_OWNER = { id: "forge_pr_owner", role_key: "owner", name: "Owner", is_builtin: true, version: 1 };
 
 function snapshotWith({ roles = [ROLE_OWNER, ROLE_PLANNER_ADMIN, ROLE_READ_ONLY], capabilities = [], assignments = [] } = {}) {

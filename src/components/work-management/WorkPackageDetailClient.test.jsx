@@ -40,10 +40,24 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null } = {}) {
   const patches = [];
   const deletes = [];
+  const freezeRequests = [];
+  // D1: a real backend's GET reflects whatever the scope POST actually
+  // committed. A GET stub that always returns [] regardless of prior
+  // writes would make the awaited-refresh fix look broken for a reason
+  // that's an artifact of the stub, not the component.
+  const committedBaselines = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
+    if (url === `/api/work-packages/${BASE_PKG.id}/scope` && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      freezeRequests.push(body);
+      if (freezeImpl) return freezeImpl(body);
+      const baseline = { id: "forge_wsb_1", version: committedBaselines.length + 1, package_id: BASE_PKG.id, membership: body.membership, membership_hash: "fnv1a:test" };
+      committedBaselines.push(baseline);
+      return { ok: true, json: async () => ({ success: true, baseline }) };
+    }
     if (url === "/api/work-packages/property-options") {
       if (failOptions) return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
       return { ok: true, json: async () => ({ properties }) };
@@ -60,7 +74,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       return { ok: true, json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }) };
     }
     if (url === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
-      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: [], scopeChanges: [], observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
+      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: committedBaselines, scopeChanges: [], observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
     }
     if (typeof url === "string" && url.startsWith("/api/work-links")) {
       return { ok: true, json: async () => ({ links: [], documents: [] }) };
@@ -82,7 +96,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     }
     throw new Error(`unexpected fetch ${url}`);
   }));
-  return { patches, deletes };
+  return { patches, deletes, freezeRequests };
 }
 
 function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, transitions = [] } = {}) {
@@ -699,5 +713,49 @@ describe("WorkPackageDetailClient Freeze baseline error scoping (D14)", () => {
     expect(container.textContent).toContain("Scope items must be valid JSON");
     setTextarea(container, "[]");
     expect(container.textContent).not.toContain("Scope items must be valid JSON");
+  });
+});
+
+// D1 — the live audit found that clicking "Freeze baseline" with valid JSON
+// in the textarea produced no visible change and no message. Root cause: an
+// un-awaited refresh() raced the optimistic setBaselines update, so whichever
+// resolved last silently won either way. There was zero prior test coverage
+// of the success path (only the client-side invalid-JSON path was tested).
+describe("WorkPackageDetailClient Freeze baseline success (D1)", () => {
+  function setTextarea(container, value) {
+    const textarea = container.querySelector("textarea");
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  function freezeButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Freeze baseline");
+  }
+
+  it("POSTs the parsed membership and renders the frozen version with a plain-words confirmation", async () => {
+    const { freezeRequests } = stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    const membership = [{ key: "BUNDLE-01", description: "Pull bundle", quantity: 1, unit: "each" }];
+    setTextarea(container, JSON.stringify(membership));
+    await act(async () => { freezeButton(container).click(); });
+    await act(async () => {});
+    expect(freezeRequests).toHaveLength(1);
+    expect(freezeRequests[0]).toEqual({ action: "freeze", membership });
+    expect(container.textContent).not.toContain("No frozen baseline yet");
+    expect(container.textContent).toContain("Version 1");
+    expect(container.textContent).toContain("Froze baseline version 1.");
+  });
+
+  it("surfaces the server's real error instead of silently doing nothing on a 409", async () => {
+    stubFetch({
+      freezeImpl: async () => ({ ok: false, json: async () => ({ error: "Scope is already frozen; post-freeze changes go through the scope-change workflow." }) }),
+    });
+    const { container } = renderDetail(BASE_PKG);
+    setTextarea(container, JSON.stringify([{ key: "a" }]));
+    await act(async () => { freezeButton(container).click(); });
+    await act(async () => {});
+    expect(container.textContent).toContain("already frozen");
   });
 });
