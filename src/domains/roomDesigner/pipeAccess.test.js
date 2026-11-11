@@ -79,6 +79,22 @@ const drivePath = (id = "d1", points = [{ x: -500, y: 0 }, { x: 500, y: 0 }], ex
 const entryAt = (x, y, id = "e1") => ({ id, x, y });
 const nodeAt = (x, y, id = "n1", extra = {}) => ({ id, kind: "manway", x, y, ...extra });
 
+/** The vertical vessel's nozzle anchors: 4 catalog nozzles + 3 base utility ports. */
+const VESSEL_ANCHORS = [
+  "top-out",
+  "side-in",
+  "side-out",
+  "bottom-out",
+  "utility-plant-water",
+  "utility-plant-air",
+  "utility-nitrogen",
+];
+/** One required nozzle node per vessel anchor, all standing at (x, y). */
+const vesselNozzleNodes = (x, y, first = 2) =>
+  VESSEL_ANCHORS.map((anchorId, i) =>
+    nodeAt(x, y, `n${first + i}`, { kind: "nozzle", symbolId: "v1", anchorId }),
+  );
+
 /** Sleeper rack at (0, 0): 480 long (x -240..240), 120 wide, top 18 in. */
 const withSleeper = (design, id = "r1", x = 0, y = 0) =>
   placeSymbol(design, D, "sleeper-rack", x, y, { id });
@@ -856,7 +872,7 @@ describe("walk graph", () => {
       // completeness gate passes and this tests the footprint exemption.
       nodes: [
         nodeAt(0, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        nodeAt(0, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
+        ...vesselNozzleNodes(0, 0),
       ],
     });
     // The nodes sit on the vessel: the final approach is exempt.
@@ -872,10 +888,13 @@ describe("walk graph", () => {
         // is not the vessel, so its footprint is not exempt.
         walkPath("w2", [{ x: 0, y: 300 }, { x: 0, y: 24 }]),
       ],
+      // Nodes at (0, 20): inside the 48-in footprint (its edge is
+      // y = 24, and a point on the boundary is not "at" the
+      // equipment) and within reach of the spur path's end.
       nodes: [
         nodeAt(500, 0, "n1"),
-        nodeAt(0, 24, "n2", { kind: "manway", symbolId: "v1" }),
-        nodeAt(0, 24, "n3", { kind: "nozzle", symbolId: "v1" }),
+        nodeAt(0, 20, "n2", { kind: "manway", symbolId: "v1" }),
+        ...vesselNozzleNodes(0, 20, 3),
       ],
     });
     expect(validateWalkGraph(blocked).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
@@ -1085,8 +1104,10 @@ describe("access completeness", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "centrifugal-pump", 500, 0, { id: "p1" });
     const subjects = expectedAccessSubjects(design);
-    expect(subjects).toHaveLength(1);
-    expect(subjects[0].kind).toBe("nozzle");
+    // One subject per anchor (suction + discharge), not one per pump.
+    expect(subjects).toHaveLength(2);
+    expect(subjects.map((s) => s.kind)).toEqual(["nozzle", "nozzle"]);
+    expect(subjects.map((s) => s.anchorId)).toEqual(["suction-in", "discharge-out"]);
     expect(validateOperatorAccess(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
     expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
   });
@@ -1095,9 +1116,23 @@ describe("access completeness", () => {
     let design = entryAndPathOnly();
     design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
     const subjects = expectedAccessSubjects(design);
-    expect(subjects.map((s) => s.kind).sort()).toEqual(["manway", "nozzle"]);
+    // One manway subject plus one subject per nozzle anchor: 4 catalog
+    // nozzles + 3 base utility ports.
+    expect(subjects.map((s) => s.kind).sort()).toEqual([
+      "manway",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+    ]);
+    expect(subjects.filter((s) => s.kind === "nozzle").map((s) => s.anchorId)).toEqual(
+      VESSEL_ANCHORS,
+    );
     const { findings } = validateOperatorAccess(design);
-    expect(findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED)).toHaveLength(2);
+    expect(findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED)).toHaveLength(8);
   });
 
   it("a valve station on a pipe run with no node is ACCESS_NOT_MODELED", () => {
@@ -1159,11 +1194,17 @@ describe("access completeness", () => {
     expect(expectedAccessSubjects(vessel).map((s) => s.kind).sort()).toEqual([
       "manway",
       "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
+      "nozzle",
     ]);
     vessel = setAccessData(vessel, {
       nodes: [
         nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
-        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
+        ...vesselNozzleNodes(500, 0),
       ],
     });
     expect(validateOperatorAccess(vessel).state).toBe("PASS");
@@ -1181,6 +1222,160 @@ describe("access completeness", () => {
     expect(expectedAccessSubjects(stationed)).toHaveLength(1);
     expect(validateOperatorAccess(stationed).state).toBe("PASS");
     expect(validateWalkGraph(stationed).state).toBe("PASS");
+  });
+
+  it("a required subject is not satisfied by an optional node", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    // Every subject is modeled, but the manway node is optional —
+    // optional nodes are never attached or reached.
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1", required: false }),
+        ...vesselNozzleNodes(500, 0),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(1);
+    expect(missing[0].message).toContain("optional");
+    expect(missing[0].message).toContain("n1");
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    // The same node as required satisfies the manway.
+    let required = entryAndPathOnly();
+    required = placeSymbol(required, D, "vertical-vessel", 500, 0, { id: "v1" });
+    required = setAccessData(required, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        ...vesselNozzleNodes(500, 0),
+      ],
+    });
+    expect(validateOperatorAccess(required).state).toBe("PASS");
+  });
+
+  it("a matching node placed remotely does not satisfy its subject", () => {
+    // Instrument: the node sits on the walk path but 900 in from the gauge.
+    let gauge = entryAndPathOnly();
+    gauge = placeSymbol(gauge, D, "pressure-gauge", 500, 0, { id: "pi1" });
+    gauge = setAccessData(gauge, {
+      nodes: [nodeAt(-400, 0, "n1", { kind: "instrument", symbolId: "pi1" })],
+    });
+    const gaugeMissing = validateOperatorAccess(gauge).findings.filter(
+      (f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED,
+    );
+    expect(gaugeMissing).toHaveLength(1);
+    expect(gaugeMissing[0].message).toContain("standing point (-400, 0) is not at");
+
+    // Valve station: the node sits on the walk path 400 in from the station point.
+    let stationed = entryAndPathOnly();
+    stationed = addPipeRun(stationed, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    stationed = setAccessData(stationed, {
+      nodes: [nodeAt(400, 0, "n1", { kind: "valve", runId: "p1", valveIndex: 0 })],
+    });
+    const stationMissing = validateOperatorAccess(stationed).findings.filter(
+      (f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED,
+    );
+    expect(stationMissing).toHaveLength(1);
+    expect(stationMissing[0].message).toContain("standing point (400, 0) is not at");
+
+    // Nozzle: the node sits on the walk path but outside the vessel footprint.
+    let vessel = entryAndPathOnly();
+    vessel = placeSymbol(vessel, D, "vertical-vessel", 500, 0, { id: "v1" });
+    vessel = setAccessData(vessel, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(0, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
+        ...VESSEL_ANCHORS.filter((a) => a !== "side-out").map((anchorId, i) =>
+          nodeAt(500, 0, `n${i + 3}`, { kind: "nozzle", symbolId: "v1", anchorId }),
+        ),
+      ],
+    });
+    const vesselMissing = validateOperatorAccess(vessel).findings.filter(
+      (f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED,
+    );
+    expect(vesselMissing).toHaveLength(1);
+    expect(vesselMissing[0].message).toContain("Nozzle side-out on");
+    expect(vesselMissing[0].message).toContain("standing point (0, 0) is not at");
+  });
+
+  it("multi-nozzle equipment: one modeled anchor leaves the rest unmodeled", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(6);
+    for (const anchorId of VESSEL_ANCHORS.filter((a) => a !== "side-out")) {
+      expect(missing.some((f) => f.message.includes(`Nozzle ${anchorId} on`))).toBe(true);
+    }
+    expect(missing.some((f) => f.message.includes("Nozzle side-out on"))).toBe(false);
+  });
+
+  it("a node on the wrong side does not satisfy its nozzle or manway", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    // side-out faces east (+x), side-in faces west (-x), the manway faces south (+y).
+    // All three nodes sit inside the footprint and on the walk path, but the
+    // manway and side-out nodes stand on the wrong side of the vessel.
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(500, -10, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(490, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-out" }),
+        nodeAt(490, 0, "n3", { kind: "nozzle", symbolId: "v1", anchorId: "side-in" }),
+        ...VESSEL_ANCHORS.filter((a) => a !== "side-out" && a !== "side-in").map(
+          (anchorId, i) =>
+            nodeAt(500, 0, `n${i + 4}`, { kind: "nozzle", symbolId: "v1", anchorId }),
+        ),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(2);
+    expect(missing.some((f) => f.message.includes("Manway on"))).toBe(true);
+    expect(missing.some((f) => f.message.includes("Nozzle side-out on"))).toBe(true);
+    // side-in IS satisfied by the west-side node; the rest by center nodes.
+    expect(missing.some((f) => f.message.includes("Nozzle side-in on"))).toBe(false);
+  });
+
+  it("a nozzle node with no anchorId satisfies no nozzle", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
+      ],
+    });
+    const { findings } = validateOperatorAccess(design);
+    const missing = findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(missing).toHaveLength(7);
+    expect(missing.every((f) => f.message.includes("names no anchor"))).toBe(true);
+    // A node naming another anchor is equally unlinked for this one.
+    let wrong = entryAndPathOnly();
+    wrong = placeSymbol(wrong, D, "vertical-vessel", 500, 0, { id: "v1" });
+    wrong = setAccessData(wrong, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1", anchorId: "side-in" }),
+      ],
+    });
+    const wrongMissing = validateOperatorAccess(wrong).findings.filter(
+      (f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED,
+    );
+    expect(wrongMissing).toHaveLength(6);
+    expect(
+      wrongMissing.some((f) => f.message.includes('names anchor "side-in", not "side-out"')),
+    ).toBe(true);
   });
 });
 

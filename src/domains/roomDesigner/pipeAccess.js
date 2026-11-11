@@ -88,6 +88,7 @@ import { physicalRouteIn } from "./pipeCrossings";
 import {
   LOW_PIPE_ELEVATION_IN,
   SUPPORT_FACE_TOLERANCE_IN,
+  pointAtStation,
   rackColumnWorldPositions,
   rackFootprint,
 } from "./pipeSupports";
@@ -101,7 +102,7 @@ import {
 } from "./vesselAccess";
 import { findSymbol } from "./symbolRegistry";
 import { rackTopIn } from "./rackGeometry";
-import { anchorsOf } from "./pipeAttachments";
+import { anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
 
 /** Face-contact tolerance (in): single source is pipeCrossings via pipeSupports. */
 export const ACCESS_FACE_TOLERANCE_IN = SUPPORT_FACE_TOLERANCE_IN;
@@ -1413,6 +1414,12 @@ function validateAccessRecord(kind, value) {
       finite(value.x, "x");
       finite(value.y, "y");
       if (value.elevationIn !== undefined) finite(value.elevationIn, "elevationIn");
+      // A nozzle node binds to one nozzle anchor by anchorId (fix
+      // round 2): the id is the stable anchor identity from
+      // anchorsOf, not a free-form label.
+      if (value.anchorId !== undefined && typeof value.anchorId !== "string") {
+        fail("anchorId must be a string");
+      }
       break;
     case "paths":
       if (!ACCESS_PATH_KINDS.has(value.kind)) fail(`unknown path kind ${value.kind}`);
@@ -1646,14 +1653,16 @@ export function applyCrossoverProposal(design, barrierId, proposal) {
 //   kind "valve" with the same runId and valveIndex. A station-less
 //   valve station is still a subject — its position is unknown, so
 //   its access cannot be modeled at all.
-// - Nozzle: one subject per symbol instance that carries nozzle
-//   anchors (anchorsOf — catalog nozzles, TEMA anchors, and instance
-//   overrides, honoring the legacy gate). One node per nozzle-bearing
-//   instance models the operator reaching the equipment to work on
-//   its nozzles, the same granularity as a removal node per
-//   symbolId. Satisfied by a node of kind "nozzle" with the same
-//   symbolId. Digest §4.8: a nozzle nobody can reach is a layout
-//   defect even if the piping to it is correct.
+// - Nozzle: one subject PER ANCHOR from anchorsOf (catalog nozzles,
+//   TEMA anchors, downcomer and utility anchors, honoring the
+//   legacy gate) — not one per nozzle-bearing instance. Digest §4.8:
+//   a nozzle nobody can reach is a layout defect even if the piping
+//   to it is correct, and that rule is per nozzle: one reachable
+//   node linked only to the equipment ID cannot clear every nozzle
+//   on all sides of the equipment. Satisfied only by a node of kind
+//   "nozzle" with the same symbolId AND the same anchorId, whose
+//   standing point is geometrically bound to that anchor (at the
+//   equipment, on the anchor's side — see subjectBinding).
 // - Removal: no derivable source exists in the model (nothing marks
 //   equipment as needing a removal path), so removal subjects are
 //   author-declared by the removal node itself — and a removal node
@@ -1677,10 +1686,10 @@ const INSTRUMENT_GLYPHS = new Set([
 
 /**
  * The expected access subjects derived from the design: every
- * manway, valve, instrument, valve station and nozzle-bearing
- * instance the operator must be able to reach. Each subject is
- * { kind, symbolId?, runId?, valveIndex?, stationIn?, label,
- * subjectId } — subjectId is stable for finding dedupe.
+ * manway, valve, instrument, valve station and nozzle anchor the
+ * operator must be able to reach. Each subject is
+ * { kind, symbolId?, anchorId?, runId?, valveIndex?, stationIn?,
+ * label, subjectId } — subjectId is stable for finding dedupe.
  */
 export function expectedAccessSubjects(design) {
   const subjects = [];
@@ -1700,8 +1709,14 @@ export function expectedAccessSubjects(design) {
       const kind = INSTRUMENT_GLYPHS.has(symbol.glyph) ? "instrument" : "valve";
       subjects.push({ kind, symbolId: inst.id, label, subjectId: inst.id });
     }
-    if (anchorsOf(inst).length > 0) {
-      subjects.push({ kind: "nozzle", symbolId: inst.id, label, subjectId: inst.id });
+    for (const anchor of anchorsOf(inst)) {
+      subjects.push({
+        kind: "nozzle",
+        symbolId: inst.id,
+        anchorId: anchor.id,
+        label,
+        subjectId: `${inst.id}/nozzle-${anchor.id}`,
+      });
     }
   }
   for (const run of design?.pipes || []) {
@@ -1721,61 +1736,247 @@ export function expectedAccessSubjects(design) {
   return subjects;
 }
 
-/** Whether an authored access node models the given subject. */
-function subjectHasNode(design, subject) {
-  return accessList(design, "nodes").some((node) => {
-    if (!isPlainObject(node)) return false;
-    if (subject.kind === "valve" && subject.runId !== undefined) {
-      return (
-        node.kind === "valve" && node.runId === subject.runId && node.valveIndex === subject.valveIndex
-      );
+/**
+ * Whether an authored access node models the given subject — and,
+ * when it does not, the most informative reason why. A declared ID
+ * alone is never proof (brief common contract: ownership, actual
+ * coordinates and applicability are validated). A derived required
+ * subject is satisfied only by a node that is ALL of:
+ * - ID-bound: same kind and symbolId (and, for a nozzle subject,
+ *   the same anchorId — the stable anchor identity from anchorsOf;
+ *   for a valve-station subject, the same runId and valveIndex);
+ * - required: `required !== false`. An optional node is skipped by
+ *   both validateOperatorAccess and validateWalkGraph, so it can
+ *   never satisfy a required subject — otherwise the aggregate
+ *   could report PASS on a node that is never attached or reached;
+ * - geometrically bound: the node's authored standing point
+ *   (x, y) is at the subject's actual access geometry, not merely
+ *   copied onto a clear path somewhere else on the plot (see
+ *   nodeIsBoundToSubject).
+ *
+ * Returns { satisfied: true, node } or
+ * { satisfied: false, reason, node } with reason one of:
+ * - "none": no node names this subject at all;
+ * - "unlinked": a node names the equipment but not this anchor
+ *   (nozzle subjects only — it names no anchorId, or another
+ *   anchor's);
+ * - "optional-only": every node naming this subject is optional
+ *   (required === false);
+ * - "unbound": a required node names this subject but its standing
+ *   point is not at the access geometry.
+ * The first node found in each failing class is kept so the finding
+ * can name it.
+ */
+function subjectBinding(design, subject) {
+  let optional = null;
+  let unbound = null;
+  let unlinked = null;
+  for (const node of accessList(design, "nodes")) {
+    if (!isPlainObject(node)) continue;
+    if (!nodeNamesSubjectLoosely(node, subject)) continue;
+    if (!nodeNamesSubject(node, subject)) {
+      if (!unlinked) unlinked = node;
+      continue;
     }
-    return node.kind === subject.kind && node.symbolId === subject.symbolId;
-  });
+    if (node.required === false) {
+      if (!optional) optional = node;
+      continue;
+    }
+    if (nodeIsBoundToSubject(design, node, subject)) {
+      return { satisfied: true, node };
+    }
+    if (!unbound) unbound = node;
+  }
+  if (unbound) return { satisfied: false, reason: "unbound", node: unbound };
+  if (optional) return { satisfied: false, reason: "optional-only", node: optional };
+  if (unlinked) return { satisfied: false, reason: "unlinked", node: unlinked };
+  return { satisfied: false, reason: "none", node: null };
+}
+
+/** Kind + equipment link, ignoring anchorId and required. */
+function nodeNamesSubjectLoosely(node, subject) {
+  if (subject.kind === "valve" && subject.runId !== undefined) {
+    return node.kind === "valve" && node.runId === subject.runId && node.valveIndex === subject.valveIndex;
+  }
+  return node.kind === subject.kind && node.symbolId === subject.symbolId;
+}
+
+/** Full ID binding: the loose link plus the anchor identity for nozzle subjects. */
+function nodeNamesSubject(node, subject) {
+  if (!nodeNamesSubjectLoosely(node, subject)) return false;
+  if (subject.kind === "nozzle") return node.anchorId === subject.anchorId;
+  return true;
+}
+
+/** Rotate a plan direction by the instance rotation (degrees). */
+function rotateDir(x, y, deg) {
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { x: x * cos - y * sin, y: x * sin + y * cos };
+}
+
+/**
+ * The walk-graph attachment tolerance (in): half the width of the
+ * walk/drive path the node stands on, plus the face tolerance.
+ * This is the module's single adopted notion of a point being "at"
+ * a modeled feature — the same tolerance buildWalkGraph uses to
+ * attach a point to a path — and the valve-station binding reuses
+ * it rather than inventing a reach radius (the brief adopts no
+ * approach/travel threshold). A node with no authored path uses the
+ * walkway baseline.
+ */
+function nodeBindingTolerance(design, node) {
+  const path = node?.pathId
+    ? accessList(design, "paths").find((p) => p?.id === node.pathId)
+    : null;
+  const widthIn = path ? resolvePathProfile(path).widthIn : WALKWAY_PROFILE_IN.widthIn;
+  return widthIn / 2 + FACE;
+}
+
+/**
+ * Whether a valve-station node's standing point is at the station:
+ * within the binding tolerance of the route point at the subject's
+ * stationIn (pointAtStation, D10-02). A station-less subject has
+ * no position to bind to and can never be satisfied.
+ */
+function valveStationBinding(design, node, subject) {
+  if (subject.stationIn === undefined) return false;
+  const run = (design?.pipes || []).find((r) => r?.id === subject.runId);
+  if (!run) return false;
+  const route = physicalRouteIn(design, run);
+  if (!Array.isArray(route) || route.length === 0) return false;
+  const stationPoint = pointAtStation(route, subject.stationIn);
+  if (!stationPoint) return false;
+  return (
+    Math.hypot(node.x - stationPoint.x, node.y - stationPoint.y) <=
+    nodeBindingTolerance(design, node) + EPS
+  );
+}
+
+/**
+ * Whether a required node's standing point is geometrically bound
+ * to its subject's actual access geometry:
+ * - valve / instrument: inside the symbol instance's plan
+ *   footprint — the symbol IS the valve/instrument, so its own
+ *   footprint is the access zone;
+ * - manway: inside the footprint AND on the manway's side of the
+ *   equipment centerline (manwayLocal direction, rotated by the
+ *   instance rotation). A centerline point is side-neutral and
+ *   binds; a point on the opposite side does not;
+ * - nozzle anchor: inside the footprint AND, when the anchor's
+ *   connection face carries a plan normal, on the anchor's side of
+ *   the centerline. A top nozzle (vertical face) and a TEMA anchor
+ *   carry no plan normal, so the footprint alone binds them.
+ * A point outside the footprint is remote from the equipment,
+ * however clearly its walk path runs.
+ */
+function nodeIsBoundToSubject(design, node, subject) {
+  if (!isFiniteNumber(node?.x) || !isFiniteNumber(node?.y)) return false;
+  if (subject.runId !== undefined) return valveStationBinding(design, node, subject);
+  const inst = (design?.symbols || []).find((s) => s?.id === subject.symbolId);
+  if (!inst) return false;
+  const symbol = findSymbol(inst.domain, inst.symbolId);
+  if (!symbol) return false;
+  const point = { x: node.x, y: node.y };
+  if (!pointInPolygon(point, instanceFootprint(inst, symbol))) return false;
+  const cx = inst.x || 0;
+  const cy = inst.y || 0;
+  if (subject.kind === "manway") {
+    const local = manwayLocal(symbol, inst);
+    if (!local) return false;
+    const dir = rotateDir(local.dirX, local.dirY, inst.rotationDeg || 0);
+    return (point.x - cx) * dir.x + (point.y - cy) * dir.y >= -EPS;
+  }
+  if (subject.kind === "nozzle") {
+    const face = connectionFaceForAnchor(symbol, inst, subject.anchorId);
+    if (!face || !face.normal) return true;
+    return (point.x - cx) * face.normal.x + (point.y - cy) * face.normal.y >= -EPS;
+  }
+  return true;
+}
+
+/** Plain-words name of a subject for findings. */
+function subjectName(subject) {
+  if (subject.kind === "manway") return `Manway on ${subject.label}`;
+  if (subject.kind === "nozzle") return `Nozzle ${subject.anchorId} on ${subject.label}`;
+  if (subject.runId !== undefined) {
+    return subject.stationIn !== undefined
+      ? `Valve station ${subject.valveIndex} on pipe run ${subject.runId} at ${subject.stationIn} in`
+      : `Valve station ${subject.valveIndex} on pipe run ${subject.runId}`;
+  }
+  return `${subject.kind === "instrument" ? "Instrument" : "Valve"} ${subject.label}`;
+}
+
+/** How to author a node that models this subject. */
+function subjectAuthorInstruction(subject) {
+  if (subject.kind === "manway") {
+    return `author an access node of kind "manway" for ${subject.symbolId}`;
+  }
+  if (subject.kind === "nozzle") {
+    return `author an access node of kind "nozzle" for ${subject.symbolId} with anchorId "${subject.anchorId}" at that nozzle`;
+  }
+  if (subject.runId !== undefined) {
+    return subject.stationIn !== undefined
+      ? `author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex} at that station`
+      : `author the station, then an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}`;
+  }
+  return `author an access node of kind "${subject.kind}" for ${subject.symbolId}`;
 }
 
 /**
  * ACCESS_NOT_MODELED findings for every derived subject with no
  * modeled access node. Shared by validateOperatorAccess and
  * validateWalkGraph so the two agree — and accessCheckStates
- * dedupes the identical findings into one.
+ * dedupes the identical findings into one. The message names WHY
+ * the subject is unmodeled (no node / wrong anchor / optional-only
+ * / standing point not at the access geometry) so the repair is
+ * explicit.
  */
 function missingAccessSubjectFindings(design) {
   const findings = [];
   for (const subject of expectedAccessSubjects(design)) {
-    if (subjectHasNode(design, subject)) continue;
-    if (subject.kind === "manway") {
+    const binding = subjectBinding(design, subject);
+    if (binding.satisfied) continue;
+    const name = subjectName(subject);
+    const instruction = subjectAuthorInstruction(subject);
+    if (binding.reason === "none") {
       findings.push(
         finding(
           ACCESS_CODES.ACCESS_NOT_MODELED,
           subject.subjectId,
-          `Manway on ${subject.label} has no modeled operator access node: author an access node of kind "manway" for ${subject.symbolId}.`,
+          subject.runId !== undefined && subject.stationIn === undefined
+            ? `${name} has no authored route station, so its operator access cannot be modeled: ${instruction}.`
+            : `${name} has no modeled operator access node: ${instruction}.`,
         ),
       );
-    } else if (subject.kind === "nozzle") {
+    } else if (binding.reason === "unlinked") {
+      const node = binding.node;
       findings.push(
         finding(
           ACCESS_CODES.ACCESS_NOT_MODELED,
           subject.subjectId,
-          `Nozzles on ${subject.label} have no modeled operator access node: author an access node of kind "nozzle" for ${subject.symbolId}.`,
+          `${name} has no modeled operator access node: access node ${node.id} is authored for ${subject.label} but names ${
+            node.anchorId === undefined ? "no anchor" : `anchor "${node.anchorId}", not "${subject.anchorId}"`
+          } — ${instruction}.`,
         ),
       );
-    } else if (subject.runId !== undefined) {
+    } else if (binding.reason === "optional-only") {
       findings.push(
         finding(
           ACCESS_CODES.ACCESS_NOT_MODELED,
           subject.subjectId,
-          subject.stationIn !== undefined
-            ? `Valve station ${subject.valveIndex} on pipe run ${subject.runId} at ${subject.stationIn} in has no modeled operator access node: author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}.`
-            : `Valve station ${subject.valveIndex} on pipe run ${subject.runId} has no authored route station, so its operator access cannot be modeled: author the station, then an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}.`,
+          `${name} is modeled only by optional access node ${binding.node.id}, which is never attached or reached: ${instruction} as a required node.`,
         ),
       );
     } else {
+      // "unbound": a required node names the subject but stands elsewhere.
+      const node = binding.node;
       findings.push(
         finding(
           ACCESS_CODES.ACCESS_NOT_MODELED,
           subject.subjectId,
-          `${subject.kind === "instrument" ? "Instrument" : "Valve"} ${subject.label} has no modeled operator access node: author an access node of kind "${subject.kind}" for ${subject.symbolId}.`,
+          `${name} has no modeled operator access node: access node ${node.id} is authored for it but its standing point (${node.x}, ${node.y}) is not at the access point — move the node to the access point or ${instruction} as a required node.`,
         ),
       );
     }
