@@ -711,6 +711,26 @@ describe("slice 8 migration: change-order create and update", () => {
     expect(rows[0].n).toBe(0);
   });
 
+  // D17 fix round: the UI's "Reason for grid changes" box is required
+  // before a blank-row create can commit, but the create POST body never
+  // included it, so the panel's reason never reached this RPC at all —
+  // purely a client-side wiring gap, this RPC already accepted and
+  // recorded p_reason correctly. There is no `reason` column on
+  // forge_work_change_orders itself (reason only ever lives on the
+  // 'create' revision row) — querying that revision back is the real
+  // persistence proof, not the create RPC's own return value.
+  it60("records the given reason on the create revision; omitting it records no reason, not an error", async () => {
+    const withReason = await createCO(db, OWNER_A, { description: "Owner-requested scope addition", reason: "Owner-requested scope addition" });
+    const [createRevision] = await orderRevisionRows(db, withReason.id);
+    expect(createRevision.version).toBe(1);
+    expect(createRevision.action).toBe("create");
+    expect(createRevision.reason).toBe("Owner-requested scope addition");
+
+    const withoutReason = await createCO(db, OWNER_A, { description: "No reason given" });
+    const [bareRevision] = await orderRevisionRows(db, withoutReason.id);
+    expect(bareRevision.reason).toBe(null);
+  });
+
   it60("updates version-guarded with a reason, and a no-op update bumps nothing", async () => {
     const order = await createCO(db, OWNER_A, { description: "Rework", estimatedCostCents: 10000 });
     await expect(updateCO(db, OWNER_A, order.id, { expectedVersion: 1, description: "Changed" }))

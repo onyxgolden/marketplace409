@@ -8,7 +8,7 @@
 // so the plan on screen is always the plan that would apply.
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   PACKAGE_IMPORT_COLUMNS,
   STEP_IMPORT_COLUMNS,
@@ -129,8 +129,26 @@ export default function WorkPackageImportDialog({ kind, packageId, onImported, o
   const plan = preview?.plan;
   const canConfirm = stage === "preview" && plan && plan.summary.errorCount === 0;
 
+  // Window-level, not the dialog's own onKeyDown: the trigger button that
+  // opens this dialog never moves focus into it, so a handler that only
+  // fires while focus is inside the dialog never sees the Escape pressed
+  // right after opening. Matches this directory's existing convention
+  // (PlannerAdminClient's confirm dialog / audit screen).
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-label={`Import ${label}`}>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Import ${label}`}
+    >
       <div className="mt-10 w-full max-w-3xl rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>

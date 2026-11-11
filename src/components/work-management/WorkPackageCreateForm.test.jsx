@@ -32,10 +32,18 @@ function stubFetch({ properties, failOptions = false } = {}) {
   return { posts };
 }
 
+// D9: the unsaved-changes guard attaches a document-level click listener
+// via a useEffect cleanup — unlike every other effect in this file so far,
+// that listener outlives a bare `document.body.innerHTML = ""` (which
+// clears nodes, not React's own commit/cleanup lifecycle) and keeps firing
+// in later tests unless the root is actually unmounted first.
+const activeRoots = [];
+
 function renderForm(props = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  activeRoots.push(root);
   act(() => {
     root.render(<WorkPackageCreateForm {...props} />);
   });
@@ -65,6 +73,9 @@ async function submitCreate(container) {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  while (activeRoots.length > 0) {
+    act(() => { activeRoots.pop().unmount(); });
+  }
   document.body.innerHTML = "";
 });
 
@@ -269,5 +280,79 @@ describe("WorkPackageCreateForm Cancel (D4)", () => {
     expect(posts).toHaveLength(1);
     expect(posts[0].title).toBe("Real package");
     expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new");
+  });
+});
+
+describe("WorkPackageCreateForm unsaved-changes guard (D9)", () => {
+  function fillTitle(container, value) {
+    const title = container.querySelector("#title");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(title, value);
+    act(() => {
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function addOutsideLink(href, label) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.textContent = label;
+    document.body.appendChild(link);
+    return link;
+  }
+
+  it("prompts before leaving via another link (e.g. the shared planner nav) once the form is touched, and blocks on cancel", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    fillTitle(container, "Unsaved turnover package");
+    const navLink = addOutsideLink("/forge/work/admin", "Admin");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    let event;
+    act(() => {
+      event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      navLink.dispatchEvent(event);
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("lets the navigation through once the user confirms leaving", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    fillTitle(container, "Unsaved turnover package");
+    const navLink = addOutsideLink("/forge/work/admin", "Admin");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let event;
+    act(() => {
+      event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      navLink.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("never prompts for Cancel itself — Cancel discards without a warning", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    fillTitle(container, "Unsaved turnover package");
+    const cancel = [...container.querySelectorAll("a")].find((a) => a.textContent.trim() === "Cancel");
+    const confirmSpy = vi.spyOn(window, "confirm");
+    act(() => {
+      cancel.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("never prompts when the form has not been touched yet", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    renderForm();
+    await settle();
+    const navLink = addOutsideLink("/forge/work/admin", "Admin");
+    const confirmSpy = vi.spyOn(window, "confirm");
+    act(() => {
+      navLink.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 });

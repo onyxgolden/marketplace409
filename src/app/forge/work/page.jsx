@@ -6,7 +6,7 @@ import { listWorkPackages, listPackagePropertyOptions } from "@/application/work
 import { WP_STATUS } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
-import WorkPackageListGrid from "@/components/work-management/WorkPackageListGrid.jsx";
+import WorkPackageListGrid, { BLANK_ROWS } from "@/components/work-management/WorkPackageListGrid.jsx";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +80,13 @@ export default async function WorkPackagesPage({ searchParams }) {
   const properties = propertyResult.ok ? propertyResult.properties : [];
   const clearHref = workspaceQuery ? `/forge/work${workspaceQuery}` : "/forge/work";
 
+  // D7: a blank add-row is an unsaved draft with no property yet — it must
+  // follow the same filter rule as a real row with that shape, not render
+  // unconditionally regardless of the active Status/Property filter.
+  const blankRowsMatchFilters = (filters.status === "all" || filters.status === "draft")
+    && (filters.propertyId === "all" || filters.propertyId === UNASSIGNED);
+  const blankRowCount = blankRowsMatchFilters ? BLANK_ROWS : 0;
+
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8">
       <div className="flex items-center justify-between">
@@ -140,6 +147,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-status">Status</label>
             <select id="filter-status" name="status" defaultValue={filters.status}
+              key={`status-${filters.status}-${filters.propertyId}`}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
               <option value="all">All statuses</option>
               {STATUS_VALUES.map((status) => (
@@ -150,6 +158,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-property">Property</label>
             <select id="filter-property" name="propertyId" defaultValue={filters.propertyId}
+              key={`property-${filters.status}-${filters.propertyId}`}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
               <option value="all">All properties</option>
               <option value={UNASSIGNED}>No property assigned</option>
@@ -173,7 +182,7 @@ export default async function WorkPackagesPage({ searchParams }) {
         <p className="mt-8 rounded-lg bg-red-50 p-4 text-sm text-red-700">
           Unable to load work packages.
         </p>
-      ) : filtered.length === 0 && hasFilters ? (
+      ) : filtered.length === 0 && hasFilters && blankRowCount === 0 ? (
         <div className="mt-8 rounded-lg border border-dashed border-slate-300 p-6 text-center">
           <p className="text-slate-500">No work packages match these filters.</p>
           <Link href={clearHref} className="mt-2 inline-block text-sm font-medium text-blue-700 hover:underline">
@@ -188,6 +197,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           initialPackages={filtered}
           properties={properties}
           workspaceQuery={workspaceQuery}
+          blankRowCount={blankRowCount}
         />
       )}
     </main>
