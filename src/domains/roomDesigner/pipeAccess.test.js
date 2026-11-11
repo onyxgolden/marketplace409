@@ -28,6 +28,7 @@ import {
   corridorStationLine,
   deleteCrossover,
   effectiveManwayPlatform,
+  expectedAccessSubjects,
   manwayCenterlineAbovePavingIn,
   manwayProfileCompatibility,
   manwayReferencePlatform,
@@ -295,6 +296,82 @@ describe("manway profile (§5.3)", () => {
     const bareInst = bare.symbols.find((s) => s.id === "v1");
     expect(effectiveManwayPlatform(bare, bareInst).source).toBe("legacy-d5");
     expect(effectiveManwayPlatform(bare, bareInst).elevationIn).toBe(168);
+  });
+});
+
+// ---- Manway reference frame with nonzero grade --------------------------------
+// The reference platform elevation is ABSOLUTE (grade + centerline − 30);
+// the centerline and the platform height above paving are the relative
+// values. With grade 0 the two frames coincide and the mix is invisible
+// — these fixtures use grade 24 in so a frame error shows up as a
+// 24-in delta. (vessel base 0, sill S, diameter 24: centerline above
+// paving = S + 12 − 24.)
+
+describe("manway reference frame (nonzero grade)", () => {
+  const graded = (sillIn, gradeIn = 24) => {
+    const design = vesselWithSill(sillIn);
+    design.gradeElevationIn = gradeIn;
+    return design;
+  };
+
+  it("reference keeps the above-paving height and the absolute elevation distinct", () => {
+    const design = graded(192); // centerline 180 above paving
+    const inst = design.symbols.find((s) => s.id === "v1");
+    expect(manwayCenterlineAbovePavingIn(design, inst)).toBe(180);
+    const ref = manwayReferencePlatform(design, inst);
+    expect(ref.required).toBe(true);
+    expect(ref.centerlineIn).toBe(180);
+    expect(ref.centerlineAbovePavingIn).toBe(180);
+    expect(ref.centerlineElevationIn).toBe(204); // grade 24 + 180
+    expect(ref.platformAbovePavingIn).toBe(150);
+    expect(ref.platformElevationIn).toBe(174); // grade 24 + 150, NOT 150
+    expect(ref.ladderRuns).toBe(1);
+    // The trigger boundary is on the above-paving centerline, not the
+    // absolute elevation: 179.999 above paving does not trigger even
+    // though its absolute elevation (203.999) is well past 180.
+    const below = graded(191.999);
+    const belowInst = below.symbols.find((s) => s.id === "v1");
+    expect(manwayReferencePlatform(below, belowInst).required).toBe(false);
+  });
+
+  it("a platform at the absolute reference elevation resolves; the old relative number conflicts by the grade", () => {
+    let repaired = graded(192);
+    repaired = setAccessData(repaired, { platforms: [{ id: "pf1", symbolId: "v1", elevationIn: 174 }] });
+    expect(manwayProfileCompatibility(repaired).state).toBe("PASS");
+    let wrong = graded(192);
+    wrong = setAccessData(wrong, { platforms: [{ id: "pf1", symbolId: "v1", elevationIn: 150 }] });
+    const { state, findings } = manwayProfileCompatibility(wrong);
+    expect(state).toBe(ACCESS_CODES.MANWAY_PROFILE_CONFLICT);
+    expect(findings[0].message).toContain("24");
+    expect(findings[0].referenceElevationIn).toBe(174);
+    expect(findings[0].platformElevationIn).toBe(150);
+  });
+
+  it("ladder runs count the climb from paving, and a 360.001-in climb exceeds one run", () => {
+    const tall = graded(402.001); // centerline 390.001 above paving, platform 360.001
+    const tallInst = tall.symbols.find((s) => s.id === "v1");
+    const ref = manwayReferencePlatform(tall, tallInst);
+    expect(ref.platformAbovePavingIn).toBeCloseTo(360.001, 6);
+    expect(ref.platformElevationIn).toBeCloseTo(384.001, 6);
+    expect(ref.ladderRuns).toBe(2); // old code subtracted grade again and said 1
+    let climbed = graded(402.001);
+    climbed = setAccessData(climbed, { platforms: [{ id: "pf1", symbolId: "v1", elevationIn: 384.001 }] });
+    const { findings } = manwayProfileCompatibility(climbed);
+    expect(hasCode(findings, ACCESS_CODES.MANWAY_LADDER_RUN_EXCEEDED)).toBe(true);
+    // A climb of exactly 360 in is a legal single run.
+    let ok = graded(402.001);
+    ok = setAccessData(ok, { platforms: [{ id: "pf1", symbolId: "v1", elevationIn: 384 }] });
+    const okResult = manwayProfileCompatibility(ok);
+    expect(hasCode(okResult.findings, ACCESS_CODES.MANWAY_LADDER_RUN_EXCEEDED)).toBe(false);
+  });
+
+  it("missing-platform message names the absolute reference elevation", () => {
+    const design = graded(192, 24);
+    const inst = design.symbols.find((s) => s.id === "v1");
+    inst.noAccess = true; // no platform at all
+    const { state, findings } = manwayProfileCompatibility(design);
+    expect(state).toBe(ACCESS_CODES.MANWAY_PLATFORM_MISSING);
+    expect(findings[0].message).toContain("174");
   });
 });
 
@@ -775,16 +852,31 @@ describe("walk graph", () => {
     design = setAccessData(design, {
       entries: [entryAt(-500, 0)],
       paths: [walkPath()],
-      nodes: [nodeAt(0, 0, "n1", { symbolId: "v1" })],
+      // The vessel's manway and nozzle subjects are modeled, so the
+      // completeness gate passes and this tests the footprint exemption.
+      nodes: [
+        nodeAt(0, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(0, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
+      ],
     });
-    // The node sits on the vessel: the final approach is exempt.
+    // The nodes sit on the vessel: the final approach is exempt.
     expect(validateWalkGraph(design).state).toBe("PASS");
     let blocked = createEmptyDesign("Plan");
     blocked = placeSymbol(blocked, D, "vertical-vessel", 0, 0, { id: "v1" });
     blocked = setAccessData(blocked, {
-      entries: [entryAt(-500, 0)],
-      paths: [walkPath()],
-      nodes: [nodeAt(500, 0, "n1")],
+      entries: [entryAt(-500, 0), entryAt(0, 300, "e2")],
+      paths: [
+        walkPath(),
+        // A spur path approaches the vessel from the north so its
+        // subjects are modeled there; the through-path's destination
+        // is not the vessel, so its footprint is not exempt.
+        walkPath("w2", [{ x: 0, y: 300 }, { x: 0, y: 24 }]),
+      ],
+      nodes: [
+        nodeAt(500, 0, "n1"),
+        nodeAt(0, 24, "n2", { kind: "manway", symbolId: "v1" }),
+        nodeAt(0, 24, "n3", { kind: "nozzle", symbolId: "v1" }),
+      ],
     });
     expect(validateWalkGraph(blocked).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
   });
@@ -872,6 +964,224 @@ describe("operator access and removal volumes", () => {
     });
     expect(validateRemovalVolumes(design).state).toBe(ACCESS_CODES.REMOVAL_PATH_OBSTRUCTED);
   });
+
+  it("a zero or negative half-extent is not a usable removal volume", () => {
+    let design = createEmptyDesign("Plan");
+    design = placeSymbol(design, D, "vertical-vessel", 0, 0, { id: "v1" });
+    // Authoring-time: setAccessData refuses degenerate volumes.
+    expect(() =>
+      setAccessData(design, {
+        nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+        removalVolumes: [
+          { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 0, halfWIn: 60 },
+        ],
+      }),
+    ).toThrow(/halfLIn must be positive/);
+    expect(() =>
+      setAccessData(design, {
+        nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+        removalVolumes: [
+          { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 60, halfWIn: -5 },
+        ],
+      }),
+    ).toThrow(/halfWIn must be positive/);
+    expect(() =>
+      setAccessData(design, {
+        nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+        removalVolumes: [
+          { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 60, halfWIn: 60, rotationDeg: NaN },
+        ],
+      }),
+    ).toThrow(/rotationDeg must be a finite number/);
+    // Runtime: a degenerate volume that arrived outside setAccessData
+    // (hand-built or legacy data) is unverified, never "clear."
+    let degenerate = createEmptyDesign("Plan");
+    degenerate = placeSymbol(degenerate, D, "vertical-vessel", 0, 0, { id: "v1" });
+    degenerate.access = {
+      nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+      removalVolumes: [
+        { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 0, halfWIn: 60 },
+      ],
+    };
+    expect(validateRemovalVolumes(degenerate).state).toBe(ACCESS_CODES.REMOVAL_PATH_UNVERIFIED);
+    let inverted = createEmptyDesign("Plan");
+    inverted = placeSymbol(inverted, D, "vertical-vessel", 0, 0, { id: "v1" });
+    inverted.access = {
+      nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+      removalVolumes: [
+        { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 60, halfWIn: -60 },
+      ],
+    };
+    expect(validateRemovalVolumes(inverted).state).toBe(ACCESS_CODES.REMOVAL_PATH_UNVERIFIED);
+    let badRotation = createEmptyDesign("Plan");
+    badRotation = placeSymbol(badRotation, D, "vertical-vessel", 0, 0, { id: "v1" });
+    badRotation.access = {
+      nodes: [nodeAt(0, 0, "n1", { kind: "removal", symbolId: "v1" })],
+      removalVolumes: [
+        { id: "rv1", symbolId: "v1", cx: 0, cy: 0, zMinIn: 0, zMaxIn: 60, halfLIn: 60, halfWIn: 60, rotationDeg: Infinity },
+      ],
+    };
+    expect(validateRemovalVolumes(badRotation).state).toBe(ACCESS_CODES.REMOVAL_PATH_UNVERIFIED);
+  });
+});
+
+// ---- Access completeness: the applicability contract ---------------------------
+// Derived subjects (manway, valve/instrument symbol, valve station,
+// nozzle-bearing instance) each need a modeled access node. A design
+// with an entry and a clear path but no nodes must NOT pass while a
+// subject is unmodeled — that is the vacuous all-clear this suite
+// closes. A design with genuinely no applicable subjects passes.
+
+describe("access completeness", () => {
+  /** Entry + walk path, no nodes, no equipment: the explicit control. */
+  const entryAndPathOnly = () => {
+    let design = createEmptyDesign("Plan");
+    design = setAccessData(design, {
+      entries: [entryAt(-500, 0)],
+      paths: [walkPath()],
+    });
+    return design;
+  };
+
+  it("no applicable subjects is an explicit control: operator and walk graph PASS", () => {
+    const design = entryAndPathOnly();
+    expect(expectedAccessSubjects(design)).toEqual([]);
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+    expect(accessCheckStates(design).allClear).toBe(true);
+  });
+
+  it("a placed control valve with no node is ACCESS_NOT_MODELED, not PASS", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "control-valve", 500, 0, { id: "v1" });
+    expect(expectedAccessSubjects(design)).toHaveLength(1);
+    expect(expectedAccessSubjects(design)[0].kind).toBe("valve");
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(operator.findings[0].message).toContain("v1");
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    const aggregate = accessCheckStates(design);
+    expect(aggregate.checks.operator).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(aggregate.checks.walkGraph).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(aggregate.allClear).toBe(false);
+    // One finding, not two: operator and walk graph emit the same
+    // completeness finding and the aggregate dedupes it.
+    expect(
+      aggregate.findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED),
+    ).toHaveLength(1);
+  });
+
+  it("a placed pressure gauge with no node is ACCESS_NOT_MODELED", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "pressure-gauge", 500, 0, { id: "pi1" });
+    expect(expectedAccessSubjects(design)).toHaveLength(1);
+    expect(expectedAccessSubjects(design)[0].kind).toBe("instrument");
+    expect(validateOperatorAccess(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("a pump's nozzles with no node are ACCESS_NOT_MODELED", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "centrifugal-pump", 500, 0, { id: "p1" });
+    const subjects = expectedAccessSubjects(design);
+    expect(subjects).toHaveLength(1);
+    expect(subjects[0].kind).toBe("nozzle");
+    expect(validateOperatorAccess(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("a vessel's manway and nozzles are separate subjects, both unmodeled without nodes", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    const subjects = expectedAccessSubjects(design);
+    expect(subjects.map((s) => s.kind).sort()).toEqual(["manway", "nozzle"]);
+    const { findings } = validateOperatorAccess(design);
+    expect(findings.filter((f) => f.code === ACCESS_CODES.ACCESS_NOT_MODELED)).toHaveLength(2);
+  });
+
+  it("a valve station on a pipe run with no node is ACCESS_NOT_MODELED", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200, // above the walkway headroom band: no obstruction
+      valveStations: [{ stationIn: 500 }],
+    });
+    const subjects = expectedAccessSubjects(design);
+    expect(subjects).toHaveLength(1);
+    expect(subjects[0]).toMatchObject({ kind: "valve", runId: "p1", valveIndex: 0, stationIn: 500 });
+    expect(validateOperatorAccess(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(validateWalkGraph(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("a station-less valve station cannot be modeled at all", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{}],
+    });
+    const { state, findings } = validateOperatorAccess(design);
+    expect(state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(findings[0].message).toContain("no authored route station");
+  });
+
+  it("a node of the wrong kind does not satisfy a subject", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "pressure-gauge", 500, 0, { id: "pi1" });
+    design = setAccessData(design, {
+      nodes: [nodeAt(500, 0, "n1", { kind: "valve", symbolId: "pi1" })],
+    });
+    expect(validateOperatorAccess(design).state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+  });
+
+  it("modeled subjects pass: valve, instrument, manway, nozzle and valve station nodes", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "control-valve", 500, 0, { id: "v1" });
+    design = placeSymbol(design, D, "pressure-gauge", 500, 0, { id: "pi1" });
+    expect(expectedAccessSubjects(design).map((s) => s.kind).sort()).toEqual([
+      "instrument",
+      "valve",
+    ]);
+    design = setAccessData(design, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "valve", symbolId: "v1" }),
+        nodeAt(500, 0, "n2", { kind: "instrument", symbolId: "pi1" }),
+      ],
+    });
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+
+    let vessel = entryAndPathOnly();
+    vessel = placeSymbol(vessel, D, "vertical-vessel", 500, 0, { id: "v1" });
+    expect(expectedAccessSubjects(vessel).map((s) => s.kind).sort()).toEqual([
+      "manway",
+      "nozzle",
+    ]);
+    vessel = setAccessData(vessel, {
+      nodes: [
+        nodeAt(500, 0, "n1", { kind: "manway", symbolId: "v1" }),
+        nodeAt(500, 0, "n2", { kind: "nozzle", symbolId: "v1" }),
+      ],
+    });
+    expect(validateOperatorAccess(vessel).state).toBe("PASS");
+
+    let stationed = entryAndPathOnly();
+    stationed = addPipeRun(stationed, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    stationed = setAccessData(stationed, {
+      nodes: [nodeAt(0, 0, "n1", { kind: "valve", runId: "p1", valveIndex: 0 })],
+    });
+    expect(expectedAccessSubjects(stationed)).toHaveLength(1);
+    expect(validateOperatorAccess(stationed).state).toBe("PASS");
+    expect(validateWalkGraph(stationed).state).toBe("PASS");
+  });
 });
 
 // ---- Editable workflow ---------------------------------------------------------
@@ -917,6 +1227,62 @@ describe("editable workflow", () => {
     expect(applied.access.crossovers).toHaveLength(2);
     expect(applied.access.crossovers[1].id).not.toBe("x1");
     expect(applied.access.crossovers[1].id).toMatch(/^crossover-/);
+  });
+
+  it("applying after an id reset never duplicates crossover-1, even twice in one proposal", () => {
+    // The reviewed bug: a single regeneration after resetAccessIds()
+    // lands on `crossover-1` again when the design already holds it.
+    let design = createEmptyDesign("Plan");
+    design = withSleeper(design);
+    design = setAccessData(design, { barriers: [rackBarrier()] });
+    design = setAccessData(design, { crossovers: [usableCrossover("crossover-1", "b1", 100)] });
+    resetAccessIds();
+    const { proposal } = previewCrossoverProposal(design, "b1", { clearanceAbovePipeIn: 6 });
+    proposal.crossovers[0].id = "crossover-1"; // collides with the existing one
+    const applied = applyCrossoverProposal(design, "b1", proposal);
+    const ids = applied.access.crossovers.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length); // no duplicates
+    expect(applied.access.crossovers[1].id).toBe("crossover-2");
+
+    // Two colliding records in one proposal each get a fresh id.
+    let two = createEmptyDesign("Plan");
+    two = withSleeper(two);
+    two = setAccessData(two, { barriers: [rackBarrier()] });
+    two = setAccessData(two, {
+      crossovers: [
+        usableCrossover("crossover-1", "b1", 100),
+        usableCrossover("crossover-2", "b1", 300),
+      ],
+    });
+    resetAccessIds();
+    const { proposal: twoProposal } = previewCrossoverProposal(two, "b1", {
+      clearanceAbovePipeIn: 6,
+    });
+    const second = { ...usableCrossover(), id: "crossover-2", stationIn: 300 };
+    const appliedTwo = applyCrossoverProposal(two, "b1", {
+      crossovers: [
+        { ...twoProposal.crossovers[0], id: "crossover-1" },
+        second,
+      ],
+    });
+    const twoIds = appliedTwo.access.crossovers.map((c) => c.id);
+    expect(new Set(twoIds).size).toBe(twoIds.length);
+    expect(appliedTwo.access.crossovers.slice(2).map((c) => c.id)).toEqual([
+      "crossover-3",
+      "crossover-4",
+    ]);
+  });
+
+  it("addCrossover generates past an existing id after a counter reset", () => {
+    let design = createEmptyDesign("Plan");
+    design = withSleeper(design);
+    design = setAccessData(design, { barriers: [rackBarrier()] });
+    design = setAccessData(design, { crossovers: [usableCrossover("crossover-1", "b1", 100)] });
+    resetAccessIds();
+    const added = addCrossover(design, "b1", { ...usableCrossover(), id: undefined, stationIn: 240 });
+    const ids = added.access.crossovers.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(added.access.crossovers[1].id).toBe("crossover-2");
   });
 
   it("barrier geometry is derived from the source, never a label", () => {

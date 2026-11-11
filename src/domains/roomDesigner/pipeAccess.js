@@ -101,6 +101,7 @@ import {
 } from "./vesselAccess";
 import { findSymbol } from "./symbolRegistry";
 import { rackTopIn } from "./rackGeometry";
+import { anchorsOf } from "./pipeAttachments";
 
 /** Face-contact tolerance (in): single source is pipeCrossings via pipeSupports. */
 export const ACCESS_FACE_TOLERANCE_IN = SUPPORT_FACE_TOLERANCE_IN;
@@ -502,22 +503,40 @@ export function manwayCenterlineAbovePavingIn(design, inst) {
  * separation of at least 96 in. Below the trigger the profile does
  * not apply (required: false) — the legacy D5 catwalk stands as
  * legacy, and no conflict is raised.
+ *
+ * Frames, kept distinct and converted exactly once: `centerlineIn`
+ * / `centerlineAbovePavingIn` is the centerline height ABOVE
+ * PAVING; `centerlineElevationIn` is the same centerline in the
+ * design's absolute elevation frame (grade + above-paving);
+ * `platformAbovePavingIn` is the reference platform height above
+ * paving (centerline − 30); `platformElevationIn` is the reference
+ * platform in the ABSOLUTE frame (grade + above-paving) — the
+ * frame `effectiveManwayPlatform` reports, so the two compare
+ * directly. Ladder runs count the climb from paving to the
+ * platform, which is the above-paving height — grade is NOT
+ * subtracted a second time.
  */
 export function manwayReferencePlatform(design, inst) {
   const centerline = manwayCenterlineAbovePavingIn(design, inst);
   if (centerline === null) return null;
   const required = centerline >= MANWAY_PLATFORM_TRIGGER_IN - 1e-9;
   const grade = gradeElevationIn(design);
+  const platformAbovePaving = centerline - MANWAY_PLATFORM_DROP_IN;
   return {
     centerlineIn: centerline,
+    centerlineAbovePavingIn: centerline,
+    centerlineElevationIn: grade + centerline,
     required,
-    platformElevationIn: centerline - MANWAY_PLATFORM_DROP_IN,
+    platformAbovePavingIn: platformAbovePaving,
+    platformElevationIn: grade + platformAbovePaving,
     ladderRunMaxIn: LADDER_RUN_MAX_IN,
     platformSeparationMinIn: PLATFORM_SEPARATION_MIN_IN,
     // Ladder runs from the paving to the reference platform, split
     // into runs of at most 360 in: the count the profile implies.
+    // The climb IS platformAbovePaving (the height above paving);
+    // subtracting grade again would count the paving twice.
     ladderRuns: required
-      ? Math.max(1, Math.ceil((centerline - MANWAY_PLATFORM_DROP_IN - grade) / LADDER_RUN_MAX_IN - 1e-9))
+      ? Math.max(1, Math.ceil(platformAbovePaving / LADDER_RUN_MAX_IN - 1e-9))
       : 0,
   };
 }
@@ -1431,6 +1450,13 @@ function validateAccessRecord(kind, value) {
       finite(value.zMaxIn, "zMaxIn");
       finite(value.halfLIn, "halfLIn");
       finite(value.halfWIn, "halfWIn");
+      // A removal volume is a usable pull/lift envelope, not a named
+      // box: zero or negative half-extents are a degenerate (or
+      // inverted) volume and can never "satisfy" a required removal
+      // node — obstruction checking on its corners would be meaningless.
+      if (!(value.halfLIn > 0)) fail("halfLIn must be positive");
+      if (!(value.halfWIn > 0)) fail("halfWIn must be positive");
+      if (value.rotationDeg !== undefined) finite(value.rotationDeg, "rotationDeg");
       if (!(value.zMinIn < value.zMaxIn)) fail("zMinIn must be below zMaxIn");
       break;
     case "platforms":
@@ -1489,11 +1515,22 @@ function findCrossover(design, crossoverId) {
   return crossover;
 }
 
-/** Add a crossover to a barrier (id generated when absent). */
+/** Add a crossover to a barrier (id generated when absent). A generated
+ * id loops until it is absent from the existing crossovers — after a
+ * counter reset the first generated id can collide with one already
+ * present, and a duplicate id must never be appended. A caller-supplied
+ * id is kept as authored (the caller owns it). */
 export function addCrossover(design, barrierId, crossover = {}) {
   const barrier = accessList(design, "barriers").find((b) => b?.id === barrierId);
   if (!barrier) throw new Error(`Unknown barrier: ${barrierId}`);
-  const record = { ...detach(crossover), id: crossover?.id || nextAccessId("crossover"), barrierId };
+  const existingIds = new Set(accessList(design, "crossovers").map((c) => c?.id));
+  let id = crossover?.id;
+  if (!id) {
+    do {
+      id = nextAccessId("crossover");
+    } while (existingIds.has(id));
+  }
+  const record = { ...detach(crossover), id, barrierId };
   validateAccessRecord("crossovers", record);
   const next = ensureAccess(design);
   const access = { ...next.access, crossovers: [...accessList(design, "crossovers"), record] };
@@ -1547,7 +1584,12 @@ export function applyCrossoverProposal(design, barrierId, proposal) {
   const usedIds = new Set(existing.map((c) => c?.id));
   const validated = proposal.crossovers.map((crossover) => {
     const record = { ...detach(crossover), barrierId };
-    if (!record.id || usedIds.has(record.id)) record.id = nextAccessId("crossover");
+    // Loop until the id is absent from BOTH the existing crossovers
+    // AND the ids already prepared in this apply: a single
+    // regeneration can land on an id that is already taken (after a
+    // counter reset the first candidate is `crossover-1` again), and
+    // two colliding records in one proposal must not share a fresh id.
+    while (!record.id || usedIds.has(record.id)) record.id = nextAccessId("crossover");
     validateAccessRecord("crossovers", record);
     if (!(record.stationIn >= 0 && record.stationIn <= geometry.lengthIn)) {
       throw new Error(`Crossover station ${record.stationIn} is outside barrier ${barrierId}.`);
@@ -1571,6 +1613,174 @@ export function applyCrossoverProposal(design, barrierId, proposal) {
     ...next,
     access: { ...next.access, crossovers: [...existing, ...validated] },
   };
+}
+
+// ---- Applicability / completeness (brief items 1 and 4) ---------------------
+//
+// The access checks must never report an all-clear for a design whose
+// required access points were never modeled. The authored
+// `design.access.nodes` list is NOT a complete universe: the expected
+// subjects are derived from the design itself, and every derived
+// subject needs a modeled access node. Unknown applicability is
+// ACCESS_NOT_MODELED, never "clear."
+//
+// Derived subjects (one per source; the node models the operator
+// standing point for that source):
+// - Manway: every symbol instance whose manway spec resolves
+//   (manwaySpec — the same condition manwayProfileCompatibility
+//   uses, so the legacy gate and tombstones agree). The manway
+//   subject is satisfied by a node of kind "manway" with the same
+//   symbolId.
+// - Valve / instrument: every placed symbol whose catalog category
+//   is "Valves & instruments" (processEquipmentCatalog). The kind
+//   follows the catalog glyph — instrument-family glyphs
+//   ("instrument", "instrument-temperature", "instrument-level",
+//   "analyzer", "flow-meter") are instruments, the valve glyphs are
+//   valves. Satisfied by a node of the same kind with the same
+//   symbolId. Digest §5.5: valves and instruments must be reachable
+//   and readable — from grade or a platform — so every placed one is
+//   a subject; there is no adopted elevation threshold to split
+//   "elevated" from grade-level, and none is invented here.
+// - Valve station: every entry of every pipe run's valveStations
+//   (the D10-02 concentrated-load source). Satisfied by a node of
+//   kind "valve" with the same runId and valveIndex. A station-less
+//   valve station is still a subject — its position is unknown, so
+//   its access cannot be modeled at all.
+// - Nozzle: one subject per symbol instance that carries nozzle
+//   anchors (anchorsOf — catalog nozzles, TEMA anchors, and instance
+//   overrides, honoring the legacy gate). One node per nozzle-bearing
+//   instance models the operator reaching the equipment to work on
+//   its nozzles, the same granularity as a removal node per
+//   symbolId. Satisfied by a node of kind "nozzle" with the same
+//   symbolId. Digest §4.8: a nozzle nobody can reach is a layout
+//   defect even if the piping to it is correct.
+// - Removal: no derivable source exists in the model (nothing marks
+//   equipment as needing a removal path), so removal subjects are
+//   author-declared by the removal node itself — and a removal node
+//   with no volume already fails closed (REMOVAL_PATH_UNVERIFIED).
+//
+// A design with no derived subjects at all has nothing to check:
+// operator access and the walk graph can pass on their own terms
+// (the explicit no-applicable-subjects control). A node whose kind
+// or link fields do not match any subject is still checked for
+// reachability on its own — the subject contract adds findings, it
+// never removes the existing node checks.
+
+/** Instrument-family catalog glyphs (processEquipmentCatalog). */
+const INSTRUMENT_GLYPHS = new Set([
+  "instrument",
+  "instrument-temperature",
+  "instrument-level",
+  "analyzer",
+  "flow-meter",
+]);
+
+/**
+ * The expected access subjects derived from the design: every
+ * manway, valve, instrument, valve station and nozzle-bearing
+ * instance the operator must be able to reach. Each subject is
+ * { kind, symbolId?, runId?, valveIndex?, stationIn?, label,
+ * subjectId } — subjectId is stable for finding dedupe.
+ */
+export function expectedAccessSubjects(design) {
+  const subjects = [];
+  for (const inst of design?.symbols || []) {
+    const symbol = findSymbol(inst?.domain, inst?.symbolId);
+    if (!symbol) continue;
+    const label = `${symbol.label} (${inst.id})`;
+    if (manwaySpec(symbol, inst) !== null) {
+      subjects.push({
+        kind: "manway",
+        symbolId: inst.id,
+        label,
+        subjectId: inst.id,
+      });
+    }
+    if (symbol.category === "Valves & instruments") {
+      const kind = INSTRUMENT_GLYPHS.has(symbol.glyph) ? "instrument" : "valve";
+      subjects.push({ kind, symbolId: inst.id, label, subjectId: inst.id });
+    }
+    if (anchorsOf(inst).length > 0) {
+      subjects.push({ kind: "nozzle", symbolId: inst.id, label, subjectId: inst.id });
+    }
+  }
+  for (const run of design?.pipes || []) {
+    const stations = Array.isArray(run?.valveStations) ? run.valveStations : [];
+    stations.forEach((valve, index) => {
+      const station = isPlainObject(valve) ? valve.stationIn : undefined;
+      subjects.push({
+        kind: "valve",
+        runId: run.id,
+        valveIndex: index,
+        stationIn: isFiniteNumber(station) ? station : undefined,
+        label: `valve station ${index} on pipe run ${run.id}`,
+        subjectId: `${run.id}/valve-${index}`,
+      });
+    });
+  }
+  return subjects;
+}
+
+/** Whether an authored access node models the given subject. */
+function subjectHasNode(design, subject) {
+  return accessList(design, "nodes").some((node) => {
+    if (!isPlainObject(node)) return false;
+    if (subject.kind === "valve" && subject.runId !== undefined) {
+      return (
+        node.kind === "valve" && node.runId === subject.runId && node.valveIndex === subject.valveIndex
+      );
+    }
+    return node.kind === subject.kind && node.symbolId === subject.symbolId;
+  });
+}
+
+/**
+ * ACCESS_NOT_MODELED findings for every derived subject with no
+ * modeled access node. Shared by validateOperatorAccess and
+ * validateWalkGraph so the two agree — and accessCheckStates
+ * dedupes the identical findings into one.
+ */
+function missingAccessSubjectFindings(design) {
+  const findings = [];
+  for (const subject of expectedAccessSubjects(design)) {
+    if (subjectHasNode(design, subject)) continue;
+    if (subject.kind === "manway") {
+      findings.push(
+        finding(
+          ACCESS_CODES.ACCESS_NOT_MODELED,
+          subject.subjectId,
+          `Manway on ${subject.label} has no modeled operator access node: author an access node of kind "manway" for ${subject.symbolId}.`,
+        ),
+      );
+    } else if (subject.kind === "nozzle") {
+      findings.push(
+        finding(
+          ACCESS_CODES.ACCESS_NOT_MODELED,
+          subject.subjectId,
+          `Nozzles on ${subject.label} have no modeled operator access node: author an access node of kind "nozzle" for ${subject.symbolId}.`,
+        ),
+      );
+    } else if (subject.runId !== undefined) {
+      findings.push(
+        finding(
+          ACCESS_CODES.ACCESS_NOT_MODELED,
+          subject.subjectId,
+          subject.stationIn !== undefined
+            ? `Valve station ${subject.valveIndex} on pipe run ${subject.runId} at ${subject.stationIn} in has no modeled operator access node: author an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}.`
+            : `Valve station ${subject.valveIndex} on pipe run ${subject.runId} has no authored route station, so its operator access cannot be modeled: author the station, then an access node of kind "valve" with runId ${subject.runId} and valveIndex ${subject.valveIndex}.`,
+        ),
+      );
+    } else {
+      findings.push(
+        finding(
+          ACCESS_CODES.ACCESS_NOT_MODELED,
+          subject.subjectId,
+          `${subject.kind === "instrument" ? "Instrument" : "Valve"} ${subject.label} has no modeled operator access node: author an access node of kind "${subject.kind}" for ${subject.symbolId}.`,
+        ),
+      );
+    }
+  }
+  return findings;
 }
 
 // ---- Walk graph (brief item 7) ---------------------------------------------
@@ -1881,6 +2091,10 @@ export function validateWalkGraph(design) {
       ),
     );
   }
+  // Applicability gate first: a design whose required access points
+  // were never modeled cannot pass on its walk graph alone, however
+  // clear the authored paths are.
+  findings.push(...missingAccessSubjectFindings(design));
   const graph = buildWalkGraph(design);
   findings.push(...graph.findings);
   // Required nodes: attached but unreachable, or never attached.
@@ -2107,6 +2321,10 @@ export function validateOperatorAccess(design) {
     );
     return { state: "ACCESS_NOT_MODELED", findings };
   }
+  // Applicability gate first: a design whose required access points
+  // were never modeled cannot report operator PASS, however clear
+  // the authored paths are.
+  findings.push(...missingAccessSubjectFindings(design));
   const graph = buildWalkGraph(design);
   findings.push(...graph.findings);
   for (const node of accessList(design, "nodes")) {
@@ -2175,13 +2393,16 @@ export function validateRemovalVolumes(design) {
       !isFiniteNumber(volume?.zMinIn) ||
       !isFiniteNumber(volume?.zMaxIn) ||
       !isFiniteNumber(volume?.halfLIn) ||
-      !isFiniteNumber(volume?.halfWIn)
+      !isFiniteNumber(volume?.halfWIn) ||
+      !(volume.halfLIn > 0) ||
+      !(volume.halfWIn > 0) ||
+      (volume?.rotationDeg !== undefined && !isFiniteNumber(volume.rotationDeg))
     ) {
       findings.push(
         finding(
           ACCESS_CODES.REMOVAL_PATH_UNVERIFIED,
           volume?.id ?? "(unknown)",
-          `${label} is unverified: its box dimensions must all be finite numbers.`,
+          `${label} is unverified: its box dimensions must all be finite numbers, its half-extents strictly positive, and any authored rotation finite.`,
         ),
       );
       continue;
