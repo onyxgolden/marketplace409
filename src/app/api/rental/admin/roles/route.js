@@ -152,6 +152,7 @@ export async function PATCH(request) {
     const added = rentalAdminKeyLabels(data?.added || []);
     const removed = rentalAdminKeyLabels(data?.removed || []);
     const affected = Number(data?.affected_user_count || 0);
+    const displayName = data?.role?.display_name || "the role";
     const parts = [];
     if (added.length > 0) parts.push(`added ${added.join(", ")}`);
     if (removed.length > 0) parts.push(`removed ${removed.join(", ")}`);
@@ -163,8 +164,8 @@ export async function PATCH(request) {
       removed: data?.removed || [],
       version: data?.version,
       message: parts.length > 0
-        ? `Saved the role: ${parts.join("; ")}. This changes access for ${affected} staff member${affected === 1 ? "" : "s"}.`
-        : "Saved the role. Nothing changed.",
+        ? `Saved the ${displayName} role: ${parts.join("; ")}. This changes access for ${affected} staff member${affected === 1 ? "" : "s"}.`
+        : `Saved the ${displayName} role. Nothing changed.`,
     });
   } catch (error) {
     return NextResponse.json(

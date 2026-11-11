@@ -130,10 +130,10 @@ describe("RentalPermissionsPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  async function renderPanel({ onPatch } = {}) {
+  async function renderPanel({ onPatch, auditOverride } = {}) {
     const calls = [];
     const liveRoles = baseRoles();
-    const liveAudit = baseAudit();
+    const liveAudit = auditOverride || baseAudit();
     const liveUsers = {
       "staff@example.test": {
         user_id: "user-staff",
@@ -190,6 +190,32 @@ describe("RentalPermissionsPanel", () => {
             message: `Assigned the ${role.display_name} role to ${user.email}.`,
           });
         }
+        if (url === "/api/rental/admin/revoke" && method === "POST") {
+          const body = JSON.parse(options.body);
+          const user = Object.values(liveUsers).find((u) => u.user_id === body.userId);
+          user.current_role = null;
+          user.effective_keys = [];
+          liveAudit.unshift({
+            id: `audit-${Date.now()}`,
+            action: "role.revoked",
+            actor_user_id: "viewer-1",
+            target_role_id: "role-manager",
+            target_user_id: user.user_id,
+            // Models the real `rental_revoke_role` RPC: its audit detail
+            // only ever carries request_id, never the role's name — the
+            // server cannot name it either, since it returns the user's
+            // post-revoke (roleless) state. Naming it is the client's job.
+            detail: { request_id: body.requestId },
+            created_at: "2026-11-10T02:00:00.000Z",
+          });
+          // The real route also cannot name the role (same reason) — its
+          // message only names the person, by design (see route.js).
+          return response({
+            success: true,
+            user,
+            message: `Removed the role from ${user.email}. They can no longer use the permissions that role gave them.`,
+          });
+        }
         if (url === "/api/rental/admin/roles" && method === "PATCH") {
           if (onPatch) {
             const handled = await onPatch({ calls, liveRoles, liveAudit, options });
@@ -209,7 +235,7 @@ describe("RentalPermissionsPanel", () => {
             added: body.addKeys || [],
             removed: body.removeKeys || [],
             version: role.version,
-            message: `Saved the role: added View reports. This changes access for ${role.active_assignee_count} staff members.`,
+            message: `Saved the ${role.display_name} role: added View reports. This changes access for ${role.active_assignee_count} staff members.`,
           });
         }
         if (url === "/api/rental/admin/roles/retire" && method === "POST") {
@@ -293,6 +319,67 @@ describe("RentalPermissionsPanel", () => {
     expect(refreshed.textContent).toContain("Rental Admin");
   });
 
+  it("revokes a role and names the role, not just the person, in the confirmation", async () => {
+    // Non-vacuous: the real rental_revoke_role RPC returns the user's
+    // post-revoke (roleless) state, so the server's own message can only
+    // name the person (see the mocked /api/rental/admin/revoke response
+    // above, which deliberately omits the role name — matching route.js).
+    // The confirmation must still name the role, which only the client can
+    // do, since it has the pre-revoke role in `foundUser` before the call.
+    const { container, calls } = await renderPanel();
+    const searchInput = container.querySelector(
+      'input[placeholder="user id or name@example.com"]'
+    );
+    await setValue(searchInput, "staff@example.test");
+    await click(findButton(container, "Search"));
+    await flush(2);
+    const card = container.querySelector("[data-found-user='user-staff']");
+    expect(card.textContent).toContain("Manager");
+    await click(findButton(container, "Remove role"));
+    await click(findButton(container, "Remove this role?"));
+    await flush(3);
+    const revokeCall = calls.find(
+      (c) => c.url === "/api/rental/admin/revoke" && c.options?.method === "POST"
+    );
+    expect(revokeCall).toBeDefined();
+    expect(JSON.parse(revokeCall.options.body).userId).toBe("user-staff");
+    expect(container.textContent).toContain(
+      "Removed the Manager role from staff@example.test. They can no longer use the permissions that role gave them."
+    );
+    const refreshed = container.querySelector("[data-found-user='user-staff']");
+    expect(refreshed.textContent).toContain("No role assigned");
+  });
+
+  it("names a role.updated audit entry from the roles list when detail has no role name (non-vacuous)", async () => {
+    // Models the real rental_update_role RPC's audit insert, which never
+    // stores a role name in `detail` (only request_id/version/added/
+    // removed/before/affected_user_count) — unlike this file's default
+    // baseAudit() fixture, which bakes role_name in and would pass even
+    // without the resolveRoleName fallback this test exists to prove.
+    const { container } = await renderPanel({
+      auditOverride: [
+        {
+          id: "audit-no-name",
+          action: "role.updated",
+          actor_user_id: "actor-1",
+          target_role_id: "role-manager",
+          target_user_id: null,
+          detail: {
+            added: ["rental.reports.read"],
+            removed: [],
+            affected_user_count: 2,
+            previous_version: 1,
+            new_version: 2,
+          },
+          created_at: "2026-11-10T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(container.textContent).toContain(
+      "Role updated: Manager: added View reports. Affects 2 staff members."
+    );
+  });
+
   it("edits a role grid, shows the diff preview and affected count, then confirms the save", async () => {
     const { container } = await renderPanel();
     await click(findButton(container, "Edit Manager"));
@@ -307,7 +394,7 @@ describe("RentalPermissionsPanel", () => {
     await click(findButton(container, "Save role changes"));
     await flush(3);
     expect(container.textContent).toContain(
-      "Saved the role: added View reports. This changes access for 2 staff members."
+      "Saved the Manager role: added View reports. This changes access for 2 staff members."
     );
   });
 
@@ -375,7 +462,7 @@ describe("RentalPermissionsPanel", () => {
           added: body.addKeys || [],
           removed: body.removeKeys || [],
           version: role.version,
-          message: "Saved the role: removed View tenants. This changes access for 2 staff members.",
+          message: "Saved the Manager role: removed View tenants. This changes access for 2 staff members.",
         });
       },
     });
@@ -402,7 +489,7 @@ describe("RentalPermissionsPanel", () => {
     await click(findButton(container, "Save role changes"));
     await flush(3);
     expect(container.textContent).toContain(
-      "Saved the role: removed View tenants. This changes access for 2 staff members."
+      "Saved the Manager role: removed View tenants. This changes access for 2 staff members."
     );
   });
 });

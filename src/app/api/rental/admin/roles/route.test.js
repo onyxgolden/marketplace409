@@ -143,10 +143,25 @@ describe("PATCH /api/rental/admin/roles", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
+    expect(body.message).toMatch(/^Saved the Manager role: /);
     expect(body.message).toMatch(/added View reports/);
     expect(body.message).toMatch(/removed Add tenants/);
     expect(body.message).toMatch(/changes access for 3 staff members/);
     expect(body.version).toBe(3);
+  });
+
+  it("names the role even when nothing changed", async () => {
+    authed({
+      rpcImpl: async (name) =>
+        name === "rental_update_role"
+          ? { data: { role: { ...ROLE_ROW, version: 3 }, added: [], removed: [], affected_user_count: 0, version: 3 }, error: null }
+          : { data: null, error: null },
+    });
+    const response = await PATCH(
+      jsonRequest("PATCH", { roleId: "role_manager", addKeys: [], removeKeys: [], expectedVersion: 2, requestId: "req-3" }),
+    );
+    const body = await response.json();
+    expect(body.message).toBe("Saved the Manager role. Nothing changed.");
   });
 
   it("returns 409 with the fresh role list on a stale version", async () => {
