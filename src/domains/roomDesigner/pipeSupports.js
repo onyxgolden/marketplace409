@@ -2355,8 +2355,18 @@ export function previewSupportProposal(design, run) {
   // the span subdivision below counts them.
   const contactStations = contacts.map((c) => c.stationIn);
   for (const t of transitionVertices(design, run)) {
-    if (contacts.some((c) => c.transitionIndex === t.vertexIndex)) continue;
     const station = stations[t.vertexIndex].stationIn;
+    // A transition is bound only when a support's actual contact
+    // station sits within the adopted tolerance of the transition
+    // station; a remote support that merely carries the transition
+    // index does not count (same label-vs-geometry rule as the
+    // validation binding above).
+    const bound = contacts.some(
+      (c) =>
+        c.transitionIndex === t.vertexIndex &&
+        Math.abs(c.stationIn - station) <= TRANSITION_ADJACENCY_IN,
+    );
+    if (bound) continue;
     propose({
       type: "dummy-leg",
       stationIn: station,
@@ -2392,11 +2402,37 @@ export function previewSupportProposal(design, run) {
     contactStations.push(flange.stationIn);
   });
   const valves = Array.isArray(run.valveStations) ? run.valveStations : [];
-  valves.forEach((_, index) => {
+  valves.forEach((valve, index) => {
+    const station = isPlainObject(valve) ? valve.stationIn : undefined;
+    if (!isFiniteNumber(station)) {
+      // No authored route station: no load support can be placed
+      // or verified by geometry — the valve stays explicitly
+      // unresolved regardless of any index-matched label (same rule
+      // as the validation binding, which emits
+      // CONCENTRATED_LOAD_UNVERIFIED for the same geometry).
+      unresolved.push(`valve station ${index} has no station to place a load support at`);
+      return;
+    }
+    // An authored valve station is bound only when a load support's
+    // actual contact station sits within the adopted tolerance of
+    // the valve station; a remote bracket whose loadRef merely
+    // claims the valve index must not suppress the proposal (same
+    // label-vs-geometry rule as the validation binding above).
     const bound = contacts.some(
-      (c) => isPlainObject(c.loadRef) && c.loadRef.kind === "valve" && c.loadRef.index === index,
+      (c) =>
+        isPlainObject(c.loadRef) &&
+        c.loadRef.kind === "valve" &&
+        c.loadRef.index === index &&
+        Math.abs(c.stationIn - station) <= TRANSITION_ADJACENCY_IN,
     );
-    if (!bound) unresolved.push(`valve station ${index} has no station to place a load support at`);
+    if (bound) return;
+    propose({
+      type: "bracket",
+      stationIn: station,
+      loadRef: { kind: "valve", index, stationIn: station },
+      carrier: { kind: "foundation" },
+    });
+    contactStations.push(station);
   });
   // Span subdivision over the remaining overlong intervals.
   const breaks = [0, totalIn, ...contactStations, ...changes.map((c) => c.stationIn)];

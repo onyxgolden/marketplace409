@@ -1799,6 +1799,222 @@ describe("editable workflow (brief item 10)", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("preview does not let a remote transition-indexed support suppress a needed dummy-leg", () => {
+    // The verdict's counterexample: a trunnion at station 100
+    // carrying transitionIndex 1 for the elbow at station 60 is
+    // remote — validation rejects it, so the preview must still
+    // propose the adjacent dummy-leg instead of staying silent.
+    const { design, run } = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 60, y: 0 },
+        { x: 60, y: 60 },
+      ],
+      "p1",
+      {
+        diameterIn: 2,
+        spanProfile: water(2),
+        supports: [
+          sup(0, "s1"),
+          sup(120, "s2"),
+          {
+            id: "t1",
+            type: "trunnion",
+            stationIn: 100,
+            transitionIndex: 1,
+            carrier: { kind: "foundation" },
+          },
+        ],
+      },
+    );
+    expect(codes(validateTransitionSupports(design, run).findings)).toEqual([
+      "TRANSITION_SUPPORT_MISSING",
+    ]);
+    const { proposal } = previewSupportProposal(design, run);
+    expect(proposal.supports).toContainEqual(
+      expect.objectContaining({ type: "dummy-leg", stationIn: 60, transitionIndex: 1 }),
+    );
+    // Applying the preview leaves no validation finding behind.
+    const applied = applySupportProposal(design, "p1", proposal);
+    const appliedRun = applied.pipes.find((p) => p.id === "p1");
+    expect(validateTransitionSupports(applied, appliedRun).state).toBe("PASS");
+    // Boundary: a contact exactly at the adopted tolerance binds
+    // and proposes nothing; 0.001 in past it proposes the leg.
+    const atTolerance = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 60, y: 0 },
+        { x: 60, y: 60 },
+      ],
+      "p1",
+      {
+        diameterIn: 2,
+        spanProfile: water(2),
+        supports: [
+          sup(0, "s1"),
+          sup(120, "s2"),
+          {
+            id: "t1",
+            type: "trunnion",
+            stationIn: 60 + TRANSITION_ADJACENCY_IN,
+            transitionIndex: 1,
+            carrier: { kind: "foundation" },
+          },
+        ],
+      },
+    );
+    expect(previewSupportProposal(atTolerance.design, atTolerance.run).proposal.supports).toEqual([]);
+    const pastTolerance = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 60, y: 0 },
+        { x: 60, y: 60 },
+      ],
+      "p1",
+      {
+        diameterIn: 2,
+        spanProfile: water(2),
+        supports: [
+          sup(0, "s1"),
+          sup(120, "s2"),
+          {
+            id: "t1",
+            type: "trunnion",
+            stationIn: 60 + TRANSITION_ADJACENCY_IN + 0.001,
+            transitionIndex: 1,
+            carrier: { kind: "foundation" },
+          },
+        ],
+      },
+    );
+    expect(previewSupportProposal(pastTolerance.design, pastTolerance.run).proposal.supports).toContainEqual(
+      expect.objectContaining({ type: "dummy-leg", stationIn: 60, transitionIndex: 1 }),
+    );
+  });
+
+  it("preview does not let a remote valve-indexed bracket suppress a needed load-support proposal", () => {
+    // The verdict's counterexample: a bracket at 150 whose loadRef
+    // claims valve index 0 at station 100 is remote — validation
+    // rejects it, so the preview must propose the adjacent bracket
+    // instead of treating the index match as resolved.
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(200, "s2"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 150,
+          loadRef: { kind: "valve", index: 0, stationIn: 100 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+    });
+    expect(codes(validateTransitionSupports(design, run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNSUPPORTED",
+    ]);
+    const { proposal, unresolved } = previewSupportProposal(design, run);
+    expect(unresolved).toEqual([]);
+    expect(proposal.supports).toContainEqual(
+      expect.objectContaining({ type: "bracket", stationIn: 100 }),
+    );
+    // Applying the preview leaves no validation finding behind.
+    const applied = applySupportProposal(design, "p1", proposal);
+    const appliedRun = applied.pipes.find((p) => p.id === "p1");
+    expect(validateTransitionSupports(applied, appliedRun).state).toBe("PASS");
+    // Reverse control: a bracket at the valve station clears the
+    // valve even when its label claims another station — no
+    // proposal, and validation passes.
+    const labelWrongButContactRight = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(200, "s2"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 100,
+          loadRef: { kind: "valve", index: 0, stationIn: 150 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+    });
+    expect(
+      previewSupportProposal(labelWrongButContactRight.design, labelWrongButContactRight.run).proposal
+        .supports,
+    ).toEqual([]);
+    expect(
+      validateTransitionSupports(
+        labelWrongButContactRight.design,
+        labelWrongButContactRight.run,
+      ).state,
+    ).toBe("PASS");
+    // Boundary: a bracket exactly at the adopted tolerance binds;
+    // 0.001 in past it proposes the bracket.
+    const atContactStation = (contactStation) =>
+      flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+        diameterIn: 2,
+        spanProfile: water(2),
+        supports: [
+          sup(0, "s1"),
+          sup(200, "s2"),
+          {
+            id: "v1",
+            type: "bracket",
+            stationIn: contactStation,
+            loadRef: { kind: "valve", index: 0, stationIn: 100 },
+            carrier: { kind: "foundation" },
+          },
+        ],
+        valveStations: [{ parallelTo: "rack", operatorSide: true, stationIn: 100 }],
+      });
+    expect(
+      previewSupportProposal(atContactStation(100.5).design, atContactStation(100.5).run).proposal
+        .supports,
+    ).toEqual([]);
+    expect(
+      previewSupportProposal(atContactStation(100.501).design, atContactStation(100.501).run).proposal
+        .supports,
+    ).toContainEqual(expect.objectContaining({ type: "bracket", stationIn: 100 }));
+  });
+
+  it("preview keeps a station-less valve unresolved even when an index-matched support exists", () => {
+    // The verdict's counterexample: a station-less valve has no
+    // geometry to place a load support at, so an index-matched
+    // bracket must not suppress the unresolved warning — validation
+    // emits CONCENTRATED_LOAD_UNVERIFIED for the same geometry, and
+    // the preview must say so explicitly instead of staying silent.
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 200, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      supports: [
+        sup(0, "s1"),
+        sup(200, "s2"),
+        {
+          id: "v1",
+          type: "bracket",
+          stationIn: 100,
+          loadRef: { kind: "valve", index: 0 },
+          carrier: { kind: "foundation" },
+        },
+      ],
+      valveStations: [{ parallelTo: "rack", operatorSide: true }],
+    });
+    expect(codes(validateTransitionSupports(design, run).findings)).toEqual([
+      "CONCENTRATED_LOAD_UNVERIFIED",
+    ]);
+    const { proposal, unresolved } = previewSupportProposal(design, run);
+    expect(unresolved).toEqual(["valve station 0 has no station to place a load support at"]);
+    // No bracket can be placed without a station: the proposal
+    // carries no valve support.
+    expect(proposal.supports).toEqual([]);
+  });
+
   it("collision remapping loops until the fresh id is free, even right after a generator reset", () => {
     // The verdict's counterexample: after resetSupportIds, the first
     // generated id is support-1 — which already exists on this run.
