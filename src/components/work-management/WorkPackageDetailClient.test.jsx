@@ -569,12 +569,12 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(headings(container)).toContain("Package");
   });
 
-  it("switching to Milestones shows the placeholder and hides the Overview panels", () => {
+  it("switching to Milestones shows the Milestones tab and hides the Overview panels", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG);
     act(() => { tabButton(container, "Milestones").click(); });
     expect(tabButton(container, "Milestones").getAttribute("aria-selected")).toBe("true");
-    expect(container.textContent).toContain("Milestone tracking arrives with slice 9");
+    expect(headings(container)).toContain("Milestones");
     expect(headings(container)).not.toContain("Package");
     expect(headings(container)).not.toContain("Lifecycle");
     // Deep-linkable: the switch updates the URL without a refetch.
@@ -594,7 +594,7 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG, { initialTab: "milestones" });
     expect(tabButton(container, "Milestones").getAttribute("aria-selected")).toBe("true");
-    expect(container.textContent).toContain("Milestone tracking arrives with slice 9");
+    expect(headings(container)).toContain("Milestones");
     expect(headings(container)).not.toContain("Package");
   });
 
