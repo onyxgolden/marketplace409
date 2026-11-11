@@ -116,6 +116,35 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview",
   );
 
+  // Redlines-tab link-controls bug, fix round 1 (ChatGPT P1): the original
+  // fix below only resynced `activeTab` on a soft navigation to a different
+  // package — but every package-derived value in this component (`pkg`,
+  // `transitions`, `attestations`, `baselines`, `changes`, `editForm`,
+  // `deletionEligibility`) was still seeded once via a one-time `useState`
+  // initializer, so a navigation from package A to package B could show B's
+  // tab/heading while every piece of actual content and every mutation
+  // target still referenced A — a real cross-package data-integrity risk,
+  // not cosmetic. The real fix is in the parent route
+  // (`src/app/forge/work/[packageId]/page.jsx`): `WorkPackageDetailClient`
+  // is now keyed by `packageId`, so React fully unmounts and remounts this
+  // component — resetting every `useState` initializer at once — on any
+  // genuine package-identity change. The `activeTab` resync below still
+  // matters for the one case a package-keyed remount does NOT cover: the
+  // SAME package with a different `?tab=` deep link (e.g. browser
+  // back/forward, or an external link to this package naming a different
+  // tab) — the component instance survives that navigation, so the tab
+  // still needs resyncing during render (same pattern as
+  // CaptureEditorHost's prevSelectionId / PlanCanvas's prevTool in this
+  // codebase) rather than in an effect, so the sync happens before the
+  // stale tab ever paints. The IFA→IFC redlines tab itself never had the
+  // "Link existing"/Designer-project-picker controls the original report
+  // named — those belong to Documents (see WorkPackageDocuments.jsx).
+  const [prevInitialTab, setPrevInitialTab] = useState(initialTab);
+  if (initialTab !== prevInitialTab) {
+    setPrevInitialTab(initialTab);
+    setActiveTab(TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview");
+  }
+
   // D16: "Review linked records" on the Budget tab was a dead anchor
   // (#work-package-links only exists in the DOM while Overview is the
   // active tab — tabs are conditionally rendered, not merely hidden).

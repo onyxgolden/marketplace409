@@ -58,6 +58,7 @@ export default async function WorkPackagePage({ params, searchParams }) {
         preserveParams={{ tab: activeTab !== "overview" ? activeTab : "" }}
       />
       <WorkPackageDetailClient
+        key={packageId}
         initial={detail}
         initialLinks={links.ok ? links.links : []}
         initialTab={activeTab}
