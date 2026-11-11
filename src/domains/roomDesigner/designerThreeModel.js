@@ -701,6 +701,9 @@ export function nozzleFlangeDescriptors(design, instanceId) {
       normal: face.normal,
       vertical: face.vertical,
       kind: face.kind,
+      // Scheduled head faces (D10-04) carry the modeled tangent-line
+      // base of the neck stub; other faces carry none.
+      ...(face.neckBase ? { neckBase: face.neckBase } : {}),
     });
   }
   return out;

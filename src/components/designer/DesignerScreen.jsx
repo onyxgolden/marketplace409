@@ -78,6 +78,7 @@ import DxfImportSection from "./DxfImportSection";
 import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
 import RackSection from "./RackSection";
 import DowncomerSection from "./DowncomerSection";
+import HeadNozzleScheduleSection from "./HeadNozzleScheduleSection";
 import {
   CONNECTION_FACE_TOLERANCE_IN,
   developedRunLengthIn,
@@ -4208,6 +4209,7 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
         <ReducerSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <SpraySection design={design} symbol={symbol} instance={inst} dispatch={dispatch} />
         <ComponentsSection design={design} symbol={symbol} instance={inst} dispatch={dispatch} />
+        <HeadNozzleScheduleSection design={design} symbol={symbol} instance={inst} dispatch={dispatch} />
         <DowncomerSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RackSection symbol={symbol} instance={inst} dispatch={dispatch} />

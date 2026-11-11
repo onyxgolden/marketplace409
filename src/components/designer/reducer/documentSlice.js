@@ -98,6 +98,7 @@ import {
   setDoorSwing,
   setFurnitureMount,
   setFurnitureUnitCost,
+  setHeadNozzleSchedule,
   setPersonManager,
   setPipeFields,
   setPipeSource,
@@ -118,6 +119,7 @@ import {
   updatePerson,
   updateSheetFormat,
   updateUnderlay,
+  upgradeHeadNozzleSchedules,
 } from "@/domains/roomDesigner/designerDocument";
 import {
   alignFurniture,
@@ -813,6 +815,28 @@ export function documentSlice(state, action) {
         return state;
       }
     }
+
+    case "SET_HEAD_NOZZLE_SCHEDULE": {
+      if (!findSymbolInstance(state.design, action.instanceId)) return state;
+      try {
+        return touch(
+          state,
+          setHeadNozzleSchedule(state.design, action.instanceId, action.schedule ?? null),
+        );
+      } catch {
+        return state;
+      }
+    }
+
+    case "UPGRADE_HEAD_NOZZLES":
+      // The explicit D10-04 head-schedule upgrade: clear the legacy
+      // stamp on every applicable vessel and reconcile attached ends
+      // onto their scheduled faces. One undoable transaction.
+      try {
+        return touch(state, upgradeHeadNozzleSchedules(state.design));
+      } catch {
+        return state;
+      }
 
     case "UPGRADE_CONNECTIONS":
       // The deterministic upgrade for designs saved before the full

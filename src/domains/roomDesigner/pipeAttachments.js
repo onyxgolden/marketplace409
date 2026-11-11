@@ -37,6 +37,15 @@ import {
   CONNECTION_FACE_TOLERANCE_IN,
 } from "./pipeCrossings";
 import { flangeNominalSizeIn, pipeOdIn, NOZZLE_NECK_LENGTH_IN } from "./flangeGeometry";
+import {
+  endNozzleSide,
+  endNozzleSpecForAnchor,
+  headNozzleAnchor,
+  headNozzleFace,
+  isCurrentHeadNozzleInstance,
+  isScheduledHeadVessel,
+  isUnscheduledHeadNozzle,
+} from "./vesselHeadNozzles";
 import { boundReducerAt } from "./pipeReducerModel";
 
 export { JUNCTION_TOLERANCE_IN, CONNECTION_FACE_TOLERANCE_IN };
@@ -81,6 +90,19 @@ export function catalogAnchorsWorld(symbol, inst) {
   const out = [];
   for (const n of specs) {
     if (!n || typeof n.id !== "string" || tombstoned.has(n.id)) continue;
+    // Scheduled end-head nozzles (D10-04): the anchor sits at the
+    // scheduled face — tangent line + projection — and carries the
+    // scheduled elevation, so snap, reconcile and picking land on
+    // the same point validation checks. Unscheduled, invalid or
+    // legacy end nozzles keep the catalog plan position (their prior
+    // shape); every other nozzle is unchanged.
+    if (isScheduledHeadVessel(symbol) && endNozzleSide(n) !== null) {
+      const scheduled = headNozzleAnchor(symbol, inst, n);
+      if (scheduled) {
+        out.push(scheduled);
+        continue;
+      }
+    }
     const lx = n.fx * (effWidth / 2);
     const ly = n.fy * (effDepth / 2);
     out.push({
@@ -130,6 +152,11 @@ export function anchorsOf(inst) {
  *   base + height + neck length, normal straight up;
  * - kind "side": base + height * SIDE_NOZZLE_ELEVATION_FRAC, normal is
  *   the outward plan direction through the nozzle;
+ * - kind "head": a scheduled end-head nozzle (D10-04) — the face sits
+ *   at the scheduled elevation, tangent line + scheduled projection
+ *   along the vessel axis, normal is the scheduled axial outward
+ *   direction; legacy instances resolve the prior side face instead,
+ *   and an unscheduled/invalid entry resolves NO face (null);
  * - kind "utility": the vessel's base utility port (explicit elevation
  *   and outward normal from utilityPiping);
  * - kind "downcomer": the level elevation, outward from the column;
@@ -201,6 +228,18 @@ export function connectionFaceForAnchor(symbol, inst, anchorId) {
         kind: "downcomer",
       };
     }
+  }
+  // Scheduled end-head nozzles (D10-04): the face comes from the
+  // authored schedule, never from the generic side rule. The schedule
+  // is authoritative even on an unversioned vessel (authoring a
+  // schedule IS the upgrade). Without a valid scheduled face, an
+  // unversioned instance falls through to its prior side face below;
+  // a versioned (current) instance resolves NO face (null) — the
+  // incomplete schedule fails closed.
+  if (isScheduledHeadVessel(symbol) && endNozzleSpecForAnchor(symbol, inst, anchorId) !== null) {
+    const scheduled = headNozzleFace(symbol, inst, anchorId);
+    if (scheduled) return scheduled;
+    if (isCurrentHeadNozzleInstance(inst)) return null;
   }
   // Generic catalog nozzles (honoring the instance lifecycle overrides).
   const anchor = catalogAnchorsWorld(symbol, inst).find((a) => a.id === anchorId);
@@ -563,6 +602,14 @@ export function attachmentInterfaceErrors(design, run, end) {
   const symbol = inst ? findSymbol(inst.domain, inst.symbolId) : null;
   const face = symbol ? connectionFaceForAnchor(symbol, inst, ref.anchorId) : null;
   if (!face) {
+    // An unscheduled end-head nozzle is not a stale reference — the
+    // nozzle exists, its schedule is missing or invalid. Say so.
+    if (symbol && isUnscheduledHeadNozzle(symbol, inst, ref.anchorId)) {
+      errors.push(
+        `Pipe run ${run.id} claims nozzle ${ref.anchorId} on ${inst.tag || inst.id}, which has no scheduled head position (NOZZLE_SCHEDULE_UNRESOLVED) — author the vessel's head-nozzle schedule before connecting to this nozzle.`,
+      );
+      return errors;
+    }
     errors.push(
       `Pipe run ${run.id} claims nozzle ${ref.anchorId} on symbol ${ref.symbolId}, which does not resolve to a connection face — stale reference.`,
     );

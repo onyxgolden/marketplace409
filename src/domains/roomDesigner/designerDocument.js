@@ -45,11 +45,20 @@ import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
 import {
+  connectionFaceForAnchor,
   pipeAttachmentErrors,
   pipeJunctionErrors,
   connectionCompatibilityErrors,
+  reconcilePipeAttachments,
   upgradeDesignConnections,
 } from "./pipeAttachments";
+import {
+  HEAD_NOZZLE_SCHEDULE_VERSION,
+  endNozzleSpecs,
+  headNozzleFace,
+  isScheduledHeadVessel,
+  vesselHeadNozzleErrors,
+} from "./vesselHeadNozzles";
 import {
   pipeCrossingErrors,
   crossServiceErrors,
@@ -169,7 +178,32 @@ export function createEmptyDesign(name = "Untitled design", options = {}) {
     // equipment instances `legacyComponents` so the generated sets
     // stay OFF until the explicit, undoable retrofit.
     componentsVersion: DESIGN_COMPONENTS_VERSION,
+    // Head-nozzle-schedule marker (D10-04): deliberately NOT stamped
+    // here. A fresh empty document is unversioned, so vessels placed
+    // into it carry no layout version and resolve their prior faces
+    // — the safe default, because the frozen FCCU sample is built
+    // from this factory with pre-schedule content. (Contrast the R8
+    // components marker above, which IS stamped here: the sample was
+    // authored against the current component generator, but it
+    // predates the schedule model.) The current marker is stamped
+    // where content is authored now: createHomeProject/addLevel
+    // (homeProject.js), setHeadNozzleSchedule /
+    // upgradeHeadNozzleSchedules — and placeSymbol copies the
+    // design's marker onto each vessel it places.
   };
+}
+
+/**
+ * Mark a design envelope schedule-aware (D10-04): vessels placed
+ * into it from here on are current — their end-head nozzles fail
+ * closed without an authored schedule instead of resolving the
+ * prior side-rule faces. Used by the authored-now paths
+ * (createHomeProject, addLevel), never by the empty-document
+ * factory (see createEmptyDesign).
+ */
+export function markHeadNozzleScheduleCurrent(design) {
+  assertDesign(design);
+  return { ...design, headNozzleScheduleVersion: HEAD_NOZZLE_SCHEDULE_VERSION };
 }
 
 function assertDesign(design) {
@@ -1155,6 +1189,130 @@ export function retrofitDesignComponents(design) {
   return upgradeDesignConnections(unstamped);
 }
 
+/**
+ * Author (or clear) an applicable vessel's head-nozzle schedule
+ * (D10-04). `schedule` is an array of schedule entries, or null to
+ * clear the schedule. Structural shape is enforced here (array of
+ * objects with string ids); semantic checks (envelope fit, top/bottom
+ * consistency, rating, projection) stay in validateDesign so a
+ * half-authored schedule saves and reports its gaps instead of
+ * refusing the edit. Authoring a schedule IS the per-instance
+ * upgrade: it clears the legacy stamp, and attached pipe ends are
+ * reconciled onto their new scheduled faces (ends whose face is now
+ * null keep their position and drop the link — unresolved endpoints,
+ * never moved geometry). An ordinary document edit — persists and
+ * undoes like any other command.
+ */
+export function setHeadNozzleSchedule(design, instanceId, schedule) {
+  assertDesign(design);
+  if (schedule !== null && schedule !== undefined) {
+    if (!Array.isArray(schedule)) throw new Error("Head-nozzle schedule must be an array of entries.");
+    for (const entry of schedule) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.id !== "string") {
+        throw new Error("Head-nozzle schedule entries must be objects with a string nozzle id.");
+      }
+    }
+  }
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    const symbol = findSymbol(s.domain, s.symbolId);
+    if (!isScheduledHeadVessel(symbol)) {
+      throw new Error(`Symbol ${s.symbolId} is not a scheduled-head vessel.`);
+    }
+    changed = true;
+    const next = { ...s };
+    if (schedule === null || schedule === undefined) delete next.headNozzleSchedule;
+    else next.headNozzleSchedule = schedule.map((entry) => ({ ...entry }));
+    // Authoring (or clearing) a schedule versions this vessel — and
+    // the envelope — as schedule-aware. Sibling vessels keep their
+    // own version: authoring one vessel's schedule does not disturb
+    // the others (the whole-design upgrade is upgradeHeadNozzleSchedules).
+    next.headNozzleScheduleVersion = HEAD_NOZZLE_SCHEDULE_VERSION;
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  // Authoring a schedule marks the envelope schedule-aware.
+  const nextDesign = { ...design, symbols, headNozzleScheduleVersion: HEAD_NOZZLE_SCHEDULE_VERSION };
+  return reconcilePipeAttachments(nextDesign);
+}
+
+/**
+ * Preview the explicit head-nozzle upgrade (D10-04): for every
+ * unversioned applicable vessel, the end nozzles whose faces would
+ * change, their prior faces, the faces the current schedule would
+ * give (null when unscheduled/invalid), and the runs attached to
+ * them. Pure read — no mutation. The UI shows this before the user
+ * commits the upgrade.
+ */
+export function previewHeadNozzleUpgrade(design) {
+  assertDesign(design);
+  const instances = [];
+  for (const inst of design?.symbols || []) {
+    if (inst?.headNozzleScheduleVersion === HEAD_NOZZLE_SCHEDULE_VERSION) continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!isScheduledHeadVessel(symbol)) continue;
+    const endNozzles = [];
+    for (const spec of endNozzleSpecs(symbol, inst)) {
+      const priorFace = connectionFaceForAnchor(symbol, inst, spec.id);
+      if (!priorFace) continue;
+      // The scheduled face as it would resolve once the stamp is
+      // cleared (the schedule is authoritative, so the face reads
+      // straight off the instance).
+      const scheduledFace = headNozzleFace(symbol, inst, spec.id);
+      endNozzles.push({
+        anchorId: spec.id,
+        priorFace: { x: priorFace.x, y: priorFace.y, elevationIn: priorFace.elevationIn, kind: priorFace.kind },
+        scheduledFace: scheduledFace
+          ? { x: scheduledFace.x, y: scheduledFace.y, elevationIn: scheduledFace.elevationIn, kind: scheduledFace.kind }
+          : null,
+      });
+    }
+    const attachedRunIds = (design.pipes || [])
+      .filter((run) =>
+        Object.values(run.attachments || {}).some(
+          (ref) => ref?.symbolId === inst.id && endNozzles.some((e) => e.anchorId === ref.anchorId),
+        ),
+      )
+      .map((run) => run.id);
+    instances.push({
+      instanceId: inst.id,
+      tag: inst.tag || inst.id,
+      symbolId: inst.symbolId,
+      symbolLabel: symbol.label,
+      endNozzles,
+      attachedRunIds,
+    });
+  }
+  return { instances };
+}
+
+/**
+ * The explicit head-nozzle upgrade (D10-04): version every
+ * unversioned applicable vessel and reconcile attached pipe ends onto
+ * their scheduled faces. Ends whose face is now null keep their
+ * position and their link (the anchor still resolves in plan) — but
+ * the connection cannot verify, so validation flags them as
+ * unresolved endpoints until a schedule is authored. Never moved
+ * geometry. One undoable transaction; returns the same design when
+ * nothing is unversioned.
+ */
+export function upgradeHeadNozzleSchedules(design) {
+  assertDesign(design);
+  const isCurrentDesign = design.headNozzleScheduleVersion === HEAD_NOZZLE_SCHEDULE_VERSION;
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    const symbol = findSymbol(s?.domain, s?.symbolId);
+    if (!isScheduledHeadVessel(symbol)) return s;
+    if (s?.headNozzleScheduleVersion === HEAD_NOZZLE_SCHEDULE_VERSION) return s;
+    changed = true;
+    return { ...s, headNozzleScheduleVersion: HEAD_NOZZLE_SCHEDULE_VERSION };
+  });
+  if (!changed && isCurrentDesign) return design;
+  // The upgrade marks the envelope schedule-aware.
+  return reconcilePipeAttachments({ ...design, symbols, headNozzleScheduleVersion: HEAD_NOZZLE_SCHEDULE_VERSION });
+}
+
 export function deletePipeRun(design, pipeId) {
   assertDesign(design);
   return { ...design, pipes: (design.pipes || []).filter((p) => p.id !== pipeId) };
@@ -1373,6 +1531,18 @@ export function placeSymbol(design, domain, symbolId, x, y, { id, rotationDeg = 
   }
   const cleanTag = cleanText(tag, 40);
   if (cleanTag) instance.tag = cleanTag;
+  // Head-nozzle layout version (D10-04): the design envelope's
+  // marker is copied onto each scheduled-head vessel at placement,
+  // so the face resolvers can tell pre-schedule content (no version:
+  // prior side-rule faces) from current content (versioned:
+  // fail-closed without a schedule) from the instance alone — no
+  // load-time stamping, so old documents round-trip byte-identically.
+  if (
+    isScheduledHeadVessel(symbol) &&
+    design.headNozzleScheduleVersion === HEAD_NOZZLE_SCHEDULE_VERSION
+  ) {
+    instance.headNozzleScheduleVersion = HEAD_NOZZLE_SCHEDULE_VERSION;
+  }
   return { ...design, symbols: [...(design.symbols || []), instance] };
 }
 
@@ -1682,6 +1852,7 @@ export function validateDesign(design) {
   errors.push(...downcomerPropsErrors(design)); // column downcomer level properties
   errors.push(...downcomerGeometryErrors(design)); // downcomer shell/head fit
   errors.push(...utilityPipingErrors(design)); // vessel utility connections (water/air/nitrogen)
+  errors.push(...vesselHeadNozzleErrors(design)); // horizontal-vessel end-head nozzle schedules (D10-04)
   errors.push(...connectionCompatibilityErrors(design)); // connection size/elevation mismatches
   errors.push(...reducerErrors(design)); // reducer/transition component validity
   errors.push(...firewaterErrors(design)); // hydrant spacing + spray coverage/standoff
@@ -1812,6 +1983,14 @@ export function parseDesign(json) {
     );
     parsed.componentsVersion = DESIGN_COMPONENTS_VERSION;
   }
+  // Head-nozzle schedules (D10-04): loading NEVER mutates a
+  // document. An old design carries no layout version anywhere, so
+  // its vessels resolve their prior side-rule faces from the
+  // instance version alone (see vesselHeadNozzles.js) — no stamping,
+  // no normalization, so old designs round-trip byte-identically.
+  // The version is stamped only by explicit authoring
+  // (setHeadNozzleSchedule / upgradeHeadNozzleSchedules) and by the
+  // authored-now paths (createHomeProject / addLevel).
   return parsed;
 }
 
