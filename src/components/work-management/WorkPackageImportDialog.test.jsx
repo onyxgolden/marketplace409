@@ -54,11 +54,20 @@ afterEach(() => {
 });
 
 describe("WorkPackageImportDialog", () => {
-  it("closes on Escape, same as the command palette", async () => {
-    const { container, onClose } = await renderDialog();
-    const dialog = container.querySelector('[role="dialog"]');
+  it("closes on Escape even though the real open path never moves focus into the dialog", async () => {
+    // The real trigger (WorkPackageListGrid / WorkPackageSteps "Import from
+    // file" button) is a plain setImportOpen(true) with no focus() call, so
+    // focus stays on that button, outside the dialog, when Escape is
+    // pressed right after opening — dispatching on the dialog element
+    // itself would prove the handler exists without proving it fires in
+    // the real flow.
+    const { onClose } = await renderDialog();
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
     await act(async () => {
-      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
   });

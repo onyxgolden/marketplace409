@@ -247,10 +247,12 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     // (existing rows AND blank add-rows together) and is labeled required
     // on every edit, but only onCommitCell (editing an existing row)
     // enforced it — adding a new row through a blank row did not. Gate
-    // creation the same way; still client-side only, matching the create
-    // endpoint, which has no reason field to persist.
+    // creation the same way, and actually send it: the create endpoint
+    // accepts and persists `reason` (p_reason), it just was never included
+    // in this POST body.
+    let reason;
     try {
-      requirePanelReason();
+      reason = requirePanelReason();
     } catch (e) {
       setError(e.message);
       return;
@@ -271,6 +273,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
         body: JSON.stringify({
           type: draft.type,
           description: draft.description.trim(),
+          reason,
           ...(estimatedCents !== null ? { estimatedCostCents: estimatedCents } : {}),
         }),
       });

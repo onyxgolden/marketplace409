@@ -230,7 +230,14 @@ describe("WorkPackageChangeOrders", () => {
 
     const post = calls.find((c) => c.method === "POST");
     expect(post).toBeDefined();
-    expect(post.body).toEqual(expect.objectContaining({ description: "New scope item" }));
+    // D17 fix round: the panel's reason box was required and validated
+    // before this point, but the POST body never included it — the real
+    // backend RPC already persists reason correctly (see the migration
+    // test); this was purely never sent.
+    expect(post.body).toEqual(expect.objectContaining({
+      description: "New scope item",
+      reason: "Owner-requested scope addition",
+    }));
     expect(container.textContent).toContain("Change order #2 added — New scope item.");
   });
 });
