@@ -38,9 +38,14 @@ function diffParts(addedKeys, removedKeys) {
   return parts;
 }
 
-function auditSummary(entry, resolveEmail) {
+function auditSummary(entry, resolveEmail, resolveRoleName) {
   const detail = entry.detail || {};
-  const roleName = detail.role_name || detail.display_name || detail.name || null;
+  const roleName =
+    detail.role_name ||
+    detail.display_name ||
+    detail.name ||
+    (entry.target_role_id && resolveRoleName ? resolveRoleName(entry.target_role_id) : null) ||
+    null;
   const added = rentalAdminKeyLabels(detail.added || []);
   const removed = rentalAdminKeyLabels(detail.removed || []);
   const affected = detail.affected_user_count;
@@ -76,7 +81,9 @@ function auditSummary(entry, resolveEmail) {
     case "role.revoked":
       return detail.superseded_by
         ? `Role replaced for ${who}: the previous role was removed.`
-        : `Role removed from ${who}.`;
+        : roleName
+          ? `Removed the ${roleName} role from ${who}.`
+          : `Role removed from ${who}.`;
     default:
       return entry.action || "Role change.";
   }
@@ -189,6 +196,24 @@ export default function RentalPermissionsPanel() {
   const resolveEmail = useCallback(
     (userId) => knownEmails.get(userId) || null,
     [knownEmails]
+  );
+
+  // The audit log's own detail payload only carries a role's display name
+  // for role.created and role.seeded — role.updated, role.retired, and
+  // role.revoked store only the role id, so those entries must resolve the
+  // name from the currently-loaded roles list (which includes retired
+  // roles) rather than from the stored detail.
+  const rolesById = useMemo(() => {
+    const map = new Map();
+    for (const role of roles || []) {
+      if (role?.id) map.set(role.id, role);
+    }
+    return map;
+  }, [roles]);
+
+  const resolveRoleName = useCallback(
+    (roleId) => rolesById.get(roleId)?.display_name || null,
+    [rolesById]
   );
 
   async function readJson(response) {
@@ -439,6 +464,12 @@ export default function RentalPermissionsPanel() {
 
   async function revokeRole() {
     if (!foundUser) return;
+    // The revoked role's name is only known BEFORE the call — the RPC
+    // returns the user's post-revoke state (no active role), so the
+    // server's own message can't name it. Capture it here to keep the
+    // confirmation naming the role, not just the person.
+    const revokedRoleName = foundUser.current_role?.display_name || null;
+    const revokedEmail = foundUser.email;
     setAssigning(true);
     try {
       const response = await fetch("/api/rental/admin/revoke", {
@@ -457,7 +488,10 @@ export default function RentalPermissionsPanel() {
       setConfirmingRevoke(false);
       await loadRoles();
       await loadAudit();
-      notify(result?.message || "Role removed.", false);
+      const message = revokedRoleName
+        ? `Removed the ${revokedRoleName} role from ${revokedEmail}. They can no longer use the permissions that role gave them.`
+        : result?.message || "Role removed.";
+      notify(message, false);
     } catch (error) {
       notify(error.message, true);
     } finally {
@@ -1024,7 +1058,7 @@ export default function RentalPermissionsPanel() {
                     className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-2 text-sm last:border-0 dark:border-slate-800"
                   >
                     <span className="font-bold text-slate-800 dark:text-slate-200">
-                      {auditSummary(entry, resolveEmail)}
+                      {auditSummary(entry, resolveEmail, resolveRoleName)}
                     </span>
                     <span className="text-xs text-slate-500">
                       {entry.created_at || entry.createdAt
