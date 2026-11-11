@@ -277,4 +277,74 @@ describe("WorkPackageTakeoffScreen", () => {
     expect(mounted.container.textContent).toContain("IFC pipe");
     expect(mounted.container.textContent).toContain("15 of 60 ft");
   });
+
+  // D15: adding a takeoff line never told the independently-cached Daily
+  // progress panel (its own useStaleWhileRevalidate instance, keyed by
+  // progress-summary/progress-entries) that the lines it summarizes had
+  // changed. An already-open panel kept showing "No takeoff lines yet"
+  // after a line was added elsewhere on the same screen.
+  it("D15: the Daily progress panel picks up a newly added takeoff line without a reload", async () => {
+    const drawing = { id: "dwg_pid1", drawingNumber: "P-101", drawingType: "p_id", title: null, pIdDrawingId: null };
+    let lines = [];
+    let summaryHasLine = false;
+    global.fetch = vi.fn((url, options) => {
+      if (url.endsWith("/drawings") && !options?.method) return jsonResponse({ drawings: [drawing] });
+      if (url.includes("/takeoff-lines") && !options?.method) return jsonResponse({ lines });
+      if (url.includes("/takeoff-lines") && options?.method === "POST") {
+        const created = {
+          id: "line_1", lineNo: 1, description: "6in CS pipe", materialSpec: null, sizeLabel: null,
+          quantity: 10, unit: "ft", category: "pipe", fabLocation: "shop", fieldWeldCount: 0, requiresFieldFit: false,
+        };
+        lines = [created];
+        summaryHasLine = true;
+        return jsonResponse({ line: created });
+      }
+      if (url.includes("/drawings/readiness")) return jsonResponse({ drawings: [] });
+      if (url.includes("/progress/summary") && !options?.method) {
+        if (summaryHasLine) return jsonResponse(progressSummary());
+        return jsonResponse({
+          summary: { packageId: "pkg_1", lines: [], package: { aggregatePercent: null, cappedAggregateCompletion: null, unitGroups: [], overrunLineCount: 0 } },
+        });
+      }
+      if (url.endsWith("/progress") && !options?.method) return jsonResponse({ entries: [] });
+      return jsonResponse({}, false);
+    });
+
+    // A packageId unused by any other test in this file: useStaleWhileRevalidate
+    // caches by key in a module-level store that outlives a single test.
+    mounted = mount(<WorkPackageTakeoffScreen packageId="pkg_d15_takeoff" />);
+    await flush();
+
+    // Open the Daily progress panel first, while there are no lines yet.
+    act(() => { buttonWithText(mounted.container, "Daily progress").click(); });
+    for (let i = 0; i < 8; i += 1) await flush();
+    expect(mounted.container.textContent).toContain("No takeoff lines yet.");
+
+    // Open the drawing and add a line through the sibling takeoff-lines form.
+    act(() => { buttonWithText(mounted.container, "P&ID — P-101").click(); });
+    for (let i = 0; i < 4; i += 1) await flush();
+
+    const descriptionInput = [...mounted.container.querySelectorAll("input")].find((i) => i.placeholder === "Description");
+    const quantityInput = [...mounted.container.querySelectorAll("input")].find((i) => i.placeholder === "Qty");
+    const unitInput = [...mounted.container.querySelectorAll("input")].find((i) => i.placeholder === "Unit (ft, ea…)");
+    function setValue(el, value) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    act(() => {
+      setValue(descriptionInput, "6in CS pipe");
+      setValue(quantityInput, "10");
+      setValue(unitInput, "ft");
+    });
+    await flush();
+    const addLineForm = descriptionInput.closest("form");
+    act(() => { addLineForm.querySelector('button[type="submit"]').click(); });
+    for (let i = 0; i < 10; i += 1) await flush();
+
+    // No further click on "Daily progress" -- it was already open. It must
+    // now reflect the new line on its own.
+    expect(mounted.container.textContent).toContain("6in CS pipe");
+    expect(mounted.container.textContent).not.toContain("No takeoff lines yet.");
+  });
 });

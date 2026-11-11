@@ -42,12 +42,38 @@ function otherIdOf(link) {
   return isSource ? link.target_id : link.source_id;
 }
 
+// D18: the "Link existing" Designer-project picker showed the same project
+// repeated (one appeared 6 times, another 5) plus case-variant duplicates
+// ("highland" / "Highland") with nothing distinguishing them. Dedupe by id
+// first (closes a literal repeated row), then by case-insensitive display
+// name (closes the casing-variant duplicates), keeping the first occurrence
+// of each.
+function dedupeProjects(projects) {
+  const byId = new Map();
+  for (const project of projects) {
+    if (!byId.has(project.id)) byId.set(project.id, project);
+  }
+  const seenNames = new Set();
+  const result = [];
+  for (const project of byId.values()) {
+    const nameKey = (project.name || project.title || project.id || "").toLowerCase();
+    if (seenNames.has(nameKey)) continue;
+    seenNames.add(nameKey);
+    result.push(project);
+  }
+  return result;
+}
+
 export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
   const [links, setLinks] = useState(initialLinks);
   const [library, setLibrary] = useState([]);
   const [designerProjects, setDesignerProjects] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // D18: distinguishes "still loading" from "loaded and genuinely empty" --
+  // without this the picker rendered as a plain required textbox during
+  // the load window, indistinguishable from the real empty case.
+  const [loaded, setLoaded] = useState(false);
   // Link-existing form
   const [linkKind, setLinkKind] = useState("drawing"); // drawing | document
   const [relType, setRelType] = useState(DRAWING_REL);
@@ -77,9 +103,11 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
       const designerData = await designerRes.json();
       setLinks(linksData.links || []);
       setLibrary(libData.documents || []);
-      setDesignerProjects(designerData.projects || designerData.designer_projects || []);
+      setDesignerProjects(dedupeProjects(designerData.projects || designerData.designer_projects || []));
     } catch (e) {
       setError(e.message);
+    } finally {
+      setLoaded(true);
     }
   }
 
@@ -240,7 +268,9 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
             ))}
           </select>
         )}
-        {linkKind === "drawing" && designerProjects.length > 0 ? (
+        {!loaded ? (
+          <p className={`${input} flex-1 flex items-center text-slate-400`} aria-live="polite">Loading…</p>
+        ) : linkKind === "drawing" && designerProjects.length > 0 ? (
           <select className={`${input} flex-1`} value={otherId} onChange={(e) => setOtherId(e.target.value)} required>
             <option value="">Designer project…</option>
             {designerProjects.map((p) => (

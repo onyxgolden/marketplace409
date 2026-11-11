@@ -83,6 +83,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   const [attestation, setAttestation] = useState({ gate: "", statement: "" });
   const [baselineItems, setBaselineItems] = useState("");
   const [changeForm, setChangeForm] = useState({ changeType: "addition", description: "" });
+  // D14: this used to reuse the shared, page-wide `error` state, so a
+  // client-side "invalid JSON" message from Freeze baseline (on Overview)
+  // kept showing on every other tab, with no dismiss control, until a full
+  // reload. Scoped to its own section's local state, cleared on any new
+  // attempt, so it can never outlive the section it belongs to.
+  const [baselineError, setBaselineError] = useState("");
   const [costRefreshKey, setCostRefreshKey] = useState(0);
   // D7 delete affordance: server-derived eligibility (display only — the
   // delete RPC revalidates everything). Owner-only section; null hides it.
@@ -292,11 +298,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   }
 
   async function onFreeze() {
+    setBaselineError("");
     let membership;
     try {
       membership = JSON.parse(baselineItems);
     } catch {
-      setError("Scope items must be valid JSON: an array of {key, description, quantity, unit}.");
+      setBaselineError("Scope items must be valid JSON: an array of {key, description, quantity, unit}.");
       return;
     }
     const { response, data } = await call(`/api/work-packages/${pkg.id}/scope`, "POST", { action: "freeze", membership });
@@ -339,7 +346,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
   return (
     <div className="mt-6">
-      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {error && (
+        <p role="alert" className="flex items-start justify-between gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError("")} aria-label="Dismiss" className="shrink-0 font-bold">×</button>
+        </p>
+      )}
 
       <div role="tablist" aria-label="Work package sections" className="sticky top-0 z-20 -mx-4 border-b border-slate-200 bg-white px-4">
         <div className="flex flex-wrap gap-1 py-2">
@@ -495,16 +507,6 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             ) : (
               <p className="mt-2 text-sm text-slate-500">Terminal state — no further transitions.</p>
             )}
-            {transitions.length > 0 && (
-              <ul className="mt-4 space-y-1 text-xs text-slate-500">
-                {transitions.map((t) => (
-                  <li key={t.id}>
-                    {new Date(t.at).toLocaleString()} — {t.from_status} → {t.to_status}
-                    {t.reason ? ` — ${t.reason}` : ""}
-                  </li>
-                ))}
-              </ul>
-            )}
           </section>
 
           <section className="rounded-lg border border-slate-200 bg-white p-5">
@@ -557,7 +559,13 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <p className="text-xs text-slate-500">No frozen baseline yet. Freeze an immutable version:</p>
                 <textarea className={`${input} mt-2`} rows={4}
                   placeholder='[{"key": "BUNDLE-01", "description": "Pull bundle", "quantity": 1, "unit": "each"}]'
-                  value={baselineItems} onChange={(e) => setBaselineItems(e.target.value)} />
+                  value={baselineItems} onChange={(e) => { setBaselineItems(e.target.value); setBaselineError(""); }} />
+                {baselineError && (
+                  <p role="alert" className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    <span>{baselineError}</span>
+                    <button type="button" onClick={() => setBaselineError("")} aria-label="Dismiss" className="shrink-0 font-bold">×</button>
+                  </p>
+                )}
                 <button className={`${btnPrimary} mt-2`} onClick={onFreeze} disabled={busy}>Freeze baseline</button>
               </div>
             ) : (
@@ -662,6 +670,30 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "activity" && (
         <div className="mt-6 space-y-6">
+          {/* D20: this tab previously showed only the Danger zone, with no
+             activity or audit history at all despite the tab's own name.
+             The status-transition history already existed (it used to
+             render under Overview -> Lifecycle) — moved here since it is
+             this package's real, already-tracked activity trail. A fuller
+             field-level audit log (every edit, link, attestation) is a
+             larger follow-up, recorded in KNOWN_GAPS.md, not attempted in
+             this fix. */}
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Status history</h2>
+            {transitions.length > 0 ? (
+              <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                {transitions.map((t) => (
+                  <li key={t.id}>
+                    {new Date(t.at).toLocaleString()} — {t.from_status} → {t.to_status}
+                    {t.reason ? ` — ${t.reason}` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">No status changes recorded yet.</p>
+            )}
+          </section>
+
           {deletionEligibility?.isOwner && (
             <section aria-label="Danger zone" className="rounded-lg border border-red-200 bg-white p-5">
               <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>

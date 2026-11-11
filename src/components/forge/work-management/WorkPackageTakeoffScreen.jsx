@@ -13,6 +13,7 @@ import { useState } from "react";
 import { ForgeLoadingState, ForgeErrorState, ForgeEmptyState } from "@/components/forge/ForgeStates";
 import { forgeTheme } from "@/components/forge/theme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { invalidatePrefix } from "@/hooks/swrCache";
 import { preIfcTag } from "@/domains/work-management/drawingReviews.js";
 import WorkPackagePermitAnnotations from "@/components/work-management/WorkPackagePermitAnnotations";
 
@@ -84,7 +85,7 @@ function NewDrawingForm({ packageId, pIdDrawings, onCreated }) {
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Drawing type</span>
           <select value={drawingType} onChange={(e) => setDrawingType(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold bg-white text-slate-950">
             <option value="p_id">P&amp;ID</option>
             <option value="cut_sheet">Cut sheet</option>
             <option value="isometric">Isometric</option>
@@ -93,13 +94,13 @@ function NewDrawingForm({ packageId, pIdDrawings, onCreated }) {
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Drawing number</span>
           <input value={drawingNumber} onChange={(e) => setDrawingNumber(e.target.value)} required
-            placeholder="P-101" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            placeholder="P-101" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         </label>
         {drawingType !== "p_id" && (
           <label className="text-sm sm:col-span-2">
             <span className={forgeTheme.labelSmall}>Which P&amp;ID does this roll up to?</span>
             <select value={pIdDrawingId} onChange={(e) => setPIdDrawingId(e.target.value)} required
-              className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+              className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold bg-white text-slate-950">
               <option value="">Select a P&amp;ID…</option>
               {pIdDrawings.map((d) => (
                 <option key={d.id} value={d.id}>{d.drawingNumber}{d.title ? ` — ${d.title}` : ""}</option>
@@ -110,7 +111,7 @@ function NewDrawingForm({ packageId, pIdDrawings, onCreated }) {
         <label className="text-sm sm:col-span-2">
           <span className={forgeTheme.labelSmall}>Title (optional)</span>
           <input value={title} onChange={(e) => setTitle(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         </label>
       </div>
       <button type="submit" disabled={busy}
@@ -167,28 +168,28 @@ function NewLineForm({ packageId, drawingId, onCreated }) {
       <p className={forgeTheme.labelSmall}>Add a takeoff line</p>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <input value={description} onChange={(e) => setDescription(e.target.value)} required
-          placeholder="Description" className="col-span-2 rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950 sm:col-span-1" />
+          placeholder="Description" className="col-span-2 rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950 sm:col-span-1" />
         <input value={materialSpec} onChange={(e) => setMaterialSpec(e.target.value)}
-          placeholder="Material spec" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+          placeholder="Material spec" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         <input value={sizeLabel} onChange={(e) => setSizeLabel(e.target.value)}
-          placeholder="Size" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+          placeholder="Size" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" step="any" min="0" required
-          placeholder="Qty" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+          placeholder="Qty" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         <input value={unit} onChange={(e) => setUnit(e.target.value)} required
-          placeholder="Unit (ft, ea…)" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+          placeholder="Unit (ft, ea…)" className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         <select value={category} onChange={(e) => setCategory(e.target.value)}
-          className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+          className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold bg-white text-slate-950">
           {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
         <select value={fabLocation} onChange={(e) => setFabLocation(e.target.value)}
-          className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+          className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold bg-white text-slate-950">
           <option value="shop">Shop fab</option>
           <option value="field">Field install</option>
         </select>
         <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-bold text-slate-700">
           FW count
           <input value={fieldWeldCount} onChange={(e) => setFieldWeldCount(e.target.value)} type="number" step="1" min="0"
-            className="w-14 rounded border border-slate-300 px-1 py-1 text-sm text-slate-950" />
+            className="w-14 rounded border border-slate-300 px-1 py-1 text-sm bg-white text-slate-950" />
         </label>
         <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-bold text-slate-700">
           <input type="checkbox" checked={requiresFieldFit} onChange={(e) => setRequiresFieldFit(e.target.checked)} />
@@ -255,23 +256,23 @@ function LineRow({ packageId, drawingId, line, onChanged, onDeleted }) {
     return (
       <tr className="border-b border-slate-200 bg-amber-50 text-sm dark:border-slate-800 dark:bg-amber-900/20">
         <td className="py-2 pr-3">{line.lineNo}</td>
-        <td className="py-2 pr-3"><input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} className="w-full rounded border border-slate-300 px-1.5 py-1 text-slate-950" /></td>
+        <td className="py-2 pr-3"><input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} className="w-full rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" /></td>
         <td className="py-2 pr-3">
-          <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} className="rounded border border-slate-300 px-1.5 py-1 text-slate-950">
+          <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} className="rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950">
             {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </td>
         <td className="py-2 pr-3">
-          <input value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} type="number" step="any" min="0" className="w-16 rounded border border-slate-300 px-1.5 py-1 text-slate-950" />{" "}
-          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} className="w-14 rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+          <input value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} type="number" step="any" min="0" className="w-16 rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />{" "}
+          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} className="w-14 rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />
         </td>
         <td className="py-2 pr-3">
-          <select value={draft.fabLocation} onChange={(e) => setDraft({ ...draft, fabLocation: e.target.value })} className="rounded border border-slate-300 px-1.5 py-1 text-slate-950">
+          <select value={draft.fabLocation} onChange={(e) => setDraft({ ...draft, fabLocation: e.target.value })} className="rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950">
             <option value="shop">Shop</option>
             <option value="field">Field</option>
           </select>
         </td>
-        <td className="py-2 pr-3"><input value={draft.fieldWeldCount} onChange={(e) => setDraft({ ...draft, fieldWeldCount: e.target.value })} type="number" step="1" min="0" className="w-14 rounded border border-slate-300 px-1.5 py-1 text-slate-950" /></td>
+        <td className="py-2 pr-3"><input value={draft.fieldWeldCount} onChange={(e) => setDraft({ ...draft, fieldWeldCount: e.target.value })} type="number" step="1" min="0" className="w-14 rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" /></td>
         <td className="py-2 pr-3"><input type="checkbox" checked={!!draft.requiresFieldFit} onChange={(e) => setDraft({ ...draft, requiresFieldFit: e.target.checked })} /></td>
         <td className="py-2">
           <button type="button" onClick={onSave} disabled={busy} className="rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
@@ -398,6 +399,16 @@ function DrawingPanel({ packageId, drawing, onDrawingDeleted, onAnnotationsChang
   function bump() {
     refresh();
     setSummaryRefreshToken((t) => t + 1);
+    // D15: adding/editing/deleting a takeoff line never told the sibling
+    // Daily-progress panel (its own, independently cached
+    // useStaleWhileRevalidate instance) that the lines it summarizes had
+    // changed, so an already-open panel kept showing "No takeoff lines
+    // yet" after a line was added elsewhere on the same screen.
+    // invalidatePrefix drops every progress-summary/progress-entries cache
+    // entry for this package; the panel's own subscribe() callback (inside
+    // useStaleWhileRevalidate) then re-renders and refetches on its own —
+    // no reload needed, and no change to the panel's own code.
+    invalidatePrefix(`work-packages:${packageId}:progress`);
   }
 
   function onLineCreated() {
@@ -571,11 +582,11 @@ function ProgressEntryRow({ packageId, entry, lineLabel, preIfc, onChanged }) {
         {mode === "correct" && (
           <span className="flex flex-wrap items-center gap-2">
             <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" step="any" min="0"
-              className="w-20 rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+              className="w-20 rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />
             <input value={workDate} onChange={(e) => setWorkDate(e.target.value)} type="date"
-              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+              className="rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)"
-              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+              className="rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />
             <button type="button" onClick={onSaveCorrect} disabled={busy}
               className="rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
             <button type="button" onClick={() => setMode(null)} className="text-xs font-bold text-slate-600">Cancel</button>
@@ -584,7 +595,7 @@ function ProgressEntryRow({ packageId, entry, lineLabel, preIfc, onChanged }) {
         {mode === "void" && (
           <span className="flex flex-wrap items-center gap-2">
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)"
-              className="rounded border border-slate-300 px-1.5 py-1 text-slate-950" />
+              className="rounded border border-slate-300 px-1.5 py-1 bg-white text-slate-950" />
             <button type="button" onClick={onConfirmVoid} disabled={busy}
               className="rounded-lg bg-red-700 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{busy ? "Voiding…" : "Confirm void"}</button>
             <button type="button" onClick={() => setMode(null)} className="text-xs font-bold text-slate-600">Cancel</button>
@@ -641,7 +652,7 @@ function NewProgressForm({ packageId, lines, onCreated }) {
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Takeoff line</span>
           <select value={lineId} onChange={(e) => setLineId(e.target.value)} required
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold bg-white text-slate-950">
             {lines.map((line) => (
               <option key={line.lineId} value={line.lineId}>{line.description} ({line.baselineQuantity} {line.baselineUnit})</option>
             ))}
@@ -650,17 +661,17 @@ function NewProgressForm({ packageId, lines, onCreated }) {
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Work date</span>
           <input value={workDate} onChange={(e) => setWorkDate(e.target.value)} type="date" required
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         </label>
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Installed quantity</span>
           <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" step="any" min="0" required
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         </label>
         <label className="text-sm">
           <span className={forgeTheme.labelSmall}>Note (optional)</span>
           <input value={note} onChange={(e) => setNote(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-950" />
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm bg-white text-slate-950" />
         </label>
       </div>
       <button type="submit" disabled={busy}
@@ -811,8 +822,10 @@ function ProgressSection({ packageId }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mt-5">
+      {/* D11: text-slate-800 with no dark: override was barely readable
+         against this screen's dark-mode background. */}
       <button type="button" onClick={() => setOpen((v) => !v)}
-        className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-800">
+        className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-800 dark:border-slate-600 dark:text-slate-100">
         {open ? "Hide daily progress" : "Daily progress"}
       </button>
       {open && (

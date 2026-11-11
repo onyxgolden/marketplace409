@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { getWorkPackageDetail } from "@/application/work-management/workPackages";
@@ -32,7 +32,12 @@ export default async function WorkPackagePage({ params, searchParams }) {
     actor: forgeApplication.user.id,
     packageId,
   });
-  if (!detail.ok) redirect("/forge/work");
+  // D8(b): a nonexistent id (or a package RLS hides from this actor — same
+  // branch for both, so existence is never leaked to an unauthorized
+  // viewer) used to silently redirect to the list with no explanation.
+  // notFound() renders not-found.jsx inside this segment's own layout, so
+  // the Planner nav bar stays visible instead of a bare redirect.
+  if (!detail.ok) notFound();
 
   const links = await listLinks(forgeApplication.supabaseClient, {
     ownerId,
