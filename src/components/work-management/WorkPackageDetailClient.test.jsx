@@ -659,6 +659,125 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(headings(container)).toContain("Drawing readiness");
   });
 
+  it("fix round 1: a package-identity change (key remount) discards package A's data and any in-progress edit, never leaking it into package B", async () => {
+    // ChatGPT's P1 on the first fix round: resyncing only `activeTab` left
+    // every package-derived value (pkg, transitions, attestations,
+    // baselines, changes, editForm, deletionEligibility) seeded once from
+    // the `initial` prop, with no package-identity reconciliation. Under
+    // the exact no-remount mechanism this bug lives in, a navigation from
+    // package A to package B could show B's tab/heading while the actual
+    // content and any mutation target still referenced A. The real fix
+    // keys <WorkPackageDetailClient> by packageId in the parent route, so
+    // React fully unmounts/remounts on a genuine package change. A single
+    // renderDetail() call can't catch a remount regression — it always
+    // mounts fresh. This test re-renders the SAME root with a DIFFERENT
+    // key and a different package, exactly as the parent route now does,
+    // and must still show it as a clean instance: no stale A title, no
+    // stale open edit, correct B id/code/title throughout.
+    stubFetch();
+    const PKG_B = { ...BASE_PKG, id: "forge_wp_2", code: "WP-0002", title: "Second package" };
+    vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
+      if (url === `/api/work-packages/${PKG_B.id}/drawings/readiness` || url === `/api/work-packages/${BASE_PKG.id}/drawings/readiness`) {
+        const forId = url.includes(PKG_B.id) ? PKG_B.id : BASE_PKG.id;
+        return {
+          ok: true,
+          json: async () => ({
+            packageId: forId, packageStatus: BASE_PKG.status, drawings: [],
+            counts: { drawingsTotal: 0, ifcReleased: 0, pendingReview: 0, returned: 0, openRequiredRedlines: 0, pendingFieldRedlines: 0 },
+          }),
+        };
+      }
+      if (url === "/api/work-packages/property-options") return { ok: true, json: async () => ({ properties: OPTIONS }) };
+      if (typeof url === "string" && url.startsWith("/api/work-links")) return { ok: true, json: async () => ({ links: [], documents: [] }) };
+      if (typeof url === "string" && url.startsWith("/api/work-documents")) return { ok: true, json: async () => ({ documents: [] }) };
+      if (typeof url === "string" && url.startsWith("/api/forge/designer")) return { ok: true, json: async () => ({ projects: [] }) };
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    activeRoots.push(root);
+    act(() => {
+      root.render(
+        <WorkPackageDetailClient
+          key={BASE_PKG.id}
+          initialTab="overview"
+          initial={{ package: BASE_PKG, transitions: [], attestations: [], baselines: [], currentBaseline: null, scopeChanges: [], observations: [] }}
+          initialLinks={[]}
+        />,
+      );
+    });
+    await settle();
+    expect(container.textContent).toContain(BASE_PKG.title);
+
+    // Open Edit on package A and type an unsaved change — this is the
+    // "in-progress mutation target" the review warns could otherwise leak.
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+    const textarea = container.querySelector("textarea");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    act(() => {
+      setter.call(textarea, "Unsaved edit for package A — must never reach package B");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Cancel")).toBe(true);
+
+    // Non-vacuous check, step 1: re-render the SAME root with the SAME key
+    // (i.e. the pre-fix-round page.jsx, which never keyed this component at
+    // all) while swapping in package B's data and tab. React reuses the
+    // existing instance — this must reproduce the exact reported bug:
+    // package A's title and its unsaved edit both survive under package
+    // B's own tab. If this assertion ever stops failing, the fix below is
+    // no longer being proven against anything.
+    act(() => {
+      root.render(
+        <WorkPackageDetailClient
+          key={BASE_PKG.id}
+          initialTab="redlines"
+          initial={{ package: PKG_B, transitions: [], attestations: [], baselines: [], currentBaseline: null, scopeChanges: [], observations: [] }}
+          initialLinks={[]}
+        />,
+      );
+    });
+    await settle();
+    expect(tabButton(container, "IFA→IFC redlines").getAttribute("aria-selected")).toBe("true");
+    // The Edit form/title live only under the Overview tab's conditional
+    // render — switch back to it to actually observe whether A's stale
+    // state survived underneath the tab switch.
+    act(() => { tabButton(container, "Overview").click(); });
+    expect(container.querySelector("input").value).toBe(BASE_PKG.title);
+    expect(container.textContent).toContain("Unsaved edit for package A");
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Cancel")).toBe(true);
+
+    // Step 2: the real fix — re-render with a DIFFERENT key, exactly what
+    // the parent route's key={packageId} now produces for a genuine
+    // package-identity change.
+    act(() => {
+      root.render(
+        <WorkPackageDetailClient
+          key={PKG_B.id}
+          initialTab="redlines"
+          initial={{ package: PKG_B, transitions: [], attestations: [], baselines: [], currentBaseline: null, scopeChanges: [], observations: [] }}
+          initialLinks={[]}
+        />,
+      );
+    });
+    await settle();
+    expect(tabButton(container, "IFA→IFC redlines").getAttribute("aria-selected")).toBe("true");
+    expect(headings(container)).toContain("Drawing readiness");
+
+    // Clean instance: switching back to Overview now shows package B's own
+    // title with no trace of A's title or its unsaved edit, and the Edit
+    // form is closed (a fresh mount always starts with editing=false), not
+    // left open on A's stale draft.
+    act(() => { tabButton(container, "Overview").click(); });
+    expect(container.textContent).not.toContain(BASE_PKG.title);
+    expect(container.textContent).not.toContain("Unsaved edit for package A");
+    expect(container.textContent).toContain(PKG_B.title);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Cancel")).toBe(false);
+  });
+
   it("shows the danger zone only on the Activity / Audit tab", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG, {
