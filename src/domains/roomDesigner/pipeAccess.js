@@ -1896,6 +1896,12 @@ export function nodeStandingElevationIn(design, node) {
  * declares it or another node stands on the platform it reaches.
  * An authored elevation with no run reaching it is never in the
  * set: reachability is proven by the chain, not by the number.
+ * Fix round 5: an elevated intermediate datum is a landing, not
+ * just a number — a leg that begins above grade extends
+ * reachability only from a modeled platform at its bottom, under
+ * the same symbol-scoped/effective-platform rules the final
+ * standing check uses. Grade is the implicit starting datum and
+ * needs no platform.
  */
 export function reachableElevationsIn(design) {
   const grade = gradeElevationIn(design);
@@ -1916,6 +1922,21 @@ export function reachableElevationsIn(design) {
         continue;
       }
       if (!has(bottom) || has(va.topElevationIn)) continue;
+      // Fix round 5: an elevated intermediate datum is a landing,
+      // not just a number. A leg that begins above grade may extend
+      // reachability only from a modeled platform at its bottom —
+      // the same symbol-scoped/effective-platform rules the final
+      // standing check uses (platformAtElevationIn: an authored
+      // platform record at that elevation, scoped to the node's
+      // symbol when the record names one, or the node's symbol
+      // instance's effective manway platform, authored else the
+      // legacy D5 deck). Without that landing there is no modeled
+      // place to transfer from the incoming run to this one, so
+      // the leg contributes nothing. Grade is the implicit
+      // starting datum and needs no platform.
+      if (Math.abs(bottom - grade) > EPS && !platformAtElevationIn(design, node, bottom)) {
+        continue;
+      }
       reached.push(va.topElevationIn);
       changed = true;
     }

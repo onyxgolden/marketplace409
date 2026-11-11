@@ -1579,8 +1579,301 @@ describe("access completeness", () => {
       ],
     });
     expect(expectedAccessSubjects(design)).toHaveLength(2);
+    expect(reachableElevationsIn(design)).toEqual([0, 200, 400]);
     expect(validateOperatorAccess(design).state).toBe("PASS");
     expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  // Fix round 5: the intermediate landing is a required condition,
+  // not an optional detail. This is the same 200→400 two-leg
+  // geometry as the passing test above, but with ONLY the final
+  // 400-in platform modeled — no platform at the 200-in datum
+  // where the second leg begins. The chain must stop at 200 in:
+  // both validators fail, and the 400-in node does not attach.
+  it("a two-leg chain with only the final platform does not reach a 400-in station", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = setAccessData(design, {
+      // Only the final platform: the 200-in transfer datum has no
+      // modeled landing, so the second leg contributes nothing.
+      platforms: [{ id: "pf1", elevationIn: 400 }],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(300, 0, "n2", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+      ],
+    });
+    expect(expectedAccessSubjects(design)).toHaveLength(2);
+    expect(reachableElevationsIn(design)).toEqual([0, 200]);
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(
+      operator.findings.some((f) => f.message.includes("not reachable from grade")),
+    ).toBe(true);
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(walk.findings.some((f) => f.message.includes("not reachable from grade"))).toBe(true);
+    // The graph refuses the attachment: no vertex, no provenance
+    // for the unreachable stand.
+    const graph = buildWalkGraph(design);
+    expect(graph.attached.nodes.n2).toBeUndefined();
+    expect(graph.attached.nodeStandingElevationIn.n2).toBeUndefined();
+  });
+
+  // Fix round 5: the landing rule applies at EVERY elevated
+  // datum in a chain, not just the final one. Three 200-in legs
+  // (each within the 360-in cap) reach a 600-in station only
+  // when a modeled platform stands at both the 200-in and the
+  // 400-in transfer datums.
+  it("a three-leg chain reaches a 600-in station through modeled platforms at 200 and 400 in", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 600, y: -500 }, { x: 600, y: 500 }], {
+      id: "p3",
+      diameterIn: 2,
+      elevationIn: 600,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = setAccessData(design, {
+      // The walk path is lengthened so the 600-in station at
+      // (600, 0) stands on it.
+      paths: [walkPath("w1", [{ x: -500, y: 0 }, { x: 1000, y: 0 }])],
+      platforms: [
+        { id: "pf1", elevationIn: 200 },
+        { id: "pf2", elevationIn: 400 },
+      ],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(300, 0, "n2", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(600, 0, "n3", {
+          kind: "valve",
+          runId: "p3",
+          valveIndex: 0,
+          elevationIn: 400,
+          verticalAccess: { kind: "ladder", topElevationIn: 600 },
+        }),
+      ],
+    });
+    expect(expectedAccessSubjects(design)).toHaveLength(3);
+    expect(reachableElevationsIn(design)).toEqual([0, 200, 400, 600]);
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  it("a three-leg chain missing the 400-in platform does not reach a 600-in station", () => {
+    let design = entryAndPathOnly();
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 600, y: -500 }, { x: 600, y: 500 }], {
+      id: "p3",
+      diameterIn: 2,
+      elevationIn: 600,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = setAccessData(design, {
+      paths: [walkPath("w1", [{ x: -500, y: 0 }, { x: 1000, y: 0 }])],
+      // Only the 200-in landing: the 400-in transfer datum has no
+      // modeled platform, so the third leg contributes nothing.
+      platforms: [{ id: "pf1", elevationIn: 200 }],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(300, 0, "n2", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(600, 0, "n3", {
+          kind: "valve",
+          runId: "p3",
+          valveIndex: 0,
+          elevationIn: 400,
+          verticalAccess: { kind: "ladder", topElevationIn: 600 },
+        }),
+      ],
+    });
+    expect(expectedAccessSubjects(design)).toHaveLength(3);
+    expect(reachableElevationsIn(design)).toEqual([0, 200, 400]);
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(
+      operator.findings.some((f) => f.message.includes("not reachable from grade")),
+    ).toBe(true);
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(walk.findings.some((f) => f.message.includes("not reachable from grade"))).toBe(true);
+    expect(buildWalkGraph(design).attached.nodes.n3).toBeUndefined();
+  });
+
+  // Fix round 5: the legacy D5 deck counts as an intermediate
+  // landing — platformAtElevationIn's effective-manway-platform
+  // branch, not just authored platform records. The vessel's
+  // manway sill is set to 200 in, so its D5 deck rides at 200 in
+  // and the manway node's 200→400 ladder extends the chain to
+  // the 400-in station. The negative moves the sill (and the
+  // deck) to 100 in, leaving the 200-in datum with no landing.
+  it("a legacy D5 deck at the intermediate datum lets a chain reach a 400-in station", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    design.symbols.find((s) => s.id === "v1").manway = { sillIn: 200 };
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
+      // Only the final 400-in platform is an authored record: the
+      // 200-in landing is the vessel's legacy D5 deck, not a record.
+      platforms: [{ id: "pf2", elevationIn: 400 }],
+      nodes: [
+        nodeAt(0, 0, "na", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        vesselManwayFaceNode(500, 0, "nb", {
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(300, 0, "nc", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 400,
+        }),
+        ...vesselFaceNodes(500, 0, VESSEL_ANCHORS, 10),
+      ],
+    });
+    // 2 valve stations + manway + 7 vessel nozzles.
+    expect(expectedAccessSubjects(design)).toHaveLength(10);
+    const reached = reachableElevationsIn(design);
+    expect(reached).toEqual(expect.arrayContaining([0, 200, 400]));
+    expect(validateOperatorAccess(design).state).toBe("PASS");
+    expect(validateWalkGraph(design).state).toBe("PASS");
+  });
+
+  it("a legacy D5 deck below the intermediate datum does not land a chain at a 400-in station", () => {
+    let design = entryAndPathOnly();
+    design = placeSymbol(design, D, "vertical-vessel", 500, 0, { id: "v1" });
+    design.symbols.find((s) => s.id === "v1").manway = { sillIn: 100 };
+    design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 200,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = addPipeRun(design, [{ x: 300, y: -500 }, { x: 300, y: 500 }], {
+      id: "p2",
+      diameterIn: 2,
+      elevationIn: 400,
+      valveStations: [{ stationIn: 500 }],
+    });
+    design = setAccessData(design, {
+      paths: [vesselFacePath(500)],
+      platforms: [{ id: "pf2", elevationIn: 400 }],
+      nodes: [
+        nodeAt(0, 0, "na", {
+          kind: "valve",
+          runId: "p1",
+          valveIndex: 0,
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        vesselManwayFaceNode(500, 0, "nb", {
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(300, 0, "nc", {
+          kind: "valve",
+          runId: "p2",
+          valveIndex: 0,
+          elevationIn: 400,
+        }),
+        ...vesselFaceNodes(500, 0, VESSEL_ANCHORS, 10),
+      ],
+    });
+    expect(expectedAccessSubjects(design)).toHaveLength(10);
+    const reached = reachableElevationsIn(design);
+    expect(reached).toContain(200);
+    expect(reached).not.toContain(400);
+    const operator = validateOperatorAccess(design);
+    expect(operator.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(
+      operator.findings.some((f) => f.message.includes("not reachable from grade")),
+    ).toBe(true);
+    const walk = validateWalkGraph(design);
+    expect(walk.state).toBe(ACCESS_CODES.ACCESS_NOT_MODELED);
+    expect(walk.findings.some((f) => f.message.includes("not reachable from grade"))).toBe(true);
+    const graph = buildWalkGraph(design);
+    expect(graph.attached.nodes.nb).toBeUndefined();
+    expect(graph.attached.nodes.nc).toBeUndefined();
   });
 
   it("a ladder from grade up to the station elevation satisfies an elevated valve station", () => {
@@ -1771,7 +2064,7 @@ describe("access completeness", () => {
     expect(graph.attached.nodeStandingElevationIn).toEqual({});
   });
 
-  it("reachableElevationsIn follows a complete ladder chain and stops at an over-cap run", () => {
+  it("reachableElevationsIn stops a chain at an elevated bottom with no modeled landing platform", () => {
     let design = entryAndPathOnly();
     design = setAccessData(design, {
       nodes: [
@@ -1794,10 +2087,42 @@ describe("access completeness", () => {
         }),
       ],
     });
-    // 200 in from grade, then 400 in from 200 in; 800 in is not
-    // reached — the 400-in run from 400 in exceeds the 360-in cap.
-    // (The n2/n3 stands themselves are unproven here — no platform
-    // is modeled — so this tests the chain alone, not attachment.)
+    // 200 in from grade; 400 in is NOT reached — the 200-in
+    // bottom of the second leg has no modeled landing platform,
+    // so there is no place to transfer from the first run to the
+    // next (fix round 5). The 800-in run is doubly out: its
+    // 400-in bottom is unreached, and the 400-in leg exceeds the
+    // 360-in cap.
+    expect(reachableElevationsIn(design)).toEqual([0, 200]);
+  });
+
+  it("reachableElevationsIn follows a complete ladder chain through a modeled intermediate platform", () => {
+    let design = entryAndPathOnly();
+    design = setAccessData(design, {
+      platforms: [{ id: "pf1", elevationIn: 200 }],
+      nodes: [
+        nodeAt(0, 0, "n1", {
+          kind: "valve",
+          symbolId: "v1",
+          verticalAccess: { kind: "ladder", topElevationIn: 200 },
+        }),
+        nodeAt(100, 0, "n2", {
+          kind: "valve",
+          symbolId: "v1",
+          elevationIn: 200,
+          verticalAccess: { kind: "ladder", topElevationIn: 400 },
+        }),
+        nodeAt(200, 0, "n3", {
+          kind: "valve",
+          symbolId: "v1",
+          elevationIn: 400,
+          verticalAccess: { kind: "ladder", topElevationIn: 800 },
+        }),
+      ],
+    });
+    // 200 in from grade, then 400 in from the modeled 200-in
+    // platform; 800 in is not reached — the 400-in run from 400
+    // in exceeds the 360-in cap.
     expect(reachableElevationsIn(design)).toEqual([0, 200, 400]);
   });
 
