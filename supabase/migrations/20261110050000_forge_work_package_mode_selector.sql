@@ -60,4 +60,4 @@ begin
 end $$;
 
 comment on column forge_work_packages.mode is
-  'Industrial vs Commercial (real-estate) planner mode. Controls which optional fields (Unit/Area/System vs Property) the UI/import layer shows and validates for this package. Toggling it never rewrites unit/area/system/property_id/package_type — those stay exactly as stored. Default industrial: every row that existed before this migration reads back as industrial with all prior data intact.';
+  'Industrial vs Commercial (real-estate) planner mode. Controls which optional fields (Unit/Area/System vs Property) the UI/import layer shows and validates for this package. Toggling it never rewrites unit/area/system/property_id/package_type — those stay exactly as stored. Default industrial on ADD COLUMN, then backfilled by package_type: a row carrying a commercial-only type (remodel/rental_turn/maintenance_repair/new_construction_phase) reads back as commercial; every other pre-existing row reads back as industrial. All prior data stays intact either way.';

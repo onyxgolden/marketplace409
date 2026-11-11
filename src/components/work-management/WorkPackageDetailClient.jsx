@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
@@ -62,7 +62,7 @@ function editFormFromPackage(p) {
     title: p.title, description: p.description || "",
     project_id: p.project_id || "",
     planned_finish: p.planned_finish || "", property_id: p.property_id || "",
-    mode: inferEffectiveMode(p),
+    mode: inferEffectiveMode(p), package_type: p.package_type || "other",
   };
 }
 
@@ -419,14 +419,39 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <div>
                   <label className={label} htmlFor="edit_mode">Mode</label>
                   <select id="edit_mode" className={input} value={editForm.mode}
-                    onChange={(e) => setEditForm({ ...editForm, mode: e.target.value })}>
+                    onChange={(e) => {
+                      const nextMode = e.target.value;
+                      setEditForm((prev) => ({
+                        ...prev,
+                        mode: nextMode,
+                        // A package_type exclusive to the old mode would fail
+                        // server-side validation on save (the merged candidate
+                        // must have a type valid for its own mode) — reset to
+                        // "other" only when the stored type isn't offered under
+                        // the new mode; a type shared by both modes ("other")
+                        // or already valid under the new mode is left alone.
+                        package_type: WP_PACKAGE_TYPES_BY_MODE[nextMode].includes(prev.package_type)
+                          ? prev.package_type
+                          : "other",
+                      }));
+                    }}>
                     <option value="industrial">Industrial</option>
                     <option value="commercial">Commercial</option>
                   </select>
                   <p className="mt-1 text-xs text-slate-500">
-                    Switches which optional fields this package shows (Unit/Area/System vs Property) — it never
-                    changes the package&apos;s Scope/type, Unit/Area/System, or Property values themselves.
+                    Switches which optional fields this package shows (Unit/Area/System vs Property). If the
+                    current Type isn&apos;t offered under the new mode, Type resets to Other — Unit/Area/System
+                    and Property values themselves are never changed.
                   </p>
+                </div>
+                <div>
+                  <label className={label} htmlFor="edit_package_type">Type</label>
+                  <select id="edit_package_type" className={input} value={editForm.package_type}
+                    onChange={(e) => setEditForm({ ...editForm, package_type: e.target.value })}>
+                    {WP_PACKAGE_TYPES_BY_MODE[editForm.mode].map((t) => (
+                      <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
                 </div>
                 {editForm.mode === "commercial" && (
                   <div>
