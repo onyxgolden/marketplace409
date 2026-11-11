@@ -6,9 +6,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SchedulingAdminClient from "./SchedulingAdminClient.jsx";
 
-const ROLE_ADMIN = { id: "forge_sr_1", role_key: "admin", name: "Admin", is_builtin: false, version: 1 };
-const ROLE_VIEWER = { id: "forge_sr_2", role_key: "viewer", name: "Viewer", is_builtin: false, version: 1 };
+// The real migration (forge_scheduling_roles_provision_starter_set) hardcodes
+// is_builtin=true for every one of the 4 starter roles -- these fixtures
+// previously had it backwards (false), which is exactly why the
+// is_builtin-based exclusion bug (every starter role filtered out of the
+// assign dropdown and the capability matrix's editable check) was never
+// caught: the fixture's is_builtin never matched what real data looks like.
+const ROLE_ADMIN = { id: "forge_sr_1", role_key: "admin", name: "Admin", is_builtin: true, version: 1 };
+const ROLE_VIEWER = { id: "forge_sr_2", role_key: "viewer", name: "Viewer", is_builtin: true, version: 1 };
+// A literal "owner" row never exists in practice (owner authority is
+// structural -- see PR #767/#773); this fixture exists only to prove the UI
+// defensively excludes one by role_key if it ever did.
 const ROLE_OWNER = { id: "forge_sr_owner", role_key: "owner", name: "Owner", is_builtin: true, version: 1 };
+// The other two starter roles, used only by the realistic-provision test
+// below (all four starters present at once, matching a real provisioned
+// workspace).
+const ROLE_SCHEDULER = { id: "forge_sr_3", role_key: "scheduler", name: "Scheduler", is_builtin: true, version: 1 };
+const ROLE_CREW_LEAD = { id: "forge_sr_4", role_key: "crew_lead", name: "Crew Lead", is_builtin: true, version: 1 };
 
 function snapshotWith({ roles = [ROLE_OWNER, ROLE_ADMIN, ROLE_VIEWER], capabilities = [], assignments = [] } = {}) {
   return { roles, capabilities, assignments, generations: { roles: { count: roles.length, max_version: 1 }, assignments: { count: assignments.length, max_version: 1 } } };
@@ -118,6 +132,51 @@ describe("SchedulingAdminClient", () => {
     const ownerBoxes = [...container.querySelectorAll('input[aria-label$="— Owner"]')];
     expect(ownerBoxes.length).toBeGreaterThan(0);
     for (const box of ownerBoxes) expect(box.disabled).toBe(true);
+  });
+
+  it("with a realistic fully-provisioned workspace, every starter role's checkboxes are enabled and its assignment renders (the test that would have caught the is_builtin bug)", async () => {
+    const assignment = { id: "forge_asg_admin_1", assignee_user_id: "user_99", role_id: "forge_sr_1", version: 1, assigned_at: "2026-11-10T00:00:00Z" };
+    const snapshot = snapshotWith({
+      roles: [ROLE_OWNER, ROLE_ADMIN, ROLE_SCHEDULER, ROLE_CREW_LEAD, ROLE_VIEWER],
+      capabilities: [{ role_id: "forge_sr_1", capability_key: "scheduling.schedules.read" }],
+      assignments: [assignment],
+    });
+    stubFetch({ snapshot });
+    const { container } = renderClient();
+    await settle();
+
+    // Every real starter role's checkboxes are enabled (is_builtin: true must
+    // not disable them) -- only the synthetic Owner column stays disabled.
+    for (const roleName of ["Admin", "Scheduler", "Crew Lead", "Viewer"]) {
+      const boxes = [...container.querySelectorAll(`input[aria-label$="— ${roleName}"]`)];
+      expect(boxes.length).toBeGreaterThan(0);
+      for (const box of boxes) expect(box.disabled).toBe(false);
+    }
+    for (const box of container.querySelectorAll('input[aria-label$="— Owner"]')) {
+      expect(box.disabled).toBe(true);
+    }
+
+    // The existing assignment to the starter role Admin actually renders.
+    expect(container.textContent).toContain("user_99");
+    expect(container.textContent).toContain("Admin");
+  });
+
+  it("with a realistic fully-provisioned workspace, the assign dropdown lists every starter role and never the synthetic Owner row", async () => {
+    const snapshot = snapshotWith({ roles: [ROLE_OWNER, ROLE_ADMIN, ROLE_SCHEDULER, ROLE_CREW_LEAD, ROLE_VIEWER] });
+    const handlers = { search: () => ({ ok: true, status: 200, json: async () => ({ results: [{ user_id: "user_1", email: "staff@example.com" }] }) }) };
+    stubFetch({ snapshot, handlers });
+    const { container } = renderClient();
+    await settle();
+
+    setInputValue(container.querySelector("#scheduling-admin-search-id"), "user_1");
+    clickByText(container, "Search");
+    await settle();
+    clickByText(container, "Assign a role…");
+    await settle();
+
+    const options = [...container.querySelector('select[aria-label="Role to assign"]').querySelectorAll("option")].map((o) => o.textContent);
+    expect(options).toEqual(expect.arrayContaining(["Admin", "Scheduler", "Crew Lead", "Viewer"]));
+    expect(options).not.toContain("Owner");
   });
 
   it("toggling a capability opens a plain-English confirmation naming the role, and only sends the PATCH after confirming", async () => {
