@@ -147,6 +147,55 @@ describe("validateAndPlanWorkPackageImport — packages", () => {
     expect(plan.errors).toHaveLength(4);
   });
 
+  it("accepts any WP_PACKAGE_TYPES value when no mode is given — no regression for an older caller", () => {
+    const plan = validateAndPlanWorkPackageImport({
+      kind: "packages",
+      rows: [{ title: "A", packageType: "remodel" }, { title: "B", packageType: "engineering" }],
+      existingPackages: [],
+      properties: PROPERTIES,
+    });
+    expect(plan.errors).toHaveLength(0);
+    expect(plan.creates).toHaveLength(2);
+  });
+
+  it("rejects a package_type outside the active mode's subset, naming the mode", () => {
+    const plan = validateAndPlanWorkPackageImport({
+      kind: "packages",
+      rows: [{ title: "A", packageType: "remodel" }],
+      existingPackages: [],
+      properties: PROPERTIES,
+      mode: "industrial",
+    });
+    expect(plan.errors).toHaveLength(1);
+    expect(plan.errors[0].message).toMatch(/not an industrial package type/);
+    expect(plan.creates).toHaveLength(0);
+  });
+
+  it("accepts a package_type that IS in the active mode's subset", () => {
+    const plan = validateAndPlanWorkPackageImport({
+      kind: "packages",
+      rows: [{ title: "A", packageType: "engineering" }],
+      existingPackages: [],
+      properties: PROPERTIES,
+      mode: "industrial",
+    });
+    expect(plan.errors).toHaveLength(0);
+    expect(plan.creates).toHaveLength(1);
+  });
+
+  it("'other' passes the active-mode check in either mode", () => {
+    for (const mode of ["industrial", "commercial"]) {
+      const plan = validateAndPlanWorkPackageImport({
+        kind: "packages",
+        rows: [{ title: "A", packageType: "other" }],
+        existingPackages: [],
+        properties: PROPERTIES,
+        mode,
+      });
+      expect(plan.errors).toHaveLength(0);
+    }
+  });
+
   it("flags the same title twice in one file as a duplicate", () => {
     const plan = validateAndPlanWorkPackageImport({
       kind: "packages",

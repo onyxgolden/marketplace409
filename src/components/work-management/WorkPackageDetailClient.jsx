@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
@@ -63,6 +63,7 @@ function editFormFromPackage(p) {
     title: p.title, description: p.description || "",
     project_id: p.project_id || "",
     planned_finish: p.planned_finish || "", property_id: p.property_id || "",
+    mode: inferEffectiveMode(p), package_type: p.package_type || "other",
   };
 }
 
@@ -466,27 +467,66 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                   <input type="date" className={input} value={editForm.planned_finish} onChange={(e) => setEditForm({ ...editForm, planned_finish: e.target.value })} />
                 </div>
                 <div>
-                  <label className={label} htmlFor="edit_property_id">Property (optional)</label>
-                  <select id="edit_property_id" className={input} value={editForm.property_id}
-                    onChange={(e) => setEditForm({ ...editForm, property_id: e.target.value })}
-                    disabled={properties === null && !propertiesError}>
-                    <option value="">No property assigned</option>
-                    {editForm.property_id && !(properties || []).some((property) => property.slug === editForm.property_id) && (
-                      <option value={editForm.property_id}>{editForm.property_id} (current)</option>
-                    )}
-                    {(properties || []).map((property) => (
-                      <option key={property.slug} value={property.slug}>{property.label}</option>
+                  <label className={label} htmlFor="edit_mode">Mode</label>
+                  <select id="edit_mode" className={input} value={editForm.mode}
+                    onChange={(e) => {
+                      const nextMode = e.target.value;
+                      setEditForm((prev) => ({
+                        ...prev,
+                        mode: nextMode,
+                        // A package_type exclusive to the old mode would fail
+                        // server-side validation on save (the merged candidate
+                        // must have a type valid for its own mode) — reset to
+                        // "other" only when the stored type isn't offered under
+                        // the new mode; a type shared by both modes ("other")
+                        // or already valid under the new mode is left alone.
+                        package_type: WP_PACKAGE_TYPES_BY_MODE[nextMode].includes(prev.package_type)
+                          ? prev.package_type
+                          : "other",
+                      }));
+                    }}>
+                    <option value="industrial">Industrial</option>
+                    <option value="commercial">Commercial</option>
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Switches which optional fields this package shows (Unit/Area/System vs Property). If the
+                    current Type isn&apos;t offered under the new mode, Type resets to Other — Unit/Area/System
+                    and Property values themselves are never changed.
+                  </p>
+                </div>
+                <div>
+                  <label className={label} htmlFor="edit_package_type">Type</label>
+                  <select id="edit_package_type" className={input} value={editForm.package_type}
+                    onChange={(e) => setEditForm({ ...editForm, package_type: e.target.value })}>
+                    {WP_PACKAGE_TYPES_BY_MODE[editForm.mode].map((t) => (
+                      <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
                     ))}
                   </select>
-                  {properties === null && !propertiesError && (
-                    <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
-                  )}
-                  {propertiesError && (
-                    <p className="mt-1 text-xs text-red-700">
-                      Properties could not be loaded ({propertiesError}) — the current assignment is shown by its saved name below.
-                    </p>
-                  )}
                 </div>
+                {editForm.mode === "commercial" && (
+                  <div>
+                    <label className={label} htmlFor="edit_property_id">Property (optional)</label>
+                    <select id="edit_property_id" className={input} value={editForm.property_id}
+                      onChange={(e) => setEditForm({ ...editForm, property_id: e.target.value })}
+                      disabled={properties === null && !propertiesError}>
+                      <option value="">No property assigned</option>
+                      {editForm.property_id && !(properties || []).some((property) => property.slug === editForm.property_id) && (
+                        <option value={editForm.property_id}>{editForm.property_id} (current)</option>
+                      )}
+                      {(properties || []).map((property) => (
+                        <option key={property.slug} value={property.slug}>{property.label}</option>
+                      ))}
+                    </select>
+                    {properties === null && !propertiesError && (
+                      <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
+                    )}
+                    {propertiesError && (
+                      <p className="mt-1 text-xs text-red-700">
+                        Properties could not be loaded ({propertiesError}) — the current assignment is shown by its saved name below.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
                   <button type="button" className={btnGhost} onClick={onCancelEdit} disabled={busy}>Cancel</button>
@@ -499,28 +539,32 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <Field title="Priority" value={pkg.priority} />
                 <Field title="Project" value={pkg.project_id} />
                 <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
-                <div>
-                  <dt className="text-xs font-medium text-slate-500">Property</dt>
-                  <dd className="mt-0.5 text-sm text-slate-900">
-                    {pkg.property_id ? (
-                      <Link
-                        href={`/forge/rental?recordType=property&recordId=${encodeURIComponent(pkg.property_id)}&propertyId=${encodeURIComponent(pkg.property_id)}`}
-                        className="font-medium text-blue-700 hover:underline"
-                      >
-                        {propertyLabel}
-                      </Link>
-                    ) : (
-                      "No property assigned"
-                    )}
-                  </dd>
-                </div>
+                <Field title="Mode" value={inferEffectiveMode(pkg).replace(/^./, (c) => c.toUpperCase())} />
+                {inferEffectiveMode(pkg) === "commercial" ? (
+                  <div>
+                    <dt className="text-xs font-medium text-slate-500">Property</dt>
+                    <dd className="mt-0.5 text-sm text-slate-900">
+                      {pkg.property_id ? (
+                        <Link
+                          href={`/forge/rental?recordType=property&recordId=${encodeURIComponent(pkg.property_id)}&propertyId=${encodeURIComponent(pkg.property_id)}`}
+                          className="font-medium text-blue-700 hover:underline"
+                        >
+                          {propertyLabel}
+                        </Link>
+                      ) : (
+                        "No property assigned"
+                      )}
+                    </dd>
+                  </div>
+                ) : (
+                  <Field title="Unit / Area / System" value={[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || null} />
+                )}
                 <Field title="Planned start" value={pkg.planned_start} />
                 <Field title="Planned finish" value={pkg.planned_finish} />
                 <Field title="Actual start" value={pkg.actual_start} />
                 <Field title="Actual finish" value={pkg.actual_finish} />
                 <Field title="Progress" value={pkg.percent_complete != null ? `${pkg.percent_complete}% (${pkg.progress_basis || "unknown basis"})` : "unknown"} />
                 <Field title="Equipment tag" value={pkg.equipment_tag} />
-                <Field title="Unit / Area / System" value={[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || null} />
                 <Field title="Work order ref" value={pkg.work_order_ref} />
               </dl>
             )}

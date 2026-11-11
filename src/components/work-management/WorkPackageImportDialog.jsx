@@ -34,7 +34,7 @@ async function postJson(path, payload) {
   return body;
 }
 
-export default function WorkPackageImportDialog({ kind, packageId, onImported, onClose }) {
+export default function WorkPackageImportDialog({ kind, packageId, mode = null, onImported, onClose }) {
   const columns = kind === "packages" ? PACKAGE_IMPORT_COLUMNS : STEP_IMPORT_COLUMNS;
   const fileRef = useRef(null);
   const [file, setFile] = useState(null);
@@ -54,6 +54,7 @@ export default function WorkPackageImportDialog({ kind, packageId, onImported, o
     formData.append("kind", kind);
     if (packageId) formData.append("packageId", packageId);
     if (sourceSystem) formData.append("sourceSystem", sourceSystem);
+    if (mode) formData.append("mode", mode);
     if (mappingOverride) formData.append("mapping", JSON.stringify(mappingOverride));
     const body = await postForm("/api/work-packages/import/preview", formData);
     setPreview(body);
@@ -102,6 +103,7 @@ export default function WorkPackageImportDialog({ kind, packageId, onImported, o
         kind,
         packageId: packageId || undefined,
         sourceSystem: sourceSystem || undefined,
+        mode: mode || undefined,
         rows: preview.rows,
       });
       setResult(body);
@@ -188,7 +190,7 @@ export default function WorkPackageImportDialog({ kind, packageId, onImported, o
             </div>
             <p className="text-sm text-slate-600">
               Columns the file should have: {columns.map((column) => column.header).join(", ")}.
-              {" "}<a href={`/api/work-packages/import/template?kind=${kind}`} download
+              {" "}<a href={`/api/work-packages/import/template?kind=${kind}${mode ? `&mode=${mode}` : ""}`} download
                 className="font-medium text-blue-700 hover:underline">Download the CSV template</a>.
             </p>
             <button type="submit" disabled={busy}

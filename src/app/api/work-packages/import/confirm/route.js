@@ -34,6 +34,8 @@ export async function POST(request) {
     if (sourceSystem && !IMPORT_SOURCE_SYSTEMS.includes(sourceSystem)) {
       return NextResponse.json({ error: `sourceSystem must be one of: ${IMPORT_SOURCE_SYSTEMS.join(", ")}.` }, { status: 400 });
     }
+    const mode = kind === "packages" && (body?.mode === "industrial" || body?.mode === "commercial")
+      ? body.mode : null;
     const rows = Array.isArray(body?.rows) ? body.rows : null;
     if (!rows || rows.length === 0) {
       return NextResponse.json({ error: "No rows to import." }, { status: 400 });
@@ -51,6 +53,7 @@ export async function POST(request) {
       sourceSystem,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
       properties: context.properties,
+      mode,
     });
     if (!plan.success) {
       return NextResponse.json({
@@ -66,6 +69,7 @@ export async function POST(request) {
       packageId,
       sourceSystem,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
+      mode,
     });
     return ok({
       success: true,

@@ -11,6 +11,7 @@ export async function GET(request) {
       status: url.searchParams.get("status") || undefined,
       packageType: url.searchParams.get("packageType") || undefined,
       propertyId: url.searchParams.get("propertyId") || undefined,
+      mode: url.searchParams.get("mode") || undefined,
     });
     return ok(result);
   } catch (error) {

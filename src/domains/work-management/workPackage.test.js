@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  WP_STATUS, WP_PACKAGE_TYPES,
+  WP_STATUS, WP_PACKAGE_TYPES, WP_MODES, WP_PACKAGE_TYPES_BY_MODE,
   defaultGatesFor, isTerminalStatus, findTransition, allowedTransitionsFrom,
   validateTransition, staticTransitionEdges,
   derivePercentComplete, validatePackageInput, hashScopeMembership,
-  deriveCurrentBaseline,
+  deriveCurrentBaseline, inferEffectiveMode,
 } from "./workPackage.js";
 
 const BASE_PKG = {
@@ -215,6 +215,64 @@ describe("validatePackageInput", () => {
   it("accepts null (cleared) and valid planned dates", () => {
     expect(validatePackageInput({ title: "x", planned_start: null, planned_finish: null }).ok).toBe(true);
     expect(validatePackageInput({ title: "x", planned_start: "2026-11-01", planned_finish: "2026-11-10" }).ok).toBe(true);
+  });
+  it("accepts a valid mode and rejects a bad one", () => {
+    expect(validatePackageInput({ title: "x", mode: "industrial" }).ok).toBe(true);
+    expect(validatePackageInput({ title: "x", mode: "commercial" }).ok).toBe(true);
+    const r = validatePackageInput({ title: "x", mode: "residential" });
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/mode must be one of/);
+  });
+  it("still accepts the full WP_PACKAGE_TYPES list when mode is absent — no regression", () => {
+    // A caller that sends package_type without mode context (an older
+    // client, or an internal caller) must see every value in
+    // WP_PACKAGE_TYPES accepted here; the mode-based subset narrowing is
+    // the application layer's job, not this function's.
+    for (const type of WP_PACKAGE_TYPES) {
+      expect(validatePackageInput({ title: "x", package_type: type }).ok).toBe(true);
+    }
+  });
+});
+
+describe("WP_MODES / WP_PACKAGE_TYPES_BY_MODE", () => {
+  it("has exactly industrial and commercial, each a real WP_PACKAGE_TYPES subset", () => {
+    expect(WP_MODES).toEqual(["industrial", "commercial"]);
+    for (const mode of WP_MODES) {
+      for (const type of WP_PACKAGE_TYPES_BY_MODE[mode]) {
+        expect(WP_PACKAGE_TYPES).toContain(type);
+      }
+    }
+  });
+  it("every WP_PACKAGE_TYPES value is offered by at least one mode", () => {
+    const covered = new Set([...WP_PACKAGE_TYPES_BY_MODE.industrial, ...WP_PACKAGE_TYPES_BY_MODE.commercial]);
+    for (const type of WP_PACKAGE_TYPES) expect(covered.has(type)).toBe(true);
+  });
+  it("'other' is shared by both modes; every other type is mode-exclusive", () => {
+    const shared = WP_PACKAGE_TYPES_BY_MODE.industrial.filter((t) => WP_PACKAGE_TYPES_BY_MODE.commercial.includes(t));
+    expect(shared).toEqual(["other"]);
+  });
+});
+
+describe("inferEffectiveMode", () => {
+  it("returns the package's own mode when present, even if it conflicts with package_type", () => {
+    // An explicit mode always wins — this helper only fills a GAP, it
+    // never overrides a real stored value.
+    expect(inferEffectiveMode({ mode: "commercial", package_type: "engineering" })).toBe("commercial");
+    expect(inferEffectiveMode({ mode: "industrial", package_type: "remodel" })).toBe("industrial");
+  });
+  it("infers commercial for a commercial-exclusive package_type when mode is missing", () => {
+    for (const type of ["remodel", "rental_turn", "maintenance_repair", "new_construction_phase"]) {
+      expect(inferEffectiveMode({ package_type: type })).toBe("commercial");
+    }
+  });
+  it("infers industrial for an industrial-exclusive or shared package_type when mode is missing", () => {
+    for (const type of ["engineering", "industrial", "capital_project", "other"]) {
+      expect(inferEffectiveMode({ package_type: type })).toBe("industrial");
+    }
+  });
+  it("defaults to industrial for a missing package_type and a missing mode", () => {
+    expect(inferEffectiveMode({})).toBe("industrial");
+    expect(inferEffectiveMode(null)).toBe("industrial");
   });
 });
 

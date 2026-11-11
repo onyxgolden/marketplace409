@@ -106,7 +106,7 @@ function sameValue(a, b) {
 
 export async function applyWorkPackageImport(db, {
   ownerId, actor, kind, plan, packageId,
-  sourceSystem = null, sourceTrackingAvailable = false,
+  sourceSystem = null, sourceTrackingAvailable = false, mode = null,
 }) {
   const results = { created: [], updated: [], warnings: [], errors: [] };
   const trackSource = sourceTrackingAvailable && sourceSystem;
@@ -124,6 +124,12 @@ export async function applyWorkPackageImport(db, {
           planned_finish: fields.plannedFinish ?? null,
           description: fields.description ?? null,
         };
+        // New packages created by this import land in the mode the file
+        // was imported under (the plan was already validated against
+        // that mode's package-type subset) — never on an UPDATE, which
+        // targets an existing package whose own mode is unrelated to
+        // which mode tab the import dialog happened to be open on.
+        if (mode) input.mode = mode;
         if (trackSource && fields.sourceRecordId) {
           input.source_system = sourceSystem;
           input.source_record_id = fields.sourceRecordId;

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_PACKAGE_TYPES, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
+import { WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
@@ -16,13 +16,18 @@ const label = "block text-xs font-medium text-slate-600 mb-1";
 // loaded options by canonical slug; if it is not one of the owner's
 // properties the picker stays on "No property assigned" rather than
 // silently choosing something else.
-export default function WorkPackageCreateForm({ initialPropertyId = "", workspaceParam = null }) {
+// initialMode preselects the mode the owner came from (e.g. the list
+// page's own mode filter/toggle carries `?mode=` onto "New package").
+// Industrial is the default — the planner's primary purpose — when no
+// mode is named.
+export default function WorkPackageCreateForm({ initialPropertyId = "", workspaceParam = null, initialMode = "industrial" }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [properties, setProperties] = useState(null);
   const [propertiesError, setPropertiesError] = useState("");
   const [propertyId, setPropertyId] = useState("");
+  const [mode, setMode] = useState(initialMode === "commercial" ? "commercial" : "industrial");
   // D9: any real user edit (not the initialPropertyId auto-preselect
   // below, which is not something the user typed) arms the unsaved-
   // changes guard. Cleared once the create actually succeeds.
@@ -35,6 +40,15 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
     equipment_tag: "", unit: "", area: "", system: "",
     work_order_ref: "", workscope_code: "",
   });
+
+  // A package_type carried over from the other mode's offered list would
+  // silently fail server-side validation on submit — resetting it to the
+  // new mode's own default on toggle keeps the dropdown's visible value
+  // always a legal choice for the active mode.
+  function onModeChange(nextMode) {
+    setMode(nextMode);
+    setForm((prev) => ({ ...prev, package_type: "other" }));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -82,9 +96,13 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         title: form.title, description: form.description || null,
-        package_type: form.package_type, priority: form.priority,
+        package_type: form.package_type, priority: form.priority, mode,
         project_id: form.project_id.trim() || null,
         planned_start: form.planned_start || null, planned_finish: form.planned_finish || null,
+        // The Property select and the Unit/Area/System inputs are shown
+        // one at a time by mode, but both travel in the payload exactly
+        // as the (unused) section's own state holds it — empty for the
+        // hidden section, since neither field was ever edited.
         property_id: propertyId || null,
         responsible_party: form.responsible_party
           ? { domain: "contractor", type: "contractor", display_name: form.responsible_party }
@@ -109,6 +127,22 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
 
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="mb-4 text-sm font-semibold text-slate-900">Package</h2>
+        <div className="mb-4 flex items-center gap-2" role="radiogroup" aria-label="Planner mode">
+          <span className={label}>Mode</span>
+          <div className="flex rounded-lg border border-slate-300 p-0.5">
+            {["industrial", "commercial"].map((option) => (
+              <button
+                key={option} type="button" role="radio" aria-checked={mode === option}
+                onClick={() => onModeChange(option)}
+                className={`rounded px-3 py-1 text-xs font-medium capitalize ${
+                  mode === option ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className={label} htmlFor="title">Title *</label>
@@ -128,7 +162,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
           <div>
             <label className={label} htmlFor="package_type">Type</label>
             <select id="package_type" className={input} value={form.package_type} onChange={set("package_type")}>
-              {WP_PACKAGE_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+              {WP_PACKAGE_TYPES_BY_MODE[mode].map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
             </select>
           </div>
           <div>
@@ -149,28 +183,30 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
             <label className={label} htmlFor="responsible_party">Responsible party</label>
             <input id="responsible_party" className={input} placeholder="Crew or contractor name" value={form.responsible_party} onChange={set("responsible_party")} />
           </div>
-          <div className="sm:col-span-2">
-            <label className={label} htmlFor="property_id">Property (optional)</label>
-            <select id="property_id" className={input} value={propertyId}
-              onChange={(event) => { setTouched(true); setPropertyId(event.target.value); }}
-              disabled={properties === null && !propertiesError}>
-              <option value="">No property assigned</option>
-              {(properties || []).map((property) => (
-                <option key={property.slug} value={property.slug}>{property.label}</option>
-              ))}
-            </select>
-            {properties === null && !propertiesError && (
-              <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
-            )}
-            {propertiesError && (
-              <p className="mt-1 text-xs text-red-700">
-                Properties could not be loaded ({propertiesError}) — this package will be saved with no property assigned.
-              </p>
-            )}
-            {properties !== null && properties.length === 0 && !propertiesError && (
-              <p className="mt-1 text-xs text-slate-500">No properties yet — the package can still be created without one.</p>
-            )}
-          </div>
+          {mode === "commercial" && (
+            <div className="sm:col-span-2">
+              <label className={label} htmlFor="property_id">Property (optional)</label>
+              <select id="property_id" className={input} value={propertyId}
+                onChange={(event) => { setTouched(true); setPropertyId(event.target.value); }}
+                disabled={properties === null && !propertiesError}>
+                <option value="">No property assigned</option>
+                {(properties || []).map((property) => (
+                  <option key={property.slug} value={property.slug}>{property.label}</option>
+                ))}
+              </select>
+              {properties === null && !propertiesError && (
+                <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
+              )}
+              {propertiesError && (
+                <p className="mt-1 text-xs text-red-700">
+                  Properties could not be loaded ({propertiesError}) — this package will be saved with no property assigned.
+                </p>
+              )}
+              {properties !== null && properties.length === 0 && !propertiesError && (
+                <p className="mt-1 text-xs text-slate-500">No properties yet — the package can still be created without one.</p>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -185,18 +221,22 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
             <label className={label} htmlFor="work_order_ref">Work order ref</label>
             <input id="work_order_ref" className={input} value={form.work_order_ref} onChange={set("work_order_ref")} />
           </div>
-          <div>
-            <label className={label} htmlFor="unit">Unit</label>
-            <input id="unit" className={input} value={form.unit} onChange={set("unit")} />
-          </div>
-          <div>
-            <label className={label} htmlFor="area">Area</label>
-            <input id="area" className={input} value={form.area} onChange={set("area")} />
-          </div>
-          <div>
-            <label className={label} htmlFor="system">System</label>
-            <input id="system" className={input} value={form.system} onChange={set("system")} />
-          </div>
+          {mode === "industrial" && (
+            <>
+              <div>
+                <label className={label} htmlFor="unit">Unit</label>
+                <input id="unit" className={input} value={form.unit} onChange={set("unit")} />
+              </div>
+              <div>
+                <label className={label} htmlFor="area">Area</label>
+                <input id="area" className={input} value={form.area} onChange={set("area")} />
+              </div>
+              <div>
+                <label className={label} htmlFor="system">System</label>
+                <input id="system" className={input} value={form.system} onChange={set("system")} />
+              </div>
+            </>
+          )}
           <div>
             <label className={label} htmlFor="workscope_code">Workscope code</label>
             <input id="workscope_code" className={input} value={form.workscope_code} onChange={set("workscope_code")} />

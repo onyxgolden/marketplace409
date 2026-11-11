@@ -157,15 +157,20 @@ afterEach(() => {
 });
 
 describe("WorkPackageDetailClient property display (Slice 2)", () => {
+  // The Property field is Commercial-mode-only since the mode selector
+  // slice (Industrial shows Unit/Area/System instead; BASE_PKG's
+  // package_type "other" is ambiguous and infers Industrial by
+  // default) — these tests are about the Property field itself,
+  // unrelated to mode, so they set mode: "commercial" explicitly.
   it("shows 'No property assigned' when unassigned", () => {
     stubFetch();
-    const { container } = renderDetail();
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial" });
     expect(propertyField(container).textContent).toBe("No property assigned");
   });
 
   it("shows the linked property label with a link back to the property page", async () => {
     stubFetch();
-    const { container } = renderDetail({ ...BASE_PKG, property_id: "1900-w-decker" });
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial", property_id: "1900-w-decker" });
     await settle();
     const field = propertyField(container);
     expect(field.textContent).toBe("1900 W. Decker");
@@ -177,7 +182,7 @@ describe("WorkPackageDetailClient property display (Slice 2)", () => {
 
   it("keeps the edit picker faithful to the current assignment", async () => {
     const { patches } = stubFetch();
-    const { container } = renderDetail({ ...BASE_PKG, property_id: "1900-w-decker" });
+    const { container } = renderDetail({ ...BASE_PKG, mode: "commercial", property_id: "1900-w-decker" });
     await settle();
     const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
     act(() => { editButton.click(); });
@@ -191,6 +196,65 @@ describe("WorkPackageDetailClient property display (Slice 2)", () => {
     await settle();
     expect(patches).toHaveLength(1);
     expect(patches[0].property_id).toBeNull();
+  });
+});
+
+describe("WorkPackageDetailClient edit-form mode toggle (PR #775 fix round)", () => {
+  // Server-side, updateWorkPackage refuses a save whose package_type is
+  // exclusive to the package's OLD mode once mode has changed — so
+  // toggling mode in the edit form on a typed package must reset
+  // package_type to the shared "other" value before save, the same way
+  // the create form already does, or every such save 400s with no way
+  // for the user to recover from the form.
+  it("resets Type to Other when flipping to a mode that doesn't offer the stored type, and the save succeeds", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, mode: "industrial", package_type: "engineering" });
+    await settle();
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+
+    const typeSelectBefore = container.querySelector("#edit_package_type");
+    expect(typeSelectBefore.value).toBe("engineering");
+
+    const modeSelect = container.querySelector("#edit_mode");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(modeSelect, "commercial");
+    act(() => { modeSelect.dispatchEvent(new Event("change", { bubbles: true })); });
+
+    // "engineering" is industrial-only — flipping to commercial must reset
+    // the visible Type select to "other" before the user ever saves.
+    const typeSelectAfter = container.querySelector("#edit_package_type");
+    expect(typeSelectAfter.value).toBe("other");
+
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0].mode).toBe("commercial");
+    expect(patches[0].package_type).toBe("other");
+  });
+
+  it("leaves Type untouched when the stored type is still valid under the new mode", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, mode: "industrial", package_type: "other" });
+    await settle();
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+
+    const modeSelect = container.querySelector("#edit_mode");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(modeSelect, "commercial");
+    act(() => { modeSelect.dispatchEvent(new Event("change", { bubbles: true })); });
+
+    // "other" is offered under both modes — flipping must not force a reset.
+    expect(container.querySelector("#edit_package_type").value).toBe("other");
+
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0].mode).toBe("commercial");
+    expect(patches[0].package_type).toBe("other");
   });
 });
 
