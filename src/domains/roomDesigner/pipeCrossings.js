@@ -232,8 +232,16 @@ export function effectiveApproachSegment(design, run, end) {
   };
 }
 
-/** Minimum distance between two 3D segments (p1-q1, p2-q2). */
-export function segSegDistance3D(p1, q1, p2, q2) {
+/**
+ * Closest points between two 3D segments (p1-q1, p2-q2): the same
+ * closest-approach math as segSegDistance3D, returning the pair
+ * { distance, pointA, pointB, s, t } where s/t are the parameters
+ * along each segment (0–1). Pair-spacing classification (D10-06
+ * Ruling 2) needs the points, not just the distance: whether the
+ * closest approach sits at a verified junction contact decides
+ * whether the segment pair is a junction or a spacing pair.
+ */
+export function closestSegSegPoints(p1, q1, p2, q2) {
   const d1 = { x: q1.x - p1.x, y: q1.y - p1.y, z: q1.zIn - p1.zIn };
   const d2 = { x: q2.x - p2.x, y: q2.y - p2.y, z: q2.zIn - p2.zIn };
   const r = { x: p1.x - p2.x, y: p1.y - p2.y, z: p1.zIn - p2.zIn };
@@ -243,9 +251,9 @@ export function segSegDistance3D(p1, q1, p2, q2) {
   let s;
   let t;
   if (a <= EPS && e <= EPS) {
-    return Math.hypot(r.x, r.y, r.z);
-  }
-  if (a <= EPS) {
+    s = 0;
+    t = 0;
+  } else if (a <= EPS) {
     s = 0;
     t = Math.max(0, Math.min(1, f / e));
   } else {
@@ -267,9 +275,20 @@ export function segSegDistance3D(p1, q1, p2, q2) {
       }
     }
   }
-  const c1 = { x: p1.x + d1.x * s, y: p1.y + d1.y * s, z: p1.zIn + d1.z * s };
-  const c2 = { x: p2.x + d2.x * t, y: p2.y + d2.y * t, z: p2.zIn + d2.z * t };
-  return Math.hypot(c1.x - c2.x, c1.y - c2.y, c1.z - c2.z);
+  const pointA = { x: p1.x + d1.x * s, y: p1.y + d1.y * s, zIn: p1.zIn + d1.z * s };
+  const pointB = { x: p2.x + d2.x * t, y: p2.y + d2.y * t, zIn: p2.zIn + d2.z * t };
+  return {
+    distance: Math.hypot(pointA.x - pointB.x, pointA.y - pointB.y, pointA.zIn - pointB.zIn),
+    pointA,
+    pointB,
+    s,
+    t,
+  };
+}
+
+/** Minimum distance between two 3D segments (p1-q1, p2-q2). */
+export function segSegDistance3D(p1, q1, p2, q2) {
+  return closestSegSegPoints(p1, q1, p2, q2).distance;
 }
 
 /** Vertical separation (in) two crossing centerlines need to not touch. */
