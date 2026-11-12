@@ -1566,6 +1566,14 @@ export function requiredPairCenters(runA, runB, options = {}) {
  * two branches claiming one physical face with no direct junction
  * between them. A zero-plan leg (a riser leaving the host upward)
  * leaves no plan overlap, so it is a takeoff.
+ *
+ * This answers only "the pair meets at the junction". It grants no
+ * exemption by itself: the caller limits the exemption to the
+ * contact neighborhood (fix round 1, P1 — Ruling 2 item 4) by
+ * clipping both segments to the ball of radius = required centers
+ * around the verified contact and evaluating the remainders. A
+ * non-parallel pair is a junction at the contact, never proof the
+ * rest of the pair is clear.
  */
 function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
   if (pointSegmentDistance(contact, a1, a2).distance > FACE) return false;
@@ -1589,6 +1597,103 @@ function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
   const bHi = Math.max(proj(b1), proj(b2));
   const overlap = Math.min(lenA, bHi) - Math.max(0, bLo);
   return overlap <= FACE + 1e-9;
+}
+
+/**
+ * The portions of one 3D segment outside a plan ball around a
+ * contact point, as { a, b } sub-segments with zIn interpolated
+ * linearly along the segment. The ball is plan-only (x, y): a
+ * vertical riser has no plan extent, so it is inside the ball iff
+ * its plan point is. Returns [] when the whole segment lies inside
+ * the ball. A tangent touch does not split the segment.
+ */
+function clipSegmentOutsideBall(p1, p2, center, radiusIn) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dz = p2.zIn - p1.zIn;
+  const wx = p1.x - center.x;
+  const wy = p1.y - center.y;
+  const a = dx * dx + dy * dy;
+  const radius2 = radiusIn * radiusIn;
+  if (a <= 1e-12) {
+    return wx * wx + wy * wy < radius2 ? [] : [{ a: p1, b: p2 }];
+  }
+  const b = 2 * (dx * wx + dy * wy);
+  const c = wx * wx + wy * wy - radius2;
+  const disc = b * b - 4 * a * c;
+  if (disc <= 0) {
+    // No crossing (or a tangent): entirely inside when c < 0.
+    return c < 0 ? [] : [{ a: p1, b: p2 }];
+  }
+  const sq = Math.sqrt(disc);
+  const tLo = Math.max(0, (-b - sq) / (2 * a));
+  const tHi = Math.min(1, (-b + sq) / (2 * a));
+  if (tHi <= 0 || tLo >= 1 || tHi <= tLo) {
+    // The ball misses the segment: the whole segment is outside.
+    return [{ a: p1, b: p2 }];
+  }
+  const at = (t) => ({ x: p1.x + t * dx, y: p1.y + t * dy, zIn: p1.zIn + t * dz });
+  const out = [];
+  if (tLo > 1e-12) out.push({ a: p1, b: at(tLo) });
+  if (tHi < 1 - 1e-12) out.push({ a: at(tHi), b: p2 });
+  return out;
+}
+
+/** A segment with every contact ball removed, in order. */
+function clipSegmentOutsideBalls(p1, p2, centers, radiusIn) {
+  let parts = [{ a: p1, b: p2 }];
+  for (const center of centers) {
+    parts = parts.flatMap((part) => clipSegmentOutsideBall(part.a, part.b, center, radiusIn));
+  }
+  return parts;
+}
+
+/**
+ * The ordinary relation classifier for one segment pair: a true plan
+ * crossing resolved by elevation uses the crossing rule (actual
+ * envelopes + 1 in); every other pair is side-by-side and keeps O3
+ * (3D closest approach against required centers). Returns
+ * { findings, minCenter }.
+ */
+function evaluateSegmentPairSpacing(a1, a2, b1, b2, req, runA, runB, runId) {
+  const findings = [];
+  let minCenter = Infinity;
+  const hit = properIntersection(a1, a2, b1, b2);
+  if (hit) {
+    const elevA = a1.zIn + hit.t * (a2.zIn - a1.zIn);
+    const elevB = b1.zIn + hit.u * (b2.zIn - b1.zIn);
+    const sep = Math.abs(elevA - elevB);
+    const required = req.effectiveRadiusAIn + req.effectiveRadiusBIn + CROSSING_CLEARANCE_IN;
+    minCenter = Math.min(minCenter, sep);
+    if (sep < required - 1e-9) {
+      findings.push(
+        finding(
+          SUPPORT_CODES.SPACING_TOO_CLOSE,
+          runId,
+          `Pipe runs ${runA.id} / ${runB.id} cross at (${Math.round(hit.x)}, ${Math.round(hit.y)}) with ${sep.toFixed(3)} in of vertical separation; ` +
+            `the crossing needs ${required.toFixed(3)} in (effective radii ${req.effectiveRadiusAIn.toFixed(3)}/${req.effectiveRadiusBIn.toFixed(3)} in + ${CROSSING_CLEARANCE_IN} in clear).`,
+          { requiredIn: required, actualIn: sep },
+        ),
+      );
+    }
+    return { findings, minCenter };
+  }
+  // Side-by-side: the 3D closest approach against O3 centers.
+  const closest = closestSegSegPoints(a1, a2, b1, b2);
+  minCenter = Math.min(minCenter, closest.distance);
+  if (closest.distance < req.requiredIn - 1e-9) {
+    findings.push(
+      finding(
+        SUPPORT_CODES.SPACING_TOO_CLOSE,
+        runId,
+        `Pipe runs ${runA.id} / ${runB.id} are ${closest.distance.toFixed(3)} in apart center-to-center; ` +
+          `the required centers are ${req.requiredIn.toFixed(3)} in (OD ${runA.outsideDiameterIn}/${runB.outsideDiameterIn} in, ` +
+          `insulation ${runA.insulationIn}/${runB.insulationIn} in, gap ${req.gapIn} in, expansion ${runA.expansionAllowanceIn}/${runB.expansionAllowanceIn} in).`,
+        { requiredIn: req.requiredIn, actualIn: closest.distance },
+      ),
+    );
+  }
+  return { findings, minCenter };
 }
 
 /**
@@ -1648,46 +1753,42 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
       const a2 = routeA[i + 1];
       const b1 = routeB[j];
       const b2 = routeB[j + 1];
-      // Junction: this segment pair meets at a verified contact.
-      if (contacts.some((c) => segmentPairIsJunctionContact(a1, a2, b1, b2, c))) continue;
-      evaluatedPairs += 1;
-      // True plan crossing resolved by elevation: actual envelopes
-      // plus the 1-in crossing clearance — no rack side-by-side gap.
-      const hit = properIntersection(a1, a2, b1, b2);
-      if (hit) {
-        const elevA = a1.zIn + hit.t * (a2.zIn - a1.zIn);
-        const elevB = b1.zIn + hit.u * (b2.zIn - b1.zIn);
-        const sep = Math.abs(elevA - elevB);
-        const required = req.effectiveRadiusAIn + req.effectiveRadiusBIn + CROSSING_CLEARANCE_IN;
-        minCenter = Math.min(minCenter, sep);
-        if (sep < required - 1e-9) {
-          findings.push(
-            finding(
-              SUPPORT_CODES.SPACING_TOO_CLOSE,
-              runId,
-              `Pipe runs ${runA.id} / ${runB.id} cross at (${Math.round(hit.x)}, ${Math.round(hit.y)}) with ${sep.toFixed(3)} in of vertical separation; ` +
-                `the crossing needs ${required.toFixed(3)} in (effective radii ${req.effectiveRadiusAIn.toFixed(3)}/${req.effectiveRadiusBIn.toFixed(3)} in + ${CROSSING_CLEARANCE_IN} in clear).`,
-              { requiredIn: required, actualIn: sep },
-            ),
-          );
+      // Junction: this segment pair meets at a verified contact. The
+      // exemption covers only the contact neighborhood (fix round 1,
+      // P1 — Ruling 2 item 4): both segments are clipped to the ball
+      // of radius = required centers around each verified contact,
+      // and the remaining portions are evaluated under the ordinary
+      // classifier. Inside that ball the branch cannot have diverged
+      // beyond the required envelope — any point within the required
+      // centers of the contact is within the required centers of the
+      // host — so no measurement there is meaningful; a shallow-angle
+      // branch that stays inside O3 beyond the ball is measured and
+      // fails. When every remainder passes, the pair's whole
+      // interaction is the junction and it is skipped exactly as
+      // before.
+      const meeting = contacts.filter((c) => segmentPairIsJunctionContact(a1, a2, b1, b2, c));
+      if (meeting.length > 0) {
+        const subA = clipSegmentOutsideBalls(a1, a2, meeting, req.requiredIn);
+        const subB = clipSegmentOutsideBalls(b1, b2, meeting, req.requiredIn);
+        const remainder = [];
+        let remainderMin = Infinity;
+        for (const sa of subA) {
+          for (const sb of subB) {
+            const out = evaluateSegmentPairSpacing(sa.a, sa.b, sb.a, sb.b, req, runA, runB, runId);
+            remainder.push(...out.findings);
+            remainderMin = Math.min(remainderMin, out.minCenter);
+          }
         }
+        if (remainder.length === 0) continue;
+        findings.push(...remainder);
+        minCenter = Math.min(minCenter, remainderMin);
+        evaluatedPairs += 1;
         continue;
       }
-      // Side-by-side: the 3D closest approach against O3 centers.
-      const closest = closestSegSegPoints(a1, a2, b1, b2);
-      minCenter = Math.min(minCenter, closest.distance);
-      if (closest.distance < req.requiredIn - 1e-9) {
-        findings.push(
-          finding(
-            SUPPORT_CODES.SPACING_TOO_CLOSE,
-            runId,
-            `Pipe runs ${runA.id} / ${runB.id} are ${closest.distance.toFixed(3)} in apart center-to-center; ` +
-              `the required centers are ${req.requiredIn.toFixed(3)} in (OD ${runA.outsideDiameterIn}/${runB.outsideDiameterIn} in, ` +
-              `insulation ${runA.insulationIn}/${runB.insulationIn} in, gap ${req.gapIn} in, expansion ${runA.expansionAllowanceIn}/${runB.expansionAllowanceIn} in).`,
-            { requiredIn: req.requiredIn, actualIn: closest.distance },
-          ),
-        );
-      }
+      evaluatedPairs += 1;
+      const out = evaluateSegmentPairSpacing(a1, a2, b1, b2, req, runA, runB, runId);
+      findings.push(...out.findings);
+      minCenter = Math.min(minCenter, out.minCenter);
     }
   }
   if (evaluatedPairs === 0) {

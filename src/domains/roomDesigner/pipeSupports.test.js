@@ -2585,6 +2585,60 @@ describe("validatePairSpacing classification (D10-06 Ruling 2)", () => {
     expect(validatePairSpacing(far.design, far.a, far.b).state).toBe("PASS");
   });
 
+  it("a shallow-angle branch is measured beyond the contact neighborhood and fails (fix round 1, P1)", () => {
+    // Verdict P1: a branch leaving its host at a shallow angle stays
+    // inside the O3 envelope for a substantial distance. The junction
+    // exempts only the contact neighborhood — the branch beyond it
+    // must still satisfy O3, so this pair fails.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    // Leaves the host at (100, 0) at ~2.9 deg and runs 200 in: it is
+    // still inside the 5.375-in required centers ~108 in past the tap.
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 300, y: 10 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a steep branch that diverges beyond the required envelope still passes (fix round 1, P1)", () => {
+    // Same verified junction, but the branch leaves steeply
+    // (direction 1:4, ~76 deg): it clears the 5.375-in required
+    // centers just past the contact neighborhood, so the pair's whole
+    // interaction is the junction.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 125, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
+      "NOT_APPLICABLE",
+    );
+  });
+
   it("same-host labels without verified common geometry do not exempt", () => {
     let design = createEmptyDesign("Plan");
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
