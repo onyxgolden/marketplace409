@@ -2613,11 +2613,16 @@ describe("validatePairSpacing classification (D10-06 Ruling 2)", () => {
     expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
   });
 
-  it("a steep branch that diverges beyond the required envelope still passes (fix round 1, P1)", () => {
-    // Same verified junction, but the branch leaves steeply
-    // (direction 1:4, ~76 deg): it clears the 5.375-in required
-    // centers just past the contact neighborhood, so the pair's whole
-    // interaction is the junction.
+  it("a 76-degree branch fails the cross-boundary check: its ball-boundary approach is inside the required envelope (fix round 3, P1)", () => {
+    // Round-3 verdict P1: the round-2 code passed this fixture by
+    // comparing only outside-ball x outside-ball portions. Its
+    // 5.21-in closest approach is a cross-boundary pair — the branch
+    // point just outside the ball against the host's inside portion —
+    // and 5.21 in is below the 5.375-in required centers, so it is a
+    // genuine clash beyond the contact neighborhood, not neighborhood
+    // itself. Both segments have outside remainders here, so this is
+    // the inside-A x outside-B side of the boundary. Proven
+    // non-vacuous: it returns NOT_APPLICABLE against round-2 code.
     let design = createEmptyDesign("Plan");
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
       id: "a",
@@ -2634,9 +2639,67 @@ describe("validatePairSpacing classification (D10-06 Ruling 2)", () => {
     design.pipes = design.pipes.map((p) =>
       p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
     );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a perpendicular branch clears the contact neighborhood exactly and still passes (fix round 3, P1)", () => {
+    // Revised positive control for the 76-degree geometry above: a
+    // branch leaving at 90 deg is the only emanating angle whose
+    // ball-boundary point sits exactly the required centers from the
+    // host, so the pair's whole interaction is the junction. The
+    // 76-degree branch does not clear the boundary (5.21 in against
+    // 5.375 in required) and fails; the perpendicular branch does.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 200, y: 0 }, { x: 200, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
     expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
       "NOT_APPLICABLE",
     );
+  });
+
+  it("a short branch wholly inside the contact ball still fails when its inside portion crowds the host's outside portion (fix round 3, P1)", () => {
+    // The other side of the contact boundary from the 76-degree
+    // case: the branch is a 4-in stub at ~2.9 deg, wholly inside the
+    // ball, so it has no outside portion at all — the deciding pair
+    // is outside-A x inside-B, the stub's end sitting ~1.39 in from
+    // the start of the host's outside portion. This side was
+    // previously covered only by the round-2 empty-remainder
+    // fallback; the general rule (every portion pair with at least
+    // one side outside) covers it directly.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 104, y: 0.2 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
   });
 
   it("a short host wholly inside the contact ball still fails a shallow branch beyond it (fix round 2, P1)", () => {

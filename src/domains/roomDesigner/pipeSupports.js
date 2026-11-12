@@ -1569,14 +1569,15 @@ export function requiredPairCenters(runA, runB, options = {}) {
  *
  * This answers only "the pair meets at the junction". It grants no
  * exemption by itself: the caller limits the exemption to the
- * contact neighborhood (fix rounds 1–2, P1 — Ruling 2 item 4) by
+ * contact neighborhood (fix rounds 1–3, P1 — Ruling 2 item 4) by
  * partitioning both segments into inside-ball and outside-ball
- * portions around the verified contact. The remainder-vs-remainder
- * comparison is the check, plus the empty-remainder fallback (see
- * validatePairSpacing): a segment lying wholly inside the ball has
- * no remainder, so the other segment's remainder is checked
- * against the segment itself. A non-parallel pair is a junction at
- * the contact, never proof the rest of the pair is clear.
+ * portions around the verified contact and evaluating every portion
+ * pair with at least one portion outside the ball (see
+ * validatePairSpacing); only inside x inside is omitted. A segment
+ * lying wholly inside the ball has no outside portion, so its
+ * inside portion is checked against the other segment's outside
+ * remainder under the same rule. A non-parallel pair is a junction
+ * at the contact, never proof the rest of the pair is clear.
  */
 function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
   if (pointSegmentDistance(contact, a1, a2).distance > FACE) return false;
@@ -1766,29 +1767,27 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
       const b1 = routeB[j];
       const b2 = routeB[j + 1];
       // Junction: this segment pair meets at a verified contact. The
-      // exemption covers only the contact neighborhood (fix round 2,
+      // exemption covers only the contact neighborhood (fix round 3,
       // P1 — Ruling 2 item 4): each segment is partitioned into
       // inside-ball and outside-ball portions around the verified
-      // contacts, and the outside-ball remainders are evaluated
-      // against each other under the ordinary classifier. A segment
-      // lying wholly inside the ball has no remainder — and an empty
-      // remainder exempts nothing: in that case the other segment's
-      // remainder is checked against the whole short segment, so a
-      // shallow branch that stays inside O3 beyond the ball fails
-      // instead of being accepted as a junction. The cross-boundary
-      // pairs are deliberately NOT all compared by closest approach:
-      // a branch leaving at 76 deg measures 5.21 in against the
-      // host's inside portion right at the ball boundary — the
-      // branch has not yet diverged beyond the required envelope
-      // at the boundary itself, which is precisely what the
-      // contact neighborhood exists to cover — so a literal
-      // check-every-cross-pair rule would fail the steep-branch
-      // positive control the ruling's own required-test list
-      // endorses. The remainder-vs-remainder comparison plus the
-      // empty-remainder fallback is the check that closes the
-      // short-host hole without doing that. When every evaluated
-      // remainder passes, the pair's whole interaction is the
-      // junction and it is skipped exactly as before.
+      // contacts, and EVERY portion pair with at least one portion
+      // outside the ball is evaluated under the ordinary classifier.
+      // Only inside x inside — the contact neighborhood itself — is
+      // omitted. The round-2 remainder-vs-remainder comparison plus
+      // empty-remainder fallback is subsumed by this rule: it omitted
+      // the cross-boundary pairs (inside-A x outside-B and outside-A
+      // x inside-B) whenever both segments had an outside remainder,
+      // and the round-3 verdict shows that omission is a
+      // false-negative path. A branch leaving at 76 deg measures
+      // 5.21 in against the host's inside portion right at the ball
+      // boundary — below the 5.375-in required centers — and that
+      // cross-boundary clash is real: the branch has not diverged
+      // beyond the required envelope at the boundary, so it fails.
+      // The only emanating angle that clears the boundary is 90 deg
+      // (its boundary point sits exactly the required centers from
+      // the host). When no portion pair is evaluated — both segments
+      // lie wholly inside the ball — the pair's whole interaction is
+      // the junction and it is skipped exactly as before.
       const meeting = contacts.filter((c) => segmentPairIsJunctionContact(a1, a2, b1, b2, c));
       if (meeting.length > 0) {
         const partA = partitionSegmentByBalls(a1, a2, meeting, req.requiredIn);
@@ -1800,24 +1799,16 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
           remainder.push(...out.findings);
           remainderMin = Math.min(remainderMin, out.minCenter);
         };
+        // Every portion pair with at least one side outside the
+        // contact neighborhood; inside x inside alone is omitted.
         for (const sa of partA.outside) {
           for (const sb of partB.outside) checkRemainder(sa, sb);
         }
-        // Empty-remainder fallback (fix round 2, P1): a segment with
-        // no outside portion lies wholly inside the contact
-        // neighborhood, so the other side's remainder is checked
-        // against the segment itself. When both sides have a
-        // remainder this adds nothing; when neither does, the pair's
-        // whole interaction is inside the neighborhood.
-        if (partA.outside.length === 0) {
-          for (const sa of partA.inside) {
-            for (const sb of partB.outside) checkRemainder(sa, sb);
-          }
+        for (const sa of partA.inside) {
+          for (const sb of partB.outside) checkRemainder(sa, sb);
         }
-        if (partB.outside.length === 0) {
-          for (const sa of partA.outside) {
-            for (const sb of partB.inside) checkRemainder(sa, sb);
-          }
+        for (const sa of partA.outside) {
+          for (const sb of partB.inside) checkRemainder(sa, sb);
         }
         if (remainder.length === 0) continue;
         findings.push(...remainder);
