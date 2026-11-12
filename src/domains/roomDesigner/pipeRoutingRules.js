@@ -68,11 +68,10 @@
 //   never from a caller-supplied oblique-face flag (ignored).
 //
 // What this module deliberately does NOT do in PR A (see the PR report):
-// - It is not wired into validateDesign. The current production sample is
-//   diagonal by construction and its acceptance test pins validateDesign
-//   clean; wiring these findings in before PR E revises the sample would
-//   break that acceptance test. PR E wires pipeRoutingRuleErrors into
-//   validateDesign when the sample is revised.
+// - It is wired into validateDesign by PR E (D10-05), gated on
+//   industrial mode plus per-registry adoption (see designerDocument):
+//   a design that carries routing data gets these findings; a legacy
+//   design without it validates as before.
 // - It does not change applyCrossingJogs. Crossing-jog orthogonality is
 //   covered by validateRouteOrthogonality and outside-envelope clearance
 //   by the existing findPipeCrossings resolved flag (requiredSeparationIn);
@@ -86,7 +85,6 @@
 //   (D10-03) and vessel end-head placement (D10-04) are out of scope.
 
 import {
-  CONNECTION_FACE_TOLERANCE_IN,
   DEFAULT_PIPE_ELEVATION_IN,
   effectiveApproachSegment,
   physicalRouteIn,
@@ -95,11 +93,12 @@ import {
 } from "./pipeCrossings";
 import { attachmentInterfaceErrors } from "./pipeAttachments";
 import { isValidPoint } from "./designerGeometry";
+import { FACE_TOLERANCE_IN } from "./pipeTolerances";
 
 /** Numerical axis epsilon (in): representation policy for grid legs. */
 export const ROUTE_AXIS_EPSILON_IN = 1e-6;
-/** Flange-face tolerance (in): single source is pipeCrossings. */
-export const ROUTE_FACE_TOLERANCE_IN = CONNECTION_FACE_TOLERANCE_IN;
+/** Flange-face tolerance (in): single source is pipeTolerances (leaf). */
+export const ROUTE_FACE_TOLERANCE_IN = FACE_TOLERANCE_IN;
 
 /** Finding codes. Every code is stable text a reviewer can grep for. */
 export const ROUTE_CODES = Object.freeze({
@@ -122,10 +121,28 @@ export const ROUTE_CODES = Object.freeze({
   METER_STRAIGHT_LENGTH_SHORT: "METER_STRAIGHT_LENGTH_SHORT",
   VALVE_ARRANGEMENT_UNVERIFIED: "VALVE_ARRANGEMENT_UNVERIFIED",
   VALVE_ARRANGEMENT_MISMATCH: "VALVE_ARRANGEMENT_MISMATCH",
+  OPEN_END_UNDECLARED: "ROUTE_OPEN_END_UNDECLARED",
 });
 
 const EPS = ROUTE_AXIS_EPSILON_IN;
 const ENDS = ["start", "end"];
+
+/**
+ * Declared open-end kinds (D10-05). A run end that is intentionally
+ * open — it terminates at the plot boundary or at a capped dead end —
+ * carries an openEnds declaration naming the kind. The declaration is
+ * the authored evidence: an end with no attachment, no authored inlet
+ * reference and no junction record is connected-by-declaration only
+ * when its declared kind is one of these. Any other value is
+ * malformed and flagged OPEN_END_UNDECLARED, never silently accepted.
+ * The kinds are closed: a battery-limit end is a live process
+ * connection that continues outside the modeled plot; a capped end is
+ * a dead end closed by a blind/cap. An end feeding a firewater device
+ * is NOT an open end — it is connected by the device's authored inlet
+ * reference (see inletReferenceFor).
+ */
+export const OPEN_END_KINDS = Object.freeze(["battery-limit", "capped"]);
+const OPEN_END_VALUES = new Set(OPEN_END_KINDS);
 
 function finding(code, runId, message, legIndex = undefined) {
   const out = { code, runId, message };
@@ -321,22 +338,55 @@ export function simplifyRouteLegs(route) {
 }
 
 /**
+ * The authored inlet reference of a placed device (D10-05). A symbol
+ * that carries inletRunId/inletEnd names the run and end feeding its
+ * inlet — the firewater model (firewater.js) authors exactly this
+ * reference on hydrant and spray-nozzle instances, and verifies the
+ * supply against it, never by proximity. Routing honors the same
+ * reference as an owned interface: when the named run end sits on the
+ * device's plan position (within the face tolerance), the end is
+ * connected. The device has no anchors, so no attachment can ever
+ * name it; proximity alone never connects — the reference must name
+ * this run and this end.
+ */
+export function inletReferenceFor(design, run, end) {
+  if (!design || !run?.id || (end !== "start" && end !== "end")) return null;
+  const point = end === "start" ? run.points?.[0] : run.points?.[run.points.length - 1];
+  if (!point || !isFiniteNumber(point.x) || !isFiniteNumber(point.y)) return null;
+  for (const symbol of design.symbols || []) {
+    if (!symbol || symbol.inletRunId !== run.id || symbol.inletEnd !== end) continue;
+    if (!isFiniteNumber(symbol.x) || !isFiniteNumber(symbol.y)) continue;
+    const dx = point.x - symbol.x;
+    const dy = point.y - symbol.y;
+    if (Math.hypot(dx, dy) <= ROUTE_FACE_TOLERANCE_IN) return symbol;
+  }
+  return null;
+}
+
+/**
  * Validate one run's ends (brief item 2). An end is connected only via
  * the canonical owned-interface/junction predicate, never by endpoint
  * proximity alone: a scheduled owned flange interface (attachments
  * metadata resolving to a real connection face within the face
- * tolerance, judged by attachmentInterfaceErrors) or a verified pipe
- * junction (validatedJunctionEdge status "ok" — a recorded junction
- * whose host route actually passes through the end, whose face
- * elevations meet within the face tolerance, whose approach carries
- * evidence, and whose mixed-size transition, when any, is bound by a
- * reducer owning exactly the two participating interfaces). Any other
- * end is flagged ROUTE_UNCONNECTED_END: the flag is the whole behavior
- * — nothing here moves geometry, and a transient unfinished drawing
- * simply carries the flag until its ends connect. In particular a
- * coincident end with no junction record, a junction to a run at a
- * different elevation, and a junction to an incompatible size with no
- * owned reducer are all unresolved, even when the plan points coincide.
+ * tolerance, judged by attachmentInterfaceErrors), an authored inlet
+ * reference (a placed device naming this run and end as its inlet,
+ * with the end on the device's plan position — inletReferenceFor),
+ * a declared open end (openEnds naming a closed kind — "battery-limit"
+ * or "capped" — with no junction record naming a host), or a verified
+ * pipe junction (validatedJunctionEdge status "ok" — a recorded
+ * junction whose host route actually passes through the end, whose
+ * face elevations meet within the face tolerance, whose approach
+ * carries evidence, and whose mixed-size transition, when any, is
+ * bound by a reducer owning exactly the two participating interfaces).
+ * Any other end is flagged ROUTE_UNCONNECTED_END: the flag is the
+ * whole behavior — nothing here moves geometry, and a transient
+ * unfinished drawing simply carries the flag until its ends connect.
+ * In particular a coincident end with no junction record, a junction
+ * to a run at a different elevation, and a junction to an incompatible
+ * size with no owned reducer are all unresolved, even when the plan
+ * points coincide. A declared open end that also carries a junction
+ * record is NOT connected by declaration — the junction must verify;
+ * a malformed open-end value is flagged OPEN_END_UNDECLARED.
  * (The 1e-6-in numerical axis epsilon and the 0.5-in physical
  * face-contact tolerance are separate constants and are never merged.)
  */
@@ -351,7 +401,26 @@ export function validateRouteEndpoints(design, run) {
       }
       continue;
     }
+    if (inletReferenceFor(design, run, end)) continue;
     const edge = validatedJunctionEdge(design, run, end);
+    if (edge.status === "ok") continue;
+    const openValue = run.openEnds?.[end];
+    if (openValue !== undefined && openValue !== null) {
+      if (!OPEN_END_VALUES.has(openValue)) {
+        findings.push(
+          finding(
+            ROUTE_CODES.OPEN_END_UNDECLARED,
+            runId,
+            `Pipe run ${runId} ${end} end declares an unknown open-end kind ` +
+              `"${openValue}"; open ends are "battery-limit" or "capped".`,
+          ),
+        );
+        continue;
+      }
+      if (edge.status === "no-edge") continue;
+      // A declared open end with a junction record must verify through
+      // the junction — the declaration never hides a bad junction.
+    }
     if (edge.status !== "ok") {
       const why =
         edge.status === "no-edge"
@@ -892,9 +961,9 @@ export function routeCheckStates(design, run) {
 
 /**
  * All D10-01 findings for a design as strings, in the same shape as the
- * sibling *Errors aggregators. PR A does not wire this into
- * validateDesign (see the header note); PR E wires it when the sample is
- * revised.
+ * sibling *Errors aggregators. Wired into validateDesign by PR E
+ * (D10-05), gated on industrial mode plus routing-registry adoption
+ * (see designerDocument).
  */
 export function pipeRoutingRuleErrors(design) {
   const errors = [];

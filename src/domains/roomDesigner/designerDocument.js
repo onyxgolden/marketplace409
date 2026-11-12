@@ -75,7 +75,9 @@ import {
 } from "./utilityPiping";
 import { firewaterErrors, FIREWATER_MAIN_DIAMETER_IN } from "./firewater";
 import { reducerErrors } from "./pipeReducerModel";
-import { ROUTE_AXIS_EPSILON_IN } from "./pipeRoutingRules";
+import { ROUTE_AXIS_EPSILON_IN, pipeRoutingRuleErrors } from "./pipeRoutingRules";
+import { pipeSupportRuleErrors } from "./pipeSupports";
+import { pipeAccessRuleErrors } from "./pipeAccess";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
@@ -99,6 +101,7 @@ import {
 } from "./designerGeometry";
 import {
   dedupeConsecutivePoints,
+  MIN_PIPE_SEGMENT_IN,
   PIPE_LAYERS,
 } from "./pipingGeometry";
 // H0 (home parity): the optional per-level homeOverlays block is validated
@@ -790,9 +793,56 @@ function deepDetachMetadata(value) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations, spanProfile, sizeChanges, routeIntervals, supports, restraints, nozzleSupports, spacingProfile, guideProfile, outsideDiameterIn, insulationIn, expansionAllowanceIn, flangeStations, structureClearance } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, elevIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations, openEnds, spanProfile, sizeChanges, routeIntervals, supports, restraints, nozzleSupports, spacingProfile, guideProfile, outsideDiameterIn, insulationIn, expansionAllowanceIn, flangeStations, structureClearance } = {}) {
   assertDesign(design);
-  const clean = dedupeConsecutivePoints(points);
+  // D10-05 vertical risers: consecutive vertices with the same plan
+  // position and different elevations are the codebase's riser
+  // representation (physicalRouteIn; replacePipeRoute preserves them).
+  // The legacy plan-only dedupe collapsed them, so a run could never
+  // be authored with a vertical leg — exactly what the D10-01
+  // orthogonality rule requires for an elevation change. When the
+  // caller supplies a per-point elevIn array, the dedupe is
+  // elevation-aware: a consecutive pair is a duplicate only when it
+  // is within plan tolerance AND its two elevations are not explicit
+  // numbers that differ (a null elevation cannot prove a riser, so
+  // it falls back to the plan-only rule). Callers that omit elevIn
+  // keep the exact legacy behavior. The stored elevIn runs parallel
+  // to the deduped points.
+  let clean = points;
+  let cleanElevIn = elevIn;
+  if (Array.isArray(elevIn)) {
+    if (elevIn.length !== (points || []).length) {
+      throw new Error("Pipe route elevations must run parallel to its points.");
+    }
+    for (const z of elevIn) {
+      if (z !== null && z !== undefined && !Number.isFinite(z)) {
+        throw new Error("Pipe route elevation must be a number or null.");
+      }
+    }
+    const kept = [];
+    const keptElev = [];
+    for (let i = 0; i < (points || []).length; i += 1) {
+      const p = points[i];
+      if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      const last = kept[kept.length - 1];
+      const lastZ = keptElev[keptElev.length - 1];
+      const z = elevIn[i];
+      const planNear = last && Math.hypot(p.x - last.x, p.y - last.y) < MIN_PIPE_SEGMENT_IN;
+      const isRiser =
+        planNear &&
+        Number.isFinite(z) &&
+        Number.isFinite(lastZ) &&
+        Math.abs(z - lastZ) > ROUTE_AXIS_EPSILON_IN;
+      if (!last || !planNear || isRiser) {
+        kept.push({ x: p.x, y: p.y });
+        keptElev.push(z ?? null);
+      }
+    }
+    clean = kept;
+    cleanElevIn = keptElev;
+  } else {
+    clean = dedupeConsecutivePoints(points);
+  }
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
   const run = {
     id: id || nextId("pipe"),
@@ -800,6 +850,7 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     diameterIn: cleanDiameter(diameterIn),
     layer: cleanPipeLayer(layer),
   };
+  if (Array.isArray(cleanElevIn)) run.elevIn = [...cleanElevIn];
   if (elevationIn !== undefined && elevationIn !== null) {
     if (!Number.isFinite(elevationIn)) {
       throw new Error("Pipe elevation must be a number.");
@@ -858,6 +909,12 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
     run.meterStraightDownstreamIn = meterStraightDownstreamIn;
   }
   if (valveStations !== undefined && valveStations !== null) run.valveStations = deepDetachMetadata(valveStations);
+  // D10-05 declared open ends: an end that intentionally terminates
+  // at the plot boundary ("battery-limit") or at a capped dead end
+  // ("capped"). Stored as-is (detached) so the validator classifies
+  // an unknown kind OPEN_END_UNDECLARED rather than the admission
+  // layer inventing a rule; absence is not a declaration.
+  if (openEnds !== undefined && openEnds !== null) run.openEnds = deepDetachMetadata(openEnds);
   // D10-02 support/spacing metadata: scheduled, authored fields
   // validated by pipeSupports. Absence yields a named NOT_VERIFIED
   // state, never a default; unknown shapes are stored as-is
@@ -1809,6 +1866,50 @@ export function setFurnitureUnitCost(design, furnitureId, costPerUnit) {
 }
 
 /** Structural sanity check; returns a list of human-readable problems. */
+// D10-05 registry-adoption signals (see validateDesign). A registry
+// is adopted when the design carries that registry's authored data;
+// presence of the field is the signal, never an inferred default.
+const D10_ROUTING_FIELDS = [
+  "branchRole",
+  "phase",
+  "takeoff",
+  "flexibility",
+  "isMeterRun",
+  "meterSchedule",
+  "valveStations",
+  "openEnds",
+];
+const D10_SUPPORT_FIELDS = [
+  "spanProfile",
+  "sizeChanges",
+  "routeIntervals",
+  "supports",
+  "restraints",
+  "nozzleSupports",
+  "spacingProfile",
+  "outsideDiameterIn",
+  "insulationIn",
+  "expansionAllowanceIn",
+  "flangeStations",
+  "structureClearance",
+];
+
+function designAdoptsRoutingRegistry(design) {
+  return (design?.pipes || []).some((run) =>
+    D10_ROUTING_FIELDS.some((key) => run?.[key] !== undefined && run?.[key] !== null),
+  );
+}
+
+function designAdoptsSupportRegistry(design) {
+  return (design?.pipes || []).some((run) =>
+    D10_SUPPORT_FIELDS.some((key) => run?.[key] !== undefined && run?.[key] !== null),
+  );
+}
+
+function designAdoptsAccessRegistry(design) {
+  return design?.access !== undefined && design?.access !== null;
+}
+
 export function validateDesign(design) {
   const errors = [];
   try {
@@ -1862,6 +1963,26 @@ export function validateDesign(design) {
   errors.push(...downcomerGeometryErrors(design)); // downcomer shell/head fit
   errors.push(...utilityPipingErrors(design)); // vessel utility connections (water/air/nitrogen)
   errors.push(...vesselHeadNozzleErrors(design)); // horizontal-vessel end-head nozzle schedules (D10-04)
+  // D10-05: routing (D10-01), supports (D10-02) and access (D10-03)
+  // rules apply to industrial-mode designs that have adopted the
+  // corresponding registry. Adoption is per-registry, signaled by
+  // the presence of that registry's authored data: a run carrying a
+  // routing field (branchRole/phase/takeoff/flexibility/meter/valve/
+  // openEnds), a run carrying a support field (span/interval/support/
+  // restraint/nozzle-support/spacing/OD/insulation/expansion/flange/
+  // structure-clearance), or an authored access block (design.access).
+  // A legacy industrial design carries none of these and validates
+  // exactly as before — the D10 checks are fail-closed (missing data
+  // is a named NOT_VERIFIED state), so wiring them unconditionally
+  // would break every pre-D10 industrial document. A home-mode
+  // design never carries industrial pipe-rack context, so the mode
+  // gate applies first. The FCCU sample (industrial, all three
+  // registries authored) is the integrated D10 delivery.
+  if (design.mode === "industrial") {
+    if (designAdoptsRoutingRegistry(design)) errors.push(...pipeRoutingRuleErrors(design));
+    if (designAdoptsSupportRegistry(design)) errors.push(...pipeSupportRuleErrors(design));
+    if (designAdoptsAccessRegistry(design)) errors.push(...pipeAccessRuleErrors(design));
+  }
   errors.push(...connectionCompatibilityErrors(design)); // connection size/elevation mismatches
   errors.push(...reducerErrors(design)); // reducer/transition component validity
   errors.push(...firewaterErrors(design)); // hydrant spacing + spray coverage/standoff

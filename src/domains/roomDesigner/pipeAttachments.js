@@ -263,7 +263,30 @@ export function connectionFaceForAnchor(symbol, inst, anchorId) {
       kind: "top",
     };
   }
-  const n = rotate(fx / radial, fy / radial);
+  // D10-05: a side nozzle on a flat face — or on the shell of a
+  // horizontal cylinder, whose radial direction around its axis has
+  // no plan component along the axis — faces outward perpendicular
+  // to that face (the dominant axis), not radially from the symbol
+  // center. The radial convention gave off-center edge nozzles a
+  // diagonal normal (e.g. (±0.5, ±1) -> (±0.447, ±0.894)), which no
+  // axis-aligned approach can meet within the 20-degree approach
+  // window, so no orthogonal route could ever connect to them. A
+  // vertical cylinder (vcyl) is genuinely curved in plan, so its
+  // nozzles keep the radial normal; a corner nozzle (|fx| == |fy|)
+  // has no dominant face and keeps it too.
+  let nx;
+  let ny;
+  if (symbol.shape3d === "vcyl" || Math.abs(Math.abs(fx) - Math.abs(fy)) <= 1e-9) {
+    nx = fx / radial;
+    ny = fy / radial;
+  } else if (Math.abs(fx) > Math.abs(fy)) {
+    nx = Math.sign(fx);
+    ny = 0;
+  } else {
+    nx = 0;
+    ny = Math.sign(fy);
+  }
+  const n = rotate(nx, ny);
   return {
     anchorId,
     x: anchor.x,

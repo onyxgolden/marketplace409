@@ -12,15 +12,24 @@
 // What this module is:
 // - Route-interval classification (brief item 1): persisted roles
 //   RACK_TRAVEL / EQUIPMENT_APPROACH / SHORT_INTERCONNECT /
-//   BURIED_FIREWATER covering the full developed route. Travel uses
-//   actual racks (a rackId that resolves to a real rack instance, a
-//   tier inside it, and a stable rack-local offset the route geometry
-//   actually sits at); an approach terminates at named equipment and
-//   its serving rack exit; a short interconnect binds two attached
-//   equipment interfaces on an authored basis. A long cross-plot route
-//   cannot evade rack travel by renaming every interval "approach":
-//   an approach with no rack exit is unverified. No universal length
-//   threshold is claimed from the digest — there is none.
+//   BURIED_FIREWATER / PLOT_CONNECTION covering the full developed
+//   route. Travel uses actual racks (a rackId that resolves to a real
+//   rack instance, a tier inside it, and a stable rack-local offset
+//   the route geometry actually sits at); an approach terminates at
+//   named equipment and its serving rack exit; a short interconnect
+//   binds two attached equipment interfaces on an authored basis; a
+//   plot connection (D10-05) binds two owned interfaces — an attached
+//   face, a verified junction, a declared open end, an authored
+//   inlet reference, a rack-exit point, or a burial-boundary point —
+//   on an authored basis, and covers the runs the four closed roles
+//   cannot: equipment-to-header connections, free headers, lead-ins
+//   from an open end to a rack, and surfacing risers. A long
+//   cross-plot route cannot evade rack travel by renaming every
+//   interval "approach": an approach with no rack exit is unverified,
+//   and a plot connection carrying an along-rack leg inside a rack
+//   footprint or a fully-buried leg is unverified — those belong in
+//   RACK_TRAVEL and BURIED_FIREWATER. No universal length threshold
+//   is claimed from the digest — there is none.
 // - Support library (brief item 2): scheduled supports with a type
 //   from the closed support set and a carrier that reaches a real
 //   foundation/carrier — a rack bent/beam, a sleeper, a foundation at
@@ -102,12 +111,10 @@
 //
 // What this module deliberately does NOT do in PR B (see the PR
 // report):
-// - It is not wired into validateDesign. The current production
-//   sample is diagonal by construction and carries no D10-02
-//   schedule data; wiring these findings in before PR E revises the
-//   sample would break that acceptance test. PR E wires
-//   pipeSupportRuleErrors into validateDesign when the sample is
-//   revised.
+// - It is wired into validateDesign by PR E (D10-05), gated on
+//   industrial mode plus per-registry adoption (see designerDocument):
+//   a design that carries support data gets these findings; a legacy
+//   design without it validates as before.
 // - It does not build D10-03 access zones/crossovers or D10-04
 //   vessel end-head schedules. Ground-handling notes the access
 //   revalidation those rules need; the D10-03 registry owns it.
@@ -120,7 +127,6 @@
 //   without it validate as explicitly unverified, never as passing.
 
 import {
-  CONNECTION_FACE_TOLERANCE_IN,
   CROSSING_CLEARANCE_IN,
   closestSegSegPoints,
   physicalRouteIn,
@@ -128,14 +134,16 @@ import {
   properIntersection,
   runIsBuried,
   validatedContactPoints,
+  validatedJunctionEdge,
 } from "./pipeCrossings";
 import { attachmentInterfaceErrors } from "./pipeAttachments";
-import { classifyLeg, ROUTE_AXIS_EPSILON_IN } from "./pipeRoutingRules";
+import { classifyLeg, inletReferenceFor, OPEN_END_KINDS, ROUTE_AXIS_EPSILON_IN } from "./pipeRoutingRules";
 import { rackParams, rackPlan, RACK_BEAM_DEPTH_IN, RACK_LIMITS } from "./rackGeometry";
 import { findSymbol } from "./symbolRegistry";
+import { FACE_TOLERANCE_IN, LOW_PIPE_ELEVATION_IN as LEAF_LOW_PIPE_ELEVATION_IN } from "./pipeTolerances";
 
-/** Face-contact tolerance (in): single source is pipeCrossings. */
-export const SUPPORT_FACE_TOLERANCE_IN = CONNECTION_FACE_TOLERANCE_IN;
+/** Face-contact tolerance (in): single source is pipeTolerances (leaf). */
+export const SUPPORT_FACE_TOLERANCE_IN = FACE_TOLERANCE_IN;
 /**
  * Transition-adjacency tolerance (in): a transition support's
  * contact station must sit within this of the transition station.
@@ -256,8 +264,8 @@ export const SPACING_GAP_IN = Object.freeze({ ordinary: 3, "largest-line": 4 });
 export const FLANGE_GAP_IN = 1;
 /** Flange-to-structure working space (in), digest §2.8/§2.10. */
 export const STRUCTURE_CLEARANCE_IN = 24;
-/** "Low" pipe for ground handling (in above grade), digest §3.2. */
-export const LOW_PIPE_ELEVATION_IN = 24;
+/** "Low" pipe for ground handling (in above grade), digest §3.2. Single source is pipeTolerances (leaf). */
+export const LOW_PIPE_ELEVATION_IN = LEAF_LOW_PIPE_ELEVATION_IN;
 /** Bounded rack tiers (rackGeometry RACK_LIMITS). */
 export const MAX_RACK_TIERS = RACK_LIMITS.pipe.tiers[1];
 
@@ -337,7 +345,7 @@ export const CARRIER_KINDS = Object.freeze(
 );
 /** Route-interval roles (brief item 1). */
 export const INTERVAL_ROLES = Object.freeze(
-  new Set(["RACK_TRAVEL", "EQUIPMENT_APPROACH", "SHORT_INTERCONNECT", "BURIED_FIREWATER"]),
+  new Set(["RACK_TRAVEL", "EQUIPMENT_APPROACH", "SHORT_INTERCONNECT", "BURIED_FIREWATER", "PLOT_CONNECTION"]),
 );
 /** Steel materials the adopted span table is sourced for. */
 export const SPAN_STEEL_MATERIALS = Object.freeze(
@@ -842,6 +850,139 @@ export function validateSupportSpans(design, run) {
 // ---- Route-interval classification (brief item 1) -----------------------
 
 /**
+ * Plot-connection interval validation (D10-05). A plot connection
+ * binds two owned interfaces on an authored basis, and covers the
+ * runs the four closed roles cannot: equipment-to-header connections,
+ * free headers, lead-ins from an open end to a rack, and surfacing
+ * risers. Each interval end must be an owned interface:
+ * - at a run end: an attached face that resolves cleanly, a verified
+ *   pipe junction, a declared open end (a closed open-end kind), or
+ *   an authored inlet reference (a device naming this run and end);
+ * - mid-route: a rack-exit point (the interval end sits inside a rack
+ *   footprint — the rack named by iv.rackId when given, else any rack
+ *   in the design) or a burial-boundary point (a route vertex where
+ *   the elevation crosses grade).
+ * Anti-evasion: the interval carries no along-rack leg (a leg whose
+ * overlap with the interval runs parallel to a rack's long axis
+ * inside that rack's footprint — that is rack travel) and no
+ * fully-buried leg (both ends below grade — that is buried
+ * firewater). A perpendicular rack crossing and a surfacing riser
+ * are not along-rack and not fully buried, so they pass.
+ */
+export function validatePlotConnectionInterval(design, run, iv, route, stations, totalIn) {
+  const runId = run?.id ?? "(unknown)";
+  const findings = [];
+  const from = iv.fromStationIn;
+  const to = iv.toStationIn;
+  if (typeof iv.basis !== "string" || iv.basis.trim() === "") {
+    findings.push(
+      finding(
+        SUPPORT_CODES.ROUTE_CLASSIFICATION_UNVERIFIED,
+        runId,
+        `Pipe run ${runId} plot-connection interval ${from}–${to} in has no authored applicability basis.`,
+      ),
+    );
+  }
+  const endOk = (stationIn) => {
+    const atStart = Math.abs(stationIn) <= EPS;
+    const atEnd = Math.abs(stationIn - totalIn) <= EPS;
+    if (atStart || atEnd) {
+      const end = atStart ? "start" : "end";
+      if (run.attachments?.[end] && attachmentInterfaceErrors(design, run, end).length === 0) return true;
+      if (validatedJunctionEdge(design, run, end).status === "ok") return true;
+      if (OPEN_END_KINDS.includes(run.openEnds?.[end])) return true;
+      if (inletReferenceFor(design, run, end)) return true;
+      return false;
+    }
+    const pt = pointAtStation(route, stationIn);
+    if (!pt) return false;
+    // Rack exit: inside the named rack's footprint, or any rack's.
+    const rackIds =
+      typeof iv.rackId === "string" && rackInstanceById(design, iv.rackId)
+        ? [iv.rackId]
+        : (design?.symbols || [])
+            .filter((s) => rackInstanceById(design, s.id))
+            .map((s) => s.id);
+    for (const rackId of rackIds) {
+      const footprint = rackFootprint(design, rackId);
+      if (footprint && pointInRackFootprint(footprint, pt)) return true;
+    }
+    // Burial boundary: a route vertex at this station whose elevation
+    // crosses grade against an adjacent vertex.
+    const vertexIndex = stations.findIndex((s) => Math.abs(s.stationIn - stationIn) <= EPS);
+    if (vertexIndex >= 0) {
+      const z = route[vertexIndex]?.zIn;
+      const neighbors = [route[vertexIndex - 1]?.zIn, route[vertexIndex + 1]?.zIn].filter(
+        (v) => typeof v === "number",
+      );
+      if (
+        typeof z === "number" &&
+        neighbors.some((nz) => (z < 0 && nz >= 0) || (z >= 0 && nz < 0))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const stationIn of [from, to]) {
+    if (!endOk(stationIn)) {
+      findings.push(
+        finding(
+          SUPPORT_CODES.ROUTE_CLASSIFICATION_UNVERIFIED,
+          runId,
+          `Pipe run ${runId} plot-connection interval ${from}–${to} in has an interval end at station ${stationIn.toFixed(3)} in that is not an owned interface (attached face, verified junction, declared open end, authored inlet reference, rack exit, or burial boundary).`,
+        ),
+      );
+    }
+  }
+  // Anti-evasion guards over the legs overlapping this interval.
+  let alongRack = false;
+  for (let i = 0; i + 1 < route.length && !alongRack; i += 1) {
+    const legStart = stations[i]?.stationIn ?? 0;
+    const legEnd = stations[i + 1]?.stationIn ?? 0;
+    const overlapStart = Math.max(from, legStart);
+    const overlapEnd = Math.min(to, legEnd);
+    if (overlapEnd - overlapStart <= EPS) continue;
+    const a = route[i];
+    const b = route[i + 1];
+    if (a.zIn < 0 && b.zIn < 0) {
+      findings.push(
+        finding(
+          SUPPORT_CODES.ROUTE_CLASSIFICATION_UNVERIFIED,
+          runId,
+          `Pipe run ${runId} plot-connection interval ${from}–${to} in carries a fully-buried leg; buried legs belong in BURIED_FIREWATER.`,
+        ),
+      );
+      break;
+    }
+    const mid = pointAtStation(route, (overlapStart + overlapEnd) / 2);
+    if (!mid) continue;
+    const racks = (design?.symbols || []).filter((s) => rackInstanceById(design, s.id));
+    for (const rack of racks) {
+      const footprint = rackFootprint(design, rack.id);
+      if (!footprint || !pointInRackFootprint(footprint, mid)) continue;
+      const p0 = pointAtStation(route, overlapStart);
+      const p1 = pointAtStation(route, overlapEnd);
+      if (!p0 || !p1) continue;
+      const l0 = toRackLocal(footprint, p0);
+      const l1 = toRackLocal(footprint, p1);
+      if (Math.abs(l1.across - l0.across) <= EPS && Math.abs(l1.along - l0.along) > EPS) {
+        findings.push(
+          finding(
+            SUPPORT_CODES.ROUTE_CLASSIFICATION_UNVERIFIED,
+            runId,
+            `Pipe run ${runId} plot-connection interval ${from}–${to} in carries an along-rack leg inside rack "${rack.id}"; along-rack legs belong in RACK_TRAVEL.`,
+          ),
+        );
+        alongRack = true;
+        break;
+      }
+    }
+  }
+  return findings;
+}
+
+/**
  * Validate one run's route-interval classification. Intervals must
  * cover the full developed route contiguously; travel uses a real
  * rack (resolvable rackId, tier inside it, and a rack-local offset
@@ -889,7 +1030,7 @@ export function validateRouteClassification(design, run) {
         finding(
           SUPPORT_CODES.ROUTE_CLASSIFICATION_UNVERIFIED,
           runId,
-          `Pipe run ${runId} interval ${iv.index} is malformed (role "${iv?.role}", stations ${iv?.fromStationIn}–${iv?.toStationIn}); roles are RACK_TRAVEL, EQUIPMENT_APPROACH, SHORT_INTERCONNECT or BURIED_FIREWATER.`,
+          `Pipe run ${runId} interval ${iv.index} is malformed (role "${iv?.role}", stations ${iv?.fromStationIn}–${iv?.toStationIn}); roles are RACK_TRAVEL, EQUIPMENT_APPROACH, SHORT_INTERCONNECT, BURIED_FIREWATER or PLOT_CONNECTION.`,
         ),
       );
       shapeOk = false;
@@ -1123,6 +1264,9 @@ export function validateRouteClassification(design, run) {
           ),
         );
       }
+    }
+    if (iv.role === "PLOT_CONNECTION") {
+      findings.push(...validatePlotConnectionInterval(design, run, iv, route, stations, totalIn));
     }
   }
   // Renamed travel is caught by the per-interval rack-exit check
@@ -2485,9 +2629,9 @@ export function supportCheckStates(design, run) {
 
 /**
  * All D10-02 findings for a design as strings, in the same shape as
- * the sibling *Errors aggregators. PR B does not wire this into
- * validateDesign (see the header note); PR E wires it when the
- * sample is revised. Pair spacing runs only over pairs where both
+ * the sibling *Errors aggregators. Wired into validateDesign by PR E
+ * (D10-05), gated on industrial mode plus support-registry adoption
+ * (see designerDocument). Pair spacing runs only over pairs where both
  * runs carry complete spacing data — a pair with no spacing model
  * is not spacing-modeled, and the design-level roll-up does not spam
  * it as unverified (call validatePairSpacing directly for the

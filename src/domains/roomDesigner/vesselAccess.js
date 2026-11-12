@@ -39,7 +39,7 @@
 import { findSymbol } from "./symbolRegistry";
 import { catalogAnchorsWorld } from "./pipeAttachments";
 import { downcomerLevels, isColumnSymbol } from "./downcomers";
-import { physicalRouteIn } from "./pipeCrossings";
+import { physicalRouteIn, verifiedAttachments } from "./pipeCrossings";
 
 /** Sill height (in above grade) that triggers the access package. */
 export const MANWAY_ACCESS_TRIGGER_IN = 24;
@@ -447,6 +447,22 @@ function deckObstruction(design, ownerId, deck, { inflated = true, skipOwnerAnch
       return `its own vessel ${ownerId}`;
     }
   }
+  // D10-05: a terminal riser at a VERIFIED attached face on the
+  // deck's own vessel is the connection the deck exists to service,
+  // not an obstruction — a 45-degree nozzle can only be met
+  // orthogonally by a riser at its face, and that riser necessarily
+  // crosses the deck's elevation band where the face sits inside
+  // the deck's working box. Only a riser whose plan point IS such
+  // a verified face is exempt; every other segment is judged.
+  const ownerFaces = verifiedAttachments(design)
+    .filter((t) => t.symbolId === ownerId)
+    .map((t) => ({ x: t.x, y: t.y }));
+  const isOwnerFaceRiser = (a, b) => {
+    if (Math.hypot(b.x - a.x, b.y - a.y) > 1e-9) return false;
+    return ownerFaces.some(
+      (f) => Math.hypot(f.x - a.x, f.y - a.y) <= 0.5,
+    );
+  };
   for (const run of design?.pipes || []) {
     const route = physicalRouteIn(design, run);
     const pipeR = (run.diameterIn ?? 2) / 2;
@@ -458,6 +474,7 @@ function deckObstruction(design, ownerId, deck, { inflated = true, skipOwnerAnch
       depthIn: deck.depthIn + (by + pipeR + 6) * 2,
     });
     for (let i = 0; i + 1 < route.length; i += 1) {
+      if (isOwnerFaceRiser(route[i], route[i + 1])) continue;
       if (segmentEntersDeckBox(route[i], route[i + 1], box, pipeR, deck.elevationIn)) {
         return `pipe run ${run.id}`;
       }
