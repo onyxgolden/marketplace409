@@ -121,11 +121,13 @@
 
 import {
   CONNECTION_FACE_TOLERANCE_IN,
+  CROSSING_CLEARANCE_IN,
+  closestSegSegPoints,
   physicalRouteIn,
-  pipeConnectionGraph,
   pointSegmentDistance,
+  properIntersection,
   runIsBuried,
-  segSegDistance3D,
+  validatedContactPoints,
 } from "./pipeCrossings";
 import { attachmentInterfaceErrors } from "./pipeAttachments";
 import { classifyLeg, ROUTE_AXIS_EPSILON_IN } from "./pipeRoutingRules";
@@ -193,6 +195,60 @@ export const RISER_GUIDE_PROFILE_IN = Object.freeze([
   Object.freeze({ maxSizeIn: 8, maxIntervalIn: 600 }),
   Object.freeze({ maxSizeIn: 10, maxIntervalIn: 660 }),
 ]);
+
+/**
+ * D10-06 Ruling 1: named planning profile for riser guides above
+ * 10 in. The 660-in value is the digest's published 10-in maximum,
+ * deliberately retained as a conservative frequency cap — it is NOT
+ * a sourced 12/16/24-in interval, a calculation, capacity evidence,
+ * or engineering certification, and it never applies as a horizontal
+ * weight-support span (see maxSpanInFor / SUPPORT_SPAN_TABLE_IN).
+ * The cap covers nominal sizes greater than 10 in through the
+ * currently supported 24-in size, only when this exact profile is
+ * explicitly selected and persisted on the run (run.guideProfile).
+ * Anything else — missing selection, a different profile string,
+ * size above 24 in, invalid size — stays unverified.
+ */
+export const RISER_GUIDE_CAP_PROFILE = "conservative-10in-guide-cap-v1";
+export const RISER_GUIDE_CAP_MAX_SIZE_IN = 24;
+export const RISER_GUIDE_CAP_INTERVAL_IN = 660;
+
+/**
+ * Resolve a riser guide interval with its provenance, so findings
+ * and UI can distinguish digest-backed entries (<=10 in, source
+ * "digest") from the reviewer-adopted interim cap (source
+ * "reviewer-adopted-cap"). Returns { ok, intervalIn, source,
+ * reason }: ok is false with intervalIn null whenever the size has
+ * no adopted interval — missing/invalid size, above 24 in, or above
+ * 10 in without the explicitly selected named cap profile.
+ */
+export function resolveRiserGuideInterval(sizeIn, options = {}) {
+  if (!isFiniteNumber(sizeIn) || sizeIn <= 0) {
+    return {
+      ok: false,
+      intervalIn: null,
+      source: null,
+      reason: `nominal size ${sizeIn} in is not a finite positive size`,
+    };
+  }
+  for (const row of RISER_GUIDE_PROFILE_IN) {
+    if (sizeIn <= row.maxSizeIn) {
+      return { ok: true, intervalIn: row.maxIntervalIn, source: "digest" };
+    }
+  }
+  if (sizeIn <= RISER_GUIDE_CAP_MAX_SIZE_IN && options.guideProfile === RISER_GUIDE_CAP_PROFILE) {
+    return { ok: true, intervalIn: RISER_GUIDE_CAP_INTERVAL_IN, source: "reviewer-adopted-cap" };
+  }
+  return {
+    ok: false,
+    intervalIn: null,
+    source: null,
+    reason:
+      sizeIn > RISER_GUIDE_CAP_MAX_SIZE_IN
+        ? `nominal size ${sizeIn} in is above the supported 24-in size`
+        : `nominal size ${sizeIn} in has no adopted riser guide interval without the explicitly selected "${RISER_GUIDE_CAP_PROFILE}" profile; the digest guide profile ends at 10 in`,
+  };
+}
 
 /** Ordinary / largest-line surface gaps (in), digest §2.2. */
 export const SPACING_GAP_IN = Object.freeze({ ordinary: 3, "largest-line": 4 });
@@ -373,18 +429,6 @@ export function pointAtStation(route, stationIn) {
     acc += len;
   }
   return { ...route[route.length - 1] };
-}
-
-/** Minimum 3D distance between two physical routes. */
-function minRouteDistance(routeA, routeB) {
-  let best = Infinity;
-  for (let i = 0; i + 1 < routeA.length; i += 1) {
-    for (let j = 0; j + 1 < routeB.length; j += 1) {
-      const d = segSegDistance3D(routeA[i], routeA[i + 1], routeB[j], routeB[j + 1]);
-      if (d < best) best = d;
-    }
-  }
-  return best;
 }
 
 /**
@@ -1275,12 +1319,9 @@ export function validateTransitionSupports(design, run) {
 // ---- Nozzle ends and risers (brief item 5) ------------------------------
 
 /** Maximum riser guide interval (in) for a nominal size, or null when unadopted. */
-export function riserGuideIntervalInFor(sizeIn) {
-  if (!isFiniteNumber(sizeIn)) return null;
-  for (const row of RISER_GUIDE_PROFILE_IN) {
-    if (sizeIn <= row.maxSizeIn) return row.maxIntervalIn;
-  }
-  return null;
+export function riserGuideIntervalInFor(sizeIn, options = {}) {
+  const resolved = resolveRiserGuideInterval(sizeIn, options);
+  return resolved.ok ? resolved.intervalIn : null;
 }
 
 /**
@@ -1419,17 +1460,26 @@ export function validateNozzleSupports(design, run) {
         ),
       );
     } else {
-      const interval = riserGuideIntervalInFor(sizeIn);
-      if (interval === null) {
+      // D10-06 Ruling 1: the named cap profile is read off the run
+      // (run.guideProfile) — the resolver's provenance labels the
+      // finding so a cap-resolved interval is never presented as a
+      // digest-sourced interval.
+      const resolved = resolveRiserGuideInterval(sizeIn, { guideProfile: run.guideProfile });
+      if (!resolved.ok) {
         findings.push(
           finding(
             SUPPORT_CODES.GUIDE_PROFILE_UNVERIFIED,
             runId,
-            `Pipe run ${runId} size ${sizeIn} in has no adopted riser guide interval; the digest guide profile ends at 10 in.`,
+            `Pipe run ${runId} size ${sizeIn} in has no adopted riser guide interval: ${resolved.reason}.`,
             { legIndex: leg.legIndex },
           ),
         );
       } else {
+        const interval = resolved.intervalIn;
+        const provenance =
+          resolved.source === "reviewer-adopted-cap"
+            ? "reviewer-adopted interim cap (the digest's published 10-in maximum retained as a conservative cap, not a sourced interval for this size)"
+            : "digest §3.10";
         const stops = [leg.fromStationIn, ...guides, leg.toStationIn];
         for (let i = 0; i + 1 < stops.length; i += 1) {
           const gap = stops[i + 1] - stops[i];
@@ -1438,7 +1488,7 @@ export function validateNozzleSupports(design, run) {
               finding(
                 SUPPORT_CODES.GUIDE_INTERVAL_EXCEEDED,
                 runId,
-                `Pipe run ${runId} vertical leg ${leg.legIndex} has a ${gap.toFixed(3)}-in guide gap; the ${sizeIn}-in maximum guide interval is ${interval} in.`,
+                `Pipe run ${runId} vertical leg ${leg.legIndex} has a ${gap.toFixed(3)}-in guide gap; the ${sizeIn}-in maximum guide interval is ${interval} in (${provenance}).`,
                 { legIndex: leg.legIndex, gapIn: gap, maxIn: interval },
               ),
             );
@@ -1508,24 +1558,181 @@ export function requiredPairCenters(runA, runB, options = {}) {
 }
 
 /**
- * O3 pair spacing (brief item 6; digest §2.2–2.3). Bare/insulated
- * parallel pairs: centers >= (OD/2 + insulation) each side + the
- * selected clear gap + authored expansion allowances. At a flange
- * station the governing check is flange radius + adjacent effective
- * pipe radius + 1 in + the authored expansion allowances of both
- * lines (each line may move toward the other, so a flange that
- * governs can still understate required centers without them);
- * overlapping flange stations use flange/flange envelopes + 1 in +
- * both allowances. The governing maximum of pipe and fitting checks
- * rules; the 1-in flange gap is never substituted for the pipe
- * clearance everywhere. Runs joined by a verified junction are not
- * a spacing pair (they meet by design).
+ * Whether one segment pair meets at a verified junction contact —
+ * the contact point lies on both segments (within the face
+ * tolerance) and the pair is a takeoff, not a duplicate route. A
+ * collinear overlap beyond the face is not a junction: two runs
+ * sharing more than a face of route still fail pair spacing, as do
+ * two branches claiming one physical face with no direct junction
+ * between them. A zero-plan leg (a riser leaving the host upward)
+ * leaves no plan overlap, so it is a takeoff.
+ *
+ * This answers only "the pair meets at the junction". It grants no
+ * exemption by itself: the caller limits the exemption to the
+ * contact neighborhood (fix rounds 1–3, P1 — Ruling 2 item 4) by
+ * partitioning both segments into inside-ball and outside-ball
+ * portions around the verified contact and evaluating every portion
+ * pair with at least one portion outside the ball (see
+ * validatePairSpacing); only inside x inside is omitted. A segment
+ * lying wholly inside the ball has no outside portion, so its
+ * inside portion is checked against the other segment's outside
+ * remainder under the same rule. A non-parallel pair is a junction
+ * at the contact, never proof the rest of the pair is clear.
+ */
+function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
+  if (pointSegmentDistance(contact, a1, a2).distance > FACE) return false;
+  if (pointSegmentDistance(contact, b1, b2).distance > FACE) return false;
+  const dAx = a2.x - a1.x;
+  const dAy = a2.y - a1.y;
+  const dBx = b2.x - b1.x;
+  const dBy = b2.y - b1.y;
+  const lenA = Math.hypot(dAx, dAy);
+  const lenB = Math.hypot(dBx, dBy);
+  if (lenA <= EPS || lenB <= EPS) return true;
+  const cross = Math.abs(dAx * dBy - dAy * dBx) / (lenA * lenB);
+  if (cross > 1e-9) return true;
+  // Parallel: project both onto A's direction and measure the
+  // shared length — beyond one face of overlap it is a duplicate
+  // route, not a junction.
+  const ux = dAx / lenA;
+  const uy = dAy / lenA;
+  const proj = (p) => (p.x - a1.x) * ux + (p.y - a1.y) * uy;
+  const bLo = Math.min(proj(b1), proj(b2));
+  const bHi = Math.max(proj(b1), proj(b2));
+  const overlap = Math.min(lenA, bHi) - Math.max(0, bLo);
+  return overlap <= FACE + 1e-9;
+}
+
+/**
+ * One 3D segment partitioned by the plan balls around verified
+ * contacts, as { inside, outside } lists of { a, b } sub-segments
+ * with zIn interpolated linearly along the segment. A point is
+ * inside when its plan distance to any contact is < radiusIn; the
+ * ball is plan-only (x, y), so a vertical riser has no plan extent
+ * and is inside iff its plan point is. Inside ∪ outside is the
+ * whole segment: the inside intervals are the union of the
+ * per-ball intervals in parameter space, the outside pieces their
+ * complement, and a tangent touch does not split the segment.
+ * Degenerate (zero-length) pieces are dropped.
+ */
+function partitionSegmentByBalls(p1, p2, centers, radiusIn) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dz = p2.zIn - p1.zIn;
+  const a = dx * dx + dy * dy;
+  const radius2 = radiusIn * radiusIn;
+  const intervals = [];
+  for (const center of centers) {
+    const wx = p1.x - center.x;
+    const wy = p1.y - center.y;
+    if (a <= 1e-12) {
+      if (wx * wx + wy * wy < radius2) intervals.push([0, 1]);
+      continue;
+    }
+    const b = 2 * (dx * wx + dy * wy);
+    const c = wx * wx + wy * wy - radius2;
+    const disc = b * b - 4 * a * c;
+    if (disc <= 0) continue; // No crossing (or a tangent): entirely outside.
+    const sq = Math.sqrt(disc);
+    const tLo = Math.max(0, (-b - sq) / (2 * a));
+    const tHi = Math.min(1, (-b + sq) / (2 * a));
+    if (tHi > tLo) intervals.push([tLo, tHi]);
+  }
+  intervals.sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const [lo, hi] of intervals) {
+    const last = merged[merged.length - 1];
+    if (last && lo <= last[1] + 1e-12) {
+      last[1] = Math.max(last[1], hi);
+    } else {
+      merged.push([lo, hi]);
+    }
+  }
+  const at = (t) => ({ x: p1.x + t * dx, y: p1.y + t * dy, zIn: p1.zIn + t * dz });
+  const inside = [];
+  const outside = [];
+  let cursor = 0;
+  for (const [lo, hi] of merged) {
+    if (lo - cursor > 1e-12) outside.push({ a: at(cursor), b: at(lo) });
+    if (hi - lo > 1e-12) inside.push({ a: at(lo), b: at(hi) });
+    cursor = hi;
+  }
+  if (1 - cursor > 1e-12) outside.push({ a: at(cursor), b: at(1) });
+  return { inside, outside };
+}
+
+/**
+ * The ordinary relation classifier for one segment pair: a true plan
+ * crossing resolved by elevation uses the crossing rule (actual
+ * envelopes + 1 in); every other pair is side-by-side and keeps O3
+ * (3D closest approach against required centers). Returns
+ * { findings, minCenter }.
+ */
+function evaluateSegmentPairSpacing(a1, a2, b1, b2, req, runA, runB, runId) {
+  const findings = [];
+  let minCenter = Infinity;
+  const hit = properIntersection(a1, a2, b1, b2);
+  if (hit) {
+    const elevA = a1.zIn + hit.t * (a2.zIn - a1.zIn);
+    const elevB = b1.zIn + hit.u * (b2.zIn - b1.zIn);
+    const sep = Math.abs(elevA - elevB);
+    const required = req.effectiveRadiusAIn + req.effectiveRadiusBIn + CROSSING_CLEARANCE_IN;
+    minCenter = Math.min(minCenter, sep);
+    if (sep < required - 1e-9) {
+      findings.push(
+        finding(
+          SUPPORT_CODES.SPACING_TOO_CLOSE,
+          runId,
+          `Pipe runs ${runA.id} / ${runB.id} cross at (${Math.round(hit.x)}, ${Math.round(hit.y)}) with ${sep.toFixed(3)} in of vertical separation; ` +
+            `the crossing needs ${required.toFixed(3)} in (effective radii ${req.effectiveRadiusAIn.toFixed(3)}/${req.effectiveRadiusBIn.toFixed(3)} in + ${CROSSING_CLEARANCE_IN} in clear).`,
+          { requiredIn: required, actualIn: sep },
+        ),
+      );
+    }
+    return { findings, minCenter };
+  }
+  // Side-by-side: the 3D closest approach against O3 centers.
+  const closest = closestSegSegPoints(a1, a2, b1, b2);
+  minCenter = Math.min(minCenter, closest.distance);
+  if (closest.distance < req.requiredIn - 1e-9) {
+    findings.push(
+      finding(
+        SUPPORT_CODES.SPACING_TOO_CLOSE,
+        runId,
+        `Pipe runs ${runA.id} / ${runB.id} are ${closest.distance.toFixed(3)} in apart center-to-center; ` +
+          `the required centers are ${req.requiredIn.toFixed(3)} in (OD ${runA.outsideDiameterIn}/${runB.outsideDiameterIn} in, ` +
+          `insulation ${runA.insulationIn}/${runB.insulationIn} in, gap ${req.gapIn} in, expansion ${runA.expansionAllowanceIn}/${runB.expansionAllowanceIn} in).`,
+        { requiredIn: req.requiredIn, actualIn: closest.distance },
+      ),
+    );
+  }
+  return { findings, minCenter };
+}
+
+/**
+ * O3 pair spacing (brief item 6; digest §2.2–2.3). D10-06 Ruling 2:
+ * segment pairs are classified before any clearance is applied.
+ * A pair meeting at a verified junction contact is a junction —
+ * only the contact neighborhood is omitted, and only for the
+ * segment pairs that actually meet there. A true perpendicular /
+ * oblique plan crossing resolved by elevation uses the crossing
+ * rule (actual envelopes + 1 in, owned by pipeCrossings.js) with
+ * no added 3/4-in rack gap. Every other pair is side-by-side and
+ * keeps O3 (centers >= effective radii + selected gap + authored
+ * expansion). A pair with one valid crossing is not exempt
+ * everywhere: its other segment pairs still satisfy their own
+ * relation's rule. Missing relation/topology/envelope evidence
+ * fails closed upstream (requiredPairCenters) — it never silently
+ * becomes a crossing or junction exemption. At a flange station
+ * the governing check is flange radius + adjacent effective pipe
+ * radius + 1 in, or flange/flange + 1 in where the stations
+ * overlap; the governing maximum of pipe and fitting checks rules.
+ * Runs joined by a verified junction whose whole interaction is
+ * the junction are not a spacing pair.
  */
 export function validatePairSpacing(design, runA, runB, options = {}) {
   const runId = `${runA?.id ?? "(unknown)"}/${runB?.id ?? "(unknown)"}`;
   if (!runA || !runB || runA.id === runB.id) return { state: "NOT_APPLICABLE", findings: [] };
-  const graph = pipeConnectionGraph(design);
-  if (graph.get(runA.id)?.has(runB.id)) return { state: "NOT_APPLICABLE", findings: [] };
   if (!Array.isArray(runA.points) || runA.points.length < 2 || !Array.isArray(runB.points) || runB.points.length < 2) {
     return { state: "NOT_APPLICABLE", findings: [] };
   }
@@ -1546,19 +1753,79 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
   const routeA = physicalRouteIn(design, runA);
   const routeB = physicalRouteIn(design, runB);
   const findings = [];
-  const minCenter = minRouteDistance(routeA, routeB);
   let governingIn = req.requiredIn;
-  if (minCenter < req.requiredIn - 1e-9) {
-    findings.push(
-      finding(
-        SUPPORT_CODES.SPACING_TOO_CLOSE,
-        runId,
-        `Pipe runs ${runA.id} / ${runB.id} are ${minCenter.toFixed(3)} in apart center-to-center; ` +
-          `the required centers are ${req.requiredIn.toFixed(3)} in (OD ${runA.outsideDiameterIn}/${runB.outsideDiameterIn} in, ` +
-          `insulation ${runA.insulationIn}/${runB.insulationIn} in, gap ${req.gapIn} in, expansion ${runA.expansionAllowanceIn}/${runB.expansionAllowanceIn} in).`,
-        { requiredIn: req.requiredIn, actualIn: minCenter },
-      ),
-    );
+  // Verified junction contacts between exactly these two runs.
+  // Same-host labels with no validated common geometry yield no
+  // contacts here, so they exempt nothing.
+  const contacts = validatedContactPoints(design, runA, runB);
+  let evaluatedPairs = 0;
+  let minCenter = Infinity;
+  for (let i = 0; i + 1 < routeA.length; i += 1) {
+    for (let j = 0; j + 1 < routeB.length; j += 1) {
+      const a1 = routeA[i];
+      const a2 = routeA[i + 1];
+      const b1 = routeB[j];
+      const b2 = routeB[j + 1];
+      // Junction: this segment pair meets at a verified contact. The
+      // exemption covers only the contact neighborhood (fix round 3,
+      // P1 — Ruling 2 item 4): each segment is partitioned into
+      // inside-ball and outside-ball portions around the verified
+      // contacts, and EVERY portion pair with at least one portion
+      // outside the ball is evaluated under the ordinary classifier.
+      // Only inside x inside — the contact neighborhood itself — is
+      // omitted. The round-2 remainder-vs-remainder comparison plus
+      // empty-remainder fallback is subsumed by this rule: it omitted
+      // the cross-boundary pairs (inside-A x outside-B and outside-A
+      // x inside-B) whenever both segments had an outside remainder,
+      // and the round-3 verdict shows that omission is a
+      // false-negative path. A branch leaving at 76 deg measures
+      // 5.21 in against the host's inside portion right at the ball
+      // boundary — below the 5.375-in required centers — and that
+      // cross-boundary clash is real: the branch has not diverged
+      // beyond the required envelope at the boundary, so it fails.
+      // The only emanating angle that clears the boundary is 90 deg
+      // (its boundary point sits exactly the required centers from
+      // the host). When no portion pair is evaluated — both segments
+      // lie wholly inside the ball — the pair's whole interaction is
+      // the junction and it is skipped exactly as before.
+      const meeting = contacts.filter((c) => segmentPairIsJunctionContact(a1, a2, b1, b2, c));
+      if (meeting.length > 0) {
+        const partA = partitionSegmentByBalls(a1, a2, meeting, req.requiredIn);
+        const partB = partitionSegmentByBalls(b1, b2, meeting, req.requiredIn);
+        const remainder = [];
+        let remainderMin = Infinity;
+        const checkRemainder = (sa, sb) => {
+          const out = evaluateSegmentPairSpacing(sa.a, sa.b, sb.a, sb.b, req, runA, runB, runId);
+          remainder.push(...out.findings);
+          remainderMin = Math.min(remainderMin, out.minCenter);
+        };
+        // Every portion pair with at least one side outside the
+        // contact neighborhood; inside x inside alone is omitted.
+        for (const sa of partA.outside) {
+          for (const sb of partB.outside) checkRemainder(sa, sb);
+        }
+        for (const sa of partA.inside) {
+          for (const sb of partB.outside) checkRemainder(sa, sb);
+        }
+        for (const sa of partA.outside) {
+          for (const sb of partB.inside) checkRemainder(sa, sb);
+        }
+        if (remainder.length === 0) continue;
+        findings.push(...remainder);
+        minCenter = Math.min(minCenter, remainderMin);
+        evaluatedPairs += 1;
+        continue;
+      }
+      evaluatedPairs += 1;
+      const out = evaluateSegmentPairSpacing(a1, a2, b1, b2, req, runA, runB, runId);
+      findings.push(...out.findings);
+      minCenter = Math.min(minCenter, out.minCenter);
+    }
+  }
+  if (evaluatedPairs === 0) {
+    // Every segment pair meets at a verified junction contact: the
+    // pair's whole interaction is the junction.
+    return { state: "NOT_APPLICABLE", findings: [] };
   }
   // Flange stations: flange radius + adjacent effective radius + 1 in,
   // or flange/flange + 1 in where the stations overlap.
@@ -1688,6 +1955,91 @@ export function proposeTierOverflow(design, rackInstanceId, runId) {
 }
 
 /**
+ * Stable rack-local longitudinal envelope for one rack-travel
+ * interval (D10-06 Ruling 2, rack defect): the route portion
+ * between the interval's stations projected onto the rack axis,
+ * extended by the run's authored expansion allowance and by the
+ * largest flange radius among flange stations inside the interval.
+ * The extension is a conservative planning allowance — a fitting
+ * or axial movement at the interval ends reaches that far along
+ * the rack — never a claimed physical dimension. Returns
+ * { ok, coreMinIn, coreMaxIn, alongMinIn, alongMaxIn } or
+ * { ok: false, reason }: unknown interval geometry (missing
+ * stations, stations outside the developed route, unknown
+ * expansion, malformed flange data, unresolvable rack) fails
+ * closed — the pair is never silently treated as non-overlapping.
+ */
+export function rackLongitudinalEnvelope(design, rackId, run, interval) {
+  const footprint = rackFootprint(design, rackId);
+  if (!footprint) return { ok: false, reason: `rack "${rackId}" does not resolve` };
+  const from = interval?.fromStationIn;
+  const to = interval?.toStationIn;
+  if (!isFiniteNumber(from) || !isFiniteNumber(to) || from > to + 1e-9) {
+    return {
+      ok: false,
+      reason: `pipe run ${run?.id ?? "(unknown)"} rack-travel interval has no usable station range`,
+    };
+  }
+  const { stations, totalIn, route } = routeStations(design, run);
+  if (!Array.isArray(route) || route.length < 2 || from < -1e-9 || to > totalIn + 1e-9) {
+    return {
+      ok: false,
+      reason: `pipe run ${run?.id ?? "(unknown)"} rack-travel interval stations ${from}–${to} in lie outside the developed route (0–${totalIn} in)`,
+    };
+  }
+  const points = [pointAtStation(route, from), pointAtStation(route, to)];
+  for (const s of stations) {
+    if (s.stationIn >= from - 1e-9 && s.stationIn <= to + 1e-9) points.push(s.point);
+  }
+  let coreMinIn = Infinity;
+  let coreMaxIn = -Infinity;
+  for (const point of points) {
+    if (!point) continue;
+    const along = toRackLocal(footprint, point).along;
+    coreMinIn = Math.min(coreMinIn, along);
+    coreMaxIn = Math.max(coreMaxIn, along);
+  }
+  if (!Number.isFinite(coreMinIn) || !Number.isFinite(coreMaxIn)) {
+    return {
+      ok: false,
+      reason: `pipe run ${run?.id ?? "(unknown)"} rack-travel interval has no resolvable route portion`,
+    };
+  }
+  if (!isFiniteNumber(run?.expansionAllowanceIn)) {
+    return {
+      ok: false,
+      reason: `pipe run ${run?.id ?? "(unknown)"} has no authored expansion allowance for its rack envelope`,
+    };
+  }
+  let fittingIn = 0;
+  for (const flange of Array.isArray(run?.flangeStations) ? run.flangeStations : []) {
+    if (!isPlainObject(flange)) {
+      return {
+        ok: false,
+        reason: `pipe run ${run?.id ?? "(unknown)"} has a malformed flange station in its rack envelope`,
+      };
+    }
+    if (!isFiniteNumber(flange.stationIn) || !isFiniteNumber(flange.flangeRadiusIn)) {
+      return {
+        ok: false,
+        reason: `pipe run ${run?.id ?? "(unknown)"} has a flange station without a validated flange radius`,
+      };
+    }
+    if (flange.stationIn >= from - 1e-9 && flange.stationIn <= to + 1e-9) {
+      fittingIn = Math.max(fittingIn, flange.flangeRadiusIn);
+    }
+  }
+  const ext = run.expansionAllowanceIn + fittingIn;
+  return {
+    ok: true,
+    coreMinIn,
+    coreMaxIn,
+    alongMinIn: coreMinIn - ext,
+    alongMaxIn: coreMaxIn + ext,
+  };
+}
+
+/**
  * Rack organization (brief item 7; digest §2.4–2.7). Stable
  * rack-local coordinates (same-tier pairs at their required O3
  * centers), authored reserve and loop envelopes, guides/shoes as
@@ -1730,7 +2082,12 @@ export function validateRackOrganization(design, rackInstanceId) {
       );
     }
   }
-  // Same-tier pairs at their required O3 centers.
+  // Same-tier pairs at their required O3 centers — but only where
+  // the pair actually travels concurrently: D10-06 gates the lateral
+  // check on longitudinal envelope overlap, so end-to-end runs
+  // sharing a lane are not overflow. Overlap confined to the
+  // fitting/expansion margins at a verified connection face is a
+  // touching face, not concurrency.
   for (let i = 0; i < lines.length; i += 1) {
     for (let j = i + 1; j < lines.length; j += 1) {
       const a = lines[i];
@@ -1747,6 +2104,34 @@ export function validateRackOrganization(design, rackInstanceId) {
           ),
         );
         continue;
+      }
+      const envA = rackLongitudinalEnvelope(design, rackInstanceId, a.run, a.interval);
+      const envB = rackLongitudinalEnvelope(design, rackInstanceId, b.run, b.interval);
+      if (!envA.ok || !envB.ok) {
+        findings.push(
+          finding(
+            SUPPORT_CODES.RACK_LINE_UNVERIFIED,
+            runId,
+            `Pipe runs ${a.run.id} / ${b.run.id} share tier ${a.interval.tier} of rack "${rackInstanceId}" but their longitudinal overlap is unverified: ${!envA.ok ? envA.reason : envB.reason}.`,
+          ),
+        );
+        continue;
+      }
+      const overlapLo = Math.max(envA.alongMinIn, envB.alongMinIn);
+      const overlapHi = Math.min(envA.alongMaxIn, envB.alongMaxIn);
+      if (overlapLo >= overlapHi - 1e-9) continue;
+      const coreOverlap =
+        Math.max(envA.coreMinIn, envB.coreMinIn) < Math.min(envA.coreMaxIn, envB.coreMaxIn) - 1e-9;
+      if (!coreOverlap) {
+        const contacts = validatedContactPoints(design, a.run, b.run);
+        const footprint = rackFootprint(design, rackInstanceId);
+        const touching =
+          footprint !== null &&
+          contacts.some((c) => {
+            const along = toRackLocal(footprint, c).along;
+            return along >= overlapLo - FACE && along <= overlapHi + FACE;
+          });
+        if (touching) continue;
       }
       const actual = Math.abs(a.interval.rackOffsetIn - b.interval.rackOffsetIn);
       if (actual < req.requiredIn - 1e-9) {
@@ -2168,6 +2553,7 @@ const SUPPORT_DATA_FIELDS = Object.freeze([
   "restraints",
   "nozzleSupports",
   "spacingProfile",
+  "guideProfile",
   "outsideDiameterIn",
   "insulationIn",
   "expansionAllowanceIn",
@@ -2202,6 +2588,16 @@ export function setPipeSupportData(design, pipeId, fields = {}) {
     if (key === "spacingProfile") {
       if (value !== "ordinary" && value !== "largest-line") {
         throw new Error(`Unknown spacing profile: ${value}.`);
+      }
+      next[key] = value;
+      continue;
+    }
+    if (key === "guideProfile") {
+      // D10-06 Ruling 1: only the named cap profile is admitted;
+      // any other string is refused, never stored as a near-miss
+      // that a validator might read as a selection.
+      if (value !== RISER_GUIDE_CAP_PROFILE) {
+        throw new Error(`Unknown guide profile: ${value}.`);
       }
       next[key] = value;
       continue;

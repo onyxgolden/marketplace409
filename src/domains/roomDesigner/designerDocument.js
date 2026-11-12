@@ -790,7 +790,7 @@ function deepDetachMetadata(value) {
  * doubled final click of a double-click-to-finish never creates a
  * zero-length segment); fewer than two distinct points throws.
  */
-export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations, spanProfile, sizeChanges, routeIntervals, supports, restraints, nozzleSupports, spacingProfile, outsideDiameterIn, insulationIn, expansionAllowanceIn, flangeStations, structureClearance } = {}) {
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer, elevationIn, utility, underground, sourceOf, branchRole, phase, takeoff, flexibility, isMeterRun, meterSchedule, meterStraightUpstreamIn, meterStraightDownstreamIn, valveStations, spanProfile, sizeChanges, routeIntervals, supports, restraints, nozzleSupports, spacingProfile, guideProfile, outsideDiameterIn, insulationIn, expansionAllowanceIn, flangeStations, structureClearance } = {}) {
   assertDesign(design);
   const clean = dedupeConsecutivePoints(points);
   if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
@@ -875,6 +875,15 @@ export function addPipeRun(design, points, { id, diameterIn = 2, material, servi
       throw new Error(`Unknown spacing profile: ${spacingProfile}.`);
     }
     run.spacingProfile = spacingProfile;
+  }
+  // D10-06 Ruling 1: the riser guide cap profile is an explicit
+  // selection persisted on the run; only the named profile is
+  // admitted, so a typo never silently becomes a selection.
+  if (guideProfile !== undefined && guideProfile !== null) {
+    if (guideProfile !== "conservative-10in-guide-cap-v1") {
+      throw new Error(`Unknown guide profile: ${guideProfile}.`);
+    }
+    run.guideProfile = guideProfile;
   }
   if (outsideDiameterIn !== undefined && outsideDiameterIn !== null) {
     if (!Number.isFinite(outsideDiameterIn)) throw new Error("Pipe outside diameter must be a number.");

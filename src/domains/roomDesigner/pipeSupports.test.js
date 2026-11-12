@@ -15,6 +15,7 @@ import {
   FLANGE_GAP_IN,
   LOW_PIPE_ELEVATION_IN,
   MAX_RACK_TIERS,
+  RISER_GUIDE_CAP_PROFILE,
   SPACING_GAP_IN,
   STRUCTURE_CLEARANCE_IN,
   SUPPORT_CODES,
@@ -27,8 +28,10 @@ import {
   pipeSupportRuleErrors,
   previewSupportProposal,
   proposeTierOverflow,
+  rackLongitudinalEnvelope,
   requiredPairCenters,
   resetSupportIds,
+  resolveRiserGuideInterval,
   resolveSpanProfile,
   revalidateSupportsAfterEdit,
   riserGuideIntervalInFor,
@@ -2294,5 +2297,689 @@ describe("reducer: D10-02 actions are one undoable transaction each", () => {
     expect(rackState.design.symbols[0].rack.reserve).toEqual({ spareWidthIn: 60 });
     rackState = designerReducer(rackState, { type: "UNDO" });
     expect(rackState.design.symbols[0].rack).toBeUndefined();
+  });
+});
+
+describe("riser guide cap profile (D10-06 Ruling 1)", () => {
+  const CAP = RISER_GUIDE_CAP_PROFILE;
+
+  it("10 in keeps its sourced digest entry; 12/16/24 resolve to 660 only with the named profile", () => {
+    expect(resolveRiserGuideInterval(10)).toEqual({ ok: true, intervalIn: 660, source: "digest" });
+    for (const size of [12, 16, 24]) {
+      expect(resolveRiserGuideInterval(size, { guideProfile: CAP })).toEqual({
+        ok: true,
+        intervalIn: 660,
+        source: "reviewer-adopted-cap",
+      });
+      expect(resolveRiserGuideInterval(size).ok).toBe(false);
+      expect(resolveRiserGuideInterval(size, { guideProfile: "conservative-10in-guide-cap-v2" }).ok).toBe(
+        false,
+      );
+    }
+    expect(riserGuideIntervalInFor(2)).toBe(300);
+    expect(riserGuideIntervalInFor(12)).toBeNull();
+    expect(riserGuideIntervalInFor(12, { guideProfile: CAP })).toBe(660);
+  });
+
+  it("above 24 in and invalid sizes fail closed even with the profile", () => {
+    expect(resolveRiserGuideInterval(25, { guideProfile: CAP }).ok).toBe(false);
+    expect(resolveRiserGuideInterval(36, { guideProfile: CAP }).ok).toBe(false);
+    expect(riserGuideIntervalInFor(25, { guideProfile: CAP })).toBeNull();
+    for (const bad of [0, -2, NaN, undefined, "12"]) {
+      expect(resolveRiserGuideInterval(bad, { guideProfile: CAP }).ok).toBe(false);
+      expect(riserGuideIntervalInFor(bad, { guideProfile: CAP })).toBeNull();
+    }
+  });
+
+  /** 12-in riser: 60-in vertical leg, guides bounding both leg ends. */
+  const riser12 = (extra = {}) =>
+    literal(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 50 },
+      ],
+      [30, 30, 90, 90],
+      "p1",
+      {
+        diameterIn: 12,
+        spanProfile: water(12),
+        supports: [
+          sup(0, "s1"),
+          sup(210, "s2"),
+          { id: "r1", type: "riser-support", stationIn: 200, verticalLegIndex: 1, maxSupportedLengthIn: 100, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+        ],
+        restraints: [
+          { id: "g1", type: "guide", stationIn: 100, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+          { id: "g2", type: "guide", stationIn: 160, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+        ],
+        ...extra,
+      },
+    );
+
+  it("a 12-in riser passes with the named profile and fails closed without it", () => {
+    const withCap = riser12({ guideProfile: CAP });
+    expect(validateNozzleSupports(withCap.design, withCap.run).state).toBe("PASS");
+    const without = riser12();
+    expect(codes(validateNozzleSupports(without.design, without.run).findings)).toEqual([
+      "GUIDE_PROFILE_UNVERIFIED",
+    ]);
+    expect(validateNozzleSupports(without.design, without.run).findings[0].message).toMatch(
+      /conservative-10in-guide-cap-v1/,
+    );
+  });
+
+  it("no-guide and exceeded-gap cases still fail with the profile selected", () => {
+    const noGuide = riser12({ guideProfile: CAP, restraints: [] });
+    expect(codes(validateNozzleSupports(noGuide.design, noGuide.run).findings)).toEqual([
+      "GUIDE_NOT_SCHEDULED",
+    ]);
+    // 700-in leg with guides only at its ends: the 660-in cap is exceeded.
+    const tall = literal(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 50 },
+      ],
+      [30, 30, 730, 730],
+      "p1",
+      {
+        diameterIn: 12,
+        spanProfile: water(12),
+        guideProfile: CAP,
+        supports: [
+          sup(0, "s1"),
+          sup(850, "s2"),
+          { id: "r1", type: "riser-support", stationIn: 200, verticalLegIndex: 1, maxSupportedLengthIn: 400, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+          { id: "r2", type: "riser-support", stationIn: 400, verticalLegIndex: 1, maxSupportedLengthIn: 400, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+        ],
+        restraints: [
+          { id: "g1", type: "guide", stationIn: 100, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+          { id: "g2", type: "guide", stationIn: 800, carrier: { kind: "shell-bracket", reference: "vessel-shell" } },
+        ],
+      },
+    );
+    const found = validateNozzleSupports(tall.design, tall.run);
+    expect(codes(found.findings)).toEqual(["GUIDE_INTERVAL_EXCEEDED"]);
+    expect(found.findings[0].message).toMatch(/reviewer-adopted interim cap/);
+  });
+
+  it("the cap is guide-spacing only: it never becomes a horizontal span", () => {
+    expect(maxSpanInFor(12)).toBe(276);
+    expect(resolveSpanProfile({ spanProfile: water(12), guideProfile: CAP })).toMatchObject({
+      ok: true,
+      maxIn: 276,
+    });
+    // A flat 300-in 12-in run with the cap profile still exceeds the
+    // 276-in span maximum — the 660-in guide cap is not a span.
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 300, y: 0 }], "p1", {
+      diameterIn: 12,
+      spanProfile: water(12),
+      guideProfile: CAP,
+      supports: [sup(0, "s1"), sup(300, "s2")],
+    });
+    expect(validateSupportSpans(design, run).state).toBe("SPAN_EXCEEDS_MAX");
+  });
+
+  it("the profile is admitted only by its exact name, and clears on null", () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 0 }], {
+      id: "p1",
+      diameterIn: 12,
+      guideProfile: CAP,
+    });
+    expect(design.pipes[0].guideProfile).toBe(CAP);
+    expect(() =>
+      addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 0 }], { id: "p2", guideProfile: "cap" }),
+    ).toThrow(/Unknown guide profile/);
+    const patched = setPipeSupportData(design, "p1", { guideProfile: CAP });
+    expect(patched.pipes[0].guideProfile).toBe(CAP);
+    expect(() => setPipeSupportData(design, "p1", { guideProfile: "cap" })).toThrow(
+      /Unknown guide profile/,
+    );
+    expect(setPipeSupportData(design, "p1", { guideProfile: null }).pipes[0]).not.toHaveProperty(
+      "guideProfile",
+    );
+  });
+});
+
+describe("validatePairSpacing classification (D10-06 Ruling 2)", () => {
+  /** Two perpendicular bare 2-in runs crossing at (100, 0) with a vertical separation. */
+  const crossAt = (sepIn) => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 200, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: -100 }, { x: 100, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30 + sepIn,
+      ...spacing(),
+    });
+    return { design, a: design.pipes[0], b: design.pipes[1] };
+  };
+  /** Two parallel bare 2-in runs at a center distance. */
+  const pairAt = (distanceIn) => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 200, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 0, y: distanceIn }, { x: 200, y: distanceIn }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    return { design, a: design.pipes[0], b: design.pipes[1] };
+  };
+  /** Branch b taps host a at (100, 0) and then runs at height y. */
+  const tapThenRun = (y) => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 100, y }, { x: 300, y }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    return { design, a: design.pipes[0], b: design.pipes[1] };
+  };
+
+  it("resolved perpendicular crossing at exactly envelope + 1 in passes; 1 in minus epsilon fails", () => {
+    // Bare 2-in pair: crossing needs 1.1875 + 1.1875 + 1 = 3.375 in.
+    expect(validatePairSpacing(crossAt(3.375).design, crossAt(3.375).a, crossAt(3.375).b).state).toBe(
+      "PASS",
+    );
+    const close = crossAt(3.374);
+    expect(validatePairSpacing(close.design, close.a, close.b).state).toBe("SPACING_TOO_CLOSE");
+    // Same-elevation crossing is a clash, not a resolved crossing.
+    const clash = crossAt(0);
+    expect(validatePairSpacing(clash.design, clash.a, clash.b).state).toBe("SPACING_TOO_CLOSE");
+  });
+
+  it("a parallel rack pair at 1 in still fails O3 — the crossing rule never applies to it", () => {
+    const one = pairAt(2.375 + 1);
+    expect(validatePairSpacing(one.design, one.a, one.b).state).toBe("SPACING_TOO_CLOSE");
+  });
+
+  it("a valid crossing does not exempt a separate close parallel segment", () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    // Crosses a at (100, 0) with the resolved 3.375-in separation,
+    // then turns and runs 3 in from a — the parallel tail fails.
+    design = addPipeRun(design, [{ x: 100, y: -100 }, { x: 100, y: 3 }, { x: 300, y: 3 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 33.375,
+      ...spacing(),
+    });
+    expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
+      "SPACING_TOO_CLOSE",
+    );
+    // Same crossing with the tail 100 in away passes: the failure is
+    // the tail, not the crossing.
+    let far = createEmptyDesign("Plan");
+    far = addPipeRun(far, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    far = addPipeRun(far, [{ x: 100, y: -100 }, { x: 100, y: 100 }, { x: 300, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 33.375,
+      ...spacing(),
+    });
+    expect(validatePairSpacing(far, far.pipes[0], far.pipes[1]).state).toBe("PASS");
+  });
+
+  it("a verified junction ignores only the contact face: the tap is exempt, its close tail is not", () => {
+    // Simple single-segment tap: the pair's whole interaction is the junction.
+    let simple = createEmptyDesign("Plan");
+    simple = addPipeRun(simple, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    simple = addPipeRun(simple, [{ x: 100, y: 0 }, { x: 100, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    simple.pipes = simple.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    expect(
+      validatePairSpacing(simple, simple.pipes[0], simple.pipes[1]).state,
+    ).toBe("NOT_APPLICABLE");
+    // Same tap, but the branch turns and runs 4 in from the host —
+    // the parallel tail still fails O3.
+    const tail = tapThenRun(4);
+    expect(validatePairSpacing(tail.design, tail.a, tail.b).state).toBe("SPACING_TOO_CLOSE");
+    // Same tap with the tail 100 in away passes: the failure is the tail.
+    const far = tapThenRun(100);
+    expect(validatePairSpacing(far.design, far.a, far.b).state).toBe("PASS");
+  });
+
+  it("a shallow-angle branch is measured beyond the contact neighborhood and fails (fix round 1, P1)", () => {
+    // Verdict P1: a branch leaving its host at a shallow angle stays
+    // inside the O3 envelope for a substantial distance. The junction
+    // exempts only the contact neighborhood — the branch beyond it
+    // must still satisfy O3, so this pair fails.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    // Leaves the host at (100, 0) at ~2.9 deg and runs 200 in: it is
+    // still inside the 5.375-in required centers ~108 in past the tap.
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 300, y: 10 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a 76-degree branch fails the cross-boundary check: its ball-boundary approach is inside the required envelope (fix round 3, P1)", () => {
+    // Round-3 verdict P1: the round-2 code passed this fixture by
+    // comparing only outside-ball x outside-ball portions. Its
+    // 5.21-in closest approach is a cross-boundary pair — the branch
+    // point just outside the ball against the host's inside portion —
+    // and 5.21 in is below the 5.375-in required centers, so it is a
+    // genuine clash beyond the contact neighborhood, not neighborhood
+    // itself. Both segments have outside remainders here, so this is
+    // the inside-A x outside-B side of the boundary. Proven
+    // non-vacuous: it returns NOT_APPLICABLE against round-2 code.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 125, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a perpendicular branch clears the contact neighborhood exactly and still passes (fix round 3, P1)", () => {
+    // Revised positive control for the 76-degree geometry above: a
+    // branch leaving at 90 deg is the only emanating angle whose
+    // ball-boundary point sits exactly the required centers from the
+    // host, so the pair's whole interaction is the junction. The
+    // 76-degree branch does not clear the boundary (5.21 in against
+    // 5.375 in required) and fails; the perpendicular branch does.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 200, y: 0 }, { x: 200, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
+      "NOT_APPLICABLE",
+    );
+  });
+
+  it("a short branch wholly inside the contact ball still fails when its inside portion crowds the host's outside portion (fix round 3, P1)", () => {
+    // The other side of the contact boundary from the 76-degree
+    // case: the branch is a 4-in stub at ~2.9 deg, wholly inside the
+    // ball, so it has no outside portion at all — the deciding pair
+    // is outside-A x inside-B, the stub's end sitting ~1.39 in from
+    // the start of the host's outside portion. This side was
+    // previously covered only by the round-2 empty-remainder
+    // fallback; the general rule (every portion pair with at least
+    // one side outside) covers it directly.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 104, y: 0.2 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a short host wholly inside the contact ball still fails a shallow branch beyond it (fix round 2, P1)", () => {
+    // Verdict P1: the round-1 clip compared only outside-ball x
+    // outside-ball portions, so a host short enough to lie wholly
+    // inside the ball produced no comparison at all and the pair was
+    // accepted. The host here is a 4-in segment — shorter than the
+    // 5.375-in required centers — and the branch leaves its end at
+    // ~2.9 deg, back toward the host, for 200 in. The branch's
+    // outside-ball remainder stays inside the host's O3 envelope, so
+    // the pair must fail: the host's inside portion is checked
+    // against the branch's outside remainder.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 4, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 4, y: 0 }, { x: -195.74, y: 10.12 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a short host with a branch that clears it after the contact neighborhood still passes (fix round 2, P1)", () => {
+    // Same 4-in host wholly inside the ball, but the branch leaves
+    // at 90 deg: it clears the 5.375-in required centers just past
+    // the contact neighborhood, so the pair's whole interaction is
+    // the junction. This is the positive control for the short-host
+    // geometry — the fix must not turn every short host into a
+    // failure.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 4, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 4, y: 0 }, { x: 4, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
+      "NOT_APPLICABLE",
+    );
+  });
+
+  it("same-host labels without verified common geometry do not exempt", () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "h",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    // Both ends claim host h but sit 50 in off its route: off-route
+    // junctions that never validate, on two overlapping runs.
+    design = addPipeRun(design, [{ x: 100, y: 50 }, { x: 100, y: 150 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 50 }, { x: 100, y: 150 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "h" ? p : { ...p, junctions: { start: { runId: "h" } } },
+    );
+    const a = design.pipes.find((p) => p.id === "a");
+    const b = design.pipes.find((p) => p.id === "b");
+    expect(validatePairSpacing(design, a, b).state).toBe("SPACING_TOO_CLOSE");
+  });
+
+  it("overlapping co-hosted branches still fail; two branches claiming one face fail", () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "h",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    // Two branches off the same tap point, occupying the same route.
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 100, y: 100 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 100, y: 0 }, { x: 100, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "h" ? p : { ...p, junctions: { start: { runId: "h" } } },
+    );
+    const h = design.pipes.find((p) => p.id === "h");
+    const a = design.pipes.find((p) => p.id === "a");
+    const b = design.pipes.find((p) => p.id === "b");
+    // Each branch's own tap is a junction; the branch-branch overlap is not.
+    expect(validatePairSpacing(design, a, h).state).toBe("NOT_APPLICABLE");
+    expect(validatePairSpacing(design, a, b).state).toBe("SPACING_TOO_CLOSE");
+    // A second branch claiming the same face and running along the
+    // host fails against the host itself: collinear overlap beyond
+    // the face is a duplicate route, not a junction.
+    let along = createEmptyDesign("Plan");
+    along = addPipeRun(along, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "h",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    along = addPipeRun(along, [{ x: 100, y: 0 }, { x: 200, y: 0 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    along.pipes = along.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "h" } } } : p,
+    );
+    expect(
+      validatePairSpacing(along, along.pipes.find((p) => p.id === "b"), along.pipes.find((p) => p.id === "h"))
+        .state,
+    ).toBe("SPACING_TOO_CLOSE");
+  });
+});
+
+describe("validateRackOrganization longitudinal overlap (D10-06)", () => {
+  /** Two end-to-end lines sharing one lane (same tier, same offset). */
+  const endToEnd = ({ junction = true, expansion = 2 } = {}) => {
+    let design = withRack(createEmptyDesign("Plan"));
+    design = setRackReserve(design, "r1", { spareWidthIn: 60 });
+    const line = (id, from, to, extra = {}) =>
+      addPipeRun(design, [{ x: from, y: 0 }, { x: to, y: 0 }], {
+        id,
+        diameterIn: 2,
+        elevationIn: 180,
+        spanProfile: water(2),
+        ...spacing({ expansionAllowanceIn: expansion }),
+        routeIntervals: [
+          { fromStationIn: 0, toStationIn: to - from, role: "RACK_TRAVEL", rackId: "r1", tier: 1, rackOffsetIn: 0 },
+        ],
+        restraints: [{ id: `${id}-g1`, type: "guide", stationIn: (to - from) / 2, carrier: rackCarrier("r1", 1) }],
+        ...extra,
+      });
+    design = line("a", -100, 50);
+    design = line("b", 50, 200, junction ? { junctions: { start: { runId: "a" } } } : {});
+    // addPipeRun drops junctions; attach the record the way the
+    // existing junction test does.
+    if (junction) {
+      design.pipes = design.pipes.map((p) =>
+        p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+      );
+    }
+    return { design, a: design.pipes[0], b: design.pipes[1] };
+  };
+
+  it("end-to-end runs sharing a lane pass when their joint is a verified junction", () => {
+    const { design } = endToEnd({ junction: true, expansion: 2 });
+    expect(validateRackOrganization(design, "r1").state).toBe("PASS");
+    // Without the verified junction the same fitting/expansion
+    // margins collide and the lane overflows.
+    const open = endToEnd({ junction: false, expansion: 2 });
+    expect(codes(validateRackOrganization(open.design, "r1").findings)).toEqual([
+      "RACK_TIER_OVERFLOW",
+    ]);
+  });
+
+  it("real longitudinal overlap still overflows", () => {
+    let design = withRack(createEmptyDesign("Plan"));
+    design = setRackReserve(design, "r1", { spareWidthIn: 60 });
+    const line = (id, offset) =>
+      addPipeRun(design, [{ x: -100, y: offset }, { x: 200, y: offset }], {
+        id,
+        diameterIn: 2,
+        elevationIn: 180,
+        spanProfile: water(2),
+        ...spacing(),
+        routeIntervals: [
+          { fromStationIn: 0, toStationIn: 300, role: "RACK_TRAVEL", rackId: "r1", tier: 1, rackOffsetIn: offset },
+        ],
+        restraints: [{ id: `${id}-g1`, type: "guide", stationIn: 150, carrier: rackCarrier("r1", 1) }],
+      });
+    design = line("a", 0);
+    design = line("b", 5);
+    expect(codes(validateRackOrganization(design, "r1").findings)).toEqual(["RACK_TIER_OVERFLOW"]);
+  });
+
+  it("fitting/expansion-envelope overlap applies the lateral check; a true gap does not", () => {
+    const gapped = (expansionA, expansionB, flangeA = null, gapIn = 4) => {
+      let design = withRack(createEmptyDesign("Plan"));
+      design = setRackReserve(design, "r1", { spareWidthIn: 60 });
+      const line = (id, from, to, expansion, flange) =>
+        addPipeRun(design, [{ x: from, y: 0 }, { x: to, y: 0 }], {
+          id,
+          diameterIn: 2,
+          elevationIn: 180,
+          spanProfile: water(2),
+          ...spacing({ expansionAllowanceIn: expansion }),
+          ...(flange ? { flangeStations: [flange] } : {}),
+          routeIntervals: [
+            { fromStationIn: 0, toStationIn: to - from, role: "RACK_TRAVEL", rackId: "r1", tier: 1, rackOffsetIn: 0 },
+          ],
+          restraints: [{ id: `${id}-g1`, type: "guide", stationIn: (to - from) / 2, carrier: rackCarrier("r1", 1) }],
+        });
+      design = line("a", -100, 0, expansionA, flangeA);
+      design = line("b", gapIn, 104 + gapIn, expansionB, null);
+      return design;
+    };
+    // 4-in gap, no extensions: no overlap, no lateral check.
+    expect(validateRackOrganization(gapped(0, 0), "r1").state).toBe("PASS");
+    // 3-in expansion on each side closes the 4-in gap: the margins
+    // overlap and the shared lane overflows.
+    expect(codes(validateRackOrganization(gapped(3, 3), "r1").findings)).toEqual([
+      "RACK_TIER_OVERFLOW",
+    ]);
+    // A 4-in flange at a's interval end reaches 1 in past b's start
+    // (gap 4, flange 4 + 0 expansion): the fitting envelope overlaps.
+    const flanged = gapped(0, 0, { stationIn: 100, flangeRadiusIn: 4 }, 3);
+    expect(codes(validateRackOrganization(flanged, "r1").findings)).toEqual([
+      "RACK_TIER_OVERFLOW",
+    ]);
+    // Same geometry without the flange: a 3-in gap is a real gap.
+    expect(validateRackOrganization(gapped(0, 0, null, 3), "r1").state).toBe("PASS");
+  });
+
+  it("unknown interval geometry fails closed instead of silently passing", () => {
+    let design = withRack(createEmptyDesign("Plan"));
+    design = setRackReserve(design, "r1", { spareWidthIn: 60 });
+    const line = (id, offset, interval) =>
+      addPipeRun(design, [{ x: -100, y: offset }, { x: 200, y: offset }], {
+        id,
+        diameterIn: 2,
+        elevationIn: 180,
+        spanProfile: water(2),
+        ...spacing(),
+        routeIntervals: [interval],
+        restraints: [{ id: `${id}-g1`, type: "guide", stationIn: 150, carrier: rackCarrier("r1", 1) }],
+      });
+    design = line("a", 0, {
+      toStationIn: 300,
+      role: "RACK_TRAVEL",
+      rackId: "r1",
+      tier: 1,
+      rackOffsetIn: 0,
+    });
+    design = line("b", 10, {
+      fromStationIn: 0,
+      toStationIn: 300,
+      role: "RACK_TRAVEL",
+      rackId: "r1",
+      tier: 1,
+      rackOffsetIn: 10,
+    });
+    expect(codes(validateRackOrganization(design, "r1").findings)).toEqual([
+      "RACK_LINE_UNVERIFIED",
+    ]);
+    // The envelope itself reports the missing station range.
+    expect(
+      rackLongitudinalEnvelope(design, "r1", design.pipes[0], design.pipes[0].routeIntervals[0]).ok,
+    ).toBe(false);
   });
 });

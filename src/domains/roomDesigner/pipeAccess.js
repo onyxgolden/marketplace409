@@ -776,7 +776,12 @@ export function barrierGeometry(design, barrier) {
       findings,
     };
   }
-  // ground-pipe
+  // ground-pipe. D10-06 Ruling 3: a barrier may name one leg of a
+  // multi-leg run (segmentIndex) — each nonzero horizontal plan leg
+  // gets its own axis/envelope. Without it, the legacy rule stands:
+  // a multi-leg run has no single barrier axis. A vertical /
+  // zero-plan leg has no barrier axis at all and stays a physical
+  // obstruction in the walk-graph pipe checks.
   const run = (design?.pipes || []).find((r) => r.id === barrier.runId);
   if (!run || !Array.isArray(run.points) || run.points.length < 2) {
     return {
@@ -791,19 +796,39 @@ export function barrierGeometry(design, barrier) {
     };
   }
   const route = physicalRouteIn(design, run);
-  if (route.length !== 2) {
-    return {
-      geometry: null,
-      findings: [
-        finding(
-          ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED,
-          barrierId,
-          `Barrier ${barrierId} pipe run ${run.id} is not a single straight leg, so it has no single barrier axis.`,
-        ),
-      ],
-    };
+  const segmentIndex = Number.isInteger(barrier.segmentIndex) ? barrier.segmentIndex : null;
+  let a;
+  let b;
+  if (segmentIndex !== null) {
+    if (segmentIndex < 0 || segmentIndex >= route.length - 1) {
+      return {
+        geometry: null,
+        findings: [
+          finding(
+            ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED,
+            barrierId,
+            `Barrier ${barrierId} names segment ${segmentIndex} of pipe run ${run.id}, which has ${route.length - 1} segments.`,
+          ),
+        ],
+      };
+    }
+    a = route[segmentIndex];
+    b = route[segmentIndex + 1];
+  } else {
+    if (route.length !== 2) {
+      return {
+        geometry: null,
+        findings: [
+          finding(
+            ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED,
+            barrierId,
+            `Barrier ${barrierId} pipe run ${run.id} is not a single straight leg, so it has no single barrier axis.`,
+          ),
+        ],
+      };
+    }
+    [a, b] = route;
   }
-  const [a, b] = route;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const lengthIn = Math.hypot(dx, dy);
@@ -814,7 +839,9 @@ export function barrierGeometry(design, barrier) {
         finding(
           ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED,
           barrierId,
-          `Barrier ${barrierId} pipe run ${run.id} has zero length.`,
+          segmentIndex !== null
+            ? `Barrier ${barrierId} pipe run ${run.id} segment ${segmentIndex} has no plan length — a vertical/zero-plan leg has no barrier axis and remains a physical obstruction.`
+            : `Barrier ${barrierId} pipe run ${run.id} has zero length.`,
         ),
       ],
     };
@@ -845,6 +872,7 @@ export function barrierGeometry(design, barrier) {
       kind: "ground-pipe",
       sourceId: barrier.runId,
       groupId: barrier.groupId ?? null,
+      segmentIndex: segmentIndex ?? 0,
       axis,
       origin: { x: a.x, y: a.y },
       lengthIn,
@@ -914,6 +942,59 @@ export function corridorStationLine(design, { groupId = null, barrierId = null }
   if (barrierId != null || geometries.length === 1) {
     const g = geometries[0];
     return { lengthIn: g.lengthIn, segments: [{ barrierId: g.id, offsetIn: 0, lengthIn: g.lengthIn }], findings };
+  }
+  // D10-06 Ruling 3: a group of per-leg barriers from one multi-leg
+  // run keeps developed stationing through the polyline — a leg's
+  // offset is the cumulative plan length of the preceding legs, so
+  // bends and regenerated barrier IDs cannot reset crossover
+  // spacing. Vertical legs contribute zero plan length: they have no
+  // barrier axis and stay out of the station line. A group that
+  // mixes runs or kinds is not a developed polyline and falls
+  // through to the single-axis corridor below.
+  const developed =
+    geometries.every(
+      (g) => g.kind === "ground-pipe" && g.sourceId != null && Number.isInteger(g.segmentIndex),
+    ) && new Set(geometries.map((g) => g.sourceId)).size === 1;
+  if (developed) {
+    const runId = geometries[0].sourceId;
+    const run = (design?.pipes || []).find((r) => r.id === runId);
+    const route = run ? physicalRouteIn(design, run) : [];
+    const seen = new Set();
+    for (const g of geometries) {
+      if (seen.has(g.segmentIndex)) {
+        findings.push(
+          finding(
+            ACCESS_CODES.BARRIER_GROUP_UNVERIFIED,
+            groupId,
+            `Barrier ${g.id} duplicates segment ${g.segmentIndex} of pipe run ${runId} in corridor ${groupId}, so the corridor stationing is unverified.`,
+          ),
+        );
+        return { lengthIn: 0, segments: [], findings };
+      }
+      seen.add(g.segmentIndex);
+      if (g.segmentIndex < 0 || g.segmentIndex >= route.length - 1) {
+        findings.push(
+          finding(
+            ACCESS_CODES.BARRIER_GROUP_UNVERIFIED,
+            groupId,
+            `Barrier ${g.id} names segment ${g.segmentIndex} of pipe run ${runId}, which has ${route.length - 1} segments, so the corridor stationing is unverified.`,
+          ),
+        );
+        return { lengthIn: 0, segments: [], findings };
+      }
+    }
+    const legPlanLength = (k) =>
+      Math.hypot(route[k + 1].x - route[k].x, route[k + 1].y - route[k].y);
+    const ordered = [...geometries].sort((x, y) => x.segmentIndex - y.segmentIndex);
+    const segments = [];
+    let lengthIn = 0;
+    for (const g of ordered) {
+      let offsetIn = 0;
+      for (let k = 0; k < g.segmentIndex; k += 1) offsetIn += legPlanLength(k);
+      segments.push({ barrierId: g.id, offsetIn, lengthIn: g.lengthIn });
+      lengthIn = Math.max(lengthIn, offsetIn + g.lengthIn);
+    }
+    return { lengthIn, segments, findings };
   }
   // Grouped: one common axis. Project every origin onto the first
   // barrier's axis; all must share the direction and line.
@@ -1472,6 +1553,15 @@ function validateAccessRecord(kind, value) {
     case "barriers":
       if (!BARRIER_KINDS.has(value.kind)) fail(`unknown barrier kind ${value.kind}`);
       if (value.topElevationIn !== undefined) finite(value.topElevationIn, "topElevationIn");
+      // D10-06 Ruling 3: a per-leg barrier names its leg by integer
+      // segment index; a non-integer index never silently becomes
+      // the legacy single-leg rule.
+      if (
+        value.segmentIndex !== undefined &&
+        (!Number.isInteger(value.segmentIndex) || value.segmentIndex < 0)
+      ) {
+        fail("segmentIndex must be a non-negative integer");
+      }
       break;
     case "crossovers":
       finite(value.stationIn, "stationIn");
@@ -2495,7 +2585,7 @@ export function buildWalkGraph(design) {
       const profile = profiles.get(path.id);
       const nearest = nearestPointOnPolyline(point, path.points);
       if (nearest.distance > profile.widthIn / 2 + FACE) continue;
-      if (!best || nearest.distance < best.distance) {
+      if (!best || nearest.distance < best.nearest.distance) {
         best = { path, nearest, profile };
       }
     }
@@ -2715,9 +2805,19 @@ export function validateWalkGraph(design) {
     const { geometry } = barrierGeometry(design, barrier);
     if (geometry) barrierGeoms.set(barrier.id, geometry);
   }
-  const barrierSourceRuns = new Set();
+  // Barrier-owned pipe legs, keyed per (run, segment): the barrier
+  // check owns exactly the leg its geometry derives from — D10-06
+  // Ruling 3. A multi-leg run with a barrier on one leg still
+  // obstructs on its other legs, and a crossover on one leg never
+  // clears another leg. A barrier whose geometry failed to resolve
+  // owns nothing: its run stays visible to the pipe checks below
+  // (fail closed), instead of vanishing from both checks.
+  const barrierOwnedSegments = new Set();
   for (const barrier of barriers) {
-    if (barrier?.kind === "ground-pipe" && barrier.runId) barrierSourceRuns.add(barrier.runId);
+    if (barrier?.kind !== "ground-pipe" || !barrier.runId) continue;
+    const geometry = barrierGeoms.get(barrier.id);
+    if (!geometry) continue;
+    barrierOwnedSegments.add(`${barrier.runId}:${geometry.segmentIndex ?? 0}`);
   }
   for (const path of paths) {
     const profile = resolvePathProfile(path);
@@ -2767,10 +2867,14 @@ export function validateWalkGraph(design) {
         }
       }
       // Pipes inside the swept envelope below the headroom band.
+      // A barrier-owned leg is skipped here — the barrier check
+      // above owns it. Any other leg is judged on its own: a
+      // crossover binds a specific barrier leg and never clears a
+      // different leg of the same run.
       for (const run of design?.pipes || []) {
-        if (barrierSourceRuns.has(run.id)) continue; // barrier check owns it
         const route = physicalRouteIn(design, run);
         for (let i = 0; i + 1 < route.length; i += 1) {
+          if (barrierOwnedSegments.has(`${run.id}:${i}`)) continue;
           const clipped = clipSegmentToRect(route[i], route[i + 1], envelope);
           if (!clipped) continue;
           let zMin = Infinity;
@@ -2780,10 +2884,6 @@ export function validateWalkGraph(design) {
             zMax = Math.max(zMax, p.zIn);
           }
           if (zMax < grade - 1e-9 || zMin > headroomTop + 1e-9) continue;
-          const mid = clipped[Math.floor(clipped.length / 2)];
-          const barrier = barriers.find((x) => x?.kind === "ground-pipe" && x?.runId === run.id);
-          const covered = !isDrive && barrier && crossoverCoversPoint(design, barrier, mid);
-          if (covered) continue;
           const low = zMax <= ACCESS_LOW_PIPE_ELEVATION_IN + 1e-9;
           findings.push(
             finding(

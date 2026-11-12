@@ -2453,3 +2453,328 @@ describe("reducer: D10-03 actions are one undoable transaction each", () => {
     expect(undone.design.access.crossovers).toHaveLength(0);
   });
 });
+
+// ---- D10-06 Ruling 3: multi-leg low-pipe barriers --------------------------
+
+describe("multi-leg ground-pipe barriers (D10-06 Ruling 3)", () => {
+  /** L-shaped low run: leg 0 (0,-300)-(0,0), leg 1 (0,0)-(300,0), both at 12 in. */
+  const lRun = () => {
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: -300 }, { x: 0, y: 0 }, { x: 300, y: 0 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 12,
+    });
+    return design;
+  };
+  const lBarriers = (extra0 = {}, extra1 = {}) => [
+    pipeBarrier("b0", "p1", { segmentIndex: 0, groupId: "g1", ...extra0 }),
+    pipeBarrier("b1", "p1", { segmentIndex: 1, groupId: "g1", ...extra1 }),
+  ];
+  /** A usable crossover over leg 0 at its midpoint (0,-150), landing on path pa. */
+  const leg0Crossover = (id = "x0") => ({
+    id,
+    barrierId: "b0",
+    stationIn: 150,
+    deck: { lengthIn: 3, widthIn: 36, elevationIn: 24 },
+    stairs: [
+      { side: "a", fromIn: 0, toIn: 24 },
+      { side: "b", fromIn: 0, toIn: 24 },
+    ],
+    supports: [{ x: 0, y: -150 }],
+    guards: true,
+    clearanceAbovePipeIn: 6,
+    landings: [
+      { side: "a", x: 3, y: -150, pathId: "pa" },
+      { side: "b", x: -3, y: -150, pathId: "pa" },
+    ],
+  });
+  /** Paths crossing each leg: pa crosses leg 0 at (0,-150), pb crosses leg 1 at (150,0). */
+  const lPaths = () => [
+    walkPath("pa", [{ x: -500, y: -150 }, { x: 500, y: -150 }]),
+    walkPath("pb", [{ x: 150, y: -500 }, { x: 150, y: 500 }]),
+  ];
+
+  it("each nonzero horizontal plan leg has its own axis and envelope", () => {
+    const design = setAccessData(lRun(), { barriers: lBarriers() });
+    const g0 = barrierGeometry(design, design.access.barriers[0]);
+    expect(g0.geometry).toMatchObject({
+      kind: "ground-pipe",
+      segmentIndex: 0,
+      axis: { x: 0, y: 1 },
+      origin: { x: 0, y: -300 },
+      lengthIn: 300,
+      widthIn: 2,
+    });
+    expect(g0.findings).toEqual([]);
+    const g1 = barrierGeometry(design, design.access.barriers[1]);
+    expect(g1.geometry).toMatchObject({
+      kind: "ground-pipe",
+      segmentIndex: 1,
+      axis: { x: 1, y: 0 },
+      origin: { x: 0, y: 0 },
+      lengthIn: 300,
+    });
+    // A barrier with no segmentIndex on a multi-leg run has no
+    // single axis — the legacy rule stands.
+    const legacy = barrierGeometry(design, pipeBarrier("bl", "p1"));
+    expect(legacy.geometry).toBeNull();
+    expect(legacy.findings[0].code).toBe(ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED);
+  });
+
+  it("two- and multi-leg barriers preserve developed stationing through the polyline", () => {
+    const design = setAccessData(lRun(), { barriers: lBarriers() });
+    const line = corridorStationLine(design, { groupId: "g1" });
+    expect(line.findings).toEqual([]);
+    expect(line.lengthIn).toBe(600);
+    expect(line.segments).toEqual([
+      { barrierId: "b0", offsetIn: 0, lengthIn: 300 },
+      { barrierId: "b1", offsetIn: 300, lengthIn: 300 },
+    ]);
+    // A three-leg run stations through both bends: 200 + 150 + 200.
+    let three = createEmptyDesign("Plan");
+    three = addPipeRun(three, [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 150 }, { x: 400, y: 150 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 12,
+    });
+    three = setAccessData(three, {
+      barriers: [
+        pipeBarrier("c0", "p1", { segmentIndex: 0, groupId: "g3" }),
+        pipeBarrier("c1", "p1", { segmentIndex: 1, groupId: "g3" }),
+        pipeBarrier("c2", "p1", { segmentIndex: 2, groupId: "g3" }),
+      ],
+    });
+    const line3 = corridorStationLine(three, { groupId: "g3" });
+    expect(line3.findings).toEqual([]);
+    expect(line3.lengthIn).toBe(550);
+    expect(line3.segments).toEqual([
+      { barrierId: "c0", offsetIn: 0, lengthIn: 200 },
+      { barrierId: "c1", offsetIn: 200, lengthIn: 150 },
+      { barrierId: "c2", offsetIn: 350, lengthIn: 200 },
+    ]);
+  });
+
+  it("bend/ID regeneration does not reset spacing", () => {
+    const design = setAccessData(lRun(), { barriers: lBarriers() });
+    const before = corridorStationLine(design, { groupId: "g1" });
+    // Regenerate the barrier IDs (same legs, same group).
+    const renamed = setAccessData(design, {
+      barriers: [
+        pipeBarrier("b0-regen", "p1", { segmentIndex: 0, groupId: "g1" }),
+        pipeBarrier("b1-regen", "p1", { segmentIndex: 1, groupId: "g1" }),
+      ],
+    });
+    const afterIds = corridorStationLine(renamed, { groupId: "g1" });
+    expect(afterIds.lengthIn).toBe(before.lengthIn);
+    expect(afterIds.segments.map((s) => ({ offsetIn: s.offsetIn, lengthIn: s.lengthIn }))).toEqual(
+      before.segments.map((s) => ({ offsetIn: s.offsetIn, lengthIn: s.lengthIn })),
+    );
+    // Regenerate the run ID too: the station line follows the route.
+    const rerun = {
+      ...renamed,
+      pipes: renamed.pipes.map((p) => (p.id === "p1" ? { ...p, id: "p1-regen" } : p)),
+    };
+    const rerunDesign = setAccessData(rerun, {
+      barriers: [
+        pipeBarrier("b0-regen", "p1-regen", { segmentIndex: 0, groupId: "g1" }),
+        pipeBarrier("b1-regen", "p1-regen", { segmentIndex: 1, groupId: "g1" }),
+      ],
+    });
+    const afterRun = corridorStationLine(rerunDesign, { groupId: "g1" });
+    expect(afterRun.lengthIn).toBe(600);
+    expect(afterRun.segments.map((s) => ({ offsetIn: s.offsetIn, lengthIn: s.lengthIn }))).toEqual([
+      { offsetIn: 0, lengthIn: 300 },
+      { offsetIn: 300, lengthIn: 300 },
+    ]);
+  });
+
+  it("a crossover on one leg does not clear another leg", () => {
+    let design = lRun();
+    design = setAccessData(design, {
+      entries: [entryAt(-500, -150, "e1"), entryAt(150, -500, "e2")],
+      paths: lPaths(),
+      barriers: lBarriers(),
+      crossovers: [leg0Crossover()],
+    });
+    // Corridor spacing across the developed line passes — one
+    // crossover serves the 600-in line — but the walk graph still
+    // obstructs on the unbridged leg.
+    expect(validateCorridorSpacing(design, "b0").state).toBe("PASS");
+    const { state, findings } = validateWalkGraph(design);
+    expect(state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
+    expect(findings.some((f) => f.message.includes("b1"))).toBe(true);
+    // Bridging leg 1 as well clears both crossings.
+    const both = setAccessData(design, {
+      crossovers: [
+        leg0Crossover(),
+        {
+          id: "x1",
+          barrierId: "b1",
+          stationIn: 150,
+          deck: { lengthIn: 3, widthIn: 36, elevationIn: 24 },
+          stairs: [
+            { side: "a", fromIn: 0, toIn: 24 },
+            { side: "b", fromIn: 0, toIn: 24 },
+          ],
+          supports: [{ x: 150, y: 0 }],
+          guards: true,
+          clearanceAbovePipeIn: 6,
+          landings: [
+            { side: "a", x: 150, y: -3, pathId: "pb" },
+            { side: "b", x: 150, y: 3, pathId: "pb" },
+          ],
+        },
+      ],
+    });
+    expect(validateWalkGraph(both).state).toBe("PASS");
+  });
+
+  it("a path connected on only one side of a crossover fails", () => {
+    let design = bridgedDesign();
+    design = setAccessData(design, {
+      entries: [entryAt(-500, -80)],
+      nodes: [nodeAt(500, 80, "n1", { pathId: "pb" })],
+      crossovers: [{ ...usableCrossover(), landings: [{ side: "a", x: 0, y: -80, pathId: "pa" }] }],
+    });
+    const { state } = validateWalkGraph(design);
+    expect(state).toBe(ACCESS_CODES.ACCESS_NODE_UNREACHABLE);
+    const graph = buildWalkGraph(design);
+    expect(graph.reachable.has(graph.attached.nodes.n1)).toBe(false);
+  });
+
+  it("a trapped equipment-face entry fails until every crossing is bridged", () => {
+    const trapped = (bridged = []) => {
+      let design = createEmptyDesign("Plan");
+      design = addPipeRun(design, [{ x: 0, y: -500 }, { x: 0, y: 500 }], {
+        id: "p1",
+        diameterIn: 2,
+        elevationIn: 12,
+      });
+      design = addPipeRun(design, [{ x: 200, y: -500 }, { x: 200, y: 500 }], {
+        id: "p2",
+        diameterIn: 2,
+        elevationIn: 12,
+      });
+      const barriers = [
+        pipeBarrier("b1", "p1"),
+        pipeBarrier("b2", "p2"),
+      ];
+      const crossovers = bridged.map((runId) => {
+        const x = runId === "p1" ? 0 : 200;
+        const barrierId = runId === "p1" ? "b1" : "b2";
+        return {
+          id: `x-${runId}`,
+          barrierId,
+          stationIn: 500,
+          deck: { lengthIn: 3, widthIn: 36, elevationIn: 24 },
+          stairs: [
+            { side: "a", fromIn: 0, toIn: 24 },
+            { side: "b", fromIn: 0, toIn: 24 },
+          ],
+          supports: [{ x, y: 0 }],
+          guards: true,
+          clearanceAbovePipeIn: 6,
+          landings: [
+            { side: "a", x: x + 3, y: 0, pathId: "w1" },
+            { side: "b", x: x - 3, y: 0, pathId: "w1" },
+          ],
+        };
+      });
+      return setAccessData(design, {
+        entries: [entryAt(-500, 0)],
+        paths: [walkPath()],
+        nodes: [nodeAt(500, 0, "n1", { pathId: "w1" })],
+        barriers,
+        crossovers,
+      });
+    };
+    expect(validateWalkGraph(trapped()).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
+    // Bridging one pipe still leaves the entry window closed.
+    expect(validateWalkGraph(trapped(["p1"])).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
+    // Both crossings bridged: the entry window opens.
+    expect(validateWalkGraph(trapped(["p1", "p2"])).state).toBe("PASS");
+  });
+
+  it("a valid adjacent operating station passes without intersecting its own pipe", () => {
+    const withPipeAt = (pipeY) => {
+      let design = createEmptyDesign("Plan");
+      design = placeSymbol(design, D, "vertical-vessel", 0, 0, { id: "v1" });
+      design = addPipeRun(design, [{ x: -500, y: pipeY }, { x: 500, y: pipeY }], {
+        id: "p1",
+        diameterIn: 2,
+        elevationIn: 12,
+      });
+      return setAccessData(design, {
+        entries: [entryAt(-500, 0)],
+        paths: [vesselFacePath(0)],
+        nodes: [vesselManwayFaceNode(0, 0), ...vesselFaceNodes(0, 0)],
+      });
+    };
+    // The serving pipe runs 60 in from the face path: adjacent, not crossed.
+    expect(validateWalkGraph(withPipeAt(60)).state).toBe("PASS");
+    // The same pipe laid on the face path is passed through, not
+    // adjacent: the approach fails.
+    expect(validateWalkGraph(withPipeAt(24)).state).toBe(ACCESS_CODES.WALKWAY_OBSTRUCTED);
+  });
+
+  it("zero-plan legs remain obstructions and have no barrier axis", () => {
+    // Riser at (0,0): leg 0 high at 100 in, vertical leg down to 12,
+    // leg 2 low at 12 in. Only the vertical leg dips into the
+    // headroom band at the path crossing. The literal run bypasses
+    // addPipeRun's plan dedupe, which would collapse the riser's
+    // repeated plan point.
+    const design0 = createEmptyDesign("Plan");
+    let design = {
+      ...design0,
+      pipes: [
+        {
+          id: "p1",
+          points: [{ x: 0, y: -300 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 300, y: 0 }],
+          elevIn: [100, 100, 12, 12],
+          diameterIn: 2,
+          elevationIn: 100,
+        },
+      ],
+    };
+    const vertical = barrierGeometry(design, pipeBarrier("bv", "p1", { segmentIndex: 1 }));
+    expect(vertical.geometry).toBeNull();
+    expect(vertical.findings[0].code).toBe(ACCESS_CODES.BARRIER_SOURCE_UNVERIFIED);
+    // Diagonal path through (0,0): the vertical leg is the first
+    // obstruction it meets, reported at its 12–100 in range.
+    design = setAccessData(design, {
+      entries: [entryAt(-200, -200)],
+      paths: [walkPath("w1", [{ x: -200, y: -200 }, { x: 200, y: 200 }])],
+    });
+    const { state, findings } = validateWalkGraph(design);
+    expect(state).toBe(ACCESS_CODES.WALKWAY_HEADROOM_BLOCKED);
+    expect(findings[0].message).toMatch(/12–100/);
+    // The same path routed clear of (0,0) passes.
+    const clear = setAccessData(design, {
+      paths: [walkPath("w1", [{ x: -200, y: -200 }, { x: -200, y: 200 }])],
+    });
+    expect(validateWalkGraph(clear).state).toBe("PASS");
+  });
+});
+
+describe("attachPoint order invariance (D10-06)", () => {
+  it("attaches to the nearer of two eligible paths whichever is listed first", () => {
+    const build = (paths) => {
+      let design = createEmptyDesign("Plan");
+      return setAccessData(design, {
+        paths,
+        nodes: [nodeAt(0, 12, "n1")],
+      });
+    };
+    const near = walkPath("pb", [{ x: -500, y: 10 }, { x: 500, y: 10 }]);
+    const far = walkPath("pa", [{ x: -500, y: 0 }, { x: 500, y: 0 }]);
+    // Node at (0,12): 2 in from pb, 12 in from pa — both inside the
+    // 30-in walkway half-width, so both are eligible.
+    for (const order of [[far, near], [near, far]]) {
+      const graph = buildWalkGraph(build(order));
+      const vertexId = graph.attached.nodes.n1;
+      expect(vertexId).toBeTruthy();
+      expect(graph.vertices.get(vertexId).pathId).toBe("pb");
+    }
+  });
+});

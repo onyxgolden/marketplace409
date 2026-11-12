@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCrossingJogs,
+  closestSegSegPoints,
   connectionFlanges,
   developedRunLengthIn,
   findPipeCrossings,
   pipeCrossingErrors,
   requiredSeparationIn,
+  segSegDistance3D,
   segmentElevationsForDesign,
 } from "./pipeCrossings";
 import { pipeDescriptors } from "./designerThreeModel";
@@ -294,5 +296,57 @@ describe("flanged connections", () => {
     const flanges = connectionFlanges(moved);
     expect(flanges).toHaveLength(1);
     expect(flanges[0]).toMatchObject({ kind: "nozzle", x: 260, y: 231 });
+  });
+});
+
+// D10-06 Ruling 2: pair-spacing classification needs the closest
+// points, not just the distance — whether the closest approach sits
+// at a verified junction contact decides the relation.
+describe("closestSegSegPoints", () => {
+  const p = (x, y, zIn) => ({ x, y, zIn });
+
+  it("skew segments report the unique closest pair", () => {
+    const hit = closestSegSegPoints(p(0, 0, 30), p(100, 0, 30), p(50, 10, 40), p(50, 110, 40));
+    expect(hit.distance).toBeCloseTo(Math.hypot(10, 10), 9);
+    expect(hit.pointA).toEqual({ x: 50, y: 0, zIn: 30 });
+    expect(hit.pointB).toEqual({ x: 50, y: 10, zIn: 40 });
+    expect(hit.s).toBeCloseTo(0.5, 9);
+    expect(hit.t).toBeCloseTo(0, 9);
+  });
+
+  it("crossing segments at different elevations report the vertical gap", () => {
+    const hit = closestSegSegPoints(p(0, 0, 30), p(100, 0, 30), p(50, -50, 35), p(50, 50, 35));
+    expect(hit.distance).toBeCloseTo(5, 9);
+    expect(hit.pointA).toEqual({ x: 50, y: 0, zIn: 30 });
+    expect(hit.pointB).toEqual({ x: 50, y: 0, zIn: 35 });
+  });
+
+  it("parallel segments report the lateral distance with both points on their segments", () => {
+    const hit = closestSegSegPoints(p(0, 0, 30), p(100, 0, 30), p(0, 5, 30), p(100, 5, 30));
+    expect(hit.distance).toBeCloseTo(5, 9);
+    expect(hit.pointA.y).toBe(0);
+    expect(hit.pointB.y).toBe(5);
+    expect(hit.pointA.x).toBeGreaterThanOrEqual(0);
+    expect(hit.pointA.x).toBeLessThanOrEqual(100);
+    expect(hit.s).toBeGreaterThanOrEqual(0);
+    expect(hit.s).toBeLessThanOrEqual(1);
+  });
+
+  it("a degenerate point segment measures from the point", () => {
+    const hit = closestSegSegPoints(p(0, 0, 30), p(0, 0, 30), p(10, 0, 30), p(20, 0, 30));
+    expect(hit.distance).toBeCloseTo(10, 9);
+    expect(hit.pointA).toEqual({ x: 0, y: 0, zIn: 30 });
+    expect(hit.pointB).toEqual({ x: 10, y: 0, zIn: 30 });
+  });
+
+  it("identical segments are zero apart, and segSegDistance3D still agrees", () => {
+    const a1 = p(0, 0, 30);
+    const a2 = p(100, 0, 30);
+    const hit = closestSegSegPoints(a1, a2, a1, a2);
+    expect(hit.distance).toBeCloseTo(0, 9);
+    expect(segSegDistance3D(a1, a2, p(50, 10, 40), p(50, 110, 40))).toBeCloseTo(
+      Math.hypot(10, 10),
+      9,
+    );
   });
 });
