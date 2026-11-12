@@ -437,6 +437,9 @@ describe("red reservation", () => {
   // Builds the full FCCU sample (~4-6 s of CPU): the 5 s default
   // timeout tips over under full-suite parallel load with no
   // assertion failing, so this test carries an explicit timeout.
+  // Fix round 1 raised it 30 s -> 60 s: under full-battery parallel
+  // load on this 1.5-CPU box the build can take 30-50 s of wall
+  // time, so the 30 s cap still tripped with no assertion failing.
   it("no piping color in the FCCU sample is red except firewater", async () => {
     const { buildFccuPlotPlan } = await import("./fccuPlotPlanSample");
     const { effectiveColor } = await import("./designSystems");
@@ -451,5 +454,5 @@ describe("red reservation", () => {
       }
     }
     expect(design.pipes.some((p) => p.utility === "firewater")).toBe(true);
-  }, 30000);
+  }, 60000);
 });

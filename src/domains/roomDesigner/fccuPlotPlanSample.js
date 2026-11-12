@@ -762,6 +762,15 @@ function addPiping(design, systemIds) {
   // runs flat at the V-101 face elevation, drops at the (273, 260.8)
   // corner, and climbs to the gas-in face in a terminal riser AT
   // the face — never a slope, never a stub.
+  // D10-05 fix round 1: the nozzle moved to the north shell at
+  // (3915, 3114), so the run leaves north along its face normal,
+  // drops at the (326.25, 257.5) corner to the 30-in lane, runs
+  // west at y=3090 — 23.6 in south of the liquid-out spur envelope
+  // (south edge 3113.6) — then south into the gas-in face and
+  // climbs in a terminal riser AT the face. The north leg is 45 in
+  // west of the inlet pipe's south leg (x=3960); the west leg
+  // crosses the T-101 utility south legs at 30 in against their
+  // 18 in (12 in clear, crossing-resolved).
   {
     const start = anchor("V-101", "wet-gas-out");
     const end = anchor("V-102", "gas-in");
@@ -770,16 +779,17 @@ function addPiping(design, systemIds) {
     run(
       [
         anchorPt(start),
-        { x: end.x, y: start.y },
-        { x: end.x, y: start.y },
-        anchorPt(end),
+        { x: start.x, y: 3090 },
+        { x: start.x, y: 3090 },
+        { x: end.x, y: 3090 },
+        { x: end.x, y: end.y },
         anchorPt(end),
       ],
       {
         diameterIn: 8,
         service: "Wet gas to knockout drum",
         systemName: "Wet gas",
-        elevIn: [null, startElevIn, 30, 30, endElevIn],
+        elevIn: [null, startElevIn, 30, 30, 30, endElevIn],
       },
     );
   }
@@ -1503,12 +1513,14 @@ function addUtilities(design, systemIds) {
         // without connecting. Jog west around the drum at the 18-in
         // transit elevation (north leg at y=268.75 ft, west of the
         // drum's west edge; south leg at x=318.33 ft, west of the
-        // drum and of the liquid-out / wet-gas-out spur envelopes),
-        // then east at y=164 ft — south of the rack — and south to
-        // the port. The south leg at x=3820 in clears the liquid-out
-        // and wet-gas-out spur envelopes (west edges 3828/3825 in);
-        // the north leg at y=3225 in clears the plant-water spur's
-        // envelope top (3219 in). No leg runs along the rack.
+        // drum and of the liquid-out spur envelope), then east at
+        // y=164 ft — south of the rack — and south to the port. The
+        // south leg at x=3820 in clears the liquid-out spur envelope
+        // (west edge 3828 in) by 8 in; the wet-gas-out spur moved
+        // east in fix round 1 (x=3930.4, envelope 3915.4–3945.4),
+        // so the leg is 95 in west of it. The north leg at y=3225
+        // in clears the plant-water spur's envelope top (3219 in).
+        // No leg runs along the rack.
         points = [
           pt(anchorFt.x, yFt),
           pt(anchorFt.x, yFt - 1),
@@ -3319,9 +3331,25 @@ function buildPlotDesign() {
   // required) — an explicit editable choice, not a deletion.
   design = {
     ...design,
-    symbols: design.symbols.map((s) =>
-      s.tag === "V-102" ? { ...s, manway: { fx: 0, fy: 1, diameterIn: 24, sillIn: 24 } } : s,
-    ),
+    symbols: design.symbols.map((s) => {
+      if (s.tag === "V-102") return { ...s, manway: { fx: 0, fy: 1, diameterIn: 24, sillIn: 24 } };
+      // D10-05 fix round 1: relocate V-101's synthetic wet-gas-out
+      // shell nozzle. Its catalog spot (-1, -0.5) sits at (3870,
+      // 3129) — ON the liquid-out access spur line (spur runs west
+      // along y=3128.6), so the wet-gas pipe headroom-blocks the
+      // liquid-out approach and no reroute or riser at the same port
+      // clears it. The override moves it to the north shell at
+      // (-0.5, -1) -> (3915, 3114): 45 in from the inlet nozzle
+      // (above the 30.4-in spur minimum), its own approach runs
+      // north and its west leg rides at y=3090 — 23.6 in south of
+      // the liquid-out spur envelope. Identity, 8-in size, and
+      // shell-nozzle kind are preserved; this is an explicit
+      // sample-layout decision, not a claim about the catalog.
+      if (s.tag === "V-101") {
+        return { ...s, nozzleOverrides: { "wet-gas-out": { fx: -0.5, fy: -1 } } };
+      }
+      return s;
+    }),
   };
   // V-101 (reflux accumulator, D10-04): author its head-nozzle
   // schedule (version 1) so the end nozzles resolve to authored
@@ -3329,7 +3357,9 @@ function buildPlotDesign() {
   // West head, bottom: liquid-out, 6 in, face (3873, 3144) at 12 in.
   // East head, top: vapor-out, 8 in, face (4047, 3144) at 48 in.
   // Ratings are unknown — preserved, never invented. G2 (reflux drum
-  // liquid) and G4 (wet gas) land on these scheduled faces.
+  // liquid) lands on the scheduled liquid-out face; G4 (wet gas)
+  // leaves the relocated wet-gas-out shell nozzle (see the
+  // nozzleOverrides above).
   design = setHeadNozzleSchedule(design, instanceByTag(design, "V-101").id, [
     {
       id: "liquid-out",

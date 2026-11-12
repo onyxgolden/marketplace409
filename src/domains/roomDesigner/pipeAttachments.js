@@ -62,6 +62,21 @@ const EPS = 1e-6;
 export const SIDE_NOZZLE_ELEVATION_FRAC = 0.62;
 
 /**
+ * The authored fractional reposition for one nozzle on an instance, or
+ * null. `inst.nozzleOverrides` is `{ [anchorId]: { fx, fy } }`; an
+ * entry is honored only when both components are finite numbers, so a
+ * malformed entry falls back to the catalog position instead of
+ * moving a nozzle to NaN. An unknown anchor id is simply never
+ * looked up, so it changes nothing.
+ */
+function nozzleOverrideFor(inst, anchorId) {
+  const entry = inst?.nozzleOverrides?.[anchorId];
+  if (!entry || typeof entry !== "object") return null;
+  if (!Number.isFinite(entry.fx) || !Number.isFinite(entry.fy)) return null;
+  return { fx: entry.fx, fy: entry.fy };
+}
+
+/**
  * World anchors for catalog `nozzle` specs: local offset
  * (fx * effWidth / 2, fy * effDepth / 2) with effWidth / effDepth the
  * instance's size overrides or the catalog defaults, rotated by the
@@ -74,6 +89,15 @@ export const SIDE_NOZZLE_ELEVATION_FRAC = 0.62;
  * tombstones (`inst.nozzleTombstones`, an array of catalog nozzle ids
  * the user deleted). Both are plain instance fields, so they persist
  * through save/reload and ride the normal undoable edit path.
+ *
+ * A partial reposition (`inst.nozzleOverrides`, D10-05 fix round 1)
+ * moves ONE catalog nozzle in the fractional frame —
+ * `{ [anchorId]: { fx, fy } }` — and leaves everything else alone:
+ * the other catalog nozzles, the head-nozzle schedule (a scheduled
+ * end nozzle is still positioned by its schedule), downcomers, and
+ * utility ports. It is the sample-layout mechanism for relocating a
+ * synthetic nozzle whose catalog spot conflicts with an access spur;
+ * it never renames a nozzle, changes its size, or converts its kind.
  */
 export function catalogAnchorsWorld(symbol, inst) {
   let specs = symbol?.nozzles;
@@ -103,8 +127,11 @@ export function catalogAnchorsWorld(symbol, inst) {
         continue;
       }
     }
-    const lx = n.fx * (effWidth / 2);
-    const ly = n.fy * (effDepth / 2);
+    const override = nozzleOverrideFor(inst, n.id);
+    const fx = override?.fx ?? n.fx;
+    const fy = override?.fy ?? n.fy;
+    const lx = fx * (effWidth / 2);
+    const ly = fy * (effDepth / 2);
     out.push({
       id: n.id,
       x: inst.x + lx * cos - ly * sin,
@@ -247,8 +274,14 @@ export function connectionFaceForAnchor(symbol, inst, anchorId) {
   const spec = (Array.isArray(inst.nozzles) ? inst.nozzles : symbol.nozzles || []).find(
     (n) => n?.id === anchorId,
   );
-  const fx = spec?.fx ?? 0;
-  const fy = spec?.fy ?? 0;
+  // A repositioned nozzle faces along its OVERRIDDEN direction, so
+  // the face normal follows the same fractional position the anchor
+  // does — otherwise snap and validation would disagree about the
+  // face. (The scheduled-head branch above already returned for
+  // end nozzles, whose faces come from the schedule.)
+  const override = nozzleOverrideFor(inst, anchorId);
+  const fx = override?.fx ?? spec?.fx ?? 0;
+  const fy = override?.fy ?? spec?.fy ?? 0;
   const radial = Math.hypot(fx, fy);
   if (radial < 0.01) {
     // Top nozzle: the flange face at the neck top.

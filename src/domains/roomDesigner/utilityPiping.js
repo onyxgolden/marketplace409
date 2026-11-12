@@ -93,6 +93,16 @@ export const UTILITY_ANCHOR_SPECS = Object.freeze([
 // keyed by vessel tag; every other vessel keeps the base fx.
 export const UTILITY_ANCHOR_FX_OVERRIDES = Object.freeze({
   "T-101": Object.freeze({ "utility-plant-water": -0.67 }),
+  // D10-05 fix round 1: V-101's plant-water port at the base fx
+  // (-0.9, x=3879) sits inside the manway spur's swept envelope —
+  // the spur runs east along y=3159.4, envelope to y=3174.4, and the
+  // port at y=3174 and its north drop leg at x=3879 cross it, so no
+  // elevation clears it (WALKWAY_OBSTRUCTED). fx -0.5 puts the port
+  // at x=3915: east of the manway spur envelope (east edge 3900) by
+  // 15 in, and 45 in from the plant-air port (above the 30.4-in spur
+  // minimum). The override is keyed by vessel tag; every other vessel
+  // keeps the base fx.
+  "V-101": Object.freeze({ "utility-plant-water": -0.5 }),
 });
 
 /**

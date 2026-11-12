@@ -6,15 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 // head 8e425555; D10-06 scope ruling 2026-11-11).
 //
 // The sample is inspected through the same updateLevelDesign bypass
-// the audit uses: two access residuals remain (see the pinned
-// access test below) and validateDesign reports them, so the raw
-// build throws. The test pins the achieved state exactly — routing
-// 0, supports 0, head-nozzles 0, access exactly the two named
-// V-101 residuals — so any regression or any silent change to the
-// residuals fails it. It is NOT a 0-access assertion: the two
-// residuals are port-placement conflicts (a port sitting inside
-// another port's spur) that need a scope ruling to move a nozzle
-// or port, not a pipe-routing fix.
+// the audit uses. Fix round 1 relocated the two port-placement
+// conflicts ChatGPT ruled on (PR #795 NEEDS CHANGES at 0732ee5):
+// the synthetic V-101 wet-gas-out shell nozzle moved from the
+// liquid-out spur line to the north shell, and the V-101 plant-water
+// utility port moved east of the manway spur envelope — so the
+// acceptance test asserts ZERO applicable access findings, and
+// buildFccuPlotPlan() no longer throws. The relocation test below
+// pins both moves exactly, so any silent drift back fails it.
 vi.mock("./homeProject", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -29,6 +28,7 @@ vi.mock("./homeProject", async (importOriginal) => {
 });
 
 import { buildFccuPlotPlan } from "./fccuPlotPlanSample";
+import { anchorsOf } from "./pipeAttachments";
 import { pipeRoutingRuleErrors } from "./pipeRoutingRules";
 import { pipeSupportRuleErrors } from "./pipeSupports";
 import { pipeAccessRuleErrors } from "./pipeAccess";
@@ -44,19 +44,33 @@ describe("FCCU sample D10 acceptance (D10-05)", () => {
     expect(design.pipes).toHaveLength(91);
   });
 
-  it("has routing 0, supports 0, head-nozzles 0", () => {
+  it("has routing 0, supports 0, head-nozzles 0, access 0", () => {
     expect(pipeRoutingRuleErrors(design)).toEqual([]);
     expect(pipeSupportRuleErrors(design)).toEqual([]);
     expect(vesselHeadNozzleErrors(design)).toEqual([]);
+    expect(pipeAccessRuleErrors(design)).toEqual([]);
   });
 
-  it("has exactly the two pinned V-101 access residuals", () => {
-    const access = pipeAccessRuleErrors(design);
-    expect(access).toHaveLength(2);
-    expect(access[0]).toContain("path-acc-symbol_11-liquid-out");
-    expect(access[0]).toContain("fccu_pipe_29");
-    expect(access[1]).toContain("path-manway-symbol_11");
-    expect(access[1]).toContain("fccu_pipe_86");
+  it("relocates the two V-101 ports ChatGPT ruled on (fix round 1)", () => {
+    const v101 = design.symbols.find((s) => s.tag === "V-101");
+    expect(v101).toBeDefined();
+    const anchors = anchorsOf(v101);
+    // Wet-gas-out: off the liquid-out spur line (catalog (3870,
+    // 3129)) to the north shell at (-0.5, -1) -> (3915, 3114).
+    // Identity, 8-in size, and shell-nozzle kind preserved; NOT a
+    // head-nozzle schedule entry.
+    const wetGas = anchors.find((a) => a.id === "wet-gas-out");
+    expect(wetGas).toEqual({ id: "wet-gas-out", x: 3915, y: 3114, sizeIn: 8 });
+    const schedule = v101.headNozzleSchedule || v101.nozzleSchedule || [];
+    expect(schedule.map((n) => n.id)).not.toContain("wet-gas-out");
+    // Liquid-out head schedule untouched by the move.
+    const liquid = schedule.find((n) => n.id === "liquid-out");
+    expect(liquid.surface).toBe("head-west");
+    expect(liquid.position).toBe("bottom");
+    // Plant-water utility port: east of the manway spur envelope
+    // (base fx -0.9 -> (3879, 3174)) to fx -0.5 -> (3915, 3174).
+    const water = anchors.find((a) => a.id === "utility-plant-water");
+    expect(water).toEqual({ id: "utility-plant-water", x: 3915, y: 3174, sizeIn: 1, elevationIn: 24 });
   });
 
   it("runs every pipe plan-orthogonal (R1, authored points)", () => {

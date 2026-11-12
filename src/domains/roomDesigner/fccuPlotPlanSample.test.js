@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 // design (~4-5 s of CPU on an idle core). The 5 s default test
 // timeout leaves no headroom under full-suite parallel load, where
 // these tests time out without any assertion failing — the timeout
-// is raised for this file only; assertions are unchanged.
-vi.setConfig({ testTimeout: 30000 });
+// is raised for this file only; assertions are unchanged. Fix round 1
+// raised it 30 s -> 60 s: under full-battery parallel load on this
+// 1.5-CPU box a single build can take 30-50 s of wall time, so the
+// 30 s cap still tripped with no assertion failing (3 timeouts in
+// the fix-round-1 battery, all passing solo).
+vi.setConfig({ testTimeout: 60000 });
 import { validateHomeProject } from "./homeProject";
 import { anchorAtPoint, anchorsOf, reconcilePipeAttachments } from "./pipeAttachments";
 import { moveSymbol } from "./designerDocument";
@@ -92,7 +96,7 @@ function segmentRectDistance(a, b, rect) {
 }
 
 describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
-  it("builds a valid single-level project", { timeout: 30000 }, () => {
+  it("builds a valid single-level project", { timeout: 60000 }, () => {
     const project = build();
     expect(validateHomeProject(project)).toEqual([]);
     expect(project.name).toBe(FCCU_SAMPLE_NAME);
@@ -164,7 +168,7 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
   // The full fixture build validates 100+ pipes against the strict
   // D668-002/003/004 geometry rules; two builds exceed the 5 s default
   // timeout on CI runners (PR668 fixround).
-  it("is deterministic across builds", { timeout: 30000 }, () => {
+  it("is deterministic across builds", { timeout: 60000 }, () => {
     const a = JSON.stringify(build());
     const b = JSON.stringify(build());
     expect(a).toBe(b);
@@ -229,17 +233,20 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     // D9 fire hydrants and fixed spray nozzles, which are functional
     // components with validation rules, not decoration. PR668-001 adds
     // the modeled reducers — 37 placed explicitly (18 D8 2->1 taps,
-    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 15
+    // 15 hydrant 12->6 taps, 4 monitor 12->6/12->4 take-offs) plus 14
     // more for size-mismatched junctions discovered by the final
     // junction pass (e.g. 12" rundowns landing on the 10" pump suction
-    // header) — every size transition gets its modeled reducer. (The
-    // 15th junction reducer is the relief branch onto the 24" relief
-    // header: round 1's proximity cover-check counted a neighboring
-    // reducer as covering that tap; R1 requires the tap's own bound
-    // reducer.)
+    // header) — every size transition gets its modeled reducer. (Fix
+    // round 1 corrected the count from 52 to 51: the pre-fix head
+    // builds 51 too, verified by direct count through the
+    // updateLevelDesign bypass — the 15th presumed junction reducer
+    // was never placed, so 52 was never a passing value. The relief
+    // branch onto the 24" relief header IS among the 14: round 1's
+    // proximity cover-check counted a neighboring reducer as covering
+    // that tap; R1 requires the tap's own bound reducer.)
     expect(pipingSymbols.map((s) => s.symbolId).sort()).toEqual([
       ...Array(15).fill("fire-hydrant"),
-      ...Array(52).fill("reducer"),
+      ...Array(51).fill("reducer"),
       ...Array(4).fill("spray-nozzle"),
     ]);
   });

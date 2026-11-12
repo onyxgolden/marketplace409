@@ -212,6 +212,20 @@ describe("utility piping (D8)", () => {
     expect(ports.map((p) => p.sizeIn)).toEqual([1, 1, 1]);
   });
 
+  it("per-vessel fx overrides move one port and leave the rest alone (D10-05 fix round 1)", () => {
+    // V-101's plant-water port moves east of the manway spur envelope.
+    const v101 = { tag: "V-101", x: 3960, y: 3144, widthIn: 180, depthIn: 60 };
+    const ports = utilityPortDescriptors(sym("horizontal-drum"), v101);
+    expect(ports.find((p) => p.id === "utility-plant-water").x).toBe(3915);
+    expect(ports.find((p) => p.id === "utility-plant-air").x).toBe(3960);
+    expect(ports.find((p) => p.id === "utility-nitrogen").x).toBe(4041);
+    expect(ports.every((p) => p.y === 3174)).toBe(true);
+    // Any other vessel keeps the base fx.
+    const other = { tag: "V-999", x: 3960, y: 3144, widthIn: 180, depthIn: 60 };
+    const otherPorts = utilityPortDescriptors(sym("horizontal-drum"), other);
+    expect(otherPorts.find((p) => p.id === "utility-plant-water").x).toBe(3879);
+  });
+
   it("sizing defaults: 2-inch headers, 1-inch drops to the base stations (sizes stay editable per run)", () => {
     expect(UTILITY_HEADER_DIAMETER_IN).toBe(2);
     expect(UTILITY_DROP_DIAMETER_IN).toBe(1);
