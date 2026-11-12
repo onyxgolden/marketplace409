@@ -2639,6 +2639,65 @@ describe("validatePairSpacing classification (D10-06 Ruling 2)", () => {
     );
   });
 
+  it("a short host wholly inside the contact ball still fails a shallow branch beyond it (fix round 2, P1)", () => {
+    // Verdict P1: the round-1 clip compared only outside-ball x
+    // outside-ball portions, so a host short enough to lie wholly
+    // inside the ball produced no comparison at all and the pair was
+    // accepted. The host here is a 4-in segment — shorter than the
+    // 5.375-in required centers — and the branch leaves its end at
+    // ~2.9 deg, back toward the host, for 200 in. The branch's
+    // outside-ball remainder stays inside the host's O3 envelope, so
+    // the pair must fail: the host's inside portion is checked
+    // against the branch's outside remainder.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 4, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 4, y: 0 }, { x: -195.74, y: 10.12 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    const found = validatePairSpacing(design, design.pipes[0], design.pipes[1]);
+    expect(found.state).toBe("SPACING_TOO_CLOSE");
+    expect(codes(found.findings)).toContain("SPACING_TOO_CLOSE");
+  });
+
+  it("a short host with a branch that clears it after the contact neighborhood still passes (fix round 2, P1)", () => {
+    // Same 4-in host wholly inside the ball, but the branch leaves
+    // at 90 deg: it clears the 5.375-in required centers just past
+    // the contact neighborhood, so the pair's whole interaction is
+    // the junction. This is the positive control for the short-host
+    // geometry — the fix must not turn every short host into a
+    // failure.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 4, y: 0 }], {
+      id: "a",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design = addPipeRun(design, [{ x: 4, y: 0 }, { x: 4, y: 100 }], {
+      id: "b",
+      diameterIn: 2,
+      elevationIn: 30,
+      ...spacing(),
+    });
+    design.pipes = design.pipes.map((p) =>
+      p.id === "b" ? { ...p, junctions: { start: { runId: "a" } } } : p,
+    );
+    expect(validatePairSpacing(design, design.pipes[0], design.pipes[1]).state).toBe(
+      "NOT_APPLICABLE",
+    );
+  });
+
   it("same-host labels without verified common geometry do not exempt", () => {
     let design = createEmptyDesign("Plan");
     design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 300, y: 0 }], {

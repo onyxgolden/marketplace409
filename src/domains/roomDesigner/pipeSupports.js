@@ -1569,11 +1569,14 @@ export function requiredPairCenters(runA, runB, options = {}) {
  *
  * This answers only "the pair meets at the junction". It grants no
  * exemption by itself: the caller limits the exemption to the
- * contact neighborhood (fix round 1, P1 — Ruling 2 item 4) by
- * clipping both segments to the ball of radius = required centers
- * around the verified contact and evaluating the remainders. A
- * non-parallel pair is a junction at the contact, never proof the
- * rest of the pair is clear.
+ * contact neighborhood (fix rounds 1–2, P1 — Ruling 2 item 4) by
+ * partitioning both segments into inside-ball and outside-ball
+ * portions around the verified contact. The remainder-vs-remainder
+ * comparison is the check, plus the empty-remainder fallback (see
+ * validatePairSpacing): a segment lying wholly inside the ball has
+ * no remainder, so the other segment's remainder is checked
+ * against the segment itself. A non-parallel pair is a junction at
+ * the contact, never proof the rest of the pair is clear.
  */
 function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
   if (pointSegmentDistance(contact, a1, a2).distance > FACE) return false;
@@ -1600,52 +1603,61 @@ function segmentPairIsJunctionContact(a1, a2, b1, b2, contact) {
 }
 
 /**
- * The portions of one 3D segment outside a plan ball around a
- * contact point, as { a, b } sub-segments with zIn interpolated
- * linearly along the segment. The ball is plan-only (x, y): a
- * vertical riser has no plan extent, so it is inside the ball iff
- * its plan point is. Returns [] when the whole segment lies inside
- * the ball. A tangent touch does not split the segment.
+ * One 3D segment partitioned by the plan balls around verified
+ * contacts, as { inside, outside } lists of { a, b } sub-segments
+ * with zIn interpolated linearly along the segment. A point is
+ * inside when its plan distance to any contact is < radiusIn; the
+ * ball is plan-only (x, y), so a vertical riser has no plan extent
+ * and is inside iff its plan point is. Inside ∪ outside is the
+ * whole segment: the inside intervals are the union of the
+ * per-ball intervals in parameter space, the outside pieces their
+ * complement, and a tangent touch does not split the segment.
+ * Degenerate (zero-length) pieces are dropped.
  */
-function clipSegmentOutsideBall(p1, p2, center, radiusIn) {
+function partitionSegmentByBalls(p1, p2, centers, radiusIn) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const dz = p2.zIn - p1.zIn;
-  const wx = p1.x - center.x;
-  const wy = p1.y - center.y;
   const a = dx * dx + dy * dy;
   const radius2 = radiusIn * radiusIn;
-  if (a <= 1e-12) {
-    return wx * wx + wy * wy < radius2 ? [] : [{ a: p1, b: p2 }];
+  const intervals = [];
+  for (const center of centers) {
+    const wx = p1.x - center.x;
+    const wy = p1.y - center.y;
+    if (a <= 1e-12) {
+      if (wx * wx + wy * wy < radius2) intervals.push([0, 1]);
+      continue;
+    }
+    const b = 2 * (dx * wx + dy * wy);
+    const c = wx * wx + wy * wy - radius2;
+    const disc = b * b - 4 * a * c;
+    if (disc <= 0) continue; // No crossing (or a tangent): entirely outside.
+    const sq = Math.sqrt(disc);
+    const tLo = Math.max(0, (-b - sq) / (2 * a));
+    const tHi = Math.min(1, (-b + sq) / (2 * a));
+    if (tHi > tLo) intervals.push([tLo, tHi]);
   }
-  const b = 2 * (dx * wx + dy * wy);
-  const c = wx * wx + wy * wy - radius2;
-  const disc = b * b - 4 * a * c;
-  if (disc <= 0) {
-    // No crossing (or a tangent): entirely inside when c < 0.
-    return c < 0 ? [] : [{ a: p1, b: p2 }];
-  }
-  const sq = Math.sqrt(disc);
-  const tLo = Math.max(0, (-b - sq) / (2 * a));
-  const tHi = Math.min(1, (-b + sq) / (2 * a));
-  if (tHi <= 0 || tLo >= 1 || tHi <= tLo) {
-    // The ball misses the segment: the whole segment is outside.
-    return [{ a: p1, b: p2 }];
+  intervals.sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const [lo, hi] of intervals) {
+    const last = merged[merged.length - 1];
+    if (last && lo <= last[1] + 1e-12) {
+      last[1] = Math.max(last[1], hi);
+    } else {
+      merged.push([lo, hi]);
+    }
   }
   const at = (t) => ({ x: p1.x + t * dx, y: p1.y + t * dy, zIn: p1.zIn + t * dz });
-  const out = [];
-  if (tLo > 1e-12) out.push({ a: p1, b: at(tLo) });
-  if (tHi < 1 - 1e-12) out.push({ a: at(tHi), b: p2 });
-  return out;
-}
-
-/** A segment with every contact ball removed, in order. */
-function clipSegmentOutsideBalls(p1, p2, centers, radiusIn) {
-  let parts = [{ a: p1, b: p2 }];
-  for (const center of centers) {
-    parts = parts.flatMap((part) => clipSegmentOutsideBall(part.a, part.b, center, radiusIn));
+  const inside = [];
+  const outside = [];
+  let cursor = 0;
+  for (const [lo, hi] of merged) {
+    if (lo - cursor > 1e-12) outside.push({ a: at(cursor), b: at(lo) });
+    if (hi - lo > 1e-12) inside.push({ a: at(lo), b: at(hi) });
+    cursor = hi;
   }
-  return parts;
+  if (1 - cursor > 1e-12) outside.push({ a: at(cursor), b: at(1) });
+  return { inside, outside };
 }
 
 /**
@@ -1754,29 +1766,57 @@ export function validatePairSpacing(design, runA, runB, options = {}) {
       const b1 = routeB[j];
       const b2 = routeB[j + 1];
       // Junction: this segment pair meets at a verified contact. The
-      // exemption covers only the contact neighborhood (fix round 1,
-      // P1 — Ruling 2 item 4): both segments are clipped to the ball
-      // of radius = required centers around each verified contact,
-      // and the remaining portions are evaluated under the ordinary
-      // classifier. Inside that ball the branch cannot have diverged
-      // beyond the required envelope — any point within the required
-      // centers of the contact is within the required centers of the
-      // host — so no measurement there is meaningful; a shallow-angle
-      // branch that stays inside O3 beyond the ball is measured and
-      // fails. When every remainder passes, the pair's whole
-      // interaction is the junction and it is skipped exactly as
-      // before.
+      // exemption covers only the contact neighborhood (fix round 2,
+      // P1 — Ruling 2 item 4): each segment is partitioned into
+      // inside-ball and outside-ball portions around the verified
+      // contacts, and the outside-ball remainders are evaluated
+      // against each other under the ordinary classifier. A segment
+      // lying wholly inside the ball has no remainder — and an empty
+      // remainder exempts nothing: in that case the other segment's
+      // remainder is checked against the whole short segment, so a
+      // shallow branch that stays inside O3 beyond the ball fails
+      // instead of being accepted as a junction. The cross-boundary
+      // pairs are deliberately NOT all compared by closest approach:
+      // a branch leaving at 76 deg measures 5.21 in against the
+      // host's inside portion right at the ball boundary — the
+      // branch has not yet diverged beyond the required envelope
+      // at the boundary itself, which is precisely what the
+      // contact neighborhood exists to cover — so a literal
+      // check-every-cross-pair rule would fail the steep-branch
+      // positive control the ruling's own required-test list
+      // endorses. The remainder-vs-remainder comparison plus the
+      // empty-remainder fallback is the check that closes the
+      // short-host hole without doing that. When every evaluated
+      // remainder passes, the pair's whole interaction is the
+      // junction and it is skipped exactly as before.
       const meeting = contacts.filter((c) => segmentPairIsJunctionContact(a1, a2, b1, b2, c));
       if (meeting.length > 0) {
-        const subA = clipSegmentOutsideBalls(a1, a2, meeting, req.requiredIn);
-        const subB = clipSegmentOutsideBalls(b1, b2, meeting, req.requiredIn);
+        const partA = partitionSegmentByBalls(a1, a2, meeting, req.requiredIn);
+        const partB = partitionSegmentByBalls(b1, b2, meeting, req.requiredIn);
         const remainder = [];
         let remainderMin = Infinity;
-        for (const sa of subA) {
-          for (const sb of subB) {
-            const out = evaluateSegmentPairSpacing(sa.a, sa.b, sb.a, sb.b, req, runA, runB, runId);
-            remainder.push(...out.findings);
-            remainderMin = Math.min(remainderMin, out.minCenter);
+        const checkRemainder = (sa, sb) => {
+          const out = evaluateSegmentPairSpacing(sa.a, sa.b, sb.a, sb.b, req, runA, runB, runId);
+          remainder.push(...out.findings);
+          remainderMin = Math.min(remainderMin, out.minCenter);
+        };
+        for (const sa of partA.outside) {
+          for (const sb of partB.outside) checkRemainder(sa, sb);
+        }
+        // Empty-remainder fallback (fix round 2, P1): a segment with
+        // no outside portion lies wholly inside the contact
+        // neighborhood, so the other side's remainder is checked
+        // against the segment itself. When both sides have a
+        // remainder this adds nothing; when neither does, the pair's
+        // whole interaction is inside the neighborhood.
+        if (partA.outside.length === 0) {
+          for (const sa of partA.inside) {
+            for (const sb of partB.outside) checkRemainder(sa, sb);
+          }
+        }
+        if (partB.outside.length === 0) {
+          for (const sa of partA.outside) {
+            for (const sb of partB.inside) checkRemainder(sa, sb);
           }
         }
         if (remainder.length === 0) continue;
