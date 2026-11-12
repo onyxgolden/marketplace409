@@ -26,6 +26,7 @@ import { findSymbol } from "./symbolRegistry";
 import { rackParams } from "./rackGeometry";
 import { boundReducerAt, junctionHostOwner } from "./pipeReducerModel";
 import { attachmentInterfaceErrors } from "./pipeAttachments";
+import { FACE_TOLERANCE_IN } from "./pipeTolerances";
 
 const EPS = 1e-9;
 
@@ -43,9 +44,10 @@ export const JUNCTION_TOLERANCE_IN = 0.5;
 /**
  * Plan/elevation tolerance (in) for two pipe centerlines to count as
  * meeting at a shared flanged face. Faces meet; barrel-overlap reach
- * is NOT a connection (D668-004).
+ * is NOT a connection (D668-004). Single source is pipeTolerances
+ * (a leaf module — see its header for why the value lives there).
  */
-export const CONNECTION_FACE_TOLERANCE_IN = 0.5;
+export const CONNECTION_FACE_TOLERANCE_IN = FACE_TOLERANCE_IN;
 
 /** True when a run carries any stored elevation (base or per-vertex). */
 export function runHasStoredElevation(run) {
@@ -389,7 +391,7 @@ export function findPipeCrossings(design) {
  * segment rule and the crossing would vanish from validation at its own
  * vertex.
  */
-function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn) {
+function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn, otherOutsideDiameterIn) {
   const pts = run.points;
   const A = pts[segIndex];
   const B = pts[segIndex + 1];
@@ -399,7 +401,19 @@ function insertJog(run, segIndex, X, targetElevIn, baseElevIn, otherDiameterIn) 
   const ux = (B.x - A.x) / segLen;
   const uy = (B.y - A.y) / segLen;
   const distX = Math.hypot(X.x - A.x, X.y - A.y);
-  const half = Math.min(Math.max(9, pipeOdIn(otherDiameterIn) + 6), segLen / 2);
+  // D10-05/D10-06 O3: the jog's risers stand alongside the crossed
+  // pipe at the base elevation, so the jog half-width must clear the
+  // O3 required centers for the pair — both ODs plus the ordinary
+  // 3-in surface gap (digest §2.2–2.3) — not just the crossed pipe's
+  // OD. The old other-OD + 6 heuristic left risers inside the
+  // required centers (e.g. a 16-in jog over an 8-in line stood
+  // 14.625 in from its centerline against 15.313 in required).
+  // Authored ODs win where present: pipeOdIn snaps 24-in to 16-in.
+  // A largest-line pair needs a 4-in gap, which this generic jog
+  // does not assume; the spacing validator still fails closed there.
+  const myOd = run.outsideDiameterIn ?? pipeOdIn(run.diameterIn ?? 2);
+  const otherOd = otherOutsideDiameterIn ?? pipeOdIn(otherDiameterIn);
+  const half = Math.min(Math.max(9, (myOd + otherOd) / 2 + 3), segLen / 2);
   const at = (dist) => ({ x: A.x + ux * dist, y: A.y + uy * dist });
   // Clamp the riser plan positions inside the segment so a crossing
   // near a vertex still gets a real jog.
@@ -507,7 +521,7 @@ export function applyCrossingJogs(design, runId) {
     );
     let accepted = null;
     for (const target of targets) {
-      const jogged = insertJog(work, mine.seg, { x: c.x, y: c.y }, target, mine.myElev, otherDiam);
+      const jogged = insertJog(work, mine.seg, { x: c.x, y: c.y }, target, mine.myElev, otherDiam, other?.outsideDiameterIn);
       const candidate = {
         ...current,
         pipes: current.pipes.map((r) => (r.id === runId ? jogged : r)),
@@ -1043,7 +1057,12 @@ export function pipeCrossingErrors(design) {
         const a = run.points[i];
         const b = run.points[i + 1];
         const exempt = verified.some(
-          (t) => t.runId === run.id && t.symbolId === inst.id && t.segmentIndex === i,
+          (t) =>
+            t.runId === run.id &&
+            t.symbolId === inst.id &&
+            (Array.isArray(t.segmentIndices)
+              ? t.segmentIndices.includes(i)
+              : t.segmentIndex === i),
         );
         if (exempt) continue;
         if (segmentPassesThroughFootprint(a, b, inst, symbol)) {
@@ -1082,10 +1101,45 @@ export function verifiedAttachments(design) {
       if (attachmentInterfaceErrors(design, run, end).length > 0) continue;
       const idx = end === "start" ? 0 : run.points.length - 1;
       const point = run.points[idx];
+      // One tuple per verified attachment (run, end) — callers count
+      // these. The penetration exemption, however, must cover every
+      // segment the connection occupies in plan: a terminal riser
+      // (zero plan length) at the face is the segment adjacent to
+      // the end, but it cannot pass through a footprint in plan —
+      // it IS the face point. The segment that actually leaves the
+      // face in plan is the first non-zero-plan segment from the
+      // end. So the tuple carries the full exempt set in
+      // segmentIndices (adjacent segment first, then each zero-plan
+      // riser segment, then the first plan-leaving segment):
+      // without this, every terminal riser at a 45-degree face
+      // breaks the exemption — the riser sits a floating-point
+      // hair inside the vessel radius by construction, and the
+      // plan leg after it is no longer the "adjacent" segment.
+      // segmentIndex stays the adjacent segment for consumers
+      // that read a single index.
+      const planLen = (i) =>
+        Math.hypot(run.points[i + 1].x - run.points[i].x, run.points[i + 1].y - run.points[i].y);
+      const exemptIndices = [];
+      if (end === "start") {
+        let s = 0;
+        exemptIndices.push(s);
+        while (s + 1 < run.points.length - 1 && planLen(s) < 1e-9) {
+          s += 1;
+          exemptIndices.push(s);
+        }
+      } else {
+        let s = run.points.length - 2;
+        exemptIndices.push(s);
+        while (s > 0 && planLen(s) < 1e-9) {
+          s -= 1;
+          exemptIndices.push(s);
+        }
+      }
       out.push({
         runId: run.id,
         end,
-        segmentIndex: end === "start" ? 0 : run.points.length - 2,
+        segmentIndex: exemptIndices[0],
+        segmentIndices: exemptIndices,
         symbolId: ref.symbolId,
         anchorId: ref.anchorId,
         x: point.x,

@@ -223,6 +223,79 @@ describe("validateRouteEndpoints", () => {
     const design2 = { ...design, pipes: [claimed] };
     expect(codes(validateRouteEndpoints(design2, claimed))).toContain("ROUTE_FACE_UNRESOLVED");
   });
+
+  it("connects a declared open end by declaration (D10-05)", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
+      openEnds: { start: "battery-limit", end: "capped" },
+    });
+    expect(validateRouteEndpoints(design, run)).toEqual([]);
+  });
+
+  it("flags an unknown open-end kind, never silently accepts it", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
+      openEnds: { start: "mystery" },
+    });
+    const found = codes(validateRouteEndpoints(design, run));
+    expect(found).toContain("ROUTE_OPEN_END_UNDECLARED");
+    expect(found).toContain("ROUTE_UNCONNECTED_END");
+  });
+
+  it("does not let a declaration hide a bad junction record", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
+      openEnds: { end: "capped" },
+    });
+    const design2 = {
+      ...design,
+      pipes: [{ ...run, junctions: { end: { runId: "ghost-host" } } }],
+    };
+    const found = codes(validateRouteEndpoints(design2, design2.pipes[0]));
+    expect(found).toContain("ROUTE_UNCONNECTED_END");
+    expect(found).not.toContain("ROUTE_OPEN_END_UNDECLARED");
+  });
+
+  it("connects an end named by a device's authored inlet reference (D10-05)", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1");
+    const withHydrant = {
+      ...design,
+      symbols: [
+        { id: "h1", domain: "piping", symbolId: "fire-hydrant", x: 100, y: 0, inletRunId: "p1", inletEnd: "end" },
+      ],
+    };
+    // Only the start end is unconnected; the end feeds the hydrant.
+    expect(codes(validateRouteEndpoints(withHydrant, run))).toEqual(["ROUTE_UNCONNECTED_END"]);
+  });
+
+  it("does not connect on an inlet reference naming another run, or an end off the device", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1");
+    const wrongRun = {
+      ...design,
+      symbols: [
+        { id: "h1", domain: "piping", symbolId: "fire-hydrant", x: 100, y: 0, inletRunId: "other", inletEnd: "end" },
+      ],
+    };
+    expect(codes(validateRouteEndpoints(wrongRun, run))).toEqual([
+      "ROUTE_UNCONNECTED_END",
+      "ROUTE_UNCONNECTED_END",
+    ]);
+    const offDevice = {
+      ...design,
+      symbols: [
+        { id: "h1", domain: "piping", symbolId: "fire-hydrant", x: 101, y: 0, inletRunId: "p1", inletEnd: "end" },
+      ],
+    };
+    expect(codes(validateRouteEndpoints(offDevice, run))).toEqual([
+      "ROUTE_UNCONNECTED_END",
+      "ROUTE_UNCONNECTED_END",
+    ]);
+  });
+
+  it("stores openEnds through addPipeRun, detached from the caller", () => {
+    const declared = { start: "battery-limit" };
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", { openEnds: declared });
+    declared.start = "capped";
+    expect(run.openEnds).toEqual({ start: "battery-limit" });
+    expect(design.pipes[0].openEnds).toEqual({ start: "battery-limit" });
+  });
 });
 
 describe("validateBranchTakeoff", () => {
@@ -605,5 +678,90 @@ describe("REPLACE_PIPE_ROUTE", () => {
   it("ignores an unknown pipe run", () => {
     const state = start();
     expect(designerReducer(state, { type: "REPLACE_PIPE_ROUTE", pipeId: "nope", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] })).toBe(state);
+  });
+});
+
+describe("addPipeRun — elevation-aware dedupe (D10-05 vertical risers)", () => {
+  it("preserves a vertical riser authored as duplicate plan points with different explicit elevations", () => {
+    const { design, run } = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+      ],
+      "p1",
+      { elevIn: [30, 30, 120, 120] },
+    );
+    expect(run.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    expect(run.elevIn).toEqual([30, 30, 120, 120]);
+    // The riser leg is vertical, the rest axis-aligned: no diagonal.
+    expect(validateRouteOrthogonality(design, run)).toEqual([]);
+  });
+
+  it("still dedupes a true duplicate (same plan, same elevation)", () => {
+    const { run } = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+      ],
+      "p1",
+      { elevIn: [30, 30, 30, 30] },
+    );
+    expect(run.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    expect(run.elevIn).toEqual([30, 30, 30]);
+  });
+
+  it("still dedupes a duplicate plan point when either elevation is null (no riser proof)", () => {
+    const { run } = flat(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+      ],
+      "p1",
+      { elevIn: [30, null, 120, 120] },
+    );
+    expect(run.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    // The @120 duplicate is the one dropped; the kept corner keeps its null.
+    expect(run.elevIn).toEqual([30, null, 120]);
+  });
+
+  it("keeps the legacy plan-only dedupe when no elevIn is given", () => {
+    const { run } = flat([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    expect(run.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    expect(run.elevIn).toBeUndefined();
+  });
+
+  it("rejects an elevIn array that does not run parallel to the points", () => {
+    const design = createEmptyDesign("Plan");
+    expect(() =>
+      addPipeRun(design, [{ x: 0, y: 0 }, { x: 100, y: 0 }], { id: "p1", elevIn: [30] }),
+    ).toThrow("parallel");
   });
 });

@@ -19,6 +19,7 @@ import { TEMA_PRESETS } from "./temaTypes";
 import {
   anchorAtPoint,
   anchorsOf,
+  connectionFaceForAnchor,
   detectRunAttachments,
   pipeAttachmentErrors,
   reconcilePipeAttachments,
@@ -190,6 +191,66 @@ describe("catalog nozzle anchors", () => {
     // Doubled footprint: suction-in (0, -1) -> (200, 200 - 18).
     expect(pumpAnchor(design, "suction-in")).toEqual({ id: "suction-in", x: 200, y: 182, sizeIn: 4 });
     expect(pumpAnchor(design, "discharge-out")).toEqual({ id: "discharge-out", x: 200, y: 218, sizeIn: 6 });
+  });
+
+  describe("nozzleOverrides (D10-05 fix round 1)", () => {
+    /** Horizontal drum "v101" at (3960, 3144), 180 x 60 in — the V-101 shape. */
+    function drum(overrides) {
+      let design = placeSymbol(createEmptyDesign(), D, "horizontal-drum", 3960, 3144, {
+        id: "v101",
+        widthIn: 180,
+        depthIn: 60,
+      });
+      if (overrides !== undefined) {
+        design = {
+          ...design,
+          symbols: design.symbols.map((s) =>
+            s.id === "v101" ? { ...s, nozzleOverrides: overrides } : s,
+          ),
+        };
+      }
+      return design;
+    }
+    const drumAnchor = (design, id) =>
+      anchorsOf(design.symbols.find((s) => s.id === "v101")).find((a) => a.id === id);
+    const drumInst = (design) => design.symbols.find((s) => s.id === "v101");
+
+    it("moves one catalog nozzle and leaves the rest alone", () => {
+      const design = drum({ "wet-gas-out": { fx: -0.5, fy: -1 } });
+      expect(drumAnchor(design, "wet-gas-out")).toEqual({ id: "wet-gas-out", x: 3915, y: 3114, sizeIn: 8 });
+      expect(drumAnchor(design, "inlet")).toEqual({ id: "inlet", x: 3960, y: 3114, sizeIn: 10 });
+      expect(drumAnchor(design, "liquid-out")).toEqual({ id: "liquid-out", x: 3870, y: 3144, sizeIn: 6 });
+      expect(drumAnchor(design, "vapor-out")).toEqual({ id: "vapor-out", x: 4050, y: 3144, sizeIn: 8 });
+      // Utility ports are untouched by a process-nozzle override.
+      expect(drumAnchor(design, "utility-plant-water")).toEqual({
+        id: "utility-plant-water",
+        x: 3879,
+        y: 3174,
+        sizeIn: 1,
+        elevationIn: 24,
+      });
+    });
+
+    it("the connection face normal follows the override", () => {
+      const symbol = findSymbol(D, "horizontal-drum");
+      const moved = drum({ "wet-gas-out": { fx: -0.5, fy: -1 } });
+      const face = connectionFaceForAnchor(symbol, drumInst(moved), "wet-gas-out");
+      expect(face.kind).toBe("side");
+      expect(face.normal).toEqual({ x: 0, y: -1 });
+      expect(face.elevationIn).toBeCloseTo(33.48, 9);
+      const plain = drum();
+      const catalogFace = connectionFaceForAnchor(symbol, drumInst(plain), "wet-gas-out");
+      expect(catalogFace.normal).toEqual({ x: -1, y: 0 });
+      expect(catalogFace.elevationIn).toBeCloseTo(33.48, 9);
+    });
+
+    it("a malformed override and an unknown id fall back to the catalog position", () => {
+      const malformed = drum({ "wet-gas-out": { fx: "north", fy: -1 } });
+      expect(drumAnchor(malformed, "wet-gas-out")).toEqual({ id: "wet-gas-out", x: 3870, y: 3129, sizeIn: 8 });
+      const unknown = drum({ "no-such-nozzle": { fx: 0, fy: 0 } });
+      expect(drumAnchor(unknown, "wet-gas-out")).toEqual({ id: "wet-gas-out", x: 3870, y: 3129, sizeIn: 8 });
+      expect(drumAnchor(unknown, "inlet")).toEqual({ id: "inlet", x: 3960, y: 3114, sizeIn: 10 });
+    });
   });
 
   it("a symbol type without nozzles yields no anchors and no attachments", () => {

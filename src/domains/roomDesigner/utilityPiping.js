@@ -65,12 +65,45 @@ const SERVICE_BY_ID = new Map(
  * nozzle fractional frame (fy = 1 is the base edge in plan). Positions
  * are offset from the process-nozzle spots so the connections read as
  * their own points along the base.
+ *
+ * D10-05: the ports sit at fx -0.9 / 0 / +0.9 (was -0.6 / +0.2 /
+ * +0.6). D10-03 requires a 30-in walkway at every required access
+ * node, and a spur stands 15.4 in off its face — so adjacent ports
+ * must be more than 30.4 in apart or each port's branch falls inside
+ * its neighbour's spur envelope (the old 0.4-fx air/nitrogen gap was
+ * 12–29 in, and 13 of the D10-05 access findings were that sandwich).
+ * The 0.9-fx gaps admit the walkway on every vessel wide enough to
+ * carry it; the smallest column (T-102) is handled by its fan routing.
  */
 export const UTILITY_ANCHOR_SPECS = Object.freeze([
-  Object.freeze({ id: "utility-plant-water", fx: -0.6, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
-  Object.freeze({ id: "utility-plant-air", fx: 0.2, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
-  Object.freeze({ id: "utility-nitrogen", fx: 0.6, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
+  Object.freeze({ id: "utility-plant-water", fx: -0.9, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
+  Object.freeze({ id: "utility-plant-air", fx: 0, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
+  Object.freeze({ id: "utility-nitrogen", fx: 0.9, fy: 1, sizeIn: UTILITY_DROP_DIAMETER_IN }),
 ]);
+
+// D10-05: per-vessel utility-port fx overrides. T-101's plant-water
+// port at the base fx (-0.9, x=3797) sits inside the bottoms-out
+// process port's access spur (the spur runs north at x=3790.66,
+// y 1833.94-1863.94, 30 in wide, east edge 3805.66) — any south leg
+// on the water meridian crosses the walkway and the build throws
+// (WALKWAY_OBSTRUCTED), and a terminal riser at the port is itself
+// inside the walkway, so no elevation clears it. fx -0.67 puts the
+// port at x=3808: east of the walkway by 2.3 in, and 32 in from the
+// plant-air port (above the 30.4-in spur minimum). The override is
+// keyed by vessel tag; every other vessel keeps the base fx.
+export const UTILITY_ANCHOR_FX_OVERRIDES = Object.freeze({
+  "T-101": Object.freeze({ "utility-plant-water": -0.67 }),
+  // D10-05 fix round 1: V-101's plant-water port at the base fx
+  // (-0.9, x=3879) sits inside the manway spur's swept envelope —
+  // the spur runs east along y=3159.4, envelope to y=3174.4, and the
+  // port at y=3174 and its north drop leg at x=3879 cross it, so no
+  // elevation clears it (WALKWAY_OBSTRUCTED). fx -0.5 puts the port
+  // at x=3915: east of the manway spur envelope (east edge 3900) by
+  // 15 in, and 45 in from the plant-air port (above the 30.4-in spur
+  // minimum). The override is keyed by vessel tag; every other vessel
+  // keeps the base fx.
+  "V-101": Object.freeze({ "utility-plant-water": -0.5 }),
+});
 
 /**
  * The in-scope vessel catalog IDs for base utilities — named
@@ -166,7 +199,9 @@ export function utilityPortDescriptors(symbol, inst) {
   const dirX = 0 * cos - 1 * sin;
   const dirY = 0 * sin + 1 * cos;
   return UTILITY_ANCHOR_SPECS.map((spec) => {
-    const lx = spec.fx * (effWidth / 2);
+    const overrideFx = UTILITY_ANCHOR_FX_OVERRIDES[inst.tag]?.[spec.id];
+    const fx = overrideFx ?? spec.fx;
+    const lx = fx * (effWidth / 2);
     const ly = spec.fy * (effDepth / 2);
     const service = utilityServiceForAnchor(spec.id);
     return {

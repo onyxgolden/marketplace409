@@ -30,7 +30,11 @@ const attachedTo = (instanceId, anchorId) =>
   );
 
 describe("FCCU sample acceptance (D7)", () => {
-  it("the sample builds valid", () => {
+  // Validating the full 91-run design takes ~5-10 s of CPU on this
+  // box, so the 5 s default timeout tips the full-design checks over
+  // with no assertion failing — same precedent as the explicit
+  // timeouts in fccuPlotPlanSample.test.js and firewater.test.js.
+  it("the sample builds valid", { timeout: 30000 }, () => {
     expect(validateDesign(design)).toEqual([]);
   });
 
@@ -79,7 +83,7 @@ describe("FCCU sample acceptance (D7)", () => {
     expect(accessPackageLocal(symbolOf(v102), v102)).toBeNull();
   });
 
-  it("no pipe crosses another at the same elevation anywhere in the sample", () => {
+  it("no pipe crosses another at the same elevation anywhere in the sample", { timeout: 30000 }, () => {
     expect(findPipeCrossings(design).filter((c) => !c.resolved)).toEqual([]);
     expect(pipeCrossingErrors(design)).toEqual([]);
   });
@@ -102,7 +106,7 @@ describe("FCCU sample acceptance (D7)", () => {
     expect(Math.max(...elevs)).toBeGreaterThan(100);
   });
 
-  it("stripping one vessel utility makes validation flag exactly that gap", () => {
+  it("stripping one vessel utility makes validation flag exactly that gap", { timeout: 30000 }, () => {
     const v102 = byTag("V-102");
     const nitrogenBranch = design.pipes.find((p) =>
       Object.values(p.attachments || {}).some(
@@ -210,7 +214,7 @@ describe("FCCU sample acceptance (D7)", () => {
     expect(takeoffs.map((p) => p.diameterIn).sort()).toEqual([4, 4, 6, 6]);
   });
 
-  it("serialize -> parse preserves the new model data", () => {
+  it("serialize -> parse preserves the new model data", { timeout: 30000 }, () => {
     const back = parseDesign(serializeDesign(design));
     const t101 = back.symbols.find((s) => s.tag === "T-101");
     expect(t101.downcomerProps).toEqual(byTag("T-101").downcomerProps);

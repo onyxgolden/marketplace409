@@ -68,6 +68,7 @@ import {
   attachmentInterfaceErrors,
   connectionFaceForAnchor,
   detectRunAttachments,
+  detectRunJunctions,
 } from "./pipeAttachments";
 import { findSymbol } from "./symbolRegistry";
 import { createInitialState, designerReducer } from "@/components/designer/designerReducer";
@@ -1406,6 +1407,160 @@ describe("validateRouteClassification (O4)", () => {
       ],
     });
     expect(validateSupportSpans(fixed, fixed.pipes.find((p) => p.id === "p1")).state).toBe("PASS");
+  });
+
+  it("a plot connection binds two owned interfaces on a basis (D10-05)", () => {
+    // Pump suction face to a capped end: attached + declared open.
+    let design = withPump(createEmptyDesign("Plan"));
+    const face = suctionFace(design);
+    design = addPipeRun(
+      design,
+      [
+        { x: face.x, y: face.y },
+        { x: face.x, y: face.y - 91 },
+      ],
+      {
+        id: "p1",
+        diameterIn: face.sizeIn,
+        elevationIn: face.elevationIn,
+        spanProfile: water(face.sizeIn),
+        openEnds: { end: "capped" },
+        routeIntervals: [
+          { fromStationIn: 0, toStationIn: 91, role: "PLOT_CONNECTION", basis: "pump suction to capped dead end" },
+        ],
+      },
+    );
+    design = detectRunAttachments(design, "p1");
+    const run = design.pipes.find((p) => p.id === "p1");
+    expect(attachmentInterfaceErrors(design, run, "start")).toEqual([]);
+    expect(validateRouteClassification(design, run).state).toBe("PASS");
+  });
+
+  it("a plot connection binds a verified junction to a declared open end (D10-05)", () => {
+    // Lead-in from a battery-limit end, junctioned onto a host run.
+    let design = createEmptyDesign("Plan");
+    design = addPipeRun(design, [{ x: 0, y: 0 }, { x: 400, y: 0 }], { id: "h", diameterIn: 2, elevationIn: 30 });
+    design = addPipeRun(
+      design,
+      [
+        { x: 200, y: 100 },
+        { x: 200, y: 0 },
+      ],
+      {
+        id: "c",
+        diameterIn: 2,
+        elevationIn: 30,
+        spanProfile: water(2),
+        openEnds: { start: "battery-limit" },
+        routeIntervals: [
+          { fromStationIn: 0, toStationIn: 100, role: "PLOT_CONNECTION", basis: "battery-limit lead-in to header" },
+        ],
+      },
+    );
+    design = detectRunJunctions(design, "c");
+    const run = design.pipes.find((p) => p.id === "c");
+    expect(run.junctions?.end?.runId).toBe("h");
+    expect(validateRouteClassification(design, run).state).toBe("PASS");
+  });
+
+  it("a plot connection without a basis fails", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 100, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      openEnds: { start: "battery-limit", end: "capped" },
+      routeIntervals: [{ fromStationIn: 0, toStationIn: 100, role: "PLOT_CONNECTION" }],
+    });
+    expect(validateRouteClassification(design, run).state).toBe("ROUTE_CLASSIFICATION_UNVERIFIED");
+  });
+
+  it("a plot-connection interval end in open space is not an owned interface", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 300, y: 0 }], "p1", {
+      diameterIn: 2,
+      spanProfile: water(2),
+      openEnds: { start: "battery-limit", end: "capped" },
+      routeIntervals: [
+        { fromStationIn: 0, toStationIn: 150, role: "PLOT_CONNECTION", basis: "first half" },
+        { fromStationIn: 150, toStationIn: 300, role: "PLOT_CONNECTION", basis: "second half" },
+      ],
+    });
+    const result = validateRouteClassification(design, run);
+    expect(result.state).toBe("ROUTE_CLASSIFICATION_UNVERIFIED");
+    expect(result.findings.some((f) => /not an owned interface/.test(f.message))).toBe(true);
+  });
+
+  it("a plot connection carrying an along-rack leg is rack travel, not a connection", () => {
+    let design = withRack(createEmptyDesign("Plan"));
+    design = addPipeRun(design, [{ x: -100, y: 0 }, { x: 200, y: 0 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 180,
+      spanProfile: water(2),
+      openEnds: { start: "battery-limit", end: "capped" },
+      routeIntervals: [
+        { fromStationIn: 0, toStationIn: 300, role: "PLOT_CONNECTION", basis: "renamed travel" },
+      ],
+    });
+    const run = design.pipes.find((p) => p.id === "p1");
+    const result = validateRouteClassification(design, run);
+    expect(result.state).toBe("ROUTE_CLASSIFICATION_UNVERIFIED");
+    expect(result.findings.some((f) => /along-rack leg/.test(f.message))).toBe(true);
+  });
+
+  it("a plot connection carrying a fully-buried leg is buried firewater, not a connection", () => {
+    const { design, run } = flat([{ x: 0, y: 0 }, { x: 300, y: 0 }], "p1", {
+      diameterIn: 2,
+      elevationIn: -36,
+      spanProfile: water(2),
+      openEnds: { start: "battery-limit", end: "capped" },
+      routeIntervals: [
+        { fromStationIn: 0, toStationIn: 300, role: "PLOT_CONNECTION", basis: "renamed burial" },
+      ],
+    });
+    const result = validateRouteClassification(design, run);
+    expect(result.state).toBe("ROUTE_CLASSIFICATION_UNVERIFIED");
+    expect(result.findings.some((f) => /fully-buried leg/.test(f.message))).toBe(true);
+  });
+
+  it("a surfacing riser is a plot connection from its burial boundary (D10-05)", () => {
+    const { design, run } = literal(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 0 },
+      ],
+      [-36, -36, 0],
+      "p1",
+      {
+        diameterIn: 6,
+        utility: "firewater",
+        spanProfile: water(6),
+        openEnds: { end: "capped" },
+        routeIntervals: [
+          { fromStationIn: 0, toStationIn: 100, role: "BURIED_FIREWATER" },
+          { fromStationIn: 100, toStationIn: 136, role: "PLOT_CONNECTION", basis: "surfacing riser to grade" },
+        ],
+      },
+    );
+    expect(validateRouteClassification(design, run).state).toBe("PASS");
+  });
+
+  it("a lead-in ending at a rack exit is a plot connection (D10-05)", () => {
+    // Rack at (0,0) spans x -240..240. The run enters from the west;
+    // the plot-connection interval ends at the rack's west edge.
+    let design = withRack(createEmptyDesign("Plan"));
+    design = addPipeRun(design, [{ x: -400, y: 0 }, { x: 200, y: 0 }], {
+      id: "p1",
+      diameterIn: 2,
+      elevationIn: 180,
+      spanProfile: water(2),
+      openEnds: { start: "battery-limit" },
+      routeIntervals: [
+        { fromStationIn: 0, toStationIn: 160, role: "PLOT_CONNECTION", basis: "battery-limit lead-in to rack", rackId: "r1" },
+        { fromStationIn: 160, toStationIn: 600, role: "RACK_TRAVEL", rackId: "r1", tier: 1, rackOffsetIn: 0 },
+      ],
+    });
+    const run = design.pipes.find((p) => p.id === "p1");
+    expect(validateRouteClassification(design, run).state).toBe("PASS");
   });
 });
 

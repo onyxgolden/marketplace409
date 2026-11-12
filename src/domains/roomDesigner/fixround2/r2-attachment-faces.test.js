@@ -111,12 +111,15 @@ describe("R2 attachments verify against the named face, not the vessel box", () 
     expect(connectionCompatibilityErrors(design)).toEqual([]);
     expect(pipeCrossingErrors(design)).toEqual([]);
     // F2 (fix round 3): verified attachments are owned tuples keyed
-    // by run/end/segment/anchor, not bare plan points.
+    // by run/end/segment/anchor, not bare plan points. D10-05:
+    // segmentIndices carries every segment the connection occupies
+    // in plan (here just the one plan leg).
     expect(verifiedAttachmentPoints(design).get("v")).toEqual([
       {
         runId: "r1",
         end: "end",
         segmentIndex: 0,
+        segmentIndices: [0],
         symbolId: "v",
         anchorId: "side-out",
         x: 24,

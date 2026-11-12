@@ -86,11 +86,10 @@
 //
 // What this module deliberately does NOT do in PR C (see the PR
 // report):
-// - It is not wired into validateDesign. The current production
-//   sample carries no D10-03 access data; wiring these findings in
-//   before PR E revises the sample would break that acceptance test.
-//   PR E wires pipeAccessRuleErrors into validateDesign when the
-//   sample is revised.
+// - It is wired into validateDesign by PR E (D10-05), gated on
+//   industrial mode plus access-registry adoption (see
+//   designerDocument): a design that carries an access block gets
+//   these findings; a legacy design without it validates as before.
 // - It does not build D10-04 vessel end-head schedules. Manway
 //   access here reads the existing D5 manway data and the §5.3
 //   reference profile only.
@@ -104,12 +103,11 @@
 
 import { physicalRouteIn } from "./pipeCrossings";
 import {
-  LOW_PIPE_ELEVATION_IN,
-  SUPPORT_FACE_TOLERANCE_IN,
   pointAtStation,
   rackColumnWorldPositions,
   rackFootprint,
 } from "./pipeSupports";
+import { FACE_TOLERANCE_IN, LOW_PIPE_ELEVATION_IN as LEAF_LOW_PIPE_ELEVATION_IN } from "./pipeTolerances";
 import {
   accessPackageWorld,
   baseElevationIn,
@@ -123,12 +121,12 @@ import { findSymbol } from "./symbolRegistry";
 import { rackTopIn } from "./rackGeometry";
 import { anchorsOf, connectionFaceForAnchor } from "./pipeAttachments";
 
-/** Face-contact tolerance (in): single source is pipeCrossings via pipeSupports. */
-export const ACCESS_FACE_TOLERANCE_IN = SUPPORT_FACE_TOLERANCE_IN;
+/** Face-contact tolerance (in): single source is pipeTolerances (leaf). */
+export const ACCESS_FACE_TOLERANCE_IN = FACE_TOLERANCE_IN;
 /** Numerical station epsilon (in): representation policy, from D10-01. */
 export const ACCESS_STATION_EPSILON_IN = 1e-6;
-/** Low pipe elevation (in): a pipe at or below this is a walking/driving obstruction (D10-02). */
-export const ACCESS_LOW_PIPE_ELEVATION_IN = LOW_PIPE_ELEVATION_IN;
+/** Low pipe elevation (in): a pipe at or below this is a walking/driving obstruction (D10-02). Single source is pipeTolerances (leaf). */
+export const ACCESS_LOW_PIPE_ELEVATION_IN = LEAF_LOW_PIPE_ELEVATION_IN;
 
 /**
  * Adopted §5.2 walkway profile (digest §5.2): 84-in headroom,
@@ -3233,9 +3231,9 @@ export function accessCheckStates(design) {
 
 /**
  * All D10-03 findings for a design as strings, in the same shape
- * as the sibling *Errors aggregators. PR C does not wire this into
- * validateDesign (see the header note); PR E wires it when the
- * sample is revised.
+ * as the sibling *Errors aggregators. Wired into validateDesign by
+ * PR E (D10-05), gated on industrial mode plus access-registry
+ * adoption (see designerDocument).
  */
 export function pipeAccessRuleErrors(design) {
   const { findings } = accessCheckStates(design);
