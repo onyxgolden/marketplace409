@@ -67,11 +67,45 @@ CHECKPOINTS_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoice"
 # 2026-11-12); the S3 URL must never be restored here.
 HF_CHECKPOINTS_REVISION = "c70fc8b939bd1d8213994ff7c88e32be39708271"
 # Weights SHA-256: the deterministic checkpoints zip hash, built from
-# the Hugging Face files above. Used when no setup receipt exists yet;
-# the receipt value (the same hash, written by setup) wins at runtime.
+# the Hugging Face files above. Used ONLY as the expected value the
+# setup receipt must carry (see validate_weights_receipt): a job must
+# never claim this hash for bytes that were not verified. Until a
+# validated receipt exists, no enrollment or generation runs at all.
 # Do not "re-fill" this from any other source without re-verifying the
 # zip build -- a different file set is a different hash.
 WEIGHTS_SHA256_PINNED = "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb"
+
+# Per-file manifest of the installed checkpoint tree: the nine files
+# of the deterministic zip, each with its full SHA-256, verified
+# 2026-11-13 from the official Hugging Face repo
+# (myshell-ai/OpenVoice, revision c70fc8b939bd1d8213994ff7c88e32be39708271):
+# all nine downloaded, sizes verified against the HF tree listing, and
+# the deterministic zip rebuilt from exactly these bytes hashes to
+# WEIGHTS_SHA256_PINNED above — so the per-file hashes and the zip
+# hash are mutually consistent. validate_weights_receipt hashes the
+# installed files against this manifest before any enrollment or
+# generation: a changed, replaced, or incomplete tree fails closed
+# instead of running while result.json asserts the pinned hash.
+CHECKPOINTS_FILES = {
+    "base_speakers/EN/checkpoint.pth":
+        "1db1ae1a5c8ded049bd1536051489aefbfad4a5077c01c2257e9e88fa1bb8422",
+    "base_speakers/EN/config.json":
+        "f01c2ecbf115128d00e13acc57eadb89ac0579635c1a27c7957158bceb77e561",
+    "base_speakers/EN/en_default_se.pth":
+        "9cab24002eec738d0fe72cb73a34e57fbc3999c1bd4a1670a7b56ee4e3590ac9",
+    "base_speakers/EN/en_style_se.pth":
+        "6f698153be5004b90a8642d1157c89cae7dd296752a3276450ced6a17b8b98a9",
+    "base_speakers/ZH/checkpoint.pth":
+        "de9fb0eb749f3254130fe0172fcbb20e75f88a9b16b54dd0b73cac0dc40da7d9",
+    "base_speakers/ZH/config.json":
+        "dca3b59c0039b79be87af78cacf87c15796329458bd099fe0cf3a749e5a7b5cc",
+    "base_speakers/ZH/zh_default_se.pth":
+        "3b62e8264962059b8a84dd00b29e2fcccc92f5d3be90eec67dfa082c0cf58ccf",
+    "converter/checkpoint.pth":
+        "89ae83aa4e3668fef64b388b789ff7b0ce0def9f801069edfc18a00ea420748d",
+    "converter/config.json":
+        "86c61ff1ac3efb9fbf0246c727345793b34053fb1dd5b98e7f561201d4f90739",
+}
 
 DEFAULT_CHECKPOINTS_DIR = r"C:\forge-bridge\narration\checkpoints_v2"
 DEFAULT_RECEIPT_PATH = r"C:\forge-bridge\narration\receipt.json"
@@ -145,11 +179,13 @@ def weights_receipt_path(receipt_path: str | None = None) -> Path | None:
 def weights_sha256(receipt_path: str | None = None) -> str:
     """Weights hash from the setup receipt, else the pinned value.
 
-    The setup script records ``checkpoints_v2_zip_sha256`` in
-    C:\\forge-bridge\\narration\\receipt.json. Until that file exists
-    the pinned hash of the deterministic checkpoints zip is returned --
-    the same value the receipt will carry, since the zip build is
-    reproducible.
+    This is only an IDENTIFIER for the job binding (the canonical job
+    id derives from it) — it is NOT evidence the installed bytes are
+    the pinned weights. The trusted value is the one
+    validate_weights_receipt returns after checking the receipt and
+    the installed files; callers must validate before any enrollment
+    or generation. Until then the pinned value is returned so the
+    binding check can still name a tampered script precisely.
     """
     path = weights_receipt_path(receipt_path)
     if path is None:
@@ -161,6 +197,104 @@ def weights_sha256(receipt_path: str | None = None) -> str:
     except Exception as exc:  # receipt unreadable: pinned value, flagged
         log(f"WARNING: could not read receipt {path}: {exc}")
     return WEIGHTS_SHA256_PINNED
+
+
+def _same_dir(a, b) -> bool:
+    """True when two directory paths name the same directory.
+
+    Normalized (case-insensitive on Windows, where setup writes the
+    receipt) so a receipt bound to ``C:\\...\\checkpoints_v2`` matches
+    the same directory resolved with different casing or separators.
+    """
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(
+        os.path.normpath(str(b)))
+
+
+def validate_weights_receipt(receipt_path: str | None,
+                             checkpoints_dir) -> str:
+    """Validate the setup receipt and the installed checkpoint tree.
+
+    Before any enrollment or generation, require ALL of:
+    (a) a setup receipt exists — the explicit ``--receipt-path`` when
+        given, else the default setup receipt (``receipt.json``). A
+        missing receipt fails: the pinned hash is expected metadata,
+        not evidence of the bytes actually installed.
+    (b) the receipt parses as JSON and carries
+        ``checkpoints_v2_zip_sha256`` as a 64-character lowercase hex
+        digest exactly equal to ``WEIGHTS_SHA256_PINNED``.
+    (c) the receipt is bound to the resolved checkpoint directory:
+        it must carry ``checkpoints_dir`` naming the directory the
+        checkpoints were installed to, equal to ``checkpoints_dir``
+        (normalized). A receipt for another directory fails.
+    (d) every file in the pinned per-file manifest
+        (``CHECKPOINTS_FILES``) exists under ``checkpoints_dir`` and
+        hashes to its pinned value — an incomplete, replaced, or
+        changed tree fails.
+
+    Returns the validated hash (== ``WEIGHTS_SHA256_PINNED``).
+    Raises RuntimeError with a specific reason on any failure — the
+    caller fails the job closed with that reason.
+    """
+    # (a) Resolve the receipt file. An explicit path is authoritative:
+    # it does not fall back to the default.
+    if receipt_path:
+        path = Path(receipt_path)
+        if not path.is_file():
+            raise RuntimeError(
+                f"no setup receipt at {receipt_path}: run "
+                "tools/narration/setup-env.ps1 and pass its receipt.json")
+    else:
+        path = Path(DEFAULT_RECEIPT_PATH)
+        if not path.is_file():
+            raise RuntimeError(
+                "no setup receipt found (looked for "
+                f"{DEFAULT_RECEIPT_PATH}): run "
+                "tools/narration/setup-env.ps1 first — the pinned "
+                "weights hash alone is not proof the checkpoints "
+                "are installed")
+    try:
+        receipt = load_json(path)
+    except Exception as exc:
+        raise RuntimeError(f"malformed setup receipt {path}: {exc}")
+    if not isinstance(receipt, dict):
+        raise RuntimeError(f"malformed setup receipt {path}: not a JSON object")
+    # (b) The receipt hash must be exactly the pinned digest.
+    value = receipt.get("checkpoints_v2_zip_sha256")
+    if not isinstance(value, str) or len(value) != 64 or \
+            any(c not in "0123456789abcdef" for c in value):
+        raise RuntimeError(
+            f"setup receipt {path} has no valid checkpoints_v2_zip_sha256 "
+            "(must be a 64-character lowercase hex digest)")
+    if value != WEIGHTS_SHA256_PINNED:
+        raise RuntimeError(
+            f"setup receipt {path} checkpoints_v2_zip_sha256 does not "
+            "match the pinned weights hash "
+            f"({value[:16]}... != {WEIGHTS_SHA256_PINNED[:16]}...)")
+    # (c) The receipt must be bound to the resolved directory.
+    bound = receipt.get("checkpoints_dir")
+    if not isinstance(bound, str) or not bound:
+        raise RuntimeError(
+            f"setup receipt {path} does not record checkpoints_dir: "
+            "re-run tools/narration/setup-env.ps1 to write a bound receipt")
+    if not _same_dir(bound, checkpoints_dir):
+        raise RuntimeError(
+            f"setup receipt {path} is bound to checkpoints_dir {bound!r} "
+            f"but checkpoints resolved to {checkpoints_dir!r}: refusing "
+            "to use an unrelated checkpoint tree")
+    # (d) Every pinned file must exist under the resolved directory
+    # and hash to its pinned value.
+    for rel, expected in sorted(CHECKPOINTS_FILES.items()):
+        installed = Path(checkpoints_dir) / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"checkpoint file missing under {checkpoints_dir}: {rel} "
+                "(incomplete checkpoint tree — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"checkpoint file changed under {checkpoints_dir}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    return value
 
 
 def resolve_checkpoints_dir(cli_dir: str | None) -> Path:
@@ -355,6 +489,14 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
     speaker_embedding.json and enrollment.json (status "active"). Never
     trains anything. Raises on any failure; the caller fails the job.
     """
+    # Weights provenance (fix round 2, moved-head P1): enrollment must
+    # not use an unverified checkpoint tree. Validates the setup
+    # receipt (hash + directory binding) and the installed files
+    # against the pinned per-file manifest — before the reuse path
+    # too, since a reused enrollment still leads to generation with
+    # these checkpoints. Raises before any model work.
+    validate_weights_receipt(receipt_path, checkpoints_dir)
+
     import torch  # lazy: model stack only on the iBUYPOWER
 
     from openvoice import se_extractor
@@ -548,7 +690,10 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
     weights = weights_sha256(receipt_path)
     weights_from_receipt = weights_receipt_path(receipt_path) is not None
     if not weights_from_receipt:
-        log("weights SHA-256 from pinned code value (no receipt.json yet)")
+        # The pinned value is only the binding identifier here; the
+        # receipt validation below fails the job closed before any
+        # enrollment or generation when no receipt exists.
+        log("no setup receipt found yet (weights validation follows)")
 
     log(f"job {job_id} started (presenter {presenter_id})")
     append_audit(root, {"event": "job_started", "job_id": job_id,
@@ -558,6 +703,20 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
     consent_ok, reason, _consent = check_consent(root, presenter_id)
     if not consent_ok:
         return _fail(root, job_dir, job_id, reason,
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- Weights provenance (fix round 2, moved-head P1) ------------------
+    # Before any script work, enrollment, or generation: the setup
+    # receipt must exist, carry the pinned hash, be bound to the
+    # resolved checkpoint directory, and the installed files must hash
+    # to the pinned per-file manifest. The pinned hash alone is not
+    # evidence of the bytes installed. A failure here fails the job
+    # closed with the weights reason (never silently renders with an
+    # unverified tree while result.json asserts the pinned hash).
+    try:
+        weights = validate_weights_receipt(receipt_path, checkpoints_dir)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
                      consent_receipt_version=consent_version, weights=weights)
 
     try:

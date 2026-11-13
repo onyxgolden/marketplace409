@@ -636,11 +636,12 @@ def test_verify_job_binding_same_payload_replay_verifies():
         manifest, script, job_id, _BINDING_WEIGHTS) == []
 
 
-def test_runner_process_job_rejects_tampered_script(tmp_path):
+def test_runner_process_job_rejects_tampered_script(tmp_path, monkeypatch):
     """End-to-end wiring: a tampered script fails the job closed in
     process_job BEFORE capture checks (the capture file does not even
     exist here, yet the failure reason is the binding, not the
-    missing capture), with the weights source named."""
+    missing capture), with the weights source named. The weights
+    receipt is valid here so the job reaches the binding check."""
     # Consent preflight must pass so the job reaches the binding check.
     pdir = tmp_path / "presenters" / "tyler-welch"
     pdir.mkdir(parents=True)
@@ -651,8 +652,9 @@ def test_runner_process_job_rejects_tampered_script(tmp_path):
         "scope": ["voice"],
         "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
         "consent_artifact_path": "consent-artifact.mp4"}))
-    # Job created with the pinned weights (no receipt.json here),
-    # then the script text tampered after creation.
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    # Job created with the pinned weights, then the script text
+    # tampered after creation.
     script_hash = _BINDING_SCRIPT_HASH
     job_id = lib.canonical_job_id(
         "tyler-welch", 1, "openvoice-v2", "checkpoints_v2_0417",
@@ -667,13 +669,13 @@ def test_runner_process_job_rejects_tampered_script(tmp_path):
     script["segments"][0]["text"] = "Tampered after creation."
     (job_dir / "script.json").write_text(json.dumps(script))
     rc = runner.process_job(tmp_path, job_dir, tmp_path / "ckpt",
-                            "ffmpeg", "ffprobe")
+                            "ffmpeg", "ffprobe", receipt_path)
     assert rc == 2
     result = json.loads((job_dir / "result.json").read_text())
     assert result["status"] == "failed"
     assert "job binding verification failed" in result["failure_reason"]
     assert "script_sha256 mismatch" in result["failure_reason"]
-    assert "pinned in code (no receipt.json yet)" in result["failure_reason"]
+    assert "setup receipt (receipt.json)" in result["failure_reason"]
     assert (job_dir / ".failed").exists()
 
 
@@ -782,13 +784,37 @@ def test_presenter_lock_cross_process_contention(tmp_path):
 
 # --- runner completion publication (fix round 2) -----------------------------
 
-def _completion_spool(tmp_path):
+def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
+    """Fake-but-valid weights installation for tests.
+
+    Writes the nine manifest files with small fake contents under
+    ``ckpt_dir``, a setup receipt bound to that directory carrying
+    the pinned hash, and monkeypatches the runner's per-file manifest
+    to the fake files' real hashes. Returns the receipt path (str).
+    The production manifest (real 160 MB weights) is NOT used here —
+    the validation logic, not the weights bytes, is under test.
+    """
+    fake_hashes = {}
+    for rel in sorted(runner.CHECKPOINTS_FILES):
+        dest = Path(ckpt_dir) / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f"fake weights bytes for {rel}".encode())
+        fake_hashes[rel] = lib.sha256_file(dest)
+    monkeypatch.setattr(runner, "CHECKPOINTS_FILES", fake_hashes)
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps({
+        "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED,
+        "checkpoints_dir": str(ckpt_dir)}))
+    return str(receipt)
+
+
+def _completion_spool(tmp_path, monkeypatch):
     """Spool with active consent + a valid processing job ready to run.
 
-    Returns (root, job_dir, job_id). Heavy work (probe/enroll/TTS/
-    render) is stubbed by the caller via monkeypatch; only the
-    consent checks, binding verification, and completion publication
-    run for real.
+    Returns (root, job_dir, job_id, receipt_path). Heavy work
+    (probe/enroll/TTS/render) is stubbed by the caller via
+    monkeypatch; only the consent checks, binding verification,
+    weights validation, and completion publication run for real.
     """
     root = tmp_path
     pdir = root / "presenters" / "tyler-welch"
@@ -813,10 +839,8 @@ def _completion_spool(tmp_path):
     manifest["capture_path"] = str(capture)
     (job_dir / "job.json").write_text(json.dumps(manifest))
     (job_dir / "script.json").write_text(json.dumps(_binding_script(job_id)))
-    ckpt = tmp_path / "ckpt" / "converter"
-    ckpt.mkdir(parents=True)
-    (ckpt / "config.json").write_text("{}")
-    return root, job_dir, job_id
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    return root, job_dir, job_id, receipt_path
 
 
 def _stub_heavy_runner(monkeypatch, revoke_during_render=False):
@@ -867,10 +891,10 @@ def _stub_heavy_runner(monkeypatch, revoke_during_render=False):
 
 
 def test_runner_completion_publishes_under_active_consent(tmp_path, monkeypatch):
-    root, job_dir, job_id = _completion_spool(tmp_path)
+    root, job_dir, job_id, receipt_path = _completion_spool(tmp_path, monkeypatch)
     _stub_heavy_runner(monkeypatch)
     rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
-                            "ffmpeg", "ffprobe")
+                            "ffmpeg", "ffprobe", receipt_path)
     assert rc == 0
     result = json.loads((job_dir / "result.json").read_text())
     assert result["status"] == "done"
@@ -891,10 +915,10 @@ def test_runner_completion_revoked_mid_render_fails_closed(tmp_path, monkeypatch
     finished while consent was active, revocation landed before
     publication. The job must fail as consent_revoked and publish
     NOTHING — no result success, no managed output, no .done."""
-    root, job_dir, job_id = _completion_spool(tmp_path)
+    root, job_dir, job_id, receipt_path = _completion_spool(tmp_path, monkeypatch)
     _stub_heavy_runner(monkeypatch, revoke_during_render=True)
     rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
-                            "ffmpeg", "ffprobe")
+                            "ffmpeg", "ffprobe", receipt_path)
     assert rc == 2
     result = json.loads((job_dir / "result.json").read_text())
     assert result["status"] == "failed"
@@ -911,7 +935,7 @@ def test_runner_completion_holds_presenter_lock(tmp_path, monkeypatch):
     acquisition attempted while result.json is being written must
     time out — proving the completion critical section is serialized
     against revocation, not merely checked before it."""
-    root, job_dir, job_id = _completion_spool(tmp_path)
+    root, job_dir, job_id, receipt_path = _completion_spool(tmp_path, monkeypatch)
     _stub_heavy_runner(monkeypatch)
     real_write_json = runner.write_json
     lock_seen_held = []
@@ -927,6 +951,145 @@ def test_runner_completion_holds_presenter_lock(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "write_json", spying_write_json)
     rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
-                            "ffmpeg", "ffprobe")
+                            "ffmpeg", "ffprobe", receipt_path)
     assert rc == 0
     assert lock_seen_held == [True]
+
+
+# --- Weights receipt validation (moved-head re-review P1) ----------------
+# The runner must not claim the pinned weights hash for bytes it did
+# not verify. validate_weights_receipt requires a setup receipt with
+# the pinned hash bound to the resolved checkpoint directory, and
+# hashes the installed files against the pinned per-file manifest.
+
+
+def test_weights_receipt_happy_path(tmp_path, monkeypatch):
+    """Verified happy path: receipt carries the pinned hash, is bound
+    to the resolved directory, and all nine files hash to the pinned
+    manifest. Returns the pinned hash."""
+    ckpt = tmp_path / "ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
+    assert runner.validate_weights_receipt(receipt_path, ckpt) == \
+        runner.WEIGHTS_SHA256_PINNED
+
+
+def test_weights_receipt_custom_checkpoint_directory(tmp_path, monkeypatch):
+    """resolve_checkpoints_dir accepts an env/CLI directory — and the
+    receipt must be bound to THAT directory. A receipt bound to the
+    custom directory validates; the same receipt fails when the job
+    resolves a different directory."""
+    custom = tmp_path / "custom-ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, custom)
+    assert runner.validate_weights_receipt(receipt_path, custom) == \
+        runner.WEIGHTS_SHA256_PINNED
+    other = tmp_path / "other-ckpt"
+    other.mkdir()
+    with pytest.raises(RuntimeError, match="bound to checkpoints_dir"):
+        runner.validate_weights_receipt(receipt_path, other)
+
+
+def test_weights_receipt_no_receipt(tmp_path, monkeypatch):
+    """No receipt at all: fail closed. The pinned hash is expected
+    metadata, not evidence of the installed bytes."""
+    ckpt = tmp_path / "ckpt"
+    _weights_fixture(tmp_path, monkeypatch, ckpt)
+    missing = str(tmp_path / "no-such-receipt.json")
+    with pytest.raises(RuntimeError, match="no setup receipt"):
+        runner.validate_weights_receipt(missing, ckpt)
+
+
+def test_weights_receipt_malformed(tmp_path, monkeypatch):
+    """Receipt that is not JSON, or not an object, or carries no
+    usable hash: fail closed."""
+    ckpt = tmp_path / "ckpt"
+    _weights_fixture(tmp_path, monkeypatch, ckpt)
+    bad = tmp_path / "bad-receipt.json"
+    bad.write_text("{ not json")
+    with pytest.raises(RuntimeError, match="malformed setup receipt"):
+        runner.validate_weights_receipt(str(bad), ckpt)
+    empty = tmp_path / "empty-receipt.json"
+    empty.write_text(json.dumps({"something_else": 1}))
+    with pytest.raises(RuntimeError, match="no valid checkpoints_v2"):
+        runner.validate_weights_receipt(str(empty), ckpt)
+
+
+def test_weights_receipt_mismatched_hash(tmp_path, monkeypatch):
+    """Receipt hash that is not the pinned digest — a different hash,
+    a short hash, or an uppercase hash: fail closed. A receipt's
+    nonempty string is no longer accepted on its own."""
+    ckpt = tmp_path / "ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
+    for bad_hash in ("0" * 64, "abc",
+                     runner.WEIGHTS_SHA256_PINNED.upper()):
+        receipt = tmp_path / "mismatch-receipt.json"
+        receipt.write_text(json.dumps({
+            "checkpoints_v2_zip_sha256": bad_hash,
+            "checkpoints_dir": str(ckpt)}))
+        with pytest.raises(RuntimeError):
+            runner.validate_weights_receipt(str(receipt), ckpt)
+
+
+def test_weights_receipt_wrong_directory(tmp_path, monkeypatch):
+    """Receipt bound to one directory, checkpoints resolved to
+    another: fail closed. Also covers a receipt that records no
+    directory at all."""
+    ckpt = tmp_path / "ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
+    other_dir = tmp_path / "elsewhere"
+    other_dir.mkdir()
+    bound_elsewhere = tmp_path / "bound-elsewhere.json"
+    bound_elsewhere.write_text(json.dumps({
+        "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED,
+        "checkpoints_dir": str(other_dir)}))
+    with pytest.raises(RuntimeError, match="bound to checkpoints_dir"):
+        runner.validate_weights_receipt(str(bound_elsewhere), ckpt)
+    no_dir = tmp_path / "no-dir.json"
+    no_dir.write_text(json.dumps({
+        "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED}))
+    with pytest.raises(RuntimeError, match="does not record checkpoints_dir"):
+        runner.validate_weights_receipt(str(no_dir), ckpt)
+
+
+def test_weights_receipt_missing_checkpoint_file(tmp_path, monkeypatch):
+    """An incomplete tree — one manifest file absent — fails closed,
+    even with a valid receipt."""
+    ckpt = tmp_path / "ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
+    (ckpt / "converter" / "checkpoint.pth").unlink()
+    with pytest.raises(RuntimeError, match="checkpoint file missing"):
+        runner.validate_weights_receipt(receipt_path, ckpt)
+
+
+def test_weights_receipt_changed_checkpoint_file(tmp_path, monkeypatch):
+    """A changed checkpoint file — same name, different bytes — fails
+    closed and names the file. This is the verdict's 'replaced tree'
+    leg: the receipt hash alone cannot catch it, the per-file
+    manifest does."""
+    ckpt = tmp_path / "ckpt"
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
+    changed = ckpt / "base_speakers" / "EN" / "checkpoint.pth"
+    changed.write_bytes(b"replaced weights bytes")
+    with pytest.raises(RuntimeError) as excinfo:
+        runner.validate_weights_receipt(receipt_path, ckpt)
+    assert "checkpoint file changed" in str(excinfo.value)
+    assert "base_speakers/EN/checkpoint.pth" in str(excinfo.value)
+
+
+def test_runner_process_job_rejects_missing_receipt(tmp_path, monkeypatch):
+    """End-to-end: a job with active consent and a valid script fails
+    closed with the weights reason when no setup receipt exists —
+    before enrollment or any model work. Nothing is rendered and no
+    result claims the pinned hash."""
+    root, job_dir, job_id, _receipt = _completion_spool(tmp_path, monkeypatch)
+    (tmp_path / "receipt.json").unlink()  # spool built a valid one
+    ckpt = tmp_path / "ckpt"
+    _stub_heavy_runner(monkeypatch)
+    rc = runner.process_job(root, job_dir, ckpt,
+                            "ffmpeg", "ffprobe", str(tmp_path / "receipt.json"))
+    assert rc == 2
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "failed"
+    assert "no setup receipt" in result["failure_reason"]
+    assert (job_dir / ".failed").exists()
+    assert not (job_dir / ".done").exists()
+    assert not (job_dir / "output.mp4").exists()

@@ -442,6 +442,26 @@ pinned in the Rust core, the runner, and `LICENSE-RECEIPT.md`. The
 live enrollment / generation proof still needs a setup run with the
 new step 6 — it is not claimed as done here.
 
+**Weights provenance (fix round 2, moved-head re-review):** the pinned
+hash is expected metadata, not evidence of the installed bytes — the
+runner never claims it for an unverified tree. Before any enrollment
+or generation, `validate_weights_receipt` requires ALL of: a setup
+receipt exists (the explicit `--receipt-path` when given, else the
+default `receipt.json`); it parses and carries
+`checkpoints_v2_zip_sha256` as a 64-character lowercase hex digest
+exactly equal to the pinned hash; it records `checkpoints_dir` naming
+the directory the checkpoints were installed to, equal to the
+resolved checkpoint directory; and every one of the nine installed
+files hashes to its pinned per-file value (`CHECKPOINTS_FILES` in
+the runner — full SHA-256s verified 2026-11-13 from the official
+Hugging Face repo at the pinned revision, and the deterministic zip
+rebuilt from exactly those bytes hashes to the pinned hash, so the
+per-file manifest and the zip hash are mutually consistent). A
+missing, malformed, mismatched, or wrong-directory receipt, a missing
+file, or a changed file fails the job closed with the weights reason
+before any model work. Setup writes the receipt with the lowercase
+hash and the `checkpoints_dir` binding.
+
 Copy the sidecar into place first:
 
 ```powershell
