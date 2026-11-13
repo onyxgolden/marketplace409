@@ -42,6 +42,12 @@ describe("mapHierarchyRpcError", () => {
       409,
     );
     expect(mapHierarchyRpcError({ message: "FORGE_HIERARCHY_ARCHIVED" }).httpStatus).toBe(409);
+    expect(mapHierarchyRpcError({ message: "FORGE_HIERARCHY_PARENT_INACTIVE" }).httpStatus).toBe(
+      409,
+    );
+    expect(mapHierarchyRpcError({ message: "FORGE_HIERARCHY_PARENT_INACTIVE" }).error).toBe(
+      "The parent client or site is inactive. Activate it first, or pick an active one.",
+    );
     expect(mapHierarchyRpcError({ message: "FORGE_HIERARCHY_HAS_CHILDREN: x" }).httpStatus).toBe(
       409,
     );
@@ -56,6 +62,23 @@ describe("mapHierarchyRpcError", () => {
 
   it("maps a raw unique violation to 409 and a raw FK violation to 404", () => {
     expect(mapHierarchyRpcError({ code: "23505", message: "duplicate key" }).httpStatus).toBe(409);
+    expect(mapHierarchyRpcError({ code: "23505", message: "duplicate key" }).error).toBe(
+      "A record with that name already exists here.",
+    );
+    // A code collision names the violated constraint: it maps to
+    // DUPLICATE_CODE, not the generic duplicate-name error.
+    expect(
+      mapHierarchyRpcError({
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "forge_projects_code_uq"',
+      }),
+    ).toMatchObject({ httpStatus: 409 });
+    expect(
+      mapHierarchyRpcError({
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "forge_projects_code_uq"',
+      }).error,
+    ).toBe("A project with that code already exists in this workspace.");
     expect(mapHierarchyRpcError({ code: "23503", message: "violates foreign key" }).httpStatus).toBe(
       404,
     );

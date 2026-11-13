@@ -31,6 +31,8 @@ export const HIERARCHY_ERRORS = Object.freeze({
   FORBIDDEN: "You do not have permission to manage the client, site, and project hierarchy.",
   NOT_FOUND: "That client, site, or project does not exist in this workspace.",
   ARCHIVED: "That project (or its site or client) is archived. Pick an active project instead.",
+  PARENT_INACTIVE:
+    "The parent client or site is inactive. Activate it first, or pick an active one.",
   STALE_VERSION:
     "This record was changed by someone else. Reload and try again.",
   REQUEST_ID_CONFLICT:

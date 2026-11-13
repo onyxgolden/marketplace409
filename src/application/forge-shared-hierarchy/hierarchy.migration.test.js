@@ -478,23 +478,38 @@ describe("forge shared hierarchy migration (PR A)", () => {
     expect(project.site_id).toBe(site.id);
     expect(project.project_code).toBe("TA-2027");
     expect(project.status).toBe("planned");
-    // The selector lists ACTIVE rows only: a freshly created project
-    // is 'planned', so it does not appear until it is activated.
-    const beforeActivate = await selector(db, OWNER_A, OWNER_A);
-    expect(beforeActivate.clients[0].sites).toHaveLength(1);
-    expect(beforeActivate.clients[0].sites[0].projects).toHaveLength(0);
-    const activated = await updateProject(db, OWNER_A, OWNER_A, project.id,
-      { status: "active" }, { expectedVersion: 1, requestId: "req_activate_1" });
-    expect(activated.status).toBe("active");
-    expect(activated.version).toBe(2);
+    // A freshly created project is 'planned' — and the selector
+    // lists every non-archived state, so it appears immediately
+    // with its status explicit (fix round 1: the old active-only
+    // filter hid it until activation).
     const tree = await selector(db, OWNER_A, OWNER_A);
     expect(tree.clients[0].sites).toHaveLength(1);
     expect(tree.clients[0].sites[0].projects).toHaveLength(1);
     expect(tree.clients[0].sites[0].projects[0].id).toBe(project.id);
+    expect(tree.clients[0].sites[0].projects[0].status).toBe("planned");
+    // On-hold and complete projects stay selectable, with the status
+    // carried in the read model.
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { status: "on_hold" }, { expectedVersion: 1, requestId: "req_hold_1" });
+    const onHold = await selector(db, OWNER_A, OWNER_A);
+    expect(onHold.clients[0].sites[0].projects[0].status).toBe("on_hold");
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { status: "complete" }, { expectedVersion: 2, requestId: "req_complete_1" });
+    const done = await selector(db, OWNER_A, OWNER_A);
+    expect(done.clients[0].sites[0].projects[0].status).toBe("complete");
     const validated = await validateSelection(db, OWNER_A, OWNER_A, project.id);
     expect(validated.client.id).toBe(client.id);
     expect(validated.site.id).toBe(site.id);
     expect(validated.project.id).toBe(project.id);
+    // Only archived projects leave the selector — and validate
+    // reports ARCHIVED for them.
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { status: "archived" }, { expectedVersion: 3, requestId: "req_archive_1" });
+    const archived = await selector(db, OWNER_A, OWNER_A);
+    expect(archived.clients[0].sites[0].projects).toHaveLength(0);
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_validate_selection('${OWNER_A}', '${project.id}');`,
+      "FORGE_HIERARCHY_ARCHIVED");
     // A missing project id and an unknown project id are NOT_FOUND.
     await expectRpcError(db, OWNER_A,
       `select forge_hierarchy_validate_selection('${OWNER_A}', null);`,
@@ -689,6 +704,176 @@ describe("forge shared hierarchy migration (PR A)", () => {
     expect((await auditFor(db, OWNER_A, "client", client.id))).toHaveLength(2);
   });
 
+  it60("stale same-value writes are 409 for client, site, and project; a fresh no-op still returns the row", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "La Porte Yard");
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround 2027");
+    // A real change moves each row to version 2.
+    await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { name: "Acme Industrial LLC" }, { expectedVersion: 1, requestId: "req_sv_1" });
+    await updateSite(db, OWNER_A, OWNER_A, site.id,
+      { name: "La Porte Yard East" }, { expectedVersion: 1, requestId: "req_sv_2" });
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { name: "Turnaround 2027 Revised" }, { expectedVersion: 1, requestId: "req_sv_3" });
+    // A caller holding the OLD version re-submits the CURRENT values
+    // with a FRESH request id: that is a stale write, not a replay,
+    // and it must 409 even though nothing would change.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_client_update('${OWNER_A}', '${client.id}', 'Acme Industrial LLC', null, null, null, 1, 'req_sv_4');`,
+      "FORGE_HIERARCHY_STALE_VERSION");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_update('${OWNER_A}', '${site.id}', null, 'La Porte Yard East', null, null, null, null, null, null, null, null, 1, 'req_sv_5');`,
+      "FORGE_HIERARCHY_STALE_VERSION");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_update('${OWNER_A}', '${project.id}', null, 'Turnaround 2027 Revised', null, null, null, null, null, null, 1, 'req_sv_6');`,
+      "FORGE_HIERARCHY_STALE_VERSION");
+    // The same request id with the same payload IS a replay: it
+    // returns the current row even though the expected version it
+    // carries is now stale. Only replay bypasses the version check.
+    const replay = await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { name: "Acme Industrial LLC" }, { expectedVersion: 1, requestId: "req_sv_1" });
+    expect(replay.version).toBe(2);
+    // And a no-op at the CURRENT version still returns the row with
+    // no bump and no audit row.
+    const noop = await updateClient(db, OWNER_A, OWNER_A, client.id, {},
+      { expectedVersion: 2, requestId: "req_sv_7" });
+    expect(noop.version).toBe(2);
+    expect((await auditFor(db, OWNER_A, "client", client.id))).toHaveLength(2);
+  });
+
+  it60("create and reparent reject archived and inactive parents; an active parent still works", async () => {
+    const active = await createClient(db, OWNER_A, OWNER_A, "Active Co");
+    const archived = await createClient(db, OWNER_A, OWNER_A, "Archived Co");
+    const inactive = await createClient(db, OWNER_A, OWNER_A, "Inactive Co");
+    await updateClient(db, OWNER_A, OWNER_A, archived.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_par_1" });
+    await updateClient(db, OWNER_A, OWNER_A, inactive.id,
+      { status: "inactive" }, { expectedVersion: 1, requestId: "req_par_2" });
+    // Site create under an archived or inactive client.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_create('${OWNER_A}', '${archived.id}', 'Dead Yard', 'other', null, null, null, null, null, null, 'req_par_3');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_create('${OWNER_A}', '${inactive.id}', 'Quiet Yard', 'other', null, null, null, null, null, null, 'req_par_4');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    // Project create under an archived or inactive site, and under an
+    // active site whose client is archived or inactive.
+    const goodSite = await createSite(db, OWNER_A, OWNER_A, active.id, "Good Yard");
+    const archivedSite = await createSite(db, OWNER_A, OWNER_A, active.id, "Archived Yard");
+    const inactiveSite = await createSite(db, OWNER_A, OWNER_A, active.id, "Inactive Yard");
+    await updateSite(db, OWNER_A, OWNER_A, archivedSite.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_par_5" });
+    await updateSite(db, OWNER_A, OWNER_A, inactiveSite.id,
+      { status: "inactive" }, { expectedVersion: 1, requestId: "req_par_6" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_create('${OWNER_A}', '${archivedSite.id}', 'Dead Job', null, null, null, null, null, 'req_par_7');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_create('${OWNER_A}', '${inactiveSite.id}', 'Quiet Job', null, null, null, null, null, 'req_par_8');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    const doomedClient = await createClient(db, OWNER_A, OWNER_A, "Doomed Co");
+    const doomedSite = await createSite(db, OWNER_A, OWNER_A, doomedClient.id, "Doomed Yard");
+    await updateClient(db, OWNER_A, OWNER_A, doomedClient.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_par_9" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_create('${OWNER_A}', '${doomedSite.id}', 'Hidden Job', null, null, null, null, null, 'req_par_10');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    const quietClient = await createClient(db, OWNER_A, OWNER_A, "Quiet Co");
+    const quietSite = await createSite(db, OWNER_A, OWNER_A, quietClient.id, "Quiet Yard");
+    await updateClient(db, OWNER_A, OWNER_A, quietClient.id,
+      { status: "inactive" }, { expectedVersion: 1, requestId: "req_par_11" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_create('${OWNER_A}', '${quietSite.id}', 'Hidden Job', null, null, null, null, null, 'req_par_12');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    // Reparent: a site move to an archived/inactive client, and a
+    // project move to an archived/inactive site — both rejected, and
+    // a move to an active parent still succeeds.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_update('${OWNER_A}', '${goodSite.id}', '${archived.id}', null, null, null, null, null, null, null, null, null, 1, 'req_par_13');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_update('${OWNER_A}', '${goodSite.id}', '${inactive.id}', null, null, null, null, null, null, null, null, null, 1, 'req_par_14');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    const project = await createProject(db, OWNER_A, OWNER_A, goodSite.id, "Live Job");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_update('${OWNER_A}', '${project.id}', '${archivedSite.id}', null, null, null, null, null, null, null, 1, 'req_par_15');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_update('${OWNER_A}', '${project.id}', '${inactiveSite.id}', null, null, null, null, null, null, null, 1, 'req_par_16');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_update('${OWNER_A}', '${project.id}', '${doomedSite.id}', null, null, null, null, null, null, null, 1, 'req_par_17');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    const otherSite = await createSite(db, OWNER_A, OWNER_A, active.id, "Other Yard");
+    const moved = await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: otherSite.id },
+      { expectedVersion: 1, requestId: "req_par_18" });
+    expect(moved.site_id).toBe(otherSite.id);
+  });
+
+  it60("delete: a request id used by an update, archive, or reparent conflicts; an exact delete replay returns deleted", async () => {
+    // Client: update with req_delx_1, archive with req_delx_2 — both
+    // ids are spent; only a fresh id deletes.
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { name: "Acme Industrial LLC" }, { expectedVersion: 1, requestId: "req_delx_1" });
+    await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { status: "archived" }, { expectedVersion: 2, requestId: "req_delx_2" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_client_delete('${OWNER_A}', '${client.id}', 3, 'req_delx_1');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_client_delete('${OWNER_A}', '${client.id}', 3, 'req_delx_2');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    const deletedClient = await deleteClient(db, OWNER_A, OWNER_A, client.id,
+      { expectedVersion: 3, requestId: "req_delx_3" });
+    expect(deletedClient.deleted).toBe(true);
+    const replayedClient = await deleteClient(db, OWNER_A, OWNER_A, client.id,
+      { expectedVersion: 3, requestId: "req_delx_3" });
+    expect(replayedClient.deleted).toBe(true);
+    expect((await auditFor(db, OWNER_A, "client", client.id))).toHaveLength(4);
+    // Site: reparent with req_dely_1, archive with req_dely_2.
+    const client2 = await createClient(db, OWNER_A, OWNER_A, "Beta Holdings");
+    const client3 = await createClient(db, OWNER_A, OWNER_A, "Gamma Group");
+    const site = await createSite(db, OWNER_A, OWNER_A, client2.id, "La Porte Yard");
+    await updateSite(db, OWNER_A, OWNER_A, site.id, { clientId: client3.id },
+      { expectedVersion: 1, requestId: "req_dely_1" });
+    await updateSite(db, OWNER_A, OWNER_A, site.id,
+      { status: "archived" }, { expectedVersion: 2, requestId: "req_dely_2" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_delete('${OWNER_A}', '${site.id}', 3, 'req_dely_1');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_delete('${OWNER_A}', '${site.id}', 3, 'req_dely_2');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    const deletedSite = await deleteSite(db, OWNER_A, OWNER_A, site.id,
+      { expectedVersion: 3, requestId: "req_dely_3" });
+    expect(deletedSite.deleted).toBe(true);
+    const replayedSite = await deleteSite(db, OWNER_A, OWNER_A, site.id,
+      { expectedVersion: 3, requestId: "req_dely_3" });
+    expect(replayedSite.deleted).toBe(true);
+    expect((await auditFor(db, OWNER_A, "site", site.id))).toHaveLength(4);
+    // Project: update with req_delz_1, archive with req_delz_2.
+    const projectSite = await createSite(db, OWNER_A, OWNER_A, client2.id, "Second Yard");
+    const project = await createProject(db, OWNER_A, OWNER_A, projectSite.id, "Turnaround 2027");
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { name: "Turnaround 2027 Revised" }, { expectedVersion: 1, requestId: "req_delz_1" });
+    await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { status: "archived" }, { expectedVersion: 2, requestId: "req_delz_2" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_delete('${OWNER_A}', '${project.id}', 3, 'req_delz_1');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_delete('${OWNER_A}', '${project.id}', 3, 'req_delz_2');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    const deletedProject = await deleteProject(db, OWNER_A, OWNER_A, project.id,
+      { expectedVersion: 3, requestId: "req_delz_3" });
+    expect(deletedProject.deleted).toBe(true);
+    const replayedProject = await deleteProject(db, OWNER_A, OWNER_A, project.id,
+      { expectedVersion: 3, requestId: "req_delz_3" });
+    expect(replayedProject.deleted).toBe(true);
+    expect((await auditFor(db, OWNER_A, "project", project.id))).toHaveLength(4);
+  });
+
   it60("archive/restore are recorded actions; archived rows leave the selector; validate_selection reports ARCHIVED", async () => {
     const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
     const site = await createSite(db, OWNER_A, OWNER_A, client.id, "La Porte Yard");
@@ -721,9 +906,8 @@ describe("forge shared hierarchy migration (PR A)", () => {
     const clientB = await createClient(db, OWNER_A, OWNER_A, "Beta Holdings");
     const site = await createSite(db, OWNER_A, OWNER_A, clientA.id, "La Porte Yard");
     const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround 2027");
-    // Activate the project first: the selector lists active rows only.
-    await updateProject(db, OWNER_A, OWNER_A, project.id,
-      { status: "active" }, { expectedVersion: 1, requestId: "req_rep_0" });
+    // No activation step: the selector lists every non-archived
+    // project state, so the planned project is visible already.
     const moved = await updateSite(db, OWNER_A, OWNER_A, site.id, { clientId: clientB.id },
       { expectedVersion: 1, requestId: "req_rep_1" });
     expect(moved.client_id).toBe(clientB.id);
@@ -738,18 +922,18 @@ describe("forge shared hierarchy migration (PR A)", () => {
     expect(tree.clients.find((c) => c.id === clientB.id).sites[0].projects[0].id).toBe(project.id);
     expect(tree.clients.find((c) => c.id === clientA.id).sites).toEqual([]);
     // A project reparent moves it to another site. (The project is
-    // version 2 after the activation above; the site move did not bump
-    // the project's version.)
+    // still version 1 — creating it did not bump anything, and the
+    // site move did not bump the project's version.)
     const site2 = await createSite(db, OWNER_A, OWNER_A, clientB.id, "Second Yard");
     const movedProject = await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: site2.id },
-      { expectedVersion: 2, requestId: "req_rep_2" });
+      { expectedVersion: 1, requestId: "req_rep_2" });
     expect(movedProject.site_id).toBe(site2.id);
-    // Audit trail: create, activate, reparent.
+    // Audit trail: create, reparent.
     const projectAudit = await auditFor(db, OWNER_A, "project", project.id);
-    expect(projectAudit).toHaveLength(3);
-    expect(projectAudit[2].action).toBe("reparent");
-    expect(projectAudit[2].new_values.changed.site_id).toBe(site2.id);
-    expect(projectAudit[2].new_values.row.site_id).toBe(site2.id);
+    expect(projectAudit).toHaveLength(2);
+    expect(projectAudit[1].action).toBe("reparent");
+    expect(projectAudit[1].new_values.changed.site_id).toBe(site2.id);
+    expect(projectAudit[1].new_values.row.site_id).toBe(site2.id);
     // Reparenting to a parent in another workspace is rejected.
     const clientC = await createClient(db, OWNER_B, OWNER_B, "Other Owner Co");
     await expectRpcError(db, OWNER_A,
@@ -1143,12 +1327,11 @@ describe.skipIf(!HAS_REAL_PG)("forge shared hierarchy migration: real-PostgreSQL
   });
 
   it60("two sessions updating the same client at the same version: one wins, the other gets 409, no lost audit/update pair", async () => {
-    // NOTE: the two racers must request DIFFERENT changes. Two sessions
-    // requesting the IDENTICAL change converge: the loser reads the
-    // already-applied row and returns it as a no-op (one audit row,
-    // version 2) — that is the migration's intended idempotent
-    // behavior, not a lost update. The 409 needs a genuinely
-    // conflicting change-set.
+    // NOTE: the two racers request DIFFERENT changes here. Two
+    // sessions requesting the IDENTICAL change are covered by the
+    // next test: distinct request ids are different commands, so the
+    // loser 409s even on an identical payload — convergence is
+    // rejected; only a same-request-ID replay returns the row.
     const { rows: created } = await pgAsUser(pgClient, OWNER_A, `
       select forge_hierarchy_client_create('${OWNER_A}', 'Race Update Client', null, null, 'req_race_upd_0') as v;`);
     const clientId = created[0].v.id;
@@ -1181,6 +1364,139 @@ describe.skipIf(!HAS_REAL_PG)("forge shared hierarchy migration: real-PostgreSQL
     } finally {
       await clientA.end().catch(() => {});
       await clientB.end().catch(() => {});
+    }
+  });
+
+  it60("two sessions updating with the identical change-set and distinct request ids: one wins, the other gets 409 (client, site, project)", async () => {
+    // Distinct request ids are different commands: the loser 409s
+    // even when its payload is identical to the winner's. Only a
+    // same-request-ID replay returns the applied row.
+    const { rows: createdClient } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_client_create('${OWNER_A}', 'Race Same Client', null, null, 'req_race_same_0') as v;`);
+    const clientId = createdClient[0].v.id;
+    const { rows: createdSite } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_site_create('${OWNER_A}', '${clientId}', 'Race Same Yard', 'other', null, null, null, null, null, null, 'req_race_same_1') as v;`);
+    const siteId = createdSite[0].v.id;
+    const { rows: createdProject } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_project_create('${OWNER_A}', '${siteId}', 'Race Same Job', null, null, null, null, null, 'req_race_same_2') as v;`);
+    const projectId = createdProject[0].v.id;
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    try {
+      const race = async (sqlA, sqlB) => {
+        const results = await Promise.allSettled([
+          pgAsUser(clientA, OWNER_A, sqlA),
+          pgAsUser(clientB, OWNER_A, sqlB),
+        ]);
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(String(rejected[0].reason?.message ?? rejected[0].reason)).toMatch(/FORGE_HIERARCHY_STALE_VERSION/);
+      };
+      await race(
+        `select forge_hierarchy_client_update('${OWNER_A}', '${clientId}', 'Race Same Winner', null, null, null, 1, 'req_race_same_a') as v;`,
+        `select forge_hierarchy_client_update('${OWNER_A}', '${clientId}', 'Race Same Winner', null, null, null, 1, 'req_race_same_b') as v;`);
+      await race(
+        `select forge_hierarchy_site_update('${OWNER_A}', '${siteId}', null, 'Race Same Yard East', null, null, null, null, null, null, null, null, 1, 'req_race_same_c') as v;`,
+        `select forge_hierarchy_site_update('${OWNER_A}', '${siteId}', null, 'Race Same Yard East', null, null, null, null, null, null, null, null, 1, 'req_race_same_d') as v;`);
+      await race(
+        `select forge_hierarchy_project_update('${OWNER_A}', '${projectId}', null, 'Race Same Job East', null, null, null, null, null, null, 1, 'req_race_same_e') as v;`,
+        `select forge_hierarchy_project_update('${OWNER_A}', '${projectId}', null, 'Race Same Job East', null, null, null, null, null, null, 1, 'req_race_same_f') as v;`);
+      const { rows: client } = await pgClient.query(`
+        select name, version from forge_clients where owner_id = '${OWNER_A}' and id = '${clientId}';`);
+      expect(client[0].name).toBe("Race Same Winner");
+      expect(client[0].version).toBe(2);
+      const { rows: site } = await pgClient.query(`
+        select name, version from forge_sites where owner_id = '${OWNER_A}' and id = '${siteId}';`);
+      expect(site[0].name).toBe("Race Same Yard East");
+      expect(site[0].version).toBe(2);
+      const { rows: project } = await pgClient.query(`
+        select name, version from forge_projects where owner_id = '${OWNER_A}' and id = '${projectId}';`);
+      expect(project[0].name).toBe("Race Same Job East");
+      expect(project[0].version).toBe(2);
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+    }
+  });
+
+  it60("two sessions creating projects with the same code: one wins, the other gets DUPLICATE_CODE", async () => {
+    const { rows: createdClient } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_client_create('${OWNER_A}', 'Race Code Client', null, null, 'req_race_code_0') as v;`);
+    const { rows: createdSite } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_site_create('${OWNER_A}', '${createdClient[0].v.id}', 'Race Code Yard', 'other', null, null, null, null, null, null, 'req_race_code_1') as v;`);
+    const siteId = createdSite[0].v.id;
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    try {
+      const create = (client, requestId) => pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_create(
+          '${OWNER_A}', '${siteId}', 'Race Code Job', 'RACE-CODE', null, null, null, null, '${requestId}') as v;`);
+      const results = await Promise.allSettled([
+        create(clientA, "req_race_code_a"),
+        create(clientB, "req_race_code_b"),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(String(rejected[0].reason?.message ?? rejected[0].reason)).toMatch(/FORGE_HIERARCHY_DUPLICATE_CODE/);
+      const { rows: projects } = await pgClient.query(`
+        select count(*)::int as n from forge_projects
+        where owner_id = '${OWNER_A}' and project_code = 'RACE-CODE';`);
+      expect(projects[0].n).toBe(1);
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+    }
+  });
+
+  it60("a site create blocks while its parent client is locked, then proceeds once the lock releases", async () => {
+    const { rows: created } = await pgAsUser(pgClient, OWNER_A, `
+      select forge_hierarchy_client_create('${OWNER_A}', 'Race Lock Client', null, null, 'req_race_lock_0') as v;`);
+    const clientId = created[0].v.id;
+    const locker = new Client(pgCfg);
+    const creator = new Client(pgCfg);
+    await locker.connect();
+    await creator.connect();
+    try {
+      // Session A holds the parent row FOR UPDATE: a concurrent
+      // archive/reparent cannot slip in while the create waits.
+      await locker.query("begin");
+      await locker.query(`select * from forge_clients where owner_id = '${OWNER_A}' and id = '${clientId}' for update;`);
+      // Session B's create takes the parent FOR SHARE and must time
+      // out on the lock rather than slipping past it.
+      await creator.query("set lock_timeout = '500ms'");
+      let caught = null;
+      try {
+        await pgAsUser(creator, OWNER_A, `
+          select forge_hierarchy_site_create(
+            '${OWNER_A}', '${clientId}', 'Locked Yard', 'other', null, null, null, null, null, null, 'req_race_lock_1') as v;`);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught, "expected the create to time out on the parent lock").not.toBeNull();
+      expect(String(caught.message)).toMatch(/lock timeout/i);
+      expect(caught.code).toBe("55P03");
+      // Once the lock releases, the same create succeeds.
+      await locker.query("rollback");
+      await creator.query("set lock_timeout = '0'");
+      const { rows: site } = await pgAsUser(creator, OWNER_A, `
+        select forge_hierarchy_site_create(
+          '${OWNER_A}', '${clientId}', 'Locked Yard', 'other', null, null, null, null, null, null, 'req_race_lock_1') as v;`);
+      expect(site[0].v.name).toBe("Locked Yard");
+      const { rows: sites } = await pgClient.query(`
+        select count(*)::int as n from forge_sites where owner_id = '${OWNER_A}' and name = 'Locked Yard';`);
+      expect(sites[0].n).toBe(1);
+    } finally {
+      await locker.query("rollback").catch(() => {});
+      await locker.end().catch(() => {});
+      await creator.end().catch(() => {});
     }
   });
 });

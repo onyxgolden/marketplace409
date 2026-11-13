@@ -22,7 +22,9 @@
 --      name grants authority anywhere in the new RPCs.
 --   4. has_forge_hierarchy_permission(owner_id, key) — owner/co-owner
 --      structural bypass, then OR across the three role frameworks.
---   5. Read RPCs: forge_hierarchy_selector (active tree) and
+--   5. Read RPCs: forge_hierarchy_selector (non-archived tree: all
+--      clients/sites active, all projects except archived — a freshly
+--      created 'planned' project is selectable immediately) and
 --      forge_hierarchy_validate_selection (membership + hierarchy check
 --      for a shareable ?forgeProject=<id> hint).
 --   6. Mutation RPCs: create / update (incl. archive, restore,
@@ -827,7 +829,11 @@ begin
                       'status', p.status
                     ) as project_json
                     from public.forge_projects p
-                    where p.owner_id = p_owner_id and p.site_id = s.id and p.status = 'active'
+                    -- Every non-archived state is selectable (planned,
+                    -- active, on_hold, complete). A freshly created
+                    -- project is 'planned' and must be visible
+                    -- immediately — only archived projects are hidden.
+                    where p.owner_id = p_owner_id and p.site_id = s.id and p.status <> 'archived'
                   ) projects
                 ), '[]'::jsonb)
               ) as site_json
@@ -925,7 +931,16 @@ grant execute on function public.forge_hierarchy_validate_selection(text, text) 
 --     'row': <full new row>} so the replay comparison reads the
 --     change-set while the receipt still names full old/new values.
 --   * A no-op update (resolved values equal the stored values) returns
---     the row with no version bump and no audit row.
+--     the row with no version bump and no audit row — but only when
+--     the supplied expected version matches the locked row. A stale
+--     no-op is a 409 like any stale write: only a same-request-ID
+--     replay may bypass the version check, never an ordinary no-op.
+--   * Create/reparent targets must have an ACTIVE parent (and, for
+--     projects, an active grandparent client): an archived parent
+--     returns FORGE_HIERARCHY_ARCHIVED, an inactive one
+--     FORGE_HIERARCHY_PARENT_INACTIVE. The parent row is locked
+--     FOR SHARE before the status decision so a concurrent archive
+--     cannot slip in between the check and the insert/update.
 --   * Action label on update: a parent change is 'reparent'; else a
 --     move to 'archived' is 'archive'; else a move out of 'archived'
 --     is 'restore'; else 'update'. old/new values always carry the
@@ -1057,6 +1072,7 @@ declare
   v_replay record;
   v_id text;
   v_row public.forge_sites%rowtype;
+  v_parent public.forge_clients%rowtype;
 begin
   v_actor := auth.uid()::text;
   if v_actor is null or btrim(v_actor) = '' then
@@ -1074,10 +1090,23 @@ begin
   if p_client_id is null or btrim(p_client_id) = '' then
     raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
   end if;
-  -- The parent must exist in THIS workspace: a guessed id from another
-  -- workspace fails here, never at the FK (clean error, no leak).
-  if not exists (select 1 from public.forge_clients where owner_id = p_owner_id and id = p_client_id) then
+  -- The parent must exist in THIS workspace AND be active: a guessed
+  -- id from another workspace fails here, never at the FK (clean
+  -- error, no leak), and a site under an archived/inactive client
+  -- would be unreachable in the selector. The parent row is locked
+  -- FOR SHARE so a concurrent archive cannot slip in between this
+  -- check and the insert — the archiver's FOR UPDATE waits, then
+  -- this check sees the archived state and rejects.
+  select * into v_parent from public.forge_clients
+  where owner_id = p_owner_id and id = p_client_id for share;
+  if not found then
     raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
+  end if;
+  if v_parent.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_parent.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
   end if;
   v_name := btrim(coalesce(p_name, ''));
   if v_name = '' or char_length(v_name) > 200 or v_name ~ '[[:cntrl:]]' then
@@ -1176,6 +1205,9 @@ declare
   v_replay record;
   v_id text;
   v_row public.forge_projects%rowtype;
+  v_site public.forge_sites%rowtype;
+  v_client public.forge_clients%rowtype;
+  v_constraint text;
 begin
   v_actor := auth.uid()::text;
   if v_actor is null or btrim(v_actor) = '' then
@@ -1193,11 +1225,36 @@ begin
   if p_site_id is null or btrim(p_site_id) = '' then
     raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
   end if;
-  -- The parent site must exist in THIS workspace. No client_id is taken
-  -- on this row: the client resolves through the site FK chain, so a
-  -- project cannot point at a site under one client and claim another.
-  if not exists (select 1 from public.forge_sites where owner_id = p_owner_id and id = p_site_id) then
+  -- The parent site must exist in THIS workspace AND be active, and
+  -- so must its client: the client resolves through the site FK
+  -- chain, so a project cannot point at a site under one client and
+  -- claim another — and a project under an archived/inactive site or
+  -- client would be unreachable in the selector. Both ancestors are
+  -- locked FOR SHARE (site first, then its client — the site lock
+  -- pins the client_id while the client lock is taken) so a
+  -- concurrent archive/reparent cannot slip in between the check
+  -- and the insert.
+  select * into v_site from public.forge_sites
+  where owner_id = p_owner_id and id = p_site_id for share;
+  if not found then
     raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+  end if;
+  if v_site.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_site.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+  end if;
+  select * into v_client from public.forge_clients
+  where owner_id = p_owner_id and id = v_site.client_id for share;
+  if not found then
+    raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+  end if;
+  if v_client.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_client.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
   end if;
   v_name := btrim(coalesce(p_name, ''));
   if v_name = '' or char_length(v_name) > 200 or v_name ~ '[[:cntrl:]]' then
@@ -1263,10 +1320,21 @@ begin
   end if;
 
   v_id := 'forge_project_' || replace(gen_random_uuid()::text, '-', '');
-  insert into public.forge_projects
-    (owner_id, id, site_id, name, project_code, description, project_type, planned_start, planned_finish, status, created_by, updated_by)
-    values (p_owner_id, v_id, p_site_id, v_name, v_code, v_desc, v_type, v_start, v_finish, 'planned', v_actor, v_actor)
-    returning * into v_row;
+  begin
+    insert into public.forge_projects
+      (owner_id, id, site_id, name, project_code, description, project_type, planned_start, planned_finish, status, created_by, updated_by)
+      values (p_owner_id, v_id, p_site_id, v_name, v_code, v_desc, v_type, v_start, v_finish, 'planned', v_actor, v_actor)
+      returning * into v_row;
+  exception when unique_violation then
+    -- A raced duplicate code slips past the pre-check above; the
+    -- partial unique index is the backstop. Translate the violated
+    -- constraint so the caller gets DUPLICATE_CODE, not DUPLICATE_NAME.
+    get stacked diagnostics v_constraint = constraint_name;
+    if v_constraint = 'forge_projects_code_uq' then
+      raise exception 'FORGE_HIERARCHY_DUPLICATE_CODE';
+    end if;
+    raise;
+  end;
   insert into public.forge_hierarchy_audit (owner_id, id, actor_id, entity_type, entity_id, action, old_values, new_values, request_id)
     values (p_owner_id, 'forge_ha_' || replace(gen_random_uuid()::text, '-', ''), v_actor, 'project', v_id, 'create', null,
             jsonb_build_object('changed', v_change, 'row', row_to_json(v_row)::jsonb), p_request_id);
@@ -1378,6 +1446,13 @@ begin
     return row_to_json(v_new)::jsonb;
   end if;
 
+  -- Optimistic concurrency is mandatory even for a no-op: a caller
+  -- holding a stale version must 409 rather than silently succeed.
+  -- Only a same-request-ID replay above may bypass this check.
+  if v_old.version <> p_expected_version then
+    raise exception 'FORGE_HIERARCHY_STALE_VERSION';
+  end if;
+
   -- No-op: nothing actually changes.
   if v_name = v_old.name and v_ext is not distinct from v_old.external_reference
      and v_notes is not distinct from v_old.notes and v_status = v_old.status then
@@ -1455,6 +1530,7 @@ declare
   v_change jsonb := '{}'::jsonb;
   v_action text;
   v_moved integer;
+  v_parent public.forge_clients%rowtype;
   v_replay record;
   v_new public.forge_sites%rowtype;
   v_updated boolean;
@@ -1484,14 +1560,28 @@ begin
 
   -- Reparent: a new client_id moves the site (and its projects with
   -- it — counted in the audit, never silent). The target client must
-  -- exist in this workspace.
+  -- exist in this workspace AND be active: a move under an
+  -- archived/inactive client would make the site unreachable in the
+  -- selector. The target row is locked FOR SHARE so a concurrent
+  -- archive cannot slip in between the check and the update; the
+  -- check runs only on an actual move, not a same-parent re-statement.
   v_client_id := v_old.client_id;
   if p_client_id is not null then
     if btrim(p_client_id) = '' then
       raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
     end if;
-    if not exists (select 1 from public.forge_clients where owner_id = p_owner_id and id = p_client_id) then
-      raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
+    if p_client_id <> v_old.client_id then
+      select * into v_parent from public.forge_clients
+      where owner_id = p_owner_id and id = p_client_id for share;
+      if not found then
+        raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
+      end if;
+      if v_parent.status = 'archived' then
+        raise exception 'FORGE_HIERARCHY_ARCHIVED';
+      end if;
+      if v_parent.status <> 'active' then
+        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+      end if;
     end if;
     v_client_id := p_client_id;
     v_change := v_change || jsonb_build_object('client_id', v_client_id);
@@ -1581,6 +1671,13 @@ begin
     return row_to_json(v_new)::jsonb;
   end if;
 
+  -- Optimistic concurrency is mandatory even for a no-op: a caller
+  -- holding a stale version must 409 rather than silently succeed.
+  -- Only a same-request-ID replay above may bypass this check.
+  if v_old.version <> p_expected_version then
+    raise exception 'FORGE_HIERARCHY_STALE_VERSION';
+  end if;
+
   if v_client_id = v_old.client_id and v_name = v_old.name and v_type is not distinct from v_old.site_type
      and v_addr1 is not distinct from v_old.address_line1 and v_addr2 is not distinct from v_old.address_line2
      and v_city is not distinct from v_old.city and v_region is not distinct from v_old.region
@@ -1666,6 +1763,9 @@ declare
   v_status text;
   v_change jsonb := '{}'::jsonb;
   v_action text;
+  v_site public.forge_sites%rowtype;
+  v_client public.forge_clients%rowtype;
+  v_constraint text;
   v_replay record;
   v_new public.forge_projects%rowtype;
   v_updated boolean;
@@ -1694,15 +1794,40 @@ begin
   end if;
 
   -- Reparent: a new site_id moves the project. The target site must
-  -- exist in this workspace; the client follows the site (no client_id
-  -- lives on this row, so a cross-client move is exactly a site move).
+  -- exist in this workspace AND be active, and so must its client
+  -- (the client follows the site — no client_id lives on this row,
+  -- so a cross-client move is exactly a site move). Both ancestors
+  -- are locked FOR SHARE (site first, then its client) so a
+  -- concurrent archive/reparent cannot slip in between the check
+  -- and the update; the check runs only on an actual move.
   v_site_id := v_old.site_id;
   if p_site_id is not null then
     if btrim(p_site_id) = '' then
       raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
     end if;
-    if not exists (select 1 from public.forge_sites where owner_id = p_owner_id and id = p_site_id) then
-      raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+    if p_site_id <> v_old.site_id then
+      select * into v_site from public.forge_sites
+      where owner_id = p_owner_id and id = p_site_id for share;
+      if not found then
+        raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+      end if;
+      if v_site.status = 'archived' then
+        raise exception 'FORGE_HIERARCHY_ARCHIVED';
+      end if;
+      if v_site.status <> 'active' then
+        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+      end if;
+      select * into v_client from public.forge_clients
+      where owner_id = p_owner_id and id = v_site.client_id for share;
+      if not found then
+        raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+      end if;
+      if v_client.status = 'archived' then
+        raise exception 'FORGE_HIERARCHY_ARCHIVED';
+      end if;
+      if v_client.status <> 'active' then
+        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+      end if;
     end if;
     v_site_id := p_site_id;
     v_change := v_change || jsonb_build_object('site_id', v_site_id);
@@ -1789,6 +1914,13 @@ begin
     return row_to_json(v_new)::jsonb;
   end if;
 
+  -- Optimistic concurrency is mandatory even for a no-op: a caller
+  -- holding a stale version must 409 rather than silently succeed.
+  -- Only a same-request-ID replay above may bypass this check.
+  if v_old.version <> p_expected_version then
+    raise exception 'FORGE_HIERARCHY_STALE_VERSION';
+  end if;
+
   if v_site_id = v_old.site_id and v_name = v_old.name and v_code is not distinct from v_old.project_code
      and v_desc is not distinct from v_old.description and v_type is not distinct from v_old.project_type
      and v_start is not distinct from v_old.planned_start and v_finish is not distinct from v_old.planned_finish
@@ -1808,13 +1940,24 @@ begin
     when v_old.status = 'archived' and v_status <> 'archived' then 'restore'
     else 'update' end;
 
-  update public.forge_projects
-     set site_id = v_site_id, name = v_name, project_code = v_code,
-         description = v_desc, project_type = v_type,
-         planned_start = v_start, planned_finish = v_finish,
-         status = v_status, version = version + 1, updated_by = v_actor, updated_at = now()
-   where owner_id = p_owner_id and id = p_project_id and version = p_expected_version
-   returning * into v_new;
+  begin
+    update public.forge_projects
+       set site_id = v_site_id, name = v_name, project_code = v_code,
+           description = v_desc, project_type = v_type,
+           planned_start = v_start, planned_finish = v_finish,
+           status = v_status, version = version + 1, updated_by = v_actor, updated_at = now()
+     where owner_id = p_owner_id and id = p_project_id and version = p_expected_version
+     returning * into v_new;
+  exception when unique_violation then
+    -- A raced duplicate code slips past the pre-check above; the
+    -- partial unique index is the backstop. Translate the violated
+    -- constraint so the caller gets DUPLICATE_CODE, not DUPLICATE_NAME.
+    get stacked diagnostics v_constraint = constraint_name;
+    if v_constraint = 'forge_projects_code_uq' then
+      raise exception 'FORGE_HIERARCHY_DUPLICATE_CODE';
+    end if;
+    raise;
+  end;
   v_updated := found;
   if not v_updated then
     raise exception 'FORGE_HIERARCHY_STALE_VERSION';
@@ -1854,6 +1997,7 @@ declare
   v_actor text;
   v_row public.forge_clients%rowtype;
   v_children integer;
+  v_prior_action text;
 begin
   v_actor := auth.uid()::text;
   if v_actor is null or btrim(v_actor) = '' then
@@ -1872,11 +2016,19 @@ begin
     raise exception 'FORGE_HIERARCHY_EXPECTED_VERSION_REQUIRED';
   end if;
 
-  -- Replay: already deleted under this request id.
-  if exists (select 1 from public.forge_hierarchy_audit
-             where owner_id = p_owner_id and entity_type = 'client'
-               and entity_id = p_client_id and request_id = p_request_id and action = 'delete') then
-    return jsonb_build_object('deleted', true, 'id', p_client_id);
+  -- Replay only a matching prior delete. A request id is unique per
+  -- entity across ALL its mutations: reuse after an update/archive/
+  -- reparent is a conflict, not a delete — the audit insert below
+  -- would otherwise collide with a raw 23505.
+  select a.action into v_prior_action
+    from public.forge_hierarchy_audit a
+    where a.owner_id = p_owner_id and a.entity_type = 'client'
+      and a.entity_id = p_client_id and a.request_id = p_request_id;
+  if found then
+    if v_prior_action = 'delete' then
+      return jsonb_build_object('deleted', true, 'id', p_client_id);
+    end if;
+    raise exception 'FORGE_HIERARCHY_REQUEST_ID_CONFLICT';
   end if;
 
   select * into v_row from public.forge_clients
@@ -1922,6 +2074,7 @@ declare
   v_actor text;
   v_row public.forge_sites%rowtype;
   v_children integer;
+  v_prior_action text;
 begin
   v_actor := auth.uid()::text;
   if v_actor is null or btrim(v_actor) = '' then
@@ -1940,10 +2093,17 @@ begin
     raise exception 'FORGE_HIERARCHY_EXPECTED_VERSION_REQUIRED';
   end if;
 
-  if exists (select 1 from public.forge_hierarchy_audit
-             where owner_id = p_owner_id and entity_type = 'site'
-               and entity_id = p_site_id and request_id = p_request_id and action = 'delete') then
-    return jsonb_build_object('deleted', true, 'id', p_site_id);
+  -- Replay only a matching prior delete (see the client delete: a
+  -- request id is unique per entity across ALL its mutations).
+  select a.action into v_prior_action
+    from public.forge_hierarchy_audit a
+    where a.owner_id = p_owner_id and a.entity_type = 'site'
+      and a.entity_id = p_site_id and a.request_id = p_request_id;
+  if found then
+    if v_prior_action = 'delete' then
+      return jsonb_build_object('deleted', true, 'id', p_site_id);
+    end if;
+    raise exception 'FORGE_HIERARCHY_REQUEST_ID_CONFLICT';
   end if;
 
   select * into v_row from public.forge_sites
@@ -1988,6 +2148,7 @@ as $$
 declare
   v_actor text;
   v_row public.forge_projects%rowtype;
+  v_prior_action text;
 begin
   v_actor := auth.uid()::text;
   if v_actor is null or btrim(v_actor) = '' then
@@ -2006,10 +2167,17 @@ begin
     raise exception 'FORGE_HIERARCHY_EXPECTED_VERSION_REQUIRED';
   end if;
 
-  if exists (select 1 from public.forge_hierarchy_audit
-             where owner_id = p_owner_id and entity_type = 'project'
-               and entity_id = p_project_id and request_id = p_request_id and action = 'delete') then
-    return jsonb_build_object('deleted', true, 'id', p_project_id);
+  -- Replay only a matching prior delete (see the client delete: a
+  -- request id is unique per entity across ALL its mutations).
+  select a.action into v_prior_action
+    from public.forge_hierarchy_audit a
+    where a.owner_id = p_owner_id and a.entity_type = 'project'
+      and a.entity_id = p_project_id and a.request_id = p_request_id;
+  if found then
+    if v_prior_action = 'delete' then
+      return jsonb_build_object('deleted', true, 'id', p_project_id);
+    end if;
+    raise exception 'FORGE_HIERARCHY_REQUEST_ID_CONFLICT';
   end if;
 
   select * into v_row from public.forge_projects

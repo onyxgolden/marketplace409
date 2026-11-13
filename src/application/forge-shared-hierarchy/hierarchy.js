@@ -75,6 +75,9 @@ export function mapHierarchyRpcError(error) {
   if (message.includes("FORGE_HIERARCHY_ARCHIVED")) {
     return { ok: false, httpStatus: 409, error: HIERARCHY_ERRORS.ARCHIVED };
   }
+  if (message.includes("FORGE_HIERARCHY_PARENT_INACTIVE")) {
+    return { ok: false, httpStatus: 409, error: HIERARCHY_ERRORS.PARENT_INACTIVE };
+  }
   if (message.includes("FORGE_HIERARCHY_STALE_VERSION")) {
     return { ok: false, httpStatus: 409, error: HIERARCHY_ERRORS.STALE_VERSION };
   }
@@ -141,6 +144,12 @@ export function mapHierarchyRpcError(error) {
   }
   // The partial-unique backstops: a raw unique violation means a
   // duplicate name/code raced past the RPC pre-check — still a 409.
+  // Distinguish the violated constraint: a project-code collision is
+  // DUPLICATE_CODE, everything else (active names, audit request ids)
+  // keeps the DUPLICATE_NAME contract.
+  if (error?.code === "23505" && message.includes("forge_projects_code_uq")) {
+    return { ok: false, httpStatus: 409, error: HIERARCHY_ERRORS.DUPLICATE_CODE };
+  }
   if (error?.code === "23505") {
     return { ok: false, httpStatus: 409, error: HIERARCHY_ERRORS.DUPLICATE_NAME };
   }
