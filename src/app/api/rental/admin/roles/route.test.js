@@ -76,7 +76,7 @@ describe("GET /api/rental/admin/roles", () => {
     expect(body.success).toBe(true);
     expect(body.roles).toEqual([ROLE_ROW]);
     expect(Array.isArray(body.catalog)).toBe(true);
-    expect(body.catalog.length).toBe(51);
+    expect(body.catalog.length).toBe(53);
     expect(body.myEffectiveKeys).toEqual(["rental.roles.read", "rental.roles.manage"]);
     expect(rpc).toHaveBeenCalledWith("rental_list_roles", { p_owner_id: OWNER_ID });
   });

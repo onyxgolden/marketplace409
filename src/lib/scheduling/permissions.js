@@ -50,6 +50,13 @@ export const SCHEDULING_CAPABILITIES = Object.freeze([
   Object.freeze({ key: "scheduling.roles.read", label: "View roles", category: "Administration" }),
   Object.freeze({ key: "scheduling.roles.manage", label: "Manage roles", category: "Administration" }),
   Object.freeze({ key: "scheduling.audit.read", label: "View audit log", category: "Administration" }),
+
+  // Shared client -> site -> project hierarchy (foundation migration
+  // 20261112010000): read on every starter role, manage on Admin only.
+  // The .read key flows into ALL_READS below, so the ALL_READS-based
+  // admin set picks it up automatically.
+  Object.freeze({ key: "forge.hierarchy.read", label: "View clients, sites, and projects", category: "Hierarchy" }),
+  Object.freeze({ key: "forge.hierarchy.manage", label: "Manage clients, sites, and projects", category: "Hierarchy" }),
 ]);
 
 export const SCHEDULING_CAPABILITY_KEYS = Object.freeze(SCHEDULING_CAPABILITIES.map((c) => c.key));
@@ -81,19 +88,23 @@ export const STARTER_ROLE_CAPABILITIES = Object.freeze({
     "scheduling.activities.create", "scheduling.activities.edit", "scheduling.activities.resequence",
     "scheduling.resources.create", "scheduling.resources.edit", "scheduling.resources.allocate", "scheduling.resources.release",
     "scheduling.calendars.configure",
+    "forge.hierarchy.manage",
   ]),
   scheduler: Object.freeze([
     "scheduling.schedules.read", "scheduling.activities.read", "scheduling.resources.read", "scheduling.calendars.read",
     "scheduling.schedules.edit", "scheduling.activities.edit", "scheduling.activities.resequence",
     "scheduling.resources.allocate", "scheduling.resources.release",
+    "forge.hierarchy.read",
   ]),
   // Default read-only until per-job scoping is proven safe (per-job
   // scoping is explicitly OUT of slice 1) -- identical to Viewer today.
   crew_lead: Object.freeze([
     "scheduling.schedules.read", "scheduling.activities.read", "scheduling.calendars.read",
+    "forge.hierarchy.read",
   ]),
   viewer: Object.freeze([
     "scheduling.schedules.read", "scheduling.activities.read", "scheduling.calendars.read",
+    "forge.hierarchy.read",
   ]),
 });
 
