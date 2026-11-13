@@ -1357,7 +1357,12 @@ def test_generate_segments_binds_validated_melotts_paths_offline(
     no paths again, the fake download path would raise.
     """
     _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
-    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    # Cold cache: no HF cache dir is seeded here, and the runner must
+    # still generate from the validated local files — so the fake
+    # melo download functions are wired to raise, and the runner
+    # itself must force HF_HUB_OFFLINE=1 (asserted below) so no real
+    # melo/transformers code path can fetch at job time.
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.setenv("HF_HOME", str(tmp_path / "empty-hf-cache"))
     calls = {}
     _fake_ml_modules(monkeypatch, calls)
@@ -1377,6 +1382,10 @@ def test_generate_segments_binds_validated_melotts_paths_offline(
     assert len(results) == 1
     assert results[0]["step_id"] == "s1"
     assert "download_attempts" not in calls
+    # The runner forces offline mode before importing melo, so the
+    # generation above could not have fetched anything even with a
+    # real melo/transformers stack.
+    assert os.environ.get("HF_HUB_OFFLINE") == "1"
     tts_kwargs = calls["tts_kwargs"]
     assert tts_kwargs["language"] == "EN"
     assert tts_kwargs["config_path"] == str(tmp_path / "melotts" / "config.json")

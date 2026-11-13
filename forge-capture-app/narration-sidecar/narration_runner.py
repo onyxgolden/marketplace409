@@ -1081,6 +1081,14 @@ def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
     (segment result dicts, [(wav_path, start_sec), ...])."""
     if melotts_dir is None:
         melotts_dir = resolve_melotts_dir(None)
+    # Force offline model loading (fix round 3): every model this job
+    # needs is seeded and pinned at setup — the MeloTTS English
+    # config/checkpoint (validated above) and bert-base-uncased (the
+    # BERT encoder melo loads for every segment). A job must never
+    # download at runtime: with HF_HUB_OFFLINE=1, transformers/melo
+    # load from the seeded local cache only, and a missing cache
+    # fails the job closed instead of fetching unpinned weights.
+    os.environ["HF_HUB_OFFLINE"] = "1"
     import torch  # lazy
 
     from melo.api import TTS

@@ -69,6 +69,21 @@ so it is not an admissible fallback.
   model block. A missing or changed base-model file fails the job
   closed. The `spk2id` keys at this revision are exactly the five
   `MELO_EN_SPEAKER_KEYS` the ses layout smoke test covers.
+- **BERT base encoder (fix round 3):** MeloTTS EN generation loads
+  `bert-base-uncased` (tokenizer + masked-LM) on every segment, at
+  no revision in melo's code. Setup seeds it once from
+  `google-bert/bert-base-uncased` at pinned revision
+  `86b5e0934494bd15c9632b12f734a8a67f723594` into the transformers
+  cache (sizes verified, revision + cache dir in the receipt); the
+  runner forces `HF_HUB_OFFLINE=1` before importing melo, so a job
+  can only use the seeded cache.
+- **Code install (fix round 3):** the pinned MeloTTS
+  `requirements.txt` cannot install on Python 3.12 (fugashi 1.3.0
+  needs MeCab C headers; tokenizers 0.13.3 has no cp312 wheel), and
+  no melo module imports fugashi/mecab/unidic — setup installs the
+  pinned MeloTTS code `--no-deps` plus only the EN-path runtime deps
+  (`cached_path`, `transformers`, `g2p_en`, `pykakasi`, `num2words`,
+  `jamo`, NLTK cmudict data) and verifies the import before proceeding.
 
 ## FFmpeg (render assembly)
 

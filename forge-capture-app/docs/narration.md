@@ -508,6 +508,27 @@ functions wired to raise) proves no outbound fetch is attempted.
 its model block records the validated `melotts_model_revision` +
 per-file hashes.
 
+**BERT base encoder (fix round 3, found while fixing setup run 6):**
+MeloTTS EN generation calls `get_bert` on every segment, and
+`english_bert.py` does
+`AutoTokenizer`/`AutoModelForMaskedLM.from_pretrained('bert-base-uncased')`
+at NO revision — a second unpinned download on the first job, the
+same class as the MeloTTS-model P1. Setup seeds it once (step 6c)
+from `google-bert/bert-base-uncased` at pinned revision
+`86b5e0934494bd15c9632b12f734a8a67f723594` (config + tokenizer +
+`pytorch_model.bin` + `model.safetensors`, sizes verified) into the
+transformers cache and records the revision + cache dir in the
+receipt; the runner sets `HF_HUB_OFFLINE=1` before importing melo,
+so a job loads BERT from the seeded cache only and fails closed if
+it is missing. The MeloTTS code itself could not install on Python
+3.12 from its pinned `requirements.txt` (fugashi 1.3.0 needs MeCab C
+headers that are not on the box; tokenizers 0.13.3 has no cp312
+wheel) — setup installs the pinned MeloTTS code `--no-deps` and only
+the runtime deps the EN path executes (`cached_path`, `transformers`,
+`g2p_en`, `pykakasi`, `num2words`, `jamo`, plus the NLTK cmudict data
+for `g2p_en`), then verifies `from melo.api import TTS` imports and
+`G2p()` loads before proceeding.
+
 Copy the sidecar into place first:
 
 ```powershell
