@@ -437,6 +437,28 @@ begin
   end if;
 end $$;
 
+-- Fix round 5 (P1): the 'complexity_noop' receipt action for a
+-- standalone same-value complexity call. A successful same-value
+-- call must durably consume its mandatory request ID under the
+-- shared package-level namespace, so it records a receipt even
+-- though nothing changes and the version does not advance.
+-- Guarded like the fix-round-3 upgrade above.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.forge_work_planning_process_revisions'::regclass
+      and conname = 'forge_work_planning_process_revisions_action_check'
+      and pg_get_constraintdef(oid) not like '%complexity_noop%'
+  ) then
+    alter table public.forge_work_planning_process_revisions
+      drop constraint forge_work_planning_process_revisions_action_check;
+    alter table public.forge_work_planning_process_revisions
+      add constraint forge_work_planning_process_revisions_action_check
+        check (action in ('status_change', 'evidence_link_change', 'complexity_change', 'package_update', 'complexity_noop'));
+  end if;
+end $$;
+
 create index if not exists idx_forge_work_planning_process_revisions_package
   on public.forge_work_planning_process_revisions (owner_id, work_package_id, recorded_at desc, id);
 
@@ -1380,7 +1402,12 @@ select p.owner_id,
 -- stale version is WPP10_STALE_VERSION, 409) and p_request_id is
 -- mandatory, nonempty and <= 128 chars; reuse with a different
 -- payload is WPP10_REQUEST_ID_CONFLICT. A complexity value equal to
--- the current one is a no-op (returns the package row, no revision).
+-- the current one is a no-op (returns the package row, no version
+-- bump) that still records a 'complexity_noop' receipt with the
+-- canonical payload, so its mandatory request ID is durably
+-- consumed under the shared package-level namespace (fix round 5,
+-- P1): without the receipt a later reuse of the request ID with a
+-- different payload would be accepted instead of conflicting.
 -- A terminal package (cancelled / verified_closed) cannot change.
 -- Complexity events have template_step_id NULL, so the revisions
 -- unique index (which treats NULLs as distinct) cannot enforce
@@ -1514,9 +1541,42 @@ begin
     raise exception 'WPP10_STALE_VERSION: expected version %, current version %', p_expected_version, v_pkg.version;
   end if;
 
-  -- A value equal to the current one is a no-op: return the package
-  -- row, no revision, no version bump.
+  -- A value equal to the current one changes nothing and does not
+  -- advance the version — but it MUST durably consume its mandatory
+  -- request ID (fix round 5, P1): without a receipt, a later reuse
+  -- of this request ID in the combined RPC with a different payload
+  -- would be accepted instead of conflicting, and an exact
+  -- cross-RPC retry would re-apply instead of replaying. Record a
+  -- 'complexity_noop' receipt with the canonical payload
+  -- {complexity, updates: {}} — the same shape a real change
+  -- stores — so both RPCs' package-level lookups find it. The
+  -- idempotency lookup above already ran, so a retry of this same
+  -- request ID replays there and never reaches this insert twice.
   if v_old_complexity = p_complexity then
+    insert into public.forge_work_planning_process_revisions
+      (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
+       old_status, new_status, reason, evidence_reference, evidence_digest, attestation,
+       is_override, request_id, request_payload, old_values, new_values)
+    values (
+      p_owner_id,
+      'forge_ppr_' || replace(gen_random_uuid()::text, '-', ''),
+      null,
+      p_package_id,
+      null,
+      v_actor,
+      'complexity_noop',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      false,
+      v_request_id,
+      v_payload,
+      jsonb_build_object('complexity', v_old_complexity),
+      jsonb_build_object('complexity', p_complexity)
+    );
     return row_to_json(v_pkg)::jsonb;
   end if;
 

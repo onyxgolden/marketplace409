@@ -423,7 +423,9 @@ export async function getPlanningSummary(db, { ownerId, packageId }) {
  * recalculate derived MHRS and are audited). Goes through the SECURITY
  * DEFINER RPC forge_work_planning_process_set_complexity, which
  * updates the package and appends the complexity_change event in one
- * transaction — never a client-side revisions insert. expectedVersion
+ * transaction — never a client-side revisions insert. A same-value
+ * call appends a complexity_noop receipt instead (fix round 5, P1)
+ * and does not advance the version. expectedVersion
  * is MANDATORY; a request ID is generated when the client omits one.
  * Returns the updated package row (DB shape, snake_case) so the
  * caller can reuse it for its optimistic-concurrency match.

@@ -52,6 +52,12 @@
 //     combined update RPC under one canonical payload
 //     {complexity, updates}; cross-RPC reuse is proved in both
 //     directions, same and different complexity.
+//   - Fix round 5 (P1): a same-value standalone complexity call
+//     records a complexity_noop receipt (no version bump), so its
+//     mandatory request ID is durably consumed under the shared
+//     package-level namespace; an exact cross-RPC retry replays
+//     and reuse with a different canonical payload conflicts in
+//     both RPCs.
 //   - Set-status RPC (F2): status rules, evidence/attestation for
 //     Complete, reason for N/A and Needs Revision, fresh evidence on
 //     return from Needs Revision, self-review ban with owner override,
@@ -1004,11 +1010,22 @@ describe("planning-process migration", () => {
     await expectRpcError(db, OWNER_A,
       `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_cancelled', 'high', 1, 'req_cx_inv_3');`,
       "WPP10_PACKAGE_TERMINAL");
-    // A no-op (same value) returns the row with no event and no bump.
-    const noop = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard");
+    // A no-op (same value) returns the row with no bump — but it
+    // still records exactly one complexity_noop receipt (fix round
+    // 5, P1): a successful same-value call must durably consume its
+    // mandatory request ID, or a later reuse with a different
+    // payload would be accepted instead of conflicting.
+    const noop = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard", { requestId: "req_cx_noop_1" });
     expect(noop.planning_complexity).toBe("standard");
     expect(noop.version).toBe(1);
-    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+    const noopEvents = await revisionsFor(db, "pkg_a");
+    expect(noopEvents).toHaveLength(1);
+    expect(noopEvents[0].action).toBe("complexity_noop");
+    expect(noopEvents[0].request_id).toBe("req_cx_noop_1");
+    const { rows: noopRaw } = await db.query(`select request_payload, old_values, new_values from forge_work_planning_process_revisions where work_package_id = 'pkg_a';`);
+    expect(noopRaw[0].request_payload).toEqual({ complexity: "standard", updates: {} });
+    expect(noopRaw[0].old_values).toEqual({ complexity: "standard" });
+    expect(noopRaw[0].new_values).toEqual({ complexity: "standard" });
   });
 
   it60("combined update RPC: fields + complexity + one event commit together, version bumps once (fix round 2, P1-A)", async () => {
@@ -1241,6 +1258,55 @@ describe("planning-process migration", () => {
     const replay2 = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_xrpc_both_2" });
     expect(replay2.planning_complexity).toBe("high");
     expect(replay2.version).toBe(3);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(2);
+  });
+
+  it60("cross-RPC request-ID reuse: a same-value standalone call records a receipt, so an exact combined retry replays instead of re-applying (fix round 5, P1)", async () => {
+    // The verdict's hole, exact sequence: package complexity is
+    // standard, version 1. A standalone call R requesting standard
+    // succeeds as a no-op — version unmoved — but its request ID is
+    // now durably consumed by a complexity_noop receipt. An exact
+    // combined retry of {complexity: standard, updates: {}} replays:
+    // no second receipt, version unmoved, no package UPDATE at all.
+    // A standalone retry of R replays the same way.
+    const first = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard", { requestId: "req_xrpc_noop_a" });
+    expect(first.planning_complexity).toBe("standard");
+    expect(first.version).toBe(1);
+    const firstEvents = await revisionsFor(db, "pkg_a");
+    expect(firstEvents).toHaveLength(1);
+    expect(firstEvents[0].action).toBe("complexity_noop");
+    const replay = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "standard", {},
+      { requestId: "req_xrpc_noop_a" });
+    expect(replay.planning_complexity).toBe("standard");
+    expect(replay.version).toBe(1);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+    const replay2 = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard", { requestId: "req_xrpc_noop_a" });
+    expect(replay2.planning_complexity).toBe("standard");
+    expect(replay2.version).toBe(1);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("cross-RPC request-ID reuse: a same-value standalone receipt conflicts on reuse with a different canonical payload, in both RPCs (fix round 5, P1)", async () => {
+    // Same setup, then reuse with a different payload: a combined
+    // call reusing R with {priority: critical} must conflict — the
+    // standalone receipt's canonical payload is {complexity:
+    // standard, updates: {}} — and a standalone reuse of a second
+    // same-value receipt with a different complexity must conflict
+    // too. Neither failed reuse applies anything: complexity still
+    // standard, version still 1, priority still null, receipt count
+    // still exactly the two noop receipts.
+    await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard", { requestId: "req_xrpc_noop_b1" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_xrpc_noop_b1', 'standard', '{"priority": "critical"}'::jsonb);`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard", { requestId: "req_xrpc_noop_b2" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', 1, 'req_xrpc_noop_b2');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    const { rows } = await db.query(`select priority, planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].priority).toBeNull();
+    expect(rows[0].planning_complexity).toBe("standard");
+    expect(rows[0].version).toBe(1);
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(2);
   });
 

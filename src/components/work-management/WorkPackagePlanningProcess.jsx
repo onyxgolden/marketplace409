@@ -88,6 +88,7 @@ function StepHistory({ packageId, checklist }) {
   const templateByKey = new Map((checklist?.template || []).map((t) => [t.stepKey, t]));
   function stepNameFor(revision) {
     if (revision.action === "complexity_change") return "Planning complexity";
+    if (revision.action === "complexity_noop") return "Planning complexity (confirmed, no change)";
     if (revision.templateStepId) {
       return templateByKey.get(revision.templateStepId)?.name || revision.templateStepId;
     }
@@ -141,7 +142,7 @@ function StepHistory({ packageId, checklist }) {
                 {revisions.map((revision) => (
                   <li key={revision.id}>
                     <span className="font-medium text-slate-800">{formatWhenUtc(revision.recordedAt)} — {stepNameFor(revision)}</span>
-                    {revision.action === "complexity_change" ? (
+                    {revision.action === "complexity_change" || revision.action === "complexity_noop" ? (
                       <>
                         {": planning complexity "}
                         {revision.oldValues?.planning_complexity || "—"} → {revision.newValues?.planning_complexity || "—"}
