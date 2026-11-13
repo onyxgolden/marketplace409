@@ -895,7 +895,11 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
     converter = ToneColorConverter(str(checkpoints_dir / "converter" / "config.json"),
                                    device=device)
     converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
-    se = se_extractor.get_se(str(reference_wav), converter, vad=True)
+    # get_se returns (se_tensor, audio_name): unpack the tuple.
+    # Calling .detach() on the tuple raises "'tuple' object has no
+    # attribute 'detach'" -- the first real enrollment failed on
+    # exactly that (fix round 6 live-proof find).
+    se, _audio_name = se_extractor.get_se(str(reference_wav), converter, vad=True)
     se_list = se.detach().cpu().float().tolist()
     enrollment = {
         "version": 1,

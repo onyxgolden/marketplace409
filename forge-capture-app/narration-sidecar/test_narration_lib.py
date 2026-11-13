@@ -27,6 +27,70 @@ FFPROBE = shutil.which("ffprobe")
 
 # --- hashing ---------------------------------------------------------------
 
+def test_enroll_presenter_unpacks_get_se_tuple(tmp_path, monkeypatch):
+    # Fix round 6 live-proof find: se_extractor.get_se returns
+    # (se_tensor, audio_name); the runner called .detach() on the
+    # tuple and the first real enrollment failed with "'tuple' object
+    # has no attribute 'detach'".
+    import types
+    root = tmp_path
+    pdir = root / "presenters" / "tyler-welch"
+    pdir.mkdir(parents=True)
+    (pdir / "reference.wav").write_bytes(b"fake reference audio")
+    artifact = pdir / "consent-artifact.mp4"
+    artifact.write_bytes(b"fake video bytes")
+    (pdir / "consent.json").write_text(json.dumps({
+        "version": 1, "presenter_id": "tyler-welch", "status": "active",
+        "scope": ["voice"],
+        "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
+        "consent_artifact_path": "consent-artifact.mp4"}))
+    monkeypatch.setattr(
+        runner, "validate_weights_receipt",
+        lambda *a: runner.WEIGHTS_SHA256_PINNED)
+    monkeypatch.setattr(runner, "weights_sha256",
+                        lambda *a: runner.WEIGHTS_SHA256_PINNED)
+
+    class FakeTensor:
+        def detach(self):
+            return self
+        def cpu(self):
+            return self
+        def float(self):
+            return self
+        def tolist(self):
+            return [0.1, 0.2, 0.3]
+
+    class FakeConverter:
+        device = "cpu"
+        version = "v1"
+        def __init__(self, *a, **k):
+            pass
+        def load_ckpt(self, *a, **k):
+            pass
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    fake_se = types.ModuleType("openvoice.se_extractor")
+    fake_se.get_se = lambda *a, **k: (FakeTensor(), "reference_v1_hash")
+    fake_api = types.ModuleType("openvoice.api")
+    fake_api.ToneColorConverter = FakeConverter
+    fake_ov = types.ModuleType("openvoice")
+    fake_ov.se_extractor = fake_se
+    fake_ov.api = fake_api
+    monkeypatch.setitem(sys.modules, "openvoice", fake_ov)
+    monkeypatch.setitem(sys.modules, "openvoice.se_extractor", fake_se)
+    monkeypatch.setitem(sys.modules, "openvoice.api", fake_api)
+
+    enrollment = runner.enroll_presenter(root, "tyler-welch",
+                                         tmp_path / "ckpt")
+    assert enrollment["status"] == "active"
+    assert enrollment["presenter_id"] == "tyler-welch"
+    stored = json.loads(
+        (pdir / "speaker_embedding.json").read_text())
+    assert stored["se"] == [0.1, 0.2, 0.3]
+
+
 def test_prepend_ffmpeg_to_path(monkeypatch):
     # Fix round 6 live-proof find: whisper/pydub spawn bare `ffmpeg`
     # from PATH, so the runner must export its resolved ffmpeg dir.
