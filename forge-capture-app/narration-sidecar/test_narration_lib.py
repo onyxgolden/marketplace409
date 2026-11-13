@@ -800,6 +800,14 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
     the receipt fields the model validation requires, bound to that
     directory. NARRATION_MELOTTS_DIR is set so process_job resolves
     the fixture dir by default.
+
+    Also installs the pinned BERT snapshot (fix round 5): the six
+    BERT files under ``tmp_path/bert-snapshot``, the runner's BERT
+    manifest patched to their real hashes, the receipt fields the
+    BERT validation requires, and the cache resolver patched to
+    return the fixture snapshot's config.json (the identity melo
+    would resolve to). process_job now gates on the BERT snapshot
+    too, so every spool test runs through it.
     """
     fake_hashes = {}
     for rel in sorted(runner.CHECKPOINTS_FILES):
@@ -817,6 +825,16 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
         fake_melo[rel] = lib.sha256_file(dest)
     monkeypatch.setattr(runner, "MELO_MODEL_FILES", fake_melo)
     monkeypatch.setenv("NARRATION_MELOTTS_DIR", str(melotts_dir))
+    bert_dir = tmp_path / "bert-snapshot"
+    fake_bert = {}
+    for rel in sorted(runner.BERT_MODEL_FILES):
+        dest = bert_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f"fake bert bytes for {rel}".encode())
+        fake_bert[rel] = lib.sha256_file(dest)
+    monkeypatch.setattr(runner, "BERT_MODEL_FILES", fake_bert)
+    monkeypatch.setattr(runner, "resolve_bert_cache_path",
+                        lambda: str(bert_dir / "config.json"))
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps({
         "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED,
@@ -824,7 +842,16 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
         "melotts_model_hf_revision": runner.MELO_MODEL_REVISION,
         "melotts_config_sha256": fake_melo["config.json"],
         "melotts_checkpoint_sha256": fake_melo["checkpoint.pth"],
-        "melotts_dir": str(melotts_dir)}))
+        "melotts_dir": str(melotts_dir),
+        "bert_model_repo": runner.BERT_MODEL_REPO_ID,
+        "bert_model_hf_revision": runner.BERT_MODEL_REVISION,
+        "bert_snapshot_dir": str(bert_dir),
+        "bert_config_sha256": fake_bert["config.json"],
+        "bert_vocab_sha256": fake_bert["vocab.txt"],
+        "bert_tokenizer_config_sha256": fake_bert["tokenizer_config.json"],
+        "bert_tokenizer_sha256": fake_bert["tokenizer.json"],
+        "bert_pytorch_model_sha256": fake_bert["pytorch_model.bin"],
+        "bert_safetensors_sha256": fake_bert["model.safetensors"]}))
     return str(receipt)
 
 
@@ -1267,6 +1294,105 @@ def test_validate_melotts_model_wrong_recorded_hash(tmp_path, monkeypatch):
         runner.validate_melotts_model(receipt_path, melotts_dir)
 
 
+# --- BERT offline pin (fix round 5) ---------------------------------------
+
+def _bert_receipt(tmp_path, monkeypatch):
+    """Install the fake BERT snapshot + receipt (via _weights_fixture).
+
+    Returns receipt_path. The fixture snapshot is under
+    ``tmp_path/bert-snapshot``."""
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    return receipt_path
+
+
+def test_validate_bert_model_happy_path(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    assert runner.validate_bert_model(receipt_path) \
+        == runner.BERT_MODEL_REVISION
+
+
+def test_validate_bert_model_no_receipt(tmp_path, monkeypatch):
+    _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    with pytest.raises(RuntimeError, match="setup receipt missing"):
+        runner.validate_bert_model(str(tmp_path / "nope.json"))
+
+
+def test_validate_bert_model_wrong_repo(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["bert_model_repo"] = "google-bert/bert-base-uncased"
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="pinned BERT repo"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_wrong_revision(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["bert_model_hf_revision"] = "0" * 40
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="pinned BERT revision"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_no_snapshot_dir(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    del doc["bert_snapshot_dir"]
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="does not record bert_snapshot_dir"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_snapshot_dir_missing(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["bert_snapshot_dir"] = str(tmp_path / "no-such-snapshot")
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="snapshot directory missing"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_missing_file(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    (tmp_path / "bert-snapshot" / "pytorch_model.bin").unlink()
+    with pytest.raises(RuntimeError, match="model file missing"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_changed_file(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    (tmp_path / "bert-snapshot" / "vocab.txt").write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="model file changed"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_wrong_recorded_hash(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["bert_tokenizer_sha256"] = "0" * 64
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="does not record the pinned hash"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_cache_resolves_elsewhere(tmp_path, monkeypatch):
+    # An ambient alias cache pointing at unvalidated bytes must fail
+    # closed even when the receipt snapshot itself is intact.
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "resolve_bert_cache_path",
+                        lambda: str(tmp_path / "other-cache" / "config.json"))
+    with pytest.raises(RuntimeError, match="cache identity mismatch"):
+        runner.validate_bert_model(receipt_path)
+
+
+def test_validate_bert_model_cache_resolves_nothing(tmp_path, monkeypatch):
+    receipt_path = _bert_receipt(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "resolve_bert_cache_path", lambda: None)
+    with pytest.raises(RuntimeError, match="cache identity mismatch"):
+        runner.validate_bert_model(receipt_path)
+
+
 def _fake_ml_modules(monkeypatch, calls):
     """Inject fake torch/melo/openvoice modules into sys.modules.
 
@@ -1355,6 +1481,12 @@ def test_generate_segments_binds_validated_melotts_paths_offline(
     validated local model files with explicit config_path/ckpt_path
     and no outbound fetch was attempted. If the runner ever passed
     no paths again, the fake download path would raise.
+
+    NOTE (fix round 5): this test fakes melo/transformers, so it
+    proves the MeloTTS path binding only — it proves NOTHING about
+    the real BERT tokenizer/model load. That proof is the setup-run
+    cold-cache proof (setup-env.ps1 step 7b): real libraries, fresh
+    HF_HOME, sockets blocked, one real English segment.
     """
     _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
     # Cold cache: no HF cache dir is seeded here, and the runner must

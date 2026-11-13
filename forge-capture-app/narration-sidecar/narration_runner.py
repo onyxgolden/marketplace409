@@ -117,6 +117,45 @@ MELO_MODEL_FILES = {
 }
 DEFAULT_MELOTTS_DIR = r"C:\forge-bridge\narration\melotts-en"
 
+# BERT base encoder for MeloTTS EN generation (fix round 5): the
+# "offline pin". Pinned MeloTTS code (melo/text/english_bert.py,
+# commit 20914537) hard-codes model_id = 'bert-base-uncased' and
+# calls AutoTokenizer.from_pretrained(model_id) at module level plus
+# AutoModelForMaskedLM.from_pretrained(model_id) lazily per segment.
+# Hugging Face Hub builds the cache folder from the CALLER-supplied
+# repo id, so 'bert-base-uncased' resolves under
+# models--bert-base-uncased — NOT under the google-bert org folder
+# the old setup seeded (models--google-bert--bert-base-uncased).
+# A web redirect cannot repair that once the runner forces
+# HF_HUB_OFFLINE=1: a clean setup failed at the first real segment,
+# and an ambient alias cache could feed unpinned bytes while
+# result.json still reported outbound_requests []. The setup now
+# seeds repo id 'bert-base-uncased' (which redirects to the same
+# canonical repo at the pinned revision below) so the runtime
+# request and the seeded cache identity are identical, and the
+# runner validates the receipt, the snapshot directory, the
+# cache-resolution identity, and every file hash before generation.
+# Per-file SHA-256s verified 2026-11-13 from the official Hugging
+# Face repo google-bert/bert-base-uncased at this revision — the two
+# model files by direct download (hashes match the Hub's LFS
+# metadata), the four small files by direct download.
+BERT_MODEL_REPO_ID = "bert-base-uncased"
+BERT_MODEL_REVISION = "86b5e0934494bd15c9632b12f734a8a67f723594"
+BERT_MODEL_FILES = {
+    "config.json":
+        "7160e1553ad2ca51d8c1cb066be533db31826e12d173824c1bb0cb1a4f187d20",
+    "vocab.txt":
+        "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+    "tokenizer_config.json":
+        "a025160ef0431f1a392f6f050c1310f4c5d9fb6f275932dbccba73c4d214bf10",
+    "tokenizer.json":
+        "ce64fce797c24f68df90b40a3f74f579b336a493db14bd583fd520ea0d8c9a98",
+    "pytorch_model.bin":
+        "097417381d6c7230bd9e3557456d726de6e83245ec8b24f529f60198a67b203a",
+    "model.safetensors":
+        "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3",
+}
+
 # MeloTTS English speaker keys (model.hps.data.spk2id) the runner can
 # select from, as observed in the live myshell-ai/MeloTTS-English
 # config.json at MELO_MODEL_REVISION above (fetched 2026-11-13): the runner picks the first key
@@ -487,6 +526,111 @@ def _melotts_receipt_key(rel: str) -> str:
             else "melotts_checkpoint_sha256")
 
 
+def _bert_receipt_key(rel: str) -> str:
+    """Receipt field holding the recorded hash of one BERT file."""
+    return {
+        "config.json": "bert_config_sha256",
+        "vocab.txt": "bert_vocab_sha256",
+        "tokenizer_config.json": "bert_tokenizer_config_sha256",
+        "tokenizer.json": "bert_tokenizer_sha256",
+        "pytorch_model.bin": "bert_pytorch_model_sha256",
+        "model.safetensors": "bert_safetensors_sha256",
+    }[rel]
+
+
+def resolve_bert_cache_path():
+    """Path the Hugging Face cache would load 'bert-base-uncased'
+    config.json from — i.e. what pinned melo code's
+    AutoTokenizer.from_pretrained('bert-base-uncased') resolves to.
+
+    Local cache only: try_to_load_from_cache never downloads.
+    Returns None when the alias cache has no such file. The lazy
+    import keeps this module importable where huggingface_hub is
+    absent (unit tests stub this function instead).
+    """
+    from huggingface_hub import try_to_load_from_cache
+    return try_to_load_from_cache(BERT_MODEL_REPO_ID, "config.json")
+
+
+def validate_bert_model(receipt_path: str | None) -> str:
+    """Validate the pinned BERT base encoder before any TTS work
+    (fix round 5: the BERT offline pin).
+
+    The setup receipt must carry: ``bert_model_repo`` exactly equal
+    to ``BERT_MODEL_REPO_ID`` (the identity pinned melo code
+    requests — NOT the google-bert org id); ``bert_model_hf_revision``
+    exactly equal to ``BERT_MODEL_REVISION``; ``bert_snapshot_dir``
+    naming the cache snapshot directory the files were installed to;
+    and per-file SHA-256s for every file in ``BERT_MODEL_FILES``
+    equal to the pin. Then every file in ``BERT_MODEL_FILES`` must
+    exist under that snapshot directory and hash to its pinned value.
+    Finally the cache identity itself is checked: the path
+    ``from_pretrained('bert-base-uncased')`` would resolve to must
+    be the validated snapshot's config.json — an ambient alias cache
+    pointing elsewhere fails closed instead of feeding unpinned
+    bytes to the job.
+
+    Returns the validated BERT revision. Raises RuntimeError on any
+    mismatch — the caller fails the job closed (never constructs TTS
+    against unvalidated BERT bytes).
+    """
+    if receipt_path is None:
+        receipt_path = DEFAULT_RECEIPT_PATH
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"setup receipt missing: {path} (run the env setup first)")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"setup receipt unreadable: {path}: {exc}")
+    repo = receipt.get("bert_model_repo")
+    if not isinstance(repo, str) or repo != BERT_MODEL_REPO_ID:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned BERT repo "
+            f"{BERT_MODEL_REPO_ID} (has {repo!r}): re-run setup")
+    rev = receipt.get("bert_model_hf_revision")
+    if not isinstance(rev, str) or rev != BERT_MODEL_REVISION:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned BERT revision "
+            f"{BERT_MODEL_REVISION} (has {rev!r}): re-run setup")
+    snapshot_dir = receipt.get("bert_snapshot_dir")
+    if not snapshot_dir:
+        raise RuntimeError(
+            f"setup receipt {path} does not record bert_snapshot_dir: "
+            "re-run setup")
+    snap = Path(snapshot_dir)
+    if not snap.is_dir():
+        raise RuntimeError(
+            f"BERT snapshot directory missing: {snap} (re-run setup)")
+    for rel, expected in BERT_MODEL_FILES.items():
+        recorded = receipt.get(_bert_receipt_key(rel))
+        if recorded != expected:
+            raise RuntimeError(
+                f"setup receipt {path} does not record the pinned hash for "
+                f"BERT {rel} (has {recorded!r}): re-run setup")
+        installed = snap / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"BERT model file missing under {snap}: {rel} "
+                "(incomplete BERT snapshot — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"BERT model file changed under {snap}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    resolved = resolve_bert_cache_path()
+    expected_config = str(snap / "config.json")
+    if resolved is None or os.path.normcase(str(resolved)) != \
+            os.path.normcase(expected_config):
+        raise RuntimeError(
+            "BERT cache identity mismatch: from_pretrained("
+            f"'{BERT_MODEL_REPO_ID}') resolves to {resolved!r}, not the "
+            f"validated snapshot {expected_config!r} — refusing to run "
+            "against unvalidated BERT bytes (re-run setup)")
+    return rev
+
+
 def resolve_melotts_dir(cli_dir: str | None) -> Path:
     """Resolve the MeloTTS English base-model dir.
 
@@ -818,6 +962,23 @@ def make_result(job_id, status, failure_reason=None, segments=None,
             "melotts_model_revision": MELO_MODEL_REVISION,
             "melotts_config_sha256": MELO_MODEL_FILES["config.json"],
             "melotts_checkpoint_sha256": MELO_MODEL_FILES["checkpoint.pth"],
+            # BERT base encoder provenance (fix round 5): the
+            # validated snapshot the job's MeloTTS segments loaded
+            # from. Same rule as the MeloTTS block above — these equal
+            # the pinned constants only because validate_bert_model
+            # enforced receipt, snapshot dir, cache identity, and
+            # per-file hashes before any TTS work.
+            "bert_model_repo": BERT_MODEL_REPO_ID,
+            "bert_model_revision": BERT_MODEL_REVISION,
+            "bert_config_sha256": BERT_MODEL_FILES["config.json"],
+            "bert_vocab_sha256": BERT_MODEL_FILES["vocab.txt"],
+            "bert_tokenizer_config_sha256":
+                BERT_MODEL_FILES["tokenizer_config.json"],
+            "bert_tokenizer_sha256": BERT_MODEL_FILES["tokenizer.json"],
+            "bert_pytorch_model_sha256":
+                BERT_MODEL_FILES["pytorch_model.bin"],
+            "bert_safetensors_sha256":
+                BERT_MODEL_FILES["model.safetensors"],
         },
         "consent_receipt_version": consent_receipt_version,
         "completed_at": utc_now(),
@@ -922,6 +1083,20 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
         melotts_dir = resolve_melotts_dir(None)
     try:
         validate_melotts_model(receipt_path, melotts_dir)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- BERT base-encoder provenance (fix round 5, moved-head P1) -----
+    # Same gate as the MeloTTS model: the BERT snapshot must be the
+    # pinned revision, bound to the recorded snapshot directory, with
+    # per-file hashes matching the pin AND the cache identity melo
+    # will resolve ('bert-base-uncased') pointing at that snapshot —
+    # BEFORE any TTS work. Without this, the first segment's lazy
+    # get_bert could fail offline or consume unpinned alias-cache
+    # bytes while result.json reported no outbound requests.
+    try:
+        validate_bert_model(receipt_path)
     except RuntimeError as exc:
         return _fail(root, job_dir, job_id, str(exc),
                      consent_receipt_version=consent_version, weights=weights)
@@ -1084,10 +1259,14 @@ def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
     # Force offline model loading (fix round 3): every model this job
     # needs is seeded and pinned at setup — the MeloTTS English
     # config/checkpoint (validated above) and bert-base-uncased (the
-    # BERT encoder melo loads for every segment). A job must never
-    # download at runtime: with HF_HUB_OFFLINE=1, transformers/melo
-    # load from the seeded local cache only, and a missing cache
-    # fails the job closed instead of fetching unpinned weights.
+    # BERT encoder melo loads for every segment; fix round 5
+    # validates its receipt, snapshot dir, cache identity, and
+    # per-file hashes in process_job before this point, so the
+    # snapshot the loader resolves to here is the pinned one). A job
+    # must never download at runtime: with HF_HUB_OFFLINE=1,
+    # transformers/melo load from the seeded local cache only, and a
+    # missing cache fails the job closed instead of fetching unpinned
+    # weights.
     os.environ["HF_HUB_OFFLINE"] = "1"
     import torch  # lazy
 

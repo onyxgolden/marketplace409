@@ -69,14 +69,27 @@ so it is not an admissible fallback.
   model block. A missing or changed base-model file fails the job
   closed. The `spk2id` keys at this revision are exactly the five
   `MELO_EN_SPEAKER_KEYS` the ses layout smoke test covers.
-- **BERT base encoder (fix round 3):** MeloTTS EN generation loads
-  `bert-base-uncased` (tokenizer + masked-LM) on every segment, at
-  no revision in melo's code. Setup seeds it once from
-  `google-bert/bert-base-uncased` at pinned revision
-  `86b5e0934494bd15c9632b12f734a8a67f723594` into the transformers
-  cache (sizes verified, revision + cache dir in the receipt); the
-  runner forces `HF_HUB_OFFLINE=1` before importing melo, so a job
-  can only use the seeded cache.
+- **BERT base encoder (fix round 5 — the offline pin):** MeloTTS EN
+  generation loads `bert-base-uncased` (tokenizer + masked-LM) on
+  every segment, at no revision in melo's code. Setup seeds it once
+  by the repo id melo requests, `bert-base-uncased` (the old id
+  redirects to the same canonical repo — the fix-round-3 setup
+  seeded `google-bert/bert-base-uncased`, which lands under a
+  different cache folder than melo looks in, so a clean offline run
+  could fail or consume unpinned alias-cache bytes), at pinned
+  revision `86b5e0934494bd15c9632b12f734a8a67f723594`, every file
+  verified by pinned SHA-256 (config.json
+  `7160e155…187d20`, vocab.txt `07eced37…038a3`, tokenizer_config.json
+  `a025160e…4bf10`, tokenizer.json `ce64fce7…9a98`, pytorch_model.bin
+  `09741738…b203a`, model.safetensors `68d45e23…169d3` — full hashes
+  in `docs/narration.md`); the receipt records the repo, revision,
+  snapshot dir, and all six hashes, and the runner re-validates
+  them plus the cache identity (`validate_bert_model`) before any
+  TTS work and records them in every `result.json` model block. A
+  missing, changed, or mis-resolved BERT file fails the job closed.
+  The setup also runs a real-library cold-cache proof (fresh
+  `HF_HOME`, sockets blocked, one English segment) that must print
+  `COLD CACHE PROOF OK`.
 - **Code install (fix round 3):** the pinned MeloTTS
   `requirements.txt` cannot install on Python 3.12 as written
   (fugashi 1.3.0 needs MeCab C headers; tokenizers 0.13.3 has no

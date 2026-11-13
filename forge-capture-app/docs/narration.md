@@ -508,31 +508,63 @@ functions wired to raise) proves no outbound fetch is attempted.
 its model block records the validated `melotts_model_revision` +
 per-file hashes.
 
-**BERT base encoder (fix round 3, found while fixing setup run 6):**
-MeloTTS EN generation calls `get_bert` on every segment, and
-`english_bert.py` does
+**BERT base encoder (fix round 5 — the offline pin):** MeloTTS EN
+generation calls `get_bert` on every segment, and `english_bert.py`
+does
 `AutoTokenizer`/`AutoModelForMaskedLM.from_pretrained('bert-base-uncased')`
 at NO revision — a second unpinned download on the first job, the
-same class as the MeloTTS-model P1. Setup seeds it once (step 6c)
-from `google-bert/bert-base-uncased` at pinned revision
-`86b5e0934494bd15c9632b12f734a8a67f723594` (config + tokenizer +
-`pytorch_model.bin` + `model.safetensors`, sizes verified) into the
-transformers cache and records the revision + cache dir in the
-receipt; the runner sets `HF_HUB_OFFLINE=1` before importing melo,
-so a job loads BERT from the seeded cache only and fails closed if
-it is missing. The MeloTTS code itself could not install on Python
-3.12 from its pinned `requirements.txt` (fugashi 1.3.0 needs MeCab C
-headers that are not on the box; tokenizers 0.13.3 has no cp312
-wheel) — setup installs the pinned MeloTTS code `--no-deps` and only
-the runtime deps the EN path executes (`cached_path`, `transformers`,
-`g2p_en`, `pykakasi`, `num2words`, `jamo`, `anyascii`,
-`mecab-python3` + `unidic-lite`, `fugashi`, `gruut` + `gruut-ipa` —
-required at import through `cleaner.py`'s eager language-module
-imports; the list was verified with a full AST walk of the pinned
-source after two rounds missed imports a line grep couldn't see —
-plus the NLTK cmudict + perceptron-tagger data for `g2p_en`), then
-verifies `from melo.api import TTS` imports and `G2p()` loads before
-proceeding.
+same class as the MeloTTS-model P1. The fix-round-3 setup seeded the
+WRONG cache identity: it seeded `google-bert/bert-base-uncased`,
+which lands under `models--google-bert--bert-base-uncased`, while
+melo requests `bert-base-uncased` and the Hub builds that cache
+folder as `models--bert-base-uncased` — so a clean offline run could
+fail at the first real segment, and an ambient alias cache could
+feed unpinned bytes while `outbound_requests` still reported `[]`.
+Setup now seeds (step 6c) by the repo id melo requests,
+`bert-base-uncased` — the old id redirects to the same canonical
+repo at pinned revision
+`86b5e0934494bd15c9632b12f734a8a67f723594`, so the bytes are
+identical, only the cache identity changes — and verifies EVERY
+file by pinned SHA-256 (not size alone), recorded in the receipt
+alongside the revision + snapshot dir:
+
+| file | bytes | SHA-256 |
+| --- | --- | --- |
+| `config.json` | 570 | `7160e1553ad2ca51d8c1cb066be533db31826e12d173824c1bb0cb1a4f187d20` |
+| `vocab.txt` | 231,508 | `07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3` |
+| `tokenizer_config.json` | 48 | `a025160ef0431f1a392f6f050c1310f4c5d9fb6f275932dbccba73c4d214bf10` |
+| `tokenizer.json` | 466,062 | `ce64fce797c24f68df90b40a3f74f579b336a493db14bd583fd520ea0d8c9a98` |
+| `pytorch_model.bin` | 440,473,133 | `097417381d6c7230bd9e3557456d726de6e83245ec8b24f529f60198a67b203a` |
+| `model.safetensors` | 440,449,768 | `68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3` |
+
+The two model files were hashed from direct downloads at the
+pinned revision and match the Hub's LFS metadata; the four small
+files were hashed from direct downloads. The runner
+(`validate_bert_model`, in `process_job` before any TTS work)
+re-validates the receipt repo/revision/snapshot dir, every file
+hash, AND the cache identity — the path
+`from_pretrained('bert-base-uncased')` resolves to must be the
+validated snapshot — and fails the job closed on any mismatch.
+`result.json`'s model block records the BERT repo, revision, and
+all six hashes. The setup's step-7 import smoke runs with
+`HF_HUB_OFFLINE=1`, and step 7b is the real-library cold-cache
+proof: a FRESH `HF_HOME` holding only the setup-seeded snapshots,
+sockets blocked, one real English segment through the pinned
+`TTS` — it must print `COLD CACHE PROOF OK` or the setup fails.
+The stale `models--google-bert--bert-base-uncased` folder the old
+script seeded is deleted at setup. The MeloTTS code itself could
+not install on Python 3.12 from its pinned `requirements.txt`
+(fugashi 1.3.0 needs MeCab C headers that are not on the box;
+tokenizers 0.13.3 has no cp312 wheel) — setup installs the pinned
+MeloTTS code `--no-deps` and only the runtime deps the EN path
+executes (`cached_path`, `transformers`, `g2p_en`, `pykakasi`,
+`num2words`, `jamo`, `anyascii`, `mecab-python3` + `unidic-lite`,
+`fugashi`, `gruut` + `gruut-ipa` — required at import through
+`cleaner.py`'s eager language-module imports; the list was verified
+with a full AST walk of the pinned source after two rounds missed
+imports a line grep couldn't see — plus the NLTK cmudict +
+perceptron-tagger data for `g2p_en`), then verifies `from melo.api
+import TTS` imports and `G2p()` loads before proceeding.
 
 Copy the sidecar into place first:
 
