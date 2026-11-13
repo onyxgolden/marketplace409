@@ -526,10 +526,12 @@ headers that are not on the box; tokenizers 0.13.3 has no cp312
 wheel) — setup installs the pinned MeloTTS code `--no-deps` and only
 the runtime deps the EN path executes (`cached_path`, `transformers`,
 `g2p_en`, `pykakasi`, `num2words`, `jamo`, `mecab-python3` +
-`unidic-lite` — required at import because `japanese.py` does
-`import MeCab` at module level — plus the NLTK cmudict data for
-`g2p_en`), then verifies `from melo.api import TTS` imports and
-`G2p()` loads before proceeding.
+`unidic-lite`, `fugashi` — the last three are required at import
+because `japanese.py` does `import MeCab` and instantiates the
+Japanese BERT tokenizer at module level; the pinned fugashi 1.3.0
+has no cp312 wheel, so the latest wheel build is installed instead
+— plus the NLTK cmudict data for `g2p_en`), then verifies `from
+melo.api import TTS` imports and `G2p()` loads before proceeding.
 
 Copy the sidecar into place first:
 
