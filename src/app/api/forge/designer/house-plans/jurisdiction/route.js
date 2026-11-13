@@ -51,7 +51,7 @@ export async function GET(request) {
         { status: 404 }
       );
     }
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
 
     const { latitude, longitude } = readCoordinates(new URL(request.url).searchParams);

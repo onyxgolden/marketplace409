@@ -27,7 +27,7 @@ export async function workAuth(request) {
       requestedOwnerId = null;
     }
   }
-  const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId });
+  const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId, appKey: "planner" });
   if (authenticated.response) return { error: authenticated.response };
   // PR B: one server-side project-scope resolution per request. The
   // ?forgeProject= hint is parsed here and validated through the

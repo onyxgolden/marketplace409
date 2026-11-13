@@ -20,7 +20,7 @@ export async function GET(request) {
     } catch {
       requestedOwnerId = null;
     }
-    const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId });
+    const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId, appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const { data, error } = await authenticated.supabaseClient
       .from("designer_projects")
@@ -46,7 +46,7 @@ export async function GET(request) {
 // POST /api/forge/designer — create a new blank design owned by the caller.
 export async function POST(request) {
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const body = await request.json().catch(() => ({}));
     const name =

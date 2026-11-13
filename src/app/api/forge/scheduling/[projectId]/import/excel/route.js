@@ -6,7 +6,7 @@ import { stripNamespace } from "@/domains/scheduling/schedulingRelationalToBoard
 import { loadProjectRelational } from "../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 const IMPORTABLE_COLUMNS = ACTIVITY_COLUMNS.filter((column) => !READ_ONLY_IMPORT_COLUMNS.includes(column.key));

@@ -4,7 +4,7 @@ import { captureBaseline } from "@/domains/scheduling/schedulingBaselines";
 import { loadProjectRelational, computeAndPersistCpm } from "../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // A Postgres unique-violation (schedule_baselines has unique(owner_id, schedule_project_id, name))

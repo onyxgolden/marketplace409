@@ -4,7 +4,7 @@ import { exportProjectToXer } from "@/domains/scheduling/schedulingXerExport";
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm, loadExportData } from "../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 function sanitizeFilename(name) {

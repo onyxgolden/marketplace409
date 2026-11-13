@@ -4,7 +4,7 @@ import { levelResources } from "@/domains/scheduling/schedulingResourceLeveling"
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm } from "../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Read-only preview, owner-only -- same reasoning as cost-rollup/evm-dcma (resource/cost data has

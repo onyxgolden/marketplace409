@@ -6,7 +6,7 @@ import { computeEvm, computeDcmaMetrics, dcmaCriticalPathLengthIndex, runCritica
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm } from "../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 function todayISO() {

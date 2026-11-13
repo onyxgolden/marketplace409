@@ -4,7 +4,7 @@ import { levelResources } from "@/domains/scheduling/schedulingResourceLeveling"
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm } from "../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Re-runs the SAME computation as GET .../level-resources server-side rather than trusting a
