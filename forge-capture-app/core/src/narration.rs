@@ -47,18 +47,20 @@ pub const OPENVOICE_CODE_COMMIT: &str = "74a1d147b17a8c3092dd5430504bd83ef6c7eb2
 pub const MELOTTS_CODE_COMMIT: &str = "209145371cff8fc3bd60d7be902ea69cbdb7965a";
 /// SHA-256 of the checkpoints zip.
 ///
-/// The deterministic zip built from the official Hugging Face repo
+/// The deterministic zip built from the official Hugging Face repos
 /// (`myshell-ai/OpenVoice`, revision
-/// `c70fc8b939bd1d8213994ff7c88e32be39708271`) by
-/// `narration-sidecar/build_checkpoints_zip.py`: the nine files of the
-/// `checkpoints/` tree (base_speakers/EN, base_speakers/ZH, converter)
+/// `c70fc8b939bd1d8213994ff7c88e32be39708271`, for the nine files of
+/// the `checkpoints/` tree; `myshell-ai/OpenVoiceV2`, revision
+/// `f36e7edfe1684461a8343844af60babc2efbb727`, for the six English
+/// `base_speakers/ses/` embeddings the V2 generation path loads) by
+/// `narration-sidecar/build_checkpoints_zip.py`: the fifteen files
 /// packed as `checkpoints_v2/...` with fixed timestamps, permissions,
 /// and order. The upstream S3 zip this used to come from is gone
 /// (bucket deleted); the setup script rebuilds the same bytes, so the
 /// receipt's `checkpoints_v2_zip_sha256` equals this value. Any
 /// receipt carrying a different value is not this pinned weights set.
 pub const CHECKPOINTS_ZIP_SHA256: &str =
-    "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb";
+    "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020";
 
 /// Hard cap on narration segments accepted in one script.
 pub const MAX_SEGMENTS: usize = 1000;
@@ -2402,11 +2404,13 @@ mod tests {
         assert_eq!(MAX_SEGMENTS, 1000);
         assert_eq!(MAX_SEGMENT_TEXT_CHARS, 5000);
         // Pinned weights hash: the deterministic checkpoints zip
-        // (Hugging Face myshell-ai/OpenVoice @ c70fc8b9...).
+        // (Hugging Face myshell-ai/OpenVoice @ c70fc8b9... + the six
+        // English ses embeddings from myshell-ai/OpenVoiceV2 @
+        // f36e7edf...; fifteen files, fix round 3).
         assert!(is_sha256_hex(CHECKPOINTS_ZIP_SHA256));
         assert_eq!(
             CHECKPOINTS_ZIP_SHA256,
-            "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb"
+            "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020"
         );
     }
 

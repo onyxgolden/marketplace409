@@ -34,9 +34,11 @@ Setup script: `~/workspace/forge-ai-drop/tools/narration/setup-env.ps1`
 ## Weights hash — pinned
 
 The checkpoints zip SHA-256 is
-`200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`
-(the deterministic zip built from the official Hugging Face repo
-`myshell-ai/OpenVoice` at revision `c70fc8b9...`; see
+`cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020`
+(the deterministic zip built from the official Hugging Face repos
+`myshell-ai/OpenVoice` at revision `c70fc8b9...` — nine files — plus
+`myshell-ai/OpenVoiceV2` at revision `f36e7edf...` — the six English
+`base_speakers/ses/` embeddings; fifteen files total; see
 `LICENSE-RECEIPT.md` and `build_checkpoints_zip.py`). It is pinned in
 `LICENSE-RECEIPT.md`, the runner (`WEIGHTS_SHA256_PINNED`), and the
 Rust core (`CHECKPOINTS_ZIP_SHA256`). The setup script rebuilds the

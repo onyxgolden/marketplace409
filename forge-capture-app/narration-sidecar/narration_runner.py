@@ -66,6 +66,22 @@ CHECKPOINTS_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoice"
 # (myshell-public-repo-host) is GONE (bucket deleted, verified
 # 2026-11-12); the S3 URL must never be restored here.
 HF_CHECKPOINTS_REVISION = "c70fc8b939bd1d8213994ff7c88e32be39708271"
+# Source of the English base-speaker embeddings the V2 generation
+# path loads (base_speakers/ses/<normalized-speaker-key>.pth): the
+# official Hugging Face repo myshell-ai/OpenVoiceV2 (the V2 companion
+# to myshell-ai/OpenVoice, same author). The myshell-ai/OpenVoice
+# checkpoints/ tree does NOT carry a ses/ directory (verified
+# 2026-11-13 at the pinned revision and at main), and the canonical
+# V2 zip that used to carry them lived on the deleted S3 bucket — so
+# OpenVoiceV2 is the authoritative source for these six files. The
+# setup script downloads them at this revision into the stage tree
+# (checkpoints/base_speakers/ses/) before the deterministic zip build.
+# Only the six English files are pinned: the runner is EN-only by
+# construction (TTS(language='EN')), so no other language's ses file
+# can ever be required; the es/fr/jp/kr/zh files in the same upstream
+# directory are out of scope for this slice.
+CHECKPOINTS_SES_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoiceV2"
+HF_SES_REVISION = "f36e7edfe1684461a8343844af60babc2efbb727"
 # Weights SHA-256: the deterministic checkpoints zip hash, built from
 # the Hugging Face files above. Used ONLY as the expected value the
 # setup receipt must carry (see validate_weights_receipt): a job must
@@ -73,19 +89,64 @@ HF_CHECKPOINTS_REVISION = "c70fc8b939bd1d8213994ff7c88e32be39708271"
 # validated receipt exists, no enrollment or generation runs at all.
 # Do not "re-fill" this from any other source without re-verifying the
 # zip build -- a different file set is a different hash.
-WEIGHTS_SHA256_PINNED = "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb"
+WEIGHTS_SHA256_PINNED = "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020"
 
-# Per-file manifest of the installed checkpoint tree: the nine files
-# of the deterministic zip, each with its full SHA-256, verified
-# 2026-11-13 from the official Hugging Face repo
-# (myshell-ai/OpenVoice, revision c70fc8b939bd1d8213994ff7c88e32be39708271):
-# all nine downloaded, sizes verified against the HF tree listing, and
-# the deterministic zip rebuilt from exactly these bytes hashes to
-# WEIGHTS_SHA256_PINNED above — so the per-file hashes and the zip
-# hash are mutually consistent. validate_weights_receipt hashes the
-# installed files against this manifest before any enrollment or
-# generation: a changed, replaced, or incomplete tree fails closed
-# instead of running while result.json asserts the pinned hash.
+# MeloTTS English speaker keys (model.hps.data.spk2id) the runner can
+# select from, as observed in the live myshell-ai/MeloTTS-English
+# config.json (fetched 2026-11-13): the runner picks the first key
+# starting with "EN", so this is the full selection surface. Each key
+# normalizes (lowercase, '_' -> '-') to a ses file that MUST be in
+# CHECKPOINTS_FILES below — the layout smoke test proves it. If a
+# future MeloTTS model presents an EN key outside this list, the job
+# fails closed at the ses load ("base speaker embedding missing")
+# rather than guessing a speaker; the list is then re-verified and
+# the manifest extended. The MeloTTS model itself is downloaded by
+# the melo package at setup time and is not revision-pinned here
+# (pre-existing exposure, not this slice's scope).
+MELO_EN_SPEAKER_KEYS = (
+    "EN-US",
+    "EN-BR",
+    "EN_INDIA",
+    "EN-AU",
+    "EN-Default",
+)
+
+
+def normalize_speaker_key(speaker_key: str) -> str:
+    """Normalize a MeloTTS speaker key to a ses filename stem.
+
+    Exactly the pinned upstream V2 flow (demo_part3.ipynb, OpenVoice
+    commit 74a1d147): ``speaker_key.lower().replace('_', '-')``.
+    The runner previously used the raw key (e.g. ``EN-US``), which
+    matches no file upstream ships; the files are ``en-us.pth`` etc.
+    """
+    return speaker_key.lower().replace("_", "-")
+
+
+def resolve_speaker_embedding_path(checkpoints_dir, speaker_key: str) -> Path:
+    """Path of the validated source embedding for a MeloTTS speaker key.
+
+    Pure path construction (no torch, no model) so the layout smoke
+    test can prove every selectable key resolves against the
+    production manifest without a GPU or the 420 MB weights.
+    """
+    return (Path(checkpoints_dir) / "base_speakers" / "ses"
+            / f"{normalize_speaker_key(speaker_key)}.pth")
+
+# Per-file manifest of the installed checkpoint tree: the fifteen
+# files of the deterministic zip, each with its full SHA-256,
+# verified 2026-11-13 from the official Hugging Face repos
+# (myshell-ai/OpenVoice, revision c70fc8b939bd1d8213994ff7c88e32be39708271
+# for the nine checkpoints/ files; myshell-ai/OpenVoiceV2, revision
+# f36e7edfe1684461a8343844af60babc2efbb727 for the six English
+# base_speakers/ses/ files): all fifteen downloaded, sizes verified
+# against the HF tree listings, and the deterministic zip rebuilt
+# from exactly these bytes hashes to WEIGHTS_SHA256_PINNED above — so
+# the per-file hashes and the zip hash are mutually consistent.
+# validate_weights_receipt hashes the installed files against this
+# manifest before any enrollment or generation: a changed, replaced,
+# or incomplete tree fails closed instead of running while
+# result.json asserts the pinned hash.
 CHECKPOINTS_FILES = {
     "base_speakers/EN/checkpoint.pth":
         "1db1ae1a5c8ded049bd1536051489aefbfad4a5077c01c2257e9e88fa1bb8422",
@@ -101,6 +162,18 @@ CHECKPOINTS_FILES = {
         "dca3b59c0039b79be87af78cacf87c15796329458bd099fe0cf3a749e5a7b5cc",
     "base_speakers/ZH/zh_default_se.pth":
         "3b62e8264962059b8a84dd00b29e2fcccc92f5d3be90eec67dfa082c0cf58ccf",
+    "base_speakers/ses/en-au.pth":
+        "5e9782233deef51fc5289d05ad4dd4ce12b196e282eccf6b6db6256bbd02daaa",
+    "base_speakers/ses/en-br.pth":
+        "2bf5a88025cfd10473b25d65d5c0e608338ce4533059c5f9a3383e69c812d389",
+    "base_speakers/ses/en-default.pth":
+        "e4139de3bc2ea162f45a5a5f9559b710686c9689749b5ab8945ee5e2a082d154",
+    "base_speakers/ses/en-india.pth":
+        "ad03d946757e95fe9e13239aa4b11071d98f22316f604f34b1a0b4bdf41cda48",
+    "base_speakers/ses/en-newest.pth":
+        "6a3798229b1114f0e9cc137b33211809def7dda5a8a9398d5a112c0b42699177",
+    "base_speakers/ses/en-us.pth":
+        "0d092d4af0815a4bfbc6105b65621ab68dc4c61b2f55044d8a66968a34947c32",
     "converter/checkpoint.pth":
         "89ae83aa4e3668fef64b388b789ff7b0ce0def9f801069edfc18a00ea420748d",
     "converter/config.json":
@@ -890,11 +963,17 @@ def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
 
     tts = TTS(language="EN", device=device)
     speaker_key, speaker_id = pick_en_speaker(tts)
-    src_se_path = checkpoints_dir / "base_speakers" / "ses" / f"{speaker_key}.pth"
+    # The ses filename is the NORMALIZED key (upstream V2 flow:
+    # lower + '_' -> '-'); the raw MeloTTS key (e.g. "EN-US") matches
+    # no file upstream ships. resolve_speaker_embedding_path applies
+    # exactly that normalization.
+    src_se_path = resolve_speaker_embedding_path(checkpoints_dir,
+                                                 speaker_key)
     if not src_se_path.is_file():
         raise RuntimeError(f"base speaker embedding missing: {src_se_path}")
     src_se = torch.load(str(src_se_path), map_location=device)
-    log(f"base TTS speaker: {speaker_key} (id {speaker_id})")
+    log(f"base TTS speaker: {speaker_key} (id {speaker_id}, "
+        f"embedding {normalize_speaker_key(speaker_key)}.pth)")
 
     segment_results = []
     segment_wavs = []

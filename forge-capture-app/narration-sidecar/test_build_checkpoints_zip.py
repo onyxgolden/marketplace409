@@ -1,10 +1,10 @@
 """Tests for the deterministic checkpoints zip builder.
 
-Uses tiny fixture files (same nine relative paths as the real
+Uses tiny fixture files (same fifteen relative paths as the real
 checkpoints tree) -- no network, no 400 MB downloads. The real zip's
 hash is pinned in the Rust core and the runner; these tests prove the
 builder properties that make that pin meaningful: byte-identical
-output across runs, the exact nine-entry layout, and fail-closed
+output across runs, the exact fifteen-entry layout, and fail-closed
 behavior on a missing or extra file.
 """
 

@@ -12,15 +12,25 @@ so it is not an admissible fallback.
 - Pinned code commit: `74a1d147b17a8c3092dd5430504bd83ef6c7eb23`
 - Checkpoints source: https://huggingface.co/myshell-ai/OpenVoice
   (official Hugging Face repo, pinned revision
-  `c70fc8b939bd1d8213994ff7c88e32be39708271`). The upstream S3 zip
+  `c70fc8b939bd1d8213994ff7c88e32be39708271`) for the nine files of
+  the repo's `checkpoints/` tree, PLUS
+  https://huggingface.co/myshell-ai/OpenVoiceV2 (official Hugging
+  Face repo, same author, pinned revision
+  `f36e7edfe1684461a8343844af60babc2efbb727`) for the six English
+  `base_speakers/ses/` embeddings the V2 generation path loads
+  (`en-au`, `en-br`, `en-default`, `en-india`, `en-newest`,
+  `en-us`). The `myshell-ai/OpenVoice` tree carries NO `ses/`
+  directory (verified 2026-11-13 at the pinned revision and at
+  main), and the canonical V2 zip that used to carry the ses files
+  lived on the S3 bucket below — OpenVoiceV2 is the authoritative
+  source for them. The upstream S3 zip
   (`https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip`)
   is GONE — the bucket was deleted (`NoSuchBucket`, verified 2026-11-12).
-  The setup script downloads the nine files of the repo's `checkpoints/`
-  tree at the pinned revision and assembles `checkpoints_v2_0417.zip`
-  with the deterministic builder
-  (`narration-sidecar/build_checkpoints_zip.py`).
-- Checkpoints (V2 weights) SHA-256: `200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`
-  - The SHA-256 of the deterministic zip (420,897,181 bytes), built
+  The setup script downloads the fifteen files from the two pinned
+  revisions and assembles `checkpoints_v2_0417.zip` with the
+  deterministic builder (`narration-sidecar/build_checkpoints_zip.py`).
+- Checkpoints (V2 weights) SHA-256: `cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020`
+  - The SHA-256 of the deterministic zip (420,906,355 bytes), built
     2026-11-13 from the Hugging Face files above and verified
     byte-identical across two independent builds. The setup script
     rebuilds the same zip on the iBUYPOWER and records the same hash
@@ -28,7 +38,11 @@ so it is not an admissible fallback.
     `C:\forge-bridge\narration\receipt.json`; the Rust core
     (`CHECKPOINTS_ZIP_SHA256`) and the runner
     (`WEIGHTS_SHA256_PINNED`) pin this value. A receipt carrying a
-    different hash is not this weights set.
+    different hash is not this weights set. (Previous hash
+    `200e6e39…82e3fb` was the nine-file zip without the ses
+    embeddings; superseded by fix round 3 — a clean setup with that
+    zip could not generate, because the runner's ses load had no
+    file to load.)
 - Use in slice A: zero-shot tone-color cloning only. No training, no
   durable per-person model.
 

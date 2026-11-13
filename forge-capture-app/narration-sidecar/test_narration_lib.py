@@ -787,7 +787,7 @@ def test_presenter_lock_cross_process_contention(tmp_path):
 def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
     """Fake-but-valid weights installation for tests.
 
-    Writes the nine manifest files with small fake contents under
+    Writes the fifteen manifest files with small fake contents under
     ``ckpt_dir``, a setup receipt bound to that directory carrying
     the pinned hash, and monkeypatches the runner's per-file manifest
     to the fake files' real hashes. Returns the receipt path (str).
@@ -965,7 +965,7 @@ def test_runner_completion_holds_presenter_lock(tmp_path, monkeypatch):
 
 def test_weights_receipt_happy_path(tmp_path, monkeypatch):
     """Verified happy path: receipt carries the pinned hash, is bound
-    to the resolved directory, and all nine files hash to the pinned
+    to the resolved directory, and all fifteen files hash to the pinned
     manifest. Returns the pinned hash."""
     ckpt = tmp_path / "ckpt"
     receipt_path = _weights_fixture(tmp_path, monkeypatch, ckpt)
@@ -1093,3 +1093,94 @@ def test_runner_process_job_rejects_missing_receipt(tmp_path, monkeypatch):
     assert (job_dir / ".failed").exists()
     assert not (job_dir / ".done").exists()
     assert not (job_dir / "output.mp4").exists()
+
+
+# --- ses layout (fix-round-2 re-review P1) ---------------------------------
+# The validated nine-file layout could not satisfy the generation
+# path: the runner loads base_speakers/ses/<speaker>.pth, and no ses
+# file existed. The fix pins the six English ses embeddings from the
+# official myshell-ai/OpenVoiceV2 repo in the manifest + zip, and
+# normalizes the MeloTTS speaker key exactly as the pinned upstream
+# V2 flow does. These tests prove the layout contract with NO torch,
+# NO GPU, and NO monkeypatched manifest — the production
+# CHECKPOINTS_FILES is used as-is.
+
+
+def test_normalize_speaker_key_matches_upstream_v2():
+    """Speaker-key normalization is exactly the pinned upstream V2
+    flow (demo_part3.ipynb): lowercase, '_' -> '-'. The runner used
+    to load the RAW key (e.g. EN-US.pth), which matches no file
+    upstream ships."""
+    assert runner.normalize_speaker_key("EN-US") == "en-us"
+    assert runner.normalize_speaker_key("EN-BR") == "en-br"
+    assert runner.normalize_speaker_key("EN_INDIA") == "en-india"
+    assert runner.normalize_speaker_key("EN-AU") == "en-au"
+    assert runner.normalize_speaker_key("EN-Default") == "en-default"
+    # A key with an underscore in the language slot normalizes too.
+    assert runner.normalize_speaker_key("EN_NEWEST") == "en-newest"
+
+
+def test_resolve_speaker_embedding_path_uses_normalized_key(tmp_path):
+    """The ses path is built from the NORMALIZED key, under
+    base_speakers/ses/ — not from the raw MeloTTS key."""
+    assert runner.resolve_speaker_embedding_path(
+        tmp_path / "ckpt", "EN-US") == \
+        tmp_path / "ckpt" / "base_speakers" / "ses" / "en-us.pth"
+    assert runner.resolve_speaker_embedding_path(
+        tmp_path / "ckpt", "EN_INDIA") == \
+        tmp_path / "ckpt" / "base_speakers" / "ses" / "en-india.pth"
+
+
+def test_manifest_contains_six_en_ses_embeddings():
+    """The production per-file manifest carries exactly the six
+    English ses embeddings (the complete EN ses set of
+    myshell-ai/OpenVoiceV2), each a 64-character lowercase digest.
+    The runner is EN-only, so no other language's ses file can be
+    required; the manifest is fifteen files total."""
+    assert len(runner.CHECKPOINTS_FILES) == 15
+    ses = sorted(rel for rel in runner.CHECKPOINTS_FILES
+                 if rel.startswith("base_speakers/ses/"))
+    assert ses == [
+        "base_speakers/ses/en-au.pth",
+        "base_speakers/ses/en-br.pth",
+        "base_speakers/ses/en-default.pth",
+        "base_speakers/ses/en-india.pth",
+        "base_speakers/ses/en-newest.pth",
+        "base_speakers/ses/en-us.pth",
+    ]
+    for rel in ses:
+        digest = runner.CHECKPOINTS_FILES[rel]
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
+
+
+def test_ses_layout_smoke_every_selectable_key_resolves(tmp_path):
+    """Non-GPU layout smoke test (fix-round-2 re-review requirement).
+
+    Starts from the PRODUCTION manifest/setup layout — the real
+    CHECKPOINTS_FILES, not a monkeypatched one — builds a checkpoint
+    tree with exactly the manifest's relative paths (dummy bytes;
+    the layout, not the weights, is under test), and proves every
+    MeloTTS EN speaker key the runner can select resolves to a
+    validated source embedding in that tree. This test FAILS at the
+    fix-round-2 head: the nine-file manifest has no ses entries, so
+    every key misses. It also proves the full EN ses set is present
+    in the manifest, so a future MeloTTS key in the same family
+    (e.g. EN-Newest) resolves too.
+    """
+    ckpt = tmp_path / "ckpt"
+    for rel in runner.CHECKPOINTS_FILES:
+        dest = ckpt / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f"layout probe for {rel}".encode())
+    # Every selectable MeloTTS EN key resolves to an existing file.
+    for key in runner.MELO_EN_SPEAKER_KEYS:
+        path = runner.resolve_speaker_embedding_path(ckpt, key)
+        assert path.is_file(), \
+            f"selectable speaker key {key} has no ses file: {path}"
+        assert str(path.relative_to(ckpt)).replace("\\", "/") \
+            in runner.CHECKPOINTS_FILES
+    # The full EN ses set shipped upstream is in the manifest.
+    for stem in ("en-au", "en-br", "en-default", "en-india",
+                 "en-newest", "en-us"):
+        assert f"base_speakers/ses/{stem}.pth" in runner.CHECKPOINTS_FILES

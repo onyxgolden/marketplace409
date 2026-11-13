@@ -94,7 +94,15 @@ mid-spool never yields a half job.
    `model.hps.data.spk2id` (no EN key → fail loudly, never guess);
    `model.tts_to_file(text, speaker_id, tmp_src_wav, speed=1.0)`; the
    base speaker's embedding from
-   `checkpoints_v2/base_speakers/ses/<speaker_key>.pth`;
+   `checkpoints_v2/base_speakers/ses/<normalized-speaker-key>.pth`,
+   where the key is normalized exactly as the pinned upstream V2 flow
+   (`demo_part3.ipynb`): lowercase, `_` → `-` (so MeloTTS `EN-US`
+   loads `en-us.pth`, `EN_INDIA` loads `en-india.pth`). The six
+   English ses embeddings come from the official Hugging Face repo
+   `myshell-ai/OpenVoiceV2` (pinned revision
+   `f36e7edfe1684461a8343844af60babc2efbb727`); the
+   `myshell-ai/OpenVoice` tree carries no `ses/` directory. A
+   missing embedding fails the job closed — never a guessed speaker.
    `tone_color_converter.convert(tmp_src_wav, src_se, tgt_se,
    segments/<step_id>.wav, message="@MyShell")`. Per-segment wall time
    and ffprobe audio duration give `real_time_factor = gen_sec /
@@ -193,7 +201,7 @@ statement must be readable and its hash must match the receipt.
   "consent_artifact_sha256": "<sha256>",
   "model_id": "openvoice-v2", "model_version": "checkpoints_v2_0417",
   "model_code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-  "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb",
+  "weights_sha256": "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020",
   "reference_audio_sha256": "<sha256 of reference.wav>",
   "preprocessing_version": "openvoice-se-extractor-vad-v1",
   "speaker_embedding_path": "speaker_embedding.json",
@@ -260,7 +268,7 @@ unique step ids, sorted, no overlaps.
   "model": { "model_id": "openvoice-v2",
              "model_version": "checkpoints_v2_0417",
              "code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-             "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb",
+             "weights_sha256": "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020",
              "base_tts": "melotts",
              "base_tts_commit": "209145371cff8fc3bd60d7be902ea69cbdb7965a" },
   "consent_receipt_version": 1,
@@ -283,7 +291,7 @@ always be `[]`.
                     "reference_audio_sha256": "<sha256>" },
   "model_hashes": { "model_id": "openvoice-v2",
                     "code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-                    "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb" },
+                    "weights_sha256": "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020" },
   "ffmpeg_version": "ffmpeg version 7.1 ...",
   "ffmpeg_command": ["ffmpeg", "-y", "-i", "..."],
   "consent_receipt_version": 1,
@@ -433,11 +441,18 @@ is dead — S3 `NoSuchBucket`, the bucket `myshell-public-repo-host`
 does not exist (verified 2026-11-12 from both the iBUYPOWER and this
 VM; env setup run 5 died at that download). The replacement source is
 the official Hugging Face repo `myshell-ai/OpenVoice` (pinned revision
-`c70fc8b939bd1d8213994ff7c88e32be39708271`): the setup downloads the
-nine files of the repo's `checkpoints/` tree and assembles
-`checkpoints_v2_0417.zip` with the deterministic builder
+`c70fc8b939bd1d8213994ff7c88e32be39708271`) for the nine files of the
+repo's `checkpoints/` tree, PLUS the official Hugging Face repo
+`myshell-ai/OpenVoiceV2` (same author, pinned revision
+`f36e7edfe1684461a8343844af60babc2efbb727`) for the six English
+`base_speakers/ses/` embeddings the V2 generation path loads. The
+`myshell-ai/OpenVoice` tree carries no `ses/` directory (verified
+2026-11-13 at the pinned revision and at main) — the nine-file zip
+fix round 2 validated could therefore never generate: the runner's
+ses load had no file to load. The setup downloads all fifteen files
+and assembles `checkpoints_v2_0417.zip` with the deterministic builder
 (`narration-sidecar/build_checkpoints_zip.py`). The zip SHA-256 is
-`200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`,
+`cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020`,
 pinned in the Rust core, the runner, and `LICENSE-RECEIPT.md`. The
 live enrollment / generation proof still needs a setup run with the
 new step 6 — it is not claimed as done here.
@@ -451,10 +466,10 @@ default `receipt.json`); it parses and carries
 `checkpoints_v2_zip_sha256` as a 64-character lowercase hex digest
 exactly equal to the pinned hash; it records `checkpoints_dir` naming
 the directory the checkpoints were installed to, equal to the
-resolved checkpoint directory; and every one of the nine installed
+resolved checkpoint directory; and every one of the fifteen installed
 files hashes to its pinned per-file value (`CHECKPOINTS_FILES` in
 the runner — full SHA-256s verified 2026-11-13 from the official
-Hugging Face repo at the pinned revision, and the deterministic zip
+Hugging Face repos at the pinned revisions, and the deterministic zip
 rebuilt from exactly those bytes hashes to the pinned hash, so the
 per-file manifest and the zip hash are mutually consistent). A
 missing, malformed, mismatched, or wrong-directory receipt, a missing
@@ -503,7 +518,7 @@ timestamps; no secrets are logged. Log file: wherever the
 | Gate | How this slice proves it |
 | --- | --- |
 | 1 Consent denial | Preflight in `process_job` + `enroll_presenter`; revoked/missing/mismatched receipt fails the job before any model work. Verified on the dev VM with a revoked-consent spool (exit 2, `consent_revoked`). |
-| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). Weights SHA-256 pinned (`200e6e39…82e3fb`, deterministic zip from Hugging Face `myshell-ai/OpenVoice` @ `c70fc8b9…`); the setup rebuilds the same zip and records the same hash. The dead S3 URL is replaced in `setup-env.ps1` step 6. |
+| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). Weights SHA-256 pinned (`cf5ce18b…602820`, deterministic zip from Hugging Face `myshell-ai/OpenVoice` @ `c70fc8b9…` + `myshell-ai/OpenVoiceV2` @ `f36e7edf…` — fifteen files incl. the six English ses embeddings); the setup rebuilds the same zip and records the same hash. The dead S3 URL is replaced in `setup-env.ps1` step 6. |
 | 5 Narration-only utility | The render is complete with only capture footage + narration + captions; there is no face track to remove. |
 | 6 Audio/video quality | Script validation (no overlaps, timing within duration), per-segment duration/RTF, captions verbatim from the approved script; human review (gate 10) is the evidence. |
 | 7 Local-first proof | `outbound_requests: []` + `resources` + per-segment RTF + `render_sec`/`output_bytes` in every `result.json`; no network code in the runner. |
