@@ -19,6 +19,7 @@
     <button id="tab-meeting" class="tab" role="tab" aria-selected="false" type="button">Meeting</button>
     <button id="tab-training" class="tab" role="tab" aria-selected="false" type="button">Process Training</button>
     <button id="tab-review" class="tab" role="tab" aria-selected="false" type="button">Review</button>
+    <button id="tab-narration" class="tab" role="tab" aria-selected="false" type="button">Narration</button>
   </div>
 
   <main>
@@ -137,6 +138,11 @@
     <section id="panel-review" role="tabpanel" aria-labelledby="tab-review" hidden>
       <div id="review-mount"></div>
     </section>
+
+    <!-- ===================== NARRATION (Phase 3 Slice A) =================== -->
+    <section id="panel-narration" role="tabpanel" aria-labelledby="tab-narration" hidden>
+      <div id="narration-mount"></div>
+    </section>
   </main>
 
   <dialog id="help-dialog">
@@ -179,6 +185,16 @@
       <p>Everything captured this session appears under <strong>This session</strong>, newest first.
       Copy puts the image on the clipboard; Provenance shows the capture's sidecar record;
       <strong>Save to FORGE</strong> uploads to your FORGE library when you're signed in.</p>
+      <h3>Narration</h3>
+      <p>The <strong>Narration</strong> tab adds a presenter's voice over a recorded capture —
+      narration only, no generated face. Pick a presenter with an active consent receipt
+      (a self-recorded consent statement, hashed and filed — a filename or checkbox is
+      not consent), write or edit the step script against the capture timeline, create a
+      narration job, and watch it render locally. The finished render stays on this
+      machine until you explicitly save it; the presenter and a reviewer both sign off
+      before anything counts as accepted. Revoking consent deletes the presenter's
+      derived voice assets, blocks queued jobs, and unpublishes managed outputs —
+      files already exported outside managed storage cannot be recalled.</p>
     </div>
     <form method="dialog"><button type="submit">Close</button></form>
   </dialog>
@@ -223,5 +239,6 @@
   <script type="module" src="meeting.js"></script>
   <script type="module" src="process-training.js"></script>
   <script type="module" src="review.js"></script>
+  <script type="module" src="narration.js"></script>
 </body>
 </html>

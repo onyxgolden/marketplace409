@@ -5134,6 +5134,273 @@ struct RecoveredMeetingDto {
     job_id: String,
 }
 
+// ---------------------------------------------------------------------------
+// Narration (Phase 3 Slice A) — consent-gated local narration over capture.
+// Pure contracts live in forge_capture_core::narration; this section owns
+// the filesystem (spool layout, consent registry, revocation transaction)
+// and the Tauri commands the Narration tab calls. The Python runner
+// (forge-capture-app/narration-sidecar) owns model work; the app never
+// touches the network and never sees a model weight.
+// ---------------------------------------------------------------------------
+
+use forge_capture_core::narration as narr;
+
+/// Request DTOs use camelCase (the UI sends camelCase invoke payloads);
+/// response DTOs serialize snake_case (the UI reads `receipt.status`,
+/// `result.render.output_bytes`, …). See `narration_ipc_tests` below.
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterConsentDto {
+    presenter_id: String,
+    display_name: String,
+    artifact_path: String,
+    recorded_at: String,
+    reviewed_by: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NarrationSegmentDto {
+    step_id: String,
+    text: String,
+    source_evidence: String,
+    capture_start_sec: f64,
+    capture_end_sec: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateNarrationJobDto {
+    presenter_id: String,
+    capture_path: String,
+    capture_file: String,
+    capture_duration_sec: f64,
+    segments: Vec<NarrationSegmentDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptNarrationDto {
+    job_id: String,
+    presenter_decision: String,
+    presenter_by: String,
+    reviewer_decision: String,
+    reviewer_by: String,
+    notes: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NarrationPresenterDto {
+    presenter_id: String,
+    display_name: String,
+    consent_status: String,
+    enrollment_status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NarrationPresenterDetailDto {
+    receipt: Option<narr::ConsentReceipt>,
+    enrollment: Option<narr::VoiceEnrollment>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NarrationCreateJobDto {
+    job_id: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NarrationPollDto {
+    job_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    result: Option<narr::NarrationResult>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NarrationJobListDto {
+    job_id: String,
+    presenter_id: String,
+    status: String,
+    created_at: String,
+}
+
+/// Narration spool root: `%LOCALAPPDATA%\FORGE Capture\narration` on
+/// Windows, `~/.local/share/forge-capture/narration` elsewhere — the same
+/// base as [`captures_dir`], one sibling down.
+fn narration_root_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "LOCALAPPDATA is not set".to_string())?
+        .join("FORGE Capture");
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "HOME is not set".to_string())?
+        .join(".local/share/forge-capture");
+    let dir = base.join(narr::NARRATION_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create narration dir: {e}"))?;
+    Ok(dir)
+}
+
+/// Presenter ids are directory names: lowercase letters, digits, hyphens.
+/// Anything else (including `/`, `\`, `..`) is rejected — a presenter id
+/// must never escape its own directory.
+fn narration_presenter_id_valid(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && !id.ends_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Canonical narration job id: `narr-` + 16 lowercase hex chars.
+fn narration_job_id_valid(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("narr-")
+        && id[5..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn narration_presenter_dir(
+    root: &std::path::Path,
+    presenter_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    if !narration_presenter_id_valid(presenter_id) {
+        return Err(format!("invalid presenter id: {presenter_id}"));
+    }
+    Ok(root.join("presenters").join(presenter_id))
+}
+
+fn narration_job_dir(
+    root: &std::path::Path,
+    job_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    if !narration_job_id_valid(job_id) {
+        return Err(format!("invalid narration job id: {job_id}"));
+    }
+    Ok(root.join("jobs").join(job_id))
+}
+
+/// Two-phase JSON write (temp file + rename) so a crash can never leave a
+/// half-written receipt or manifest under a final name.
+fn narration_write_json_two_phase<T: serde::Serialize>(
+    path: &std::path::Path,
+    value: &T,
+) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| format!("cannot encode {}: {e}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!(
+        "{}.part",
+        path.extension().unwrap_or_default().to_string_lossy()
+    ));
+    std::fs::write(&tmp, text.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot finalize {}: {e}", path.display())
+    })?;
+    Ok(())
+}
+
+/// Append one JSON line to the append-only audit log. The audit log is
+/// never rewritten or deleted — not even by revocation.
+fn narration_append_audit(
+    root: &std::path::Path,
+    event: serde_json::Value,
+) -> Result<(), String> {
+    use std::io::Write;
+    let audit_dir = root.join("audit");
+    std::fs::create_dir_all(&audit_dir)
+        .map_err(|e| format!("cannot create audit dir: {e}"))?;
+    let mut line = serde_json::Map::new();
+    line.insert(
+        "at".to_string(),
+        serde_json::Value::String(forge_capture_core::timestamp::now_utc_iso8601()),
+    );
+    if let serde_json::Value::Object(map) = event {
+        for (k, v) in map {
+            line.insert(k, v);
+        }
+    }
+    let text = serde_json::to_string(&serde_json::Value::Object(line))
+        .map_err(|e| format!("cannot encode audit event: {e}"))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_dir.join("audit-log.jsonl"))
+        .map_err(|e| format!("cannot open audit log: {e}"))?;
+    f.write_all(text.as_bytes())
+        .and_then(|_| f.write_all(b"\n"))
+        .map_err(|e| format!("cannot append to audit log: {e}"))?;
+    Ok(())
+}
+
+fn narration_sha256_file_hex(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f =
+        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let mut h = Sha256::new();
+    let mut buf = [0u8; 1024 * 1024];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+
+fn narration_read_consent(
+    root: &std::path::Path,
+    presenter_id: &str,
+) -> Result<narr::ConsentReceipt, String> {
+    let dir = narration_presenter_dir(root, presenter_id)?;
+    let bytes = std::fs::read(dir.join("consent.json")).map_err(|_| {
+        format!("no consent receipt registered for presenter {presenter_id}")
+    })?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| format!("consent receipt for {presenter_id} is corrupt: {e}"))
+}
+
+fn narration_read_enrollment_opt(
+    root: &std::path::Path,
+    presenter_id: &str,
+) -> Option<narr::VoiceEnrollment> {
+    let dir = narration_presenter_dir(root, presenter_id).ok()?;
+    let bytes = std::fs::read(dir.join("enrollment.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Job status from marker-file presence (`.done` > `.failed` >
+/// `.processing` > `.queued`), via the core wrapper around
+/// `ai_edit::status_from_presence`. `None` means no marker is present.
+fn narration_job_status(job_dir: &std::path::Path) -> Option<String> {
+    let has = |name: &str| job_dir.join(name).exists();
+    narr::narration_status_from_presence(
+        has(".queued"),
+        has(".processing"),
+        has(".done"),
+        has(".failed"),
+        false,
+    )
+    .map(|s| s.to_string())
+}
+
+
 /// Provenance sidecar for a meeting audio file, mirroring the recording
 /// convention: every file the app writes gets a `.forge.json` next to it.
 fn meeting_sidecar_json(
@@ -5630,6 +5897,517 @@ fn meeting_import(jobId: String, _state: State<AppState>) -> Result<MeetingImpor
         duration_sec: result.duration_sec,
         segments: result.segments.clone(),
     })
+}
+
+/// Narration root path for the UI (status line + diagnostics).
+#[tauri::command]
+fn narration_root_path() -> Result<String, String> {
+    narration_root_dir().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// List registered presenters with their consent + enrollment status.
+/// Rows serialize snake_case: the UI reads `p.presenter_id`.
+#[tauri::command]
+fn narration_list_presenters() -> Result<Vec<NarrationPresenterDto>, String> {
+    let root = narration_root_dir()?;
+    let presenters_dir = root.join("presenters");
+    let mut rows = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&presenters_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !narration_presenter_id_valid(&name) {
+                continue;
+            }
+            let Ok(receipt) = narration_read_consent(&root, &name) else {
+                continue;
+            };
+            let enrollment_status = narration_read_enrollment_opt(&root, &name)
+                .map(|e| e.status)
+                .unwrap_or_else(|| "not-enrolled".to_string());
+            rows.push(NarrationPresenterDto {
+                presenter_id: receipt.presenter_id.clone(),
+                display_name: receipt.display_name.clone(),
+                consent_status: receipt.status.clone(),
+                enrollment_status,
+            });
+        }
+    }
+    rows.sort_by(|a, b| a.presenter_id.cmp(&b.presenter_id));
+    Ok(rows)
+}
+
+/// One presenter's consent receipt + enrollment (either may be null).
+#[tauri::command]
+#[allow(non_snake_case)]
+fn narration_get_presenter(
+    presenterId: String,
+) -> Result<NarrationPresenterDetailDto, String> {
+    let root = narration_root_dir()?;
+    let receipt = narration_read_consent(&root, &presenterId).ok();
+    let enrollment = narration_read_enrollment_opt(&root, &presenterId);
+    if receipt.is_none() && enrollment.is_none() {
+        return Err(format!("unknown presenter: {presenterId}"));
+    }
+    Ok(NarrationPresenterDetailDto {
+        receipt,
+        enrollment,
+    })
+}
+
+/// Register a presenter's self-recorded consent.
+///
+/// The artifact is hashed and COPIED into the presenter's directory
+/// (`consent-artifact.mp4`); the receipt binds the hash, so a later
+/// swap of the file fails the preflight. An active receipt cannot be
+/// overwritten — revocation comes first; a revoked receipt may be
+/// replaced by a NEW self-recorded consent (re-enrollment requires a new
+/// receipt, never a restored embedding).
+#[tauri::command]
+fn narration_register_consent(
+    dto: RegisterConsentDto,
+) -> Result<narr::ConsentReceipt, String> {
+    if !narration_presenter_id_valid(&dto.presenter_id) {
+        return Err(format!("invalid presenter id: {}", dto.presenter_id));
+    }
+    if dto.display_name.trim().is_empty() {
+        return Err("display name is required".to_string());
+    }
+    if dto.reviewed_by.trim().is_empty() {
+        return Err("reviewed-by is required".to_string());
+    }
+    if dto.recorded_at.trim().is_empty() {
+        return Err("recorded-at is required".to_string());
+    }
+    let artifact = std::path::PathBuf::from(&dto.artifact_path);
+    if !artifact.is_file() {
+        return Err(format!(
+            "consent artifact not found: {}",
+            dto.artifact_path
+        ));
+    }
+    let root = narration_root_dir()?;
+    // Serialize against a concurrent revocation for this presenter:
+    // registering a fresh consent while a revocation is mid-flight
+    // would leave the new receipt active over assets the revocation
+    // is deleting. The lock makes registration wait for the
+    // transaction to finish, then the active-consent check below
+    // sees the revoked receipt.
+    let _lock = narr::acquire_presenter_lock(&root, &dto.presenter_id)?;
+    let dir = narration_presenter_dir(&root, &dto.presenter_id)?;
+    if let Ok(existing) = narration_read_consent(&root, &dto.presenter_id) {
+        if existing.status == "active" {
+            return Err(format!(
+                "presenter {} already has an active consent receipt — revoke it first",
+                dto.presenter_id
+            ));
+        }
+    }
+    let artifact_sha256 = narration_sha256_file_hex(&artifact)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create presenter dir: {e}"))?;
+    std::fs::copy(&artifact, dir.join("consent-artifact.mp4"))
+        .map_err(|e| format!("cannot copy consent artifact: {e}"))?;
+    let now = forge_capture_core::timestamp::now_utc_iso8601();
+    let receipt = narr::ConsentReceipt {
+        version: 1,
+        presenter_id: dto.presenter_id.clone(),
+        display_name: dto.display_name.clone(),
+        consent_artifact_path: "consent-artifact.mp4".to_string(),
+        artifact_sha256,
+        recorded_at: dto.recorded_at.clone(),
+        reviewed_by: dto.reviewed_by.clone(),
+        scope: vec!["voice".to_string()],
+        status: "active".to_string(),
+        granted_at: now.clone(),
+        revoked_at: None,
+        revoke_reason: None,
+        audit_events: vec![narr::ConsentAuditEvent {
+            event: "consent_granted".to_string(),
+            at: now.clone(),
+            by: dto.reviewed_by.clone(),
+            detail: format!(
+                "consent registered for {} (scope: voice)",
+                dto.presenter_id
+            ),
+        }],
+    };
+    narr::validate_consent_receipt(&receipt).map_err(|e| e.to_string())?;
+    narration_write_json_two_phase(&dir.join("consent.json"), &receipt)?;
+    narration_append_audit(
+        &root,
+        serde_json::json!({
+            "event": "consent_granted",
+            "presenter_id": dto.presenter_id,
+            "by": dto.reviewed_by,
+        }),
+    )?;
+    Ok(receipt)
+}
+
+/// Create (or replay) a narration job.
+///
+/// Job-id / script-hash convention (see `docs/narration.md`): the script
+/// hash is computed over the script with `job_id` empty — the
+/// pre-assignment canonical form — and the canonical job id derives from
+/// that hash. The script is then stored with the real job id. Anyone
+/// recomputing the manifest's `script_sha256` must hash the same
+/// empty-`job_id` form.
+///
+/// Idempotency (acceptance gate 9): the same presenter + consent version
+/// + model + capture hash + script hash yields the same job id. A
+/// completed job replays as its existing record (no duplicate render); a
+/// queued/processing job replays as its current status; a failed job is
+/// reset to queued for a fresh attempt.
+#[tauri::command]
+fn narration_create_job(
+    dto: CreateNarrationJobDto,
+) -> Result<NarrationCreateJobDto, String> {
+    if dto.capture_duration_sec <= 0.0 || !dto.capture_duration_sec.is_finite() {
+        return Err("captureDurationSec must be a positive number".to_string());
+    }
+    let root = narration_root_dir()?;
+    // Serialize against revocation and the runner's completion
+    // publication for this presenter (same lock file, same protocol
+    // as the core transaction): the consent read + preflight and the
+    // job writes below are one critical section, so a job can never
+    // be created after the revocation gate has closed.
+    let _lock = narr::acquire_presenter_lock(&root, &dto.presenter_id)?;
+    let receipt = narration_read_consent(&root, &dto.presenter_id)?;
+    // Consent preflight with the artifact hash recomputed from the stored
+    // file: a swapped artifact file fails here, before any job exists.
+    let presenter_dir = narration_presenter_dir(&root, &dto.presenter_id)?;
+    let actual_artifact_sha =
+        narration_sha256_file_hex(&presenter_dir.join("consent-artifact.mp4"))?;
+    narr::consent_preflight(&receipt, &actual_artifact_sha)
+        .map_err(|e| format!("consent preflight failed: {e}"))?;
+    let capture_path = std::path::PathBuf::from(&dto.capture_path);
+    if !capture_path.is_file() {
+        return Err(format!("capture file not found: {}", dto.capture_path));
+    }
+    let capture_sha256 = narration_sha256_file_hex(&capture_path)?;
+    let mut script = narr::NarrationScript {
+        version: 1,
+        job_id: String::new(),
+        presenter_id: dto.presenter_id.clone(),
+        capture_duration_sec: dto.capture_duration_sec,
+        segments: dto
+            .segments
+            .iter()
+            .map(|s| narr::NarrationSegment {
+                step_id: s.step_id.clone(),
+                text: s.text.clone(),
+                source_evidence: s.source_evidence.clone(),
+                capture_start_sec: s.capture_start_sec,
+                capture_end_sec: s.capture_end_sec,
+                audio_hash: None,
+                correction: None,
+            })
+            .collect(),
+    };
+    narr::validate_script(&script).map_err(|e| format!("invalid script: {e}"))?;
+    let script_hash = narr::script_sha256(&script);
+    let job_id = narr::canonical_job_id(
+        &dto.presenter_id,
+        receipt.version,
+        narr::MODEL_ID_OPENVOICE_V2,
+        narr::MODEL_VERSION_V2,
+        narr::CHECKPOINTS_ZIP_SHA256,
+        &capture_sha256,
+        &script_hash,
+    );
+    script.job_id = job_id.clone();
+    let job_dir = narration_job_dir(&root, &job_id)?;
+    if job_dir.is_dir() {
+        if let Some(status) = narration_job_status(&job_dir) {
+            match status.as_str() {
+                "done" | "queued" | "processing" => {
+                    return Ok(NarrationCreateJobDto { job_id, status });
+                }
+                "failed" => {
+                    // Fresh attempt with the same canonical id: drop the
+                    // failed marker + result and re-queue below.
+                    let _ = std::fs::remove_file(job_dir.join(".failed"));
+                    let _ = std::fs::remove_file(job_dir.join("result.json"));
+                }
+                _ => {}
+            }
+        }
+    }
+    std::fs::create_dir_all(&job_dir)
+        .map_err(|e| format!("cannot create job dir: {e}"))?;
+    let manifest = narr::NarrationJobManifest {
+        version: 1,
+        job_id: job_id.clone(),
+        job_type: narr::JOB_TYPE_NARRATE.to_string(),
+        presenter_id: dto.presenter_id.clone(),
+        consent_receipt_version: receipt.version,
+        capture_file: dto.capture_file.clone(),
+        capture_path: dto.capture_path.clone(),
+        capture_sha256,
+        model_id: narr::MODEL_ID_OPENVOICE_V2.to_string(),
+        model_version: narr::MODEL_VERSION_V2.to_string(),
+        script_sha256: script_hash,
+        created_at: forge_capture_core::timestamp::now_utc_iso8601(),
+        status: "queued".to_string(),
+    };
+    narration_write_json_two_phase(&job_dir.join("job.json"), &manifest)?;
+    narration_write_json_two_phase(&job_dir.join("script.json"), &script)?;
+    std::fs::write(job_dir.join(".queued"), b"")
+        .map_err(|e| format!("cannot write .queued marker: {e}"))?;
+    narration_append_audit(
+        &root,
+        serde_json::json!({
+            "event": "job_created",
+            "job_id": job_id,
+            "presenter_id": dto.presenter_id,
+            "capture_file": dto.capture_file,
+        }),
+    )?;
+    Ok(NarrationCreateJobDto {
+        job_id,
+        status: "queued".to_string(),
+    })
+}
+
+/// Poll a narration job: marker-derived status plus the runner's
+/// `result.json` once done/failed (parsed strictly; a corrupt result is
+/// reported, never silently treated as success).
+#[tauri::command]
+#[allow(non_snake_case)]
+fn narration_poll_job(jobId: String) -> Result<NarrationPollDto, String> {
+    let root = narration_root_dir()?;
+    let job_dir = narration_job_dir(&root, &jobId)?;
+    let status = narration_job_status(&job_dir)
+        .ok_or_else(|| format!("unknown narration job: {jobId}"))?;
+    let (result, reason) = match status.as_str() {
+        "done" | "failed" => {
+            let bytes = std::fs::read(job_dir.join("result.json")).map_err(|e| {
+                format!("job {jobId} is {status} but result.json is missing: {e}")
+            })?;
+            let parsed: narr::NarrationResult = serde_json::from_slice(&bytes)
+                .map_err(|e| format!("job {jobId} result.json is corrupt: {e}"))?;
+            let reason = parsed.failure_reason.clone();
+            (Some(parsed), reason)
+        }
+        _ => (None, None),
+    };
+    Ok(NarrationPollDto {
+        job_id: jobId,
+        status,
+        reason,
+        result,
+    })
+}
+
+/// List narration jobs, newest first.
+#[tauri::command]
+fn narration_list_jobs() -> Result<Vec<NarrationJobListDto>, String> {
+    let root = narration_root_dir()?;
+    let jobs_dir = root.join("jobs");
+    let mut rows = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&jobs_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !narration_job_id_valid(&name) {
+                continue;
+            }
+            let job_dir = jobs_dir.join(&name);
+            let Ok(bytes) = std::fs::read(job_dir.join("job.json")) else {
+                continue;
+            };
+            let Ok(manifest) =
+                serde_json::from_slice::<narr::NarrationJobManifest>(&bytes)
+            else {
+                continue;
+            };
+            let Some(status) = narration_job_status(&job_dir) else {
+                continue;
+            };
+            rows.push(NarrationJobListDto {
+                job_id: manifest.job_id,
+                presenter_id: manifest.presenter_id,
+                status,
+                created_at: manifest.created_at,
+            });
+        }
+    }
+    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(rows)
+}
+
+/// Revoke a presenter's consent — a TRANSACTION, not a note (scope brief):
+/// the receipt is marked revoked, derived assets (reference clip +
+/// speaker embedding) are deleted, queued jobs are blocked with a
+/// `consent_revoked` failure, managed outputs are unpublished, and every
+/// step lands in the immutable audit log. The source capture, the consent
+/// artifact, and the audit log are never deleted. A durable pending state
+/// makes the transaction restartable: a re-run resumes it instead of
+/// reporting success with unconfirmed effects. The whole transaction runs
+/// under the presenter's narration lock (same lock job creation and the
+/// runner's completion publication take), and the consent gate closes
+/// BEFORE the final job/output inventory is taken — so an in-flight
+/// completion cannot escape the plan: its publication re-checks consent
+/// under the same lock and fails once the gate has closed. A job already
+/// processing when revocation lands is named in the audit event.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn narration_revoke_consent(
+    presenterId: String,
+    reason: String,
+) -> Result<narr::RevocationReceipt, String> {
+    // Thin wrapper: the fail-closed, restartable transaction lives in
+    // the core crate (narr::execute_revocation) so its fault-injection
+    // behaviour is covered by core tests. This shell only resolves the
+    // narration root and maps the error.
+    let root = narration_root_dir()?;
+    narr::execute_revocation(&root, &presenterId, &reason)
+}
+
+/// Record human acceptance for a finished narration job (acceptance gate
+/// 10). PASS only when the presenter AND the reviewer approve the exact
+/// output hash. The verdict is computed by the core, never assumed.
+#[tauri::command]
+fn narration_accept_output(
+    dto: AcceptNarrationDto,
+) -> Result<narr::AcceptanceReceipt, String> {
+    if dto.presenter_decision != "approved" && dto.presenter_decision != "rejected" {
+        return Err("presenterDecision must be \"approved\" or \"rejected\"".to_string());
+    }
+    if dto.reviewer_decision != "approved" && dto.reviewer_decision != "rejected" {
+        return Err("reviewerDecision must be \"approved\" or \"rejected\"".to_string());
+    }
+    if dto.presenter_by.trim().is_empty() || dto.reviewer_by.trim().is_empty() {
+        return Err("presenter and reviewer names are required".to_string());
+    }
+    let root = narration_root_dir()?;
+    let job_dir = narration_job_dir(&root, &dto.job_id)?;
+    match narration_job_status(&job_dir).as_deref() {
+        Some("done") => {}
+        Some(other) => {
+            return Err(format!(
+                "job {} is {other}, not done — nothing to accept",
+                dto.job_id
+            ));
+        }
+        None => return Err(format!("unknown narration job: {}", dto.job_id)),
+    }
+    let bytes = std::fs::read(job_dir.join("result.json"))
+        .map_err(|e| format!("job {} has no result.json: {e}", dto.job_id))?;
+    let result: narr::NarrationResult = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("job {} result.json is corrupt: {e}", dto.job_id))?;
+    // Bind the decision to the bytes actually reviewed: hash the live
+    // output now and require it to equal BOTH the result and the render
+    // manifest. A done job without a readable, valid render manifest
+    // fails closed. The manifest comes back parsed for the receipt
+    // attachment below.
+    let (output_sha256, mut manifest) =
+        narr::verify_acceptance_output(&job_dir, &result)?;
+    let now = forge_capture_core::timestamp::now_utc_iso8601();
+    let mut receipt = narr::AcceptanceReceipt {
+        version: 1,
+        job_id: dto.job_id.clone(),
+        output_sha256,
+        presenter_decision: dto.presenter_decision.clone(),
+        presenter_by: dto.presenter_by.clone(),
+        presenter_at: now.clone(),
+        reviewer_decision: dto.reviewer_decision.clone(),
+        reviewer_by: dto.reviewer_by.clone(),
+        reviewer_at: now.clone(),
+        notes: dto.notes.clone(),
+        verdict: String::new(),
+    };
+    let verdict = narr::acceptance_verdict(&receipt);
+    receipt.verdict = verdict.to_string();
+    narration_write_json_two_phase(&job_dir.join("acceptance.json"), &receipt)?;
+    // Attach the verdict AND the receipt artifact reference to the
+    // render manifest. This write is checked: a failed manifest update
+    // fails the command rather than silently dropping the linkage.
+    manifest.acceptance_receipt = Some(verdict.to_string());
+    manifest.acceptance_receipt_path = Some("acceptance.json".to_string());
+    narration_write_json_two_phase(&job_dir.join("render-manifest.json"), &manifest)?;
+    narration_append_audit(
+        &root,
+        serde_json::json!({
+            "event": "output_accepted",
+            "job_id": dto.job_id,
+            "verdict": verdict,
+            "presenter_by": dto.presenter_by,
+            "reviewer_by": dto.reviewer_by,
+        }),
+    )?;
+    Ok(receipt)
+}
+
+#[cfg(test)]
+mod narration_ipc_tests {
+    //! The JS UI sends camelCase invoke payloads and Tauri matches argument
+    //! names exactly. These tests pin the narration DTOs against the EXACT
+    //! JSON shapes `ui/narration.js` sends, so a renamed field on either
+    //! side fails here instead of silently dropping data at runtime.
+
+    use super::*;
+
+    #[test]
+    fn narration_register_consent_dto_matches_ui_payload() {
+        // ui/narration.js register-consent submit:
+        //   { presenterId, displayName, artifactPath,
+        //     recordedAt: <ISO string>, reviewedBy }
+        let json = r#"{"presenterId":"tyler-welch","displayName":"Tyler Welch","artifactPath":"C:\\x\\tyler-consent.mp4","recordedAt":"2026-11-10T14:30:00.000Z","reviewedBy":"Muse"}"#;
+        let dto: RegisterConsentDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.presenter_id, "tyler-welch");
+        assert_eq!(dto.display_name, "Tyler Welch");
+        assert_eq!(dto.artifact_path, "C:\\x\\tyler-consent.mp4");
+        assert_eq!(dto.recorded_at, "2026-11-10T14:30:00.000Z");
+        assert_eq!(dto.reviewed_by, "Muse");
+    }
+
+    #[test]
+    fn narration_create_job_dto_matches_ui_payload() {
+        // ui/narration.js create-job submit (plus captureDurationSec):
+        //   { presenterId, capturePath, captureFile, captureDurationSec,
+        //     segments: [{ stepId, text, sourceEvidence,
+        //                  captureStartSec, captureEndSec }] }
+        let json = r#"{"presenterId":"tyler-welch","capturePath":"C:\\x\\recording-3.webm","captureFile":"recording-3.webm","captureDurationSec":106.0,"segments":[{"stepId":"step-1","text":"First, gather your tools.","sourceEvidence":"manual","captureStartSec":0.0,"captureEndSec":12.5}]}"#;
+        let dto: CreateNarrationJobDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.presenter_id, "tyler-welch");
+        assert_eq!(dto.capture_file, "recording-3.webm");
+        assert_eq!(dto.capture_duration_sec, 106.0);
+        assert_eq!(dto.segments.len(), 1);
+        assert_eq!(dto.segments[0].step_id, "step-1");
+        assert_eq!(dto.segments[0].capture_end_sec, 12.5);
+    }
+
+    #[test]
+    fn narration_accept_output_dto_matches_ui_payload() {
+        // ui/narration.js acceptance submit:
+        //   { jobId, presenterDecision, presenterBy,
+        //     reviewerDecision, reviewerBy, notes }
+        let json = r#"{"jobId":"narr-0123456789abcdef","presenterDecision":"approved","presenterBy":"Tyler Welch","reviewerDecision":"approved","reviewerBy":"Muse","notes":"Sounds like me."}"#;
+        let dto: AcceptNarrationDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.job_id, "narr-0123456789abcdef");
+        assert_eq!(dto.presenter_decision, "approved");
+        assert_eq!(dto.reviewer_by, "Muse");
+        assert_eq!(dto.notes, "Sounds like me.");
+    }
+
+    #[test]
+    fn narration_presenter_id_validation_rejects_traversal() {
+        assert!(narration_presenter_id_valid("tyler-welch"));
+        assert!(narration_presenter_id_valid("a1"));
+        assert!(!narration_presenter_id_valid("../tyler"));
+        assert!(!narration_presenter_id_valid("tyler/welch"));
+        assert!(!narration_presenter_id_valid("Tyler Welch"));
+        assert!(!narration_presenter_id_valid(""));
+        assert!(!narration_presenter_id_valid("-tyler"));
+    }
+
+    #[test]
+    fn narration_job_id_validation_accepts_only_canonical_ids() {
+        assert!(narration_job_id_valid("narr-0123456789abcdef"));
+        assert!(!narration_job_id_valid("narr-xyz"));
+        assert!(!narration_job_id_valid("job-0123456789abcdef"));
+        assert!(!narration_job_id_valid("narr-0123456789abcdeg"));
+    }
 }
 
 /// Recover interrupted meeting recordings after a crash: any
@@ -6422,6 +7200,15 @@ fn main() {
             meeting_poll,
             meeting_import,
             meeting_recover,
+            narration_root_path,
+            narration_list_presenters,
+            narration_get_presenter,
+            narration_register_consent,
+            narration_create_job,
+            narration_poll_job,
+            narration_list_jobs,
+            narration_revoke_consent,
+            narration_accept_output,
             test_audio_save,
             start_scroll_capture,
             stop_scroll_capture,

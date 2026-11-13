@@ -1,0 +1,1585 @@
+"""FORGE Capture Phase 3 Slice A — narration sidecar runner (OpenVoice V2).
+
+Runs on the iBUYPOWER (RTX 5080) only. Watches the narration spool at
+``%LOCALAPPDATA%\\FORGE Capture\\narration`` for queued jobs, generates
+per-step narration with OpenVoice V2 + MeloTTS (zero-shot tone-color
+cloning, no training, no generated face), assembles captions + the
+narrated MP4 with FFmpeg, and writes the result + render manifest.
+
+Local-first: the runner makes NO network calls during a job.
+``result.json`` ``outbound_requests`` is always ``[]``. Downloads happen
+only in the setup script (``tools/narration/setup-env.ps1``), never at
+job time.
+
+Stdlib only at import time. torch / openvoice / melo are imported lazily
+inside the functions that need them, so ``python -m py_compile`` and the
+pure-helper tests pass on machines without the model stack.
+
+Exit codes: 0 ok / 1 no job (``--once`` found nothing queued) /
+2 job failed.
+
+Usage (inside the venv on the iBUYPOWER):
+  python narration_runner.py --narration-root "%LOCALAPPDATA%\\FORGE Capture\\narration" --once
+  python narration_runner.py --narration-root "%LOCALAPPDATA%\\FORGE Capture\\narration" --loop
+  python narration_runner.py --narration-root "..." --enroll-only tyler-welch
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from narration_lib import (  # noqa: E402
+    build_ffmpeg_command,
+    build_vtt,
+    canonical_script_sha256,
+    marker_path,
+    presenter_lock,
+    resolve_marker,
+    sha256_file,
+    validate_result_dict,
+    validate_script_dict,
+    verify_job_binding,
+)
+
+# --- Pinned model identity (scope brief: pin exact code + weights) -------
+MODEL_ID = "openvoice-v2"
+MODEL_VERSION = "checkpoints_v2_0417"
+MODEL_CODE_COMMIT = "74a1d147b17a8c3092dd5430504bd83ef6c7eb23"
+BASE_TTS = "melotts"
+BASE_TTS_COMMIT = "209145371cff8fc3bd60d7be902ea69cbdb7965a"
+CHECKPOINTS_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoice"
+# Pinned Hugging Face revision of the checkpoints tree. The setup
+# script downloads the nine files under checkpoints/ at this revision
+# and assembles checkpoints_v2_0417.zip with the deterministic builder
+# (narration-sidecar/build_checkpoints_zip.py). The upstream S3 zip
+# (myshell-public-repo-host) is GONE (bucket deleted, verified
+# 2026-11-12); the S3 URL must never be restored here.
+HF_CHECKPOINTS_REVISION = "c70fc8b939bd1d8213994ff7c88e32be39708271"
+# Source of the English base-speaker embeddings the V2 generation
+# path loads (base_speakers/ses/<normalized-speaker-key>.pth): the
+# official Hugging Face repo myshell-ai/OpenVoiceV2 (the V2 companion
+# to myshell-ai/OpenVoice, same author). The myshell-ai/OpenVoice
+# checkpoints/ tree does NOT carry a ses/ directory (verified
+# 2026-11-13 at the pinned revision and at main), and the canonical
+# V2 zip that used to carry them lived on the deleted S3 bucket — so
+# OpenVoiceV2 is the authoritative source for these six files. The
+# setup script downloads them at this revision into the stage tree
+# (checkpoints/base_speakers/ses/) before the deterministic zip build.
+# Only the six English files are pinned: the runner is EN-only by
+# construction (TTS(language='EN')), so no other language's ses file
+# can ever be required; the es/fr/jp/kr/zh files in the same upstream
+# directory are out of scope for this slice.
+CHECKPOINTS_SES_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoiceV2"
+HF_SES_REVISION = "f36e7edfe1684461a8343844af60babc2efbb727"
+# Weights SHA-256: the deterministic checkpoints zip hash, built from
+# the Hugging Face files above. Used ONLY as the expected value the
+# setup receipt must carry (see validate_weights_receipt): a job must
+# never claim this hash for bytes that were not verified. Until a
+# validated receipt exists, no enrollment or generation runs at all.
+# Do not "re-fill" this from any other source without re-verifying the
+# zip build -- a different file set is a different hash.
+WEIGHTS_SHA256_PINNED = "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020"
+
+# MeloTTS English base model (the TTS the V2 pipeline speaks
+# through). The MeloTTS CODE is pinned separately (BASE_TTS_COMMIT,
+# installed from git by setup). The MODEL files it loads were NOT
+# pinned until fix round 3: TTS(language='EN') with no paths calls
+# hf_hub_download() for config.json + checkpoint.pth at NO revision
+# (melo/download_utils.py at the pinned code commit) — an unpinned,
+# mutable download on the first job, while result.json claimed
+# outbound_requests []. The setup script now downloads both files
+# from the official Hugging Face repo myshell-ai/MeloTTS-English at
+# the pinned revision below, verifies their SHA-256s, and records
+# them in the setup receipt; the runner binds TTS to those validated
+# local paths (config_path/ckpt_path) and never relies on an ambient
+# Hugging Face cache or an implicit download. With both paths given,
+# melo's load_or_download_* functions read the local files and make
+# no network call. The speaker keys in MELO_EN_SPEAKER_KEYS come
+# from this revision's config.json (verified 2026-11-13).
+MELO_MODEL_SOURCE_URL = "https://huggingface.co/myshell-ai/MeloTTS-English"
+MELO_MODEL_REVISION = "bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef"
+MELO_MODEL_FILES = {
+    "config.json":
+        "039116c927c70eaa4458d315ea83aaaa99e1fca1c621b50c8ca56b4a5700eb77",
+    "checkpoint.pth":
+        "acd278040eaf9536908e2b965273df5a731c44d8f0da66cc5fed7972772ed23c",
+}
+DEFAULT_MELOTTS_DIR = r"C:\forge-bridge\narration\melotts-en"
+
+# BERT base encoder for MeloTTS EN generation (fix round 5): the
+# "offline pin". Pinned MeloTTS code (melo/text/english_bert.py,
+# commit 20914537) hard-codes model_id = 'bert-base-uncased' and
+# calls AutoTokenizer.from_pretrained(model_id) at module level plus
+# AutoModelForMaskedLM.from_pretrained(model_id) lazily per segment.
+# Hugging Face Hub builds the cache folder from the CALLER-supplied
+# repo id, so 'bert-base-uncased' resolves under
+# models--bert-base-uncased — NOT under the google-bert org folder
+# the old setup seeded (models--google-bert--bert-base-uncased).
+# A web redirect cannot repair that once the runner forces
+# HF_HUB_OFFLINE=1: a clean setup failed at the first real segment,
+# and an ambient alias cache could feed unpinned bytes while
+# result.json still reported outbound_requests []. Seeding by the
+# old id directly does NOT work on the iBUYPOWER either: the Xet
+# read-token endpoint 404s for it (runs 11-12, diagnosed on the box
+# 2026-11-13). So the setup seeds by the canonical id that
+# downloads reliably (google-bert/bert-base-uncased), hash-verifies
+# every file, then CREATES the alias cache identity melo requests by
+# copying the verified snapshot into
+# models--bert-base-uncased/snapshots/<rev>/ with a refs/main
+# pointer — the exact offline alias/ref structure the pinned code
+# resolves to. The runner validates the receipt, the snapshot
+# directory, the cache-resolution identity, and every file hash
+# before generation.
+# Per-file SHA-256s verified 2026-11-13 from the official Hugging
+# Face repo google-bert/bert-base-uncased at this revision — the two
+# model files by direct download (hashes match the Hub's LFS
+# metadata), the four small files by direct download.
+BERT_MODEL_REPO_ID = "bert-base-uncased"
+BERT_MODEL_REVISION = "86b5e0934494bd15c9632b12f734a8a67f723594"
+BERT_MODEL_FILES = {
+    "config.json":
+        "7160e1553ad2ca51d8c1cb066be533db31826e12d173824c1bb0cb1a4f187d20",
+    "vocab.txt":
+        "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+    "tokenizer_config.json":
+        "a025160ef0431f1a392f6f050c1310f4c5d9fb6f275932dbccba73c4d214bf10",
+    "tokenizer.json":
+        "ce64fce797c24f68df90b40a3f74f579b336a493db14bd583fd520ea0d8c9a98",
+    "pytorch_model.bin":
+        "097417381d6c7230bd9e3557456d726de6e83245ec8b24f529f60198a67b203a",
+    "model.safetensors":
+        "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3",
+}
+
+# MeloTTS English speaker keys (model.hps.data.spk2id) the runner can
+# select from, as observed in the live myshell-ai/MeloTTS-English
+# config.json at MELO_MODEL_REVISION above (fetched 2026-11-13): the runner picks the first key
+# starting with "EN", so this is the full selection surface. Each key
+# normalizes (lowercase, '_' -> '-') to a ses file that MUST be in
+# CHECKPOINTS_FILES below — the layout smoke test proves it. If a
+# future MeloTTS model presents an EN key outside this list, the job
+# fails closed at the ses load ("base speaker embedding missing")
+# rather than guessing a speaker; the list is then re-verified and
+# the manifest extended. The MeloTTS model files themselves are
+# revision-pinned above (MELO_MODEL_REVISION); a model change is a
+# new pin, never a silent cache refresh.
+MELO_EN_SPEAKER_KEYS = (
+    "EN-US",
+    "EN-BR",
+    "EN_INDIA",
+    "EN-AU",
+    "EN-Default",
+)
+
+
+def normalize_speaker_key(speaker_key: str) -> str:
+    """Normalize a MeloTTS speaker key to a ses filename stem.
+
+    Exactly the pinned upstream V2 flow (demo_part3.ipynb, OpenVoice
+    commit 74a1d147): ``speaker_key.lower().replace('_', '-')``.
+    The runner previously used the raw key (e.g. ``EN-US``), which
+    matches no file upstream ships; the files are ``en-us.pth`` etc.
+    """
+    return speaker_key.lower().replace("_", "-")
+
+
+def resolve_speaker_embedding_path(checkpoints_dir, speaker_key: str) -> Path:
+    """Path of the validated source embedding for a MeloTTS speaker key.
+
+    Pure path construction (no torch, no model) so the layout smoke
+    test can prove every selectable key resolves against the
+    production manifest without a GPU or the 420 MB weights.
+    """
+    return (Path(checkpoints_dir) / "base_speakers" / "ses"
+            / f"{normalize_speaker_key(speaker_key)}.pth")
+
+# Per-file manifest of the installed checkpoint tree: the fifteen
+# files of the deterministic zip, each with its full SHA-256,
+# verified 2026-11-13 from the official Hugging Face repos
+# (myshell-ai/OpenVoice, revision c70fc8b939bd1d8213994ff7c88e32be39708271
+# for the nine checkpoints/ files; myshell-ai/OpenVoiceV2, revision
+# f36e7edfe1684461a8343844af60babc2efbb727 for the six English
+# base_speakers/ses/ files): all fifteen downloaded, sizes verified
+# against the HF tree listings, and the deterministic zip rebuilt
+# from exactly these bytes hashes to WEIGHTS_SHA256_PINNED above — so
+# the per-file hashes and the zip hash are mutually consistent.
+# validate_weights_receipt hashes the installed files against this
+# manifest before any enrollment or generation: a changed, replaced,
+# or incomplete tree fails closed instead of running while
+# result.json asserts the pinned hash.
+CHECKPOINTS_FILES = {
+    "base_speakers/EN/checkpoint.pth":
+        "1db1ae1a5c8ded049bd1536051489aefbfad4a5077c01c2257e9e88fa1bb8422",
+    "base_speakers/EN/config.json":
+        "f01c2ecbf115128d00e13acc57eadb89ac0579635c1a27c7957158bceb77e561",
+    "base_speakers/EN/en_default_se.pth":
+        "9cab24002eec738d0fe72cb73a34e57fbc3999c1bd4a1670a7b56ee4e3590ac9",
+    "base_speakers/EN/en_style_se.pth":
+        "6f698153be5004b90a8642d1157c89cae7dd296752a3276450ced6a17b8b98a9",
+    "base_speakers/ZH/checkpoint.pth":
+        "de9fb0eb749f3254130fe0172fcbb20e75f88a9b16b54dd0b73cac0dc40da7d9",
+    "base_speakers/ZH/config.json":
+        "dca3b59c0039b79be87af78cacf87c15796329458bd099fe0cf3a749e5a7b5cc",
+    "base_speakers/ZH/zh_default_se.pth":
+        "3b62e8264962059b8a84dd00b29e2fcccc92f5d3be90eec67dfa082c0cf58ccf",
+    "base_speakers/ses/en-au.pth":
+        "5e9782233deef51fc5289d05ad4dd4ce12b196e282eccf6b6db6256bbd02daaa",
+    "base_speakers/ses/en-br.pth":
+        "2bf5a88025cfd10473b25d65d5c0e608338ce4533059c5f9a3383e69c812d389",
+    "base_speakers/ses/en-default.pth":
+        "e4139de3bc2ea162f45a5a5f9559b710686c9689749b5ab8945ee5e2a082d154",
+    "base_speakers/ses/en-india.pth":
+        "ad03d946757e95fe9e13239aa4b11071d98f22316f604f34b1a0b4bdf41cda48",
+    "base_speakers/ses/en-newest.pth":
+        "6a3798229b1114f0e9cc137b33211809def7dda5a8a9398d5a112c0b42699177",
+    "base_speakers/ses/en-us.pth":
+        "0d092d4af0815a4bfbc6105b65621ab68dc4c61b2f55044d8a66968a34947c32",
+    "converter/checkpoint.pth":
+        "89ae83aa4e3668fef64b388b789ff7b0ce0def9f801069edfc18a00ea420748d",
+    "converter/config.json":
+        "86c61ff1ac3efb9fbf0246c727345793b34053fb1dd5b98e7f561201d4f90739",
+}
+
+DEFAULT_CHECKPOINTS_DIR = r"C:\forge-bridge\narration\checkpoints_v2"
+DEFAULT_RECEIPT_PATH = r"C:\forge-bridge\narration\receipt.json"
+DEFAULT_FFMPEG_DIR = r"C:\forge-bridge\tools\ffmpeg\bin"
+
+POLL_SECONDS = 5
+RESOURCE_POLL_SECONDS = 0.5
+
+
+def log(msg: str) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[narration] {ts} {msg}", flush=True)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def default_narration_root() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "FORGE Capture" / "narration"
+    return Path.home() / ".local" / "share" / "forge-capture" / "narration"
+
+
+def load_json(path: Path):
+    # utf-8-sig: the setup receipt is written by PowerShell Out-File
+    # -Encoding utf8, which emits a UTF-8 BOM; plain utf-8 rejects it
+    # ("Unexpected UTF-8 BOM") and the first real enrollment failed
+    # on exactly that (fix round 6 live-proof find). utf-8-sig strips
+    # a BOM when present and reads a BOM-free file identically.
+    with open(path, "r", encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def append_audit(root: Path, event: dict) -> None:
+    """Append one JSON line to audit/audit-log.jsonl (append-only)."""
+    audit_dir = root / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    line = {"at": utc_now(), **event}
+    with open(audit_dir / "audit-log.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def weights_receipt_path(receipt_path: str | None = None) -> Path | None:
+    """Receipt file carrying a checkpoints hash, else None.
+
+    Candidate order: the explicit path first, then the default setup
+    receipt. A file only counts when it parses and carries a non-empty
+    ``checkpoints_v2_zip_sha256`` value.
+    """
+    candidates = []
+    if receipt_path:
+        candidates.append(Path(receipt_path))
+    candidates.append(Path(DEFAULT_RECEIPT_PATH))
+    for path in candidates:
+        try:
+            if path.is_file():
+                value = load_json(path).get("checkpoints_v2_zip_sha256")
+                if isinstance(value, str) and value and value != "null":
+                    return path
+        except Exception:
+            pass  # unreadable receipt: weights_sha256() logs it once
+    return None
+
+
+def weights_sha256(receipt_path: str | None = None) -> str:
+    """Weights hash from the setup receipt, else the pinned value.
+
+    This is only an IDENTIFIER for the job binding (the canonical job
+    id derives from it) — it is NOT evidence the installed bytes are
+    the pinned weights. The trusted value is the one
+    validate_weights_receipt returns after checking the receipt and
+    the installed files; callers must validate before any enrollment
+    or generation. Until then the pinned value is returned so the
+    binding check can still name a tampered script precisely.
+    """
+    path = weights_receipt_path(receipt_path)
+    if path is None:
+        return WEIGHTS_SHA256_PINNED
+    try:
+        value = load_json(path).get("checkpoints_v2_zip_sha256")
+        if isinstance(value, str) and value and value != "null":
+            return value.lower()
+    except Exception as exc:  # receipt unreadable: pinned value, flagged
+        log(f"WARNING: could not read receipt {path}: {exc}")
+    return WEIGHTS_SHA256_PINNED
+
+
+def _same_dir(a, b) -> bool:
+    """True when two directory paths name the same directory.
+
+    Normalized (case-insensitive on Windows, where setup writes the
+    receipt) so a receipt bound to ``C:\\...\\checkpoints_v2`` matches
+    the same directory resolved with different casing or separators.
+    """
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(
+        os.path.normpath(str(b)))
+
+
+def validate_weights_receipt(receipt_path: str | None,
+                             checkpoints_dir) -> str:
+    """Validate the setup receipt and the installed checkpoint tree.
+
+    Before any enrollment or generation, require ALL of:
+    (a) a setup receipt exists — the explicit ``--receipt-path`` when
+        given, else the default setup receipt (``receipt.json``). A
+        missing receipt fails: the pinned hash is expected metadata,
+        not evidence of the bytes actually installed.
+    (b) the receipt parses as JSON and carries
+        ``checkpoints_v2_zip_sha256`` as a 64-character lowercase hex
+        digest exactly equal to ``WEIGHTS_SHA256_PINNED``.
+    (c) the receipt is bound to the resolved checkpoint directory:
+        it must carry ``checkpoints_dir`` naming the directory the
+        checkpoints were installed to, equal to ``checkpoints_dir``
+        (normalized). A receipt for another directory fails.
+    (d) every file in the pinned per-file manifest
+        (``CHECKPOINTS_FILES``) exists under ``checkpoints_dir`` and
+        hashes to its pinned value — an incomplete, replaced, or
+        changed tree fails.
+
+    Returns the validated hash (== ``WEIGHTS_SHA256_PINNED``).
+    Raises RuntimeError with a specific reason on any failure — the
+    caller fails the job closed with that reason.
+    """
+    # (a) Resolve the receipt file. An explicit path is authoritative:
+    # it does not fall back to the default.
+    if receipt_path:
+        path = Path(receipt_path)
+        if not path.is_file():
+            raise RuntimeError(
+                f"no setup receipt at {receipt_path}: run "
+                "tools/narration/setup-env.ps1 and pass its receipt.json")
+    else:
+        path = Path(DEFAULT_RECEIPT_PATH)
+        if not path.is_file():
+            raise RuntimeError(
+                "no setup receipt found (looked for "
+                f"{DEFAULT_RECEIPT_PATH}): run "
+                "tools/narration/setup-env.ps1 first — the pinned "
+                "weights hash alone is not proof the checkpoints "
+                "are installed")
+    try:
+        receipt = load_json(path)
+    except Exception as exc:
+        raise RuntimeError(f"malformed setup receipt {path}: {exc}")
+    if not isinstance(receipt, dict):
+        raise RuntimeError(f"malformed setup receipt {path}: not a JSON object")
+    # (b) The receipt hash must be exactly the pinned digest.
+    value = receipt.get("checkpoints_v2_zip_sha256")
+    if not isinstance(value, str) or len(value) != 64 or \
+            any(c not in "0123456789abcdef" for c in value):
+        raise RuntimeError(
+            f"setup receipt {path} has no valid checkpoints_v2_zip_sha256 "
+            "(must be a 64-character lowercase hex digest)")
+    if value != WEIGHTS_SHA256_PINNED:
+        raise RuntimeError(
+            f"setup receipt {path} checkpoints_v2_zip_sha256 does not "
+            "match the pinned weights hash "
+            f"({value[:16]}... != {WEIGHTS_SHA256_PINNED[:16]}...)")
+    # (c) The receipt must be bound to the resolved directory.
+    bound = receipt.get("checkpoints_dir")
+    if not isinstance(bound, str) or not bound:
+        raise RuntimeError(
+            f"setup receipt {path} does not record checkpoints_dir: "
+            "re-run tools/narration/setup-env.ps1 to write a bound receipt")
+    if not _same_dir(bound, checkpoints_dir):
+        raise RuntimeError(
+            f"setup receipt {path} is bound to checkpoints_dir {bound!r} "
+            f"but checkpoints resolved to {checkpoints_dir!r}: refusing "
+            "to use an unrelated checkpoint tree")
+    # (d) Every pinned file must exist under the resolved directory
+    # and hash to its pinned value.
+    for rel, expected in sorted(CHECKPOINTS_FILES.items()):
+        installed = Path(checkpoints_dir) / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"checkpoint file missing under {checkpoints_dir}: {rel} "
+                "(incomplete checkpoint tree — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"checkpoint file changed under {checkpoints_dir}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    return value
+
+
+def resolve_checkpoints_dir(cli_dir: str | None) -> Path:
+    """Resolve the checkpoints dir.
+
+    Task brief path is C:\\forge-bridge\\narration\\checkpoints_v2; the
+    setup script extracts under ...\\narration\\src\\checkpoints_v2, so
+    fall back to the src layout when the brief path has no converter
+    config. Env NARRATION_CHECKPOINTS_DIR wins over both.
+    """
+    env_dir = os.environ.get("NARRATION_CHECKPOINTS_DIR")
+    candidates = []
+    if env_dir:
+        candidates.append(Path(env_dir))
+    if cli_dir:
+        candidates.append(Path(cli_dir))
+    candidates.append(Path(DEFAULT_CHECKPOINTS_DIR))
+    candidates.append(Path(r"C:\forge-bridge\narration\src\checkpoints_v2"))
+    for cand in candidates:
+        if (cand / "converter" / "config.json").is_file():
+            return cand
+    return candidates[0] if candidates else Path(DEFAULT_CHECKPOINTS_DIR)
+
+
+def validate_melotts_model(receipt_path: str | None,
+                           melotts_dir) -> str:
+    """Validate the pinned MeloTTS English base model before any TTS
+    work (fix round 3: the first narration job must not download
+    unpinned MeloTTS weights while reporting zero outbound requests).
+
+    The setup receipt must carry (see validate_weights_receipt for the
+    receipt rules): a receipt must exist and parse; it must carry
+    ``melotts_model_hf_revision`` exactly equal to
+    ``MELO_MODEL_REVISION``; it must carry ``melotts_dir`` naming the
+    directory the model files were installed to, equal to
+    ``melotts_dir``; and it must record per-file SHA-256s for
+    ``config.json`` and ``checkpoint.pth`` equal to the pinned
+    ``MELO_MODEL_FILES``. Then every file in ``MELO_MODEL_FILES``
+    must exist under ``melotts_dir`` and hash to its pinned value.
+
+    Returns the validated MeloTTS model revision. Raises
+    RuntimeError on any mismatch — the caller fails the job closed
+    (never constructs TTS against unvalidated model bytes).
+    """
+    if receipt_path is None:
+        receipt_path = DEFAULT_RECEIPT_PATH
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"setup receipt missing: {path} (run the env setup first)")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"setup receipt unreadable: {path}: {exc}")
+    rev = receipt.get("melotts_model_hf_revision")
+    if not isinstance(rev, str) or rev != MELO_MODEL_REVISION:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned MeloTTS model "
+            f"revision {MELO_MODEL_REVISION} (has {rev!r}): re-run setup")
+    bound = receipt.get("melotts_dir")
+    if not bound:
+        raise RuntimeError(
+            f"setup receipt {path} does not record melotts_dir: re-run setup")
+    if not _same_dir(bound, melotts_dir):
+        raise RuntimeError(
+            f"setup receipt {path} is bound to melotts_dir {bound!r} but "
+            f"the model resolved to {melotts_dir!r}: refusing to use "
+            "unvalidated MeloTTS model bytes")
+    for rel, expected in MELO_MODEL_FILES.items():
+        recorded = receipt.get(_melotts_receipt_key(rel))
+        if recorded != expected:
+            raise RuntimeError(
+                f"setup receipt {path} does not record the pinned hash for "
+                f"MeloTTS {rel} (has {recorded!r}): re-run setup")
+        installed = Path(melotts_dir) / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"MeloTTS model file missing under {melotts_dir}: {rel} "
+                "(incomplete MeloTTS model — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"MeloTTS model file changed under {melotts_dir}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    return rev
+
+
+def _melotts_receipt_key(rel: str) -> str:
+    """Receipt field holding the recorded hash of one MeloTTS file."""
+    return ("melotts_config_sha256" if rel == "config.json"
+            else "melotts_checkpoint_sha256")
+
+
+def _bert_receipt_key(rel: str) -> str:
+    """Receipt field holding the recorded hash of one BERT file."""
+    return {
+        "config.json": "bert_config_sha256",
+        "vocab.txt": "bert_vocab_sha256",
+        "tokenizer_config.json": "bert_tokenizer_config_sha256",
+        "tokenizer.json": "bert_tokenizer_sha256",
+        "pytorch_model.bin": "bert_pytorch_model_sha256",
+        "model.safetensors": "bert_safetensors_sha256",
+    }[rel]
+
+
+def resolve_bert_cache_path():
+    """Path the Hugging Face cache would load 'bert-base-uncased'
+    config.json from — i.e. what pinned melo code's
+    AutoTokenizer.from_pretrained('bert-base-uncased') resolves to.
+
+    Local cache only: try_to_load_from_cache never downloads.
+    Returns None when the alias cache has no such file. The lazy
+    import keeps this module importable where huggingface_hub is
+    absent (unit tests stub this function instead).
+    """
+    from huggingface_hub import try_to_load_from_cache
+    return try_to_load_from_cache(BERT_MODEL_REPO_ID, "config.json")
+
+
+def validate_bert_model(receipt_path: str | None) -> str:
+    """Validate the pinned BERT base encoder before any TTS work
+    (fix round 5: the BERT offline pin).
+
+    The setup receipt must carry: ``bert_model_repo`` exactly equal
+    to ``BERT_MODEL_REPO_ID`` (the identity pinned melo code
+    requests — NOT the google-bert org id); ``bert_model_hf_revision``
+    exactly equal to ``BERT_MODEL_REVISION``; ``bert_snapshot_dir``
+    naming the cache snapshot directory the files were installed to;
+    and per-file SHA-256s for every file in ``BERT_MODEL_FILES``
+    equal to the pin. Then every file in ``BERT_MODEL_FILES`` must
+    exist under that snapshot directory and hash to its pinned value.
+    Finally the cache identity itself is checked: the path
+    ``from_pretrained('bert-base-uncased')`` would resolve to must
+    be the validated snapshot's config.json — an ambient alias cache
+    pointing elsewhere fails closed instead of feeding unpinned
+    bytes to the job.
+
+    Returns the validated BERT revision. Raises RuntimeError on any
+    mismatch — the caller fails the job closed (never constructs TTS
+    against unvalidated BERT bytes).
+    """
+    if receipt_path is None:
+        receipt_path = DEFAULT_RECEIPT_PATH
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"setup receipt missing: {path} (run the env setup first)")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"setup receipt unreadable: {path}: {exc}")
+    repo = receipt.get("bert_model_repo")
+    if not isinstance(repo, str) or repo != BERT_MODEL_REPO_ID:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned BERT repo "
+            f"{BERT_MODEL_REPO_ID} (has {repo!r}): re-run setup")
+    rev = receipt.get("bert_model_hf_revision")
+    if not isinstance(rev, str) or rev != BERT_MODEL_REVISION:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned BERT revision "
+            f"{BERT_MODEL_REVISION} (has {rev!r}): re-run setup")
+    snapshot_dir = receipt.get("bert_snapshot_dir")
+    if not snapshot_dir:
+        raise RuntimeError(
+            f"setup receipt {path} does not record bert_snapshot_dir: "
+            "re-run setup")
+    snap = Path(snapshot_dir)
+    if not snap.is_dir():
+        raise RuntimeError(
+            f"BERT snapshot directory missing: {snap} (re-run setup)")
+    for rel, expected in BERT_MODEL_FILES.items():
+        recorded = receipt.get(_bert_receipt_key(rel))
+        if recorded != expected:
+            raise RuntimeError(
+                f"setup receipt {path} does not record the pinned hash for "
+                f"BERT {rel} (has {recorded!r}): re-run setup")
+        installed = snap / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"BERT model file missing under {snap}: {rel} "
+                "(incomplete BERT snapshot — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"BERT model file changed under {snap}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    resolved = resolve_bert_cache_path()
+    expected_config = str(snap / "config.json")
+    if resolved is None or os.path.normcase(str(resolved)) != \
+            os.path.normcase(expected_config):
+        raise RuntimeError(
+            "BERT cache identity mismatch: from_pretrained("
+            f"'{BERT_MODEL_REPO_ID}') resolves to {resolved!r}, not the "
+            f"validated snapshot {expected_config!r} — refusing to run "
+            "against unvalidated BERT bytes (re-run setup)")
+    return rev
+
+
+def resolve_melotts_dir(cli_dir: str | None) -> Path:
+    """Resolve the MeloTTS English base-model dir.
+
+    Env NARRATION_MELOTTS_DIR wins, then --melotts-dir, then the
+    default the setup script installs to. Unlike the checkpoints
+    dir there is no src fallback: setup installs the model files
+    directly under the default.
+    """
+    env_dir = os.environ.get("NARRATION_MELOTTS_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if cli_dir:
+        return Path(cli_dir)
+    return Path(DEFAULT_MELOTTS_DIR)
+
+
+def resolve_tool(name: str, ffmpeg_dir: str | None) -> str | None:
+    """Locate ffmpeg/ffprobe: --ffmpeg-dir, then PATH, then the known
+    iBUYPOWER install dir."""
+    if ffmpeg_dir:
+        cand = Path(ffmpeg_dir) / (name + ".exe" if os.name == "nt" else name)
+        if cand.is_file():
+            return str(cand)
+    found = shutil.which(name)
+    if found:
+        return found
+    cand = Path(DEFAULT_FFMPEG_DIR) / (name + ".exe" if os.name == "nt" else name)
+    if cand.is_file():
+        return str(cand)
+    return None
+
+
+def prepend_ffmpeg_to_path(ffmpeg_bin: str) -> None:
+    """Put the resolved ffmpeg/ffprobe directory on PATH.
+
+    The runner resolves ffmpeg by absolute path for its own calls, but
+    the libraries it drives shell out to bare ``ffmpeg``: OpenVoice's
+    ``se_extractor`` (via ``whisper.audio.load_audio``) and pydub's
+    ``AudioSegment`` both spawn ``ffmpeg`` from PATH. Without this the
+    first real enrollment fails with ``[WinError 2] The system cannot
+    find the file specified`` even though the runner found ffmpeg fine
+    (fix round 6 live-proof find). Idempotent: the dir is prepended
+    only when it is not already on PATH.
+    """
+    ffmpeg_dir = str(Path(ffmpeg_bin).parent)
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep) if path else []
+    if not any(os.path.normcase(p) == os.path.normcase(ffmpeg_dir)
+               for p in parts):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + path
+        log(f"ffmpeg dir added to PATH: {ffmpeg_dir}")
+
+
+def ffmpeg_version(ffmpeg_bin: str) -> str:
+    try:
+        out = subprocess.run([ffmpeg_bin, "-version"], capture_output=True,
+                             text=True, timeout=30)
+        first = (out.stdout or "").splitlines()
+        return first[0].strip() if first else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def probe_audio_duration_sec(ffprobe_bin: str, path: Path) -> float:
+    """Audio duration in seconds via ffprobe (raises on failure)."""
+    out = subprocess.run(
+        [ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise RuntimeError(f"ffprobe failed on {path}: {out.stderr.strip()[:300]}")
+    duration = json.loads(out.stdout)["format"]["duration"]
+    return float(duration)
+
+
+def probe_has_audio_stream(ffprobe_bin: str, path: Path) -> bool:
+    """True when the file has at least one audio stream."""
+    out = subprocess.run(
+        [ffprobe_bin, "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=60)
+    return out.returncode == 0 and bool((out.stdout or "").strip())
+
+
+# --- Consent preflight ------------------------------------------------------
+
+def check_consent(root: Path, presenter_id: str):
+    """Preflight: read the presenter's consent receipt.
+
+    Returns ``(ok, failure_reason_or_None, consent_dict_or_None)``.
+    Failure reasons: ``consent_missing``, ``consent_revoked``,
+    ``consent_hash_mismatch``. A queued job revoked before start MUST
+    NOT run — the caller fails the job on any non-ok result.
+    """
+    presenter_dir = root / "presenters" / presenter_id
+    consent_path = presenter_dir / "consent.json"
+    if not consent_path.is_file():
+        return False, "consent_missing", None
+    try:
+        consent = load_json(consent_path)
+    except Exception:
+        return False, "consent_missing", None
+    if consent.get("status") != "active":
+        return False, "consent_revoked", consent
+    if "voice" not in (consent.get("scope") or []):
+        return False, "consent_revoked", consent
+    artifact_rel = consent.get("consent_artifact_path")
+    expected = consent.get("artifact_sha256")
+    if not artifact_rel or not expected:
+        return False, "consent_hash_mismatch", consent
+    artifact = Path(artifact_rel)
+    if not artifact.is_absolute():
+        artifact = presenter_dir / artifact_rel
+    if not artifact.is_file():
+        return False, "consent_hash_mismatch", consent
+    if sha256_file(artifact) != expected:
+        return False, "consent_hash_mismatch", consent
+    return True, None, consent
+
+
+# --- Resource monitoring ----------------------------------------------------
+
+class ResourceMonitor:
+    """Polls nvidia-smi for peak VRAM and tracks peak RSS of this process.
+
+    Runs in a background thread during generation + render. nvidia-smi
+    absent (or no GPU) -> peak VRAM stays None and gpu is "unknown";
+    psutil absent -> RSS falls back to the ``resource`` module (POSIX)
+    or stays None on Windows without psutil.
+    """
+
+    def __init__(self):
+        self.peak_vram_mib = None
+        self.peak_ram_mib = None
+        self.gpu = "unknown"
+        self._stop = threading.Event()
+        self._thread = None
+        self._psutil = None
+        try:
+            import psutil  # lazy: optional dependency
+            self._psutil = psutil
+        except Exception:
+            self._psutil = None
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=15)
+            name = (out.stdout or "").strip().splitlines()
+            if name:
+                self.gpu = name[0].strip()
+        except Exception:
+            self.gpu = "unknown"
+
+    def _poll_once(self):
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=15)
+            for line in (out.stdout or "").splitlines():
+                try:
+                    used = int(line.strip())
+                except ValueError:
+                    continue
+                if self.peak_vram_mib is None or used > self.peak_vram_mib:
+                    self.peak_vram_mib = used
+        except Exception:
+            pass
+        try:
+            if self._psutil is not None:
+                rss = self._psutil.Process(os.getpid()).memory_info().rss // (1024 * 1024)
+            else:
+                import resource  # POSIX only; ImportError on Windows
+                rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if self.peak_ram_mib is None or rss > self.peak_ram_mib:
+                self.peak_ram_mib = rss
+        except Exception:
+            pass
+
+    def _loop(self):
+        while not self._stop.wait(RESOURCE_POLL_SECONDS):
+            self._poll_once()
+
+    def __enter__(self):
+        self._poll_once()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._poll_once()
+
+
+# --- Enrollment (lazy heavy imports) ----------------------------------------
+
+def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
+                     receipt_path: str | None = None) -> dict:
+    """Zero-shot enrollment for a presenter. Returns the VoiceEnrollment dict.
+
+    Loads OpenVoice ToneColorConverter + checkpoint, extracts the speaker
+    embedding from the presenter's reference.wav, writes
+    speaker_embedding.json and enrollment.json (status "active"). Never
+    trains anything. Raises on any failure; the caller fails the job.
+    """
+    # Weights provenance (fix round 2, moved-head P1): enrollment must
+    # not use an unverified checkpoint tree. Validates the setup
+    # receipt (hash + directory binding) and the installed files
+    # against the pinned per-file manifest — before the reuse path
+    # too, since a reused enrollment still leads to generation with
+    # these checkpoints. Raises before any model work.
+    validate_weights_receipt(receipt_path, checkpoints_dir)
+
+    import torch  # lazy: model stack only on the iBUYPOWER
+
+    from openvoice import se_extractor
+    from openvoice.api import ToneColorConverter
+
+    presenter_dir = root / "presenters" / presenter_id
+    enrollment_path = presenter_dir / "enrollment.json"
+    if enrollment_path.is_file():
+        existing = load_json(enrollment_path)
+        if existing.get("status") == "active" and \
+                (presenter_dir / "speaker_embedding.json").is_file():
+            log(f"enrollment already active for {presenter_id}; reusing stored speaker embedding")
+            # Refresh last_used_at under the lock with a consent
+            # re-check: a revocation that landed since this job's
+            # start preflight must not have its revoked enrollment
+            # overwritten with an active one.
+            with presenter_lock(root, presenter_id):
+                consent_ok, reason, _c = check_consent(root, presenter_id)
+                if not consent_ok:
+                    raise RuntimeError(
+                        f"consent preflight failed for enrollment: {reason}")
+                existing["last_used_at"] = utc_now()
+                write_json(enrollment_path, existing)
+            return existing
+
+    reference_wav = presenter_dir / "reference.wav"
+    if not reference_wav.is_file():
+        raise RuntimeError(f"reference.wav missing for presenter {presenter_id}")
+    ref_sha = sha256_file(reference_wav)
+    consent_ok, reason, consent = check_consent(root, presenter_id)
+    if not consent_ok:
+        raise RuntimeError(f"consent preflight failed for enrollment: {reason}")
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    log(f"enrolling {presenter_id} on device {device} (zero-shot, no training)")
+    converter = ToneColorConverter(str(checkpoints_dir / "converter" / "config.json"),
+                                   device=device)
+    converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
+    # get_se returns (se_tensor, audio_name): unpack the tuple.
+    # Calling .detach() on the tuple raises "'tuple' object has no
+    # attribute 'detach'" -- the first real enrollment failed on
+    # exactly that (fix round 6 live-proof find).
+    se, _audio_name = se_extractor.get_se(str(reference_wav), converter, vad=True)
+    se_list = se.detach().cpu().float().tolist()
+    enrollment = {
+        "version": 1,
+        "presenter_id": presenter_id,
+        "consent_receipt_version": consent.get("version", 1),
+        "consent_artifact_sha256": consent.get("artifact_sha256"),
+        "model_id": MODEL_ID,
+        "model_version": MODEL_VERSION,
+        "model_code_commit": MODEL_CODE_COMMIT,
+        "weights_sha256": weights_sha256(receipt_path),
+        "reference_audio_sha256": ref_sha,
+        "preprocessing_version": "openvoice-se-extractor-vad-v1",
+        "speaker_embedding_path": "speaker_embedding.json",
+        "reference_clip_path": "reference.wav",
+        "created_at": utc_now(),
+        "last_used_at": utc_now(),
+        "status": "active",
+    }
+    # Write the derived assets under the lock with a consent re-check:
+    # the embedding extraction above runs unlocked (seconds of model
+    # work); a revocation that landed meanwhile must not be followed
+    # by a fresh active enrollment pointing at assets it deleted.
+    # Re-enrollment after revocation requires a NEW consent receipt;
+    # restoring an old embedding is prohibited by the scope brief.
+    with presenter_lock(root, presenter_id):
+        consent_ok, reason, _c = check_consent(root, presenter_id)
+        if not consent_ok:
+            raise RuntimeError(
+                f"consent preflight failed for enrollment: {reason}")
+        write_json(presenter_dir / "speaker_embedding.json", {
+            "se": se_list,
+            "model": MODEL_ID,
+            "reference_audio_sha256": ref_sha,
+        })
+        write_json(enrollment_path, enrollment)
+    append_audit(root, {"event": "enrolled", "presenter_id": presenter_id,
+                        "job_id": None})
+    log(f"enrollment active for {presenter_id}")
+    return enrollment
+
+
+def load_target_se(root: Path, presenter_id: str):
+    """Load the stored speaker embedding as a torch tensor (lazy import)."""
+    import torch  # lazy
+
+    presenter_dir = root / "presenters" / presenter_id
+    data = load_json(presenter_dir / "speaker_embedding.json")
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    return torch.tensor(data["se"], dtype=torch.float32, device=device)
+
+
+def pick_en_speaker(model):
+    """Pick the first EN speaker key from a MeloTTS model.
+
+    Robust: prefer a key starting with "EN"; if no EN key exists, fail
+    loudly — never guess a speaker id.
+    Returns ``(speaker_key, speaker_id_int)``.
+    """
+    keys = list(model.hps.data.spk2id.keys())
+    en_keys = [k for k in keys if k.startswith("EN")]
+    if not en_keys:
+        raise RuntimeError(
+            f"no EN speaker key in MeloTTS spk2id (keys present: {keys[:10]}); "
+            "refusing to guess a speaker id")
+    key = en_keys[0]
+    return key, model.hps.data.spk2id[key]
+
+
+# --- Result helpers ---------------------------------------------------------
+
+def make_result(job_id, status, failure_reason=None, segments=None,
+                render=None, resources=None, consent_receipt_version=1,
+                weights=None):
+    result = {
+        "version": 1,
+        "job_id": job_id,
+        "status": status,
+        "failure_reason": failure_reason,
+        "segments": segments if segments is not None else [],
+        "render": render,
+        "resources": resources or {"peak_vram_mib": None, "peak_ram_mib": None,
+                                   "gpu": "unknown"},
+        "outbound_requests": [],
+        "model": {
+            "model_id": MODEL_ID,
+            "model_version": MODEL_VERSION,
+            "code_commit": MODEL_CODE_COMMIT,
+            "weights_sha256": weights or WEIGHTS_SHA256_PINNED,
+            "base_tts": BASE_TTS,
+            "base_tts_commit": BASE_TTS_COMMIT,
+            # MeloTTS English base model provenance (fix round 3):
+            # the validated local files the job's TTS was bound to.
+            # These equal the pinned constants only because
+            # validate_melotts_model enforced them before any TTS
+            # work; a job that fails that gate never reaches "done".
+            "melotts_model_revision": MELO_MODEL_REVISION,
+            "melotts_config_sha256": MELO_MODEL_FILES["config.json"],
+            "melotts_checkpoint_sha256": MELO_MODEL_FILES["checkpoint.pth"],
+            # BERT base encoder provenance (fix round 5): the
+            # validated snapshot the job's MeloTTS segments loaded
+            # from. Same rule as the MeloTTS block above — these equal
+            # the pinned constants only because validate_bert_model
+            # enforced receipt, snapshot dir, cache identity, and
+            # per-file hashes before any TTS work.
+            "bert_model_repo": BERT_MODEL_REPO_ID,
+            "bert_model_revision": BERT_MODEL_REVISION,
+            "bert_config_sha256": BERT_MODEL_FILES["config.json"],
+            "bert_vocab_sha256": BERT_MODEL_FILES["vocab.txt"],
+            "bert_tokenizer_config_sha256":
+                BERT_MODEL_FILES["tokenizer_config.json"],
+            "bert_tokenizer_sha256": BERT_MODEL_FILES["tokenizer.json"],
+            "bert_pytorch_model_sha256":
+                BERT_MODEL_FILES["pytorch_model.bin"],
+            "bert_safetensors_sha256":
+                BERT_MODEL_FILES["model.safetensors"],
+        },
+        "consent_receipt_version": consent_receipt_version,
+        "completed_at": utc_now(),
+    }
+    return result
+
+
+def fail_job(root: Path, job_dir: Path, job_id: str, reason: str,
+             consent_receipt_version=1, weights=None) -> dict:
+    """Write result.json {status: failed}, .failed marker, audit event."""
+    log(f"job {job_id} FAILED: {reason}")
+    result = make_result(job_id, "failed", failure_reason=str(reason)[:500],
+                         consent_receipt_version=consent_receipt_version,
+                         weights=weights)
+    errors = validate_result_dict(result)
+    if errors:
+        log(f"WARNING: failed result failed validation: {errors}")
+    write_json(job_dir / "result.json", result)
+    proc = marker_path(job_dir, "processing")
+    if proc.exists():
+        proc.unlink()
+    marker_path(job_dir, "failed").touch(exist_ok=True)
+    append_audit(root, {"event": "job_failed", "job_id": job_id,
+                        "failure_reason": str(reason)[:500]})
+    return result
+
+
+# --- Job processing ---------------------------------------------------------
+
+def find_queued_job(root: Path):
+    """First jobs/<job_id> dir with a .queued marker, skipping .done dirs.
+
+    Idempotency (gate 9): a dir that already has .done is never re-run;
+    it is logged and skipped.
+    """
+    jobs_dir = root / "jobs"
+    if not jobs_dir.is_dir():
+        return None
+    for job_dir in sorted(jobs_dir.iterdir()):
+        if not job_dir.is_dir():
+            continue
+        status = resolve_marker(job_dir)
+        if status == "done":
+            log(f"skipping already-completed job {job_dir.name} (.done present)")
+            continue
+        if status == "queued" and (job_dir / "job.json").is_file():
+            return job_dir
+    return None
+
+
+def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
+                ffmpeg_bin: str, ffprobe_bin: str,
+                receipt_path: str | None = None,
+                melotts_dir: Path | None = None) -> int:
+    """Process one claimed job. Returns 0 on success, 2 on failure."""
+    job_id = job_dir.name
+    manifest = load_json(job_dir / "job.json")
+    if manifest.get("job_id") and manifest["job_id"] != job_id:
+        return _fail(root, job_dir, job_id,
+                     f"job.json job_id {manifest['job_id']!r} does not match directory {job_id!r}")
+    presenter_id = manifest["presenter_id"]
+    consent_version = manifest.get("consent_receipt_version", 1)
+    weights = weights_sha256(receipt_path)
+    weights_from_receipt = weights_receipt_path(receipt_path) is not None
+    if not weights_from_receipt:
+        # The pinned value is only the binding identifier here; the
+        # receipt validation below fails the job closed before any
+        # enrollment or generation when no receipt exists.
+        log("no setup receipt found yet (weights validation follows)")
+
+    log(f"job {job_id} started (presenter {presenter_id})")
+    append_audit(root, {"event": "job_started", "job_id": job_id,
+                        "presenter_id": presenter_id})
+
+    # --- Preflight (before ANY model work; re-checked at job start) ------
+    consent_ok, reason, _consent = check_consent(root, presenter_id)
+    if not consent_ok:
+        return _fail(root, job_dir, job_id, reason,
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- Weights provenance (fix round 2, moved-head P1) ------------------
+    # Before any script work, enrollment, or generation: the setup
+    # receipt must exist, carry the pinned hash, be bound to the
+    # resolved checkpoint directory, and the installed files must hash
+    # to the pinned per-file manifest. The pinned hash alone is not
+    # evidence of the bytes installed. A failure here fails the job
+    # closed with the weights reason (never silently renders with an
+    # unverified tree while result.json asserts the pinned hash).
+    try:
+        weights = validate_weights_receipt(receipt_path, checkpoints_dir)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- MeloTTS base-model provenance (fix round 3, moved-head P1) -----
+    # Same gate as the weights: the MeloTTS English config + checkpoint
+    # must be the pinned revision, bound to the resolved model dir,
+    # with per-file hashes matching the pin — BEFORE any TTS work.
+    # Without this, TTS(language="EN") with no paths would call
+    # hf_hub_download() for unpinned model files on the first job.
+    if melotts_dir is None:
+        melotts_dir = resolve_melotts_dir(None)
+    try:
+        validate_melotts_model(receipt_path, melotts_dir)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- BERT base-encoder provenance (fix round 5, moved-head P1) -----
+    # Same gate as the MeloTTS model: the BERT snapshot must be the
+    # pinned revision, bound to the recorded snapshot directory, with
+    # per-file hashes matching the pin AND the cache identity melo
+    # will resolve ('bert-base-uncased') pointing at that snapshot —
+    # BEFORE any TTS work. Without this, the first segment's lazy
+    # get_bert could fail offline or consume unpinned alias-cache
+    # bytes while result.json reported no outbound requests.
+    try:
+        validate_bert_model(receipt_path)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+    try:
+        script = load_json(job_dir / "script.json")
+        script_errors = validate_script_dict(script)
+        if script_errors:
+            return _fail(root, job_dir, job_id,
+                         "invalid script: " + "; ".join(script_errors),
+                         consent_receipt_version=consent_version, weights=weights)
+        if script.get("job_id") != job_id:
+            return _fail(root, job_dir, job_id,
+                         "script.json job_id does not match job directory",
+                         consent_receipt_version=consent_version, weights=weights)
+
+        # Job binding (P1-1): recompute the canonical empty-job_id
+        # script hash and the canonical job id BEFORE capture checks,
+        # enrollment, or any model work — a script edited after job
+        # creation must fail closed here, never render.
+        # Boundary note: the job-id recomputation uses the runner's
+        # resolved weights hash (setup receipt when present, else the
+        # pinned code value). Both are the same hash by construction
+        # -- the receipt carries the deterministic zip hash the code
+        # pins -- so no mismatch can arise from the receipt appearing
+        # later. The failure reason names the weights source, so the
+        # cause is visible instead of looking like a tampered script.
+        # Do not work around it by falling back to another weights value.
+        binding_errors = verify_job_binding(manifest, script, job_id, weights)
+        if binding_errors:
+            weights_source = (
+                "setup receipt (receipt.json)"
+                if weights_from_receipt
+                else "pinned in code (no receipt.json yet)")
+            return _fail(root, job_dir, job_id,
+                         "job binding verification failed "
+                         f"(weights_sha256 from {weights_source}): "
+                         + "; ".join(binding_errors),
+                         consent_receipt_version=consent_version, weights=weights)
+        verified_script_sha256 = canonical_script_sha256(script)
+
+        capture_path = Path(manifest["capture_path"])
+        if not capture_path.is_file():
+            return _fail(root, job_dir, job_id,
+                         f"capture file not found: {capture_path}",
+                         consent_receipt_version=consent_version, weights=weights)
+        if sha256_file(capture_path) != manifest.get("capture_sha256"):
+            return _fail(root, job_dir, job_id,
+                         "capture_sha256 mismatch: capture file changed since manifest",
+                         consent_receipt_version=consent_version, weights=weights)
+        # Defense in depth: the script was validated against the
+        # duration CLAIMED at creation; check it against the capture's
+        # REAL duration before generating anything. (Container rounding
+        # gets a 0.5 s tolerance; anything further out fails loudly.)
+        try:
+            real_duration = probe_audio_duration_sec(ffprobe_bin, capture_path)
+        except Exception as exc:
+            return _fail(root, job_dir, job_id,
+                         f"could not probe capture duration: {exc}",
+                         consent_receipt_version=consent_version, weights=weights)
+        overrun = [s for s in script["segments"]
+                   if float(s["capture_end_sec"]) > real_duration + 0.5]
+        if overrun:
+            return _fail(root, job_dir, job_id,
+                         "script extends past the capture: step "
+                         f"{overrun[0]['step_id']} ends at "
+                         f"{overrun[0]['capture_end_sec']}s but the capture "
+                         f"is {real_duration:.2f}s",
+                         consent_receipt_version=consent_version, weights=weights)
+
+        # --- Enrollment (lazy heavy imports inside) ---------------------
+        # Checkpoints are only required from here on: preflight and script
+        # validation above run (and can fail the job) without them, so a
+        # revoked job fails as consent_revoked even on a box mid-setup.
+        if not (checkpoints_dir / "converter" / "config.json").is_file():
+            return _fail(root, job_dir, job_id,
+                         f"OpenVoice V2 checkpoints not installed under "
+                         f"{checkpoints_dir} (env setup unfinished)",
+                         consent_receipt_version=consent_version, weights=weights)
+        enrollment = enroll_presenter(root, presenter_id, checkpoints_dir,
+                                      receipt_path)
+        # enroll_presenter sets last_used_at when it writes
+        # enrollment.json (under the presenter lock, with a consent
+        # re-check) — no second write here: a revocation that landed
+        # after enrollment must not have its revoked enrollment
+        # overwritten with an active one.
+
+        with ResourceMonitor() as monitor:
+            segment_results, segment_wavs = _generate_segments(
+                root, job_dir, script, presenter_id, checkpoints_dir,
+                ffprobe_bin, melotts_dir)
+            captions_path = job_dir / "captions.vtt"
+            captions_path.write_text(build_vtt(script["segments"]),
+                                     encoding="utf-8")
+            render, render_manifest = _render(
+                root, job_dir, manifest, script, capture_path, segment_wavs,
+                captions_path, ffmpeg_bin, ffprobe_bin, weights,
+                verified_script_sha256)
+
+        resources = {"peak_vram_mib": monitor.peak_vram_mib,
+                     "peak_ram_mib": monitor.peak_ram_mib,
+                     "gpu": monitor.gpu}
+        # Completion publication (fix round 2): the consent re-check
+        # AND the publication (result.json + managed-output record +
+        # .done) are ONE critical section under the per-presenter
+        # lock, serialized against job creation and revocation. A
+        # revocation that closed the gate first makes this check fail;
+        # a completion that publishes first is in the revocation's
+        # post-gate inventory. The .done marker is never written on
+        # the failure path below.
+        with presenter_lock(root, presenter_id):
+            consent_ok, consent_reason, _ = check_consent(root, presenter_id)
+            if not consent_ok:
+                for stale in [job_dir / "output.mp4",
+                              job_dir / "captions.vtt"]:
+                    stale.unlink(missing_ok=True)
+                shutil.rmtree(job_dir / "segments", ignore_errors=True)
+                return _fail(root, job_dir, job_id,
+                             f"consent_revoked at completion ({consent_reason})",
+                             consent_receipt_version=consent_version, weights=weights)
+            result = make_result(job_id, "done", segments=segment_results,
+                                 render=render, resources=resources,
+                                 consent_receipt_version=consent_version,
+                                 weights=weights)
+            errors = validate_result_dict(result)
+            if errors:
+                return _fail(root, job_dir, job_id,
+                             "result validation failed: " + "; ".join(errors),
+                             consent_receipt_version=consent_version, weights=weights)
+            write_json(job_dir / "result.json", result)
+            upsert_managed_output(root, presenter_id, job_id,
+                                  f"jobs/{job_id}/output.mp4",
+                                  render["output_sha256"])
+            marker_path(job_dir, "processing").unlink(missing_ok=True)
+            marker_path(job_dir, "done").touch(exist_ok=True)
+            append_audit(root, {"event": "job_completed", "job_id": job_id,
+                                "presenter_id": presenter_id,
+                                "output_sha256": render["output_sha256"]})
+            log(f"job {job_id} done: {render['output_file']} "
+                f"({render['output_bytes']} bytes)")
+            return 0
+    except Exception as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+
+def _fail(root, job_dir, job_id, reason, consent_receipt_version=1,
+          weights=None) -> int:
+    fail_job(root, job_dir, job_id, reason,
+             consent_receipt_version=consent_receipt_version, weights=weights)
+    return 2
+
+
+def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
+                       ffprobe_bin, melotts_dir=None):
+    """TTS + tone-color conversion per segment. Returns
+    (segment result dicts, [(wav_path, start_sec), ...])."""
+    if melotts_dir is None:
+        melotts_dir = resolve_melotts_dir(None)
+    # Force offline model loading (fix round 3): every model this job
+    # needs is seeded and pinned at setup — the MeloTTS English
+    # config/checkpoint (validated above) and bert-base-uncased (the
+    # BERT encoder melo loads for every segment; fix round 5
+    # validates its receipt, snapshot dir, cache identity, and
+    # per-file hashes in process_job before this point, so the
+    # snapshot the loader resolves to here is the pinned one). A job
+    # must never download at runtime: with HF_HUB_OFFLINE=1,
+    # transformers/melo load from the seeded local cache only, and a
+    # missing cache fails the job closed instead of fetching unpinned
+    # weights.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    import torch  # lazy
+
+    from melo.api import TTS
+    from openvoice.api import ToneColorConverter
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    tmp_dir = job_dir / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    segments_dir = job_dir / "segments"
+    segments_dir.mkdir(parents=True, exist_ok=True)
+
+    converter = ToneColorConverter(str(checkpoints_dir / "converter" / "config.json"),
+                                   device=device)
+    converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
+    tgt_se = load_target_se(root, presenter_id)
+
+    # TTS is bound to the validated local MeloTTS model files (fix
+    # round 3): config_path/ckpt_path are the paths process_job
+    # validated against the pinned revision + per-file hashes before
+    # any model work. At the pinned melo code commit, giving both
+    # paths means load_or_download_config/model read the local files
+    # and NEVER call hf_hub_download — the first job cannot fetch
+    # unpinned weights. Passing no paths (the old call) would
+    # download config.json + checkpoint.pth at no revision.
+    tts = TTS(language="EN", device=device,
+              config_path=str(Path(melotts_dir) / "config.json"),
+              ckpt_path=str(Path(melotts_dir) / "checkpoint.pth"))
+    speaker_key, speaker_id = pick_en_speaker(tts)
+    # The ses filename is the NORMALIZED key (upstream V2 flow:
+    # lower + '_' -> '-'); the raw MeloTTS key (e.g. "EN-US") matches
+    # no file upstream ships. resolve_speaker_embedding_path applies
+    # exactly that normalization.
+    src_se_path = resolve_speaker_embedding_path(checkpoints_dir,
+                                                 speaker_key)
+    if not src_se_path.is_file():
+        raise RuntimeError(f"base speaker embedding missing: {src_se_path}")
+    src_se = torch.load(str(src_se_path), map_location=device)
+    log(f"base TTS speaker: {speaker_key} (id {speaker_id}, "
+        f"embedding {normalize_speaker_key(speaker_key)}.pth)")
+
+    segment_results = []
+    segment_wavs = []
+    try:
+        for seg in script["segments"]:
+            step_id = seg["step_id"]
+            out_wav = segments_dir / f"{step_id}.wav"
+            tmp_src = tmp_dir / f"{step_id}-src.wav"
+            gen_start = time.monotonic()
+            tts.tts_to_file(seg["text"], speaker_id, str(tmp_src), speed=1.0)
+            converter.convert(str(tmp_src), src_se, tgt_se, str(out_wav),
+                              message="@MyShell")
+            gen_sec = time.monotonic() - gen_start
+            audio_sec = probe_audio_duration_sec(ffprobe_bin, out_wav) \
+                if ffprobe_bin else None
+            if audio_sec is None or audio_sec <= 0:
+                raise RuntimeError(f"could not measure duration of {out_wav}")
+            rtf = gen_sec / audio_sec
+            segment_results.append({
+                "step_id": step_id,
+                "audio_file": f"segments/{step_id}.wav",
+                "audio_sha256": sha256_file(out_wav),
+                "duration_sec": round(audio_sec, 3),
+                "real_time_factor": round(rtf, 3),
+            })
+            segment_wavs.append((out_wav, float(seg["capture_start_sec"])))
+            log(f"segment {step_id}: {audio_sec:.2f}s audio in {gen_sec:.2f}s "
+                f"(RTF {rtf:.2f})")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return segment_results, segment_wavs
+
+
+def upsert_managed_output(root: Path, presenter_id: str, job_id: str,
+                          output_file: str, output_sha256: str) -> None:
+    """Record a completed job's output in narration/managed-outputs.json.
+
+    The Tauri revocation transaction reads this file to unpublish
+    outputs. One entry per job_id (replaced on re-render); status
+    "active" until revoked. Written BEFORE the .done marker flips, so a
+    done job always has a managed record.
+    """
+    path = root / "managed-outputs.json"
+    doc = {"version": 1, "outputs": []}
+    if path.is_file():
+        try:
+            doc = load_json(path)
+        except Exception:
+            doc = {"version": 1, "outputs": []}
+    outputs = [o for o in doc.get("outputs", [])
+               if isinstance(o, dict) and o.get("job_id") != job_id]
+    outputs.append({
+        "job_id": job_id,
+        "presenter_id": presenter_id,
+        "output_file": output_file,
+        "output_sha256": output_sha256,
+        "status": "active",
+        "published_at": None,
+        "saved_to_forge": False,
+    })
+    doc["version"] = 1
+    doc["outputs"] = outputs
+    write_json(path, doc)
+
+
+def _render(root, job_dir, manifest, script, capture_path, segment_wavs,
+            captions_path, ffmpeg_bin, ffprobe_bin, weights,
+            verified_script_sha256):
+    """FFmpeg assembly + render manifest. Returns (render dict, manifest dict).
+
+    ``verified_script_sha256`` is the recomputed canonical script hash
+    that passed ``verify_job_binding`` in ``process_job`` — the render
+    manifest records that verified value, never a copy of
+    ``manifest.script_sha256``.
+    """
+    job_id = job_dir.name
+    output_path = job_dir / "output.mp4"
+    capture_has_audio = probe_has_audio_stream(ffprobe_bin, capture_path)
+    log(f"capture has audio stream: {capture_has_audio}")
+    cmd = build_ffmpeg_command(capture_path, segment_wavs, output_path,
+                               capture_has_audio)
+    render_start = time.monotonic()
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    render_sec = time.monotonic() - render_start
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg render failed (exit {proc.returncode}): "
+            f"{(proc.stderr or '').strip()[-500:]}")
+    if not output_path.is_file():
+        raise RuntimeError("ffmpeg exited 0 but output.mp4 was not created")
+    output_sha = sha256_file(output_path)
+    render = {
+        "output_file": "output.mp4",
+        "output_sha256": output_sha,
+        "output_bytes": output_path.stat().st_size,
+        "ffmpeg_version": ffmpeg_version(ffmpeg_bin),
+        "ffmpeg_command": cmd,
+        "captions_file": "captions.vtt",
+        "render_sec": round(render_sec, 3),
+    }
+    render_manifest = {
+        "version": 1,
+        "job_id": job_id,
+        "input_hashes": {
+            "capture_sha256": manifest.get("capture_sha256"),
+            "script_sha256": verified_script_sha256,
+            "reference_audio_sha256": sha256_file(
+                root / "presenters" / manifest["presenter_id"] / "reference.wav"),
+        },
+        "model_hashes": {
+            "model_id": MODEL_ID,
+            "code_commit": MODEL_CODE_COMMIT,
+            "weights_sha256": weights,
+        },
+        "ffmpeg_version": render["ffmpeg_version"],
+        "ffmpeg_command": cmd,
+        "consent_receipt_version": manifest.get("consent_receipt_version", 1),
+        "output_hash": output_sha,
+        "caption_path": "captions.vtt",
+        "acceptance_receipt": None,
+    }
+    write_json(job_dir / "render-manifest.json", render_manifest)
+    log(f"render done in {render_sec:.1f}s: {output_sha[:16]}…")
+    return render, render_manifest
+
+
+# --- CLI --------------------------------------------------------------------
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="FORGE Capture Phase 3 Slice A narration runner (OpenVoice V2, local-only)")
+    parser.add_argument("--narration-root", default=None,
+                        help="narration spool root (default: %%LOCALAPPDATA%%\\FORGE Capture\\narration)")
+    parser.add_argument("--once", action="store_true",
+                        help="process a single queued job then exit")
+    parser.add_argument("--loop", action="store_true",
+                        help="poll every 5 s for queued jobs, forever")
+    parser.add_argument("--enroll-only", metavar="PRESENTER_ID", default=None,
+                        help="standalone enrollment run for one presenter, then exit")
+    parser.add_argument("--checkpoints-dir", default=None,
+                        help="OpenVoice V2 checkpoints dir (default: C:\\forge-bridge\\narration\\checkpoints_v2)")
+    parser.add_argument("--melotts-dir", default=None,
+                        help="MeloTTS English base-model dir (default: C:\\forge-bridge\\narration\\melotts-en)")
+    parser.add_argument("--ffmpeg-dir", default=None,
+                        help="dir containing ffmpeg.exe/ffprobe.exe (default: PATH, then C:\\forge-bridge\\tools\\ffmpeg\\bin)")
+    parser.add_argument("--receipt-path", default=None,
+                        help="setup receipt JSON holding the weights SHA-256 (default: C:\\forge-bridge\\narration\\receipt.json)")
+    args = parser.parse_args(argv)
+
+    root = Path(args.narration_root) if args.narration_root else default_narration_root()
+    (root / "jobs").mkdir(parents=True, exist_ok=True)
+    (root / "presenters").mkdir(parents=True, exist_ok=True)
+    (root / "audit").mkdir(parents=True, exist_ok=True)
+    checkpoints_dir = resolve_checkpoints_dir(args.checkpoints_dir)
+    log(f"narration root: {root}")
+    log(f"checkpoints: {checkpoints_dir}")
+    melotts_dir = resolve_melotts_dir(args.melotts_dir)
+    log(f"melotts model: {melotts_dir}")
+    checkpoints_ok = (checkpoints_dir / "converter" / "config.json").is_file()
+    if not checkpoints_ok:
+        log(f"WARNING: converter config not found under {checkpoints_dir} "
+            "(is the env setup finished? jobs will fail until it lands)")
+
+    ffmpeg_bin = resolve_tool("ffmpeg", args.ffmpeg_dir)
+    ffprobe_bin = resolve_tool("ffprobe", args.ffmpeg_dir)
+    if not ffmpeg_bin or not ffprobe_bin:
+        log("ERROR: ffmpeg/ffprobe not found (PATH or --ffmpeg-dir). "
+            "Expected at C:\\forge-bridge\\tools\\ffmpeg\\bin")
+        return 2
+    log(f"ffmpeg: {ffmpeg_bin} ({ffmpeg_version(ffmpeg_bin)})")
+    # Libraries driven by enrollment/generation (whisper, pydub) spawn
+    # bare `ffmpeg` from PATH; the runner's own absolute path is not
+    # enough (fix round 6 live-proof find: WinError 2 in enrollment).
+    prepend_ffmpeg_to_path(ffmpeg_bin)
+
+    if args.enroll_only:
+        presenter_id = args.enroll_only
+        if not checkpoints_ok:
+            log(f"ERROR: cannot enroll {presenter_id}: converter config "
+                f"missing under {checkpoints_dir}")
+            return 2
+        consent_ok, reason, _c = check_consent(root, presenter_id)
+        if not consent_ok:
+            log(f"enrollment refused for {presenter_id}: {reason}")
+            return 2
+        try:
+            enroll_presenter(root, presenter_id, checkpoints_dir,
+                             args.receipt_path)
+        except Exception as exc:
+            log(f"enrollment failed for {presenter_id}: {exc}")
+            return 2
+        return 0
+
+    if args.loop and args.once:
+        log("ERROR: --loop and --once are mutually exclusive")
+        return 2
+    if not args.loop and not args.once:
+        parser.error("one of --once, --loop, or --enroll-only is required")
+
+    if args.once:
+        job_dir = find_queued_job(root)
+        if job_dir is None:
+            log("no queued job")
+            return 1
+        # Claim: atomic rename .queued -> .processing (same filesystem).
+        try:
+            os.replace(marker_path(job_dir, "queued"),
+                       marker_path(job_dir, "processing"))
+        except FileNotFoundError:
+            log(f"job {job_dir.name} was claimed by another runner; skipping")
+            return 1
+        log(f"claimed job {job_dir.name}")
+        return process_job(root, job_dir, checkpoints_dir,
+                           ffmpeg_bin, ffprobe_bin, args.receipt_path,
+                           melotts_dir)
+
+    # --loop
+    log(f"looping: polling every {POLL_SECONDS}s (Ctrl+C to stop)")
+    while True:
+        try:
+            job_dir = find_queued_job(root)
+            if job_dir is not None:
+                try:
+                    os.replace(marker_path(job_dir, "queued"),
+                               marker_path(job_dir, "processing"))
+                except FileNotFoundError:
+                    time.sleep(POLL_SECONDS)
+                    continue
+                log(f"claimed job {job_dir.name}")
+                process_job(root, job_dir, checkpoints_dir,
+                            ffmpeg_bin, ffprobe_bin, args.receipt_path,
+                            melotts_dir)
+            time.sleep(POLL_SECONDS)
+        except KeyboardInterrupt:
+            log("loop stopped by user")
+            return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -41,6 +41,12 @@
 //!   validated parsing, language-hint validation, and transcript
 //!   text/search helpers. Pure logic; the shell owns the filesystem and
 //!   the runner contract lives in `docs/meeting-mode.md`.
+//! - [`narration`] — Phase 3 Slice A narration-over-capture contract:
+//!   consent receipts and the preflight gate, voice enrollment, the
+//!   narration script, deterministic job ids, render manifests,
+//!   acceptance receipts, and the revocation transaction. Narration
+//!   only — no generated face, no cloud, no paid service. Pure logic;
+//!   the runner owns TTS/FFmpeg and the shell owns the filesystem.
 //! - [`annotations`] — Annotation sidecar contract (Slice 1 of the
 //!   annotation/blur/callouts/library program): schema/version, per-kind
 //!   geometry in source-image pixel coordinates, structural validation, and
@@ -87,6 +93,7 @@ pub mod hotkey;
 pub mod library_index;
 pub mod meeting;
 pub mod model_pack;
+pub mod narration;
 pub mod native;
 pub mod png;
 pub mod process_capture;
