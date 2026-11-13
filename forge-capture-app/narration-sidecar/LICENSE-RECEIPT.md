@@ -141,6 +141,47 @@ so it is not an admissible fallback.
   couldn't see — plus NLTK cmudict + perceptron-tagger data) and
   verifies the import (against the patched code) before proceeding.
 
+## Silero VAD (enrollment voice-activity detection)
+
+- License: **MIT**
+- Repository: https://github.com/snakers4/silero-vad
+- Pinned revision: `066409f3d9db45a30d21dfcbf9147826ffdd7052` (master
+  HEAD as of the FR6 enrollment, 2026-11-13 ~05:50 CST; commit
+  2026-10-22) — the exact bytes the successful Tyler enrollment
+  used. Post-merge corrective fix (2026-11-13): before this pin,
+  the first enrollment fetched the VAD from the moving default
+  branch via `torch.hub.load(..., source="github")` into the shared
+  Torch cache after a one-off `trust_repo=True`, outside setup,
+  receipt, and provenance, while the result still claimed no
+  outbound requests.
+- Staged files (setup step 5b downloads the codeload tarball at
+  the pinned revision, SHA-256
+  `ad33d84807fb1715af77239695ba83be624ad1130edba38202f8e1f38fc5a915`,
+  extracts ONLY these eight files into the narration-owned
+  `C:\forge-bridge\narration\silero-vad\`, and verifies each hash;
+  the runner re-validates receipt + staged bytes
+  (`validate_silero_model`) and pre-loads the model from the
+  validated local dir (`preload_silero_vad`) before any enrollment,
+  so `whisper-timestamped` never calls `torch.hub.load` itself):
+  `hubconf.py` (`2637a3a9…ae5bd`, 1,978 bytes), `LICENSE`
+  (`2e63e9a3…5520b`, 1,075 bytes),
+  `src/silero_vad/__init__.py` (`45fcf7e2…201f1`, 1,288 bytes),
+  `src/silero_vad/utils_vad.py` (`7e0f9b33…5aa6b`, 31,474 bytes),
+  `src/silero_vad/model.py` (`40762a80…2181d`, 1,504 bytes),
+  `src/silero_vad/data/__init__.py` (`e3b0c442…2b855`, 0 bytes),
+  `src/silero_vad/data/silero_vad.onnx` (`1a153a22…788e3`,
+  2,327,524 bytes), `src/silero_vad/data/silero_vad.jit`
+  (`e1122837…3720`, 2,272,526 bytes). Full hashes in the runner's
+  `SILERO_FILES`; the receipt records the repo, revision, tarball
+  hash, staging dir, and all eight per-file hashes, and every fresh
+  `enrollment.json` records the VAD repo/revision/onnx flag/file
+  hashes. The other data files in the upstream tree are never
+  loaded by `hubconf.silero_vad()` and are not staged. Setup never
+  touches the user's shared Torch hub cache.
+- Use in slice A: VAD segmentation of the reference clip during
+  enrollment only (`se_extractor.split_audio_vad` →
+  `whisper_timestamped.transcribe.get_vad_segments(method="silero")`).
+
 ## FFmpeg (render assembly)
 
 - License: **LGPL/GPL per the gyan.dev essentials build** (static build
@@ -162,7 +203,8 @@ writes a machine receipt to `C:\forge-bridge\narration\receipt.json`
 with the Python version, FFmpeg version + zip hash, OpenVoice commit +
 LICENSE hash, MeloTTS commit, checkpoints zip hash, MeloTTS English
 base-model revision + per-file hashes + install dir, BERT revision +
-per-file hashes + snapshot dir, the requirements-lock SHA-256 and the
+per-file hashes + snapshot dir, Silero VAD revision + tarball hash +
+per-file hashes + staging dir, the requirements-lock SHA-256 and the
 MeloTTS lazy-import patch SHA-256, torch version, GPU name, and the
 import smoke-test result, plus a frozen requirements list at
 `C:\forge-bridge\narration\requirements-frozen.txt`. A clean local

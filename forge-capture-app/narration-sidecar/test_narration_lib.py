@@ -49,6 +49,15 @@ def test_enroll_presenter_unpacks_get_se_tuple(tmp_path, monkeypatch):
         lambda *a: runner.WEIGHTS_SHA256_PINNED)
     monkeypatch.setattr(runner, "weights_sha256",
                         lambda *a: runner.WEIGHTS_SHA256_PINNED)
+    # Post-merge corrective fix: enrollment validates the pinned
+    # Silero VAD staging and pre-loads it before get_se. Stub both
+    # here (their own tests cover the real validation + preload);
+    # the provenance assertions below prove the enrollment record
+    # carries the Silero pin.
+    monkeypatch.setattr(
+        runner, "validate_silero_model",
+        lambda *a: runner.SILERO_REVISION)
+    monkeypatch.setattr(runner, "preload_silero_vad", lambda *a: True)
 
     class FakeTensor:
         def detach(self):
@@ -86,6 +95,16 @@ def test_enroll_presenter_unpacks_get_se_tuple(tmp_path, monkeypatch):
                                          tmp_path / "ckpt")
     assert enrollment["status"] == "active"
     assert enrollment["presenter_id"] == "tyler-welch"
+    # Silero VAD provenance (post-merge corrective fix): the
+    # enrollment record names the pinned repo/revision, the onnx
+    # branch used, and the validated per-file hashes — so the
+    # enrollment's provenance covers the VAD dependency the render's
+    # outbound_requests [] cannot describe.
+    assert enrollment["vad_method"] == "silero"
+    assert enrollment["silero_repo"] == runner.SILERO_REPO
+    assert enrollment["silero_revision"] == runner.SILERO_REVISION
+    assert enrollment["silero_onnx"] is True
+    assert enrollment["silero_files_sha256"] == runner.SILERO_FILES
     stored = json.loads(
         (pdir / "speaker_embedding.json").read_text())
     assert stored["se"] == [0.1, 0.2, 0.3]
@@ -899,6 +918,13 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
     return the fixture snapshot's config.json (the identity melo
     would resolve to). process_job now gates on the BERT snapshot
     too, so every spool test runs through it.
+
+    Also installs the pinned Silero VAD staging (post-merge
+    corrective fix): the eight Silero files under
+    ``tmp_path/silero-vad``, the runner's Silero manifest patched
+    to their real hashes, the receipt fields the Silero validation
+    requires, and NARRATION_SILERO_DIR set so enrollment resolves
+    the fixture dir by default.
     """
     fake_hashes = {}
     for rel in sorted(runner.CHECKPOINTS_FILES):
@@ -926,6 +952,15 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
     monkeypatch.setattr(runner, "BERT_MODEL_FILES", fake_bert)
     monkeypatch.setattr(runner, "resolve_bert_cache_path",
                         lambda: str(bert_dir / "config.json"))
+    silero_dir = tmp_path / "silero-vad"
+    fake_silero = {}
+    for rel in sorted(runner.SILERO_FILES):
+        dest = silero_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f"fake silero bytes for {rel}".encode())
+        fake_silero[rel] = lib.sha256_file(dest)
+    monkeypatch.setattr(runner, "SILERO_FILES", fake_silero)
+    monkeypatch.setenv("NARRATION_SILERO_DIR", str(silero_dir))
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps({
         "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED,
@@ -942,7 +977,23 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
         "bert_tokenizer_config_sha256": fake_bert["tokenizer_config.json"],
         "bert_tokenizer_sha256": fake_bert["tokenizer.json"],
         "bert_pytorch_model_sha256": fake_bert["pytorch_model.bin"],
-        "bert_safetensors_sha256": fake_bert["model.safetensors"]}))
+        "bert_safetensors_sha256": fake_bert["model.safetensors"],
+        "silero_repo": runner.SILERO_REPO,
+        "silero_revision": runner.SILERO_REVISION,
+        "silero_dir": str(silero_dir),
+        "silero_hubconf_sha256": fake_silero["hubconf.py"],
+        "silero_license_sha256": fake_silero["LICENSE"],
+        "silero_package_init_sha256":
+            fake_silero["src/silero_vad/__init__.py"],
+        "silero_utils_vad_sha256":
+            fake_silero["src/silero_vad/utils_vad.py"],
+        "silero_model_sha256": fake_silero["src/silero_vad/model.py"],
+        "silero_data_init_sha256":
+            fake_silero["src/silero_vad/data/__init__.py"],
+        "silero_onnx_sha256":
+            fake_silero["src/silero_vad/data/silero_vad.onnx"],
+        "silero_jit_sha256":
+            fake_silero["src/silero_vad/data/silero_vad.jit"]}))
     return str(receipt)
 
 
@@ -1482,6 +1533,235 @@ def test_validate_bert_model_cache_resolves_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "resolve_bert_cache_path", lambda: None)
     with pytest.raises(RuntimeError, match="cache identity mismatch"):
         runner.validate_bert_model(receipt_path)
+
+
+# --- Silero VAD pin (post-merge corrective fix) --------------------------
+
+def _silero_receipt(tmp_path, monkeypatch):
+    """Install the fake Silero staging + receipt (via _weights_fixture).
+
+    Returns (receipt_path, silero_dir). The fixture staging is under
+    ``tmp_path/silero-vad``."""
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    return receipt_path, tmp_path / "silero-vad"
+
+
+def test_silero_pin_manifest_shape():
+    # The pinned manifest itself: exactly the eight files the
+    # torch.hub.load path needs, all values 64-char lowercase hex,
+    # revision a 40-char hex commit, tarball a 64-char hex digest.
+    # (Values are verified against the real codeload tarball by the
+    # live proof on the box; this test catches typos and drift in
+    # the constants' shape.)
+    assert sorted(runner.SILERO_FILES) == sorted([
+        "hubconf.py", "LICENSE",
+        "src/silero_vad/__init__.py", "src/silero_vad/utils_vad.py",
+        "src/silero_vad/model.py", "src/silero_vad/data/__init__.py",
+        "src/silero_vad/data/silero_vad.onnx",
+        "src/silero_vad/data/silero_vad.jit"])
+    for rel, digest in runner.SILERO_FILES.items():
+        assert len(digest) == 64 and all(
+            c in "0123456789abcdef" for c in digest), rel
+    assert len(runner.SILERO_REVISION) == 40 and all(
+        c in "0123456789abcdef" for c in runner.SILERO_REVISION)
+    assert len(runner.SILERO_TARBALL_SHA256) == 64 and all(
+        c in "0123456789abcdef" for c in runner.SILERO_TARBALL_SHA256)
+    assert runner.SILERO_REPO == "snakers4/silero-vad"
+
+
+def test_validate_silero_model_happy_path(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    assert runner.validate_silero_model(receipt_path, silero_dir) \
+        == runner.SILERO_REVISION
+
+
+def test_validate_silero_model_no_receipt(tmp_path, monkeypatch):
+    _silero_receipt(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError, match="setup receipt missing"):
+        runner.validate_silero_model(str(tmp_path / "nope.json"),
+                                     tmp_path / "silero-vad")
+
+
+def test_validate_silero_model_wrong_repo(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["silero_repo"] = "someone-else/silero-vad"
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="pinned Silero repo"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def test_validate_silero_model_wrong_revision(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["silero_revision"] = "0" * 40
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="pinned Silero revision"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def test_validate_silero_model_no_silero_dir(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    del doc["silero_dir"]
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="does not record silero_dir"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def test_validate_silero_model_wrong_dir_binding(tmp_path, monkeypatch):
+    receipt_path, _silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError, match="bound to silero_dir"):
+        runner.validate_silero_model(receipt_path, tmp_path / "elsewhere")
+
+
+def test_validate_silero_model_missing_file(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    (silero_dir / "src" / "silero_vad" / "data" / "silero_vad.onnx").unlink()
+    with pytest.raises(RuntimeError, match="VAD file missing"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def test_validate_silero_model_changed_file(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    (silero_dir / "hubconf.py").write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="VAD file changed"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def test_validate_silero_model_wrong_recorded_hash(tmp_path, monkeypatch):
+    receipt_path, silero_dir = _silero_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["silero_onnx_sha256"] = "0" * 64
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="does not record the pinned hash"):
+        runner.validate_silero_model(receipt_path, silero_dir)
+
+
+def _fake_silero_hub(monkeypatch, onnx_runtime_present):
+    """Inject fake torch + whisper_timestamped.transcribe modules.
+
+    The fake torch.hub.load REFUSES any load that is not
+    source="local" from the validated dir — so a pre-fix
+    implementation that calls torch.hub.load with source="github"
+    (or never calls it) fails this test. Returns (calls, wt_mod).
+    """
+    import types
+    calls = []
+    fake_model = object()
+    fake_get_speech_ts = object()
+
+    def fake_hub_load(repo_or_dir=None, model=None, onnx=False,
+                      source=None, **_kw):
+        calls.append({"repo_or_dir": repo_or_dir, "model": model,
+                      "onnx": onnx, "source": source})
+        if source != "local":
+            raise RuntimeError(
+                f"refusing unpinned torch.hub load (source={source!r})")
+        if model != "silero_vad":
+            raise RuntimeError(f"unexpected hub model {model!r}")
+        return fake_model, (fake_get_speech_ts, None, None, None, None)
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    fake_torch.hub = types.SimpleNamespace(load=fake_hub_load)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    if onnx_runtime_present:
+        monkeypatch.setitem(sys.modules, "onnxruntime",
+                            types.ModuleType("onnxruntime"))
+    wt_mod = types.ModuleType("whisper_timestamped.transcribe")
+    wt_mod._silero_vad_model = None
+    wt_mod._silero_get_speech_ts = None
+    wt_mod._has_onnx = None
+    wt_pkg = types.ModuleType("whisper_timestamped")
+    wt_pkg.transcribe = wt_mod
+    monkeypatch.setitem(sys.modules, "whisper_timestamped", wt_pkg)
+    monkeypatch.setitem(sys.modules, "whisper_timestamped.transcribe",
+                        wt_mod)
+    return calls, wt_mod, fake_model, fake_get_speech_ts
+
+
+def test_preload_silero_vad_loads_validated_local_only(tmp_path, monkeypatch):
+    # No onnxruntime in this VM: the library's own decision for
+    # method="silero" is onnx=False, so the preload must use the
+    # .jit branch — and still load local-only from the staged dir.
+    silero_dir = tmp_path / "silero-vad"
+    silero_dir.mkdir()
+    calls, wt_mod, fake_model, fake_get_speech_ts = _fake_silero_hub(
+        monkeypatch, onnx_runtime_present=False)
+    assert runner.preload_silero_vad(silero_dir) is False
+    assert len(calls) == 1
+    assert calls[0]["repo_or_dir"] == str(silero_dir)
+    assert calls[0]["model"] == "silero_vad"
+    assert calls[0]["source"] == "local"
+    assert calls[0]["onnx"] is False
+    assert wt_mod._silero_vad_model is fake_model
+    assert wt_mod._silero_get_speech_ts is fake_get_speech_ts
+    assert wt_mod._has_onnx is False
+
+
+def test_preload_silero_vad_onnx_when_runtime_present(tmp_path, monkeypatch):
+    # With onnxruntime importable the library loads the .onnx model;
+    # the preload must mirror that decision exactly.
+    silero_dir = tmp_path / "silero-vad"
+    silero_dir.mkdir()
+    calls, wt_mod, _m, _u = _fake_silero_hub(
+        monkeypatch, onnx_runtime_present=True)
+    assert runner.preload_silero_vad(silero_dir) is True
+    assert len(calls) == 1
+    assert calls[0]["source"] == "local"
+    assert calls[0]["onnx"] is True
+    assert wt_mod._has_onnx is True
+
+
+def test_enroll_presenter_validates_silero_before_get_se(tmp_path, monkeypatch):
+    # Non-vacuous ordering: a Silero validation failure must fail
+    # enrollment BEFORE get_se (the VAD call) ever runs.
+    import types
+    root = tmp_path
+    pdir = root / "presenters" / "tyler-welch"
+    pdir.mkdir(parents=True)
+    (pdir / "reference.wav").write_bytes(b"fake reference audio")
+    artifact = pdir / "consent-artifact.mp4"
+    artifact.write_bytes(b"fake video bytes")
+    (pdir / "consent.json").write_text(json.dumps({
+        "version": 1, "presenter_id": "tyler-welch", "status": "active",
+        "scope": ["voice"],
+        "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
+        "consent_artifact_path": "consent-artifact.mp4"}))
+    monkeypatch.setattr(
+        runner, "validate_weights_receipt",
+        lambda *a: runner.WEIGHTS_SHA256_PINNED)
+    monkeypatch.setattr(runner, "weights_sha256",
+                        lambda *a: runner.WEIGHTS_SHA256_PINNED)
+    monkeypatch.setattr(
+        runner, "validate_silero_model",
+        lambda *a: (_ for _ in ()).throw(
+            RuntimeError("Silero VAD file missing under /x: hubconf.py")))
+    get_se_calls = []
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    class FakeConverter:
+        def __init__(self, *a, **k):
+            pass
+        def load_ckpt(self, *a, **k):
+            pass
+
+    fake_se = types.ModuleType("openvoice.se_extractor")
+    fake_se.get_se = lambda *a, **k: get_se_calls.append(True)
+    fake_api = types.ModuleType("openvoice.api")
+    fake_api.ToneColorConverter = FakeConverter
+    fake_ov = types.ModuleType("openvoice")
+    fake_ov.se_extractor = fake_se
+    fake_ov.api = fake_api
+    monkeypatch.setitem(sys.modules, "openvoice", fake_ov)
+    monkeypatch.setitem(sys.modules, "openvoice.se_extractor", fake_se)
+    monkeypatch.setitem(sys.modules, "openvoice.api", fake_api)
+    with pytest.raises(RuntimeError, match="Silero VAD file missing"):
+        runner.enroll_presenter(root, "tyler-welch", tmp_path / "ckpt")
+    assert get_se_calls == []
 
 
 def _fake_ml_modules(monkeypatch, calls):

@@ -6,7 +6,18 @@ narration over a recorded capture with a presenter's own cloned voice —
 iBUYPOWER GPU workstation (RTX 5080) via OpenVoice V2 zero-shot
 tone-color cloning over a MeloTTS base voice. Capture itself never
 touches the network for narration, and the runner makes no network
-calls during a job.
+calls during a job — for generation and rendering. Enrollment was
+the exception until the Silero pin below: see the correction note.
+
+> **Correction (2026-11-13, post-merge verdict):** the sentence
+> above was false for enrollment until this fix. The first
+> enrollment fetched unpinned Silero VAD bytes through torch.hub
+> (the moving default branch of `snakers4/silero-vad`) while the
+> result still claimed no outbound requests. The Silero VAD is now
+> pinned, staged, and validated like every other model dependency
+> (see "Silero VAD enrollment pin" below); a first enrollment on a
+> clean machine runs fully offline, with the VAD pin recorded in
+> every `enrollment.json`.
 
 ## The honest design: a local spool, not fake network access
 
@@ -415,7 +426,11 @@ only at completion publication, under the presenter lock.
 
 The runner makes **no network calls during a job** — downloads happen
 only in the setup script (`tools/narration/setup-env.ps1`), never at
-job time. Proof fields in every `result.json`:
+job time. That holds for enrollment too since the Silero pin below:
+before it, the first enrollment fetched unpinned Silero VAD bytes
+through torch.hub while `result.json` still reported no outbound
+requests (the render's `outbound_requests: []` never described the
+enrollment that made the embedding). Proof fields in every `result.json`:
 
 - `outbound_requests`: always `[]`.
 - `resources.peak_vram_mib` / `resources.peak_ram_mib`: peak VRAM
@@ -633,6 +648,67 @@ implemented literally per the verdict:
   directly). P2: setup does NOT delete the shared
   `models--google-bert--bert-base-uncased` folder (or any shared
   cache state) — it is the seed source, not narration-owned.
+
+**Silero VAD enrollment pin (post-merge corrective fix):** the
+first Tyler enrollment depended on an unpinned Silero VAD download
+outside setup, receipt, and provenance — the same correctness
+class as the MeloTTS, BERT, and OpenVoice pins above, disclosed
+only in the final fix-round-6 report (the successful enrollment
+had first stopped at a torch.hub trust prompt, and the run
+depended on a one-off manual `torch.hub.load(...,
+trust_repo=True)`). Pinned OpenVoice calls
+`whisper_timestamped.transcribe.get_vad_segments(...,
+method="silero")` through `se_extractor.split_audio_vad`, and in
+the exact locked `whisper-timestamped==1.14.2` the default
+`"silero"` method has no version: when
+`~/.cache/torch/hub/snakers4_silero-vad_master` is absent it runs
+`torch.hub.load(repo_or_dir="snakers4/silero-vad",
+model="silero_vad", source="github")` — the moving default branch.
+The fix, option 1 of the corrected verdict, implemented literally:
+
+- **Pin.** Silero VAD is pinned to the master HEAD as of the FR6
+  enrollment (commit
+  `066409f3d9db45a30d21dfcbf9147826ffdd7052`, 2026-10-22) — the
+  exact bytes the successful Tyler enrollment used. Setup (step
+  5b) downloads the codeload tarball at that revision, verifies
+  the tarball SHA-256
+  (`ad33d84807fb1715af77239695ba83be624ad1130edba38202f8e1f38fc5a915`),
+  extracts ONLY the eight files `torch.hub.load` actually needs
+  (`hubconf.py`, `LICENSE`, `src/silero_vad/__init__.py`,
+  `utils_vad.py`, `model.py`, `src/silero_vad/data/__init__.py`,
+  `silero_vad.onnx`, `silero_vad.jit`) into the narration-owned
+  `C:\forge-bridge\narration\silero-vad\`, and verifies each
+  staged file's SHA-256 (full hashes in
+  `narration-sidecar/LICENSE-RECEIPT.md` and the runner's
+  `SILERO_FILES`). The receipt records the repo, revision,
+  tarball hash, staging dir, and all eight per-file hashes.
+- **Runtime validation + forced local load.** Before any fresh
+  enrollment, `validate_silero_model` requires the receipt to
+  carry the pinned repo/revision/dir binding and every staged file
+  to hash to its pinned value; `preload_silero_vad` then loads the
+  model from that validated local dir via `torch.hub.load(...
+  source="local")` and installs it into
+  `whisper_timestamped.transcribe`'s module globals
+  (`_silero_vad_model`, `_silero_get_speech_ts`), so the
+  library's own load block is skipped entirely — no download, no
+  trust prompt, no shared-cache read. The onnx decision mirrors
+  the library's exactly (onnx=True whenever onnxruntime imports,
+  which it does — it is in the pinned lock — so the FR6
+  enrollment's `.onnx` path is the one used). Setup never touches
+  the user's shared Torch hub cache: no read, no seed, no delete.
+- **Provenance.** Every fresh `enrollment.json` records
+  `vad_method`, `silero_repo`, `silero_revision`, `silero_onnx`,
+  and the validated `silero_files_sha256` manifest, so the
+  enrollment's provenance covers the VAD dependency the render's
+  `outbound_requests: []` cannot describe. Tyler's existing
+  enrollment predates the pin (its embedding was derived from the
+  same master bytes, but unpinned at the time); a re-enrollment
+  after revocation uses the pinned staging.
+- **Proof owed.** A clean first enrollment with both the user
+  Torch Hub cache and the narration-owned cache initially absent,
+  network blocked during enrollment, and no manual trust/cache
+  preparation — run on the iBUYPOWER as the live proof for this
+  fix (see the build report).
 The MeloTTS code itself could
 not install on Python 3.12 from its pinned `requirements.txt`
 (fugashi 1.3.0 needs MeCab C headers that are not on the box;
@@ -692,10 +768,10 @@ timestamps; no secrets are logged. Log file: wherever the
 | Gate | How this slice proves it |
 | --- | --- |
 | 1 Consent denial | Preflight in `process_job` + `enroll_presenter`; revoked/missing/mismatched receipt fails the job before any model work. Verified on the dev VM with a revoked-consent spool (exit 2, `consent_revoked`). |
-| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). Weights SHA-256 pinned (`cf5ce18b…602820`, deterministic zip from Hugging Face `myshell-ai/OpenVoice` @ `c70fc8b9…` + `myshell-ai/OpenVoiceV2` @ `f36e7edf…` — fifteen files incl. the six English ses embeddings); the setup rebuilds the same zip and records the same hash. The dead S3 URL is replaced in `setup-env.ps1` step 6. |
+| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). Weights SHA-256 pinned (`cf5ce18b…602820`, deterministic zip from Hugging Face `myshell-ai/OpenVoice` @ `c70fc8b9…` + `myshell-ai/OpenVoiceV2` @ `f36e7edf…` — fifteen files incl. the six English ses embeddings); the setup rebuilds the same zip and records the same hash. The dead S3 URL is replaced in `setup-env.ps1` step 6. Silero VAD pinned (`snakers4/silero-vad` @ `066409f3…`, eight staged files hash-verified, receipt-bound, runtime-validated before enrollment — post-merge corrective fix). |
 | 5 Narration-only utility | The render is complete with only capture footage + narration + captions; there is no face track to remove. |
 | 6 Audio/video quality | Script validation (no overlaps, timing within duration), per-segment duration/RTF, captions verbatim from the approved script; human review (gate 10) is the evidence. |
-| 7 Local-first proof | `outbound_requests: []` + `resources` + per-segment RTF + `render_sec`/`output_bytes` in every `result.json`; no network code in the runner. |
+| 7 Local-first proof | `outbound_requests: []` + `resources` + per-segment RTF + `render_sec`/`output_bytes` in every `result.json`; no network code in the runner. Enrollment VAD is pinned/local since the Silero fix (before it, the first enrollment fetched unpinned Silero bytes via torch.hub — see the correction note at the top). |
 | 8 Revocation proof | Preflight gate (runner) + Tauri revocation transaction (delete derived assets, mark managed outputs `consent_revoked`, audit receipt). The end-to-end revocation test on a test presenter is still owed on the iBUYPOWER. |
 | 9 Idempotency | `.done` dirs are skipped, never re-run (`find_queued_job`); canonical job id from the seven manifest inputs. |
 | 3, 4, 10 Voice / instruction / human sign-off | Not provable by code: Tyler's blind A/B approval, the end-to-end step-binding watch-through, and the presenter + reviewer `acceptance.json` on the exact output hash. |
