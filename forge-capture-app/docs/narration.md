@@ -520,13 +520,23 @@ melo requests `bert-base-uncased` and the Hub builds that cache
 folder as `models--bert-base-uncased` — so a clean offline run could
 fail at the first real segment, and an ambient alias cache could
 feed unpinned bytes while `outbound_requests` still reported `[]`.
-Setup now seeds (step 6c) by the repo id melo requests,
-`bert-base-uncased` — the old id redirects to the same canonical
-repo at pinned revision
-`86b5e0934494bd15c9632b12f734a8a67f723594`, so the bytes are
-identical, only the cache identity changes — and verifies EVERY
-file by pinned SHA-256 (not size alone), recorded in the receipt
-alongside the revision + snapshot dir:
+Seeding by the old id directly does NOT work on the iBUYPOWER:
+runs 11–12 (7 attempts) all 404'd on `model.safetensors` with
+`Client error '404 Not Found' for url
+.../api/models/bert-base-uncased/xet-read-token/<rev>` — the Xet
+read-token endpoint does not follow the old-id redirect, even
+though the plain resolve URL answers 200 under both ids for the
+same CDN object (diagnosed on the box, 2026-11-13). So setup seeds
+(step 6c) by the canonical id that downloads reliably,
+`google-bert/bert-base-uncased` at pinned revision
+`86b5e0934494bd15c9632b12f734a8a67f723594`, verifies EVERY file by
+pinned SHA-256, then CREATES the alias cache identity melo requests
+by copying the verified snapshot into
+`models--bert-base-uncased/snapshots/<rev>/` with a `refs/main`
+pointer — the exact offline alias/ref structure the pinned code
+resolves to. The receipt records both the runtime repo id
+(`bert-base-uncased`) and the seed repo id, plus the revision,
+snapshot dir, and per-file hashes:
 
 | file | bytes | SHA-256 |
 | --- | --- | --- |
@@ -551,8 +561,8 @@ all six hashes. The setup's step-7 import smoke runs with
 proof: a FRESH `HF_HOME` holding only the setup-seeded snapshots,
 sockets blocked, one real English segment through the pinned
 `TTS` — it must print `COLD CACHE PROOF OK` or the setup fails.
-The stale `models--google-bert--bert-base-uncased` folder the old
-script seeded is deleted at setup. The MeloTTS code itself could
+The `models--google-bert--bert-base-uncased` folder stays as the
+seed source; the alias folder is the runtime identity. The MeloTTS code itself could
 not install on Python 3.12 from its pinned `requirements.txt`
 (fugashi 1.3.0 needs MeCab C headers that are not on the box;
 tokenizers 0.13.3 has no cp312 wheel) — setup installs the pinned

@@ -72,24 +72,25 @@ so it is not an admissible fallback.
 - **BERT base encoder (fix round 5 — the offline pin):** MeloTTS EN
   generation loads `bert-base-uncased` (tokenizer + masked-LM) on
   every segment, at no revision in melo's code. Setup seeds it once
-  by the repo id melo requests, `bert-base-uncased` (the old id
-  redirects to the same canonical repo — the fix-round-3 setup
-  seeded `google-bert/bert-base-uncased`, which lands under a
-  different cache folder than melo looks in, so a clean offline run
-  could fail or consume unpinned alias-cache bytes), at pinned
-  revision `86b5e0934494bd15c9632b12f734a8a67f723594`, every file
-  verified by pinned SHA-256 (config.json
-  `7160e155…187d20`, vocab.txt `07eced37…038a3`, tokenizer_config.json
-  `a025160e…4bf10`, tokenizer.json `ce64fce7…9a98`, pytorch_model.bin
-  `09741738…b203a`, model.safetensors `68d45e23…169d3` — full hashes
-  in `docs/narration.md`); the receipt records the repo, revision,
-  snapshot dir, and all six hashes, and the runner re-validates
-  them plus the cache identity (`validate_bert_model`) before any
-  TTS work and records them in every `result.json` model block. A
-  missing, changed, or mis-resolved BERT file fails the job closed.
-  The setup also runs a real-library cold-cache proof (fresh
-  `HF_HOME`, sockets blocked, one English segment) that must print
-  `COLD CACHE PROOF OK`.
+  by the canonical id `google-bert/bert-base-uncased` (the old id
+  `bert-base-uncased` cannot download `model.safetensors` on the
+  iBUYPOWER — the Xet read-token endpoint 404s for it, diagnosed
+  2026-11-13), then creates the alias cache identity melo requests
+  (`models--bert-base-uncased/snapshots/<rev>/` + `refs/main`) by
+  copying the verified snapshot, at pinned revision
+  `86b5e0934494bd15c9632b12f734a8a67f723594`, every file verified by
+  pinned SHA-256 (config.json `7160e155…187d20`, vocab.txt
+  `07eced37…038a3`, tokenizer_config.json `a025160e…4bf10`,
+  tokenizer.json `ce64fce7…9a98`, pytorch_model.bin `09741738…b203a`,
+  model.safetensors `68d45e23…169d3` — full hashes in
+  `docs/narration.md`); the receipt records the runtime repo, the
+  seed repo, the revision, the snapshot dir, and all six hashes, and
+  the runner re-validates them plus the cache identity
+  (`validate_bert_model`) before any TTS work and records them in
+  every `result.json` model block. A missing, changed, or
+  mis-resolved BERT file fails the job closed. The setup also runs a
+  real-library cold-cache proof (fresh `HF_HOME`, sockets blocked,
+  one English segment) that must print `COLD CACHE PROOF OK`.
 - **Code install (fix round 3):** the pinned MeloTTS
   `requirements.txt` cannot install on Python 3.12 as written
   (fugashi 1.3.0 needs MeCab C headers; tokenizers 0.13.3 has no

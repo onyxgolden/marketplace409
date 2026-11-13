@@ -129,12 +129,18 @@ DEFAULT_MELOTTS_DIR = r"C:\forge-bridge\narration\melotts-en"
 # A web redirect cannot repair that once the runner forces
 # HF_HUB_OFFLINE=1: a clean setup failed at the first real segment,
 # and an ambient alias cache could feed unpinned bytes while
-# result.json still reported outbound_requests []. The setup now
-# seeds repo id 'bert-base-uncased' (which redirects to the same
-# canonical repo at the pinned revision below) so the runtime
-# request and the seeded cache identity are identical, and the
-# runner validates the receipt, the snapshot directory, the
-# cache-resolution identity, and every file hash before generation.
+# result.json still reported outbound_requests []. Seeding by the
+# old id directly does NOT work on the iBUYPOWER either: the Xet
+# read-token endpoint 404s for it (runs 11-12, diagnosed on the box
+# 2026-11-13). So the setup seeds by the canonical id that
+# downloads reliably (google-bert/bert-base-uncased), hash-verifies
+# every file, then CREATES the alias cache identity melo requests by
+# copying the verified snapshot into
+# models--bert-base-uncased/snapshots/<rev>/ with a refs/main
+# pointer — the exact offline alias/ref structure the pinned code
+# resolves to. The runner validates the receipt, the snapshot
+# directory, the cache-resolution identity, and every file hash
+# before generation.
 # Per-file SHA-256s verified 2026-11-13 from the official Hugging
 # Face repo google-bert/bert-base-uncased at this revision — the two
 # model files by direct download (hashes match the Hub's LFS
