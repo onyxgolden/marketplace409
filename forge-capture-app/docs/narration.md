@@ -610,7 +610,7 @@ implemented literally per the verdict:
   2.11.1). No unpinned `pip install <name>` remains in the setup.
   The git-commit-pinned installs (OpenVoice, MeloTTS code) are not
   in the lock — the commit IS their hash. The lock SHA-256
-  (`d417674385350e846e14c354d03b6de2d58539482c3d7482e8506bd14a5d29a9`)
+  (`26ee751a66977300d87ff9b1973056a22732c7268696a57946ae0394ca508d7b`)
   is recorded in the setup receipt as `requirements_lock_sha256`.
   The clean-setup proof is a setup run with the `-Clean` switch,
   which removes the venv and rebuilds it from the lock from scratch.

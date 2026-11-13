@@ -118,7 +118,7 @@ so it is not an admissible fallback.
   cp312/win_amd64), including the CUDA-index torch wheel
   (`torch==2.14.1+cu130`) and `torchaudio==2.11.1` (PyPI). No unpinned
   `pip install <name>` remains in the setup. The lock SHA-256
-  (`d417674385350e846e14c354d03b6de2d58539482c3d7482e8506bd14a5d29a9`)
+  (`26ee751a66977300d87ff9b1973056a22732c7268696a57946ae0394ca508d7b`)
   is recorded in the receipt as `requirements_lock_sha256`; a `-Clean`
   setup run rebuilds the venv from the lock from scratch.
 - **Code install (fix round 3, lock in fix round 6):** the pinned MeloTTS
