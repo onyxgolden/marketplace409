@@ -234,7 +234,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
       .then((options) => { if (!cancelled) setProperties(options); })
       .catch((caught) => { if (!cancelled) setPropertiesError(caught.message); });
     return () => { cancelled = true; };
-  }, []);
+  }, [pageQuery]);
 
   const propertyLabel = pkg.property_id
     ? (properties || []).find((property) => property.slug === pkg.property_id)?.label || pkg.property_id
@@ -863,7 +863,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "redlines" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageDrawingReadiness packageId={pkg.id} />
+          <WorkPackageDrawingReadiness packageId={pkg.id} onNavigateToTab={(tab) => switchTab(tab)} />
         </div>
       )}
 
@@ -885,7 +885,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "documents" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
+          <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} onNavigateToTab={(tab) => switchTab(tab)} />
         </div>
       )}
 

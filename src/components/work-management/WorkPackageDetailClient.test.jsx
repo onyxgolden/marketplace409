@@ -50,7 +50,10 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
   // that's an artifact of the stub, not the component.
   const committedBaselines = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
-    if (url === `/api/work-packages/${BASE_PKG.id}/scope` && options.method === "POST") {
+    // Slice-7 PDF blockers: pageQuery appends ?workspace=&forgeProject=
+    // to scoped fetches, so exact matches run against the bare path.
+    const bare = typeof url === "string" ? url.split("?")[0] : url;
+    if (bare === `/api/work-packages/${BASE_PKG.id}/scope` && options.method === "POST") {
       const body = JSON.parse(options.body);
       freezeRequests.push(body);
       if (freezeImpl) return freezeImpl(body);
@@ -58,11 +61,11 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       committedBaselines.push(baseline);
       return { ok: true, json: async () => ({ success: true, baseline }) };
     }
-    if (url === "/api/work-packages/property-options") {
+    if (bare === "/api/work-packages/property-options") {
       if (failOptions) return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
       return { ok: true, json: async () => ({ properties }) };
     }
-    if (url === `/api/work-packages/${BASE_PKG.id}/planning-process` && (!options.method || options.method === "GET")) {
+    if (bare === `/api/work-packages/${BASE_PKG.id}/planning-process` && (!options.method || options.method === "GET")) {
       return {
         ok: true,
         json: async () => ({
@@ -80,18 +83,18 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
         }),
       };
     }
-    if (url === `/api/work-packages/${BASE_PKG.id}` && options.method === "PATCH") {
+    if (bare === `/api/work-packages/${BASE_PKG.id}` && options.method === "PATCH") {
       patches.push(JSON.parse(options.body));
       if (patchImpl) return patchImpl();
       if (failPatch) return { ok: false, json: async () => ({ error: "Package changed while editing; refresh and retry." }) };
       return { ok: true, json: async () => ({ package: { ...BASE_PKG, ...patches[patches.length - 1], property_id: patches[patches.length - 1].property_id ?? null } }) };
     }
-    if (url === `/api/work-packages/${BASE_PKG.id}` && options.method === "DELETE") {
+    if (bare === `/api/work-packages/${BASE_PKG.id}` && options.method === "DELETE") {
       deletes.push(JSON.parse(options.body));
       if (deleteImpl) return deleteImpl();
       return { ok: true, json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }) };
     }
-    if (url === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
+    if (bare === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
       return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: committedBaselines, scopeChanges: [], observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
     }
     if (typeof url === "string" && url.startsWith("/api/work-links")) {
@@ -103,7 +106,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
       return { ok: true, json: async () => ({ projects: [] }) };
     }
-    if (url === `/api/work-packages/${BASE_PKG.id}/drawings/readiness`) {
+    if (bare === `/api/work-packages/${BASE_PKG.id}/drawings/readiness`) {
       return {
         ok: true,
         json: async () => ({
@@ -118,7 +121,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     if (typeof url === "string" && url.startsWith("/api/forge/hierarchy?projectId=")) {
       return { ok: true, json: async () => ({ selection: null }) };
     }
-    if (url === "/api/forge/hierarchy") {
+    if (bare === "/api/forge/hierarchy") {
       return { ok: true, json: async () => ({ selector: { ownerId: "owner_1", clients: [] } }) };
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -133,7 +136,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
 // root is actually unmounted first.
 const activeRoots = [];
 
-function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, transitions = [] } = {}) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, forgeProjectParam, transitions = [] } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -143,6 +146,7 @@ function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspa
       <WorkPackageDetailClient
         initialTab={initialTab}
         workspaceParam={workspaceParam}
+        forgeProjectParam={forgeProjectParam}
         initial={{
           package: pkg,
           transitions,
@@ -917,6 +921,54 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     // Previously this read "?tab=milestones" here (one click behind) until
     // the next click. It must reflect the just-clicked tab immediately.
     expect(window.location.search).toBe("?tab=permits");
+  });
+});
+
+describe("WorkPackageDetailClient tab switches preserve package scope (slice-7 PDF blockers)", () => {
+  function tabButton(container, label) {
+    return [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent === label);
+  }
+
+  // The Defect 2 regression: switchTab rebuilt the URL with only tab +
+  // workspace, silently dropping ?forgeProject=, so every panel fetch
+  // after the first tab switch lost scope and failed closed 404 while
+  // the server-rendered header still looked fine.
+  it("keeps forgeProject=unassigned across tab switches and back to Overview", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { workspaceParam: "owner_1", forgeProjectParam: "unassigned" });
+    await settle();
+    act(() => { tabButton(container, "Documents").click(); });
+    expect(tabButton(container, "Documents").getAttribute("aria-selected")).toBe("true");
+    expect(window.location.search).toContain("tab=documents");
+    expect(window.location.search).toContain("workspace=owner_1");
+    expect(window.location.search).toContain("forgeProject=unassigned");
+    act(() => { tabButton(container, "Overview").click(); });
+    expect(window.location.search).not.toContain("tab=");
+    expect(window.location.search).toContain("forgeProject=unassigned");
+  });
+
+  it("keeps an assigned project id across tab switches", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { workspaceParam: "owner_1", forgeProjectParam: "forge_prj_1" });
+    await settle();
+    act(() => { tabButton(container, "IFA→IFC redlines").click(); });
+    expect(window.location.search).toContain("tab=redlines");
+    expect(window.location.search).toContain("forgeProject=forge_prj_1");
+  });
+
+  it("nested panel fetches carry forgeProject after a tab switch", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { workspaceParam: "owner_1", forgeProjectParam: "unassigned" });
+    await settle();
+    act(() => { tabButton(container, "Documents").click(); });
+    await settle();
+    act(() => { tabButton(container, "IFA→IFC redlines").click(); });
+    await settle();
+    const urls = globalThis.fetch.mock.calls.map(([u]) => String(u));
+    const scoped = urls.filter((u) => u.includes("forgeProject=unassigned"));
+    expect(scoped.length).toBeGreaterThan(0);
+    expect(scoped.some((u) => u.startsWith("/api/work-links"))).toBe(true);
+    expect(scoped.some((u) => u.includes("/drawings/readiness"))).toBe(true);
   });
 });
 

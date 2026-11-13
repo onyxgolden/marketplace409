@@ -239,16 +239,127 @@ export function validateIfcReleaseInput(input) {
   if (!isNonEmptyString(input?.reviewId)) {
     errors.push("A review id is required.");
   }
-  const revision = validateRevisionInput({
-    revisionCode: input?.ifcRevisionCode,
-    documentRef: input?.documentRef,
-    contentSha256: input?.contentSha256,
-  });
-  if (!revision.ok) errors.push(...revision.errors);
+  // Slice-7 PDF blockers: a staged artifact's stored bytes are
+  // authoritative, so the typed document reference + SHA-256 are not
+  // required (and are ignored) when one is given. The IFC revision
+  // code is always required.
+  if (isNonEmptyString(input?.stagedArtifactId)) {
+    if (!isValidRevisionCode(input?.ifcRevisionCode)) {
+      errors.push("Revision code must be 1–40 characters, starting with a letter or digit and using plain text only.");
+    }
+  } else {
+    const revision = validateRevisionInput({
+      revisionCode: input?.ifcRevisionCode,
+      documentRef: input?.documentRef,
+      contentSha256: input?.contentSha256,
+    });
+    if (!revision.ok) errors.push(...revision.errors);
+  }
   if (!isValidReason(input?.reason)) {
     errors.push(`Reason must be at most ${MAX_REASON_LENGTH} characters.`);
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Slice-7 PDF blockers: controlled PDF drawing intake.
+// ---------------------------------------------------------------------------
+
+// Mirrors the takeoff domain's DRAWING_TYPES (src/domains/work-management/
+// takeoff.js) — the intake accepts the same three controlled types.
+export const CONTROLLED_DRAWING_TYPES = Object.freeze(["isometric", "p_id", "cut_sheet"]);
+export const MAX_PDF_BYTES = 26214400; // 25 MB, matches the controlled-drawings bucket
+export const CONTROLLED_DRAWINGS_BUCKET = "controlled-drawings";
+export const MAX_DRAWING_NUMBER_LENGTH = 120;
+export const MAX_LINE_NUMBER_LENGTH = 120;
+export const MAX_ISSUER_REF_LENGTH = 200;
+export const MAX_DRAWING_TITLE_LENGTH = 200;
+export const MAX_REQUEST_ID_LENGTH = 128;
+
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
+
+/**
+ * Validates uploaded PDF bytes without a PDF parser: non-empty, within
+ * the bucket size limit, starting with the %PDF- magic, and carrying a
+ * %%EOF marker in the last 4 KiB (a truncated or non-PDF file fails).
+ * The MIME type is advisory — the magic bytes are authoritative.
+ */
+export function validatePdfFile({ bytes, mimeType } = {}) {
+  const errors = [];
+  if (!bytes || typeof bytes.length !== "number" || bytes.length === 0) {
+    errors.push("A PDF file is required.");
+    return { ok: false, errors };
+  }
+  if (bytes.length > MAX_PDF_BYTES) {
+    errors.push(`The PDF is too large (${bytes.length} bytes — 25 MB maximum).`);
+  }
+  if (mimeType != null && mimeType !== "" && mimeType !== "application/pdf") {
+    errors.push("The file must be a PDF (application/pdf).");
+  }
+  const magicOk = PDF_MAGIC.every((byte, index) => bytes[index] === byte);
+  if (!magicOk) {
+    errors.push("The file is not a PDF (it does not start with %PDF-).");
+  }
+  const tail = bytes.slice(Math.max(0, bytes.length - 4096));
+  const tailText = typeof TextDecoder === "undefined"
+    ? ""
+    : new TextDecoder("latin1").decode(tail);
+  if (!tailText.includes("%%EOF")) {
+    errors.push("The PDF looks truncated or malformed (no %%EOF marker near the end).");
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+function isValidIssueDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+export function validateControlledDrawingIntakeInput(input) {
+  const errors = [];
+  if (!CONTROLLED_DRAWING_TYPES.includes(input?.drawingType)) {
+    errors.push(`Drawing type must be one of: ${CONTROLLED_DRAWING_TYPES.join(", ")}.`);
+  }
+  if (!isNonEmptyString(input?.drawingNumber) || input.drawingNumber.length > MAX_DRAWING_NUMBER_LENGTH) {
+    errors.push(`Drawing number is required and must be at most ${MAX_DRAWING_NUMBER_LENGTH} characters.`);
+  }
+  if (input?.lineNumber != null && input.lineNumber !== "") {
+    if (typeof input.lineNumber !== "string" || input.lineNumber.trim().length === 0
+        || input.lineNumber.length > MAX_LINE_NUMBER_LENGTH) {
+      errors.push(`Line number must be at most ${MAX_LINE_NUMBER_LENGTH} characters.`);
+    }
+  }
+  if (!isValidRevisionCode(input?.revisionCode)) {
+    errors.push("Revision code must be 1–40 characters, starting with a letter or digit and using plain text only.");
+  }
+  if (!isValidIssueDate(input?.issueDate)) {
+    errors.push("Issue date is required and must be a valid date (YYYY-MM-DD).");
+  }
+  if (input?.issuerRef != null && input.issuerRef !== "" && input.issuerRef.length > MAX_ISSUER_REF_LENGTH) {
+    errors.push(`Issuer/drafter reference must be at most ${MAX_ISSUER_REF_LENGTH} characters.`);
+  }
+  if (input?.title != null && input.title !== "" && input.title.length > MAX_DRAWING_TITLE_LENGTH) {
+    errors.push(`Title must be at most ${MAX_DRAWING_TITLE_LENGTH} characters.`);
+  }
+  if (input?.drawingType === "p_id" && isNonEmptyString(input?.pIdDrawingId)) {
+    errors.push("pIdDrawingId must not be set on a p_id drawing — it always rolls up to itself.");
+  }
+  if (input?.pIdDrawingId != null && input.pIdDrawingId !== "" && !isNonEmptyString(input.pIdDrawingId)) {
+    errors.push("P&ID parent id must be a non-empty string when supplied.");
+  }
+  if (!isNonEmptyString(input?.requestId) || input.requestId.length > MAX_REQUEST_ID_LENGTH) {
+    errors.push(`Request id is required and must be at most ${MAX_REQUEST_ID_LENGTH} characters.`);
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+export function validateIfcStageInput(input) {
+  const errors = [];
+  if (!isNonEmptyString(input?.requestId) || input.requestId.length > MAX_REQUEST_ID_LENGTH) {
+    errors.push(`Request id is required and must be at most ${MAX_REQUEST_ID_LENGTH} characters.`);
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
 }
 
 export function validateFieldRedlineInput(input) {

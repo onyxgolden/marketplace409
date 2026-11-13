@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   LINK_RELATIONSHIPS, LINK_STATUS_LABELS,
 } from "@/domains/work-management/workLinks.js";
 import { DOCUMENT_KIND_SUGGESTIONS, DOCUMENT_KIND_LABELS } from "@/domains/work-management/workDocuments.js";
 import { usePageQuery } from "./packagePageContext.jsx";
+import ControlledDrawingUpload from "./ControlledDrawingUpload.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
@@ -21,7 +22,7 @@ const LIBRARY_RELS = ["library_supporting_document", "library_closeout_document"
 // Preview must open the new tab synchronously inside the click gesture:
 // browsers block window.open() after an await, so we open a blank tab
 // first and navigate it to the signed URL once the fetch resolves.
-async function openSignedUrl(documentId, action) {
+async function openSignedUrl(pageQuery, documentId, action) {
   const tab = window.open("", "_blank");
   if (!tab) throw new Error("Your browser blocked the preview tab — allow pop-ups for this site and try again.");
   tab.opener = null;
@@ -64,7 +65,28 @@ function dedupeProjects(projects) {
   return result;
 }
 
-export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
+// The three Documents-tab fetches, shared by the mount effect and the
+// event-handler refresh: pure fetch + parse, no setState, so the
+// effect can await it without tripping the set-state-in-effect rule.
+async function fetchDocumentsData(pageQuery, packageId) {
+  const [linksRes, libRes, designerRes] = await Promise.all([
+    fetch(pageQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`)),
+    fetch(pageQuery("/api/work-documents")),
+    fetch(pageQuery("/api/forge/designer")),
+  ]);
+  const linksData = await linksRes.json();
+  if (!linksRes.ok) throw new Error(linksData.error || "Could not load links.");
+  const libData = await libRes.json();
+  if (!libRes.ok) throw new Error(libData.error || "Could not load the document library.");
+  const designerData = await designerRes.json();
+  return {
+    links: linksData.links || [],
+    library: libData.documents || [],
+    designerProjects: dedupeProjects(designerData.projects || designerData.designer_projects || []),
+  };
+}
+
+export default function WorkPackageDocuments({ packageId, initialLinks = [], onNavigateToTab = null }) {
   const pageQuery = usePageQuery();
   const [links, setLinks] = useState(initialLinks);
   const [library, setLibrary] = useState([]);
@@ -89,30 +111,47 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
   const drawingLinks = links.filter((l) => l.relationship_type === DRAWING_REL);
   const documentLinks = links.filter((l) => LIBRARY_RELS.includes(l.relationship_type));
 
-  async function refresh() {
-    setError("");
+  // The fetch itself: every setState runs after an await, never
+  // synchronously in the effect body. Event handlers use refresh()
+  // below, which clears a stale error first.
+  const loadAll = useCallback(async () => {
     try {
-      const [linksRes, libRes, designerRes] = await Promise.all([
-        fetch(pageQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`)),
-        fetch(pageQuery("/api/work-documents")),
-        fetch(pageQuery("/api/forge/designer")),
-      ]);
-      const linksData = await linksRes.json();
-      if (!linksRes.ok) throw new Error(linksData.error || "Could not load links.");
-      const libData = await libRes.json();
-      if (!libRes.ok) throw new Error(libData.error || "Could not load the document library.");
-      const designerData = await designerRes.json();
-      setLinks(linksData.links || []);
-      setLibrary(libData.documents || []);
-      setDesignerProjects(dedupeProjects(designerData.projects || designerData.designer_projects || []));
+      const data = await fetchDocumentsData(pageQuery, packageId);
+      setLinks(data.links);
+      setLibrary(data.library);
+      setDesignerProjects(data.designerProjects);
     } catch (e) {
       setError(e.message);
     } finally {
       setLoaded(true);
     }
+  }, [pageQuery, packageId]);
+
+  async function refresh() {
+    setError("");
+    await loadAll();
   }
 
-  useEffect(() => { refresh(); }, [packageId]);
+  // Mount + scope change: the cancellation guard is the stale-response
+  // guard — a slow fetch from a previous package/scope never overwrites
+  // the fresh one after a workspace switch or tab navigation.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchDocumentsData(pageQuery, packageId);
+        if (cancelled) return;
+        setLinks(data.links);
+        setLibrary(data.library);
+        setDesignerProjects(data.designerProjects);
+      } catch (e) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pageQuery, packageId]);
 
   async function onLinkExisting(event) {
     event.preventDefault();
@@ -180,7 +219,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
   }
 
   async function onPreview(documentId) {
-    try { await openSignedUrl(documentId, "preview"); }
+    try { await openSignedUrl(pageQuery, documentId, "preview"); }
     catch (e) { setError(e.message); }
   }
 
@@ -213,7 +252,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
             <>
               <button className={btnGhost} disabled={busy} onClick={() => onPreview(doc.id)}>Preview</button>
               <button className={btnGhost} disabled={busy}
-                onClick={async () => { try { await openSignedUrl(doc.id, "download"); } catch (e) { setError(e.message); } }}>
+                onClick={async () => { try { await openSignedUrl(pageQuery, doc.id, "download"); } catch (e) { setError(e.message); } }}>
                 Download
               </button>
             </>
@@ -231,7 +270,8 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Drawings &amp; documents</h2>
       <p className="mt-1 text-xs text-slate-500">
-        Drawings come from the Designer; documents live in this planner's own library.
+        Controlled isometric, P&amp;ID, and cut-sheet drawings are uploaded below as immutable IFA revisions;
+        room designs still come from the Designer, and other documents live in this planner&apos;s own library.
         Links reference the real records — they never copy them.
       </p>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
@@ -313,6 +353,8 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [] }) {
         </div>
         <p className="text-xs text-slate-400">Uploading links the document to this package automatically.</p>
       </form>
+
+      <ControlledDrawingUpload packageId={packageId} onNavigateToTab={onNavigateToTab} />
     </section>
   );
 }
