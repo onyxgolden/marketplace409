@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { computeScheduleVariance, rollupProjectVariance } from "@/domains/scheduling/schedulingBaselines";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 export async function GET(request, { params }) {

@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { resolveOwnedBlock } from "../../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 const ACCRUAL_TYPES = ["start", "end", "uniform"];

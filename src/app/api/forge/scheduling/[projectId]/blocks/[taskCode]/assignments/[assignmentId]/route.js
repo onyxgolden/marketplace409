@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // No block/taskCode lookup needed here (unlike the collection route) -- assignmentId plus an

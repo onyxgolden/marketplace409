@@ -8,7 +8,7 @@ import {
 import { chicagoTodayISO } from "@/domains/scheduling/schedulingAskSchedule";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Fetches the most recent baseline for the project (if any). Same shape the ask

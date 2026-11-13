@@ -5,7 +5,7 @@ import { relationalTablesToBoard, stripNamespace } from "@/domains/scheduling/sc
 import { loadProjectRelational, computeAndPersistCpm } from "../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 export async function GET(request, { params }) {

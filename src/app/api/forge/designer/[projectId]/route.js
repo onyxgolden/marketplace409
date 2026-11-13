@@ -30,7 +30,7 @@ async function loadProject(authenticated, projectId) {
 export async function GET(_request, { params }) {
   const { projectId } = await params;
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const project = await loadProject(authenticated, projectId);
     if (!project) {
@@ -60,7 +60,7 @@ export async function GET(_request, { params }) {
 export async function PUT(request, { params }) {
   const { projectId } = await params;
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const body = await request.json().catch(() => null);
     if (!body || typeof body.design === "undefined") {
@@ -133,7 +133,7 @@ export async function PUT(request, { params }) {
 export async function DELETE(_request, { params }) {
   const { projectId } = await params;
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const { error } = await authenticated.supabaseClient
       .from("designer_projects")

@@ -12,6 +12,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import { checkForgeAppAccess } from "@/lib/supabase/forgeAppAccess";
+import { resolveEffectiveOwnerId } from "@/lib/supabase/resolveEffectiveOwnerId";
 
 function bearerToken(request) {
   const header = request.headers.get("authorization") || "";
@@ -40,10 +42,27 @@ export async function guardCaptureRequest(request) {
         response: NextResponse.json({ error: "Invalid or expired session. Sign in to FORGE again." }, { status: 401 }),
       };
     }
-    return { user: data.user, supabaseClient };
+    // SaaS Auth PR 1: the Bearer path resolves the effective owner
+    // the same way the cookie path does, then enforces the capture
+    // entitlement gate. A denial is a 403 with plain words; an
+    // unresolvable owner or a failed check fails closed (503).
+    let effectiveOwnerId;
+    try {
+      effectiveOwnerId = await resolveEffectiveOwnerId({
+        supabaseClient,
+        actorUserId: data.user.id,
+      });
+    } catch {
+      return { response: NextResponse.json({ error: "Access checks are temporarily unavailable. Try again in a minute." }, { status: 503 }) };
+    }
+    const gate = await checkForgeAppAccess(supabaseClient, effectiveOwnerId, "capture");
+    if (!gate.allowed) {
+      return { response: gate.response };
+    }
+    return { user: data.user, supabaseClient, effectiveOwnerId };
   }
 
-  const authenticated = await createAuthenticatedForgeApplication();
+  const authenticated = await createAuthenticatedForgeApplication({ appKey: "capture" });
   if (authenticated.response) return { response: authenticated.response };
-  return { user: authenticated.user, supabaseClient: authenticated.supabaseClient };
+  return { user: authenticated.user, supabaseClient: authenticated.supabaseClient, effectiveOwnerId: authenticated.effectiveOwnerId };
 }

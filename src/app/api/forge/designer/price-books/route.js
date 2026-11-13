@@ -16,7 +16,7 @@ const MAX_BODY_BYTES = 1_000_000;
 // GET — the caller's price books.
 export async function GET() {
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const { data, error } = await authenticated.supabaseClient
       .from("designer_price_books")
@@ -35,7 +35,7 @@ export async function GET() {
 // PUT { book } — create or replace one price book.
 export async function PUT(request) {
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const text = await request.text();
     if (text.length > MAX_BODY_BYTES) {
@@ -69,7 +69,7 @@ export async function PUT(request) {
 // DELETE ?id=<book id> — remove one price book.
 export async function DELETE(request) {
   try {
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const id = new URL(request.url).searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Missing price list id." }, { status: 400 });

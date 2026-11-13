@@ -4,7 +4,7 @@ import { ACTIVITY_COLUMNS, buildActivityRows } from "@/domains/scheduling/schedu
 import { loadProjectRelational, computeAndPersistCpm } from "../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 function sanitizeFilename(name) {

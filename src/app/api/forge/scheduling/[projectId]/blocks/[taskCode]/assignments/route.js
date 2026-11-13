@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { resolveOwnedBlock } from "../../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Resource cost data is owner-only (no public-select policy -- see the SCHED-05 migration), so

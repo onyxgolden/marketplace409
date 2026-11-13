@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { defaultBoardState } from "@/components/forge/scheduling/schedulingBoardState";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // RLS on forge_scheduling_projects grants select on a user's own rows AND any row with

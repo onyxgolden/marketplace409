@@ -4,7 +4,7 @@ import { computeResourceLoading, detectOverallocations, rollupCostByAccount, rol
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm } from "../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Read-only, owner-only (see loadResourceCostData / the SCHED-05 migration's no-public-select

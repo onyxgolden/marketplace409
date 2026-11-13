@@ -62,7 +62,7 @@ export async function GET() {
         { status: 404 }
       );
     }
-    const authenticated = await createAuthenticatedForgeApplication();
+    const authenticated = await createAuthenticatedForgeApplication({ appKey: "designer" });
     if (authenticated.response) return authenticated.response;
     const { data, error } = await authenticated.supabaseClient
       .from("house_plans_regulatory_sources")

@@ -10,7 +10,7 @@ import {
 } from "@/domains/scheduling/schedulingAskSchedule";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // Fetches the most recent baseline for the project (if any) plus its variance

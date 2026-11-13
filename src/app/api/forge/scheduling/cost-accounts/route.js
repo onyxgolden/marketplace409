@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
 async function authenticatedContext() {
-  return createAuthenticatedForgeApplication();
+  return createAuthenticatedForgeApplication({ appKey: "scheduler" });
 }
 
 // A Postgres unique-violation (schedule_cost_accounts has unique(owner_id, code)) surfaces as this

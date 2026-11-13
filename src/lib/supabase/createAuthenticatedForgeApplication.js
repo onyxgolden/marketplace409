@@ -11,10 +11,21 @@ import {
 } from "@/lib/supabase/server";
 
 import {
+  checkForgeAppAccess,
+} from "@/lib/supabase/forgeAppAccess";
+
+import {
   resolveEffectiveOwnerId,
 } from "@/lib/supabase/resolveEffectiveOwnerId";
 
-export async function createAuthenticatedForgeApplication({ requestedOwnerId = null } = {}) {
+// SaaS Auth PR 1: when appKey is given (one of designer / scheduler /
+// planner / capture), the request is gated on the workspace being
+// active, the app entitlement being active, and the actor holding an
+// active membership — enforced by forge_check_app_access, which reads
+// auth.uid() server-side. A denial returns { response: 403 }. Callers
+// that pass no appKey keep today's behavior (their own permission
+// checks still apply); the four app choke points all pass one.
+export async function createAuthenticatedForgeApplication({ requestedOwnerId = null, appKey = null } = {}) {
   const supabaseClient =
     await createClient();
 
@@ -49,6 +60,13 @@ export async function createAuthenticatedForgeApplication({ requestedOwnerId = n
       actorUserId: user.id,
       requestedOwnerId,
     });
+
+  if (appKey) {
+    const gate = await checkForgeAppAccess(supabaseClient, effectiveOwnerId, appKey);
+    if (!gate.allowed) {
+      return { response: gate.response };
+    }
+  }
 
   const currentOwnerId =
     async () => effectiveOwnerId;
