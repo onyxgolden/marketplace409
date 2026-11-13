@@ -91,18 +91,44 @@ HF_SES_REVISION = "f36e7edfe1684461a8343844af60babc2efbb727"
 # zip build -- a different file set is a different hash.
 WEIGHTS_SHA256_PINNED = "cf5ce18b3a3841d3079fc47a3cd6ec76e0b51d12da5b62d33787c63e16028020"
 
+# MeloTTS English base model (the TTS the V2 pipeline speaks
+# through). The MeloTTS CODE is pinned separately (BASE_TTS_COMMIT,
+# installed from git by setup). The MODEL files it loads were NOT
+# pinned until fix round 3: TTS(language='EN') with no paths calls
+# hf_hub_download() for config.json + checkpoint.pth at NO revision
+# (melo/download_utils.py at the pinned code commit) — an unpinned,
+# mutable download on the first job, while result.json claimed
+# outbound_requests []. The setup script now downloads both files
+# from the official Hugging Face repo myshell-ai/MeloTTS-English at
+# the pinned revision below, verifies their SHA-256s, and records
+# them in the setup receipt; the runner binds TTS to those validated
+# local paths (config_path/ckpt_path) and never relies on an ambient
+# Hugging Face cache or an implicit download. With both paths given,
+# melo's load_or_download_* functions read the local files and make
+# no network call. The speaker keys in MELO_EN_SPEAKER_KEYS come
+# from this revision's config.json (verified 2026-11-13).
+MELO_MODEL_SOURCE_URL = "https://huggingface.co/myshell-ai/MeloTTS-English"
+MELO_MODEL_REVISION = "bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef"
+MELO_MODEL_FILES = {
+    "config.json":
+        "039116c927c70eaa4458d315ea83aaaa99e1fca1c621b50c8ca56b4a5700eb77",
+    "checkpoint.pth":
+        "acd278040eaf9536908e2b965273df5a731c44d8f0da66cc5fed7972772ed23c",
+}
+DEFAULT_MELOTTS_DIR = r"C:\forge-bridge\narration\melotts-en"
+
 # MeloTTS English speaker keys (model.hps.data.spk2id) the runner can
 # select from, as observed in the live myshell-ai/MeloTTS-English
-# config.json (fetched 2026-11-13): the runner picks the first key
+# config.json at MELO_MODEL_REVISION above (fetched 2026-11-13): the runner picks the first key
 # starting with "EN", so this is the full selection surface. Each key
 # normalizes (lowercase, '_' -> '-') to a ses file that MUST be in
 # CHECKPOINTS_FILES below — the layout smoke test proves it. If a
 # future MeloTTS model presents an EN key outside this list, the job
 # fails closed at the ses load ("base speaker embedding missing")
 # rather than guessing a speaker; the list is then re-verified and
-# the manifest extended. The MeloTTS model itself is downloaded by
-# the melo package at setup time and is not revision-pinned here
-# (pre-existing exposure, not this slice's scope).
+# the manifest extended. The MeloTTS model files themselves are
+# revision-pinned above (MELO_MODEL_REVISION); a model change is a
+# new pin, never a silent cache refresh.
 MELO_EN_SPEAKER_KEYS = (
     "EN-US",
     "EN-BR",
@@ -390,6 +416,91 @@ def resolve_checkpoints_dir(cli_dir: str | None) -> Path:
         if (cand / "converter" / "config.json").is_file():
             return cand
     return candidates[0] if candidates else Path(DEFAULT_CHECKPOINTS_DIR)
+
+
+def validate_melotts_model(receipt_path: str | None,
+                           melotts_dir) -> str:
+    """Validate the pinned MeloTTS English base model before any TTS
+    work (fix round 3: the first narration job must not download
+    unpinned MeloTTS weights while reporting zero outbound requests).
+
+    The setup receipt must carry (see validate_weights_receipt for the
+    receipt rules): a receipt must exist and parse; it must carry
+    ``melotts_model_hf_revision`` exactly equal to
+    ``MELO_MODEL_REVISION``; it must carry ``melotts_dir`` naming the
+    directory the model files were installed to, equal to
+    ``melotts_dir``; and it must record per-file SHA-256s for
+    ``config.json`` and ``checkpoint.pth`` equal to the pinned
+    ``MELO_MODEL_FILES``. Then every file in ``MELO_MODEL_FILES``
+    must exist under ``melotts_dir`` and hash to its pinned value.
+
+    Returns the validated MeloTTS model revision. Raises
+    RuntimeError on any mismatch — the caller fails the job closed
+    (never constructs TTS against unvalidated model bytes).
+    """
+    if receipt_path is None:
+        receipt_path = DEFAULT_RECEIPT_PATH
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"setup receipt missing: {path} (run the env setup first)")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"setup receipt unreadable: {path}: {exc}")
+    rev = receipt.get("melotts_model_hf_revision")
+    if not isinstance(rev, str) or rev != MELO_MODEL_REVISION:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned MeloTTS model "
+            f"revision {MELO_MODEL_REVISION} (has {rev!r}): re-run setup")
+    bound = receipt.get("melotts_dir")
+    if not bound:
+        raise RuntimeError(
+            f"setup receipt {path} does not record melotts_dir: re-run setup")
+    if not _same_dir(bound, melotts_dir):
+        raise RuntimeError(
+            f"setup receipt {path} is bound to melotts_dir {bound!r} but "
+            f"the model resolved to {melotts_dir!r}: refusing to use "
+            "unvalidated MeloTTS model bytes")
+    for rel, expected in MELO_MODEL_FILES.items():
+        recorded = receipt.get(_melotts_receipt_key(rel))
+        if recorded != expected:
+            raise RuntimeError(
+                f"setup receipt {path} does not record the pinned hash for "
+                f"MeloTTS {rel} (has {recorded!r}): re-run setup")
+        installed = Path(melotts_dir) / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"MeloTTS model file missing under {melotts_dir}: {rel} "
+                "(incomplete MeloTTS model — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"MeloTTS model file changed under {melotts_dir}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    return rev
+
+
+def _melotts_receipt_key(rel: str) -> str:
+    """Receipt field holding the recorded hash of one MeloTTS file."""
+    return ("melotts_config_sha256" if rel == "config.json"
+            else "melotts_checkpoint_sha256")
+
+
+def resolve_melotts_dir(cli_dir: str | None) -> Path:
+    """Resolve the MeloTTS English base-model dir.
+
+    Env NARRATION_MELOTTS_DIR wins, then --melotts-dir, then the
+    default the setup script installs to. Unlike the checkpoints
+    dir there is no src fallback: setup installs the model files
+    directly under the default.
+    """
+    env_dir = os.environ.get("NARRATION_MELOTTS_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if cli_dir:
+        return Path(cli_dir)
+    return Path(DEFAULT_MELOTTS_DIR)
 
 
 def resolve_tool(name: str, ffmpeg_dir: str | None) -> str | None:
@@ -699,6 +810,14 @@ def make_result(job_id, status, failure_reason=None, segments=None,
             "weights_sha256": weights or WEIGHTS_SHA256_PINNED,
             "base_tts": BASE_TTS,
             "base_tts_commit": BASE_TTS_COMMIT,
+            # MeloTTS English base model provenance (fix round 3):
+            # the validated local files the job's TTS was bound to.
+            # These equal the pinned constants only because
+            # validate_melotts_model enforced them before any TTS
+            # work; a job that fails that gate never reaches "done".
+            "melotts_model_revision": MELO_MODEL_REVISION,
+            "melotts_config_sha256": MELO_MODEL_FILES["config.json"],
+            "melotts_checkpoint_sha256": MELO_MODEL_FILES["checkpoint.pth"],
         },
         "consent_receipt_version": consent_receipt_version,
         "completed_at": utc_now(),
@@ -751,7 +870,8 @@ def find_queued_job(root: Path):
 
 def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                 ffmpeg_bin: str, ffprobe_bin: str,
-                receipt_path: str | None = None) -> int:
+                receipt_path: str | None = None,
+                melotts_dir: Path | None = None) -> int:
     """Process one claimed job. Returns 0 on success, 2 on failure."""
     job_id = job_dir.name
     manifest = load_json(job_dir / "job.json")
@@ -788,6 +908,20 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
     # unverified tree while result.json asserts the pinned hash).
     try:
         weights = validate_weights_receipt(receipt_path, checkpoints_dir)
+    except RuntimeError as exc:
+        return _fail(root, job_dir, job_id, str(exc),
+                     consent_receipt_version=consent_version, weights=weights)
+
+    # --- MeloTTS base-model provenance (fix round 3, moved-head P1) -----
+    # Same gate as the weights: the MeloTTS English config + checkpoint
+    # must be the pinned revision, bound to the resolved model dir,
+    # with per-file hashes matching the pin — BEFORE any TTS work.
+    # Without this, TTS(language="EN") with no paths would call
+    # hf_hub_download() for unpinned model files on the first job.
+    if melotts_dir is None:
+        melotts_dir = resolve_melotts_dir(None)
+    try:
+        validate_melotts_model(receipt_path, melotts_dir)
     except RuntimeError as exc:
         return _fail(root, job_dir, job_id, str(exc),
                      consent_receipt_version=consent_version, weights=weights)
@@ -878,7 +1012,7 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
         with ResourceMonitor() as monitor:
             segment_results, segment_wavs = _generate_segments(
                 root, job_dir, script, presenter_id, checkpoints_dir,
-                ffprobe_bin)
+                ffprobe_bin, melotts_dir)
             captions_path = job_dir / "captions.vtt"
             captions_path.write_text(build_vtt(script["segments"]),
                                      encoding="utf-8")
@@ -942,9 +1076,11 @@ def _fail(root, job_dir, job_id, reason, consent_receipt_version=1,
 
 
 def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
-                       ffprobe_bin):
+                       ffprobe_bin, melotts_dir=None):
     """TTS + tone-color conversion per segment. Returns
     (segment result dicts, [(wav_path, start_sec), ...])."""
+    if melotts_dir is None:
+        melotts_dir = resolve_melotts_dir(None)
     import torch  # lazy
 
     from melo.api import TTS
@@ -961,7 +1097,17 @@ def _generate_segments(root, job_dir, script, presenter_id, checkpoints_dir,
     converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
     tgt_se = load_target_se(root, presenter_id)
 
-    tts = TTS(language="EN", device=device)
+    # TTS is bound to the validated local MeloTTS model files (fix
+    # round 3): config_path/ckpt_path are the paths process_job
+    # validated against the pinned revision + per-file hashes before
+    # any model work. At the pinned melo code commit, giving both
+    # paths means load_or_download_config/model read the local files
+    # and NEVER call hf_hub_download — the first job cannot fetch
+    # unpinned weights. Passing no paths (the old call) would
+    # download config.json + checkpoint.pth at no revision.
+    tts = TTS(language="EN", device=device,
+              config_path=str(Path(melotts_dir) / "config.json"),
+              ckpt_path=str(Path(melotts_dir) / "checkpoint.pth"))
     speaker_key, speaker_id = pick_en_speaker(tts)
     # The ses filename is the NORMALIZED key (upstream V2 flow:
     # lower + '_' -> '-'); the raw MeloTTS key (e.g. "EN-US") matches
@@ -1115,6 +1261,8 @@ def main(argv=None) -> int:
                         help="standalone enrollment run for one presenter, then exit")
     parser.add_argument("--checkpoints-dir", default=None,
                         help="OpenVoice V2 checkpoints dir (default: C:\\forge-bridge\\narration\\checkpoints_v2)")
+    parser.add_argument("--melotts-dir", default=None,
+                        help="MeloTTS English base-model dir (default: C:\\forge-bridge\\narration\\melotts-en)")
     parser.add_argument("--ffmpeg-dir", default=None,
                         help="dir containing ffmpeg.exe/ffprobe.exe (default: PATH, then C:\\forge-bridge\\tools\\ffmpeg\\bin)")
     parser.add_argument("--receipt-path", default=None,
@@ -1128,6 +1276,8 @@ def main(argv=None) -> int:
     checkpoints_dir = resolve_checkpoints_dir(args.checkpoints_dir)
     log(f"narration root: {root}")
     log(f"checkpoints: {checkpoints_dir}")
+    melotts_dir = resolve_melotts_dir(args.melotts_dir)
+    log(f"melotts model: {melotts_dir}")
     checkpoints_ok = (checkpoints_dir / "converter" / "config.json").is_file()
     if not checkpoints_ok:
         log(f"WARNING: converter config not found under {checkpoints_dir} "
@@ -1179,7 +1329,8 @@ def main(argv=None) -> int:
             return 1
         log(f"claimed job {job_dir.name}")
         return process_job(root, job_dir, checkpoints_dir,
-                           ffmpeg_bin, ffprobe_bin, args.receipt_path)
+                           ffmpeg_bin, ffprobe_bin, args.receipt_path,
+                           melotts_dir)
 
     # --loop
     log(f"looping: polling every {POLL_SECONDS}s (Ctrl+C to stop)")
@@ -1195,7 +1346,8 @@ def main(argv=None) -> int:
                     continue
                 log(f"claimed job {job_dir.name}")
                 process_job(root, job_dir, checkpoints_dir,
-                            ffmpeg_bin, ffprobe_bin, args.receipt_path)
+                            ffmpeg_bin, ffprobe_bin, args.receipt_path,
+                            melotts_dir)
             time.sleep(POLL_SECONDS)
         except KeyboardInterrupt:
             log("loop stopped by user")

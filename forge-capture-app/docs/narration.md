@@ -90,7 +90,13 @@ mid-spool never yields a half job.
    `active`). If enrollment is already active, the stored embedding is
    reused. **Never trains anything** — no durable personalized model.
 5. **TTS per segment (OpenVoice V2 documented pipeline):** MeloTTS
-   `TTS(language='EN')`; the first speaker key starting with `EN` from
+   `TTS(language='EN', config_path=<validated local config.json>,
+   ckpt_path=<validated local checkpoint.pth>)` — bound to the pinned
+   MeloTTS English base-model files (see the weights-source section
+   below). The runner never constructs TTS without both paths: at the
+   pinned MeloTTS code commit, absent paths make melo call
+   `hf_hub_download()` for unpinned model files at no revision. The
+   first speaker key starting with `EN` from
    `model.hps.data.spk2id` (no EN key → fail loudly, never guess);
    `model.tts_to_file(text, speaker_id, tmp_src_wav, speed=1.0)`; the
    base speaker's embedding from
@@ -476,6 +482,31 @@ missing, malformed, mismatched, or wrong-directory receipt, a missing
 file, or a changed file fails the job closed with the weights reason
 before any model work. Setup writes the receipt with the lowercase
 hash and the `checkpoints_dir` binding.
+
+**MeloTTS base-model provenance (fix round 3, moved-head re-review):**
+the same rule covers the MeloTTS English base model — the first
+narration job used to construct `TTS(language='EN')` with no paths,
+so melo called `hf_hub_download()` for `config.json` +
+`checkpoint.pth` at NO revision while `result.json` claimed
+`outbound_requests: []`. Setup now downloads both files from the
+official Hugging Face repo `myshell-ai/MeloTTS-English` at pinned
+revision `bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef` (setup step 6b),
+verifies their sizes + SHA-256s, and records the revision, the
+per-file hashes, and `melotts_dir` in the receipt. Before any TTS
+work, `validate_melotts_model` requires the receipt to carry that
+exact revision, the `melotts_dir` binding, and per-file hashes equal
+to the pinned `MELO_MODEL_FILES`, and every installed file to hash
+to its pinned value; a missing or changed base-model file fails the
+job closed before generation. `_generate_segments` then constructs
+TTS with explicit `config_path`/`ckpt_path` to those validated local
+files — at the pinned melo code commit, giving both paths means
+`load_or_download_config`/`load_or_download_model` read the local
+files and never call `hf_hub_download`. The cold-cache,
+network-disabled test (`HF_HUB_OFFLINE=1`, fake melo download
+functions wired to raise) proves no outbound fetch is attempted.
+`result.json` keeps `outbound_requests: []` only on that proof, and
+its model block records the validated `melotts_model_revision` +
+per-file hashes.
 
 Copy the sidecar into place first:
 

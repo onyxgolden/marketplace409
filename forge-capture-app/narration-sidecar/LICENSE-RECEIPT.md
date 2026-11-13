@@ -53,6 +53,22 @@ so it is not an admissible fallback.
 - Pinned code commit: `209145371cff8fc3bd60d7be902ea69cbdb7965a`
 - Use in slice A: English base-speaker synthesis (`TTS(language='EN')`);
   its output is re-voiced by the OpenVoice tone-color converter.
+- **Base model files (fix round 3):** the MeloTTS English config +
+  checkpoint the runner binds TTS to come from the official Hugging
+  Face repo `myshell-ai/MeloTTS-English`, pinned revision
+  `bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef`:
+  `config.json` (3,488 bytes, SHA-256
+  `039116c927c70eaa4458d315ea83aaaa99e1fca1c621b50c8ca56b4a5700eb77`) and
+  `checkpoint.pth` (207,860,748 bytes, SHA-256
+  `acd278040eaf9536908e2b965273df5a731c44d8f0da66cc5fed7972772ed23c`).
+  Setup downloads them from that exact revision, verifies sizes +
+  hashes, records them in the receipt, and installs them under
+  `C:\forge-bridge\narration\melotts-en\`; the runner validates the
+  receipt + installed bytes (`validate_melotts_model`) before any TTS
+  work and records the revision + hashes in every `result.json`
+  model block. A missing or changed base-model file fails the job
+  closed. The `spk2id` keys at this revision are exactly the five
+  `MELO_EN_SPEAKER_KEYS` the ses layout smoke test covers.
 
 ## FFmpeg (render assembly)
 
@@ -73,7 +89,8 @@ so it is not an admissible fallback.
 The setup script (`tools/narration/setup-env.ps1` in forge-ai-drop)
 writes a machine receipt to `C:\forge-bridge\narration\receipt.json`
 with the Python version, FFmpeg version + zip hash, OpenVoice commit +
-LICENSE hash, MeloTTS commit, checkpoints zip hash, torch version, GPU
+LICENSE hash, MeloTTS commit, checkpoints zip hash, MeloTTS English
+base-model revision + per-file hashes + install dir, torch version, GPU
 name, and the import smoke-test result, plus a frozen requirements
 list at `C:\forge-bridge\narration\requirements-frozen.txt`. A clean
 local install reproduces one segment from those pins (acceptance gate 2).

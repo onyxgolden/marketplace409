@@ -793,6 +793,13 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
     to the fake files' real hashes. Returns the receipt path (str).
     The production manifest (real 160 MB weights) is NOT used here —
     the validation logic, not the weights bytes, is under test.
+
+    Also installs the pinned MeloTTS English base model (fix round
+    3): fake config.json + checkpoint.pth under ``tmp_path/melotts``,
+    the runner's MeloTTS manifest patched to their real hashes, and
+    the receipt fields the model validation requires, bound to that
+    directory. NARRATION_MELOTTS_DIR is set so process_job resolves
+    the fixture dir by default.
     """
     fake_hashes = {}
     for rel in sorted(runner.CHECKPOINTS_FILES):
@@ -801,10 +808,23 @@ def _weights_fixture(tmp_path, monkeypatch, ckpt_dir):
         dest.write_bytes(f"fake weights bytes for {rel}".encode())
         fake_hashes[rel] = lib.sha256_file(dest)
     monkeypatch.setattr(runner, "CHECKPOINTS_FILES", fake_hashes)
+    melotts_dir = tmp_path / "melotts"
+    fake_melo = {}
+    for rel in sorted(runner.MELO_MODEL_FILES):
+        dest = melotts_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f"fake melotts bytes for {rel}".encode())
+        fake_melo[rel] = lib.sha256_file(dest)
+    monkeypatch.setattr(runner, "MELO_MODEL_FILES", fake_melo)
+    monkeypatch.setenv("NARRATION_MELOTTS_DIR", str(melotts_dir))
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps({
         "checkpoints_v2_zip_sha256": runner.WEIGHTS_SHA256_PINNED,
-        "checkpoints_dir": str(ckpt_dir)}))
+        "checkpoints_dir": str(ckpt_dir),
+        "melotts_model_hf_revision": runner.MELO_MODEL_REVISION,
+        "melotts_config_sha256": fake_melo["config.json"],
+        "melotts_checkpoint_sha256": fake_melo["checkpoint.pth"],
+        "melotts_dir": str(melotts_dir)}))
     return str(receipt)
 
 
@@ -1184,3 +1204,218 @@ def test_ses_layout_smoke_every_selectable_key_resolves(tmp_path):
     for stem in ("en-au", "en-br", "en-default", "en-india",
                  "en-newest", "en-us"):
         assert f"base_speakers/ses/{stem}.pth" in runner.CHECKPOINTS_FILES
+
+
+# --- MeloTTS base-model pin (fix round 3) ---------------------------------
+
+def _melotts_receipt(tmp_path, monkeypatch):
+    """Install the fake MeloTTS model + receipt (via _weights_fixture).
+
+    Returns (receipt_path, melotts_dir)."""
+    receipt_path = _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    return receipt_path, tmp_path / "melotts"
+
+
+def test_validate_melotts_model_happy_path(tmp_path, monkeypatch):
+    receipt_path, melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    assert runner.validate_melotts_model(receipt_path, melotts_dir) \
+        == runner.MELO_MODEL_REVISION
+
+
+def test_validate_melotts_model_no_receipt(tmp_path, monkeypatch):
+    _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    with pytest.raises(RuntimeError, match="setup receipt missing"):
+        runner.validate_melotts_model(str(tmp_path / "nope.json"),
+                                      tmp_path / "melotts")
+
+
+def test_validate_melotts_model_wrong_revision(tmp_path, monkeypatch):
+    receipt_path, melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["melotts_model_hf_revision"] = "0" * 40
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="pinned MeloTTS model revision"):
+        runner.validate_melotts_model(receipt_path, melotts_dir)
+
+
+def test_validate_melotts_model_wrong_dir(tmp_path, monkeypatch):
+    receipt_path, _melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError, match="bound to melotts_dir"):
+        runner.validate_melotts_model(receipt_path, tmp_path / "elsewhere")
+
+
+def test_validate_melotts_model_missing_file(tmp_path, monkeypatch):
+    receipt_path, melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    (melotts_dir / "checkpoint.pth").unlink()
+    with pytest.raises(RuntimeError, match="model file missing"):
+        runner.validate_melotts_model(receipt_path, melotts_dir)
+
+
+def test_validate_melotts_model_changed_file(tmp_path, monkeypatch):
+    receipt_path, melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    (melotts_dir / "config.json").write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="model file changed"):
+        runner.validate_melotts_model(receipt_path, melotts_dir)
+
+
+def test_validate_melotts_model_wrong_recorded_hash(tmp_path, monkeypatch):
+    receipt_path, melotts_dir = _melotts_receipt(tmp_path, monkeypatch)
+    doc = json.loads(Path(receipt_path).read_text())
+    doc["melotts_config_sha256"] = "0" * 64
+    Path(receipt_path).write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match="does not record the pinned hash"):
+        runner.validate_melotts_model(receipt_path, melotts_dir)
+
+
+def _fake_ml_modules(monkeypatch, calls):
+    """Inject fake torch/melo/openvoice modules into sys.modules.
+
+    The fake melo download_utils RAISE if invoked — the runner must
+    never take the download path. The fake TTS records its
+    constructor kwargs so the test can prove it was bound to the
+    validated local model files. No torch, no GPU, no network.
+    """
+    import types
+    torch_mod = types.ModuleType("torch")
+
+    class _Cuda:
+        @staticmethod
+        def is_available():
+            return False
+
+    torch_mod.cuda = _Cuda()
+    torch_mod.load = lambda path, map_location=None: {"se": [0.0]}
+    torch_mod.float32 = "float32"
+    torch_mod.tensor = lambda data, dtype=None, device=None: {"se": data}
+
+    melo = types.ModuleType("melo")
+    melo_api = types.ModuleType("melo.api")
+
+    class FakeTTS:
+        def __init__(self, language, device="auto", use_hf=True,
+                     config_path=None, ckpt_path=None):
+            calls["tts_kwargs"] = {"language": language, "device": device,
+                                   "use_hf": use_hf,
+                                   "config_path": config_path,
+                                   "ckpt_path": ckpt_path}
+
+            class _Hps:
+                pass
+
+            class _Data:
+                pass
+
+            data = _Data()
+            data.spk2id = {"EN-US": 0, "EN-BR": 1}
+            hps = _Hps()
+            hps.data = data
+            self.hps = hps
+
+        def tts_to_file(self, text, speaker_id, path, speed=1.0):
+            Path(path).write_bytes(b"fake tts wav")
+
+    melo_api.TTS = FakeTTS
+    melo_dl = types.ModuleType("melo.download_utils")
+
+    def _boom(*a, **k):
+        calls["download_attempts"] = calls.get("download_attempts", 0) + 1
+        raise AssertionError("melo download path invoked — unpinned fetch")
+
+    melo_dl.load_or_download_config = _boom
+    melo_dl.load_or_download_model = _boom
+    ov = types.ModuleType("openvoice")
+    ov_api = types.ModuleType("openvoice.api")
+
+    class FakeConverter:
+        def __init__(self, config_path, device="cpu"):
+            calls["converter_config"] = config_path
+
+        def load_ckpt(self, path):
+            calls["converter_ckpt"] = path
+
+        def convert(self, src, src_se, tgt_se, out, message=None):
+            Path(out).write_bytes(b"fake converted wav")
+
+    ov_api.ToneColorConverter = FakeConverter
+    for name, mod in [("torch", torch_mod), ("melo", melo),
+                      ("melo.api", melo_api),
+                      ("melo.download_utils", melo_dl),
+                      ("openvoice", ov), ("openvoice.api", ov_api)]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+def test_generate_segments_binds_validated_melotts_paths_offline(
+        tmp_path, monkeypatch):
+    """Cold-cache, network-disabled generation test (fix-round-3
+    re-review requirement).
+
+    With HF_HUB_OFFLINE=1 (a cold cache that cannot download) and
+    the fake melo download functions wired to raise, _generate_segments
+    must still generate — proving TTS was constructed from the
+    validated local model files with explicit config_path/ckpt_path
+    and no outbound fetch was attempted. If the runner ever passed
+    no paths again, the fake download path would raise.
+    """
+    _weights_fixture(tmp_path, monkeypatch, tmp_path / "ckpt")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "empty-hf-cache"))
+    calls = {}
+    _fake_ml_modules(monkeypatch, calls)
+    monkeypatch.setattr(runner, "probe_audio_duration_sec",
+                        lambda *a: 4.0)
+    pdir = tmp_path / "presenters" / "tyler-welch"
+    pdir.mkdir(parents=True)
+    (pdir / "speaker_embedding.json").write_text(
+        json.dumps({"se": [0.1, 0.2]}))
+    job_dir = tmp_path / "jobs" / "job1"
+    job_dir.mkdir(parents=True)
+    script = {"segments": [{"step_id": "s1", "text": "Hello world.",
+                            "capture_start_sec": 0}]}
+    results, wavs = runner._generate_segments(
+        tmp_path, job_dir, script, "tyler-welch", tmp_path / "ckpt",
+        "ffprobe", tmp_path / "melotts")
+    assert len(results) == 1
+    assert results[0]["step_id"] == "s1"
+    assert "download_attempts" not in calls
+    tts_kwargs = calls["tts_kwargs"]
+    assert tts_kwargs["language"] == "EN"
+    assert tts_kwargs["config_path"] == str(tmp_path / "melotts" / "config.json")
+    assert tts_kwargs["ckpt_path"] == str(tmp_path / "melotts" / "checkpoint.pth")
+    assert tts_kwargs["config_path"] is not None
+    assert tts_kwargs["ckpt_path"] is not None
+
+
+def test_process_job_rejects_missing_melotts_model(tmp_path, monkeypatch):
+    """End-to-end: a spool with valid weights but no MeloTTS model
+    files fails the job closed with the MeloTTS reason — before any
+    enrollment or generation."""
+    root, job_dir, job_id, receipt_path = _completion_spool(tmp_path, monkeypatch)
+    _stub_heavy_runner(monkeypatch)
+    shutil.rmtree(tmp_path / "melotts")
+    rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe", receipt_path)
+    assert rc == 2
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "failed"
+    assert "MeloTTS" in result["failure_reason"]
+    assert (job_dir / ".failed").exists()
+    assert not (job_dir / ".done").exists()
+
+
+def test_process_job_records_melotts_provenance(tmp_path, monkeypatch):
+    """End-to-end happy path: the done result carries the validated
+    MeloTTS model revision + per-file hashes in its model block."""
+    root, job_dir, job_id, receipt_path = _completion_spool(tmp_path, monkeypatch)
+    _stub_heavy_runner(monkeypatch)
+    rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe", receipt_path)
+    assert rc == 0
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "done"
+    model = result["model"]
+    assert model["melotts_model_revision"] == runner.MELO_MODEL_REVISION
+    assert model["melotts_config_sha256"] \
+        == runner.MELO_MODEL_FILES["config.json"]
+    assert model["melotts_checkpoint_sha256"] \
+        == runner.MELO_MODEL_FILES["checkpoint.pth"]
+    assert result["outbound_requests"] == []
