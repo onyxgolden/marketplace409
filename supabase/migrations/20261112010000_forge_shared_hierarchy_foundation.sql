@@ -84,22 +84,15 @@
 -- 5fe750cb at build time (newest on main is 20261111010000;
 -- 20261112000000 is PR #796's in-flight planning-process migration).
 --
--- MERGE-ORDER NOTE: the planner CHECK list and provision JSON below are
--- written against CURRENT main (5fe750cb) — the original 35 planner keys
--- plus the two hierarchy keys. PR #796 (in flight) adds three
--- planner.planning_steps.* keys to the same CHECK and provision function.
--- If #796 merges FIRST, this migration must be rebased before merge:
--- add the three planning_steps keys to §3's planner CHECK list and to
--- the provision JSON (planner_admin: read+update+review; planner:
--- read+update; scheduler/reviewer/read_only: read). Applying this file
--- un-rebased after #796 would fail loudly (the recreated CHECK would
--- reject #796's backfilled planning_steps rows) — never silently — but
--- it would still fail, so the rebase is mandatory in that order.
--- The hazard is SYMMETRIC: if THIS PR merges first, #796 must rebase
--- the same way (its CHECK replacement would otherwise drop this
--- migration's hierarchy keys and fail loudly on the backfilled rows).
--- Whichever of #796 / PR A merges second carries the rebase. Either
--- failure mode is loud (a CHECK violation at apply time), never silent.
+-- MERGE-ORDER NOTE (resolved 2026-11-13): PR #796 merged FIRST as
+-- 5d802824, so this migration now carries the UNION: the planner CHECK
+-- list and provision JSON below hold the original 35 planner keys PLUS
+-- #796's three planner.planning_steps.* keys PLUS the two hierarchy
+-- keys. Applying this file un-rebased after #796 would have failed
+-- loudly (the recreated CHECK would have rejected #796's backfilled
+-- planning_steps rows) — never silently — but the rebase is done, so
+-- the union is in place. The hazard was SYMMETRIC: had THIS PR merged
+-- first, #796 would have had to rebase the same way.
 
 -- ============================================================================
 -- 1. Shared hierarchy tables.
@@ -371,15 +364,17 @@ begin
           'planner.staff.read','planner.staff.invite',
           'planner.roles.read','planner.roles.manage',
           'planner.audit.read',
+          'planner.planning_steps.read','planner.planning_steps.update','planner.planning_steps.review',
           'forge.hierarchy.read','forge.hierarchy.manage'
         ));
   end if;
 end $$;
 
 -- Starter-role provisioning, updated to grant the two hierarchy keys
--- (same function body as 20261110000000, only the v_starter JSON
--- differs — verified by diff at build time: five role lines changed,
--- nothing else). New workspaces provisioned after this migration get
+-- (same function body as 20261110000000 / #796's 20261112000000, only
+-- the v_starter JSON differs — verified by diff at build time: the
+-- union of #796's three planning_steps keys plus the two hierarchy
+-- keys on the five role lines, nothing else). New workspaces provisioned after this migration get
 -- the capabilities from here; workspaces that already exist are covered
 -- by the backfill below.
 create or replace function public.forge_planner_roles_provision_starter_set(
@@ -394,11 +389,11 @@ declare
   v_actor text := auth.uid()::text;
   v_is_owner boolean;
   v_starter jsonb := '[
-    {"role_key":"planner_admin","name":"Planner Admin","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.packages.create","planner.packages.edit","planner.packages.close","planner.packages.cancel","planner.steps.create","planner.steps.edit","planner.steps.reorder","planner.steps.retire","planner.crafts.assign","planner.crafts.reassign","planner.crafts.clear","planner.manpower.placements.edit","planner.progress.add","planner.progress.correct","planner.progress.void","planner.permits.annotations.link","planner.permits.annotations.unlink","planner.drawings.upload","planner.drawings.link","planner.drawings.delete","planner.baselines.freeze","planner.baselines.select","forge.hierarchy.read","forge.hierarchy.manage"]},
-    {"role_key":"planner","name":"Planner","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.packages.edit","planner.steps.edit","planner.crafts.assign","planner.manpower.placements.edit","planner.progress.add","planner.drawings.link","forge.hierarchy.read"]},
-    {"role_key":"scheduler","name":"Scheduler","capabilities":["planner.packages.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.crafts.assign","planner.manpower.placements.edit","forge.hierarchy.read"]},
-    {"role_key":"reviewer","name":"Reviewer","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.reports.export","forge.hierarchy.read"]},
-    {"role_key":"read_only","name":"Read-only","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","forge.hierarchy.read"]}
+    {"role_key":"planner_admin","name":"Planner Admin","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.packages.create","planner.packages.edit","planner.packages.close","planner.packages.cancel","planner.steps.create","planner.steps.edit","planner.steps.reorder","planner.steps.retire","planner.crafts.assign","planner.crafts.reassign","planner.crafts.clear","planner.manpower.placements.edit","planner.progress.add","planner.progress.correct","planner.progress.void","planner.permits.annotations.link","planner.permits.annotations.unlink","planner.drawings.upload","planner.drawings.link","planner.drawings.delete","planner.baselines.freeze","planner.baselines.select","planner.planning_steps.read","planner.planning_steps.update","planner.planning_steps.review","forge.hierarchy.read","forge.hierarchy.manage"]},
+    {"role_key":"planner","name":"Planner","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.packages.edit","planner.steps.edit","planner.crafts.assign","planner.manpower.placements.edit","planner.progress.add","planner.drawings.link","planner.planning_steps.read","planner.planning_steps.update","forge.hierarchy.read"]},
+    {"role_key":"scheduler","name":"Scheduler","capabilities":["planner.packages.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.crafts.assign","planner.manpower.placements.edit","planner.planning_steps.read","forge.hierarchy.read"]},
+    {"role_key":"reviewer","name":"Reviewer","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.reports.export","planner.planning_steps.read","planner.planning_steps.review","forge.hierarchy.read"]},
+    {"role_key":"read_only","name":"Read-only","capabilities":["planner.packages.read","planner.drawings.read","planner.steps.read","planner.crafts.read","planner.manpower.read","planner.baselines.read","planner.progress.read","planner.permits.read","planner.reports.read","planner.settings.read","planner.staff.read","planner.roles.read","planner.audit.read","planner.planning_steps.read","forge.hierarchy.read"]}
   ]'::jsonb;
   v_def jsonb;
   v_role_id text;
