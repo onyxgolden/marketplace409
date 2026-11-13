@@ -25,6 +25,11 @@ const DENIAL_MESSAGES = {
     "You don't have access to this workspace.",
   ENTITLEMENT_NOT_ACTIVE:
     "This app isn't enabled for your workspace yet. Ask the workspace owner to enable it.",
+  // SaaS 30-day trial: the gate returns this reason when the failed
+  // entitlement is an expired owner_trial. The data is safe — nothing
+  // is deleted at expiry — so the message says so.
+  TRIAL_ENDED:
+    "Your trial has ended. Your workspace data is safe and has not been deleted. Contact your workspace owner to restore access.",
   CAPABILITY_DENIED:
     "You don't have permission to do that in this app.",
   APP_ROLE_REQUIRED:
@@ -34,15 +39,18 @@ const DENIAL_MESSAGES = {
   UNKNOWN_CAPABILITY: "You don't have permission to do that in this app.",
 };
 
-export function appAccessDeniedResponse(reason) {
-  return NextResponse.json(
-    {
-      error:
-        DENIAL_MESSAGES[reason] ||
-        "You don't have access to this app right now.",
-    },
-    { status: 403 },
-  );
+export function appAccessDeniedResponse(reason, appKey = null) {
+  let message =
+    DENIAL_MESSAGES[reason] ||
+    "You don't have access to this app right now.";
+  // Capture trial expiry: the cloud library and sync pause, but local
+  // capture, recording, and the files on this device keep working —
+  // the trial never gates local capture. Say so in the denial.
+  if (reason === "TRIAL_ENDED" && appKey === "capture") {
+    message +=
+      " Local capture, recording, and the files on this device keep working — only the cloud library and sync are paused.";
+  }
+  return NextResponse.json({ error: message }, { status: 403 });
 }
 
 export function appAccessUnavailableResponse() {
@@ -78,6 +86,6 @@ export async function checkForgeAppAccess(supabaseClient, ownerId, appKey) {
   }
   return {
     allowed: false,
-    response: appAccessDeniedResponse(result?.reason),
+    response: appAccessDeniedResponse(result?.reason, appKey),
   };
 }

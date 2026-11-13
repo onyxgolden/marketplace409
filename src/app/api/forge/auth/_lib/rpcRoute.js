@@ -43,6 +43,18 @@ const ERROR_MAP = {
   FORGE_AUTH_ENTITLEMENT_NOT_ACTIVE: [403, "This app isn't enabled for the workspace."],
   FORGE_AUTH_ENTITLEMENT_NOT_FOUND: [404, "That entitlement wasn't found."],
   FORGE_AUTH_TRIAL_UNDECIDED: [400, "Trial grants aren't available yet. A platform owner must approve the trial terms first."],
+  // SaaS 30-day trial: the constrained trial RPCs' failure codes.
+  FORGE_AUTH_TRIAL_UNAVAILABLE: [400, "A trial isn't available for that app right now."],
+  FORGE_AUTH_TRIAL_ALREADY_GRANTED: [409, "This workspace already had a trial for that app. Renew it after it ends instead of starting a new one."],
+  FORGE_AUTH_TRIAL_NOT_ACTIVE: [403, "There's no active trial for that app in this workspace."],
+  FORGE_AUTH_TRIAL_NOT_EXPIRED: [409, "That trial hasn't ended yet. Renewal is only available after it ends."],
+  FORGE_AUTH_TRIAL_NOT_PENDING: [409, "That app is already enabled for this workspace, so a trial can't replace its access."],
+  FORGE_AUTH_TRIAL_ALREADY_RENEWED: [409, "That trial was already renewed."],
+  FORGE_AUTH_TRIAL_STATE_MISMATCH: [409, "The trial record doesn't match. Try again, and if it keeps happening, ask a platform owner to check it."],
+  FORGE_AUTH_TRIAL_MUST_CONVERT: [409, "A trial can only be converted through the trial conversion action — use Convert to paid instead."],
+  // The data-plane trigger / read-RPC guard (not a FORGE_AUTH_* code):
+  // the workspace has no active entitlement for that app right now.
+  FORGE_TRIAL_ENTITLEMENT_REQUIRED: [403, "This app isn't enabled for the workspace right now — the trial may have ended. Ask the workspace owner to restore access."],
   FORGE_AUTH_BILLING_WEBHOOK_UNAVAILABLE: [400, "Billing-verified grants aren't available yet."],
   FORGE_AUTH_MEMBER_NOT_FOUND: [404, "That member wasn't found in this workspace."],
   FORGE_AUTH_MEMBER_REVOKED: [409, "That membership was revoked."],
@@ -72,7 +84,7 @@ const ERROR_MAP = {
   FORGE_AUTH_APP_NOT_CANONICAL: [400, "That app uses its own role system."],
 };
 
-function errorResponse(error) {
+export function errorResponse(error) {
   const message = String(error?.message || "");
   const code = Object.keys(ERROR_MAP).find((key) => message.includes(key));
   if (code) {
