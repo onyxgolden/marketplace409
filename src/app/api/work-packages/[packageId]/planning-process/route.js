@@ -33,6 +33,12 @@ export async function PATCH(request, { params }) {
   try {
     const { packageId } = await params;
     const body = await readJson(request);
+    // Fix round 1, F2: optimistic concurrency is mandatory — a
+    // missing/invalid expectedVersion is a 400 here, before the RPC.
+    if (body.expectedVersion === undefined || body.expectedVersion === null
+        || !Number.isInteger(body.expectedVersion) || body.expectedVersion < 1) {
+      return fail({ ok: false, httpStatus: 400, error: "expectedVersion must be a positive whole number." });
+    }
     const result = await setPlanningStepStatus(auth.db, {
       ownerId: auth.ownerId,
       packageId,

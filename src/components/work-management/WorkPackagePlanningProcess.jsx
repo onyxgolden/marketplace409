@@ -6,9 +6,11 @@
 // and 11 reporting-only steps (0% / 0h, labeled "Reporting only").
 // Percent complete is computed server-side from the earned steps
 // (weighted sum against the fixed denominator 100) — never typed in.
-// Reviewed requires the reviewer capability (the option is disabled
-// otherwise); every other status change requires the update capability.
-// The existing free-form execution steps live on the Work steps tab;
+// Reviewed, N/A and Needs Revision require the reviewer capability;
+// In-Progress and Complete require the update capability. A reviewer
+// without update can still send a step back; a planner without
+// review cannot mark a step Reviewed, N/A or Needs Revision. The
+// existing free-form execution steps live on the Work steps tab;
 // this tab is the *build* checklist.
 //
 // F2: a status change is confirmed in an inline panel, never on the
@@ -213,8 +215,12 @@ export default function WorkPackagePlanningProcess({ packageId }) {
     // Returning from Needs Revision needs FRESH evidence supplied in
     // this request: start the field empty so the stored link cannot
     // be re-confirmed without the user actively supplying it.
-    const needsFresh = instance.status === "Needs Revision"
-      && (newStatus === "Complete" || newStatus === "Reviewed");
+    // A review decision takes NO new evidence (it judges what is
+    // already on the step), so a Reviewed change also starts empty —
+    // an owner override types a link in deliberately.
+    const needsFresh = (instance.status === "Needs Revision"
+      && (newStatus === "Complete" || newStatus === "Reviewed"))
+      || newStatus === "Reviewed";
     setPending({
       stepKey: step.stepKey,
       status: newStatus,
@@ -320,7 +326,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
     );
   }
 
-  const { template, instances, progress, complexity, canUpdate, canReview, constructionReadiness, templateVersion } = checklist;
+  const { template, instances, progress, complexity, canUpdate, canReview, isOwner, constructionReadiness, templateVersion } = checklist;
   const instanceByStep = new Map(instances.map((i) => [i.templateStepId, i]));
   const steps = [...template].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -337,7 +343,19 @@ export default function WorkPackagePlanningProcess({ packageId }) {
       newEvidenceLink: pending.evidenceLink,
       reason: pending.reason,
       attestation: pending.attestation,
+      isOwner: isOwner ?? false,
     });
+  }
+
+  // Per-option gating (fix round 1, F3): In-Progress/Complete need
+  // the update capability; N/A, Reviewed and Needs Revision need
+  // the review capability. The dropdown itself is enabled when the
+  // caller has either.
+  function optionDisabled(statusValue) {
+    if (statusValue === "Reviewed" || statusValue === "N/A" || statusValue === "Needs Revision") {
+      return !canReview;
+    }
+    return !canUpdate;
   }
 
   function renderRows() {
@@ -366,15 +384,19 @@ export default function WorkPackagePlanningProcess({ packageId }) {
               className={input}
               aria-label={`Status for ${step.name}`}
               value={instance?.status || "In-Progress"}
-              disabled={!canUpdate || savingId === step.stepKey}
+              disabled={(!canUpdate && !canReview) || savingId === step.stepKey}
               onChange={(e) => openChange(step, e.target.value)}
             >
               {PLANNING_PROCESS_STATUSES.map((s) => (
                 <option
                   key={s.value}
                   value={s.value}
-                  disabled={s.value === "Reviewed" && !canReview}
-                  title={s.value === "Reviewed" && !canReview ? "Only a reviewer can mark a step Reviewed." : undefined}
+                  disabled={optionDisabled(s.value)}
+                  title={optionDisabled(s.value)
+                    ? (s.value === "Reviewed" || s.value === "N/A" || s.value === "Needs Revision"
+                      ? "Only a reviewer can record this change."
+                      : "Only a planner can record this change.")
+                    : undefined}
                 >
                   {s.label}
                 </option>
@@ -384,7 +406,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
               <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3" data-testid={`change-panel-${step.stepKey}`}>
                 <p className="text-xs font-medium text-slate-800">
                   Change to {pending.status}
-                  {instance.status === "Needs Revision" && (pending.status === "Complete" || pending.status === "Reviewed") && (
+                  {instance.status === "Needs Revision" && pending.status === "Complete" && (
                     <> — fresh evidence is needed after a send-back</>
                   )}
                 </p>
@@ -402,27 +424,59 @@ export default function WorkPackagePlanningProcess({ packageId }) {
                 )}
                 {(pending.status === "Complete" || pending.status === "Reviewed") && (
                   <>
-                    <label className="mt-2 block text-xs text-slate-600">
-                      Evidence link{pending.status === "Complete" ? " (or an attestation below)" : ""}
-                      <input
-                        className={`${input} mt-1`}
-                        aria-label={`Change evidence link for ${step.name}`}
-                        placeholder="Link to the evidence"
-                        value={pending.evidenceLink}
-                        onChange={(e) => setPending({ ...pending, evidenceLink: e.target.value })}
-                      />
-                    </label>
                     {pending.status === "Complete" && (
-                      <label className="mt-2 block text-xs text-slate-600">
-                        Completion attestation (instead of a link)
-                        <input
-                          className={`${input} mt-1`}
-                          aria-label={`Attestation for ${step.name}`}
-                          placeholder="What was completed, in your own words"
-                          value={pending.attestation}
-                          onChange={(e) => setPending({ ...pending, attestation: e.target.value })}
-                        />
-                      </label>
+                      <>
+                        <label className="mt-2 block text-xs text-slate-600">
+                          Evidence link (or an attestation below)
+                          <input
+                            className={`${input} mt-1`}
+                            aria-label={`Change evidence link for ${step.name}`}
+                            placeholder="Link to the evidence"
+                            value={pending.evidenceLink}
+                            onChange={(e) => setPending({ ...pending, evidenceLink: e.target.value })}
+                          />
+                        </label>
+                        <label className="mt-2 block text-xs text-slate-600">
+                          Completion attestation (instead of a link)
+                          <input
+                            className={`${input} mt-1`}
+                            aria-label={`Attestation for ${step.name}`}
+                            placeholder="What was completed, in your own words"
+                            value={pending.attestation}
+                            onChange={(e) => setPending({ ...pending, attestation: e.target.value })}
+                          />
+                        </label>
+                      </>
+                    )}
+                    {pending.status === "Reviewed" && isOwner && (
+                      <>
+                        <label className="mt-2 block text-xs text-slate-600">
+                          Evidence link (owner override — replaces the stored link)
+                          <input
+                            className={`${input} mt-1`}
+                            aria-label={`Change evidence link for ${step.name}`}
+                            placeholder="Link to the evidence"
+                            value={pending.evidenceLink}
+                            onChange={(e) => setPending({ ...pending, evidenceLink: e.target.value })}
+                          />
+                        </label>
+                        <label className="mt-2 block text-xs text-slate-600">
+                          Completion attestation (owner override)
+                          <input
+                            className={`${input} mt-1`}
+                            aria-label={`Attestation for ${step.name}`}
+                            placeholder="What was completed, in your own words"
+                            value={pending.attestation}
+                            onChange={(e) => setPending({ ...pending, attestation: e.target.value })}
+                          />
+                        </label>
+                      </>
+                    )}
+                    {pending.status === "Reviewed" && !isOwner && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        The review uses the evidence already on this step — a review cannot add new evidence.
+                        {instance.evidenceLink ? ` Stored evidence: ${instance.evidenceLink}` : " No evidence is stored on this step yet."}
+                      </p>
                     )}
                   </>
                 )}
@@ -514,14 +568,19 @@ export default function WorkPackagePlanningProcess({ packageId }) {
         {constructionReadiness && constructionReadiness.status === "not_established" && progress.percentComplete !== 100 && (
           <p className="mt-1 text-xs text-slate-500">{constructionReadiness.detail}</p>
         )}
-        {!canUpdate && (
+        {!canUpdate && !canReview && (
           <p className="mt-2 text-xs text-slate-500">
             You can view this checklist but not change it — your role doesn&apos;t include changing planning-process steps.
           </p>
         )}
         {canUpdate && !canReview && (
           <p className="mt-2 text-xs text-slate-500">
-            You can change statuses, but only a reviewer can mark a step Reviewed.
+            You can change statuses, but only a reviewer can mark a step Reviewed, N/A, or Needs Revision.
+          </p>
+        )}
+        {canReview && !canUpdate && (
+          <p className="mt-2 text-xs text-slate-500">
+            You can review steps, but only a planner can mark a step In-Progress or Complete.
           </p>
         )}
       </section>

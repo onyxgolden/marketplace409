@@ -9,12 +9,11 @@ import {
   PLANNING_PROCESS_TEMPLATE,
 } from "@/domains/work-management/planningProcess.js";
 import {
-  ensurePlanningChecklist,
   getPlanningChecklist,
   getPlanningSummary,
   listPlanningRevisions,
   mapPlanningProcessRpcError,
-  recordPlanningComplexityChange,
+  setPlanningComplexity,
   setPlanningStepStatus,
 } from "./planningProcess.js";
 
@@ -25,6 +24,7 @@ function rpcResult(instances, overrides = {}) {
     templateVersion: 1,
     canUpdate: true,
     canReview: false,
+    isOwner: true,
     constructionReadiness: {
       status: "not_established",
       detail: "No package-level release decision exists yet. Planning percent never authorizes construction or releases an IFC drawing.",
@@ -91,6 +91,7 @@ describe("getPlanningChecklist", () => {
     expect(result.checklist.progress.earnedMhrs).toBe(6);
     expect(result.checklist.progress.totalMhrs).toBe(40);
     expect(result.checklist.canReview).toBe(false);
+    expect(result.checklist.isOwner).toBe(true);
     expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_checklist", {
       p_owner_id: "owner_1",
       p_package_id: "pkg_1",
@@ -135,15 +136,6 @@ describe("getPlanningChecklist", () => {
     });
     const result = await getPlanningChecklist(db, { ownerId: "owner_1", packageId: "pkg_1" });
     expect(result.httpStatus).toBe(503);
-  });
-});
-
-describe("ensurePlanningChecklist", () => {
-  it("returns true when the checklist ensures, false pre-migration", async () => {
-    const live = mockDb({ rpcImpl: async () => ({ data: rpcResult(allInstances()), error: null }) });
-    expect(await ensurePlanningChecklist(live, { ownerId: "owner_1", packageId: "pkg_1" })).toBe(true);
-    const pending = mockDb({ rpcImpl: async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }) });
-    expect(await ensurePlanningChecklist(pending, { ownerId: "owner_1", packageId: "pkg_1" })).toBe(false);
   });
 });
 
@@ -212,26 +204,62 @@ describe("setPlanningStepStatus", () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
-  it("maps F2 failures to plain words with the right status", async () => {
+  it("maps F2/F3/F5 failures to plain words with the right status", async () => {
     const cases = [
       ["WPP10_REVIEW_FORBIDDEN", 403, /Only a reviewer/],
+      ["WPP10_REVIEW_CAPABILITY_REQUIRED", 403, /reviewer capability/],
       ["WPP10_UPDATE_FORBIDDEN", 403, /don't have permission/],
       ["WPP10_SELF_REVIEW_FORBIDDEN", 403, /different reviewer/],
       ["WPP10_EVIDENCE_REQUIRED", 400, /evidence link or a completion attestation/],
       ["WPP10_FRESH_EVIDENCE_REQUIRED", 400, /fresh evidence/],
       ["WPP10_REASON_REQUIRED", 400, /needs a reason/],
       ["WPP10_STALE_VERSION", 409, /changed while you were editing/],
+      ["WPP10_EXPECTED_VERSION_REQUIRED", 400, /expectedVersion must be a positive whole number/],
+      ["WPP10_REQUEST_ID_REQUIRED", 400, /request ID is required/],
+      ["WPP10_INVALID_REQUEST_ID", 400, /128 characters or fewer/],
+      ["WPP10_REQUEST_ID_CONFLICT", 409, /already used for a different change/],
+      ["WPP10_REVIEWED_LOCKED", 409, /only a reviewer can send it back/],
+      ["WPP10_TWO_STEP_REQUIRED", 400, /two steps/],
+      ["WPP10_REVIEW_BASIS_REQUIRED", 400, /already on the record/],
+      ["WPP10_REVIEW_EVIDENCE_SAME_REQUEST", 400, /cannot add new evidence/],
+      ["WPP10_INVALID_COMPLEXITY", 400, /Planning complexity must be one of/],
+      ["WPP10_COMPLEXITY_FORBIDDEN", 403, /don't have permission to change the planning complexity/],
       ["WPP10_PACKAGE_TERMINAL", 409, /closed/],
     ];
     for (const [code, httpStatus, pattern] of cases) {
       const db = mockDb({ rpcImpl: async () => ({ data: null, error: { message: code } }) });
       const result = await setPlanningStepStatus(db, {
         ownerId: "owner_1", packageId: "pkg_1", templateStepId: "pdf-01", status: "Complete",
-        evidenceLink: "https://example.invalid/pid",
+        evidenceLink: "https://example.invalid/pid", expectedVersion: 1, requestId: "req_map_1",
       });
       expect(result.httpStatus).toBe(httpStatus);
       expect(result.error).toMatch(pattern);
     }
+  });
+
+  it("requires a positive expectedVersion before touching the database", async () => {
+    const db = mockDb();
+    for (const expectedVersion of [undefined, null, 0, -1, 1.5]) {
+      const result = await setPlanningStepStatus(db, {
+        ownerId: "owner_1", packageId: "pkg_1", templateStepId: "pdf-01", status: "Complete",
+        evidenceLink: "https://example.invalid/pid", expectedVersion,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.httpStatus).toBe(400);
+    }
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("generates a request ID when the client omits one", async () => {
+    const db = setDb();
+    const result = await setPlanningStepStatus(db, {
+      ownerId: "owner_1", packageId: "pkg_1", templateStepId: "pdf-01", status: "Complete",
+      evidenceLink: "https://example.invalid/pid", expectedVersion: 1,
+    });
+    expect(result.ok).toBe(true);
+    const args = db.rpc.mock.calls[0][1];
+    expect(typeof args.p_request_id).toBe("string");
+    expect(args.p_request_id.length).toBeGreaterThan(0);
   });
 });
 
@@ -347,31 +375,47 @@ describe("getPlanningSummary", () => {
   });
 });
 
-describe("recordPlanningComplexityChange", () => {
-  it("inserts a complexity_change event and returns true", async () => {
-    const insert = vi.fn(async () => ({ error: null }));
-    const db = { from: vi.fn(() => ({ insert })), rpc: vi.fn() };
-    const recorded = await recordPlanningComplexityChange(db, {
-      ownerId: "owner_1", packageId: "pkg_1", actorId: "user_9",
-      oldComplexity: "standard", newComplexity: "mid", requestId: "req_c1",
+describe("setPlanningComplexity", () => {
+  it("calls the complexity RPC with expected version and a generated request ID, and returns the package row", async () => {
+    const pkgRow = {
+      id: "pkg_1", owner_id: "owner_1", planning_complexity: "high", version: 2,
+      updated_by: "user_9", updated_at: "2026-11-12T00:00:00Z",
+    };
+    const db = mockDb({ rpcImpl: async () => ({ data: pkgRow, error: null }) });
+    const result = await setPlanningComplexity(db, {
+      ownerId: "owner_1", packageId: "pkg_1", complexity: "high", expectedVersion: 1,
     });
-    expect(recorded).toBe(true);
-    expect(db.from).toHaveBeenCalledWith("forge_work_planning_process_revisions");
-    const row = insert.mock.calls[0][0];
-    expect(row.action).toBe("complexity_change");
-    expect(row.old_values).toEqual({ planning_complexity: "standard" });
-    expect(row.new_values).toEqual({ planning_complexity: "mid" });
-    expect(row.request_id).toBe("req_c1");
-    expect(row.instance_id).toBeNull();
+    expect(result).toEqual({ ok: true, package: pkgRow });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_set_complexity", {
+      p_owner_id: "owner_1",
+      p_package_id: "pkg_1",
+      p_complexity: "high",
+      p_expected_version: 1,
+      p_request_id: expect.any(String),
+    });
   });
 
-  it("returns false (never throws) when the insert fails — pre-migration window", async () => {
-    const db = { from: vi.fn(() => ({ insert: vi.fn(async () => ({ error: { code: "42P01", message: "does not exist" } })) })), rpc: vi.fn() };
-    const recorded = await recordPlanningComplexityChange(db, {
-      ownerId: "owner_1", packageId: "pkg_1", actorId: "user_9",
-      oldComplexity: "standard", newComplexity: "mid",
+  it("rejects an unknown complexity and a missing expectedVersion before touching the database", async () => {
+    const db = mockDb();
+    const badComplexity = await setPlanningComplexity(db, {
+      ownerId: "owner_1", packageId: "pkg_1", complexity: "extreme", expectedVersion: 1,
     });
-    expect(recorded).toBe(false);
+    expect(badComplexity.ok).toBe(false);
+    expect(badComplexity.httpStatus).toBe(400);
+    const noVersion = await setPlanningComplexity(db, {
+      ownerId: "owner_1", packageId: "pkg_1", complexity: "high",
+    });
+    expect(noVersion.ok).toBe(false);
+    expect(noVersion.httpStatus).toBe(400);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps a stale-version RPC failure to 409", async () => {
+    const db = mockDb({ rpcImpl: async () => ({ data: null, error: { message: "WPP10_STALE_VERSION" } }) });
+    const result = await setPlanningComplexity(db, {
+      ownerId: "owner_1", packageId: "pkg_1", complexity: "high", expectedVersion: 1, requestId: "req_cx_1",
+    });
+    expect(result.httpStatus).toBe(409);
   });
 });
 

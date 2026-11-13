@@ -70,7 +70,7 @@ describe("PATCH /api/work-packages/[packageId]/planning-process", () => {
     const response = await PATCH(
       new Request("https://test/x", {
         method: "PATCH",
-        body: JSON.stringify({ templateStepId: "pdf-01", status: "Complete" }),
+        body: JSON.stringify({ templateStepId: "pdf-01", status: "Complete", expectedVersion: 1 }),
       }),
       { params: params() },
     );
@@ -83,7 +83,7 @@ describe("PATCH /api/work-packages/[packageId]/planning-process", () => {
       evidenceLink: undefined,
       reason: undefined,
       attestation: undefined,
-      expectedVersion: undefined,
+      expectedVersion: 1,
     }));
     // No client request ID: the route generates one (idempotency key).
     const call = setPlanningStepStatus.mock.calls[0][1];
@@ -127,7 +127,7 @@ describe("PATCH /api/work-packages/[packageId]/planning-process", () => {
     const response = await PATCH(
       new Request("https://test/x", {
         method: "PATCH",
-        body: JSON.stringify({ templateStepId: "pdf-01", status: "Complete", evidenceLink: "https://example.com/x.pdf" }),
+        body: JSON.stringify({ templateStepId: "pdf-01", status: "Complete", evidenceLink: "https://example.com/x.pdf", expectedVersion: 1 }),
       }),
       { params: params() },
     );
@@ -144,12 +144,28 @@ describe("PATCH /api/work-packages/[packageId]/planning-process", () => {
     const response = await PATCH(
       new Request("https://test/x", {
         method: "PATCH",
-        body: JSON.stringify({ templateStepId: "pdf-01", status: "Reviewed" }),
+        body: JSON.stringify({ templateStepId: "pdf-01", status: "Reviewed", expectedVersion: 2 }),
       }),
       { params: params() },
     );
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.error).toContain("Only a reviewer");
+  });
+
+  it("returns 400 for a missing or invalid expectedVersion before the service (F2)", async () => {
+    for (const expectedVersion of [undefined, null, 0, -1, 1.5, "1"]) {
+      const response = await PATCH(
+        new Request("https://test/x", {
+          method: "PATCH",
+          body: JSON.stringify({ templateStepId: "pdf-01", status: "Complete", expectedVersion }),
+        }),
+        { params: params() },
+      );
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toMatch(/expectedVersion must be a positive whole number/);
+    }
+    expect(setPlanningStepStatus).not.toHaveBeenCalled();
   });
 });

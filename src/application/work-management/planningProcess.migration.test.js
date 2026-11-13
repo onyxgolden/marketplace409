@@ -7,11 +7,39 @@
 //     pdf-01..pdf-22, credits sum 100%, standard hours sum 40 — the
 //     PDF's numbers, validated by the migration itself; re-apply is
 //     idempotent; a corrupted template fails the checklist closed.
-//   - Checklist RPC: template verification BEFORE instantiation;
-//     ensure-on-first-read creates exactly 22 In-Progress instances,
-//     second call creates none; returns complexity, bound template
-//     version, the caller's effective update/review affordances, and
-//     constructionReadiness (always not-established in Slice A — F1).
+//   - Checklist RPC: template verification; READ-ONLY return of the
+//     complete 22-row set (created atomically with the package row
+//     by a trigger — a GET never mutates); missing/duplicate rows
+//     are unavailable, never auto-created. Returns complexity, bound
+//     template version, the caller's effective update/review
+//     affordances and isOwner, and constructionReadiness (always
+//     not-established in Slice A — F1).
+//   - F1 (fix round 1): package creation and its 22 checklist rows
+//     are one transaction (trigger); a forced checklist-insert
+//     failure rolls the package row back; the migration backfills
+//     existing packages idempotently.
+//   - F2 (fix round 1): expected version and request ID are
+//     mandatory; the instance row is locked FOR UPDATE and the
+//     update is conditional on the version (stale = 409);
+//     request-ID reuse with a different payload is a conflict.
+//     A two-session real-PostgreSQL concurrency test proves one of
+//     two same-version changes gets 409 with no lost audit/update.
+//   - F3 (fix round 1): the transition/authority matrix —
+//     In-Progress/Complete need update; N/A, Reviewed and Needs
+//     Revision need review (Reviewer CAN record Needs Revision;
+//     ordinary Planner must NOT); Reviewed only from a distinct
+//     prior submission with an existing qualifying basis and no new
+//     evidence in the same decision except an owner/co-owner
+//     reasoned override; a Reviewed row may only go back through
+//     Needs Revision; returning from Needs Revision is two-step.
+//   - F4 (fix round 1): one effective post-update evidence value —
+//     omitted preserves, replacement replaces, explicit clear is
+//     rejected unless a valid attestation replaces it.
+//   - F5 (fix round 1): complexity changes go through a SECURITY
+//     DEFINER RPC (expected version + request-id idempotency; the
+//     complexity_change event is appended in the same transaction) —
+//     rollback, actor derivation, cross-workspace, stale-write,
+//     duplicate-request and success legs are all proved here.
 //   - Set-status RPC (F2): status rules, evidence/attestation for
 //     Complete, reason for N/A and Needs Revision, fresh evidence on
 //     return from Needs Revision, self-review ban with owner override,
@@ -42,11 +70,16 @@
 // the foreign keys reference, plus the status column the
 // terminal-package rule reads.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
+import { Client } from "pg";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const it60 = (name, fn) => it(name, fn, 60000);
@@ -96,6 +129,9 @@ const PREREQ_SQL = `
     owner_id text not null,
     id text not null,
     status text not null default 'in_progress',
+    version integer not null default 1,
+    updated_by text,
+    updated_at timestamptz,
     primary key (owner_id, id)
   );
 `;
@@ -151,12 +187,43 @@ async function checklist(db, uid, ownerId, packageId) {
 }
 
 async function setStatus(db, uid, ownerId, packageId, templateStepId, status, opts = {}) {
+  // Convenience for the legs that are not testing concurrency: read
+  // the instance's current version and generate a fresh request ID,
+  // so every call satisfies the mandatory F2 parameters. Legs that
+  // DO test concurrency pass expectedVersion/requestId explicitly.
+  let expectedVersion = opts.expectedVersion;
+  if (expectedVersion === undefined) {
+    const { rows } = await db.query(`
+      select version from forge_work_planning_process_instances
+      where owner_id = '${ownerId}' and work_package_id = '${packageId}' and template_step_id = '${templateStepId}';`);
+    expectedVersion = rows[0]?.version ?? 1;
+  }
+  const requestId = opts.requestId ?? `req_${randomUUID().replace(/-/g, "")}`;
   const { rows } = await asUser(db, uid, `
     select forge_work_planning_process_set_status(
       '${ownerId}', '${packageId}', '${templateStepId}', ${sqlStr(status)},
       ${sqlStr(opts.evidenceLink ?? null)}, ${sqlStr(opts.reason ?? null)},
-      ${sqlStr(opts.attestation ?? null)}, ${sqlInt(opts.expectedVersion ?? null)},
-      ${sqlStr(opts.requestId ?? null)}) as v;`);
+      ${sqlStr(opts.attestation ?? null)}, ${sqlInt(expectedVersion)},
+      ${sqlStr(requestId)}) as v;`);
+  return rows[0].v;
+}
+
+async function setComplexity(db, uid, ownerId, packageId, complexity, opts = {}) {
+  // Same convenience as setStatus: read the package's current
+  // version and generate a fresh request ID unless the leg passes
+  // them explicitly.
+  let expectedVersion = opts.expectedVersion;
+  if (expectedVersion === undefined) {
+    const { rows } = await db.query(`
+      select version from forge_work_packages
+      where owner_id = '${ownerId}' and id = '${packageId}';`);
+    expectedVersion = rows[0]?.version ?? 1;
+  }
+  const requestId = opts.requestId ?? `req_${randomUUID().replace(/-/g, "")}`;
+  const { rows } = await asUser(db, uid, `
+    select forge_work_planning_process_set_complexity(
+      '${ownerId}', '${packageId}', ${sqlStr(complexity)},
+      ${sqlInt(expectedVersion)}, ${sqlStr(requestId)}) as v;`);
   return rows[0].v;
 }
 
@@ -184,7 +251,8 @@ async function instancesFor(db, packageId) {
 async function revisionsFor(db, packageId) {
   const { rows } = await db.query(`
     select action, old_status, new_status, reason, evidence_reference,
-           evidence_digest, attestation, is_override, request_id, actor_id
+           evidence_digest, attestation, is_override, request_id, actor_id,
+           template_step_id
       from forge_work_planning_process_revisions
       where owner_id = '${OWNER_A}' and work_package_id = '${packageId}'
       order by recorded_at, id;`);
@@ -246,12 +314,16 @@ describe("planning-process migration", () => {
     expect(caps.rows[0].n).toBe(0); // no roles provisioned yet in this db — nothing backfilled
   });
 
-  it60("checklist ensures exactly 22 In-Progress instances on first read, none on second", async () => {
+  it60("package creation atomically creates exactly 22 In-Progress instances; the checklist GET is read-only (F1)", async () => {
+    // The trigger created the rows at seed time — before any
+    // checklist call. A GET must never create rows.
+    expect(await instancesFor(db, "pkg_a")).toHaveLength(22);
     const first = await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     expect(first.complexity).toBe("standard");
     expect(first.templateVersion).toBe(1);
     expect(first.canUpdate).toBe(true);
     expect(first.canReview).toBe(true);
+    expect(first.isOwner).toBe(true);
     expect(first.constructionReadiness.status).toBe("not_established");
     expect(first.constructionReadiness.detail).toMatch(/never authorizes construction/);
     expect(first.template).toHaveLength(22);
@@ -262,6 +334,61 @@ describe("planning-process migration", () => {
     const second = await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     expect(second.instances).toHaveLength(22);
     expect((await instancesFor(db, "pkg_a"))).toHaveLength(22);
+    // A package whose rows are gone is UNAVAILABLE, never
+    // auto-created by the GET. (pkg_b belongs to OWNER_B.)
+    await db.query(`delete from forge_work_planning_process_instances where owner_id = '${OWNER_B}' and work_package_id = 'pkg_b';`);
+    await expectRpcError(db, OWNER_B,
+      `select forge_work_planning_process_checklist('${OWNER_B}', 'pkg_b');`,
+      "WPP10_CHECKLIST_INCOMPLETE");
+  });
+
+  it60("package creation rolls back when checklist initialization fails (F1)", async () => {
+    // Break the template inside a transaction, attempt a package
+    // insert, prove it fails AND no package row survives, then roll
+    // back so the template is whole again. The insert runs as a plain
+    // query (not asUser): asUser's `reset role` in its finally would
+    // mask the trigger's error once the transaction aborts. A
+    // savepoint lets the assertions run after the expected failure.
+    await db.exec("begin;");
+    try {
+      // Instances reference the template (RESTRICT), so clear the
+      // referencing rows first, then break the template.
+      await db.query(`delete from forge_work_planning_process_instances where template_step_id = 'pdf-22';`);
+      await db.query(`delete from forge_work_planning_process_template where step_key = 'pdf-22';`);
+      await db.exec("savepoint sp_rollback;");
+      await expect(db.query(
+        `insert into forge_work_packages (owner_id, id, status) values ('${OWNER_A}', 'pkg_rollback', 'in_progress');`))
+        .rejects.toThrow(/WPP10_TEMPLATE_INVALID/);
+      await db.exec("rollback to savepoint sp_rollback;");
+      const { rows } = await db.query(`select count(*)::int as n from forge_work_packages where id = 'pkg_rollback';`);
+      expect(rows[0].n).toBe(0);
+      const inst = await db.query(`select count(*)::int as n from forge_work_planning_process_instances where work_package_id = 'pkg_rollback';`);
+      expect(inst.rows[0].n).toBe(0);
+    } finally {
+      await db.exec("rollback;");
+    }
+    const { rows } = await db.query(`select count(*)::int as n from forge_work_planning_process_template;`);
+    expect(rows[0].n).toBe(22);
+  });
+
+  it60("migration backfills existing packages idempotently (F1)", async () => {
+    // A package that exists BEFORE this migration applies gets its 22
+    // rows from the backfill — and a re-apply adds none.
+    const fresh = new PGlite();
+    try {
+      await fresh.exec(PREREQ_SQL);
+      await fresh.exec(loadMigrationSql(ADMIN_MIGRATION));
+      await fresh.exec(`insert into forge_work_packages (owner_id, id, status) values ('${OWNER_A}', 'pkg_pre', 'in_progress');`);
+      await fresh.exec(loadMigrationSql(THIS_MIGRATION));
+      const { rows } = await fresh.query(`select count(*)::int as n, count(distinct template_step_id)::int as keys from forge_work_planning_process_instances where work_package_id = 'pkg_pre';`);
+      expect(rows[0].n).toBe(22);
+      expect(rows[0].keys).toBe(22);
+      await fresh.exec(loadMigrationSql(THIS_MIGRATION));
+      const again = await fresh.query(`select count(*)::int as n from forge_work_planning_process_instances where work_package_id = 'pkg_pre';`);
+      expect(again.rows[0].n).toBe(22);
+    } finally {
+      await fresh.close();
+    }
   });
 
   it60("checklist rejects a stranger and a missing package", async () => {
@@ -274,6 +401,9 @@ describe("planning-process migration", () => {
   });
 
   it60("a corrupted template fails the checklist closed (F3)", async () => {
+    // Instances reference the template (RESTRICT), so clear the
+    // referencing rows first, then break the template.
+    await db.query(`delete from forge_work_planning_process_instances where template_step_id = 'pdf-22';`);
     await db.query(`delete from forge_work_planning_process_template where step_key = 'pdf-22';`);
     await expectRpcError(db, OWNER_A,
       `select forge_work_planning_process_checklist('${OWNER_A}', 'pkg_a');`,
@@ -313,24 +443,34 @@ describe("planning-process migration", () => {
     expect(revisions[0].request_id).toBe("req_evt_1");
   });
 
-  it60("Reviewed records the reviewer; leaving Reviewed clears reviewer attribution", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
-    const reviewed = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Reviewed",
-      { attestation: "Reviewed the job plan against the plot plan." });
+  it60("Reviewed records the reviewer; leaving Reviewed clears reviewer attribution (F3)", async () => {
+    // Reviewed from In-Progress has no prior submission to judge.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-15', 'Reviewed', null, null, null, 1, 'req_rev_basis_1');`,
+      "WPP10_REVIEW_BASIS_REQUIRED");
+    // MEMBER_D (planner_admin) submits pdf-15; the owner (a different
+    // reviewer) marks it Reviewed.
+    await provisionAndAssign(db, MEMBER_D, "planner_admin");
+    await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-15", "Complete",
+      { evidenceLink: "https://example.com/job-plan.pdf" });
+    const reviewed = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Reviewed");
     expect(reviewed.status).toBe("Reviewed");
     expect(reviewed.reviewed_by).toBe(OWNER_A);
     expect(reviewed.reviewed_at).not.toBeNull();
-    const moved = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Complete",
-      { evidenceLink: "https://example.com/job-plan.pdf" });
-    expect(moved.status).toBe("Complete");
-    expect(moved.reviewed_by).toBeNull();
-    expect(moved.reviewed_at).toBeNull();
+    // A Reviewed row may only go back through Needs Revision.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-15', 'Complete', 'https://example.com/job-plan.pdf', null, null, 3, 'req_rev_lock_1');`,
+      "WPP10_REVIEWED_LOCKED");
+    const sentBack = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Needs Revision",
+      { reason: "Job plan misses the night-shift crew." });
+    expect(sentBack.status).toBe("Needs Revision");
+    expect(sentBack.reviewed_by).toBeNull();
+    expect(sentBack.reviewed_at).toBeNull();
   });
 
   it60("Complete needs an evidence link or an attestation", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', null, null, null, 1, 'req_ev_1');`,
       "WPP10_EVIDENCE_REQUIRED");
     const byLink = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
       { evidenceLink: "https://example.com/p-id.pdf" });
@@ -341,12 +481,11 @@ describe("planning-process migration", () => {
   });
 
   it60("N/A and Needs Revision need a nonempty reason", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-06', 'N/A', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-06', 'N/A', null, null, null, 1, 'req_na_1');`,
       "WPP10_REASON_REQUIRED");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Needs Revision', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Needs Revision', null, null, null, 1, 'req_nr_1');`,
       "WPP10_REASON_REQUIRED");
     const na = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-06", "N/A",
       { reason: "No engineering request needed on this package." });
@@ -369,7 +508,7 @@ describe("planning-process migration", () => {
     expect(afterSendBack.status).toBe("Needs Revision");
     // The stored link is stale: returning with no fresh evidence fails.
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-15', 'Complete', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-15', 'Complete', null, null, null, 3, 'req_fresh_1');`,
       "WPP10_FRESH_EVIDENCE_REQUIRED");
     const returned = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Complete",
       { evidenceLink: "https://example.com/job-plan-v2.pdf" });
@@ -385,7 +524,7 @@ describe("planning-process migration", () => {
     await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-01", "Complete",
       { evidenceLink: "https://example.com/p-id.pdf" });
     await expectRpcError(db, MEMBER_D,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Reviewed', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Reviewed', null, null, null, 2, 'req_self_1');`,
       "WPP10_SELF_REVIEW_FORBIDDEN");
     // A different reviewer (the owner, who did not submit it) can.
     const reviewed = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Reviewed");
@@ -396,7 +535,7 @@ describe("planning-process migration", () => {
     await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-02", "Complete",
       { evidenceLink: "https://example.com/plot.pdf" });
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-02', 'Reviewed', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-02', 'Reviewed', null, null, null, 2, 'req_self_2');`,
       "WPP10_REASON_REQUIRED");
     const overridden = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-02", "Reviewed",
       { reason: "Owner override: I completed this step and I am reviewing it." });
@@ -407,25 +546,46 @@ describe("planning-process migration", () => {
     expect(overrideEvent.reason).toMatch(/Owner override/);
   });
 
-  it60("a Planner assignee can set Complete but not Reviewed", async () => {
+  it60("a Planner assignee can set Complete but not Reviewed, N/A, or Needs Revision (F3)", async () => {
     await provisionAndAssign(db, MEMBER_D, "planner");
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     const updated = await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-01", "Complete",
       { evidenceLink: "https://example.com/p-id.pdf" });
     expect(updated.status).toBe("Complete");
     await expectRpcError(db, MEMBER_D,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-02', 'Reviewed', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-02', 'Reviewed', null, null, null, 1, 'req_pl_1');`,
       "WPP10_REVIEW_FORBIDDEN");
+    // N/A and Needs Revision need the REVIEW capability, not update.
+    await expectRpcError(db, MEMBER_D,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-03', 'N/A', null, 'Not needed here.', null, 1, 'req_pl_2');`,
+      "WPP10_REVIEW_CAPABILITY_REQUIRED");
+    await expectRpcError(db, MEMBER_D,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-03', 'Needs Revision', null, 'Fix the markup.', null, 1, 'req_pl_3');`,
+      "WPP10_REVIEW_CAPABILITY_REQUIRED");
   });
 
-  it60("a Reviewer assignee can set Reviewed but not ordinary statuses", async () => {
+  it60("a Reviewer assignee can set Reviewed, N/A, and Needs Revision but not ordinary statuses (F3)", async () => {
     await provisionAndAssign(db, MEMBER_E, "reviewer");
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
+    // The owner submits pdf-01; the reviewer (a different actor) can
+    // mark it Reviewed.
+    await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { evidenceLink: "https://example.com/p-id.pdf" });
     const reviewed = await setStatus(db, MEMBER_E, OWNER_A, "pkg_a", "pdf-01", "Reviewed");
     expect(reviewed.status).toBe("Reviewed");
     expect(reviewed.reviewed_by).toBe(MEMBER_E);
+    // A Reviewer CAN record N/A (with a reason) and Needs Revision
+    // (with a reason) — the review capability covers both.
+    const na = await setStatus(db, MEMBER_E, OWNER_A, "pkg_a", "pdf-06", "N/A",
+      { reason: "No engineering request needed on this package." });
+    expect(na.status).toBe("N/A");
+    const nr = await setStatus(db, MEMBER_E, OWNER_A, "pkg_a", "pdf-02", "Needs Revision",
+      { reason: "Plot plan misses the new tie-in." });
+    expect(nr.status).toBe("Needs Revision");
+    // But a Reviewer cannot set ordinary statuses.
     await expectRpcError(db, MEMBER_E,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-02', 'Complete', 'https://example.com/x.pdf', null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-03', 'Complete', 'https://example.com/x.pdf', null, null, 1, 'req_rv_1');`,
+      "WPP10_UPDATE_FORBIDDEN");
+    await expectRpcError(db, MEMBER_E,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-04', 'In-Progress', null, null, null, 1, 'req_rv_2');`,
       "WPP10_UPDATE_FORBIDDEN");
   });
 
@@ -436,7 +596,7 @@ describe("planning-process migration", () => {
     expect(result.canUpdate).toBe(false);
     expect(result.canReview).toBe(false);
     await expectRpcError(db, MEMBER_D,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 1, 'req_ro_1');`,
       "WPP10_UPDATE_FORBIDDEN");
   });
 
@@ -445,7 +605,7 @@ describe("planning-process migration", () => {
     await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
       { evidenceLink: "https://example.com/p-id.pdf", expectedVersion: 1 });
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'In-Progress', null, null, null, 1, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'In-Progress', null, null, null, 1, 'req_stale_1');`,
       "WPP10_STALE_VERSION");
     const moved = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "In-Progress",
       { expectedVersion: 2 });
@@ -467,26 +627,130 @@ describe("planning-process migration", () => {
     expect((await instancesFor(db, "pkg_a")).find((i) => i.template_step_id === "pdf-01").version).toBe(2);
   });
 
+  it60("missing/invalid expected version and request ID are rejected (F2)", async () => {
+    // A missing expected version is a 400, never an optional guard.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, null, 'req_mv_1');`,
+      "WPP10_EXPECTED_VERSION_REQUIRED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 0, 'req_mv_2');`,
+      "WPP10_EXPECTED_VERSION_REQUIRED");
+    // A missing request ID is a 400; an over-long one is a 400.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 1, null);`,
+      "WPP10_REQUEST_ID_REQUIRED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 1, '${"x".repeat(129)}');`,
+      "WPP10_INVALID_REQUEST_ID");
+  });
+
+  it60("request-ID reuse with a different payload is a conflict (F2)", async () => {
+    const first = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { evidenceLink: "https://example.com/p-id.pdf", requestId: "req_conflict_1" });
+    expect(first.version).toBe(2);
+    // Same request ID, different status -> conflict.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'In-Progress', null, null, null, 2, 'req_conflict_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    // Same request ID, same status but different evidence -> conflict.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/other.pdf', null, null, 2, 'req_conflict_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    // Same request ID, same payload -> replay, no second event.
+    const replay = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { evidenceLink: "https://example.com/p-id.pdf", requestId: "req_conflict_1" });
+    expect(replay.version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("Reviewed needs a distinct prior submission with an existing basis, and no new evidence in the same decision (F3)", async () => {
+    await provisionAndAssign(db, MEMBER_D, "planner_admin");
+    // In-Progress has no submission to review.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Reviewed', null, null, null, 1, 'req_basis_1');`,
+      "WPP10_REVIEW_BASIS_REQUIRED");
+    // Complete via attestation only: the attestation in the latest
+    // revision IS a qualifying basis.
+    await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-02", "Complete",
+      { attestation: "I walked the plot plan and it matches the scope." });
+    const byAttestation = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-02", "Reviewed");
+    expect(byAttestation.status).toBe("Reviewed");
+    // N/A: the confirmation reason in the latest revision is the basis.
+    await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-06", "N/A",
+      { reason: "No engineering request needed on this package." });
+    const naReviewed = await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-06", "Reviewed");
+    expect(naReviewed.status).toBe("Reviewed");
+    // A review cannot add new evidence in the same decision (the
+    // reviewer is not the owner and supplies no reason).
+    await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-03", "Complete",
+      { evidenceLink: "https://example.com/plot.pdf" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-03', 'Reviewed', 'https://example.com/fresh.pdf', null, null, 2, 'req_basis_2');`,
+      "WPP10_REVIEW_EVIDENCE_SAME_REQUEST");
+    // An owner/co-owner reasoned override CAN supply new evidence —
+    // recorded as an override. (The owner submitted pdf-04, so the
+    // reason does double duty: self-review override + evidence
+    // override.)
+    await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-04", "Complete",
+      { evidenceLink: "https://example.com/equip.pdf" });
+    const overridden = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-04", "Reviewed",
+      { evidenceLink: "https://example.com/equip-v2.pdf", reason: "Owner override: re-checked the equipment details against the new cut sheet." });
+    expect(overridden.status).toBe("Reviewed");
+    expect(overridden.evidence_link).toBe("https://example.com/equip-v2.pdf");
+    const events = await revisionsFor(db, "pkg_a");
+    const overrideEvent = events.find((e) => e.new_status === "Reviewed" && e.is_override && e.evidence_reference === "https://example.com/equip-v2.pdf");
+    expect(overrideEvent).toBeDefined();
+  });
+
+  it60("returning from Needs Revision is two-step: resubmit Complete, then a different reviewer marks Reviewed (F3)", async () => {
+    await provisionAndAssign(db, MEMBER_D, "planner_admin");
+    await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-15", "Complete",
+      { evidenceLink: "https://example.com/job-plan-v1.pdf" });
+    await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Needs Revision",
+      { reason: "Job plan misses the night-shift crew." });
+    // Reviewed directly from Needs Revision is rejected.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-15', 'Reviewed', null, null, null, 3, 'req_two_1');`,
+      "WPP10_TWO_STEP_REQUIRED");
+    // Resubmit as Complete with fresh evidence, then a different
+    // reviewer (the owner did not submit the resubmission) marks
+    // Reviewed.
+    const resubmitted = await setStatus(db, MEMBER_D, OWNER_A, "pkg_a", "pdf-15", "Complete",
+      { evidenceLink: "https://example.com/job-plan-v2.pdf" });
+    expect(resubmitted.status).toBe("Complete");
+    const reviewed = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-15", "Reviewed");
+    expect(reviewed.status).toBe("Reviewed");
+    expect(reviewed.reviewed_by).toBe(OWNER_A);
+  });
+
   it60("terminal packages cannot change planning status", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_cancelled");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_cancelled', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_cancelled', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 1, 'req_term_1');`,
       "WPP10_PACKAGE_TERMINAL");
-    await checklist(db, OWNER_A, OWNER_A, "pkg_closed");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_closed', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_closed', 'pdf-01', 'Complete', 'https://example.com/x.pdf', null, null, 1, 'req_term_2');`,
       "WPP10_PACKAGE_TERMINAL");
   });
 
-  it60("evidence link: set, clear with empty string, reject over-long", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
+  it60("evidence link: omitted preserves, replacement replaces, explicit clear is rejected unless a valid attestation replaces it (F4)", async () => {
     const withLink = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: "https://example.com/p-id.pdf" });
     expect(withLink.evidence_link).toBe("https://example.com/p-id.pdf");
-    const cleared = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: "" });
+    // Omitted link preserves the stored link.
+    const preserved = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: null });
+    expect(preserved.evidence_link).toBe("https://example.com/p-id.pdf");
+    // Replacement link.
+    const replaced = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: "https://example.com/p-id-v2.pdf" });
+    expect(replaced.evidence_link).toBe("https://example.com/p-id-v2.pdf");
+    // Explicit clear with no replacement basis is NOT evidence.
+    await expect(setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: "" }))
+      .rejects.toThrow(/WPP10_EVIDENCE_REQUIRED/);
+    // Explicit clear WITH a valid attestation is allowed.
+    const cleared = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { evidenceLink: "", attestation: "I verified the P&ID by hand against the field walk." });
     expect(cleared.evidence_link).toBeNull();
-    await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', '${"x".repeat(2001)}', null, null, null, null);`,
-      "WPP10_INVALID_EVIDENCE_LINK");
+    // An over-long link is rejected.
+    await expect(setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete", { evidenceLink: "x".repeat(2001) }))
+      .rejects.toThrow(/WPP10_INVALID_EVIDENCE_LINK/);
   });
 
   it60("evidence-only change records an evidence_link_change event, not a status change", async () => {
@@ -503,15 +767,14 @@ describe("planning-process migration", () => {
   });
 
   it60("invalid status, unknown step, and over-long reason are rejected", async () => {
-    await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Pending', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Pending', null, null, null, 1, 'req_inv_1');`,
       "WPP10_INVALID_STATUS");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-99', 'Complete', null, null, null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-99', 'Complete', null, null, null, 1, 'req_inv_2');`,
       "WPP10_STEP_NOT_FOUND");
     await expectRpcError(db, OWNER_A,
-      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-06', 'N/A', null, '${"x".repeat(501)}', null, null, null);`,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-06', 'N/A', null, '${"x".repeat(501)}', null, 1, 'req_inv_3');`,
       "WPP10_INVALID_REASON");
   });
 
@@ -527,6 +790,98 @@ describe("planning-process migration", () => {
     const result = await checklist(db, OWNER_A, OWNER_A, "pkg_a");
     expect(result.complexity).toBe("high");
     expect(result.templateVersion).toBe(1);
+  });
+
+  it60("complexity RPC: success updates the package and appends one complexity_change event in the same transaction (F5)", async () => {
+    const updated = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high");
+    expect(updated.planning_complexity).toBe("high");
+    expect(updated.version).toBe(2);
+    expect(updated.updated_by).toBe(OWNER_A);
+    const { rows: pkgRows } = await db.query(`select planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(pkgRows[0].planning_complexity).toBe("high");
+    expect(pkgRows[0].version).toBe(2);
+    const events = await revisionsFor(db, "pkg_a");
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe("complexity_change");
+    expect(events[0].actor_id).toBe(OWNER_A);
+    expect(events[0].template_step_id).toBeNull();
+    expect(events[0].old_status).toBeNull();
+    expect(events[0].new_status).toBeNull();
+    expect(events[0].request_id).toBeDefined();
+    const { rows: raw } = await db.query(`select old_values, new_values from forge_work_planning_process_revisions where work_package_id = 'pkg_a';`);
+    expect(raw[0].old_values).toEqual({ complexity: "standard" });
+    expect(raw[0].new_values).toEqual({ complexity: "high" });
+  });
+
+  it60("complexity RPC: a stale version rolls everything back — no package change, no event (F5)", async () => {
+    await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'low', 1, 'req_cx_stale_1');`,
+      "WPP10_STALE_VERSION");
+    const { rows } = await db.query(`select planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].planning_complexity).toBe("high");
+    expect(rows[0].version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("complexity RPC: the event records the caller from auth.uid() — there is no actor parameter to forge (F5)", async () => {
+    await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "mid");
+    const events = await revisionsFor(db, "pkg_a");
+    expect(events).toHaveLength(1);
+    expect(events[0].actor_id).toBe(OWNER_A);
+    // A co-owner's change is attributed to the co-owner.
+    await setComplexity(db, MEMBER_C, OWNER_A, "pkg_a", "low");
+    const after = await revisionsFor(db, "pkg_a");
+    expect(after).toHaveLength(2);
+    expect(after[1].actor_id).toBe(MEMBER_C);
+  });
+
+  it60("complexity RPC: cross-workspace and capability failures (F5)", async () => {
+    // A stranger (another owner) reaches nothing.
+    await expectRpcError(db, OWNER_B,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', 1, 'req_cx_xws_1');`,
+      "WPP10_WORKSPACE_FORBIDDEN");
+    // A Reviewer assignee has no planner.packages.edit.
+    await provisionAndAssign(db, MEMBER_E, "reviewer");
+    await expectRpcError(db, MEMBER_E,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', 1, 'req_cx_xws_2');`,
+      "WPP10_COMPLEXITY_FORBIDDEN");
+    // A Planner assignee HAS planner.packages.edit and can change it.
+    await provisionAndAssign(db, MEMBER_D, "planner");
+    const updated = await setComplexity(db, MEMBER_D, OWNER_A, "pkg_a", "high");
+    expect(updated.planning_complexity).toBe("high");
+  });
+
+  it60("complexity RPC: duplicate request with a different payload is a conflict; same payload replays (F5)", async () => {
+    const first = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_cx_dup_1" });
+    expect(first.planning_complexity).toBe("high");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'low', 2, 'req_cx_dup_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    const replay = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_cx_dup_1" });
+    expect(replay.planning_complexity).toBe("high");
+    expect(replay.version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("complexity RPC: invalid complexity, missing version, missing request ID, and terminal package are rejected (F5)", async () => {
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'extreme', 1, 'req_cx_inv_1');`,
+      "WPP10_INVALID_COMPLEXITY");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', null, 'req_cx_inv_2');`,
+      "WPP10_EXPECTED_VERSION_REQUIRED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', 1, null);`,
+      "WPP10_REQUEST_ID_REQUIRED");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_cancelled', 'high', 1, 'req_cx_inv_3');`,
+      "WPP10_PACKAGE_TERMINAL");
+    // A no-op (same value) returns the row with no event and no bump.
+    const noop = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "standard");
+    expect(noop.planning_complexity).toBe("standard");
+    expect(noop.version).toBe(1);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
   });
 
   it60("RLS: anon cannot select at all; a stranger's owner sees nothing; direct writes are denied", async () => {
@@ -566,8 +921,8 @@ describe("planning-process migration", () => {
       select p.proname, p.proacl from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'
-        and p.proname in ('forge_work_planning_process_checklist', 'forge_work_planning_process_set_status');`);
-    expect(fns.rows).toHaveLength(2);
+        and p.proname in ('forge_work_planning_process_checklist', 'forge_work_planning_process_set_status', 'forge_work_planning_process_set_complexity');`);
+    expect(fns.rows).toHaveLength(3);
     for (const fn of fns.rows) {
       const acl = String(fn.proacl || "");
       expect(acl).toContain("authenticated=X");
@@ -604,5 +959,136 @@ describe("planning-process migration", () => {
       "reviewer:planner.planning_steps.review",
       "scheduler:planner.planning_steps.read",
     ]);
+  });
+});
+
+// Real-PostgreSQL subset (F2, fix round 1). PGlite is single-connection,
+// so the two-session concurrency leg can only run here, against a
+// scratch PG16 cluster. The suite is gated on the binaries existing AND
+// an unprivileged user to run the cluster as (initdb refuses root, and
+// this VM's agent runs as root) — and SKIPS LOUDLY, never silently,
+// when either is missing.
+//
+// The cluster MUST be UTF8 (C.UTF-8): the default initdb under a POSIX
+// locale creates a SQL_ASCII cluster, and in SQL_ASCII the em-dash in
+// pdf-07's description is stored as raw bytes E2 80 94 — whose 0x80/0x94
+// bytes are C1 control characters, so the migration's
+// `description !~ '[[:cntrl:]]'` check rejects the seed. In UTF8 (what
+// Supabase production uses, and what PGlite uses) the em-dash is one
+// proper U+2014 character and the check passes. A SQL_ASCII failure here
+// is a test-cluster artifact, not a migration defect.
+const PG_BIN = "/usr/lib/postgresql/16/bin";
+function detectRealPgUser() {
+  try {
+    execSync(`ls ${PG_BIN}/initdb ${PG_BIN}/pg_ctl`, { stdio: "ignore" });
+    execSync("which runuser", { stdio: "ignore" });
+  } catch {
+    return null;
+  }
+  for (const user of ["postgres", "nobody"]) {
+    try {
+      execSync(`id ${user}`, { stdio: "ignore" });
+      return user;
+    } catch { /* try the next user */ }
+  }
+  return null;
+}
+const PG_RUN_USER = detectRealPgUser();
+const HAS_REAL_PG = PG_RUN_USER !== null;
+if (!HAS_REAL_PG) {
+  console.warn(
+    "⚠️ LOUD SKIP: real-PostgreSQL subset SKIPPED — PG16 binaries or an unprivileged "
+    + "user to run them as (initdb refuses root) were not found. "
+    + "The PGlite battery still runs; run the real-PG leg where PG16 exists.",
+  );
+}
+
+describe.skipIf(!HAS_REAL_PG)("planning-process migration: real-PostgreSQL subset", () => {
+  let pgDir;
+  let pgClient;
+  let pgCfg;
+
+  beforeAll(async () => {
+    pgDir = mkdtempSync(join(tmpdir(), "wpp-pp-realpg-"));
+    execSync(`chown ${PG_RUN_USER}:${PG_RUN_USER} "${pgDir}"`, { stdio: "pipe" });
+    const asPgUser = (cmd) => `runuser -u ${PG_RUN_USER} -- ${cmd}`;
+    execSync(asPgUser(`"${PG_BIN}/initdb" -D "${pgDir}" -U postgres --auth=trust --encoding=UTF8 --locale=C.UTF-8`), { stdio: "pipe" });
+    execSync(
+      asPgUser(`"${PG_BIN}/pg_ctl" -D "${pgDir}" -o "-p 55435 -k ${pgDir} -c listen_addresses=''" -l "${pgDir}/server.log" start`),
+      { stdio: "pipe" },
+    );
+    pgCfg = { host: pgDir, port: 55435, user: "postgres", database: "postgres" };
+    pgClient = new Client(pgCfg);
+    await pgClient.connect();
+    await pgClient.query(PREREQ_SQL);
+    await pgClient.query(loadMigrationSql(ADMIN_MIGRATION));
+    // The package must exist BEFORE this migration applies: the
+    // trigger creates its 22 rows at insert time.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status) values
+        ('${OWNER_A}', 'pkg_real', 'in_progress');
+      insert into workspace_members (owner_id, member_user_id, status, role)
+        values ('${OWNER_A}', '${MEMBER_C}', 'active', 'co_owner');
+    `);
+    await pgClient.query(loadMigrationSql(THIS_MIGRATION));
+  }, 120000);
+
+  afterAll(async () => {
+    try { await pgClient?.end(); } catch { /* already closed */ }
+    if (pgDir) {
+      try { execSync(`runuser -u ${PG_RUN_USER} -- "${PG_BIN}/pg_ctl" -D "${pgDir}" stop -m fast`, { stdio: "pipe" }); } catch { /* already stopped */ }
+      rmSync(pgDir, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  async function pgAsUser(client, uid, sql) {
+    await client.query(`set role authenticated; set app.test_uid = '${uid}';`);
+    try {
+      return await client.query(sql);
+    } finally {
+      await client.query(`reset role;`);
+    }
+  }
+
+  it60("two sessions changing the same step at the same version: one wins, the other gets 409, no lost audit/update pair", async () => {
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    try {
+      // Both sessions read version 1 and both attempt the same change
+      // at that version, with different request IDs.
+      const change = (client, requestId) => pgAsUser(client, OWNER_A, `
+        select forge_work_planning_process_set_status(
+          '${OWNER_A}', 'pkg_real', 'pdf-01', 'Complete',
+          'https://example.com/p-id.pdf', null, null, 1, '${requestId}');
+      `);
+      const results = await Promise.allSettled([
+        change(clientA, "req_race_a"),
+        change(clientB, "req_race_b"),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(String(rejected[0].reason?.message ?? rejected[0].reason)).toMatch(/WPP10_STALE_VERSION/);
+      // Exactly one audit row and one version bump: the loser's change
+      // (and its event) never landed.
+      const { rows: inst } = await pgClient.query(`
+        select status, version from forge_work_planning_process_instances
+        where owner_id = '${OWNER_A}' and work_package_id = 'pkg_real' and template_step_id = 'pdf-01';
+      `);
+      expect(inst).toHaveLength(1);
+      expect(inst[0].status).toBe("Complete");
+      expect(inst[0].version).toBe(2);
+      const { rows: revs } = await pgClient.query(`
+        select count(*)::int as n from forge_work_planning_process_revisions
+        where owner_id = '${OWNER_A}' and work_package_id = 'pkg_real' and template_step_id = 'pdf-01';
+      `);
+      expect(revs[0].n).toBe(1);
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+    }
   });
 });

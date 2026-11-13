@@ -384,19 +384,18 @@ const PAULA_UNITS = [
   { id: "unit_b", property_id: "308-paula", label: "308 Paula", status: "active" },
 ];
 
-describe("planning-process hooks (F3: create binds the template; decision 3: complexity changes are audited)", () => {
-  it("create stores the requested complexity and attempts the checklist ensure (best-effort)", async () => {
+describe("planning-process hooks (F1: create binds the template via trigger; F5: complexity changes go through the guarded RPC)", () => {
+  it("create stores the requested complexity and does NOT call the checklist RPC (the trigger creates the rows)", async () => {
     const insertChain = chain({ data: { ...PKG, id: "forge_wp_new", code: "WP-0007" }, error: null });
     const db = mockDb([insertChain]);
     const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
       input: { title: "Turnover", package_type: "rental_turn", planning_complexity: "mid" } });
     expect(result.ok).toBe(true);
     expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planning_complexity: "mid" }));
-    // The ensure is attempted via the checklist RPC even though the
-    // mocked RPC answers with a bare number (not a checklist) — the
-    // service treats that as unavailable and creation still succeeds.
-    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_checklist",
-      { p_owner_id: "owner_1", p_package_id: "forge_wp_new" });
+    // The only RPC on create is the package-number sequence — the
+    // checklist rows are created atomically by the migration's
+    // trigger, never by a best-effort call from here.
+    expect(db.rpc.mock.calls.map((c) => c[0])).not.toContain("forge_work_planning_process_checklist");
   });
 
   it("create defaults complexity to standard when the caller sends none", async () => {
@@ -408,32 +407,44 @@ describe("planning-process hooks (F3: create binds the template; decision 3: com
     expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planning_complexity: "standard" }));
   });
 
-  it("a complexity change records a complexity_change audit event", async () => {
+  it("a complexity change goes through the guarded complexity RPC (F5), not a client-side revisions insert", async () => {
     const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
     const updateChain = chain({ data: { ...PKG, planning_complexity: "mid" }, error: null });
-    const auditChain = chain({ data: null, error: null });
-    const db = mockDb([getChain, updateChain, auditChain]);
+    const rpcPkg = { ...PKG, planning_complexity: "mid", version: 4, updated_at: "2026-11-12T00:00:00Z" };
+    const db = mockDb([getChain, updateChain], async () => ({ data: rpcPkg, error: null }));
     const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
       packageId: "forge_wp_1", patch: { planning_complexity: "mid" } });
     expect(result.ok).toBe(true);
-    expect(db.from).toHaveBeenCalledWith("forge_work_planning_process_revisions");
-    expect(auditChain.insert).toHaveBeenCalledWith(expect.objectContaining({
-      action: "complexity_change",
-      actor_id: "user_9",
-      old_values: { planning_complexity: "standard" },
-      new_values: { planning_complexity: "mid" },
-    }));
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_set_complexity", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1", p_complexity: "mid",
+      p_expected_version: 3, p_request_id: expect.any(String),
+    });
+    // No client-side revisions insert: the RPC appends the event.
+    expect(db.from).not.toHaveBeenCalledWith("forge_work_planning_process_revisions");
+    // The generic UPDATE no longer carries planning_complexity.
+    const payload = updateChain.update.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("planning_complexity");
   });
 
-  it("an unrelated edit records no complexity audit event", async () => {
+  it("a complexity RPC failure fails the whole save — no partial generic update (F5)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain], async () => ({ data: null, error: { message: "WPP10_STALE_VERSION" } }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
+  });
+
+  it("an unrelated edit calls no complexity RPC and no revisions insert", async () => {
     const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
     const updateChain = chain({ data: { ...PKG, title: "Renamed" }, error: null });
-    const auditChain = chain({ data: null, error: null });
-    const db = mockDb([getChain, updateChain, auditChain]);
+    const db = mockDb([getChain, updateChain]);
     const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
       packageId: "forge_wp_1", patch: { title: "Renamed" } });
     expect(result.ok).toBe(true);
-    expect(auditChain.insert).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+    expect(db.from).not.toHaveBeenCalledWith("forge_work_planning_process_revisions");
   });
 });
 

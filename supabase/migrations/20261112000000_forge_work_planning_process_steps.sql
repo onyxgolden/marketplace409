@@ -26,33 +26,48 @@
 --      Actor/workspace/package/permission are derived server-side
 --      (auth.uid() + has_workspace_access / has_planner_permission);
 --      nothing browser-supplied (updatedBy/reviewedBy/role/earned
---      value) is trusted. Reviewed needs the designated
---      planner.planning_steps.review permission; a reviewer cannot
---      review their own latest submission (owner/co-owner override
---      only, with reason + audit). Complete needs an evidence
---      reference or a bounded completion attestation. N/A needs a
---      nonempty reason + authorized confirmation. Needs Revision
---      revokes earned credit immediately (computed — it earns zero)
---      and records reviewer/reason; returning to Complete/Reviewed
---      needs fresh evidence/attestation. History is append-only with
+--      value) is trusted. Transition/authority matrix (fix round 1):
+--      In-Progress/Complete need planner.planning_steps.update;
+--      N/A, Reviewed and Needs Revision need
+--      planner.planning_steps.review (owner/co-owner pass every gate).
+--      Reviewed only from a distinct prior submission (Complete or
+--      N/A by another actor, with existing qualifying evidence or
+--      attestation); no new evidence/attestation in the same review
+--      decision except an owner/co-owner reasoned override. A Reviewed
+--      row may only go back through Needs Revision by review
+--      authority; returning from Needs Revision is two-step
+--      (resubmit Complete with fresh evidence, then a different
+--      reviewer marks Reviewed). N/A needs a nonempty reason plus an
+--      authorized confirmation. Needs Revision needs a reason plus
+--      reviewer attribution (Reviewer role CAN record it; ordinary
+--      Planner role must NOT). Complete needs an evidence reference
+--      or a bounded completion attestation, validated against the
+--      EFFECTIVE post-update evidence value (an explicit clear is not
+--      evidence). Needs Revision revokes earned credit immediately
+--      (computed — it earns zero). History is append-only with
 --      before/after status, actor, reason, evidence digest/reference,
 --      UTC time and request ID. Status update + event append happen in
---      one transaction; expected-version (optimistic concurrency) and
---      request-id idempotency are enforced — stale updates return 409.
---      All rows start In-Progress; there is no Pending state.
+--      one transaction; expected version (mandatory) and request ID
+--      (mandatory, bounded; reuse with a different payload is a
+--      conflict) are enforced — stale updates return 409. All rows
+--      start In-Progress; there is no Pending state.
 --   F3: immutable versioned template. 22 stable PDF step keys
 --      (pdf-01 … pdf-22) with provenance, order, role, percent,
 --      standard hours, description. Template version 1. A package
 --      binds to a template version at creation (planning_template_version
---      on the package row) and the ensure RPC atomically creates
---      exactly 22 instance rows; weights must sum 100 and hours 40
---      BEFORE instantiation, and progress is computed against the
---      fixed denominator 100. Fail closed on a missing/duplicated
---      row. Existing packages get an idempotent owner-scoped backfill
---      (the same ensure RPC, on first checklist read). New template
---      versions are new versions; migrating a package needs a
---      separately reviewed action (planning_template_version is CHECKed
---      to 1 in this slice).
+--      on the package row) and an AFTER INSERT trigger creates exactly
+--      22 instance rows in the SAME transaction — package creation
+--      rolls back if initialization fails. The checklist RPC is
+--      READ-ONLY: it validates and returns the existing complete set
+--      and fails unavailable on missing/duplicate rows; it never
+--      mutates on GET. Existing packages get an idempotent
+--      owner/package/template-scoped backfill in this migration.
+--      Weights must sum 100 and hours 40 BEFORE instantiation, and
+--      progress is computed against the fixed denominator 100. Fail
+--      closed on a missing/duplicated row. New template versions are
+--      new versions; migrating a package needs a separately reviewed
+--      action (planning_template_version is CHECKed to 1 in this
+--      slice).
 --   F4: the dashboard "Weighted Value" is earned planning MHRS /
 --      total planned planning MHRS (e.g. 20/40 MHRS at Standard for
 --      50% earned) — never cost EV, construction EV or actual labor
@@ -87,9 +102,18 @@
 --      updated to grant them, and a backfill for starter roles that
 --      already exist.
 --   6. RPCs: forge_work_planning_process_checklist (template
---      verification + ensure-on-first-read + whole checklist in one
---      call) and forge_work_planning_process_set_status (the only
+--      verification + the complete 22-row set, READ-ONLY — a
+--      missing/duplicated set is unavailable, never auto-created)
+--      and forge_work_planning_process_set_status (the only status
 --      write path: F2 rules + revision in one transaction).
+--   7. A SECURITY DEFINER trigger that creates the 22 checklist rows
+--      atomically with the package row, plus an idempotent
+--      owner/package/template-scoped backfill for existing packages.
+--   8. RPC forge_work_planning_process_set_complexity — the only
+--      complexity write path (expected version + request-id
+--      idempotency; the complexity_change event is appended in the
+--      same transaction). Complexity is no longer updated by a
+--      client-side revisions insert or a generic package PATCH.
 --
 -- The existing free-form forge_work_steps table (slice 5) is untouched:
 -- it stays the execution-step breakdown; these 22 are the *build*
@@ -606,19 +630,20 @@ revoke all on table public.forge_work_planning_process_revisions from public, an
 grant select on table public.forge_work_planning_process_revisions to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 7. RPC: forge_work_planning_process_checklist — template verification +
---    ensure-on-first-read.
+-- 7. RPC: forge_work_planning_process_checklist — READ-ONLY.
 --
--- Verifies the bound template version BEFORE instantiating (exactly 22
--- rows, 22 distinct step keys, credits sum 100, standard hours sum 40)
--- and fails closed (WPP10_TEMPLATE_INVALID) on any drift. Then creates
--- the 22 instance rows (all In-Progress, submitted_by NULL — creation
--- is not a submission) for a package that has none yet — idempotent, so
--- a second call inserts nothing — and verifies the post-ensure count
--- is exactly 22 (WPP10_CHECKLIST_INCOMPLETE otherwise). Returns the
--- whole checklist (template + instances + the package's complexity and
--- bound template version + the caller's effective update/review
--- affordances + construction readiness) as one jsonb object.
+-- Verifies the bound template version (exactly 22 rows, 22 distinct
+-- step keys, credits sum 100, standard hours sum 40) and fails closed
+-- (WPP10_TEMPLATE_INVALID) on any drift. Then verifies the 22
+-- instance rows already exist for the package (created atomically
+-- with the package row by the trigger in section 9, or by the
+-- idempotent backfill in section 10) — exactly 22 rows, 22 distinct
+-- step keys (WPP10_CHECKLIST_INCOMPLETE otherwise). A GET never
+-- mutates: a missing/duplicated set is unavailable, never
+-- auto-created. Returns the whole checklist (template + instances +
+-- the package's complexity and bound template version + the caller's
+-- effective update/review affordances + construction readiness) as
+-- one jsonb object.
 --
 -- constructionReadiness is ALWAYS 'not_established' in Slice A: no
 -- package-level release decision exists yet, and no release API is
@@ -635,9 +660,8 @@ grant select on table public.forge_work_planning_process_revisions to authentica
 -- has_planner_permission, never by broadening has_workspace_access
 -- (scope brief results/chatgpt/work-package-planner-admin-permissions-scope-2026-11-08.md:
 -- "Every key must be backed by actual RLS/RPC enforcement before
--- assignable"). A staff reader with only .read can open the checklist
--- (and trigger the lazy init, which runs as SECURITY DEFINER); a
--- stranger gets WPP10_WORKSPACE_FORBIDDEN.
+-- assignable"). A staff reader with only .read can open the checklist;
+-- a stranger gets WPP10_WORKSPACE_FORBIDDEN.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_work_planning_process_checklist(
@@ -656,6 +680,7 @@ declare
   v_template_version integer;
   v_can_update boolean;
   v_can_review boolean;
+  v_is_owner boolean;
   v_count integer;
   v_keys integer;
   v_credit numeric;
@@ -694,32 +719,17 @@ begin
 
   v_can_update := public.has_planner_permission(p_owner_id, 'planner.planning_steps.update');
   v_can_review := public.has_planner_permission(p_owner_id, 'planner.planning_steps.review');
+  v_is_owner := public.has_workspace_access(p_owner_id);
 
-  insert into public.forge_work_planning_process_instances
-    (owner_id, id, work_package_id, template_version, template_step_id, status, submitted_by, created_by, updated_by)
-  select p_owner_id,
-         'forge_ppi_' || replace(gen_random_uuid()::text, '-', ''),
-         p_package_id,
-         v_template_version,
-         t.step_key,
-         'In-Progress',
-         null,
-         v_actor,
-         v_actor
-    from public.forge_work_planning_process_template t
-    where t.version = v_template_version
-      and not exists (
-        select 1 from public.forge_work_planning_process_instances i
-        where i.owner_id = p_owner_id
-          and i.work_package_id = p_package_id
-          and i.template_step_id = t.step_key
-      );
-
-  select count(*) into v_instances
+  -- F1 (fix round 1): READ-ONLY. The 22 instance rows are created
+  -- atomically with the package row (trigger, section 9) or by the
+  -- idempotent backfill (section 10). A GET never mutates: a
+  -- missing/duplicated set is unavailable, never auto-created.
+  select count(*), count(distinct template_step_id) into v_instances, v_keys
     from public.forge_work_planning_process_instances
     where owner_id = p_owner_id and work_package_id = p_package_id;
-  if v_instances <> 22 then
-    raise exception 'WPP10_CHECKLIST_INCOMPLETE: package % has % planning instances, expected 22', p_package_id, v_instances;
+  if v_instances <> 22 or v_keys <> 22 then
+    raise exception 'WPP10_CHECKLIST_INCOMPLETE: package % has % planning instances (% distinct step keys), expected 22', p_package_id, v_instances, v_keys;
   end if;
 
   return jsonb_build_object(
@@ -728,6 +738,7 @@ begin
     'templateVersion', v_template_version,
     'canUpdate', v_can_update,
     'canReview', v_can_review,
+    'isOwner', v_is_owner,
     'constructionReadiness', jsonb_build_object(
       'status', 'not_established',
       'detail', 'No package-level release decision exists yet. Planning percent never authorizes construction or releases an IFC drawing.'
@@ -762,38 +773,59 @@ grant execute on function public.forge_work_planning_process_checklist(text, tex
 --     browser-supplied updatedBy/reviewedBy/role/earned value are
 --     ignored — the RPC takes no such parameters;
 --   - status must be one of the PDF's five word statuses;
---   - Reviewed requires planner.planning_steps.review; every other
---     status requires planner.planning_steps.update. Either gate also
---     passes for the owner/co-owner (structural authority —
+--   - TRANSITION/AUTHORITY MATRIX (fix round 1). In-Progress and
+--     Complete require planner.planning_steps.update; N/A, Reviewed
+--     and Needs Revision require planner.planning_steps.review. Either
+--     gate also passes for the owner/co-owner (structural authority —
 --     has_workspace_access). The gates are real for staff: a Planner
 --     assignee can set Complete but not Reviewed; a Reviewer assignee
---     can set Reviewed but not ordinary statuses. Until the role
---     policy is deployed (this migration), owner/co-owner only — the
---     gates above are what make the three new capabilities assignable
---     rather than decorative (admin scope brief: every key must be
---     backed by actual RPC enforcement);
+--     can set Reviewed, N/A or Needs Revision but not ordinary
+--     statuses. Until the role policy is deployed (this migration),
+--     owner/co-owner only — the gates above are what make the three
+--     new capabilities assignable rather than decorative (admin scope
+--     brief: every key must be backed by actual RPC enforcement);
+--   - Reviewed only from a distinct prior submission (Complete or N/A,
+--     submitted_by non-null and not the reviewer) with an existing
+--     qualifying basis — an evidence link already on the row, an
+--     attestation in the latest revision, or the N/A reason — and with
+--     NO new evidence/attestation supplied in the same decision
+--     (WPP10_REVIEW_EVIDENCE_SAME_REQUEST), except an owner/co-owner
+--     reasoned override (recorded as is_override);
 --   - a reviewer cannot review their own latest submission
 --     (submitted_by): WPP10_SELF_REVIEW_FORBIDDEN. An owner/co-owner
 --     may override with a nonempty reason — recorded as is_override;
---   - Complete requires an evidence reference (a link supplied now or
---     already on the row) or a bounded completion attestation
---     (<= 500 chars); returning to Complete/Reviewed from Needs
---     Revision requires FRESH evidence/attestation supplied in this
---     request (a stale stored link does not count);
---   - N/A requires a nonempty reason (<= 500 chars) and an authorized
---     confirmer (the update gate above); Needs Revision requires a
---     nonempty reason and records reviewer/reason;
+--   - a Reviewed row may only go back through Needs Revision by
+--     review authority (WPP10_REVIEWED_LOCKED); returning from Needs
+--     Revision is two-step — resubmit Complete with fresh evidence,
+--     then a different reviewer marks Reviewed (Reviewed directly
+--     from Needs Revision is WPP10_TWO_STEP_REQUIRED);
+--   - Complete requires an EFFECTIVE evidence reference (a link
+--     supplied now, else the link already on the row — an explicit
+--     clear is NOT evidence) or a bounded completion attestation
+--     (<= 500 chars); returning to Complete from Needs Revision
+--     requires FRESH evidence/attestation supplied in this request
+--     (a stale stored link does not count);
+--   - N/A requires the review capability, a nonempty reason
+--     (<= 500 chars) and an authorized confirmation. Needs Revision
+--     requires the review capability, a nonempty reason and reviewer
+--     attribution (the revision's actor_id);
 --   - a terminal package (cancelled / verified_closed) cannot change;
 --   - Reviewed records the reviewer (auth.uid()) and the time; leaving
 --     Reviewed clears both, so a row never claims Reviewed with no
 --     reviewer (the table CHECK backs this too);
---   - expected version: a stale p_expected_version is rejected with
+--   - optimistic concurrency is MANDATORY: p_expected_version must be
+--     a positive integer (WPP10_EXPECTED_VERSION_REQUIRED); the
+--     instance row is locked FOR UPDATE and the update is conditional
+--     on the version — a stale version is rejected with
 --     WPP10_STALE_VERSION (409); the row version increments on every
 --     successful change;
---   - idempotency: a p_request_id already recorded for this package x
---     step returns the current row without re-applying (no second
---     revision, no version bump). Callers must use a fresh request ID
---     per logical change;
+--   - idempotency: p_request_id is MANDATORY, nonempty and <= 128
+--     chars (WPP10_REQUEST_ID_REQUIRED / WPP10_INVALID_REQUEST_ID). A
+--     request ID already recorded for this package x step with the
+--     SAME payload replays the current row without re-applying (no
+--     second revision, no version bump); reuse with a DIFFERENT
+--     payload is rejected with WPP10_REQUEST_ID_CONFLICT. Callers must
+--     use a fresh request ID per logical change;
 --   - evidence_link: null means unchanged, '' clears to null, anything
 --     else must be <= 2000 chars with no control characters;
 --   - the revision row carries before/after status, actor, reason,
@@ -826,9 +858,17 @@ declare
   v_old_status text;
   v_old_evidence text;
   v_evidence text;
+  v_effective_evidence text;
   v_reason text;
   v_attestation text;
   v_request_id text;
+  v_latest_attestation text;
+  v_latest_reason text;
+  v_latest_actor text;
+  v_prev_status text;
+  v_prev_evidence text;
+  v_prev_reason text;
+  v_prev_attestation text;
   v_is_override boolean := false;
   v_action text;
 begin
@@ -864,6 +904,22 @@ begin
     raise exception 'WPP10_INVALID_STATUS';
   end if;
 
+  -- F2 (fix round 1): optimistic concurrency is MANDATORY — a
+  -- missing/zero/negative expected version is a 400, never an
+  -- optional guard. A missing request ID is a 400; an over-long one
+  -- is a 400. Neither is ever minted server-side here: a caller that
+  -- cannot name its change cannot replay or de-duplicate it.
+  if p_expected_version is null or p_expected_version < 1 then
+    raise exception 'WPP10_EXPECTED_VERSION_REQUIRED';
+  end if;
+  v_request_id := nullif(btrim(coalesce(p_request_id, '')), '');
+  if v_request_id is null then
+    raise exception 'WPP10_REQUEST_ID_REQUIRED';
+  end if;
+  if char_length(v_request_id) > 128 then
+    raise exception 'WPP10_INVALID_REQUEST_ID';
+  end if;
+
   if p_evidence_link is not null then
     v_evidence := nullif(btrim(p_evidence_link), '');
     if v_evidence is not null
@@ -881,10 +937,18 @@ begin
     raise exception 'WPP10_INVALID_ATTESTATION';
   end if;
 
-  if p_status = 'Reviewed' then
+  -- F3 (fix round 1): the transition/authority matrix. In-Progress
+  -- and Complete need the update capability; N/A, Reviewed and Needs
+  -- Revision need the review capability. Owner/co-owner pass every
+  -- gate. A Reviewer assignee CAN record Needs Revision; an ordinary
+  -- Planner must NOT.
+  if p_status in ('N/A', 'Reviewed', 'Needs Revision') then
     if not (v_is_owner
             or public.has_planner_permission(p_owner_id, 'planner.planning_steps.review')) then
-      raise exception 'WPP10_REVIEW_FORBIDDEN';
+      if p_status = 'Reviewed' then
+        raise exception 'WPP10_REVIEW_FORBIDDEN';
+      end if;
+      raise exception 'WPP10_REVIEW_CAPABILITY_REQUIRED';
     end if;
   else
     if not (v_is_owner
@@ -893,75 +957,143 @@ begin
     end if;
   end if;
 
+  -- Lock the instance row for the rest of this transaction so two
+  -- concurrent writers serialize here; the conditional UPDATE below
+  -- is the second, atomic guard on the version.
   select * into v_inst
     from public.forge_work_planning_process_instances
     where owner_id = p_owner_id
       and work_package_id = p_package_id
-      and template_step_id = p_template_step_id;
+      and template_step_id = p_template_step_id
+    for update;
   if v_inst.id is null then
     raise exception 'WPP10_STEP_NOT_FOUND';
   end if;
 
-  -- Idempotency: a request ID already recorded for this package x step
-  -- replays the current row without re-applying. Checked before the
-  -- version gate (a replay's expected version is stale by definition)
-  -- and before the transition rules (the original call already passed
-  -- them).
-  v_request_id := nullif(btrim(coalesce(p_request_id, '')), '');
-  if v_request_id is not null and exists (
-    select 1 from public.forge_work_planning_process_revisions r
-    where r.owner_id = p_owner_id
-      and r.work_package_id = p_package_id
-      and r.template_step_id = p_template_step_id
-      and r.request_id = v_request_id
-  ) then
-    return row_to_json(v_inst)::jsonb;
-  end if;
-  if v_request_id is null then
-    v_request_id := 'forge_pprq_' || replace(gen_random_uuid()::text, '-', '');
-  end if;
-
-  -- Optimistic concurrency: a stale expected version is a 409, never a
-  -- silent overwrite of another writer's change.
-  if p_expected_version is not null and p_expected_version <> v_inst.version then
-    raise exception 'WPP10_STALE_VERSION: expected version %, current version %', p_expected_version, v_inst.version;
-  end if;
-
-  -- Capture the pre-update values BEFORE the UPDATE ... RETURNING below
-  -- overwrites v_inst, or the revision row would record the new status
-  -- as both old and new.
+  -- Capture the pre-update values BEFORE the UPDATE ... RETURNING
+  -- below overwrites v_inst, or the revision row would record the new
+  -- status as both old and new.
   v_old_status := v_inst.status;
   v_old_evidence := v_inst.evidence_link;
 
-  -- Self-review ban: the reviewer cannot review their own latest
-  -- submission. An owner/co-owner may override, but only with a
-  -- nonempty reason — recorded as an override in the event.
-  if p_status = 'Reviewed' and v_inst.submitted_by is not null and v_inst.submitted_by = v_actor then
-    if not v_is_owner then
-      raise exception 'WPP10_SELF_REVIEW_FORBIDDEN';
+  -- F4 (fix round 1): ONE effective post-update evidence value.
+  -- p_evidence_link null means "unchanged" (keep the stored link);
+  -- '' clears it; anything else replaces. The effective value is
+  -- validated BEFORE the UPDATE, so a clear can never be mistaken
+  -- for evidence.
+  v_effective_evidence := case when p_evidence_link is null then v_old_evidence else v_evidence end;
+
+  -- Idempotency: a request ID already recorded for this package x
+  -- step replays the current row without re-applying, but ONLY for
+  -- the same payload (status + effective evidence + reason +
+  -- attestation). Reuse with a different payload is a conflict —
+  -- silently accepting it would lose the second change. Checked
+  -- before the version gate (a replay's expected version is stale by
+  -- definition) and before the transition rules (the original call
+  -- already passed them).
+  select new_status, evidence_reference, reason, attestation
+    into v_prev_status, v_prev_evidence, v_prev_reason, v_prev_attestation
+    from public.forge_work_planning_process_revisions r
+    where r.owner_id = p_owner_id
+      and r.work_package_id = p_package_id
+      and r.template_step_id = p_template_step_id
+      and r.request_id = v_request_id;
+  if v_prev_status is not null then
+    if v_prev_status = p_status
+       and v_prev_evidence is not distinct from v_effective_evidence
+       and v_prev_reason is not distinct from v_reason
+       and v_prev_attestation is not distinct from v_attestation then
+      return row_to_json(v_inst)::jsonb;
     end if;
-    if v_reason is null then
-      raise exception 'WPP10_REASON_REQUIRED: an owner override reviewing their own submission needs a reason';
-    end if;
-    v_is_override := true;
+    raise exception 'WPP10_REQUEST_ID_CONFLICT';
   end if;
 
-  -- Evidence rules. Effective evidence is a link supplied now, else
-  -- the link already on the row ('' clears it — a clear is not
-  -- evidence). Returning from Needs Revision needs FRESH evidence or
-  -- attestation supplied in this request.
+  -- Optimistic concurrency: a stale expected version is a 409, never
+  -- a silent overwrite of another writer's change.
+  if p_expected_version <> v_inst.version then
+    raise exception 'WPP10_STALE_VERSION: expected version %, current version %', p_expected_version, v_inst.version;
+  end if;
+
+  -- F3 (fix round 1): a Reviewed row may only go back through Needs
+  -- Revision, by review authority. An ordinary updater cannot
+  -- silently downgrade or rewrite it.
+  if v_old_status = 'Reviewed' and p_status not in ('Reviewed', 'Needs Revision') then
+    raise exception 'WPP10_REVIEWED_LOCKED';
+  end if;
+
+  -- F3: returning from Needs Revision is two-step — resubmit as
+  -- Complete with fresh evidence, then a different reviewer marks
+  -- Reviewed. Reviewed directly from Needs Revision is rejected.
+  if p_status = 'Reviewed' and v_old_status = 'Needs Revision' then
+    raise exception 'WPP10_TWO_STEP_REQUIRED';
+  end if;
+
+  -- F3: Reviewed only from a distinct prior submission. The row must
+  -- have been submitted (Complete or N/A) by someone other than the
+  -- reviewer, and there must be an existing qualifying basis: an
+  -- evidence link already on the row, an attestation in the latest
+  -- revision, or the N/A reason. No new evidence/attestation may be
+  -- supplied in the same review decision — the review judges what is
+  -- already there — except an owner/co-owner reasoned override.
+  -- (An evidence-only change on an already-Reviewed row — same
+  -- status — skips the basis checks: it is not a review decision.)
+  if p_status = 'Reviewed' and v_old_status <> 'Reviewed' then
+    if v_old_status not in ('Complete', 'N/A') then
+      raise exception 'WPP10_REVIEW_BASIS_REQUIRED: only a submitted step (Complete or N/A) can be Reviewed';
+    end if;
+    if v_inst.submitted_by is null then
+      raise exception 'WPP10_REVIEW_BASIS_REQUIRED: no prior submission to review';
+    end if;
+    select attestation, reason, actor_id
+      into v_latest_attestation, v_latest_reason, v_latest_actor
+      from public.forge_work_planning_process_revisions
+      where owner_id = p_owner_id
+        and work_package_id = p_package_id
+        and template_step_id = p_template_step_id
+      order by recorded_at desc, id desc
+      limit 1;
+    if v_old_status = 'Complete'
+       and v_old_evidence is null
+       and v_latest_attestation is null then
+      raise exception 'WPP10_REVIEW_BASIS_REQUIRED: a Complete step needs evidence or an attestation already on the record';
+    end if;
+    if v_old_status = 'N/A' and v_latest_reason is null then
+      raise exception 'WPP10_REVIEW_BASIS_REQUIRED: an N/A step needs the confirmation reason already on the record';
+    end if;
+    -- Self-review ban: the reviewer cannot review their own latest
+    -- submission. An owner/co-owner may override, but only with a
+    -- nonempty reason — recorded as an override in the event.
+    if v_inst.submitted_by = v_actor then
+      if not v_is_owner then
+        raise exception 'WPP10_SELF_REVIEW_FORBIDDEN';
+      end if;
+      if v_reason is null then
+        raise exception 'WPP10_REASON_REQUIRED: an owner override reviewing their own submission needs a reason';
+      end if;
+      v_is_override := true;
+    end if;
+    -- No new evidence/attestation in the same review decision,
+    -- except an owner/co-owner reasoned override.
+    if (p_evidence_link is not null or p_attestation is not null) then
+      if not v_is_owner or v_reason is null then
+        raise exception 'WPP10_REVIEW_EVIDENCE_SAME_REQUEST';
+      end if;
+      v_is_override := true;
+    end if;
+  end if;
+
+  -- F4: Complete requires EFFECTIVE evidence (a link supplied now,
+  -- else the link already on the row — an explicit clear is NOT
+  -- evidence) or a bounded completion attestation. Returning to
+  -- Complete from Needs Revision needs FRESH evidence/attestation
+  -- supplied in this request (a stale stored link does not count).
   if p_status = 'Complete' then
     if v_old_status = 'Needs Revision' then
       if v_evidence is null and v_attestation is null then
         raise exception 'WPP10_FRESH_EVIDENCE_REQUIRED';
       end if;
-    elsif coalesce(v_evidence, v_old_evidence) is null and v_attestation is null then
+    elsif v_effective_evidence is null and v_attestation is null then
       raise exception 'WPP10_EVIDENCE_REQUIRED';
-    end if;
-  end if;
-  if p_status = 'Reviewed' and v_old_status = 'Needs Revision' then
-    if v_evidence is null and v_attestation is null then
-      raise exception 'WPP10_FRESH_EVIDENCE_REQUIRED';
     end if;
   end if;
 
@@ -973,12 +1105,17 @@ begin
 
   v_action := case when v_old_status = p_status then 'evidence_link_change' else 'status_change' end;
 
+  -- Conditional UPDATE on the version: the atomic guard against a
+  -- lost update. Zero affected rows means another writer moved the
+  -- row since this call's expected version — a 409, never a silent
+  -- overwrite. (The FOR UPDATE lock above serializes writers, so in
+  -- practice this fires when the caller read a stale version.)
   update public.forge_work_planning_process_instances
     set status = p_status,
-        -- p_evidence_link null means "unchanged"; '' clears to null;
-        -- anything else replaces. (coalesce would be wrong here: a
-        -- clear-to-null would silently keep the old link.)
-        evidence_link = case when p_evidence_link is null then evidence_link else v_evidence end,
+        -- v_effective_evidence is the ONE post-update evidence value
+        -- (null means unchanged, '' clears to null, anything else
+        -- replaces). Never re-derive it here.
+        evidence_link = v_effective_evidence,
         reviewed_by = case when p_status = 'Reviewed' then v_actor else null end,
         reviewed_at = case when p_status = 'Reviewed' then now() else null end,
         submitted_by = v_actor,
@@ -986,7 +1123,11 @@ begin
         updated_by = v_actor,
         updated_at = now()
     where owner_id = p_owner_id and id = v_inst.id
+      and version = p_expected_version
     returning * into v_inst;
+  if v_inst is null then
+    raise exception 'WPP10_STALE_VERSION: expected version %, current version has moved', p_expected_version;
+  end if;
 
   insert into public.forge_work_planning_process_revisions
     (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
@@ -1018,3 +1159,272 @@ $$;
 
 revoke all on function public.forge_work_planning_process_set_status(text, text, text, text, text, text, text, integer, text) from public, anon, service_role;
 grant execute on function public.forge_work_planning_process_set_status(text, text, text, text, text, text, text, integer, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 9. Trigger: forge_work_packages AFTER INSERT — atomic checklist
+--    creation (F1, fix round 1).
+--
+-- Package creation and its 22 checklist rows are ONE transaction:
+-- the trigger fires on the package insert, validates the bound
+-- template (22 rows / 22 distinct keys / credits 100 / hours 40) and
+-- inserts the 22 instance rows (all In-Progress, submitted_by NULL —
+-- creation is not a submission). If initialization fails, the trigger
+-- raises and the package row rolls back with it — a package can never
+-- exist without its checklist. The function is SECURITY DEFINER with
+-- row_security off (instances/revisions have FORCE RLS + SELECT-only
+-- grants), and the actor falls back to 'system' when auth.uid() is
+-- null (service_role inserts). The checklist RPC is read-only and
+-- never re-creates rows, so the trigger is the only creation path.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.forge_work_planning_process_init_checklist()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+set row_security = off
+as $$
+declare
+  v_actor text;
+  v_count integer;
+  v_keys integer;
+  v_credit numeric;
+  v_hours numeric;
+begin
+  v_actor := coalesce(auth.uid()::text, 'system');
+
+  -- Validate the bound template BEFORE instantiating: a template
+  -- that cannot reach 100% must fail closed, never mint a checklist
+  -- that reports a misleading percent.
+  select count(*), count(distinct step_key),
+         coalesce(sum(credit_pct), 0), coalesce(sum(mhrs_standard), 0)
+    into v_count, v_keys, v_credit, v_hours
+    from public.forge_work_planning_process_template
+    where version = new.planning_template_version;
+  if v_count <> 22 or v_keys <> 22 or v_credit <> 100 or v_hours <> 40 then
+    raise exception 'WPP10_TEMPLATE_INVALID: template version % has % rows (% distinct keys), credits %, hours %',
+      new.planning_template_version, v_count, v_keys, v_credit, v_hours;
+  end if;
+
+  insert into public.forge_work_planning_process_instances
+    (owner_id, id, work_package_id, template_version, template_step_id, status, submitted_by, created_by, updated_by)
+  select new.owner_id,
+         'forge_ppi_' || replace(gen_random_uuid()::text, '-', ''),
+         new.id,
+         new.planning_template_version,
+         t.step_key,
+         'In-Progress',
+         null,
+         v_actor,
+         v_actor
+    from public.forge_work_planning_process_template t
+    where t.version = new.planning_template_version;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists forge_work_planning_process_init_checklist_trigger on public.forge_work_packages;
+create trigger forge_work_planning_process_init_checklist_trigger
+  after insert on public.forge_work_packages
+  for each row
+  execute function public.forge_work_planning_process_init_checklist();
+
+-- ---------------------------------------------------------------------------
+-- 10. Backfill: existing packages get their 22 checklist rows (F1).
+--
+-- Idempotent and owner/package/template-scoped: the NOT EXISTS guard
+-- means a re-apply inserts nothing, and a package that already has
+-- its rows (created by the trigger, or backfilled by a previous
+-- apply) is untouched. Packages with no template version bound yet
+-- are skipped — there is nothing to instantiate for them.
+-- ---------------------------------------------------------------------------
+
+insert into public.forge_work_planning_process_instances
+  (owner_id, id, work_package_id, template_version, template_step_id, status, submitted_by, created_by, updated_by)
+select p.owner_id,
+       'forge_ppi_' || replace(gen_random_uuid()::text, '-', ''),
+       p.id,
+       p.planning_template_version,
+       t.step_key,
+       'In-Progress',
+       null,
+       'system',
+       'system'
+  from public.forge_work_packages p
+  join public.forge_work_planning_process_template t
+    on t.version = p.planning_template_version
+  where p.planning_template_version is not null
+    and not exists (
+      select 1 from public.forge_work_planning_process_instances i
+      where i.owner_id = p.owner_id
+        and i.work_package_id = p.id
+        and i.template_step_id = t.step_key
+    );
+
+-- ---------------------------------------------------------------------------
+-- 11. RPC: forge_work_planning_process_set_complexity — the only
+--     complexity write path (F5, fix round 1).
+--
+-- Complexity is no longer updated by a client-side revisions insert
+-- (recordPlanningComplexityChange) or a best-effort generic package
+-- PATCH: it changes here, in one transaction, with the
+-- complexity_change event appended. Actor, workspace, package and
+-- permission are derived server-side (auth.uid() +
+-- has_workspace_access / has_planner_permission planner.packages.edit);
+-- browser-supplied actor values are ignored. Optimistic concurrency
+-- is mandatory (p_expected_version must be a positive integer; a
+-- stale version is WPP10_STALE_VERSION, 409) and p_request_id is
+-- mandatory, nonempty and <= 128 chars; reuse with a different
+-- payload is WPP10_REQUEST_ID_CONFLICT. A complexity value equal to
+-- the current one is a no-op (returns the package row, no revision).
+-- A terminal package (cancelled / verified_closed) cannot change.
+-- Complexity events have template_step_id NULL, so the revisions
+-- unique index (which treats NULLs as distinct) cannot enforce
+-- request-id idempotency for them — the RPC checks explicitly.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.forge_work_planning_process_set_complexity(
+  p_owner_id text,
+  p_package_id text,
+  p_complexity text,
+  p_expected_version integer default null,
+  p_request_id text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+set row_security = off
+as $$
+declare
+  v_actor text;
+  v_is_owner boolean;
+  v_pkg public.forge_work_packages%rowtype;
+  v_request_id text;
+  v_old_complexity text;
+  v_prev_complexity text;
+begin
+  -- Entry guard: a reader with only .read gets the honest
+  -- COMPLEXITY_FORBIDDEN (403), not a WORKSPACE_FORBIDDEN (404)
+  -- for a package they can plainly see; a true stranger still gets
+  -- WORKSPACE_FORBIDDEN, so existence is never leaked to them.
+  if not (public.has_workspace_access(p_owner_id)
+          or public.has_planner_permission(p_owner_id, 'planner.planning_steps.read')
+          or public.has_planner_permission(p_owner_id, 'planner.packages.edit')) then
+    raise exception 'WPP10_WORKSPACE_FORBIDDEN';
+  end if;
+  v_actor := auth.uid()::text;
+  if v_actor is null or btrim(v_actor) = '' then
+    raise exception 'WPP10_INVALID_ACTOR';
+  end if;
+  v_is_owner := public.has_workspace_access(p_owner_id);
+
+  if p_complexity is null or p_complexity not in ('low', 'standard', 'mid', 'high', 'h_high') then
+    raise exception 'WPP10_INVALID_COMPLEXITY';
+  end if;
+  if p_expected_version is null or p_expected_version < 1 then
+    raise exception 'WPP10_EXPECTED_VERSION_REQUIRED';
+  end if;
+  v_request_id := nullif(btrim(coalesce(p_request_id, '')), '');
+  if v_request_id is null then
+    raise exception 'WPP10_REQUEST_ID_REQUIRED';
+  end if;
+  if char_length(v_request_id) > 128 then
+    raise exception 'WPP10_INVALID_REQUEST_ID';
+  end if;
+
+  if not (v_is_owner
+          or public.has_planner_permission(p_owner_id, 'planner.packages.edit')) then
+    raise exception 'WPP10_COMPLEXITY_FORBIDDEN';
+  end if;
+
+  select * into v_pkg
+    from public.forge_work_packages
+    where owner_id = p_owner_id and id = p_package_id
+    for update;
+  if v_pkg.id is null then
+    raise exception 'WPP10_PACKAGE_NOT_FOUND';
+  end if;
+  if v_pkg.status in ('cancelled', 'verified_closed') then
+    raise exception 'WPP10_PACKAGE_TERMINAL';
+  end if;
+
+  -- Explicit idempotency: complexity events have template_step_id
+  -- NULL, so the revisions unique index cannot enforce request-id
+  -- uniqueness for them. A replay with the same payload returns the
+  -- current package row; reuse with a different payload is a
+  -- conflict.
+  select new_values ->> 'complexity'
+    into v_prev_complexity
+    from public.forge_work_planning_process_revisions r
+    where r.owner_id = p_owner_id
+      and r.work_package_id = p_package_id
+      and r.template_step_id is null
+      and r.action = 'complexity_change'
+      and r.request_id = v_request_id;
+  if v_prev_complexity is not null then
+    if v_prev_complexity = p_complexity then
+      return row_to_json(v_pkg)::jsonb;
+    end if;
+    raise exception 'WPP10_REQUEST_ID_CONFLICT';
+  end if;
+
+  v_old_complexity := v_pkg.planning_complexity;
+
+  -- Conditional UPDATE on the version: a stale expected version is
+  -- a 409, never a silent overwrite. Checked before the no-op return
+  -- so a stale caller cannot claim success on a version they never
+  -- read.
+  if p_expected_version <> v_pkg.version then
+    raise exception 'WPP10_STALE_VERSION: expected version %, current version %', p_expected_version, v_pkg.version;
+  end if;
+
+  -- A value equal to the current one is a no-op: return the package
+  -- row, no revision, no version bump.
+  if v_old_complexity = p_complexity then
+    return row_to_json(v_pkg)::jsonb;
+  end if;
+
+  update public.forge_work_packages
+    set planning_complexity = p_complexity,
+        version = version + 1,
+        updated_by = v_actor,
+        updated_at = now()
+    where owner_id = p_owner_id and id = v_pkg.id
+      and version = p_expected_version
+    returning * into v_pkg;
+  if v_pkg is null then
+    raise exception 'WPP10_STALE_VERSION: expected version %, current version has moved', p_expected_version;
+  end if;
+
+  insert into public.forge_work_planning_process_revisions
+    (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
+     old_status, new_status, reason, evidence_reference, evidence_digest, attestation,
+     is_override, request_id, old_values, new_values)
+  values (
+    p_owner_id,
+    'forge_ppr_' || replace(gen_random_uuid()::text, '-', ''),
+    null,
+    p_package_id,
+    null,
+    v_actor,
+    'complexity_change',
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    false,
+    v_request_id,
+    jsonb_build_object('complexity', v_old_complexity),
+    jsonb_build_object('complexity', p_complexity)
+  );
+
+  return row_to_json(v_pkg)::jsonb;
+end;
+$$;
+
+revoke all on function public.forge_work_planning_process_set_complexity(text, text, text, integer, text) from public, anon, service_role;
+grant execute on function public.forge_work_planning_process_set_complexity(text, text, text, integer, text) to authenticated;

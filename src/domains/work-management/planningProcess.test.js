@@ -198,23 +198,52 @@ describe("CONSTRUCTION_READINESS_NOT_ESTABLISHED (F1)", () => {
 
 describe("validatePlanningStatusChange (F2 pre-check)", () => {
   const base = { canUpdate: true, canReview: true, oldStatus: "In-Progress", storedEvidenceLink: null };
+  const submitted = { ...base, oldStatus: "Complete", storedEvidenceLink: "https://example.invalid/pid" };
 
   it("rejects an unknown status", () => {
     expect(validatePlanningStatusChange({ ...base, status: "Pending" })).toMatch(/must be one of/);
   });
 
-  it("Reviewed needs the reviewer capability", () => {
-    expect(validatePlanningStatusChange({ ...base, status: "Reviewed", canReview: false })).toMatch(/Only a reviewer/);
-    expect(validatePlanningStatusChange({ ...base, status: "Reviewed" })).toBeNull();
+  it("Reviewed needs the reviewer capability and a distinct prior submission", () => {
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", canReview: false })).toMatch(/Only a reviewer/);
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed" })).toBeNull();
+    // In-Progress has no submission to judge.
+    expect(validatePlanningStatusChange({ ...base, status: "Reviewed" })).toMatch(/Only a submitted step/);
   });
 
   it("a reviewer cannot review their own latest submission; an owner override needs a reason", () => {
-    expect(validatePlanningStatusChange({ ...base, status: "Reviewed", isSelfSubmission: true }))
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", isSelfSubmission: true }))
       .toMatch(/different reviewer/);
-    expect(validatePlanningStatusChange({ ...base, status: "Reviewed", isSelfSubmission: true, isOwner: true }))
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", isSelfSubmission: true, isOwner: true }))
       .toMatch(/needs a reason/);
-    expect(validatePlanningStatusChange({ ...base, status: "Reviewed", isSelfSubmission: true, isOwner: true, reason: "I checked the drawings myself." }))
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", isSelfSubmission: true, isOwner: true, reason: "I checked the drawings myself." }))
       .toBeNull();
+  });
+
+  it("a review cannot add new evidence in the same decision, except an owner override with a reason", () => {
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", newEvidenceLink: "https://example.invalid/fresh" }))
+      .toMatch(/cannot add new evidence/);
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", attestation: "I re-checked it." }))
+      .toMatch(/cannot add new evidence/);
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", newEvidenceLink: "https://example.invalid/fresh", isOwner: true }))
+      .toMatch(/cannot add new evidence/);
+    expect(validatePlanningStatusChange({ ...submitted, status: "Reviewed", newEvidenceLink: "https://example.invalid/fresh", isOwner: true, reason: "Owner override: re-checked against the new cut sheet." }))
+      .toBeNull();
+    // Without evidence already on the step, a review has nothing to judge.
+    expect(validatePlanningStatusChange({ ...base, oldStatus: "Complete", status: "Reviewed" }))
+      .toMatch(/no evidence on the record/);
+  });
+
+  it("a Reviewed row may only go back through Needs Revision", () => {
+    const reviewed = { ...base, oldStatus: "Reviewed" };
+    expect(validatePlanningStatusChange({ ...reviewed, status: "Complete", storedEvidenceLink: "https://example.invalid/pid" }))
+      .toMatch(/only a reviewer can send it back/);
+    expect(validatePlanningStatusChange({ ...reviewed, status: "In-Progress" }))
+      .toMatch(/only a reviewer can send it back/);
+    expect(validatePlanningStatusChange({ ...reviewed, status: "Needs Revision", reason: "The review found a gap." }))
+      .toBeNull();
+    expect(validatePlanningStatusChange({ ...reviewed, status: "Needs Revision", canReview: false, reason: "The review found a gap." }))
+      .toMatch(/Only a reviewer can record this change/);
   });
 
   it("Complete needs an evidence link or an attestation", () => {
@@ -222,23 +251,31 @@ describe("validatePlanningStatusChange (F2 pre-check)", () => {
     expect(validatePlanningStatusChange({ ...base, status: "Complete", storedEvidenceLink: "https://example.invalid/pid" })).toBeNull();
     expect(validatePlanningStatusChange({ ...base, status: "Complete", attestation: "I walked the plot plan and it matches." })).toBeNull();
     expect(validatePlanningStatusChange({ ...base, status: "Complete", newEvidenceLink: "https://example.invalid/pid" })).toBeNull();
+    // An explicit clear is not evidence.
+    expect(validatePlanningStatusChange({ ...base, status: "Complete", newEvidenceLink: "" })).toMatch(/evidence link or a completion attestation/);
+    expect(validatePlanningStatusChange({ ...base, status: "Complete", newEvidenceLink: "", attestation: "Verified by hand." })).toBeNull();
   });
 
-  it("returning from Needs Revision needs FRESH evidence — a stored link does not count", () => {
+  it("returning from Needs Revision needs FRESH evidence for Complete, and is two-step for Reviewed", () => {
     const returning = { ...base, oldStatus: "Needs Revision", storedEvidenceLink: "https://example.invalid/old" };
     expect(validatePlanningStatusChange({ ...returning, status: "Complete" })).toMatch(/fresh evidence/);
-    expect(validatePlanningStatusChange({ ...returning, status: "Reviewed" })).toMatch(/fresh evidence/);
+    expect(validatePlanningStatusChange({ ...returning, status: "Reviewed" })).toMatch(/two steps/);
     expect(validatePlanningStatusChange({ ...returning, status: "Complete", newEvidenceLink: "https://example.invalid/new" })).toBeNull();
     expect(validatePlanningStatusChange({ ...returning, status: "Complete", attestation: "Re-did the walk after the revision." })).toBeNull();
     expect(hasFreshEvidence({ newEvidenceLink: "", attestation: "" })).toBe(false);
     expect(hasFreshEvidence({ newEvidenceLink: "https://example.invalid/x", attestation: "" })).toBe(true);
   });
 
-  it("N/A and Needs Revision need a nonempty reason", () => {
+  it("N/A and Needs Revision need the review capability and a nonempty reason", () => {
     expect(validatePlanningStatusChange({ ...base, status: "N/A" })).toMatch(/reason is required/);
     expect(validatePlanningStatusChange({ ...base, status: "N/A", reason: "No MOC scope on this package." })).toBeNull();
     expect(validatePlanningStatusChange({ ...base, status: "Needs Revision" })).toMatch(/reason is required/);
     expect(validatePlanningStatusChange({ ...base, status: "Needs Revision", reason: "Plot plan elevation is wrong." })).toBeNull();
+    // An ordinary Planner (update without review) must NOT record them.
+    expect(validatePlanningStatusChange({ ...base, status: "N/A", canReview: false, reason: "No MOC scope." }))
+      .toMatch(/Only a reviewer can record this change/);
+    expect(validatePlanningStatusChange({ ...base, status: "Needs Revision", canReview: false, reason: "Plot plan elevation is wrong." }))
+      .toMatch(/Only a reviewer can record this change/);
   });
 
   it("In-Progress needs no evidence or reason, but does need the update capability", () => {
@@ -251,5 +288,13 @@ describe("validatePlanningStatusChange (F2 pre-check)", () => {
     expect(validateAttestation("x".repeat(501)).ok).toBe(false);
     expect(validateEvidenceLink(`https://example.invalid/${"x".repeat(2000)}`).ok).toBe(false);
     expect(validateEvidenceLink("https://example.invalid/pid").ok).toBe(true);
+  });
+
+  it("validateEvidenceLink: null means omitted, empty string means an explicit clear (F4)", () => {
+    expect(validateEvidenceLink(null)).toEqual({ ok: true, value: null });
+    expect(validateEvidenceLink(undefined)).toEqual({ ok: true, value: null });
+    expect(validateEvidenceLink("")).toEqual({ ok: true, value: "" });
+    expect(validateEvidenceLink("   ")).toEqual({ ok: true, value: "" });
+    expect(validateEvidenceLink("https://example.invalid/pid")).toEqual({ ok: true, value: "https://example.invalid/pid" });
   });
 });

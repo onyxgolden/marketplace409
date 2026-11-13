@@ -7,14 +7,17 @@
 // migration's SECURITY DEFINER RPC forge_work_planning_process_set_status,
 // which performs the instance update AND the append-only revision insert
 // in a single transaction, enforcing the F2 status rules and the
-// reviewer gate server-side. The service never writes instances or
-// revisions directly — except the complexity-change audit event (see
-// recordPlanningComplexityChange), which is a best-effort insert that
-// can never fail the package PATCH it annotates. Reads go through the
-// checklist RPC (which verifies the template and ensures the 22 instance
-// rows on first read) or the RLS-gated client for revisions, with the
-// same parent-chain proofs before any row is returned (an instance from
-// another package addressed through this package's URL is a 404).
+// reviewer gate server-side. Complexity changes go through the
+// SECURITY DEFINER RPC forge_work_planning_process_set_complexity
+// (same transaction, complexity_change event appended) — never
+// through a client-side revisions insert or a generic package PATCH.
+// The service never writes instances or revisions directly. Reads go
+// through the checklist RPC (which verifies the template and returns
+// the complete 22-row set — READ-ONLY, created atomically with the
+// package row by a trigger) or the RLS-gated client for revisions,
+// with the same parent-chain proofs before any row is returned (an
+// instance from another package addressed through this package's URL
+// is a 404).
 //
 // The RPCs derive the audit actor from auth.uid() inside the database
 // (slice 2's P1 lesson) — so, like workSteps.js, this service takes
@@ -40,6 +43,7 @@
 
 import {
   CONSTRUCTION_READINESS_NOT_ESTABLISHED,
+  PLANNING_PROCESS_COMPLEXITY_KEYS,
   PLANNING_PROCESS_STATUS_VALUES,
   computePlanningProgress,
   validateAttestation,
@@ -150,6 +154,39 @@ export function mapPlanningProcessRpcError(error) {
   if (message.includes("WPP10_STALE_VERSION")) {
     return { ok: false, httpStatus: 409, error: "This step changed while you were editing — refresh and retry." };
   }
+  if (message.includes("WPP10_EXPECTED_VERSION_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "expectedVersion must be a positive whole number." };
+  }
+  if (message.includes("WPP10_REQUEST_ID_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "A request ID is required for this change." };
+  }
+  if (message.includes("WPP10_INVALID_REQUEST_ID")) {
+    return { ok: false, httpStatus: 400, error: "Request ID must be 128 characters or fewer." };
+  }
+  if (message.includes("WPP10_REQUEST_ID_CONFLICT")) {
+    return { ok: false, httpStatus: 409, error: "This request ID was already used for a different change — use a fresh request ID." };
+  }
+  if (message.includes("WPP10_REVIEWED_LOCKED")) {
+    return { ok: false, httpStatus: 409, error: "This step is Reviewed — only a reviewer can send it back for revision." };
+  }
+  if (message.includes("WPP10_TWO_STEP_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "Returning this step from Needs Revision is two steps: resubmit it as Complete with fresh evidence, then a reviewer marks it Reviewed." };
+  }
+  if (message.includes("WPP10_REVIEW_BASIS_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "Only a submitted step can be Reviewed — it needs evidence or an attestation already on the record from a different submitter." };
+  }
+  if (message.includes("WPP10_REVIEW_EVIDENCE_SAME_REQUEST")) {
+    return { ok: false, httpStatus: 400, error: "A review cannot add new evidence — the evidence must already be on the step. An owner can override with a reason." };
+  }
+  if (message.includes("WPP10_REVIEW_CAPABILITY_REQUIRED")) {
+    return { ok: false, httpStatus: 403, error: "This change needs the reviewer capability — only a reviewer (or the workspace owner) can do it." };
+  }
+  if (message.includes("WPP10_INVALID_COMPLEXITY")) {
+    return { ok: false, httpStatus: 400, error: `Planning complexity must be one of: ${PLANNING_PROCESS_COMPLEXITY_KEYS.join(", ")}.` };
+  }
+  if (message.includes("WPP10_COMPLEXITY_FORBIDDEN")) {
+    return { ok: false, httpStatus: 403, error: "You don't have permission to change the planning complexity." };
+  }
   if (message.includes("WPP10_INVALID_STATUS")) {
     return { ok: false, httpStatus: 400, error: `Status must be one of: ${PLANNING_PROCESS_STATUS_VALUES.join(", ")}.` };
   }
@@ -190,7 +227,8 @@ function rpcValue(data) {
 
 /**
  * Whole checklist in one call (the RPC verifies the bound template
- * version and ensures the 22 instance rows on first read). Returns
+ * version and returns the complete 22-row set — READ-ONLY; the rows
+ * are created atomically with the package row by a trigger). Returns
  * template + instances + computed progress + construction readiness
  * (always not-established in Slice A — F1). Before the migration
  * applies, returns { ok: true, notApplied: true } so the package
@@ -232,6 +270,7 @@ export async function getPlanningChecklist(db, { ownerId, packageId }) {
       templateVersion: raw.templateVersion ?? raw.template_version ?? 1,
       canUpdate: raw.canUpdate ?? raw.can_update ?? false,
       canReview: raw.canReview ?? raw.can_review ?? false,
+      isOwner: raw.isOwner ?? raw.is_owner ?? false,
       constructionReadiness: raw.constructionReadiness || raw.construction_readiness || CONSTRUCTION_READINESS_NOT_ESTABLISHED,
       template,
       instances,
@@ -241,26 +280,12 @@ export async function getPlanningChecklist(db, { ownerId, packageId }) {
 }
 
 /**
- * Best-effort checklist instantiation for package creation (F3: a
- * package binds to a template version at creation and atomically
- * gets exactly 22 instance rows). Never throws and never fails the
- * caller's operation — pre-migration it is a no-op (notApplied), and
- * the checklist GET re-ensures idempotently on first open.
- */
-export async function ensurePlanningChecklist(db, { ownerId, packageId }) {
-  try {
-    const result = await getPlanningChecklist(db, { ownerId, packageId });
-    return result.ok && !result.notApplied;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * One status change (plus optional evidence link / reason /
  * attestation, expected version, request ID). Shape rules are checked
  * first for a fast plain-words 400; the transition rules and all
  * authorization are re-enforced by the RPC server-side regardless.
+ * expectedVersion is MANDATORY (fix round 1, F2); a request ID is
+ * generated when the client omits one.
  */
 export async function setPlanningStepStatus(db, {
   ownerId, packageId, templateStepId, status,
@@ -278,9 +303,13 @@ export async function setPlanningStepStatus(db, {
   if (!PLANNING_PROCESS_STATUS_VALUES.includes(status)) {
     return { ok: false, httpStatus: 400, error: `Status must be one of: ${PLANNING_PROCESS_STATUS_VALUES.join(", ")}.` };
   }
-  if (expectedVersion !== undefined && expectedVersion !== null
-      && (!Number.isInteger(expectedVersion) || expectedVersion < 1)) {
+  if (expectedVersion === undefined || expectedVersion === null
+      || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
     return { ok: false, httpStatus: 400, error: "expectedVersion must be a positive whole number." };
+  }
+  if (requestId !== undefined && requestId !== null
+      && (typeof requestId !== "string" || requestId.trim().length === 0 || requestId.length > 128)) {
+    return { ok: false, httpStatus: 400, error: "Request ID must be a nonempty string of 128 characters or fewer." };
   }
   const { data, error } = await db.rpc("forge_work_planning_process_set_status", {
     p_owner_id: ownerId,
@@ -290,8 +319,8 @@ export async function setPlanningStepStatus(db, {
     p_evidence_link: link.value,
     p_reason: reasonCheck.value,
     p_attestation: attestationCheck.value,
-    p_expected_version: expectedVersion ?? null,
-    p_request_id: requestId ?? null,
+    p_expected_version: expectedVersion,
+    p_request_id: requestId ?? crypto.randomUUID(),
   });
   if (error) return mapPlanningProcessRpcError(error);
   const row = rpcValue(data);
@@ -331,13 +360,12 @@ export async function listPlanningRevisions(db, { ownerId, packageId, limit, off
 
 /**
  * Lightweight earned-value summary for the package Overview tab: reads
- * template + instances through RLS WITHOUT ensuring rows (viewing a
- * package must not create its checklist — the Planning Checklist tab's
- * checklist call does the ensure on first open, and package creation
- * ensures best-effort). Returns { summary: null } when the migration
- * hasn't applied, the template is unusable, or the instance set is
- * partial — unavailable, never 0 or 100 (F4) — so the detail view
- * never breaks on this affordance.
+ * template + instances through RLS WITHOUT creating rows (viewing a
+ * package must not create its checklist — the rows are created
+ * atomically with the package row by a trigger). Returns { summary:
+ * null } when the migration hasn't applied, the template is unusable,
+ * or the instance set is partial — unavailable, never 0 or 100 (F4) —
+ * so the detail view never breaks on this affordance.
  */
 export async function getPlanningSummary(db, { ownerId, packageId }) {
   try {
@@ -385,38 +413,38 @@ export async function getPlanningSummary(db, { ownerId, packageId }) {
 }
 
 /**
- * Audit event for a planning-complexity change (verdict decision 3:
- * complexity changes recalculate derived MHRS and are audited).
- * Best-effort by design: pre-migration the revisions table does not
- * exist, and the package PATCH it annotates must never fail on this
- * affordance. Returns true when the event was recorded.
+ * Planning-complexity change (verdict decision 3: complexity changes
+ * recalculate derived MHRS and are audited). Goes through the SECURITY
+ * DEFINER RPC forge_work_planning_process_set_complexity, which
+ * updates the package and appends the complexity_change event in one
+ * transaction — never a client-side revisions insert. expectedVersion
+ * is MANDATORY; a request ID is generated when the client omits one.
+ * Returns the updated package row (DB shape, snake_case) so the
+ * caller can reuse it for its optimistic-concurrency match.
  */
-export async function recordPlanningComplexityChange(db, { ownerId, packageId, actorId, oldComplexity, newComplexity, requestId }) {
-  try {
-    const { error } = await db.from("forge_work_planning_process_revisions").insert({
-      owner_id: ownerId,
-      id: `forge_ppr_${crypto.randomUUID().replace(/-/g, "")}`,
-      instance_id: null,
-      work_package_id: packageId,
-      template_step_id: null,
-      actor_id: actorId,
-      action: "complexity_change",
-      old_status: null,
-      new_status: null,
-      reason: null,
-      evidence_reference: null,
-      evidence_digest: null,
-      attestation: null,
-      is_override: false,
-      request_id: requestId || `forge_pprq_${crypto.randomUUID().replace(/-/g, "")}`,
-      old_values: { planning_complexity: oldComplexity },
-      new_values: { planning_complexity: newComplexity },
-    });
-    if (error) return false;
-    return true;
-  } catch {
-    return false;
+export async function setPlanningComplexity(db, { ownerId, packageId, complexity, expectedVersion, requestId }) {
+  if (!PLANNING_PROCESS_COMPLEXITY_KEYS.includes(complexity)) {
+    return { ok: false, httpStatus: 400, error: `Planning complexity must be one of: ${PLANNING_PROCESS_COMPLEXITY_KEYS.join(", ")}.` };
   }
+  if (expectedVersion === undefined || expectedVersion === null
+      || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    return { ok: false, httpStatus: 400, error: "expectedVersion must be a positive whole number." };
+  }
+  if (requestId !== undefined && requestId !== null
+      && (typeof requestId !== "string" || requestId.trim().length === 0 || requestId.length > 128)) {
+    return { ok: false, httpStatus: 400, error: "Request ID must be a nonempty string of 128 characters or fewer." };
+  }
+  const { data, error } = await db.rpc("forge_work_planning_process_set_complexity", {
+    p_owner_id: ownerId,
+    p_package_id: packageId,
+    p_complexity: complexity,
+    p_expected_version: expectedVersion,
+    p_request_id: requestId ?? crypto.randomUUID(),
+  });
+  if (error) return mapPlanningProcessRpcError(error);
+  const row = rpcValue(data);
+  if (!row) throw new Error("forge_work_planning_process_set_complexity returned no row.");
+  return { ok: true, package: row };
 }
 
 // Re-exported for the route layer's capability pre-check copy (the RPC

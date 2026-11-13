@@ -10,7 +10,7 @@ import {
 } from "@/domains/work-management/planningProcess.js";
 import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
 
-function setupFetch({ canUpdate = true, canReview = false, listStatus = 200, listError = "", statusByKey = {} } = {}) {
+function setupFetch({ canUpdate = true, canReview = false, isOwner = false, listStatus = 200, listError = "", statusByKey = {} } = {}) {
   const template = PLANNING_PROCESS_TEMPLATE.map((t) => ({
     stepKey: t.stepKey,
     version: 1,
@@ -60,7 +60,7 @@ function setupFetch({ canUpdate = true, canReview = false, listStatus = 200, lis
         ok: true,
         json: async () => ({
           checklist: {
-            packageId: "pkg_1", complexity: "standard", templateVersion: 1, canUpdate, canReview,
+            packageId: "pkg_1", complexity: "standard", templateVersion: 1, canUpdate, canReview, isOwner,
             constructionReadiness: {
               status: "not_established",
               detail: "No package-level release decision exists yet. Planning percent never authorizes construction or releases an IFC drawing.",
@@ -75,6 +75,9 @@ function setupFetch({ canUpdate = true, canReview = false, listStatus = 200, lis
       const inst = instances.find((i) => i.templateStepId === body.templateStepId);
       if (body.status === "Reviewed" && !canReview) {
         return { ok: false, status: 403, json: async () => ({ error: "Only a reviewer can mark a step Reviewed." }) };
+      }
+      if ((body.status === "N/A" || body.status === "Needs Revision") && !canReview) {
+        return { ok: false, status: 403, json: async () => ({ error: "This change needs the reviewer capability." }) };
       }
       if (body.status === "Complete" && !body.evidenceLink && !body.attestation && !inst.evidenceLink) {
         return { ok: false, status: 400, json: async () => ({ error: "Marking a step Complete needs an evidence link or a completion attestation." }) };
@@ -196,7 +199,7 @@ describe("WorkPackagePlanningProcess", () => {
   });
 
   it("N/A needs a reason in the panel before confirming", async () => {
-    const { calls } = setupFetch();
+    const { calls } = setupFetch({ canReview: true });
     await render();
     await pickStatus("Engineering Request", "N/A");
     const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm change");
@@ -224,13 +227,76 @@ describe("WorkPackagePlanningProcess", () => {
     expect(confirm.disabled).toBe(false);
   });
 
-  it("disables the Reviewed option when the caller cannot review", async () => {
+  it("disables the Reviewed, N/A, and Needs Revision options when the caller cannot review", async () => {
     setupFetch({ canUpdate: true, canReview: false });
     await render();
     const select = container.querySelector('select[aria-label="Status for Job Plan Developed"]');
-    const reviewed = [...select.options].find((o) => o.value === "Reviewed");
-    expect(reviewed.disabled).toBe(true);
+    for (const value of ["Reviewed", "N/A", "Needs Revision"]) {
+      expect([...select.options].find((o) => o.value === value).disabled).toBe(true);
+    }
+    expect([...select.options].find((o) => o.value === "Complete").disabled).toBe(false);
     expect(container.textContent).toContain("only a reviewer can mark a step Reviewed");
+  });
+
+  it("a reviewer without update can open the dropdown and send a step back, but not mark it Complete", async () => {
+    const { calls } = setupFetch({ canUpdate: false, canReview: true });
+    await render();
+    const select = container.querySelector('select[aria-label="Status for Job Plan Developed"]');
+    expect(select.disabled).toBe(false);
+    expect([...select.options].find((o) => o.value === "Complete").disabled).toBe(true);
+    expect([...select.options].find((o) => o.value === "In-Progress").disabled).toBe(true);
+    expect([...select.options].find((o) => o.value === "Needs Revision").disabled).toBe(false);
+    expect(container.textContent).toContain("You can review steps, but only a planner can mark a step In-Progress or Complete.");
+    await pickStatus("Job Plan Developed", "Needs Revision");
+    const reason = container.querySelector('input[aria-label="Reason for Job Plan Developed"]');
+    await act(async () => { setInputValue(reason, "Job plan misses the night-shift crew."); });
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm change");
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(JSON.parse(patch.body).status).toBe("Needs Revision");
+    expect(container.textContent).toContain('Step "Job Plan Developed" marked Needs Revision');
+  });
+
+  it("a Reviewed change from a non-owner sends no new evidence — the review judges what is already there", async () => {
+    const { calls } = setupFetch({
+      canReview: true, isOwner: false,
+      statusByKey: { "pdf-15": "Complete", "pdf-15:evidence": "https://example.com/job-plan.pdf" },
+    });
+    await render();
+    await pickStatus("Job Plan Developed", "Reviewed");
+    // Non-owners get the note, not the evidence inputs.
+    expect(container.querySelector('input[aria-label="Change evidence link for Job Plan Developed"]')).toBeNull();
+    expect(container.textContent).toContain("a review cannot add new evidence");
+    expect(container.textContent).toContain("Stored evidence: https://example.com/job-plan.pdf");
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm change");
+    expect(confirm.disabled).toBe(false);
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const patch = calls.find((c) => c.method === "PATCH");
+    const body = JSON.parse(patch.body);
+    expect(body.status).toBe("Reviewed");
+    expect(body.evidenceLink).toBeUndefined();
+    expect(container.textContent).toContain('Step "Job Plan Developed" marked Reviewed');
+  });
+
+  it("Reviewed directly from Needs Revision is a two-step error in the panel", async () => {
+    setupFetch({
+      canReview: true,
+      statusByKey: { "pdf-15": "Needs Revision", "pdf-15:evidence": "https://example.com/job-plan-v1.pdf" },
+    });
+    await render();
+    await pickStatus("Job Plan Developed", "Reviewed");
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm change");
+    expect(confirm.disabled).toBe(true);
+    expect(container.textContent).toContain("two steps");
+  });
+
+  it("a Reviewed row cannot be silently downgraded to Complete", async () => {
+    setupFetch({ statusByKey: { "pdf-15": "Reviewed", "pdf-15:evidence": "https://example.com/job-plan.pdf" } });
+    await render();
+    await pickStatus("Job Plan Developed", "Complete");
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm change");
+    expect(confirm.disabled).toBe(true);
+    expect(container.textContent).toContain("only a reviewer can send it back");
   });
 
   it("disables all status changes when the caller cannot update", async () => {

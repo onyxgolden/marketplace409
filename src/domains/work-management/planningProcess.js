@@ -247,7 +247,14 @@ export function computePlanningProgress({ template, instances, complexity }) {
 
 // F2 transition rules, as a shared plain-words pre-check for the UI
 // (the set-status RPC is the enforcement — this never authorizes
-// anything on its own).
+// anything on its own). Fix round 1 mirrors the RPC matrix:
+// In-Progress/Complete need the update capability; N/A, Reviewed and
+// Needs Revision need the review capability (owner/co-owner pass
+// every gate); Reviewed only from a distinct prior submission
+// (Complete or N/A) with an existing qualifying basis and no new
+// evidence in the same decision except an owner/co-owner reasoned
+// override; a Reviewed row may only go back through Needs Revision;
+// returning from Needs Revision is two-step.
 //
 // Inputs the UI has: the target status, the caller's affordances
 // (canUpdate/canReview from the checklist), the row's current status
@@ -273,16 +280,54 @@ export function validatePlanningStatusChange({
   if (!reasonCheck.ok) return reasonCheck.error;
   const attestationCheck = validateAttestation(attestation);
   if (!attestationCheck.ok) return attestationCheck.error;
+
+  // A Reviewed row may only go back through Needs Revision, by review
+  // authority. An ordinary updater cannot silently downgrade it.
+  if (oldStatus === "Reviewed" && status !== "Reviewed" && status !== "Needs Revision") {
+    return "This step is Reviewed — only a reviewer can send it back for revision.";
+  }
+  // Returning from Needs Revision is two-step: resubmit as Complete
+  // with fresh evidence, then a reviewer marks Reviewed.
+  if (status === "Reviewed" && oldStatus === "Needs Revision") {
+    return "Returning this step from Needs Revision is two steps: resubmit it as Complete with fresh evidence, then a reviewer marks it Reviewed.";
+  }
+
   if (status === "Reviewed") {
     if (!canReview) return "Only a reviewer can mark a step Reviewed.";
+    // An evidence-only change on an already-Reviewed row (same status)
+    // is allowed for review authority; the RPC re-checks it.
+    if (oldStatus === "Reviewed") return null;
+    if (oldStatus !== "Complete" && oldStatus !== "N/A") {
+      return "Only a submitted step (Complete or N/A) can be Reviewed.";
+    }
     if (isSelfSubmission && !isOwner) {
       return "You submitted this step's latest change — a different reviewer must review it.";
     }
     if (isSelfSubmission && isOwner && !reasonCheck.value) {
       return "An owner override reviewing your own submission needs a reason.";
     }
-    if (oldStatus === "Needs Revision" && !hasFreshEvidence({ newEvidenceLink, attestation })) {
-      return "Returning this step from Needs Revision needs fresh evidence or an attestation.";
+    // No new evidence/attestation in the same review decision, except
+    // an owner/co-owner reasoned override. (The UI hides these inputs
+    // from non-owners, so a non-empty value here is a direct call.)
+    const hasNewEvidence = (typeof newEvidenceLink === "string" && newEvidenceLink.trim().length > 0)
+      || attestationCheck.value != null;
+    if (hasNewEvidence && (!isOwner || !reasonCheck.value)) {
+      return "A review cannot add new evidence — the evidence must already be on the step. An owner can override with a reason.";
+    }
+    // Without an existing basis on the record the review has nothing
+    // to judge. (The RPC also checks the attestation/reason on the
+    // record; the UI can only see the stored evidence link.)
+    if (oldStatus === "Complete" && !storedEvidenceLink && !attestationCheck.value) {
+      return "This step has no evidence on the record yet — it cannot be Reviewed.";
+    }
+    return null;
+  }
+  if (status === "N/A" || status === "Needs Revision") {
+    if (!canReview) return "Only a reviewer can record this change.";
+    if (!reasonCheck.value) {
+      return status === "N/A"
+        ? "Marking a step N/A needs a reason."
+        : "Sending a step back for revision needs a reason.";
     }
     return null;
   }
@@ -297,14 +342,6 @@ export function validatePlanningStatusChange({
       if (!effectiveEvidence && !attestationCheck.value) {
         return "Marking a step Complete needs an evidence link or a completion attestation.";
       }
-    }
-    return null;
-  }
-  if (status === "N/A" || status === "Needs Revision") {
-    if (!reasonCheck.value) {
-      return status === "N/A"
-        ? "Marking a step N/A needs a reason."
-        : "Sending a step back for revision needs a reason.";
     }
     return null;
   }
@@ -345,10 +382,15 @@ export function validateAttestation(value) {
   return { ok: true, value: trimmed };
 }
 
+// Evidence-link semantics (fix round 1, F4): null means "omitted"
+// (keep the stored link); "" means an EXPLICIT clear (drop the
+// stored link); anything else must be a link <= 2000 chars with no
+// control characters. The old version collapsed "" to null, so a
+// clear typed in the UI never reached the RPC.
 export function validateEvidenceLink(value) {
-  if (value == null || value === "") return { ok: true, value: null };
+  if (value == null) return { ok: true, value: null };
   const trimmed = String(value).trim();
-  if (trimmed.length === 0) return { ok: true, value: null };
+  if (trimmed.length === 0) return { ok: true, value: "" };
   if (trimmed.length > 2000) return { ok: false, error: "Evidence link must be 2,000 characters or fewer." };
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1F\x7F]/.test(trimmed)) {
