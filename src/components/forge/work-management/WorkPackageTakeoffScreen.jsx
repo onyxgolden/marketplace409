@@ -14,6 +14,7 @@ import { ForgeLoadingState, ForgeErrorState, ForgeEmptyState } from "@/component
 import { forgeTheme } from "@/components/forge/theme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { invalidatePrefix } from "@/hooks/swrCache";
+import { withWorkspaceQuery } from "@/components/work-management/workspaceQuery.js";
 import { preIfcTag } from "@/domains/work-management/drawingReviews.js";
 import WorkPackagePermitAnnotations from "@/components/work-management/WorkPackagePermitAnnotations";
 
@@ -21,7 +22,9 @@ const DRAWING_TYPE_LABELS = { p_id: "P&ID", cut_sheet: "Cut sheet", isometric: "
 const CATEGORY_LABELS = { pipe: "Pipe", fitting: "Fitting", valve: "Valve", support: "Support", other: "Other" };
 
 async function api(path, options) {
-  const response = await fetch(path, {
+  // PR B: package-scoped routes fail closed without the page's
+  // ?forgeProject= selection — carry it like the workspace param.
+  const response = await fetch(withWorkspaceQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });

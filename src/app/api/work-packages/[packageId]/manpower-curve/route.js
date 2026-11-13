@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../_lib/auth.js";
 import { getManpowerCurve } from "@/application/work-management/manpowerCurve";
 
 // GET /api/work-packages/[packageId]/manpower-curve?baselineVersion=<n>
@@ -12,6 +12,8 @@ export async function GET(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   const url = new URL(request.url);
   const rawBaselineVersion = url.searchParams.get("baselineVersion");
   let baselineVersion = null;

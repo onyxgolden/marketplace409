@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
 import { listPermitAnnotations, createPermitAnnotation } from "@/application/work-management/permitAnnotations";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const search = new URL(request.url).searchParams;
     const result = await listPermitAnnotations(auth.db, {
       ownerId: auth.ownerId,
@@ -28,6 +30,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createPermitAnnotation(auth.db, {
       ownerId: auth.ownerId,

@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
 import { createRevision, listRevisions } from "@/application/work-management/drawingReviews";
 
 function paging(request) {
@@ -11,6 +11,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await listRevisions(auth.db, {
       ownerId: auth.ownerId, packageId, drawingId, ...paging(request),
     });
@@ -26,6 +28,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createRevision(auth.db, {
       ownerId: auth.ownerId, packageId, drawingId, input: body,

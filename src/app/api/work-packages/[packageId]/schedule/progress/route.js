@@ -1,5 +1,5 @@
 import { recordProgressSnapshot } from "@/application/work-management/workScheduling";
-import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
 
 // POST { statusDate, measurements, actualHours, actualCost }:
 // record a progress snapshot. The engine computes earned % via the
@@ -10,6 +10,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     if (!body.statusDate || !body.measurements || body.actualHours == null ||
         body.actualCost == null) {

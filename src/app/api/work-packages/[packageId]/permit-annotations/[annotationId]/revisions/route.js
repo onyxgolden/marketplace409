@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
 import { getPermitAnnotationHistory } from "@/application/work-management/permitAnnotations";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, annotationId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await getPermitAnnotationHistory(auth.db, {
       ownerId: auth.ownerId,
       packageId,

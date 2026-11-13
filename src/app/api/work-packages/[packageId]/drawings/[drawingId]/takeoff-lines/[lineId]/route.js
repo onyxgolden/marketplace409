@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../../_lib/auth.js";
 import { updateTakeoffLine, deleteTakeoffLine } from "@/application/work-management/takeoff";
 
 export async function PATCH(request, { params }) {
@@ -6,6 +6,8 @@ export async function PATCH(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, lineId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await updateTakeoffLine(auth.db, { ownerId: auth.ownerId, packageId, drawingId, lineId, patch: body });
     if (!result.ok) return fail(result);
@@ -20,6 +22,8 @@ export async function DELETE(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, lineId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await deleteTakeoffLine(auth.db, { ownerId: auth.ownerId, packageId, drawingId, lineId });
     if (!result.ok) return fail(result);
     return ok({ deleted: true });

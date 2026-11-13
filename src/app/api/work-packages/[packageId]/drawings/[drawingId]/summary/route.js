@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
 import { getPidTakeoffSummary } from "@/application/work-management/takeoff";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await getPidTakeoffSummary(auth.db, { ownerId: auth.ownerId, packageId, pIdDrawingId: drawingId });
     if (!result.ok) return fail(result);
     return ok({ summary: result.summary });

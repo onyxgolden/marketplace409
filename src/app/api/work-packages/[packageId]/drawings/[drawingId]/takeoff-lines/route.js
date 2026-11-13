@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
 import { createTakeoffLine, listTakeoffLinesForDrawing } from "@/application/work-management/takeoff";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await listTakeoffLinesForDrawing(auth.db, { ownerId: auth.ownerId, packageId, drawingId });
     if (!result.ok) return fail(result);
     return ok({ lines: result.lines });
@@ -19,6 +21,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createTakeoffLine(auth.db, {
       ownerId: auth.ownerId,

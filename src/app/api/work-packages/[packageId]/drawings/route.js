@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
 import { createDrawing, listDrawingsForPackage } from "@/application/work-management/takeoff";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await listDrawingsForPackage(auth.db, { ownerId: auth.ownerId, packageId });
     if (!result.ok) return fail(result);
     return ok({ drawings: result.drawings });
@@ -19,6 +21,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createDrawing(auth.db, {
       ownerId: auth.ownerId,

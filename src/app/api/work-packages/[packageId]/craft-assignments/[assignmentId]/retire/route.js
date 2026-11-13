@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
 import { retireCraftAssignment } from "@/application/work-management/craftAssignments";
 
 export async function POST(request, { params }) {
@@ -6,6 +6,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, assignmentId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await retireCraftAssignment(auth.db, {
       ownerId: auth.ownerId,

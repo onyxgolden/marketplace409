@@ -43,7 +43,11 @@ export async function POST(request) {
     if (rows.length > MAX_IMPORT_ROWS) {
       return NextResponse.json({ error: `This import has ${rows.length} rows — split it into files of ${MAX_IMPORT_ROWS} rows or fewer.` }, { status: 400 });
     }
-    const context = await loadImportContext(auth.db, { ownerId: auth.ownerId, kind, packageId });
+    // PR B: same scoping as preview — the confirm re-validates
+    // against fresh, scope-filtered data.
+    if (auth.scopeError) return fail(auth.scopeError);
+    const runScope = new URL(request.url).searchParams.has("forgeProject") ? auth.scope : undefined;
+    const context = await loadImportContext(auth.db, { ownerId: auth.ownerId, kind, packageId, scope: runScope });
     if (!context.ok) return fail(context);
     const plan = validateAndPlanWorkPackageImport({
       kind,
@@ -70,6 +74,7 @@ export async function POST(request) {
       sourceSystem,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
       mode,
+      scope: runScope,
     });
     return ok({
       success: true,

@@ -1,5 +1,5 @@
 import { createGateOverride } from "@/application/work-management/workGates";
-import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
 
 // POST { gate, reason, expiresAt }: record a human override. The actor is
 // stamped from the caller's JWT by the DB trigger — never from the body.
@@ -8,6 +8,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const override = await createGateOverride(auth.db, {
       ownerId: auth.ownerId, packageId,

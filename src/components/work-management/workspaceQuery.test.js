@@ -39,4 +39,25 @@ describe("withWorkspaceQuery", () => {
     setSearch("?workspace=owner%20uuid");
     expect(withWorkspaceQuery("/api/work-packages/wp_1")).toBe("/api/work-packages/wp_1?workspace=owner%20uuid");
   });
+
+  it("appends the ?forgeProject= selection alongside the workspace (PR B)", () => {
+    setSearch("?workspace=owner-uuid-2&forgeProject=forge_prj_1");
+    expect(withWorkspaceQuery("/api/work-packages/wp_1")).toBe(
+      "/api/work-packages/wp_1?workspace=owner-uuid-2&forgeProject=forge_prj_1",
+    );
+  });
+
+  it("appends ?forgeProject= on its own when no workspace is selected (PR B)", () => {
+    setSearch("?forgeProject=unassigned");
+    expect(withWorkspaceQuery("/api/work-packages/wp_1/steps")).toBe(
+      "/api/work-packages/wp_1/steps?forgeProject=unassigned",
+    );
+  });
+
+  it("leaves a path that already carries forgeProject alone (PR B)", () => {
+    setSearch("?forgeProject=forge_prj_1");
+    expect(withWorkspaceQuery("/api/work-packages/wp_1?forgeProject=forge_prj_9")).toBe(
+      "/api/work-packages/wp_1?forgeProject=forge_prj_9",
+    );
+  });
 });

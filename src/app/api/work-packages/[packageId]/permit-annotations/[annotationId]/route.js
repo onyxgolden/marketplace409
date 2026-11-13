@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
 import { updatePermitAnnotation } from "@/application/work-management/permitAnnotations";
 
 export async function PATCH(request, { params }) {
@@ -6,6 +6,8 @@ export async function PATCH(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, annotationId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await updatePermitAnnotation(auth.db, {
       ownerId: auth.ownerId,

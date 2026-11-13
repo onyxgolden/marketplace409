@@ -1,5 +1,5 @@
 import { recordGateAttestation } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 
 // GET: current attestations for the package (latest per gate first).
 // POST { gate, statement, notApplicable?, naReason? }: record a human
@@ -9,6 +9,8 @@ export async function GET(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const supabase = auth.db;
     const { data, error } = await supabase.from("forge_work_gate_attestations").select("*")
       .eq("owner_id", auth.ownerId).eq("package_id", packageId)
@@ -25,6 +27,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await recordGateAttestation(auth.db, {
       ownerId: auth.ownerId, actor: auth.actor, packageId,

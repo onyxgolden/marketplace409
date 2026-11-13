@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
 import { clearStepPlacement, listPlacementRevisions } from "@/application/work-management/manpowerCurve";
 
 // GET /api/work-packages/[packageId]/manpower-curve/placements/[placementId]
@@ -10,6 +10,8 @@ export async function GET(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId, placementId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   try {
     const url = new URL(request.url);
     const result = await listPlacementRevisions(auth.db, {
@@ -35,6 +37,8 @@ export async function DELETE(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId, placementId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   try {
     const body = await readJson(request);
     const result = await clearStepPlacement(auth.db, {

@@ -118,7 +118,12 @@ export default function WorkPackageCreateForm({ initialPropertyId = "", workspac
       setError(body.error || "Unable to create the package.");
       return;
     }
-    router.push(`/forge/work/${body.package.id}${workspaceParam ? `?workspace=${encodeURIComponent(workspaceParam)}` : ""}`);
+    // PR B: a newborn package is Unassigned, so land on its detail page
+    // under the Unassigned scope (plus the workspace when switched).
+    const afterCreate = new URLSearchParams();
+    if (workspaceParam) afterCreate.set("workspace", workspaceParam);
+    afterCreate.set("forgeProject", "unassigned");
+    router.push(`/forge/work/${body.package.id}?${afterCreate.toString()}`);
   }
 
   return (

@@ -1,15 +1,17 @@
 import {
   getWorkPackageDetail, updateWorkPackage, deleteWorkPackage,
 } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../_lib/auth.js";
 
 export async function GET(request, { params }) {
   try {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await getWorkPackageDetail(auth.db, {
-      ownerId: auth.ownerId, actor: auth.actor, packageId,
+      ownerId: auth.ownerId, actor: auth.actor, packageId, scope: auth.scope,
     });
     if (!result.ok) return fail(result);
     return ok(result);
@@ -23,9 +25,12 @@ export async function PATCH(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await updateWorkPackage(auth.db, {
       ownerId: auth.ownerId, actor: auth.actor, packageId, patch: body || {},
+      scope: auth.scope,
     });
     if (!result.ok) return fail(result);
     return ok({
@@ -48,6 +53,8 @@ export async function DELETE(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const { confirmCode, expectedVersion } = body || {};
     if (typeof confirmCode !== "string" || confirmCode.length === 0
@@ -59,6 +66,7 @@ export async function DELETE(request, { params }) {
     }
     const result = await deleteWorkPackage(auth.db, {
       ownerId: auth.ownerId, actor: auth.actor, packageId, confirmCode, expectedVersion,
+      scope: auth.scope,
     });
     if (!result.ok) return fail(result);
     return ok({ success: true, deletion: result.deletion });

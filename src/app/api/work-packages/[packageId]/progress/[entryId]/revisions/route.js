@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
 import { listProgressRevisions } from "@/application/work-management/progress";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, entryId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await listProgressRevisions(auth.db, {
       ownerId: auth.ownerId,
       packageId,

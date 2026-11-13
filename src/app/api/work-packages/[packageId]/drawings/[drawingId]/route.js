@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../_lib/auth.js";
 import { deleteDrawing } from "@/application/work-management/takeoff";
 
 export async function DELETE(request, { params }) {
@@ -6,6 +6,8 @@ export async function DELETE(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await deleteDrawing(auth.db, { ownerId: auth.ownerId, packageId, drawingId });
     if (!result.ok) return fail(result);
     // A drawing with review history is retired, not deleted: its

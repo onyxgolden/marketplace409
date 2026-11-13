@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../../../_lib/auth.js";
 import { getReviewDetail } from "@/application/work-management/drawingReviews";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, reviewId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const url = new URL(request.url);
     const result = await getReviewDetail(auth.db, {
       ownerId: auth.ownerId, packageId, drawingId, reviewId,

@@ -1,5 +1,5 @@
 import { transitionWorkPackage } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 
 // POST { to, ...ctx } — lifecycle transition per the deterministic matrix
 // (lifecycle.md). ctx carries the transition's requirements: blockedReason,
@@ -9,6 +9,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const { to, ...ctx } = body || {};
     if (typeof to !== "string" || to.length === 0) {

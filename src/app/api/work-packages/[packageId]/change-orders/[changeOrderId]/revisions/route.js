@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../../../_lib/auth.js";
 import { listChangeOrderRevisions } from "@/application/work-management/changeOrders";
 
 // GET /api/work-packages/[packageId]/change-orders/[changeOrderId]/revisions?limit=&offset=
@@ -7,6 +7,8 @@ export async function GET(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId, changeOrderId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   try {
     const search = new URL(request.url).searchParams;
     const result = await listChangeOrderRevisions(auth.db, {

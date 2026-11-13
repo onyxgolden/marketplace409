@@ -108,7 +108,7 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
     await submitCreate(container);
     expect(posts).toHaveLength(1);
     expect(posts[0].property_id).toBeNull();
-    expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new");
+    expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new?forgeProject=unassigned");
   });
 
   it("submits the canonical slug when a property is chosen", async () => {
@@ -347,7 +347,7 @@ describe("WorkPackageCreateForm Cancel (D4)", () => {
     await submitCreate(container);
     expect(posts).toHaveLength(1);
     expect(posts[0].title).toBe("Real package");
-    expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new");
+    expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new?forgeProject=unassigned");
   });
 });
 
