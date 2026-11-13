@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -10,8 +11,8 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -47,9 +48,11 @@ function snapshotSummary(values) {
 }
 
 function AnnotationHistory({ packageId, annotationId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:permit-annotations:${annotationId}:revisions`,
-    () => api(`/api/work-packages/${packageId}/permit-annotations/${annotationId}/revisions`).then((b) => b.revisions),
+    scopedSWRKey(pageContext, "work-packages", packageId, "permit-annotations", annotationId, "revisions"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/permit-annotations/${annotationId}/revisions`).then((b) => b.revisions),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -81,6 +84,8 @@ function AnnotationHistory({ packageId, annotationId }) {
 // and every change stays in its history. Controlled drawings are never
 // edited by annotating; this panel only ever writes annotations.
 export default function WorkPackagePermitAnnotations({ packageId, scope, drawingId = null, onChanged = null }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [showRetired, setShowRetired] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,8 +99,8 @@ export default function WorkPackagePermitAnnotations({ packageId, scope, drawing
 
   const query = `targetKind=${scope}${drawingId ? `&drawingId=${encodeURIComponent(drawingId)}` : ""}${showRetired ? "&includeRetired=true" : ""}`;
   const { data, error: loadError, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:permit-annotations:${scope}${drawingId ? `:${drawingId}` : ""}:${showRetired ? "retired" : "active"}`,
-    () => api(`/api/work-packages/${packageId}/permit-annotations?${query}`).then((b) => b.annotations),
+    scopedSWRKey(pageContext, "work-packages", packageId, "permit-annotations", scope, drawingId, showRetired ? "retired" : "active"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/permit-annotations?${query}`).then((b) => b.annotations),
     { ttlMs: 10_000 },
   );
   const annotations = data || [];
@@ -119,7 +124,7 @@ export default function WorkPackagePermitAnnotations({ packageId, scope, drawing
         ...(form.permitReference.trim() ? { permitReference: form.permitReference } : {}),
         ...(form.note.trim() ? { note: form.note } : {}),
       };
-      const created = await api(`/api/work-packages/${packageId}/permit-annotations`, {
+      const created = await api(pageQuery, `/api/work-packages/${packageId}/permit-annotations`, {
         method: "POST", body: JSON.stringify(body),
       });
       setForm({ label: "", url: "", permitReference: "", note: "" });
@@ -146,7 +151,7 @@ export default function WorkPackagePermitAnnotations({ packageId, scope, drawing
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const updated = await api(`/api/work-packages/${packageId}/permit-annotations/${annotation.id}`, {
+      const updated = await api(pageQuery, `/api/work-packages/${packageId}/permit-annotations/${annotation.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: annotation.version,
@@ -167,7 +172,7 @@ export default function WorkPackagePermitAnnotations({ packageId, scope, drawing
   async function onConfirmRetire(annotation) {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const retired = await api(`/api/work-packages/${packageId}/permit-annotations/${annotation.id}/retire`, {
+      const retired = await api(pageQuery, `/api/work-packages/${packageId}/permit-annotations/${annotation.id}/retire`, {
         method: "POST",
         body: JSON.stringify({
           expectedVersion: annotation.version,

@@ -354,6 +354,73 @@ export function mapDrawingReviewRpcError(error) {
   if (message.includes("WPP7_INVALID_DECISION")) {
     return { ok: false, httpStatus: 400, error: "Decision must be APPROVE, APPROVE_WITH_REDLINES, or RETURN_TO_DRAFTER." };
   }
+  // Slice-7 PDF blockers: controlled-drawing intake / IFC staging.
+  if (message.includes("WPP7_INVALID_DRAWING_NUMBER")) {
+    return { ok: false, httpStatus: 400, error: "Drawing number is required and must be at most 120 characters." };
+  }
+  if (message.includes("WPP7_INVALID_DRAWING_TYPE")) {
+    return { ok: false, httpStatus: 400, error: "Drawing type must be isometric, p_id, or cut_sheet." };
+  }
+  if (message.includes("WPP7_INVALID_LINE_NUMBER")) {
+    return { ok: false, httpStatus: 400, error: "Line number must be at most 120 characters." };
+  }
+  if (message.includes("WPP7_INVALID_OBJECT_PATH")) {
+    return { ok: false, httpStatus: 400, error: "The stored file reference is invalid." };
+  }
+  if (message.includes("WPP7_INVALID_CONTENT_LENGTH")) {
+    return { ok: false, httpStatus: 400, error: "The PDF must be non-empty and at most 25 MB." };
+  }
+  if (message.includes("WPP7_INVALID_REQUEST_ID")) {
+    return { ok: false, httpStatus: 400, error: "Request id is required and must be at most 128 characters." };
+  }
+  if (message.includes("WPP7_INVALID_ISSUER_REF")) {
+    return { ok: false, httpStatus: 400, error: "Issuer/drafter reference must be at most 200 characters." };
+  }
+  if (message.includes("WPP7_INVALID_TITLE")) {
+    return { ok: false, httpStatus: 400, error: "Title must be at most 200 characters." };
+  }
+  if (message.includes("WPP7_INVALID_FILENAME")) {
+    return { ok: false, httpStatus: 400, error: "Filename must be at most 255 characters." };
+  }
+  if (message.includes("WPP7_PID_ON_PID")) {
+    return { ok: false, httpStatus: 400, error: "pIdDrawingId must not be set on a p_id drawing." };
+  }
+  if (message.includes("WPP7_PID_NOT_FOUND")) {
+    return { ok: false, httpStatus: 404, error: "The selected P&ID drawing was not found in this package." };
+  }
+  if (message.includes("WPP7_PID_NOT_PID")) {
+    return { ok: false, httpStatus: 400, error: "The selected parent must be a P&ID drawing." };
+  }
+  if (message.includes("WPP7_PID_RETIRED")) {
+    return { ok: false, httpStatus: 409, error: "The selected P&ID drawing is retired." };
+  }
+  if (message.includes("WPP7_PID_MISMATCH")) {
+    return { ok: false, httpStatus: 409, error: "This drawing already links to a different P&ID parent." };
+  }
+  if (message.includes("WPP7_LINE_MISMATCH")) {
+    return { ok: false, httpStatus: 409, error: "This drawing already records a different line number." };
+  }
+  if (message.includes("WPP7_DRAWING_TYPE_MISMATCH")) {
+    return { ok: false, httpStatus: 409, error: "A drawing with this number already exists in this package with a different type." };
+  }
+  if (message.includes("WPP7_IFC_SAME_AS_IFA")) {
+    return { ok: false, httpStatus: 409, error: "The IFC PDF must be a different drafter-issued file from the approved IFA revision — approval alone never converts IFA to IFC." };
+  }
+  if (message.includes("WPP7_ARTIFACT_NOT_FOUND")) {
+    return { ok: false, httpStatus: 404, error: "Staged IFC file not found." };
+  }
+  if (message.includes("WPP7_STAGED_ARTIFACT_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "An IFC release requires a staged IFC file — stage the IFC PDF first." };
+  }
+  if (message.includes("WPP7_ARTIFACT_MISMATCH")) {
+    return { ok: false, httpStatus: 409, error: "The staged IFC file does not belong to this drawing." };
+  }
+  if (message.includes("WPP7_ARTIFACT_NOT_STAGED")) {
+    return { ok: false, httpStatus: 409, error: "Only a staged IFC candidate can be released — stage the IFC PDF first." };
+  }
+  if (message.includes("WPP7_ARTIFACT_RETIRED")) {
+    return { ok: false, httpStatus: 409, error: "The staged IFC file was retired with its drawing." };
+  }
   throw error;
 }
 
@@ -614,15 +681,25 @@ export async function createIfcRelease(db, { ownerId, packageId, drawingId, inpu
   const pkg = await requirePackage(db, { ownerId, packageId });
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
 
+  // Slice-7 PDF blockers, fix round 1: the staged artifact is
+  // mandatory and its stored bytes are authoritative. Caller-typed
+  // documentRef/contentSha256 are never forwarded — the RPC derives
+  // both from the artifact row and rejects a null staged artifact
+  // id, so no IFC revision can be issued from a fabricated hash.
+  // Deployment-order note: this always calls the 9-argument RPC, so
+  // until the new migration applies the call reports 503 ("not
+  // applied yet") — the typed release path is closed from this deploy
+  // onward, staged releases included, until the migration lands.
   const { data, error } = await db.rpc("forge_wp_drawing_ifc_release", {
     p_owner_id: ownerId,
     p_package_id: packageId,
     p_drawing_id: drawingId,
     p_review_id: input.reviewId,
     p_ifc_revision_code: input.ifcRevisionCode,
-    p_document_ref: input.documentRef,
-    p_content_sha256: input.contentSha256,
+    p_document_ref: null,
+    p_content_sha256: null,
     p_reason: input.reason ?? null,
+    p_staged_artifact_id: input.stagedArtifactId,
   });
   if (error) return mapDrawingReviewRpcError(error);
   return { ok: true, release: toCamelRelease(rpcRow(data)) };

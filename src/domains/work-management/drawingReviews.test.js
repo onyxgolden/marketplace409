@@ -13,6 +13,9 @@ import {
   validateFieldRedlineInput,
   validateFieldRedlineReconcileInput,
   validateDrawingRetireInput,
+  validateControlledDrawingIntakeInput,
+  validateIfcStageInput,
+  validatePdfFile,
   deriveDrawingReadiness,
   stepDrawingLabel,
   preIfcTag,
@@ -100,18 +103,34 @@ describe("validateReviewDecisionInput", () => {
 });
 
 describe("validateIfcReleaseInput", () => {
-  it("accepts a release with a new IFC revision envelope", () => {
-    expect(validateIfcReleaseInput({
+  // Fix round 1: a staged artifact is mandatory — a typed-only
+  // release (even with a well-formed hash) is rejected outright.
+  it("rejects a typed-only release even with a well-formed hash", () => {
+    const result = validateIfcReleaseInput({
       reviewId: "rev_1", ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: SHA,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("staged IFC file is required");
+  });
+
+  it("accepts a staged-artifact release without a typed ref or hash", () => {
+    expect(validateIfcReleaseInput({
+      reviewId: "rev_1", ifcRevisionCode: "C", stagedArtifactId: "forge_wpa_1",
+    }).ok).toBe(true);
+    // Typed values are tolerated when present (the UI may still send
+    // them) but never trusted — the service never forwards them.
+    expect(validateIfcReleaseInput({
+      reviewId: "rev_1", ifcRevisionCode: "C", stagedArtifactId: "forge_wpa_1",
+      documentRef: "anything", contentSha256: "not-a-hash",
     }).ok).toBe(true);
   });
 
-  it("rejects a release with a bad revision envelope", () => {
+  it("rejects a staged-artifact release with a bad revision code or no review", () => {
     expect(validateIfcReleaseInput({
-      reviewId: "rev_1", ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: "nope",
+      reviewId: "rev_1", ifcRevisionCode: "", stagedArtifactId: "forge_wpa_1",
     }).ok).toBe(false);
     expect(validateIfcReleaseInput({
-      ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: SHA,
+      ifcRevisionCode: "C", stagedArtifactId: "forge_wpa_1",
     }).ok).toBe(false);
   });
 });
@@ -244,5 +263,91 @@ describe("preIfcTag", () => {
     expect(preIfcTag({ badge: "No issued revision", constructionUsable: false, preliminary: false })).toBe(null);
     expect(preIfcTag(null)).toBe(null);
     expect(preIfcTag(undefined)).toBe(null);
+  });
+});
+
+describe("validatePdfFile", () => {
+  const goodPdf = () => new TextEncoder().encode("%PDF-1.7\n%test isometric\n%%EOF\n");
+
+  it("accepts a small well-formed PDF", () => {
+    expect(validatePdfFile({ bytes: goodPdf(), mimeType: "application/pdf" }).ok).toBe(true);
+    // The MIME type is advisory — the magic bytes are authoritative.
+    expect(validatePdfFile({ bytes: goodPdf(), mimeType: "" }).ok).toBe(true);
+  });
+
+  it("rejects empty, non-PDF and truncated files", () => {
+    expect(validatePdfFile({ bytes: new Uint8Array(0), mimeType: "application/pdf" }).ok).toBe(false);
+    expect(validatePdfFile({ bytes: null, mimeType: "application/pdf" }).ok).toBe(false);
+    expect(validatePdfFile({
+      bytes: new TextEncoder().encode("not a pdf at all\n%%EOF\n"),
+      mimeType: "application/pdf",
+    }).ok).toBe(false);
+    expect(validatePdfFile({
+      bytes: new TextEncoder().encode("%PDF-1.7\nno eof marker here\n"),
+      mimeType: "application/pdf",
+    }).ok).toBe(false);
+  });
+
+  it("rejects a wrong MIME type and an oversized file", () => {
+    expect(validatePdfFile({ bytes: goodPdf(), mimeType: "image/png" }).ok).toBe(false);
+    const big = new Uint8Array(26214401);
+    big.set(new TextEncoder().encode("%PDF-1.7\n"));
+    big.set(new TextEncoder().encode("%%EOF"), big.length - 5);
+    expect(validatePdfFile({ bytes: big, mimeType: "application/pdf" }).ok).toBe(false);
+  });
+});
+
+describe("validateControlledDrawingIntakeInput", () => {
+  const base = {
+    drawingType: "isometric",
+    drawingNumber: "W-0005-1",
+    lineNumber: '2"-PL-101',
+    revisionCode: "0",
+    issueDate: "2026-11-13",
+    issuerRef: "Drafter A",
+    title: "Test isometric",
+    pIdDrawingId: "",
+    requestId: "req-1",
+  };
+
+  it("accepts a plain isometric intake, with or without optional fields", () => {
+    expect(validateControlledDrawingIntakeInput(base).ok).toBe(true);
+    expect(validateControlledDrawingIntakeInput({
+      ...base, lineNumber: "", issuerRef: "", title: "",
+    }).ok).toBe(true);
+    expect(validateControlledDrawingIntakeInput({ ...base, drawingType: "p_id" }).ok).toBe(true);
+    expect(validateControlledDrawingIntakeInput({ ...base, drawingType: "cut_sheet" }).ok).toBe(true);
+  });
+
+  it("rejects a bad type, missing number, bad revision code and bad date", () => {
+    expect(validateControlledDrawingIntakeInput({ ...base, drawingType: "sketch" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, drawingNumber: "" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, drawingNumber: "W".repeat(121) }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, revisionCode: "" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, issueDate: "13/11/2026" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, issueDate: "2026-02-30" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, issueDate: "" }).ok).toBe(false);
+  });
+
+  it("rejects a P&ID parent on a p_id drawing and a missing request id", () => {
+    expect(validateControlledDrawingIntakeInput({
+      ...base, drawingType: "p_id", pIdDrawingId: "forge_wdwg_1",
+    }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, requestId: "" }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, requestId: "r".repeat(129) }).ok).toBe(false);
+  });
+
+  it("rejects overlong optional fields", () => {
+    expect(validateControlledDrawingIntakeInput({ ...base, lineNumber: "L".repeat(121) }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, issuerRef: "I".repeat(201) }).ok).toBe(false);
+    expect(validateControlledDrawingIntakeInput({ ...base, title: "T".repeat(201) }).ok).toBe(false);
+  });
+});
+
+describe("validateIfcStageInput", () => {
+  it("accepts a request id and rejects a missing one", () => {
+    expect(validateIfcStageInput({ requestId: "req-2" }).ok).toBe(true);
+    expect(validateIfcStageInput({ requestId: "" }).ok).toBe(false);
+    expect(validateIfcStageInput({}).ok).toBe(false);
   });
 });

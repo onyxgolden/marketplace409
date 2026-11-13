@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery } from "./packagePageContext.jsx";
 import {
   formatCents,
   parsePlannedBudgetToCents,
@@ -28,6 +28,7 @@ export default function WorkPackageBudgetPanel({
   onBudgetSaved = null,
   onNavigateToLinks = null,
 }) {
+  const pageQuery = usePageQuery();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -38,7 +39,7 @@ export default function WorkPackageBudgetPanel({
   const [saveError, setSaveError] = useState("");
 
   const fetchSummary = useCallback(async () => {
-    const response = await fetch(withWorkspaceQuery(`/api/work-packages/${encodeURIComponent(packageId)}/cost-summary`));
+    const response = await fetch(pageQuery(`/api/work-packages/${encodeURIComponent(packageId)}/cost-summary`));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Unable to load budget and spending.");
     return data.summary;
@@ -104,7 +105,7 @@ export default function WorkPackageBudgetPanel({
     setSaving(true);
     setSaveError("");
     try {
-      const response = await fetch(withWorkspaceQuery(`/api/work-packages/${encodeURIComponent(packageId)}`), {
+      const response = await fetch(pageQuery(`/api/work-packages/${encodeURIComponent(packageId)}`), {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

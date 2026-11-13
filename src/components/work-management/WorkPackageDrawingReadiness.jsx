@@ -17,7 +17,8 @@
 
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -26,8 +27,8 @@ const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 const btnDanger = `${btn} border border-red-300 text-red-700 hover:bg-red-50`;
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -69,6 +70,8 @@ function shortId(value) {
 // One review round: redlines, decision form, audit events. Detail is
 // fetched only while the round is expanded.
 function ReviewRound({ packageId, drawingId, review, onChanged }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
   const [decision, setDecision] = useState("APPROVE");
   const [reason, setReason] = useState("");
@@ -81,8 +84,8 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
   const [resolvingId, setResolvingId] = useState(null);
 
   const { data, error: loadError, refresh } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:reviews:${review.id}:detail` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews", review.id, "detail") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}`),
     { ttlMs: 10_000 },
   );
   const redlines = data?.redlines || [];
@@ -93,7 +96,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     event.preventDefault();
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: review.version, decision, reason: reason.trim() }),
       });
@@ -109,7 +112,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     event.preventDefault();
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: review.drawingRevisionId,
@@ -134,7 +137,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     const form = resolveForm[redline.id] || {};
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: redline.version,
@@ -293,38 +296,60 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
 // One drawing's review workspace: revisions, review rounds, IFC
 // releases, field hand-redline history, and the actions that move a
 // drawing through review. Lists are fetched only while expanded.
-function DrawingReviewWorkspace({ packageId, row, onChanged }) {
+function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = null }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [revisionForm, setRevisionForm] = useState({ revisionCode: "", documentRef: "", contentSha256: "" });
   const [reviewForm, setReviewForm] = useState({ drawingRevisionId: "", reason: "" });
-  const [ifcForm, setIfcForm] = useState({ reviewId: "", ifcRevisionCode: "", documentRef: "", contentSha256: "", reason: "" });
+  const [ifcForm, setIfcForm] = useState({ reviewId: "", ifcRevisionCode: "", stagedArtifactId: "", reason: "" });
+  const [stageFile, setStageFile] = useState(null);
+  const [staging, setStaging] = useState(false);
   const [fieldForm, setFieldForm] = useState({ drawingRevisionId: "", artifactRef: "", sha256: "", fieldReason: "" });
   const [reconcileForm, setReconcileForm] = useState({});
   const [retireReason, setRetireReason] = useState("");
   const [confirmRetire, setConfirmRetire] = useState(false);
 
+  // Slice-7 PDF blockers: new revisions come only from a verified
+  // controlled-PDF upload, never from typed references. Jump to the
+  // intake section on the Documents tab and scroll it into view once
+  // it mounts.
+  function navigateToIntake() {
+    if (!onNavigateToTab) return;
+    onNavigateToTab("documents");
+    requestAnimationFrame(() => {
+      document.getElementById("controlled-drawing-intake")?.scrollIntoView({ block: "start" });
+    });
+  }
+
   const drawingId = row.drawingId;
   const { data: revisionsData, refresh: refreshRevisions } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:revisions` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "revisions") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
     { ttlMs: 10_000 },
   );
   const { data: reviewsData, refresh: refreshReviews } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:reviews` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`),
     { ttlMs: 10_000 },
   );
   const { data: releasesData, refresh: refreshReleases } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:ifc-releases` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "ifc-releases") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`),
     { ttlMs: 10_000 },
   );
   const { data: fieldData, refresh: refreshField } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:field-redlines` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "field-redlines") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`),
+    { ttlMs: 10_000 },
+  );
+  // Slice-7 PDF blockers: the drawing's stored artifacts — issued IFA
+  // bytes plus staged IFC candidates for the release picker.
+  const { data: artifactsData, refresh: refreshArtifacts } = useStaleWhileRevalidate(
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "artifacts") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/artifacts`),
     { ttlMs: 10_000 },
   );
 
@@ -332,41 +357,46 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
   const reviews = reviewsData?.reviews || [];
   const releases = releasesData?.releases || [];
   const fieldRedlines = fieldData?.fieldRedlines || [];
+  const artifacts = artifactsData?.artifacts || [];
+  const stagedCandidates = artifacts.filter((a) => a.purpose === "ifc_candidate" && !a.retiredAt);
   const latestRevision = row.latestRevision;
   const openReview = reviews.find((r) => r.state === "OPEN")
     || (row.latestReview?.state === "OPEN" ? row.latestReview : null);
   const approvedReview = reviews.find((r) => r.state === "APPROVED" || r.state === "APPROVED_WITH_REDLINES");
 
   async function refreshAll() {
-    await Promise.all([refreshRevisions(), refreshReviews(), refreshReleases(), refreshField()]);
+    await Promise.all([refreshRevisions(), refreshReviews(), refreshReleases(), refreshField(), refreshArtifacts()]);
     if (onChanged) onChanged();
   }
 
-  async function submitRevision(event) {
+  async function submitStage(event) {
     event.preventDefault();
-    setBusy(true); setError(""); setNotice("");
+    if (!stageFile) return;
+    setStaging(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/revisions`, {
-        method: "POST",
-        body: JSON.stringify({
-          revisionCode: revisionForm.revisionCode.trim(),
-          documentRef: revisionForm.documentRef.trim(),
-          contentSha256: revisionForm.contentSha256.trim(),
-        }),
-      });
-      setRevisionForm({ revisionCode: "", documentRef: "", contentSha256: "" });
-      setNotice(`Revision ${revisionForm.revisionCode.trim()} added as IFA.`);
-      await refreshAll();
+      const body = new FormData();
+      body.append("file", stageFile);
+      body.append("requestId", crypto.randomUUID());
+      const response = await fetch(
+        pageQuery(`/api/work-packages/${packageId}/drawings/${drawingId}/ifc-stage`),
+        { method: "POST", body },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not stage the IFC PDF.");
+      setStageFile(null);
+      event.target.reset();
+      setNotice("IFC PDF staged — it stays pending until the release below attaches it.");
+      await refreshArtifacts();
     } catch (e) {
       setError(e.message);
-    } finally { setBusy(false); }
+    } finally { setStaging(false); }
   }
 
   async function submitReview(event) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: reviewForm.drawingRevisionId,
@@ -386,18 +416,19 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`, {
+      // Slice-7 PDF blockers: the IFC bytes come from a staged artifact,
+      // never from typed references. The release RPC takes the staged
+      // file's stored bytes as authoritative.
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`, {
         method: "POST",
         body: JSON.stringify({
           reviewId: ifcForm.reviewId,
           ifcRevisionCode: ifcForm.ifcRevisionCode.trim(),
-          documentRef: ifcForm.documentRef.trim(),
-          contentSha256: ifcForm.contentSha256.trim(),
+          stagedArtifactId: ifcForm.stagedArtifactId,
           ...(ifcForm.reason.trim() ? { reason: ifcForm.reason.trim() } : {}),
-          idempotencyKey: newIdempotencyKey(),
         }),
       });
-      setIfcForm({ reviewId: "", ifcRevisionCode: "", documentRef: "", contentSha256: "", reason: "" });
+      setIfcForm({ reviewId: "", ifcRevisionCode: "", stagedArtifactId: "", reason: "" });
       setNotice(`IFC revision ${ifcForm.ifcRevisionCode.trim()} issued for construction.`);
       await refreshAll();
     } catch (e) {
@@ -409,7 +440,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: fieldForm.drawingRevisionId,
@@ -431,7 +462,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     const form = reconcileForm[fieldRedline.id] || {};
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
         method: "POST",
         body: JSON.stringify({
           ...(form.reconciledRevisionId ? { reconciledRevisionId: form.reconciledRevisionId } : {}),
@@ -449,7 +480,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/retire`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/retire`, {
         method: "POST",
         body: JSON.stringify({ reason: retireReason.trim() }),
       });
@@ -499,27 +530,15 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
               </ul>
             )}
             {!row.retiredAt && (
-              <form className="mt-2 space-y-2 rounded border border-slate-100 p-3" onSubmit={submitRevision}>
+              <div className="mt-2 rounded border border-slate-100 p-3">
                 <p className="text-xs font-medium text-slate-700">Add an IFA revision</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className={label} htmlFor={`rev-code-${drawingId}`}>Revision code</label>
-                    <input id={`rev-code-${drawingId}`} className={input} value={revisionForm.revisionCode}
-                      onChange={(e) => setRevisionForm((f) => ({ ...f, revisionCode: e.target.value }))} required />
-                  </div>
-                  <div>
-                    <label className={label} htmlFor={`rev-ref-${drawingId}`}>Document reference</label>
-                    <input id={`rev-ref-${drawingId}`} className={input} value={revisionForm.documentRef}
-                      onChange={(e) => setRevisionForm((f) => ({ ...f, documentRef: e.target.value }))} required />
-                  </div>
-                  <div>
-                    <label className={label} htmlFor={`rev-sha-${drawingId}`}>Content SHA-256</label>
-                    <input id={`rev-sha-${drawingId}`} className={input} value={revisionForm.contentSha256}
-                      onChange={(e) => setRevisionForm((f) => ({ ...f, contentSha256: e.target.value }))} required />
-                  </div>
-                </div>
-                <button type="submit" className={btnPrimary} disabled={busy}>Add IFA revision</button>
-              </form>
+                <p className="mt-1 text-xs text-slate-500">
+                  New revisions come only from a verified controlled-PDF upload — references and hashes are never typed in by hand.
+                </p>
+                <button type="button" className={`${btnPrimary} mt-2`} onClick={navigateToIntake}>
+                  Upload a controlled PDF
+                </button>
+              </div>
             )}
           </div>
           <div>
@@ -570,6 +589,30 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
               </ul>
             )}
             {!row.retiredAt && approvedReview && (
+              <form className="mt-2 space-y-2 rounded border border-slate-100 p-3" onSubmit={submitStage}>
+                <p className="text-xs font-medium text-slate-700">Stage an IFC PDF</p>
+                <p className="text-xs text-slate-500">
+                  Upload the drafter-issued IFC file here. It stays pending — a different file from the approved IFA revision — until the release below attaches it.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input type="file" className={`${input} flex-1`} accept="application/pdf,.pdf"
+                    onChange={(e) => setStageFile(e.target.files?.[0] || null)} required />
+                  <button type="submit" className={btnPrimary} disabled={staging || !stageFile}>
+                    {staging ? "Staging…" : "Stage IFC PDF"}
+                  </button>
+                </div>
+                {stagedCandidates.length > 0 && (
+                  <ul className="mt-1 space-y-1 text-xs text-slate-600">
+                    {stagedCandidates.map((artifact) => (
+                      <li key={artifact.id}>
+                        Staged: {artifact.originalFilename || "IFC PDF"} · SHA-256 {artifact.contentSha256.slice(0, 12)}… · {formatWhen(artifact.createdAt)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </form>
+            )}
+            {!row.retiredAt && approvedReview && (
               <form className="mt-2 space-y-2 rounded border border-slate-100 p-3" onSubmit={submitIfc}>
                 <p className="text-xs font-medium text-slate-700">Issue an IFC revision</p>
                 <p className="text-xs text-slate-500">
@@ -592,17 +635,22 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
                       onChange={(e) => setIfcForm((f) => ({ ...f, ifcRevisionCode: e.target.value }))} required />
                   </div>
                   <div>
-                    <label className={label} htmlFor={`ifc-ref-${drawingId}`}>Document reference</label>
-                    <input id={`ifc-ref-${drawingId}`} className={input} value={ifcForm.documentRef}
-                      onChange={(e) => setIfcForm((f) => ({ ...f, documentRef: e.target.value }))} required />
+                    <label className={label} htmlFor={`ifc-file-${drawingId}`}>Staged IFC file</label>
+                    <select id={`ifc-file-${drawingId}`} className={input} value={ifcForm.stagedArtifactId}
+                      onChange={(e) => setIfcForm((f) => ({ ...f, stagedArtifactId: e.target.value }))} required>
+                      <option value="">Select a staged IFC PDF…</option>
+                      {stagedCandidates.map((artifact) => (
+                        <option key={artifact.id} value={artifact.id}>
+                          {artifact.originalFilename || "IFC PDF"} · {artifact.contentSha256.slice(0, 12)}…
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <label className={label} htmlFor={`ifc-sha-${drawingId}`}>Content SHA-256</label>
-                  <input id={`ifc-sha-${drawingId}`} className={input} value={ifcForm.contentSha256}
-                    onChange={(e) => setIfcForm((f) => ({ ...f, contentSha256: e.target.value }))} required />
-                </div>
-                <button type="submit" className={btnPrimary} disabled={busy || !ifcForm.reviewId}>Issue IFC revision</button>
+                {stagedCandidates.length === 0 && (
+                  <p className="text-xs text-amber-700">No IFC PDF staged yet — stage one in the form above first.</p>
+                )}
+                <button type="submit" className={btnPrimary} disabled={busy || !ifcForm.reviewId || !ifcForm.stagedArtifactId}>Issue IFC revision</button>
               </form>
             )}
           </div>
@@ -700,10 +748,12 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
   );
 }
 
-export default function WorkPackageDrawingReadiness({ packageId }) {
+export default function WorkPackageDrawingReadiness({ packageId, onNavigateToTab = null }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:drawing-readiness`,
-    () => api(`/api/work-packages/${packageId}/drawings/readiness`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/readiness`),
     { ttlMs: 10_000 },
   );
   const drawings = data?.drawings || [];
@@ -754,7 +804,7 @@ export default function WorkPackageDrawingReadiness({ packageId }) {
           </dl>
           <ul className="mt-3 space-y-2">
             {drawings.map((row) => (
-              <DrawingReviewWorkspace key={row.drawingId} packageId={packageId} row={row} onChanged={refresh} />
+              <DrawingReviewWorkspace key={row.drawingId} packageId={packageId} row={row} onChanged={refresh} onNavigateToTab={onNavigateToTab} />
             ))}
           </ul>
         </>

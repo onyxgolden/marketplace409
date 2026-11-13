@@ -17,7 +17,8 @@
 
 import { Fragment, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import {
   ALLOWED_TRANSITIONS,
@@ -41,8 +42,8 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -90,14 +91,16 @@ function revisionSummary(revision) {
 }
 
 function ChangeOrderHistory({ packageId, changeOrderId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [pages, setPages] = useState(1);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:change-orders:${changeOrderId}:revisions:pages:${pages}`,
+    scopedSWRKey(pageContext, "work-packages", packageId, "change-orders", changeOrderId, "revisions", "pages", pages),
     async () => {
       const rows = [];
       const seen = new Set();
       for (let page = 0; page < pages; page += 1) {
-        const batch = await api(
+        const batch = await api(pageQuery, 
           `/api/work-packages/${packageId}/change-orders/${changeOrderId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`,
         ).then((b) => b.revisions);
         for (const row of batch || []) {
@@ -149,6 +152,8 @@ function statusBadge(status) {
 }
 
 export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onChanged = null }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState("");
@@ -177,8 +182,8 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   })));
 
   const { data, error: loadError, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:change-orders:${refreshKey}`,
-    () => api(`/api/work-packages/${packageId}/change-orders`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "change-orders", refreshKey),
+    () => api(pageQuery, `/api/work-packages/${packageId}/change-orders`),
     { ttlMs: 10_000 },
   );
   const summary = data?.summary || null;
@@ -188,8 +193,8 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   const notApplied = Boolean(summary?.notApplied);
 
   const { data: retiredData, refresh: refreshRetired } = useStaleWhileRevalidate(
-    showRetired ? `work-packages:${packageId}:change-orders:retired` : null,
-    () => api(`/api/work-packages/${packageId}/change-orders?retiredOnly=true&limit=100&offset=0`),
+    showRetired ? scopedSWRKey(pageContext, "work-packages", packageId, "change-orders", "retired") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/change-orders?retiredOnly=true&limit=100&offset=0`),
     { ttlMs: 10_000 },
   );
   const retiredOrders = retiredData?.changeOrders || [];
@@ -220,7 +225,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     } else {
       patch[field] = value === "" ? null : value;
     }
-    const updated = await api(`/api/work-packages/${packageId}/change-orders/${order.id}`, {
+    const updated = await api(pageQuery, `/api/work-packages/${packageId}/change-orders/${order.id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
@@ -268,7 +273,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const created = await api(`/api/work-packages/${packageId}/change-orders`, {
+      const created = await api(pageQuery, `/api/work-packages/${packageId}/change-orders`, {
         method: "POST",
         body: JSON.stringify({
           type: draft.type,
@@ -337,7 +342,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const updated = await api(`/api/work-packages/${packageId}/change-orders/${order.id}`, {
+      const updated = await api(pageQuery, `/api/work-packages/${packageId}/change-orders/${order.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: order.version,
@@ -385,7 +390,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const moved = await api(`/api/work-packages/${packageId}/change-orders/${order.id}/transition`, {
+      const moved = await api(pageQuery, `/api/work-packages/${packageId}/change-orders/${order.id}/transition`, {
         method: "POST",
         body: JSON.stringify({
           expectedVersion: order.version,
@@ -408,7 +413,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   async function onConfirmRetire(order) {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const retired = await api(`/api/work-packages/${packageId}/change-orders/${order.id}/retire`, {
+      const retired = await api(pageQuery, `/api/work-packages/${packageId}/change-orders/${order.id}/retire`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: order.version, reason: retireReason }),
       });
@@ -452,7 +457,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const saved = await api(`/api/work-packages/${packageId}/control-estimate`, {
+      const saved = await api(pageQuery, `/api/work-packages/${packageId}/control-estimate`, {
         method: "PUT",
         body: JSON.stringify({
           originalCents: parsed.originalCents,
@@ -473,7 +478,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   async function onConfirmRetireEstimate() {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      await api(`/api/work-packages/${packageId}/control-estimate/retire`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/control-estimate/retire`, {
         method: "POST",
         body: JSON.stringify({
           estimateId: summary?.estimateId,
@@ -510,7 +515,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const saved = await api(`/api/work-packages/${packageId}/craft-rates`, {
+      const saved = await api(pageQuery, `/api/work-packages/${packageId}/craft-rates`, {
         method: "PUT",
         body: JSON.stringify({
           craftKey: rateForm.craftKey,
@@ -531,7 +536,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   async function onConfirmRetireRate(craft) {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      await api(`/api/work-packages/${packageId}/craft-rates/${craft.rateId}/retire`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/craft-rates/${craft.rateId}/retire`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: craft.rateVersion, reason: rateRetireReason }),
       });

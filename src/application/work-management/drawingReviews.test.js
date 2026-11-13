@@ -351,7 +351,29 @@ describe("resolveRedline / decideReview", () => {
 });
 
 describe("createIfcRelease / listIfcReleases", () => {
-  it("calls the release RPC with the new IFC revision envelope", async () => {
+  it("calls the release RPC with the staged artifact and never forwards typed ref/sha", async () => {
+    const db = mockDb(
+      [chain({ data: PKG_ROW, error: null })],
+      [{ data: RELEASE_ROW, error: null }],
+    );
+    const result = await createIfcRelease(db, {
+      ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1",
+      input: {
+        reviewId: "forge_wpdrvw_1", ifcRevisionCode: "C",
+        stagedArtifactId: "forge_wpa_2",
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.release).toMatchObject({ id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_2" });
+    expect(db.rpc).toHaveBeenCalledWith("forge_wp_drawing_ifc_release", {
+      p_owner_id: OWNER, p_package_id: "pkg_1", p_drawing_id: "dwg_1",
+      p_review_id: "forge_wpdrvw_1", p_ifc_revision_code: "C",
+      p_document_ref: null, p_content_sha256: null, p_reason: null,
+      p_staged_artifact_id: "forge_wpa_2",
+    });
+  });
+
+  it("rejects a typed-only release (no staged artifact) at the service, without calling the RPC", async () => {
     const db = mockDb(
       [chain({ data: PKG_ROW, error: null })],
       [{ data: RELEASE_ROW, error: null }],
@@ -363,13 +385,10 @@ describe("createIfcRelease / listIfcReleases", () => {
         documentRef: "s3://forge/p-101-c.pdf", contentSha256: SHA,
       },
     });
-    expect(result.ok).toBe(true);
-    expect(result.release).toMatchObject({ id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_2" });
-    expect(db.rpc).toHaveBeenCalledWith("forge_wp_drawing_ifc_release", {
-      p_owner_id: OWNER, p_package_id: "pkg_1", p_drawing_id: "dwg_1",
-      p_review_id: "forge_wpdrvw_1", p_ifc_revision_code: "C",
-      p_document_ref: "s3://forge/p-101-c.pdf", p_content_sha256: SHA, p_reason: null,
-    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toContain("staged IFC file is required");
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 
   it("maps a stale review to 409", async () => {
@@ -381,7 +400,7 @@ describe("createIfcRelease / listIfcReleases", () => {
       ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1",
       input: {
         reviewId: "forge_wpdrvw_1", ifcRevisionCode: "C",
-        documentRef: "s3://forge/p-101-c.pdf", contentSha256: SHA,
+        stagedArtifactId: "forge_wpa_2",
       },
     });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
