@@ -122,6 +122,13 @@ pub enum HotkeyAction {
     WindowCapture,
     /// Capture the monitor under the cursor immediately.
     FullscreenCapture,
+    /// Stop an active screen recording without raising the app window or
+    /// touching the recorded source. 2026-11-11 fix: a user recording a
+    /// fullscreen/maximized source had no way to reach the in-window Stop
+    /// button, and the only way out they could reach (closing the shared
+    /// source) discarded the recording. This shortcut reaches the real
+    /// stop handler from anywhere.
+    StopRecording,
 }
 
 /// Map an accelerator string (case-insensitive) to its action. `None` for
@@ -135,6 +142,8 @@ pub fn action_for_accelerator(accelerator: &str) -> Option<HotkeyAction> {
         Some(HotkeyAction::WindowCapture)
     } else if accelerator.eq_ignore_ascii_case(FULLSCREEN_ACCELERATOR) {
         Some(HotkeyAction::FullscreenCapture)
+    } else if accelerator.eq_ignore_ascii_case(STOP_RECORDING_ACCELERATOR) {
+        Some(HotkeyAction::StopRecording)
     } else {
         None
     }
@@ -149,6 +158,26 @@ pub const CAPTURE_SHORTCUTS: [(&str, HotkeyAction); 4] = [
     (WINDOW_ACCELERATOR, HotkeyAction::WindowCapture),
     (FULLSCREEN_ACCELERATOR, HotkeyAction::FullscreenCapture),
 ];
+
+// ---------------------------------------------------------------------------
+// Recording-control shortcut: stop an active recording from anywhere.
+// ---------------------------------------------------------------------------
+
+/// Accelerator that stops an active screen recording without raising the
+/// app window. Kept in its own table from [`CAPTURE_SHORTCUTS`] — a
+/// different purpose (controlling an in-progress recording, not starting a
+/// capture) — but registered with the same best-effort discipline.
+pub const STOP_RECORDING_ACCELERATOR: &str = "Ctrl+Alt+F9";
+
+/// Event name the shell emits to the UI when the stop-recording shortcut
+/// fires. Deliberately not routed through `handle_hotkey_action`'s
+/// `app.emit("hotkey-action", ...)` channel (used for capture-start
+/// actions) — a dedicated event keeps "stop an active recording" from
+/// being confused with "open a capture mode".
+pub const ACTION_STOP_RECORDING: &str = "stop-recording-requested";
+
+pub const RECORDING_SHORTCUTS: [(&str, HotkeyAction); 1] =
+    [(STOP_RECORDING_ACCELERATOR, HotkeyAction::StopRecording)];
 
 #[cfg(test)]
 mod tests {
@@ -256,6 +285,30 @@ mod tests {
         }
         // The bare PrintScreen contract is unchanged by the new scheme.
         assert!(CAPTURE_SHORTCUTS.contains(&(PRINTSCREEN_ACCELERATOR, HotkeyAction::FocusWindow)));
+    }
+
+    #[test]
+    fn stop_recording_accelerator_maps_and_is_outside_capture_shortcuts() {
+        assert_eq!(STOP_RECORDING_ACCELERATOR, "Ctrl+Alt+F9");
+        assert_eq!(
+            action_for_accelerator(STOP_RECORDING_ACCELERATOR),
+            Some(HotkeyAction::StopRecording)
+        );
+        // Case-insensitive, same as every other accelerator.
+        assert_eq!(
+            action_for_accelerator("ctrl+alt+f9"),
+            Some(HotkeyAction::StopRecording)
+        );
+        // Never one of the four capture shortcuts — different table,
+        // different purpose, registered separately.
+        assert!(CAPTURE_SHORTCUTS
+            .iter()
+            .all(|(acc, _)| !acc.eq_ignore_ascii_case(STOP_RECORDING_ACCELERATOR)));
+        assert_eq!(RECORDING_SHORTCUTS.len(), 1);
+        assert_eq!(
+            RECORDING_SHORTCUTS[0],
+            (STOP_RECORDING_ACCELERATOR, HotkeyAction::StopRecording)
+        );
     }
 
     #[test]

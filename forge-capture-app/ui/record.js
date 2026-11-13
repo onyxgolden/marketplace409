@@ -388,8 +388,19 @@ export class RecordingSession {
     };
     videoTrack.onended = () => {
       if (this.state === "recording") {
-        this.emit("ended", { message: "The shared source ended (the browser picker was closed) — stopping." });
-        void this.stop();
+        // Defect #3 fix: capture stop()'s result instead of discarding it
+        // (`void this.stop()` built a valid blob and threw it away). The
+        // "ended" payload now carries the same { blob, mime, durationMs,
+        // byteLength, ... } shape onStop() resolves with, so a caller can
+        // treat a track-end exactly like a manual stop — preview/save
+        // offered, never silently lost.
+        void (async () => {
+          const result = await this.stop();
+          this.emit("ended", {
+            message: "The shared source ended (the browser picker was closed) — stopping.",
+            result,
+          });
+        })();
       }
     };
 
@@ -648,6 +659,11 @@ export function renderRecordControls(container, deps = {}) {
 
   const section = el("section", { class: "card" });
   const supportNote = el("p", { class: "hint", id: "rec-support" });
+  // Defect #2 fix: the Video tab had no always-visible storage location —
+  // stills (main.js `#captures-dir`) and Test Audio (meeting.js `Saved to:`)
+  // both show where a file lands; recordings only did after a successful
+  // manual Save. This line is populated once below and never hidden.
+  const capturesDirNote = el("p", { class: "hint", id: "rec-captures-dir" }, "Loading storage location…");
   section.append(
     el("h2", {}, "Screen recording"),
     el(
@@ -656,6 +672,7 @@ export function renderRecordControls(container, deps = {}) {
       "Record the screen, a window, or a region to WebM (VP9/VP8) or MP4 — encoded by this machine, saved locally. ",
       "Nothing is uploaded anywhere; the file lands in the captures folder next to stills.",
     ),
+    capturesDirNote,
     supportNote,
   );
 
@@ -779,6 +796,19 @@ export function renderRecordControls(container, deps = {}) {
       });
   }
 
+  // Defect #2 fix: always show the captures folder, the same way main.js's
+  // stills tab does via `invoke("captures_dir_path")` — never only after a
+  // save. Best-effort: a failure here must not block recording.
+  function loadCapturesDir() {
+    invoke("captures_dir_path")
+      .then((dir) => {
+        capturesDirNote.textContent = dir ? `Recordings save to: ${dir}` : "Storage location unavailable.";
+      })
+      .catch(() => {
+        capturesDirNote.textContent = "Storage location unavailable.";
+      });
+  }
+
   function probe() {
     try {
       const s = new RecordingSession(sessionDeps).support();
@@ -829,8 +859,12 @@ export function renderRecordControls(container, deps = {}) {
     session.on("warning", ({ message }) => {
       setStatus(message, "warning");
     });
-    session.on("ended", ({ message }) => {
-      setStatus(message, "warning");
+    // Defect #3 fix: an "ended" stop (the shared source closed — the only
+    // stop Jason could previously reach) now carries its result and is
+    // presented through the exact same preview/save path a manual Stop
+    // uses, instead of leaving a dangling warning with nothing to save.
+    session.on("ended", ({ message, result }) => {
+      void presentStopResult(result, { endedNote: message });
     });
     session.on("error", (e) => {
       setStatus(`Recording error: ${e.message || e}`, "error");
@@ -861,34 +895,49 @@ export function renderRecordControls(container, deps = {}) {
     setStatus("Stopping…");
     try {
       const result = await session.stop();
-      session = null;
-      startBtn.hidden = false;
-      stopBtn.hidden = true;
-      if (!result || result.byteLength === 0) {
-        setStatus("The recording came back empty — nothing was captured.", "error");
-        return;
-      }
-      const byteArray = new Uint8Array(await result.blob.arrayBuffer());
-      pendingResult = { ...result, byteArray };
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      previewUrl = URL.createObjectURL(result.blob);
-      previewVideo.src = previewUrl;
-      trimEnd.value = (result.durationMs / 1000).toFixed(1);
-      trimStart.value = "0";
-      previewWrap.hidden = false;
-      setStatus(`Recorded ${formatDuration(result.durationMs)} · ${formatBytes(result.byteLength)}. Preview, trim, save, or export a GIF.`, "ok");
-      setTimeout(() => {
-        if (previewUrl) {
-          URL.revokeObjectURL(previewUrl);
-          previewUrl = null;
-          previewVideo.removeAttribute("src");
-        }
-      }, PREVIEW_REVOKE_DELAY_MS);
+      await presentStopResult(result);
     } catch (e) {
       setStatus(`Stop failed: ${e.message || e}`, "error");
     } finally {
       setBusy(false);
     }
+  }
+
+  // Defect #3 fix — the one place that turns a RecordingSession.stop()
+  // result into UI state, shared by a manual Stop click and a track-ended
+  // stop (the shared screen was closed). Before this fix, the ended path
+  // called stop() and threw the result away (`void this.stop()`): the
+  // bytes existed but nothing downstream of record.js ever saw them, so
+  // the only way Jason could reach to end a recording destroyed it.
+  async function presentStopResult(result, { endedNote = null } = {}) {
+    session = null;
+    startBtn.hidden = false;
+    stopBtn.hidden = true;
+    if (!result || result.byteLength === 0) {
+      const prefix = endedNote ? `${endedNote} ` : "";
+      setStatus(`${prefix}The recording came back empty — nothing was captured.`, "error");
+      return;
+    }
+    const byteArray = new Uint8Array(await result.blob.arrayBuffer());
+    pendingResult = { ...result, byteArray };
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(result.blob);
+    previewVideo.src = previewUrl;
+    trimEnd.value = (result.durationMs / 1000).toFixed(1);
+    trimStart.value = "0";
+    previewWrap.hidden = false;
+    const prefix = endedNote ? `${endedNote} ` : "";
+    setStatus(
+      `${prefix}Recorded ${formatDuration(result.durationMs)} · ${formatBytes(result.byteLength)}. Preview, trim, save, or export a GIF.`,
+      "ok",
+    );
+    setTimeout(() => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+        previewVideo.removeAttribute("src");
+      }
+    }, PREVIEW_REVOKE_DELAY_MS);
   }
 
   function clearPending() {
@@ -1144,9 +1193,40 @@ export function renderRecordControls(container, deps = {}) {
   });
   combineBtn.addEventListener("click", () => void onCombine());
 
+  // Defect #1 fix: while recording, the only Stop a user could reach was
+  // inside the app window — unreachable once a fullscreen/maximized video
+  // sits on top of it (Jason's exact symptom), and the only way out (closing
+  // the recorded screen) is the data-loss path defect #3 fixes. A global
+  // shortcut fires the real stop handler (preview + save offered, see
+  // presentStopResult above) from anywhere, without raising the app window
+  // or touching the recorded screen — unlike the Ctrl+PrintScreen window
+  // shortcut, this listener must never call focus/raise.
+  async function listenStopHotkey() {
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.transformCallback !== "function") return;
+    // Same `plugin:event|listen` convention as main.js's listenEvent /
+    // listenHotkeyEvents — fire-and-forget for this page's lifetime, no
+    // unlisten (this app never tears one down elsewhere either).
+    const handlerId = internals.transformCallback(() => {
+      if (session && session.state === "recording" && !busy) void onStop();
+    });
+    try {
+      await internals.invoke("plugin:event|listen", {
+        event: "stop-recording-requested",
+        target: { kind: "Any" },
+        handler: handlerId,
+      });
+    } catch {
+      /* best effort — the global hotkey degrades gracefully, same as the
+         capture shortcuts' own registration (see main.rs register_capture_shortcuts) */
+    }
+  }
+
   renderList();
   refreshMonitors();
+  loadCapturesDir();
   probe();
+  void listenStopHotkey();
 
   return {
     destroy() {

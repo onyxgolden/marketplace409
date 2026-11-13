@@ -159,6 +159,30 @@ describe("RecordingSession lifecycle", () => {
     expect(s.state).toBe("stopped");
   });
 
+  // Defect #3 (2026-11-11): the ended-event used to call `void this.stop()`,
+  // which built a valid blob and threw it away — "ended" carried only a
+  // message, no bytes, so no caller could ever recover the recording.
+  // This is the exact mechanism that lost Jason's two live recordings.
+  it("the ended event carries the real stop result — not just a message — so the recording is never silently lost", async () => {
+    const stream = fakeStream();
+    const s = new RecordingSession(deps({ mediaDevices: { getDisplayMedia: async () => stream } }));
+    const ended = [];
+    s.on("ended", (e) => ended.push(e));
+    await s.start({ mode: "monitor", cursorMode: "none", format: "webm" });
+    await new Promise((r) => setTimeout(r, 20)); // let the fake recorder emit its chunks
+    stream.__video.onended();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ended.length).toBe(1);
+    expect(ended[0].message).toMatch(/shared source ended/);
+    // The whole point: result must be the real stop() payload with the
+    // recorded bytes, not undefined/null.
+    expect(ended[0].result).not.toBe(null);
+    expect(ended[0].result).not.toBe(undefined);
+    expect(ended[0].result.byteLength).toBe(300);
+    expect(ended[0].result.mime).toBe("video/webm;codecs=vp9");
+    expect(s.state).toBe("stopped");
+  });
+
   it("RecordingError is exported from both modules as the same class", () => {
     expect(RecordingError).toBe(CoreRecordingError);
   });

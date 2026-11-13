@@ -6194,6 +6194,40 @@ fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotk
             }
             Err(e) => report_hotkey_error(app, &e),
         },
+        // 2026-11-11 fix: deliberately NO focus_capture_window call here —
+        // the whole point is reaching Stop without raising the app window
+        // over whatever fullscreen/maximized source is being recorded.
+        HotkeyAction::StopRecording => {
+            let _ = app.emit(forge_capture_core::hotkey::ACTION_STOP_RECORDING, ());
+        }
+    }
+}
+
+/// Register the stop-recording shortcut (best effort, same discipline as
+/// [`register_capture_shortcuts`]): a rejected registration is logged and
+/// never fails startup. Kept separate from the four capture shortcuts —
+/// [`forge_capture_core::hotkey::RECORDING_SHORTCUTS`] is its own table.
+fn register_recording_shortcuts(app: &tauri::AppHandle) {
+    use tauri_plugin_global_shortcut::ShortcutState;
+    for (accelerator, action) in forge_capture_core::hotkey::RECORDING_SHORTCUTS {
+        let outcome = app
+            .global_shortcut()
+            .on_shortcut(accelerator, move |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    handle_hotkey_action(app, action);
+                }
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                app.global_shortcut()
+                    .register(accelerator)
+                    .map_err(|e| e.to_string())
+            });
+        let status = forge_capture_core::hotkey::status_from_registration(outcome);
+        eprintln!(
+            "[capture] {}",
+            forge_capture_core::hotkey::describe_shortcut_status(accelerator, &status)
+        );
     }
 }
 
@@ -6347,6 +6381,10 @@ fn main() {
             app.state::<AppState>()
                 .printscreen_active
                 .store(active, Ordering::Relaxed);
+            // Best-effort recording-control shortcut (Ctrl+Alt+F9, stop
+            // recording) — separate table/purpose from the capture
+            // shortcuts above; see register_recording_shortcuts.
+            register_recording_shortcuts(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
