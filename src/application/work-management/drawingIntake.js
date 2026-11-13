@@ -219,11 +219,32 @@ export async function uploadControlledDrawing(db, { ownerId, packageId, input, f
   const receipt = await findReceipt(db, { ownerId, requestId: input.requestId });
   if (receipt?.missing) return { ok: false, httpStatus: 503, error: NOT_APPLIED_ERROR };
   if (receipt?.artifact) {
-    if (receipt.artifact.content_sha256.toLowerCase() !== sha256) {
-      return { ok: false, httpStatus: 409, error: "This request was already used for a different file — use a new request id." };
+    // Fix round 1: the request id binds ONE operation to ONE semantic
+    // target. A receipt is only a replay when it names this operation
+    // (purpose ifa_issued), this package, this drawing (number/type/
+    // revision code) and this digest. A same-id, same-digest call for
+    // a different package, drawing, revision or operation is refused
+    // (409) instead of silently returning the first operation's
+    // artifact. A receipt whose drawing/revision cannot be loaded
+    // fails closed the same way — the target cannot be verified.
+    const row = receipt.artifact;
+    const digestMatches = row.content_sha256.toLowerCase() === sha256;
+    const operationMatches = row.purpose === "ifa_issued" && row.package_id === packageId;
+    if (!digestMatches || !operationMatches) {
+      return { ok: false, httpStatus: 409, error: "This request was already used for a different upload — use a new request id." };
     }
-    const artifact = toCamelArtifact(receipt.artifact);
-    const { drawing, revision } = await readReceiptRows(db, { ownerId, artifact: receipt.artifact });
+    const artifact = toCamelArtifact(row);
+    const { drawing, revision } = await readReceiptRows(db, { ownerId, artifact: row });
+    const targetMatches =
+      drawing !== null && revision !== null
+      && drawing.drawingNumber === input.drawingNumber
+      && drawing.drawingType === input.drawingType
+      && revision.revisionCode === input.revisionCode
+      && (drawing.lineNumber === null || input.lineNumber == null
+        || drawing.lineNumber === input.lineNumber);
+    if (!targetMatches) {
+      return { ok: false, httpStatus: 409, error: "This request was already used for a different upload — use a new request id." };
+    }
     return { ok: true, replayed: true, artifact, drawing, revision };
   }
 
@@ -279,10 +300,21 @@ export async function stageIfcArtifact(db, { ownerId, packageId, drawingId, inpu
   const receipt = await findReceipt(db, { ownerId, requestId: input.requestId });
   if (receipt?.missing) return { ok: false, httpStatus: 503, error: NOT_APPLIED_ERROR };
   if (receipt?.artifact) {
-    if (receipt.artifact.content_sha256.toLowerCase() !== sha256) {
-      return { ok: false, httpStatus: 409, error: "This request was already used for a different file — use a new request id." };
+    // Fix round 1: same binding as the intake replay — the receipt
+    // must name this operation (purpose ifc_candidate), this package
+    // and this exact drawing, with the same digest. A same-id call
+    // for a different operation, package or drawing is refused (409),
+    // never replayed as the first operation's artifact.
+    const row = receipt.artifact;
+    const replayMatches =
+      row.content_sha256.toLowerCase() === sha256
+      && row.purpose === "ifc_candidate"
+      && row.package_id === packageId
+      && row.drawing_id === drawingId;
+    if (!replayMatches) {
+      return { ok: false, httpStatus: 409, error: "This request was already used for a different staging — use a new request id." };
     }
-    return { ok: true, replayed: true, artifact: toCamelArtifact(receipt.artifact) };
+    return { ok: true, replayed: true, artifact: toCamelArtifact(row) };
   }
 
   const uploaded = await uploadVerifiedObject(db, { objectPath, bytes, sha256 });

@@ -49,7 +49,7 @@ describe("POST ifc-releases", () => {
     });
     const input = {
       reviewId: "forge_wpdrvw_1", ifcRevisionCode: "C",
-      documentRef: "s3://forge/p-101-c.pdf", contentSha256: SHA,
+      stagedArtifactId: "forge_wpa_2",
     };
     const response = await POST(
       new Request("https://test/x", { method: "POST", body: JSON.stringify(input) }),

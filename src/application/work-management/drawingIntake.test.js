@@ -174,6 +174,91 @@ describe("uploadControlledDrawing", () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
+  // Fix round 1: the request id binds one operation to one semantic
+  // target. Same id + same digest is NOT a replay when the operation,
+  // package, drawing or metadata differ.
+  it("409s a same-id, same-digest replay for a different package", async () => {
+    const db = mockDb([chain({ data: { ...ARTIFACT_ROW, package_id: "pkg_2" }, error: null })]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s a same-id, same-digest replay for a different drawing number", async () => {
+    const db = mockDb([
+      chain({ data: ARTIFACT_ROW, error: null }),
+      chain({ data: { ...DRAWING_ROW, drawing_number: "W-0005-2" }, error: null }),
+      chain({ data: REVISION_ROW, error: null }),
+    ]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s a same-id, same-digest replay for a different revision code", async () => {
+    const db = mockDb([
+      chain({ data: ARTIFACT_ROW, error: null }),
+      chain({ data: DRAWING_ROW, error: null }),
+      chain({ data: { ...REVISION_ROW, revision_code: "1" }, error: null }),
+    ]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s a same-id, same-digest replay with a changed line number", async () => {
+    const db = mockDb([
+      chain({ data: ARTIFACT_ROW, error: null }),
+      chain({ data: { ...DRAWING_ROW, line_number: '3"-PL-102' }, error: null }),
+      chain({ data: REVISION_ROW, error: null }),
+    ]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s an IFC stage receipt reused as an intake (operation mismatch)", async () => {
+    const db = mockDb([chain({ data: { ...ARTIFACT_ROW, purpose: "ifc_candidate" }, error: null })]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s when the receipt's drawing cannot be loaded (fail closed)", async () => {
+    const db = mockDb([
+      chain({ data: ARTIFACT_ROW, error: null }),
+      chain({ data: null, error: null }),
+      chain({ data: null, error: null }),
+    ]);
+    const result = await uploadControlledDrawing(db, {
+      ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
   it("removes the uploaded object when the RPC fails (compensation)", async () => {
     const remove = vi.fn(async () => ({ error: null }));
     const rpc = vi.fn(async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }));
@@ -269,6 +354,45 @@ describe("stageIfcArtifact", () => {
     expect(same.ok).toBe(false);
     expect(same.httpStatus).toBe(409);
     expect(remove).toHaveBeenCalled();
+  });
+
+  // Fix round 1: a stage receipt binds one operation to one package
+  // and drawing. Same id + same digest is NOT a replay across
+  // packages, drawings, or operations.
+  it("409s a same-id, same-digest stage replay for a different package", async () => {
+    const db = mockDb([chain({ data: { ...STAGE_ROW, package_id: "pkg_2" }, error: null })]);
+    const result = await stageIfcArtifact(db, {
+      ownerId: "owner_1", packageId: "pkg_1", drawingId: "forge_wdwg_1",
+      input: { requestId: "req-stage" }, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s a same-id, same-digest stage replay for a different drawing", async () => {
+    const db = mockDb([chain({ data: { ...STAGE_ROW, drawing_id: "forge_wdwg_2" }, error: null })]);
+    const result = await stageIfcArtifact(db, {
+      ownerId: "owner_1", packageId: "pkg_1", drawingId: "forge_wdwg_1",
+      input: { requestId: "req-stage" }, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("409s an IFA intake receipt reused as a stage (operation mismatch)", async () => {
+    const db = mockDb([chain({ data: { ...STAGE_ROW, purpose: "ifa_issued" }, error: null })]);
+    const result = await stageIfcArtifact(db, {
+      ownerId: "owner_1", packageId: "pkg_1", drawingId: "forge_wdwg_1",
+      input: { requestId: "req-stage" }, file: FILE,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.storage.from).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
 

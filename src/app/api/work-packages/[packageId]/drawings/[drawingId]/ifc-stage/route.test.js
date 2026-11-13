@@ -16,6 +16,7 @@ vi.mock("@/application/work-management/drawingIntake", () => ({
 
 import { workAuth, requirePackageScope } from "../../../../_lib/auth.js";
 import { stageIfcArtifact } from "@/application/work-management/drawingIntake";
+import { MAX_PDF_BYTES, MAX_UPLOAD_BYTES } from "@/domains/work-management/drawingReviews.js";
 import { POST } from "./route.js";
 
 const AUTH = { db: { marker: "db" }, ownerId: "owner_1", actor: "user_9" };
@@ -64,5 +65,35 @@ describe("POST /api/work-packages/[packageId]/drawings/[drawingId]/ifc-stage", (
     });
     const response = await POST(stageRequest(), { params: params() });
     expect(response.status).toBe(409);
+  });
+
+  // Fix round 1: same pre-buffer size enforcement as the intake
+  // route — an oversized file never reaches the service and its bytes
+  // are never read; an over-limit declared body is refused first.
+  it("rejects a file larger than 25 MB without invoking the service or reading its bytes", async () => {
+    const bigBytes = new Uint8Array(MAX_PDF_BYTES + 1);
+    bigBytes.set(new TextEncoder().encode("%PDF-1.7\n"));
+    const bigFile = new File([bigBytes], "big.pdf", { type: "application/pdf" });
+    const arrayBufferSpy = vi.spyOn(bigFile, "arrayBuffer");
+    const form = new FormData();
+    form.append("file", bigFile);
+    form.append("requestId", "req-big");
+    const response = await POST(new Request("https://test/x", { method: "POST", body: form }), { params: params() });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("too large");
+    expect(stageIfcArtifact).not.toHaveBeenCalled();
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a declared Content-Length above the upload limit before parsing the body", async () => {
+    const request = new Request("https://test/x", {
+      method: "POST",
+      headers: { "content-length": String(MAX_UPLOAD_BYTES + 1) },
+      body: null,
+    });
+    const response = await POST(request, { params: params() });
+    expect(response.status).toBe(413);
+    expect((await response.json()).error).toContain("too large");
+    expect(stageIfcArtifact).not.toHaveBeenCalled();
   });
 });

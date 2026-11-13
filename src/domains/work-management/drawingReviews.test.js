@@ -103,27 +103,22 @@ describe("validateReviewDecisionInput", () => {
 });
 
 describe("validateIfcReleaseInput", () => {
-  it("accepts a release with a new IFC revision envelope", () => {
-    expect(validateIfcReleaseInput({
+  // Fix round 1: a staged artifact is mandatory — a typed-only
+  // release (even with a well-formed hash) is rejected outright.
+  it("rejects a typed-only release even with a well-formed hash", () => {
+    const result = validateIfcReleaseInput({
       reviewId: "rev_1", ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: SHA,
-    }).ok).toBe(true);
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("staged IFC file is required");
   });
 
-  it("rejects a release with a bad revision envelope", () => {
-    expect(validateIfcReleaseInput({
-      reviewId: "rev_1", ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: "nope",
-    }).ok).toBe(false);
-    expect(validateIfcReleaseInput({
-      ifcRevisionCode: "C", documentRef: "s3://forge/ifc.pdf", contentSha256: SHA,
-    }).ok).toBe(false);
-  });
-
-  // Slice-7 PDF blockers: with a staged artifact the typed reference +
-  // hash are not required and are ignored; the revision code still is.
   it("accepts a staged-artifact release without a typed ref or hash", () => {
     expect(validateIfcReleaseInput({
       reviewId: "rev_1", ifcRevisionCode: "C", stagedArtifactId: "forge_wpa_1",
     }).ok).toBe(true);
+    // Typed values are tolerated when present (the UI may still send
+    // them) but never trusted — the service never forwards them.
     expect(validateIfcReleaseInput({
       reviewId: "rev_1", ifcRevisionCode: "C", stagedArtifactId: "forge_wpa_1",
       documentRef: "anything", contentSha256: "not-a-hash",

@@ -44,25 +44,33 @@
 -- 5. RPC `forge_wp_drawing_controlled_intake` — resolve-or-create the
 --    drawing envelope by exact (owner, package, drawing number) with a
 --    type check, attach one immutable IFA revision per revision code,
---    record the artifact. Request-id + digest replay guards duplicate
---    clicks and concurrent retries; the unique constraints are the
---    final arbiter.
+--    record the artifact. Request-id replay is bound to the operation
+--    and full semantic target (purpose ifa_issued, package, drawing
+--    number/type/revision code, digest) — fix round 1; the unique
+--    constraints are the final arbiter, and the concurrent-duplicate
+--    fallback applies the same binding.
 --
 -- 6. RPC `forge_wp_drawing_ifc_stage` — stage a DIFFERENT
 --    drafter-issued PDF as an IFC candidate. Staged bytes stay pending
 --    (no revision is created) until the release RPC attaches them.
 --    Staging rejects bytes identical to the latest issued revision, so
---    an IFA artifact can never be staged as its own IFC.
+--    an IFA artifact can never be staged as its own IFC. Request-id
+--    replay is bound to the operation and target (purpose
+--    ifc_candidate, package, exact drawing, digest) — fix round 1.
 --
 -- 7. `forge_wp_drawing_ifc_release` gains an optional
---    p_staged_artifact_id. When given, the staged bytes are
---    authoritative (document_ref + SHA-256 come from the artifact row,
---    never from caller-typed text) and the artifact is attached to the
---    new IFC revision. Without it the typed path behaves exactly as
---    before, except it now also rejects an IFC issue whose digest
---    equals the reviewed IFA revision's digest (an IFA artifact can
---    never be relabelled as its own IFC). The old 8-argument signature
---    is dropped and recreated with the new defaulted parameter; grants
+--    p_staged_artifact_id — and, fix round 1, REQUIRES it. The
+--    staged bytes are authoritative (document_ref + SHA-256 come from
+--    the artifact row, never from caller-typed text) and the artifact
+--    is attached to the new IFC revision. A null staged artifact id
+--    is rejected (WPP7_STAGED_ARTIFACT_REQUIRED), so the typed
+--    release path is closed: no IFC revision can be issued from a
+--    fabricated hash/reference. p_document_ref / p_content_sha256
+--    stay in the signature only for call-shape compatibility and are
+--    never read. An IFC issue whose digest equals the reviewed IFA
+--    revision's digest is rejected (an IFA artifact can never be
+--    relabelled as its own IFC). The old 8-argument signature is
+--    dropped and recreated with the new defaulted parameter; grants
 --    are re-applied after the drop.
 --
 -- 8. `forge_wp_drawing_retire` (same signature) also retires the
@@ -262,6 +270,8 @@ declare
   v_drawing public.forge_work_drawings%rowtype;
   v_existing public.forge_wp_drawing_artifacts%rowtype;
   v_pid public.forge_work_drawings%rowtype;
+  v_replay_drawing public.forge_work_drawings%rowtype;
+  v_replay_revision public.forge_wp_drawing_revisions%rowtype;
   v_drawing_id text;
   v_revision_id text;
   v_artifact_id text;
@@ -314,15 +324,41 @@ begin
     raise exception 'WPP7_PID_ON_PID';
   end if;
 
-  -- Idempotency replay first: the same request id + digest returns the
-  -- original receipt; the same request id with a different digest (or a
-  -- different object path) is a different request and is refused.
+  -- Idempotency replay first: a request id binds ONE operation to ONE
+  -- semantic target. The receipt is only a replay when it names this
+  -- operation (purpose ifa_issued), this package, this drawing
+  -- (number/type/revision code) and this digest; a same-id, same-
+  -- digest call for a different package, drawing, revision or
+  -- operation is refused (WPP7_IDEMPOTENCY_CONFLICT), never replayed
+  -- as the first operation's artifact. A receipt whose drawing or
+  -- revision cannot be loaded fails closed the same way.
   select * into v_existing
   from public.forge_wp_drawing_artifacts
   where owner_id = p_owner_id and request_id = p_request_id;
   if found then
     if lower(v_existing.content_sha256) <> lower(p_content_sha256)
-       or v_existing.object_path <> p_object_path then
+       or v_existing.object_path <> p_object_path
+       or v_existing.purpose <> 'ifa_issued'
+       or v_existing.package_id <> p_package_id then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    select * into v_replay_drawing
+    from public.forge_work_drawings
+    where owner_id = p_owner_id and id = v_existing.drawing_id;
+    if not found then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    select * into v_replay_revision
+    from public.forge_wp_drawing_revisions
+    where owner_id = p_owner_id and id = v_existing.revision_id;
+    if not found then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    if v_replay_drawing.drawing_number <> btrim(p_drawing_number)
+       or v_replay_drawing.drawing_type <> p_drawing_type
+       or v_replay_revision.revision_code <> btrim(p_revision_code)
+       or (v_replay_drawing.line_number is not null and p_line_number is not null
+           and btrim(v_replay_drawing.line_number) <> btrim(p_line_number)) then
       raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
     end if;
     return query
@@ -449,12 +485,35 @@ begin
     select * into v_existing
     from public.forge_wp_drawing_artifacts
     where owner_id = p_owner_id and request_id = p_request_id;
+    -- Same binding as the primary replay branch above: the winner's
+    -- receipt is only replayed when it names this operation, package,
+    -- drawing and revision with this digest. (The object path embeds
+    -- owner/package/request/sha, so the path check already binds the
+    -- package; the purpose and drawing/revision checks close the
+    -- cross-operation and cross-drawing reuse the path cannot see.)
     if found and lower(v_existing.content_sha256) = lower(p_content_sha256)
-       and v_existing.object_path = p_object_path then
-      return query
-        select * from public.forge_wp_drawing_artifacts
-        where owner_id = p_owner_id and id = v_existing.id;
-      return;
+       and v_existing.object_path = p_object_path
+       and v_existing.purpose = 'ifa_issued'
+       and v_existing.package_id = p_package_id then
+      select * into v_replay_drawing
+      from public.forge_work_drawings
+      where owner_id = p_owner_id and id = v_existing.drawing_id;
+      if found then
+        select * into v_replay_revision
+        from public.forge_wp_drawing_revisions
+        where owner_id = p_owner_id and id = v_existing.revision_id;
+        if found
+           and v_replay_drawing.drawing_number = btrim(p_drawing_number)
+           and v_replay_drawing.drawing_type = p_drawing_type
+           and v_replay_revision.revision_code = btrim(p_revision_code)
+           and (v_replay_drawing.line_number is null or p_line_number is null
+                or btrim(v_replay_drawing.line_number) = btrim(p_line_number)) then
+          return query
+            select * from public.forge_wp_drawing_artifacts
+            where owner_id = p_owner_id and id = v_existing.id;
+          return;
+        end if;
+      end if;
     end if;
     raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
   end;
@@ -522,12 +581,22 @@ begin
     raise exception 'WPP7_INVALID_FILENAME';
   end if;
 
+  -- Idempotency replay first: a request id binds ONE operation to ONE
+  -- semantic target. The receipt is only a replay when it names this
+  -- operation (purpose ifc_candidate), this package and this exact
+  -- drawing, with this digest; a same-id, same-digest call for a
+  -- different package, drawing or operation is refused
+  -- (WPP7_IDEMPOTENCY_CONFLICT), never replayed as the first
+  -- operation's artifact.
   select * into v_existing
   from public.forge_wp_drawing_artifacts
   where owner_id = p_owner_id and request_id = p_request_id;
   if found then
     if lower(v_existing.content_sha256) <> lower(p_content_sha256)
-       or v_existing.object_path <> p_object_path then
+       or v_existing.object_path <> p_object_path
+       or v_existing.purpose <> 'ifc_candidate'
+       or v_existing.package_id <> p_package_id
+       or v_existing.drawing_id <> p_drawing_id then
       raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
     end if;
     return query
@@ -603,8 +672,12 @@ begin
     select * into v_existing
     from public.forge_wp_drawing_artifacts
     where owner_id = p_owner_id and request_id = p_request_id;
+    -- Same binding as the primary replay branch above.
     if found and lower(v_existing.content_sha256) = lower(p_content_sha256)
-       and v_existing.object_path = p_object_path then
+       and v_existing.object_path = p_object_path
+       and v_existing.purpose = 'ifc_candidate'
+       and v_existing.package_id = p_package_id
+       and v_existing.drawing_id = p_drawing_id then
       return query
         select * from public.forge_wp_drawing_artifacts
         where owner_id = p_owner_id and id = v_existing.id;
@@ -627,13 +700,14 @@ $$;
 -- new signature as a distinct function, so the drop is required; the
 -- grants below are re-applied after the recreate. All other behavior
 -- is unchanged from slice 7 except:
---   * when p_staged_artifact_id is given, the staged artifact's
---     stored bytes are authoritative: document_ref + SHA-256 come from
---     the artifact row, never from caller-typed text, and the artifact
---     is attached to the new IFC revision (purpose -> 'ifc_issued');
+--   * a staged artifact is MANDATORY (fix round 1): a null staged
+--     artifact id is rejected, the document reference + SHA-256 come
+--     only from the artifact row, and the artifact is attached to
+--     the new IFC revision (purpose -> 'ifc_issued'). The typed
+--     documentRef/contentSha256 parameters are never read;
 --   * an IFC issue whose digest equals the reviewed IFA revision's
---     digest is rejected (WPP7_IFC_SAME_AS_IFA) on BOTH paths — an IFA
---     artifact can never be relabelled as its own IFC.
+--     digest is rejected (WPP7_IFC_SAME_AS_IFA) — an IFA artifact can
+--     never be relabelled as its own IFC.
 -- ---------------------------------------------------------------------------
 
 drop function if exists public.forge_wp_drawing_ifc_release(text, text, text, text, text, text, text, text);
@@ -682,40 +756,33 @@ begin
     raise exception 'WPP7_REASON_TOO_LONG';
   end if;
 
-  -- A staged artifact's stored bytes are authoritative: the reference
-  -- and digest come from the artifact row, never from caller-typed
-  -- text. Without a staged artifact the typed values are validated
-  -- exactly as slice 7 did.
-  if p_staged_artifact_id is not null then
-    select * into v_artifact
-    from public.forge_wp_drawing_artifacts
-    where owner_id = p_owner_id and id = p_staged_artifact_id
-    for update;
-    if not found then
-      raise exception 'WPP7_ARTIFACT_NOT_FOUND';
-    end if;
-    if v_artifact.package_id <> p_package_id or v_artifact.drawing_id <> p_drawing_id then
-      raise exception 'WPP7_ARTIFACT_MISMATCH';
-    end if;
-    if v_artifact.purpose <> 'ifc_candidate' then
-      raise exception 'WPP7_ARTIFACT_NOT_STAGED';
-    end if;
-    if v_artifact.retired_at is not null then
-      raise exception 'WPP7_ARTIFACT_RETIRED';
-    end if;
-    v_document_ref := 'controlled-drawings:' || v_artifact.object_path;
-    v_content_sha256 := lower(v_artifact.content_sha256);
-  else
-    if p_document_ref is null or btrim(p_document_ref) = ''
-       or char_length(p_document_ref) > 1000 then
-      raise exception 'WPP7_INVALID_DOCUMENT_REF';
-    end if;
-    if p_content_sha256 is null or p_content_sha256 !~ '^[0-9a-fA-F]{64}$' then
-      raise exception 'WPP7_INVALID_SHA256';
-    end if;
-    v_document_ref := btrim(p_document_ref);
-    v_content_sha256 := lower(p_content_sha256);
+  -- Fix round 1: a verified staged artifact is MANDATORY. The
+  -- document reference and digest come ONLY from the staged artifact
+  -- row — a null staged artifact id is rejected, so no IFC revision
+  -- can be issued from a caller-typed (fabricated) hash or
+  -- reference. p_document_ref / p_content_sha256 remain in the
+  -- signature only for call-shape compatibility and are never read.
+  if p_staged_artifact_id is null or btrim(p_staged_artifact_id) = '' then
+    raise exception 'WPP7_STAGED_ARTIFACT_REQUIRED';
   end if;
+  select * into v_artifact
+  from public.forge_wp_drawing_artifacts
+  where owner_id = p_owner_id and id = p_staged_artifact_id
+  for update;
+  if not found then
+    raise exception 'WPP7_ARTIFACT_NOT_FOUND';
+  end if;
+  if v_artifact.package_id <> p_package_id or v_artifact.drawing_id <> p_drawing_id then
+    raise exception 'WPP7_ARTIFACT_MISMATCH';
+  end if;
+  if v_artifact.purpose <> 'ifc_candidate' then
+    raise exception 'WPP7_ARTIFACT_NOT_STAGED';
+  end if;
+  if v_artifact.retired_at is not null then
+    raise exception 'WPP7_ARTIFACT_RETIRED';
+  end if;
+  v_document_ref := 'controlled-drawings:' || v_artifact.object_path;
+  v_content_sha256 := lower(v_artifact.content_sha256);
 
   -- Lock the package row: a concurrent package cancellation (whose
   -- trigger retires ACTIVE releases) serializes against this release

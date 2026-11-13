@@ -409,6 +409,9 @@ export function mapDrawingReviewRpcError(error) {
   if (message.includes("WPP7_ARTIFACT_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Staged IFC file not found." };
   }
+  if (message.includes("WPP7_STAGED_ARTIFACT_REQUIRED")) {
+    return { ok: false, httpStatus: 400, error: "An IFC release requires a staged IFC file — stage the IFC PDF first." };
+  }
   if (message.includes("WPP7_ARTIFACT_MISMATCH")) {
     return { ok: false, httpStatus: 409, error: "The staged IFC file does not belong to this drawing." };
   }
@@ -678,23 +681,26 @@ export async function createIfcRelease(db, { ownerId, packageId, drawingId, inpu
   const pkg = await requirePackage(db, { ownerId, packageId });
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
 
-  // Slice-7 PDF blockers: a staged artifact's stored bytes are
-  // authoritative — the RPC ignores the typed ref/sha when one is given.
-  // The staged-artifact argument is only sent when present, so the
-  // typed release path keeps calling the old 8-argument function until
-  // the new migration applies (deployment-order safety).
-  const rpcArgs = {
+  // Slice-7 PDF blockers, fix round 1: the staged artifact is
+  // mandatory and its stored bytes are authoritative. Caller-typed
+  // documentRef/contentSha256 are never forwarded — the RPC derives
+  // both from the artifact row and rejects a null staged artifact
+  // id, so no IFC revision can be issued from a fabricated hash.
+  // Deployment-order note: this always calls the 9-argument RPC, so
+  // until the new migration applies the call reports 503 ("not
+  // applied yet") — the typed release path is closed from this deploy
+  // onward, staged releases included, until the migration lands.
+  const { data, error } = await db.rpc("forge_wp_drawing_ifc_release", {
     p_owner_id: ownerId,
     p_package_id: packageId,
     p_drawing_id: drawingId,
     p_review_id: input.reviewId,
     p_ifc_revision_code: input.ifcRevisionCode,
-    p_document_ref: input.documentRef ?? null,
-    p_content_sha256: input.contentSha256 ?? null,
+    p_document_ref: null,
+    p_content_sha256: null,
     p_reason: input.reason ?? null,
-  };
-  if (input.stagedArtifactId) rpcArgs.p_staged_artifact_id = input.stagedArtifactId;
-  const { data, error } = await db.rpc("forge_wp_drawing_ifc_release", rpcArgs);
+    p_staged_artifact_id: input.stagedArtifactId,
+  });
   if (error) return mapDrawingReviewRpcError(error);
   return { ok: true, release: toCamelRelease(rpcRow(data)) };
 }

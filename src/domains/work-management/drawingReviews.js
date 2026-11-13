@@ -239,21 +239,17 @@ export function validateIfcReleaseInput(input) {
   if (!isNonEmptyString(input?.reviewId)) {
     errors.push("A review id is required.");
   }
-  // Slice-7 PDF blockers: a staged artifact's stored bytes are
-  // authoritative, so the typed document reference + SHA-256 are not
-  // required (and are ignored) when one is given. The IFC revision
-  // code is always required.
-  if (isNonEmptyString(input?.stagedArtifactId)) {
-    if (!isValidRevisionCode(input?.ifcRevisionCode)) {
-      errors.push("Revision code must be 1–40 characters, starting with a letter or digit and using plain text only.");
-    }
-  } else {
-    const revision = validateRevisionInput({
-      revisionCode: input?.ifcRevisionCode,
-      documentRef: input?.documentRef,
-      contentSha256: input?.contentSha256,
-    });
-    if (!revision.ok) errors.push(...revision.errors);
+  if (!isValidRevisionCode(input?.ifcRevisionCode)) {
+    errors.push("Revision code must be 1–40 characters, starting with a letter or digit and using plain text only.");
+  }
+  // Fix round 1: a staged artifact is mandatory. An IFC release is
+  // only ever issued from a verified staged PDF — caller-typed
+  // documentRef/contentSha256 are never accepted, never required,
+  // and never forwarded; the release derives both from the staged
+  // artifact row. The typed release path is closed, not kept for
+  // compatibility: any drawing can stage its IFC PDF first.
+  if (!isNonEmptyString(input?.stagedArtifactId)) {
+    errors.push("A staged IFC file is required — stage the IFC PDF first.");
   }
   if (!isValidReason(input?.reason)) {
     errors.push(`Reason must be at most ${MAX_REASON_LENGTH} characters.`);
@@ -269,6 +265,11 @@ export function validateIfcReleaseInput(input) {
 // takeoff.js) — the intake accepts the same three controlled types.
 export const CONTROLLED_DRAWING_TYPES = Object.freeze(["isometric", "p_id", "cut_sheet"]);
 export const MAX_PDF_BYTES = 26214400; // 25 MB, matches the controlled-drawings bucket
+// Multipart framing overhead allowance for the request-body pre-check:
+// an upload's declared Content-Length is the PDF bytes plus multipart
+// boundaries and field text (a few KiB). Routes reject a declared body
+// larger than the PDF limit + this allowance before parsing it.
+export const MAX_UPLOAD_BYTES = MAX_PDF_BYTES + 1024 * 1024;
 export const CONTROLLED_DRAWINGS_BUCKET = "controlled-drawings";
 export const MAX_DRAWING_NUMBER_LENGTH = 120;
 export const MAX_LINE_NUMBER_LENGTH = 120;

@@ -556,6 +556,88 @@ describe("slice-7 PDF blockers migration: controlled intake RPC", () => {
     expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(1);
   });
 
+  // Fix round 1: a request id binds ONE operation to ONE semantic
+  // target. Same id + same digest is NOT a replay across packages,
+  // drawings, revisions, changed metadata, or operations — the RPC
+  // must refuse (WPP7_IDEMPOTENCY_CONFLICT) instead of returning the
+  // first operation's artifact. (The object path embeds owner /
+  // package / request / sha, so a cross-package reuse already
+  // conflicts on the path; the cross-drawing, changed-metadata and
+  // cross-operation legs below are the ones the old digest-only
+  // check silently replayed.)
+  it60("intake replay conflicts on a different drawing, revision code, or line with the same id + digest", async () => {
+    await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-bind-1", line: '2"-PL-101',
+    });
+    // Different drawing number, same id + digest + package.
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-2", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-bind-1", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Different revision code.
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A, requestId: "req-bind-1", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Changed line number.
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-bind-1", line: '2"-PL-999',
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(1);
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(1);
+  });
+
+  it60("intake replay conflicts when the request id belongs to a stage (operation mismatch)", async () => {
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-op-1", line: '2"-PL-101',
+    });
+    const staged = await stageIfc(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: first.drawing_id,
+      sha: SHA_B, requestId: "req-op-stage",
+    });
+    expect(staged.purpose).toBe("ifc_candidate");
+    // Reuse the STAGE request id for an intake of the same bytes:
+    // the old digest-only check replayed the stage artifact as an
+    // intake receipt. The operation (purpose) now refuses it.
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_B, requestId: "req-op-stage", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(2);
+  });
+
+  it60("stage replay conflicts on a different drawing or an intake receipt (operation mismatch)", async () => {
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-op-2", line: '2"-PL-101',
+    });
+    const second = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-2", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-op-3", line: '2"-PL-101',
+    });
+    const staged = await stageIfc(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: first.drawing_id,
+      sha: SHA_B, requestId: "req-stage-bind",
+    });
+    expect(staged.purpose).toBe("ifc_candidate");
+    // Same stage request id, same digest, different drawing.
+    await expect(stageIfc(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: second.drawing_id,
+      sha: SHA_B, requestId: "req-stage-bind",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    // Reuse the INTAKE request id for a stage of the same bytes: the
+    // old digest-only check replayed the IFA artifact as a stage
+    // receipt. The operation (purpose) now refuses it.
+    await expect(stageIfc(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: first.drawing_id,
+      sha: SHA_A, requestId: "req-op-2",
+    })).rejects.toThrow(/WPP7_IDEMPOTENCY_CONFLICT/);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(3);
+  });
+
   it60("attaches a second revision to the same drawing; type and line mismatches are refused", async () => {
     const first = await intakeDrawing(db, OWNER_A, {
       packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
@@ -774,18 +856,37 @@ describe("slice-7 PDF blockers migration: IFC stage + staged release", () => {
     expect(row.construction_usable).toBe(true);
   });
 
-  it60("typed-path release rejects an IFC issue whose digest equals the reviewed IFA revision", async () => {
+  // Fix round 1: the typed release path is CLOSED. A direct RPC call
+  // with a fabricated different hash/reference and no staged artifact
+  // is rejected (WPP7_STAGED_ARTIFACT_REQUIRED) — the bypass is gone
+  // even for a caller who can invoke the RPC directly. The old
+  // WPP7_IFC_SAME_AS_IFA typed leg is subsumed: a staged artifact
+  // whose digest equals the reviewed IFA revision's digest is still
+  // rejected, but only a staged artifact can reach that check.
+  it60("typed-path release with a fabricated hash and no staged artifact is REJECTED", async () => {
     const { artifact, review } = await intakeApprove(db, OWNER_A);
     await expect(releaseIfc(db, OWNER_A, {
       packageId: "pkg_a", drawingId: artifact.drawing_id, reviewId: review.id,
-      code: "C", docRef: "s3://forge/ifc.pdf", sha: SHA_A,
+      code: "C", docRef: "s3://forge/fabricated-ifc.pdf", sha: SHA_C,
+    })).rejects.toThrow(/WPP7_STAGED_ARTIFACT_REQUIRED/);
+    // No IFC revision was created by the rejected call.
+    const { rows } = await db.query(`
+      select count(*)::int as n from forge_wp_drawing_revisions
+      where drawing_id = '${artifact.drawing_id}' and issued_as = 'IFC';
+    `);
+    expect(rows[0].n).toBe(0);
+  });
+
+  it60("staging bytes identical to the reviewed IFA revision is rejected at the stage boundary", async () => {
+    const { artifact } = await intakeApprove(db, OWNER_A);
+    // The staged bytes must be a DIFFERENT drafter-issued PDF from
+    // the latest issued revision, so identical bytes are rejected
+    // here and can never reach the release form. The release RPC
+    // keeps its own WPP7_IFC_SAME_AS_IFA check as defense-in-depth.
+    await expect(stageIfc(db, OWNER_A, {
+      packageId: "pkg_a", drawingId: artifact.drawing_id,
+      sha: SHA_A, requestId: "req-stage-same-digest",
     })).rejects.toThrow(/WPP7_IFC_SAME_AS_IFA/);
-    // A different digest on the typed path still issues (compat path).
-    const release = await releaseIfc(db, OWNER_A, {
-      packageId: "pkg_a", drawingId: artifact.drawing_id, reviewId: review.id,
-      code: "C", docRef: "s3://forge/ifc.pdf", sha: SHA_C,
-    });
-    expect(release.ifc_revision_id).toBeTruthy();
   });
 
   it60("retire retires the drawing's artifacts, so a staged candidate can never be released", async () => {

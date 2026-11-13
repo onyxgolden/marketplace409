@@ -48,6 +48,16 @@ export default async function WorkPackagePage({ params, searchParams }) {
     redirect(back.toString() ? `/forge/work?${back.toString()}` : "/forge/work");
   }
   const scope = scopeResult.scope;
+  // Slice-7 PDF blockers, fix round 1: the canonical prop is derived
+  // from the already validated scope — never from the raw query
+  // parameter. Project scope -> the validated project id; unassigned
+  // scope -> the exact "unassigned" sentinel. (NO_SCOPE redirects
+  // above, so no other kind reaches this point.)
+  const forgeProjectParam = scope.kind === SCOPE_KINDS.PROJECT
+    ? scope.projectId
+    : scope.kind === SCOPE_KINDS.UNASSIGNED
+      ? "unassigned"
+      : "";
   const detail = await getWorkPackageDetail(forgeApplication.supabaseClient, {
     ownerId,
     actor: forgeApplication.user.id,
