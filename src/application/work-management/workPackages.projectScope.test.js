@@ -11,6 +11,7 @@ import {
   deleteWorkPackage,
   getWorkPackageDetail,
   listWorkPackages,
+  listWorkPackagesForRentalLedger,
 } from "./workPackages.js";
 import { SCOPE_KINDS } from "./projectScope.js";
 
@@ -77,14 +78,16 @@ describe("listWorkPackages scoping", () => {
     expect(result.scope).toBe("unassigned");
     expect(listChain.is).toHaveBeenCalledWith("forge_project_id", null);
   });
-  it("an undefined scope keeps the legacy owner-wide list (cross-app callers only)", async () => {
-    const listChain = chain({ data: [PKG, { ...PKG, id: "forge_wp_2", forge_project_id: "forge_prj_9" }], error: null });
-    const db = mockDb([listChain]);
+  it("an undefined scope fails closed to the chooser state — no owner-wide list (fix round 1)", async () => {
+    // Fix round 1: the legacy owner-wide branch is gone. An omitted
+    // scope is treated exactly like NO_SCOPE: the chooser state, no
+    // package rows. The Rental ledger reads through its own explicit
+    // boundary (listWorkPackagesForRentalLedger), not through this.
+    const countChain = chain({ count: 4, error: null });
+    const db = mockDb([countChain]);
     const result = await listWorkPackages(db, { ownerId: "owner_1" });
-    expect(result.ok).toBe(true);
-    expect(result.scope).toBe("legacy");
-    expect(result.packages).toHaveLength(2);
-    expect(listChain.eq).not.toHaveBeenCalledWith("forge_project_id", expect.anything());
+    expect(result).toEqual({ ok: true, scope: "none", packages: [], unassignedCount: 4 });
+    expect(countChain.is).toHaveBeenCalledWith("forge_project_id", null);
   });
 });
 
@@ -162,5 +165,27 @@ describe("deleteWorkPackage scoping", () => {
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(404);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+});
+
+// Fix round 1: the Rental ledger's read boundary — the only
+// owner-wide, property-filtered list left, reachable only from
+// GET /api/rental/work-packages, never from the Planner list route.
+describe("listWorkPackagesForRentalLedger", () => {
+  it("lists one property's packages, owner-scoped, filtered by canonical slug", async () => {
+    const listChain = chain({ data: [PKG], error: null });
+    const db = mockDb([listChain]);
+    const result = await listWorkPackagesForRentalLedger(db, { ownerId: "owner_1", propertyId: "4800-kent" });
+    expect(result.ok).toBe(true);
+    expect(result.packages).toEqual([PKG]);
+    expect(listChain.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(listChain.eq).toHaveBeenCalledWith("property_id", "4800-kent-ave");
+  });
+  it("refuses a missing propertyId (400) without querying", async () => {
+    const db = mockDb([]);
+    const result = await listWorkPackagesForRentalLedger(db, { ownerId: "owner_1", propertyId: "" });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(db.from).not.toHaveBeenCalled();
   });
 });

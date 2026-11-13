@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({
   usePathname: () => "/forge/work",
   useSearchParams: () => new URLSearchParams(),
+  // PR B added PlannerProjectScopeBar to this layout; it calls
+  // useRouter() (navigation happens in its change handler, not at
+  // render). The stub only needs to exist.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 
 // WorkspaceShell's right rail pulls account/theme state -- stub it so this

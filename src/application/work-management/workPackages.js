@@ -46,9 +46,11 @@ function packageCode(n) {
 // package in another project (or Unassigned, when a project is
 // selected) reads exactly like a nonexistent package (null -> 404),
 // so existence is never leaked across projects. When `scope` is
-// omitted, the legacy owner-only lookup runs: only internal
-// server-side bulk callers (the import path, workspace-level by
-// design) omit it; every HTTP route passes an explicit scope.
+// omitted, the owner-only lookup runs: only internal server-side
+// single-row callers omit it — the import apply path transitioning a
+// package it created a moment ago (born Unassigned, so a project
+// scope would 404 it). Every HTTP route passes an explicit scope;
+// the list and the scope proof fail closed without one (fix round 1).
 async function getPackage(db, ownerId, packageId, scope) {
   if (scope) {
     return fetchScopedPackage(db, { ownerId, packageId, scope });
@@ -775,8 +777,9 @@ export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirm
   // PR B: prove the package is in the active scope before the delete
   // RPC runs — the RPC enforces owner authority, not project scope.
   // A package outside the scope reads as not found (non-disclosing).
-  // No scope (internal/bulk caller) means the legacy owner-wide path:
-  // no extra read, the RPC is the authority as before.
+  // No scope (internal caller only — every HTTP route passes one)
+  // means the owner-only lookup: no extra read, the RPC is the
+  // authority as before.
   if (scope) {
     const scopedPkg = await getPackage(db, ownerId, packageId, scope);
     if (!scopedPkg) {
@@ -868,27 +871,19 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor, scop
 }
 
 export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode, scope }) {
-  // PR B: the list is project-scoped when a scope is given.
-  // - scope undefined: legacy owner-wide list. Only callers that
-  //   never asked for a scope reach this — the Rental property ledger
-  //   (workspace-level read; PR F scopes Rental) and internal bulk
-  //   callers. It is NOT the Planner UI path.
+  // PR B fix round 1: the list is project-scoped, always.
+  // - scope undefined: treated exactly like NO_SCOPE — the chooser
+  //   state (an empty list plus the Unassigned count), never an
+  //   all-projects aggregate. The owner-wide branch is gone: no HTTP
+  //   route may reach an unscoped list by omitting ?forgeProject=.
+  //   The Rental property ledger reads through its own explicit
+  //   boundary instead (listWorkPackagesForRentalLedger, called only
+  //   from /api/rental/work-packages).
   // - NO_SCOPE (explicit, no project selected): the chooser state —
   //   an empty list plus the Unassigned count — never an
   //   all-projects aggregate.
   // - PROJECT / UNASSIGNED: only packages in that scope.
-  if (scope === undefined) {
-    let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,updated_at,forge_project_id")
-      .eq("owner_id", ownerId).order("updated_at", { ascending: false });
-    if (status) q = q.eq("status", status);
-    if (packageType) q = q.eq("package_type", packageType);
-    if (mode) q = q.eq("mode", mode);
-    if (propertyId) q = q.eq("property_id", canonicalPropertySlug(propertyId));
-    const { data, error } = await q;
-    if (error) throw error;
-    return { ok: true, scope: "legacy", packages: data || [] };
-  }
-  if (scope.kind === SCOPE_KINDS.NONE) {
+  if (scope === undefined || scope.kind === SCOPE_KINDS.NONE) {
     const { count, error: countError } = await db.from(TABLES.packages)
       .select("id", { count: "exact", head: true })
       .eq("owner_id", ownerId).is("forge_project_id", null);
@@ -916,6 +911,31 @@ export async function listWorkPackages(db, { ownerId, status, packageType, prope
   const { data, error } = await q;
   if (error) throw error;
   return { ok: true, scope: scope.kind, packages: data || [] };
+}
+
+// PR B fix round 1 — the Rental property ledger's read boundary.
+// This is the ONLY owner-wide work-package list left, and it is NOT
+// a Planner path: it is called only from GET /api/rental/work-packages
+// (a separate explicit Rental API boundary), never from the Planner
+// list route. It answers one question — "which packages belong to
+// this canonical property in this workspace?" — for the read-only
+// ledger section on the Rental property page. It takes no project
+// scope (Rental has no project selection until PR F scopes it), it
+// filters by the exact canonical property slug, and it returns the
+// same row shape the ledger renders (id, code, title, status).
+// A caller cannot reach it by omitting ?forgeProject= from the
+// Planner route: that route now fails closed to the chooser state.
+export async function listWorkPackagesForRentalLedger(db, { ownerId, propertyId }) {
+  if (!propertyId || String(propertyId).trim() === "") {
+    return { ok: false, httpStatus: 400, error: "A property is required to list its work packages." };
+  }
+  const q = db.from(TABLES.packages).select("id,code,title,status")
+    .eq("owner_id", ownerId)
+    .eq("property_id", canonicalPropertySlug(propertyId))
+    .order("updated_at", { ascending: false });
+  const { data, error } = await q;
+  if (error) throw error;
+  return { ok: true, packages: data || [] };
 }
 
 // Property options for the package picker: one option per canonical

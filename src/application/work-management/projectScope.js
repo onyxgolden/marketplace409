@@ -110,13 +110,17 @@ export function constrainPackageQuery(query, scope) {
 
 /**
  * Fetches one package only if it belongs to the given scope. Returns
- * the row or null. NO_SCOPE never queries (returns null). A caller
- * outside the scope sees exactly what a caller addressing a nonexistent
- * package sees: null -> 404, no existence leak.
+ * the row or null. NO_SCOPE (or a missing scope) never queries
+ * (returns null). A caller outside the scope sees exactly what a
+ * caller addressing a nonexistent package sees: null -> 404, no
+ * existence leak.
  *
- * `scope` is optional for internal server-side bulk callers (the import
- * path operates at workspace level by design — see PRB-IMPORT-1);
- * every HTTP route passes an explicit scope.
+ * Fix round 1: there is no owner-wide fallback here anymore. Every
+ * HTTP route passes an explicit scope from workAuth; internal callers
+ * that deliberately omit one (the import apply path transitioning a
+ * package it created a moment ago) go through getPackage's
+ * owner-scoped fallback in workPackages.js, never through this
+ * function with an undefined scope.
  */
 export async function fetchScopedPackage(db, { ownerId, packageId, scope }) {
   if (!scope || scope.kind === SCOPE_KINDS.NONE) return null;
@@ -129,16 +133,20 @@ export async function fetchScopedPackage(db, { ownerId, packageId, scope }) {
 }
 
 /**
- * PR B: the one-line scope gate for child services. Call at the top
- * of any exported function that takes a packageId: it proves the
- * package belongs to the active scope (or, when `scope` is undefined,
- * that the caller is an internal bulk path and the legacy owner-only
- * proof applies). Returns the standard `{ ok, httpStatus, error }`
- * failure a route can return as-is, or `{ ok: true, package }`.
- * A package outside the scope reads exactly like a nonexistent one.
+ * PR B fix round 1: the one-line scope gate for child services. Call at
+ * the top of any exported function that takes a packageId: it proves
+ * the package belongs to the active scope. A missing scope fails
+ * closed (the package reads as nonexistent) — there is no legacy
+ * owner-wide proof anymore; every HTTP route passes an explicit scope
+ * from workAuth, and internal callers pass one too. Returns the
+ * standard `{ ok, httpStatus, error }` failure a route can return
+ * as-is, or `{ ok: true, package }`. A package outside the scope
+ * reads exactly like a nonexistent one.
  */
 export async function provePackageInScope(db, { ownerId, packageId, scope }) {
-  if (!scope) return { ok: true, package: null };
+  if (!scope || scope.kind === SCOPE_KINDS.NONE) {
+    return { ok: false, httpStatus: 404, error: "Work package not found." };
+  }
   const pkg = await fetchScopedPackage(db, { ownerId, packageId, scope });
   if (!pkg) {
     return { ok: false, httpStatus: 404, error: "Work package not found." };

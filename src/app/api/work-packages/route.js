@@ -6,11 +6,13 @@ export async function GET(request) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const url = new URL(request.url);
-    // PR B: the Planner UI always sends ?forgeProject=, so a scoped
-    // request gets exactly its scope (NO_SCOPE -> chooser state).
-    // Callers that never send it — the Rental property ledger's
-    // workspace-level read — keep the legacy owner-wide list; PR F
-    // scopes Rental. An invalid forgeProject hint still fails here.
+    // PR B fix round 1: the route always passes the validated scope
+    // workAuth resolved. A request without ?forgeProject= resolves to
+    // NO_SCOPE, and the service answers with the chooser state (no
+    // package rows) — never an owner-wide list. An invalid
+    // forgeProject hint still fails above via auth.scopeError. The
+    // Rental property ledger reads through its own explicit boundary
+    // (GET /api/rental/work-packages), not through this route.
     if (auth.scopeError) return fail(auth.scopeError);
     const result = await listWorkPackages(auth.db, {
       ownerId: auth.ownerId,
@@ -18,7 +20,7 @@ export async function GET(request) {
       packageType: url.searchParams.get("packageType") || undefined,
       propertyId: url.searchParams.get("propertyId") || undefined,
       mode: url.searchParams.get("mode") || undefined,
-      scope: url.searchParams.has("forgeProject") ? auth.scope : undefined,
+      scope: auth.scope,
     });
     return ok(result);
   } catch (error) {

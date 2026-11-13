@@ -1,9 +1,11 @@
 // Foundation PR B — import scoping tests (PRB-IMPORT-1, mocked db).
 // A scoped import run matches/updates only packages already in that
-// scope; an unscoped run keeps the legacy owner-wide match pool; a
-// steps import proves its target package is in scope before any step
-// is matched or created. Imports never auto-link (creates are born
-// Unassigned — proven in workPackages.projectScope.test.js).
+// scope; a run with no scope (undefined or NO_SCOPE) is refused
+// before any matching — there is no owner-wide match pool anymore
+// (fix round 1); a steps import proves its target package is in
+// scope before any step is matched or created. Imports never
+// auto-link (creates are born Unassigned — proven in
+// workPackages.projectScope.test.js).
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import {
@@ -48,17 +50,39 @@ describe("listPackagesForImport scoping", () => {
     expect(result.sourceTrackingAvailable).toBe(true);
     expect(listChain.eq).toHaveBeenCalledWith("forge_project_id", "forge_prj_1");
   });
-  it("an unscoped run keeps the legacy owner-wide match pool", async () => {
-    const probeChain = chain({ data: [{ source_system: "maximo" }], error: null });
-    const listChain = chain({ data: [], error: null });
-    const db = mockDb([probeChain, listChain]);
-    await listPackagesForImport(db, { ownerId: "owner_1" });
-    expect(listChain.eq).not.toHaveBeenCalledWith("forge_project_id", expect.anything());
-    expect(listChain.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+  it("an unscoped run fails closed (fix round 1) — no owner-wide match pool", async () => {
+    const db = mockDb([]);
+    await expect(listPackagesForImport(db, { ownerId: "owner_1" }))
+      .rejects.toThrow(/project scope is required/);
+    expect(db.from).not.toHaveBeenCalled();
+  });
+  it("a NO_SCOPE run fails closed too", async () => {
+    const db = mockDb([]);
+    await expect(listPackagesForImport(db, { ownerId: "owner_1", scope: { kind: SCOPE_KINDS.NONE } }))
+      .rejects.toThrow(/project scope is required/);
+    expect(db.from).not.toHaveBeenCalled();
   });
 });
 
 describe("loadImportContext scoping", () => {
+  it("a run with no scope is refused (400) before any matching", async () => {
+    const db = mockDb([]);
+    const result = await loadImportContext(db, { ownerId: "owner_1", kind: "packages" });
+    expect(result).toEqual({
+      ok: false, httpStatus: 400, error: "Choose a project (or Unassigned) before importing.",
+    });
+    expect(db.from).not.toHaveBeenCalled();
+  });
+  it("a steps import with no scope is refused (400) without proving anything", async () => {
+    const db = mockDb([]);
+    const result = await loadImportContext(db, {
+      ownerId: "owner_1", kind: "steps", packageId: "forge_wp_1",
+    });
+    expect(result).toEqual({
+      ok: false, httpStatus: 400, error: "Choose a project (or Unassigned) before importing.",
+    });
+    expect(db.from).not.toHaveBeenCalled();
+  });
   it("a steps import proves its target package is in scope first (guessed id = 404)", async () => {
     const pkgChain = chain({ data: null, error: null });
     const db = mockDb([pkgChain]);

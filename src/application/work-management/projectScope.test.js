@@ -173,10 +173,10 @@ describe("fetchScopedPackage", () => {
 });
 
 describe("provePackageInScope", () => {
-  it("an undefined scope is the internal bulk path (no proof)", async () => {
+  it("an undefined scope fails closed (fix round 1) — no unproved package", async () => {
     const db = mockDb([]);
     expect(await provePackageInScope(db, { ownerId: "owner_1", packageId: "forge_wp_1", scope: undefined }))
-      .toEqual({ ok: true, package: null });
+      .toEqual({ ok: false, httpStatus: 404, error: "Work package not found." });
     expect(db.from).not.toHaveBeenCalled();
   });
   it("an out-of-scope package is the standard non-disclosing 404", async () => {
