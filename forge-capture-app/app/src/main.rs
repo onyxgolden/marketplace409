@@ -5986,6 +5986,13 @@ fn narration_register_consent(
         ));
     }
     let root = narration_root_dir()?;
+    // Serialize against a concurrent revocation for this presenter:
+    // registering a fresh consent while a revocation is mid-flight
+    // would leave the new receipt active over assets the revocation
+    // is deleting. The lock makes registration wait for the
+    // transaction to finish, then the active-consent check below
+    // sees the revoked receipt.
+    let _lock = narr::acquire_presenter_lock(&root, &dto.presenter_id)?;
     let dir = narration_presenter_dir(&root, &dto.presenter_id)?;
     if let Ok(existing) = narration_read_consent(&root, &dto.presenter_id) {
         if existing.status == "active" {
@@ -6059,6 +6066,12 @@ fn narration_create_job(
         return Err("captureDurationSec must be a positive number".to_string());
     }
     let root = narration_root_dir()?;
+    // Serialize against revocation and the runner's completion
+    // publication for this presenter (same lock file, same protocol
+    // as the core transaction): the consent read + preflight and the
+    // job writes below are one critical section, so a job can never
+    // be created after the revocation gate has closed.
+    let _lock = narr::acquire_presenter_lock(&root, &dto.presenter_id)?;
     let receipt = narration_read_consent(&root, &dto.presenter_id)?;
     // Consent preflight with the artifact hash recomputed from the stored
     // file: a swapped artifact file fails here, before any job exists.
@@ -6229,10 +6242,13 @@ fn narration_list_jobs() -> Result<Vec<NarrationJobListDto>, String> {
 /// step lands in the immutable audit log. The source capture, the consent
 /// artifact, and the audit log are never deleted. A durable pending state
 /// makes the transaction restartable: a re-run resumes it instead of
-/// reporting success with unconfirmed effects. A job already
-/// processing when revocation lands is named in the audit event; the
-/// runner re-checks consent before writing its result, so its output
-/// cannot land as an active managed record.
+/// reporting success with unconfirmed effects. The whole transaction runs
+/// under the presenter's narration lock (same lock job creation and the
+/// runner's completion publication take), and the consent gate closes
+/// BEFORE the final job/output inventory is taken — so an in-flight
+/// completion cannot escape the plan: its publication re-checks consent
+/// under the same lock and fails once the gate has closed. A job already
+/// processing when revocation lands is named in the audit event.
 #[tauri::command]
 #[allow(non_snake_case)]
 fn narration_revoke_consent(

@@ -689,12 +689,121 @@ pub struct RevocationState {
     /// event appended; a resume with this set skips re-publishing so a
     /// retried run cannot append the audit event twice.
     pub receipt_published: bool,
+    /// True once the final job/output inventory has been taken AFTER
+    /// the consent gate was closed and the plan built from it
+    /// persisted. A pending state with this false means the
+    /// transaction crashed between recording the pending state and
+    /// building the plan (or before closing the gate); a resume
+    /// rebuilds the plan under the lock instead of trusting the empty
+    /// lists. `#[serde(default)]` so pending states written before
+    /// fix round 2 still parse.
+    #[serde(default)]
+    pub plan_ready: bool,
 }
 
 /// Pending-state filename inside a presenter directory.
 pub const REVOCATION_PENDING_FILE: &str = "revocation-pending.json";
 /// [`RevocationState::status`] while the transaction is unfinished.
 pub const REVOCATION_STATE_PENDING: &str = "pending";
+
+/// Lock filename inside a presenter directory. One lock per presenter
+/// serializes the three consent-gated writers for that presenter —
+/// job creation (Tauri `narration_create_job`), completion
+/// publication (Python runner), and revocation (`execute_revocation`)
+/// — across processes. The lock is an OS advisory lock on this file
+/// (`fs2`: flock on Unix, LockFileEx on Windows); the Python runner
+/// takes the same lock on the same path with `fcntl`/`msvcrt`, so the
+/// two processes genuinely exclude each other. The OS releases the
+/// lock if a holder dies, so a crashed process can never wedge the
+/// presenter permanently. The file itself is never a derived asset and
+/// is never deleted by revocation.
+pub const NARRATION_LOCK_FILE: &str = ".narration-lock";
+/// How long a lock acquisition waits before failing closed. The
+/// critical sections are short filesystem writes (job creation,
+/// completion publication, the revocation transaction); 30 s is far
+/// beyond any of them, so a timeout means another process is wedged
+/// or the spool is on a stalled filesystem — never wait forever.
+pub const PRESENTER_LOCK_TIMEOUT_SECS: u64 = 30;
+
+/// RAII guard for a presenter's narration lock. Dropping it releases
+/// the OS lock (and closes the file, which releases it regardless),
+/// so every return path — including `Err` — frees the presenter.
+#[derive(Debug)]
+pub struct PresenterLock {
+    file: fs::File,
+}
+
+impl Drop for PresenterLock {
+    fn drop(&mut self) {
+        use fs2::FileExt;
+        let _ = self.file.unlock();
+    }
+}
+
+/// Path of a presenter's narration lock file.
+pub fn presenter_lock_path(root: &Path, presenter_id: &str) -> std::path::PathBuf {
+    root.join("presenters")
+        .join(presenter_id)
+        .join(NARRATION_LOCK_FILE)
+}
+
+/// Acquire a presenter's narration lock, waiting up to
+/// `PRESENTER_LOCK_TIMEOUT_SECS`. Fails closed on timeout: the caller
+/// must NOT proceed with the gated operation — a job must not be
+/// created, a completion must not publish, a revocation must not
+/// publish a receipt while another writer may be mid-flight.
+pub fn acquire_presenter_lock(root: &Path, presenter_id: &str) -> Result<PresenterLock, String> {
+    acquire_presenter_lock_with_timeout(
+        root,
+        presenter_id,
+        std::time::Duration::from_secs(PRESENTER_LOCK_TIMEOUT_SECS),
+    )
+}
+
+/// Acquire a presenter's narration lock with an explicit timeout
+/// (the `acquire_presenter_lock` default is 30 s). Exposed so tests
+/// can prove fail-closed contention with a short timeout instead of
+/// waiting out the production one.
+pub fn acquire_presenter_lock_with_timeout(
+    root: &Path,
+    presenter_id: &str,
+    timeout: std::time::Duration,
+) -> Result<PresenterLock, String> {
+    if !presenter_id_valid(presenter_id) {
+        return Err(format!("invalid presenter id: {presenter_id}"));
+    }
+    let presenter_dir = root.join("presenters").join(presenter_id);
+    fs::create_dir_all(&presenter_dir)
+        .map_err(|e| format!("cannot create presenter directory for lock: {e}"))?;
+    let path = presenter_dir.join(NARRATION_LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open narration lock file: {e}"))?;
+    use fs2::FileExt;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(PresenterLock { file }),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out waiting {timeout:?} for the narration lock \
+                         for presenter {presenter_id} (another process holds it)"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "cannot lock narration lock file for presenter {presenter_id}: {e}"
+                ));
+            }
+        }
+    }
+}
 
 /// Presenter ids are directory names: lowercase letters, digits, hyphens.
 /// Anything else (including `/`, `\`, `..`) is rejected — a presenter id
@@ -944,22 +1053,41 @@ fn failed_job_result(
 /// `presenters/<presenter_id>/`, `jobs/`, `managed-outputs.json`, and
 /// `audit/`.
 ///
+/// Serialization (fix round 2): the whole transaction runs under the
+/// presenter's narration lock ([`acquire_presenter_lock`]) — the same
+/// lock job creation and the runner's completion publication take.
+/// Nothing can be created or published while this runs, so the
+/// inventory below is final, not a snapshot that a concurrent writer
+/// can outrun. The lock is released on every return path (RAII).
+///
 /// Order of effects, each verified before the next begins:
-/// 1. The plan is computed and the pending state is written (two-phase)
-///    BEFORE anything mutates — a crash after this point is recoverable
-///    by re-running the command.
+/// 1. The pending state is written (two-phase) BEFORE anything
+///    mutates — a crash after this point is recoverable by re-running
+///    the command. The plan is NOT built yet (its lists start empty).
 /// 2. `consent.json` is marked revoked (validated first, as before).
-/// 3. `enrollment.json` is marked revoked when present.
-/// 4. Each planned derived asset is deleted and its absence verified
+///    The gate closes FIRST: from here on, no new job can be created
+///    and no in-flight completion can publish (both re-check consent
+///    under the lock).
+/// 3. The plan is built from the FINAL inventory — jobs spool,
+///    managed-outputs index, enrollment — taken after the gate closed
+///    and while the lock is held, then persisted with
+///    `plan_ready = true`. A resume whose plan was never built
+///    rebuilds it here instead of trusting the empty lists.
+/// 4. `enrollment.json` is marked revoked when present.
+/// 5. Each planned derived asset is deleted and its absence verified
 ///    (a missing file counts as confirmed-absent).
-/// 5. Each queued job is blocked: `.queued` removed (verified gone),
+/// 6. Each queued job is blocked: `.queued` removed (verified gone),
 ///    `result.json` written `failed`/`consent_revoked` (two-phase),
 ///    `.failed` written (verified present).
-/// 6. Managed outputs are unpublished, the index re-read, and every
+/// 7. Managed outputs are unpublished, the index re-read, and every
 ///    planned status change verified.
-/// 7. The final receipt — built from CONFIRMED effects only, never the
+/// 8. Final verification sweep, still under the lock: the jobs spool
+///    and managed-outputs index are re-read and must show no queued
+///    job and no active managed output for this presenter. A
+///    violation fails closed — the receipt is never published.
+/// 9. The final receipt — built from CONFIRMED effects only, never the
 ///    plan — is written, and the audit event appended.
-/// 8. Only then is the pending-state file removed and the receipt
+/// 10. Only then is the pending-state file removed and the receipt
 ///    returned.
 ///
 /// On ANY failure the pending state is saved with `last_error` and an
@@ -988,6 +1116,13 @@ pub fn execute_revocation(
     let reason = reason.trim().to_string();
     let presenter_dir = root.join("presenters").join(presenter_id);
     let pending_path = presenter_dir.join(REVOCATION_PENDING_FILE);
+
+    // Serialize against job creation and completion publication for
+    // this presenter. The lock is held for the whole transaction
+    // (RAII: every return path releases it), so no job can be created
+    // and no completion can publish while the inventory below is
+    // taken and applied.
+    let _lock = acquire_presenter_lock(root, presenter_id)?;
 
     // Resume state, when a previous attempt left one behind.
     let mut state = match fs::read(&pending_path) {
@@ -1039,55 +1174,30 @@ pub fn execute_revocation(
         revoked_at = s.revoked_at.clone();
         reason_owned = s.reason.clone();
     } else {
-        // Fresh transaction: plan first, then durably record the plan
-        // BEFORE mutating anything.
-        let enrollment = read_enrollment_opt(&presenter_dir)?;
-        let (queued, processing) = scan_jobs(root, presenter_id)?;
-        let managed = read_managed_outputs(root)?;
-        // The plan needs an enrollment to name the derived assets. When
-        // none exists yet (never enrolled), use the conventional paths —
-        // the apply step below deletes only files that actually exist.
-        let enrollment_for_plan = enrollment.clone().unwrap_or(VoiceEnrollment {
-            version: 1,
-            presenter_id: presenter_id.to_string(),
-            consent_receipt_version: receipt.version,
-            consent_artifact_sha256: receipt.artifact_sha256.clone(),
-            model_id: MODEL_ID_OPENVOICE_V2.to_string(),
-            model_version: MODEL_VERSION_V2.to_string(),
-            model_code_commit: OPENVOICE_CODE_COMMIT.to_string(),
-            weights_sha256: CHECKPOINTS_ZIP_SHA256.to_string(),
-            reference_audio_sha256: String::new(),
-            preprocessing_version: String::new(),
-            speaker_embedding_path: None,
-            reference_clip_path: "reference.wav".to_string(),
-            created_at: receipt.granted_at.clone(),
-            last_used_at: None,
-            status: "pending".to_string(),
-        });
+        // Fresh transaction: durably record the pending state BEFORE
+        // mutating anything — a crash after this point is recoverable
+        // by re-running the command. The plan is deliberately NOT
+        // built here: the inventory must be taken AFTER the consent
+        // gate closes (step (a) below), so no in-flight completion
+        // can escape it. The lists start empty with plan_ready false;
+        // step (b) fills them.
         revoked_at = crate::timestamp::now_utc_iso8601();
-        let plan = revocation_plan(
-            presenter_id,
-            &enrollment_for_plan,
-            &queued,
-            &managed,
-            &revoked_at,
-            &reason,
-        );
         let fresh = RevocationState {
             version: 1,
             presenter_id: presenter_id.to_string(),
             revoked_at: revoked_at.clone(),
             reason: reason.clone(),
-            planned_deleted_assets: plan.deleted_assets.clone(),
-            planned_blocked_jobs: plan.blocked_jobs.clone(),
-            planned_unpublished_outputs: plan.unpublished_outputs.clone(),
+            planned_deleted_assets: Vec::new(),
+            planned_blocked_jobs: Vec::new(),
+            planned_unpublished_outputs: Vec::new(),
             confirmed_deleted_assets: Vec::new(),
             confirmed_blocked_jobs: Vec::new(),
             confirmed_unpublished_outputs: Vec::new(),
-            processing_at_revocation: processing,
+            processing_at_revocation: Vec::new(),
             status: REVOCATION_STATE_PENDING.to_string(),
             last_error: None,
             receipt_published: false,
+            plan_ready: false,
         };
         write_json_two_phase(&pending_path, &fresh)
             .map_err(|e| format!("cannot record revocation pending state: {e}"))?;
@@ -1102,7 +1212,11 @@ pub fn execute_revocation(
         save_pending_error(&pending_path, state, msg)
     };
 
-    // (a) consent.json -> revoked.
+    // (a) consent.json -> revoked. The gate closes FIRST, before any
+    // inventory is taken: from this point on, no new job can be
+    // created (creation checks consent under the lock) and no
+    // in-flight completion can publish (publication re-checks consent
+    // under the lock).
     if receipt.status != "revoked" {
         receipt.status = "revoked".to_string();
         receipt.revoked_at = Some(revoked_at.clone());
@@ -1128,14 +1242,74 @@ pub fn execute_revocation(
         }
     }
 
-    // (b) enrollment.json -> revoked when present.
+    // (b) Build the plan from the FINAL inventory, taken now that the
+    // gate is closed and while the lock is held: no job can have been
+    // created and no completion can have published since step (a), so
+    // this inventory cannot miss an in-flight completion the way a
+    // pre-gate snapshot could. A resume with plan_ready already set
+    // keeps its plan (and its confirmed lists); a resume that crashed
+    // before the plan was built — or a pre-fix-round-2 pending state,
+    // which has no plan_ready flag — builds it here.
+    if !state.plan_ready {
+        let enrollment = match read_enrollment_opt(&presenter_dir) {
+            Ok(e) => e,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        let (queued, processing) = match scan_jobs(root, presenter_id) {
+            Ok(j) => j,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        let managed = match read_managed_outputs(root) {
+            Ok(m) => m,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        // The plan needs an enrollment to name the derived assets. When
+        // none exists yet (never enrolled), use the conventional paths —
+        // the apply step below deletes only files that actually exist.
+        let enrollment_for_plan = enrollment.clone().unwrap_or(VoiceEnrollment {
+            version: 1,
+            presenter_id: presenter_id.to_string(),
+            consent_receipt_version: receipt.version,
+            consent_artifact_sha256: receipt.artifact_sha256.clone(),
+            model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+            model_version: MODEL_VERSION_V2.to_string(),
+            model_code_commit: OPENVOICE_CODE_COMMIT.to_string(),
+            weights_sha256: CHECKPOINTS_ZIP_SHA256.to_string(),
+            reference_audio_sha256: String::new(),
+            preprocessing_version: String::new(),
+            speaker_embedding_path: None,
+            reference_clip_path: "reference.wav".to_string(),
+            created_at: receipt.granted_at.clone(),
+            last_used_at: None,
+            status: "pending".to_string(),
+        });
+        let plan = revocation_plan(
+            presenter_id,
+            &enrollment_for_plan,
+            &queued,
+            &managed,
+            &revoked_at,
+            &reason_owned,
+        );
+        state.planned_deleted_assets = plan.deleted_assets.clone();
+        state.planned_blocked_jobs = plan.blocked_jobs.clone();
+        state.planned_unpublished_outputs = plan.unpublished_outputs.clone();
+        state.processing_at_revocation = processing;
+        state.plan_ready = true;
+        if let Err(e) = write_json_two_phase(&pending_path, &state) {
+            return Err(fail(
+                &mut state,
+                format!("cannot save revocation pending state: {e}"),
+            ));
+        }
+    }
+
+    // (c) enrollment.json -> revoked when present.
     match read_enrollment_opt(&presenter_dir) {
         Ok(Some(mut enr)) => {
             if enr.status != "revoked" {
                 enr.status = "revoked".to_string();
-                if let Err(e) =
-                    write_json_two_phase(&presenter_dir.join("enrollment.json"), &enr)
-                {
+                if let Err(e) = write_json_two_phase(&presenter_dir.join("enrollment.json"), &enr) {
                     return Err(fail(
                         &mut state,
                         format!("cannot write revoked enrollment: {e}"),
@@ -1153,7 +1327,7 @@ pub fn execute_revocation(
         ));
     }
 
-    // (c) Delete each planned derived asset, verifying absence.
+    // (d) Delete each planned derived asset, verifying absence.
     let canon_dir = match presenter_dir.canonicalize() {
         Ok(d) => d,
         Err(e) => {
@@ -1222,7 +1396,7 @@ pub fn execute_revocation(
         ));
     }
 
-    // (d) Block each queued job, verifying every write.
+    // (e) Block each queued job, verifying every write.
     let mut blocked = state.confirmed_blocked_jobs.clone();
     for job_id in state.planned_blocked_jobs.clone() {
         if blocked.contains(&job_id) {
@@ -1302,7 +1476,7 @@ pub fn execute_revocation(
         }
     }
 
-    // (e) Unpublish managed outputs, then re-read and verify.
+    // (f) Unpublish managed outputs, then re-read and verify.
     if !state.planned_unpublished_outputs.is_empty() {
         let mut outputs = match read_managed_outputs(root) {
             Ok(o) => o,
@@ -1358,7 +1532,51 @@ pub fn execute_revocation(
         }
     }
 
-    // (f) Publish the final receipt from CONFIRMED effects only, then
+    // (g) Final verification sweep, still under the lock: re-read the
+    // jobs spool and the managed-outputs index and prove that no
+    // queued job and no active managed output for this presenter
+    // remains. Nothing could have been created or published since
+    // step (b) — creation and publication both need this lock — so a
+    // violation here means a writer outside the protocol, and the
+    // transaction fails closed instead of publishing a receipt that
+    // claims completeness it does not have. Processing jobs may still
+    // exist: their runners fail at the locked completion re-check
+    // after this lock is released.
+    {
+        let (queued_now, _) = match scan_jobs(root, presenter_id) {
+            Ok(j) => j,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        if !queued_now.is_empty() {
+            return Err(fail(
+                &mut state,
+                format!(
+                    "queued jobs for presenter {presenter_id} remain after blocking: {}",
+                    queued_now.join(", ")
+                ),
+            ));
+        }
+        let outputs_now = match read_managed_outputs(root) {
+            Ok(o) => o,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        let still_active: Vec<&str> = outputs_now
+            .iter()
+            .filter(|o| o.presenter_id == presenter_id && o.status == "active")
+            .map(|o| o.job_id.as_str())
+            .collect();
+        if !still_active.is_empty() {
+            return Err(fail(
+                &mut state,
+                format!(
+                    "active managed outputs for presenter {presenter_id} remain after unpublish: {}",
+                    still_active.join(", ")
+                ),
+            ));
+        }
+    }
+
+    // (h) Publish the final receipt from CONFIRMED effects only, then
     // append the audit event. A resume with `receipt_published` set
     // skips this so the audit event is never appended twice.
     let final_receipt = RevocationReceipt {
@@ -1418,7 +1636,7 @@ pub fn execute_revocation(
         }
     }
 
-    // (g) Only now remove the pending state and return the receipt.
+    // (i) Only now remove the pending state and return the receipt.
     if let Err(e) = fs::remove_file(&pending_path) {
         return Err(fail(
             &mut state,
@@ -2480,11 +2698,25 @@ mod tests {
             err.contains("managed outputs"),
             "error names managed outputs: {err}"
         );
-        // Nothing was mutated: the plan-time read fails before the
-        // pending state is recorded, so there is nothing to resume and
-        // consent is still active.
-        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
-        assert_eq!(read_consent(&fx.presenter_dir).status, "active");
+        // The pending state was recorded and the consent gate closed
+        // BEFORE the plan was built (fix round 2: the inventory must
+        // be taken after the gate closes), so the failed run leaves a
+        // resumable pending state and a revoked consent — not a
+        // pristine spool. The retry below rebuilds the plan instead
+        // of trusting the empty lists.
+        assert!(fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        assert_eq!(read_consent(&fx.presenter_dir).status, "revoked");
+        let pending = read_pending_state(&fx.presenter_dir);
+        assert!(!pending.plan_ready);
+        assert!(
+            pending
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("managed outputs"),
+            "pending state records the failure: {:?}",
+            pending.last_error
+        );
 
         // Fix the fault and re-run: the transaction completes.
         std::fs::remove_dir(fx.root.join("managed-outputs.json")).unwrap();
@@ -2563,6 +2795,264 @@ mod tests {
         // The conventional reference.wav path is still deleted.
         assert_eq!(receipt.deleted_assets, vec!["reference.wav".to_string()]);
         assert!(!fx.presenter_dir.join("reference.wav").exists());
+    }
+
+    // --- presenter lock + revocation/concurrency (P1 fix round 2) ---
+
+    #[test]
+    fn presenter_lock_is_exclusive_and_released_on_drop() {
+        let root = temp_dir();
+        let lock = acquire_presenter_lock(&root, "tyler-welch").unwrap();
+        // A second acquisition with a short timeout fails closed
+        // instead of waiting out the production 30 s.
+        let err = acquire_presenter_lock_with_timeout(
+            &root,
+            "tyler-welch",
+            std::time::Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert!(err.contains("timed out"), "error names the timeout: {err}");
+        // Releasing the first guard frees the presenter.
+        drop(lock);
+        let _lock2 = acquire_presenter_lock(&root, "tyler-welch").unwrap();
+    }
+
+    #[test]
+    fn presenter_lock_is_per_presenter() {
+        let root = temp_dir();
+        let _lock = acquire_presenter_lock(&root, "tyler-welch").unwrap();
+        // Another presenter is unaffected by the first presenter's lock.
+        let _lock2 = acquire_presenter_lock(&root, "josh-morgan").unwrap();
+    }
+
+    #[test]
+    fn presenter_lock_rejects_invalid_presenter_id() {
+        let root = temp_dir();
+        let err = acquire_presenter_lock(&root, "../escape").unwrap_err();
+        assert!(err.contains("invalid presenter id"), "{err}");
+    }
+
+    /// Simulate the Python runner's completion publication as the
+    /// verdict describes it: the runner finished its render while
+    /// consent was active, then publishes result.json + the managed
+    /// output record + .done. The whole publication happens under the
+    /// presenter lock, exactly as the runner does it.
+    fn simulate_runner_publication(root: &Path, job_id: &str) {
+        let job_dir = root.join("jobs").join(job_id);
+        write_json(
+            &job_dir.join("result.json"),
+            &serde_json::json!({
+                "version": 1,
+                "job_id": job_id,
+                "status": "done",
+                "segments": [],
+                "render": {
+                    "output_file": "output.mp4",
+                    "output_sha256": hex_64('e'),
+                    "output_bytes": 1234,
+                    "ffmpeg_version": "7.1",
+                    "ffmpeg_command": "ffmpeg -i x -c:v copy out.mp4",
+                    "captions_file": "captions.vtt",
+                    "render_sec": 1.0,
+                },
+                "resources": {"peak_vram_mib": null, "peak_ram_mib": null, "gpu": "test"},
+                "outbound_requests": [],
+                "model": {
+                    "model_id": MODEL_ID_OPENVOICE_V2,
+                    "model_version": MODEL_VERSION_V2,
+                    "code_commit": OPENVOICE_CODE_COMMIT,
+                    "weights_sha256": CHECKPOINTS_ZIP_SHA256,
+                    "base_tts": "melotts",
+                    "base_tts_commit": MELOTTS_CODE_COMMIT,
+                },
+                "consent_receipt_version": 1,
+                "completed_at": "2026-11-12T09:00:00Z",
+            }),
+        );
+        let mut outputs = read_managed_outputs_doc(root);
+        outputs.push(ManagedOutputRecord {
+            job_id: job_id.to_string(),
+            presenter_id: "tyler-welch".to_string(),
+            output_file: "out.mp4".to_string(),
+            output_sha256: hex_64('e'),
+            status: "active".to_string(),
+            published_at: Some("2026-11-12T09:00:00Z".to_string()),
+            saved_to_forge: false,
+        });
+        write_json(
+            &root.join("managed-outputs.json"),
+            &serde_json::json!({ "version": 1, "outputs": outputs }),
+        );
+        std::fs::remove_file(job_dir.join(".processing")).unwrap();
+        std::fs::write(job_dir.join(".done"), b"").unwrap();
+    }
+
+    /// Simulate `narration_create_job`'s locked section: write the job
+    /// manifest + .queued marker while holding the presenter lock.
+    fn simulate_job_creation(root: &Path, job_id: &str) {
+        let job_dir = root.join("jobs").join(job_id);
+        std::fs::create_dir_all(&job_dir).unwrap();
+        write_json(
+            &job_dir.join("job.json"),
+            &NarrationJobManifest {
+                version: 1,
+                job_id: job_id.to_string(),
+                job_type: JOB_TYPE_NARRATE.to_string(),
+                presenter_id: "tyler-welch".to_string(),
+                consent_receipt_version: 1,
+                capture_file: "capture.mp4".to_string(),
+                capture_path: "library/capture.mp4".to_string(),
+                capture_sha256: hex_64('a'),
+                model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+                model_version: MODEL_VERSION_V2.to_string(),
+                script_sha256: hex_64('b'),
+                created_at: "2026-11-12T09:00:00Z".to_string(),
+                status: "queued".to_string(),
+            },
+        );
+        std::fs::write(job_dir.join(".queued"), b"").unwrap();
+    }
+
+    #[test]
+    fn revocation_catches_completion_published_while_revocation_waited() {
+        let fx = revocation_fixture();
+        let job_id = fx.processing_job_id.clone();
+        // The "runner" thread takes the lock first, then publishes
+        // after a delay — the exact interleaving the verdict names:
+        // the completion consent check passed while consent was still
+        // active, and publication lands while revocation is waiting.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|s| {
+            let root_ref = &fx.root;
+            let job_ref = &job_id;
+            s.spawn(move || {
+                let _lock = acquire_presenter_lock(root_ref, "tyler-welch").unwrap();
+                tx.send(()).unwrap();
+                // Hold the lock briefly so revocation (below) must wait.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                simulate_runner_publication(root_ref, job_ref);
+                // Lock released on drop here.
+            });
+            // Wait until the runner holds the lock, then revoke: the
+            // call must block on the lock, then take its inventory
+            // AFTER the gate closes — after the publication landed.
+            rx.recv().unwrap();
+            let receipt = execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+            // The just-published output is in the receipt: it did not
+            // escape the plan.
+            assert!(
+                receipt.unpublished_outputs.contains(&job_id),
+                "receipt must unpublish the output published during revocation: {receipt:?}"
+            );
+            let outputs = read_managed_outputs_doc(&fx.root);
+            let rec = outputs.iter().find(|o| o.job_id == job_id).unwrap();
+            assert_eq!(rec.status, "consent_revoked");
+        });
+    }
+
+    #[test]
+    fn revocation_catches_job_created_while_revocation_waited() {
+        let fx = revocation_fixture();
+        let job_id = "narr-dddddddddddddddd".to_string();
+        // The "creator" thread takes the lock first, then creates the
+        // job after a delay — the create/revoke race the verdict
+        // names. Revocation must block on the lock, then see the new
+        // queued job in its post-gate inventory and block it.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|s| {
+            let root_ref = &fx.root;
+            let job_ref = &job_id;
+            s.spawn(move || {
+                let _lock = acquire_presenter_lock(root_ref, "tyler-welch").unwrap();
+                tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                simulate_job_creation(root_ref, job_ref);
+            });
+            rx.recv().unwrap();
+            let receipt = execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+            assert!(
+                receipt.blocked_jobs.contains(&job_id),
+                "receipt must block the job created during revocation: {receipt:?}"
+            );
+            let job_dir = fx.root.join("jobs").join(&job_id);
+            assert!(job_dir.join(".failed").exists());
+            assert!(!job_dir.join(".queued").exists());
+        });
+    }
+
+    #[test]
+    fn revocation_resumes_when_pending_state_has_no_plan_yet() {
+        let fx = revocation_fixture();
+        // Simulate a crash after the pending state was recorded but
+        // before the gate closed or the plan was built: empty plan,
+        // plan_ready false, consent still active.
+        write_json(
+            &fx.presenter_dir.join(REVOCATION_PENDING_FILE),
+            &RevocationState {
+                version: 1,
+                presenter_id: "tyler-welch".to_string(),
+                revoked_at: "2026-11-12T09:00:00Z".to_string(),
+                reason: "Withdrawn.".to_string(),
+                planned_deleted_assets: Vec::new(),
+                planned_blocked_jobs: Vec::new(),
+                planned_unpublished_outputs: Vec::new(),
+                confirmed_deleted_assets: Vec::new(),
+                confirmed_blocked_jobs: Vec::new(),
+                confirmed_unpublished_outputs: Vec::new(),
+                processing_at_revocation: Vec::new(),
+                status: REVOCATION_STATE_PENDING.to_string(),
+                last_error: None,
+                receipt_published: false,
+                plan_ready: false,
+            },
+        );
+        let receipt = execute_revocation(&fx.root, "tyler-welch", "A different reason.").unwrap();
+        // The stored transaction identity wins over the caller's reason.
+        assert_eq!(receipt.reason, "Withdrawn.");
+        assert_eq!(receipt.blocked_jobs, vec![fx.queued_job_id.clone()]);
+        assert_eq!(receipt.unpublished_outputs, vec![fx.managed_job_id.clone()]);
+        assert_eq!(read_consent(&fx.presenter_dir).status, "revoked");
+    }
+
+    #[test]
+    fn revocation_resumes_when_gate_closed_but_plan_never_built() {
+        let fx = revocation_fixture();
+        // Simulate a crash after consent was revoked but before the
+        // plan was written: consent already revoked, pending state
+        // with plan_ready false. A re-run must NOT error "already
+        // revoked" — the pending state proves the transaction is
+        // unfinished — and must build the plan and finish.
+        let mut consent = read_consent(&fx.presenter_dir);
+        consent.status = "revoked".to_string();
+        consent.revoked_at = Some("2026-11-12T09:00:00Z".to_string());
+        consent.revoke_reason = Some("Withdrawn.".to_string());
+        write_json(&fx.presenter_dir.join("consent.json"), &consent);
+        write_json(
+            &fx.presenter_dir.join(REVOCATION_PENDING_FILE),
+            &serde_json::json!({
+                "version": 1,
+                "presenter_id": "tyler-welch",
+                "revoked_at": "2026-11-12T09:00:00Z",
+                "reason": "Withdrawn.",
+                "planned_deleted_assets": [],
+                "planned_blocked_jobs": [],
+                "planned_unpublished_outputs": [],
+                "confirmed_deleted_assets": [],
+                "confirmed_blocked_jobs": [],
+                "confirmed_unpublished_outputs": [],
+                "processing_at_revocation": [],
+                "status": "pending",
+                "last_error": null,
+                "receipt_published": false
+                // NOTE: no "plan_ready" key — a pre-fix-round-2 pending
+                // state. It must parse (serde default false) and the
+                // plan must be rebuilt, not trusted as empty.
+            }),
+        );
+        let receipt = execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        assert_eq!(receipt.blocked_jobs, vec![fx.queued_job_id.clone()]);
+        assert_eq!(receipt.unpublished_outputs, vec![fx.managed_job_id.clone()]);
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
     }
 
     // --- acceptance output verification (P1-3) ---

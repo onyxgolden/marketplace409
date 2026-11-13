@@ -44,6 +44,7 @@ from narration_lib import (  # noqa: E402
     build_vtt,
     canonical_script_sha256,
     marker_path,
+    presenter_lock,
     resolve_marker,
     sha256_file,
     validate_result_dict,
@@ -366,6 +367,17 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
         if existing.get("status") == "active" and \
                 (presenter_dir / "speaker_embedding.json").is_file():
             log(f"enrollment already active for {presenter_id}; reusing stored speaker embedding")
+            # Refresh last_used_at under the lock with a consent
+            # re-check: a revocation that landed since this job's
+            # start preflight must not have its revoked enrollment
+            # overwritten with an active one.
+            with presenter_lock(root, presenter_id):
+                consent_ok, reason, _c = check_consent(root, presenter_id)
+                if not consent_ok:
+                    raise RuntimeError(
+                        f"consent preflight failed for enrollment: {reason}")
+                existing["last_used_at"] = utc_now()
+                write_json(enrollment_path, existing)
             return existing
 
     reference_wav = presenter_dir / "reference.wav"
@@ -383,11 +395,6 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
     converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
     se = se_extractor.get_se(str(reference_wav), converter, vad=True)
     se_list = se.detach().cpu().float().tolist()
-    write_json(presenter_dir / "speaker_embedding.json", {
-        "se": se_list,
-        "model": MODEL_ID,
-        "reference_audio_sha256": ref_sha,
-    })
     enrollment = {
         "version": 1,
         "presenter_id": presenter_id,
@@ -402,10 +409,26 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
         "speaker_embedding_path": "speaker_embedding.json",
         "reference_clip_path": "reference.wav",
         "created_at": utc_now(),
-        "last_used_at": None,
+        "last_used_at": utc_now(),
         "status": "active",
     }
-    write_json(enrollment_path, enrollment)
+    # Write the derived assets under the lock with a consent re-check:
+    # the embedding extraction above runs unlocked (seconds of model
+    # work); a revocation that landed meanwhile must not be followed
+    # by a fresh active enrollment pointing at assets it deleted.
+    # Re-enrollment after revocation requires a NEW consent receipt;
+    # restoring an old embedding is prohibited by the scope brief.
+    with presenter_lock(root, presenter_id):
+        consent_ok, reason, _c = check_consent(root, presenter_id)
+        if not consent_ok:
+            raise RuntimeError(
+                f"consent preflight failed for enrollment: {reason}")
+        write_json(presenter_dir / "speaker_embedding.json", {
+            "se": se_list,
+            "model": MODEL_ID,
+            "reference_audio_sha256": ref_sha,
+        })
+        write_json(enrollment_path, enrollment)
     append_audit(root, {"event": "enrolled", "presenter_id": presenter_id,
                         "job_id": None})
     log(f"enrollment active for {presenter_id}")
@@ -614,10 +637,11 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                          consent_receipt_version=consent_version, weights=weights)
         enrollment = enroll_presenter(root, presenter_id, checkpoints_dir,
                                       receipt_path)
-        presenter_dir = root / "presenters" / presenter_id
-        ref_sha = enrollment["reference_audio_sha256"]
-        enrollment["last_used_at"] = utc_now()
-        write_json(presenter_dir / "enrollment.json", enrollment)
+        # enroll_presenter sets last_used_at when it writes
+        # enrollment.json (under the presenter lock, with a consent
+        # re-check) — no second write here: a revocation that landed
+        # after enrollment must not have its revoked enrollment
+        # overwritten with an active one.
 
         with ResourceMonitor() as monitor:
             segment_results, segment_wavs = _generate_segments(
@@ -634,40 +658,45 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
         resources = {"peak_vram_mib": monitor.peak_vram_mib,
                      "peak_ram_mib": monitor.peak_ram_mib,
                      "gpu": monitor.gpu}
-        # Completion-time consent re-check: a revocation that landed
-        # mid-run must not produce an active managed output. If consent
-        # is gone now, drop the just-rendered artifacts and fail the job
-        # as consent_revoked (the .done marker is never written).
-        consent_ok, consent_reason, _ = check_consent(root, presenter_id)
-        if not consent_ok:
-            for stale in [job_dir / "output.mp4",
-                          job_dir / "captions.vtt"]:
-                stale.unlink(missing_ok=True)
-            shutil.rmtree(job_dir / "segments", ignore_errors=True)
-            return _fail(root, job_dir, job_id,
-                         f"consent_revoked at completion ({consent_reason})",
-                         consent_receipt_version=consent_version, weights=weights)
-        result = make_result(job_id, "done", segments=segment_results,
-                             render=render, resources=resources,
-                             consent_receipt_version=consent_version,
-                             weights=weights)
-        errors = validate_result_dict(result)
-        if errors:
-            return _fail(root, job_dir, job_id,
-                         "result validation failed: " + "; ".join(errors),
-                         consent_receipt_version=consent_version, weights=weights)
-        write_json(job_dir / "result.json", result)
-        upsert_managed_output(root, presenter_id, job_id,
-                              f"jobs/{job_id}/output.mp4",
-                              render["output_sha256"])
-        marker_path(job_dir, "processing").unlink(missing_ok=True)
-        marker_path(job_dir, "done").touch(exist_ok=True)
-        append_audit(root, {"event": "job_completed", "job_id": job_id,
-                            "presenter_id": presenter_id,
-                            "output_sha256": render["output_sha256"]})
-        log(f"job {job_id} done: {render['output_file']} "
-            f"({render['output_bytes']} bytes)")
-        return 0
+        # Completion publication (fix round 2): the consent re-check
+        # AND the publication (result.json + managed-output record +
+        # .done) are ONE critical section under the per-presenter
+        # lock, serialized against job creation and revocation. A
+        # revocation that closed the gate first makes this check fail;
+        # a completion that publishes first is in the revocation's
+        # post-gate inventory. The .done marker is never written on
+        # the failure path below.
+        with presenter_lock(root, presenter_id):
+            consent_ok, consent_reason, _ = check_consent(root, presenter_id)
+            if not consent_ok:
+                for stale in [job_dir / "output.mp4",
+                              job_dir / "captions.vtt"]:
+                    stale.unlink(missing_ok=True)
+                shutil.rmtree(job_dir / "segments", ignore_errors=True)
+                return _fail(root, job_dir, job_id,
+                             f"consent_revoked at completion ({consent_reason})",
+                             consent_receipt_version=consent_version, weights=weights)
+            result = make_result(job_id, "done", segments=segment_results,
+                                 render=render, resources=resources,
+                                 consent_receipt_version=consent_version,
+                                 weights=weights)
+            errors = validate_result_dict(result)
+            if errors:
+                return _fail(root, job_dir, job_id,
+                             "result validation failed: " + "; ".join(errors),
+                             consent_receipt_version=consent_version, weights=weights)
+            write_json(job_dir / "result.json", result)
+            upsert_managed_output(root, presenter_id, job_id,
+                                  f"jobs/{job_id}/output.mp4",
+                                  render["output_sha256"])
+            marker_path(job_dir, "processing").unlink(missing_ok=True)
+            marker_path(job_dir, "done").touch(exist_ok=True)
+            append_audit(root, {"event": "job_completed", "job_id": job_id,
+                                "presenter_id": presenter_id,
+                                "output_sha256": render["output_sha256"]})
+            log(f"job {job_id} done: {render['output_file']} "
+                f"({render['output_bytes']} bytes)")
+            return 0
     except Exception as exc:
         return _fail(root, job_dir, job_id, str(exc),
                      consent_receipt_version=consent_version, weights=weights)

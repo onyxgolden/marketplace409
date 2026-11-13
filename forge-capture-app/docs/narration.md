@@ -116,16 +116,18 @@ mid-spool never yields a half job.
    -version`) are recorded verbatim in `render-manifest.json` and
    `result.json`, and `render-manifest.json` also records input hashes,
    model hashes, consent receipt version, output hash, and caption path.
-8. **Completion-time consent re-check:** after the render, before
-   `result.json` is written, the runner re-runs the consent preflight.
-   A revocation that landed mid-run drops the just-rendered artifacts
-   and fails the job as `consent_revoked` — no `.done` marker, no
-   managed record. Otherwise the runner writes `result.json`, upserts
-   the output into `managed-outputs.json` (status `active`), replaces
-   `.processing` with `.done`, and appends the audit events. On any
-   exception it writes `result.json` failed (`failure_reason` = the
-   error, truncated to 500 chars), the `.failed` marker, and an audit
-   event, and exits non-zero.
+8. **Completion publication under the presenter lock:** after the
+   render, the runner takes the per-presenter lock and only then
+   re-runs the consent preflight. A revocation that landed mid-run
+   drops the just-rendered artifacts and fails the job as
+   `consent_revoked` — no `.done` marker, no managed record.
+   Otherwise the runner writes `result.json`, upserts the output into
+   `managed-outputs.json` (status `active`), replaces `.processing`
+   with `.done`, and appends the audit events — all before releasing
+   the lock, so a revocation can neither miss the publication nor
+   interleave with it. On any exception it writes `result.json`
+   failed (`failure_reason` = the error, truncated to 500 chars),
+   the `.failed` marker, and an audit event, and exits non-zero.
 9. **Human acceptance** (`acceptance.json`, presenter + reviewer
    decisions on the exact output hash) is a separate review step in the
    UI — the runner never writes it and never self-approves. Acceptance
@@ -316,52 +318,84 @@ without the field still parse.
 Revocation is a fail-closed, restartable transaction owned by the
 Tauri side (`forge-capture-core::execute_revocation`), not the runner:
 
-1. **Durable pending state first.** Before any mutation, the plan
-   (deleted assets, blocked jobs, unpublished outputs, processing jobs
-   seen at plan time) is written to
+**Serialization — one cross-process lock per presenter.** Job
+creation, completion publication, and revocation for a presenter are
+serialized by an OS advisory lock on
+`presenters/<id>/.narration-lock` (Rust `fs2`, Python `fcntl` /
+`msvcrt` — the same file, so the Tauri app process and the runner
+process genuinely exclude each other; the OS releases the lock if a
+holder dies). The lock is held only around the short critical
+sections: job creation (consent preflight + job writes), the
+runner's completion publication (consent re-check + `result.json` +
+managed-output record + `.done`), the enrollment writes, and the
+whole revocation transaction. The render itself runs unlocked. A
+lock timeout (30 s) fails closed: the gated operation does not run.
+
+1. **Durable pending state first.** Before any mutation, a pending
+   state with empty plan lists is written to
    `presenters/<id>/revocation-pending.json` (two-phase write). The
    receipt's `revoked_at` and reason are the transaction's identity.
-2. **Effects apply in order, each verified on disk:** consent receipt
-   → `revoked` (with `revoked_at` / `revoke_reason` + audit event);
-   enrollment → `revoked`; derived voice assets deleted with absence
-   verified (a missing asset counts as confirmed-absent); each queued
-   job blocked — `.queued` removed and verified gone, `result.json`
-   written `failed` / `consent_revoked`, `.failed` verified present;
-   managed outputs re-read, marked `consent_revoked`, re-read again
-   and verified.
-3. **No success receipt until every required effect is confirmed.**
+   The plan is deliberately NOT built here.
+2. **The consent gate closes first.** `consent.json` is marked
+   `revoked` (with `revoked_at` / `revoke_reason` + audit event)
+   before any inventory is taken: from here on, no new job can be
+   created and no in-flight completion can publish (both re-check
+   consent under the lock).
+3. **The plan is built from the final inventory** — jobs spool,
+   managed-outputs index, enrollment — taken after the gate closed
+   and while the lock is held, then persisted with `plan_ready`
+   set. An in-flight completion that passed its check while consent
+   was active is in this inventory; it cannot escape the plan.
+4. **Effects apply in order, each verified on disk:** enrollment →
+   `revoked`; derived voice assets deleted with absence verified (a
+   missing asset counts as confirmed-absent); each queued job blocked
+   — `.queued` removed and verified gone, `result.json` written
+   `failed` / `consent_revoked`, `.failed` verified present; managed
+   outputs re-read, marked `consent_revoked`, re-read again and
+   verified.
+5. **Final verification sweep, still under the lock.** The jobs spool
+   and managed-outputs index are re-read and must show no queued job
+   and no active managed output for the presenter. A violation fails
+   closed instead of publishing a receipt that claims completeness
+   it does not have.
+6. **No success receipt until every required effect is confirmed.**
    The final receipt (`revocation-<stamp>.json`) lists only confirmed
    effects. Any failure saves the pending state with `last_error` and
    returns an error — never a success receipt with unconfirmed effects.
    Filesystem errors are never ignored.
-4. **Restartable.** A re-run with a pending state present resumes the
+7. **Restartable.** A re-run with a pending state present resumes the
    transaction (same `revoked_at`/reason, confirmed lists carried
-   forward, already-done effects skipped); a re-run after completion
-   errors `"already revoked"`. A corrupt pending state, unreadable
-   consent receipt, or corrupt enrollment fails closed before anything
-   is claimed done.
-5. New/queued jobs are rejected at the next preflight — the runner
+   forward, already-done effects skipped). A resume whose plan was
+   never built (`plan_ready` false — including pending states written
+   before this ordering existed) rebuilds the plan under the lock
+   after closing the gate. A re-run after completion errors
+   `"already revoked"`. A corrupt pending state, unreadable consent
+   receipt, or corrupt enrollment fails closed before anything is
+   claimed done.
+8. New/queued jobs are rejected at the next preflight — the runner
    re-checks consent at every job start, so a job queued before the
    revocation cannot run afterward. A job already processing when
    revocation lands is named in the audit event; the runner's
-   completion-time re-check drops its output.
-6. Derived voice assets unique to that presenter (reference clip,
+   completion-time re-check (under the lock) drops its output and
+   fails the job as `consent_revoked`.
+9. Derived voice assets unique to that presenter (reference clip,
    speaker embedding, model caches) are deleted from managed storage;
    only the minimum consent/revocation audit and hashes are retained.
    Every managed generated output for that presenter is marked
    `consent_revoked` in `managed-outputs.json`, removed from
    active/published library views, and blocked from download, re-render,
    duplication, or republishing.
-7. The owner gets a replacement/delete queue for managed historical
-   outputs. The source capture and the audit record are **not** silently
-   erased. External files already exported cannot be recalled; the UI
-   must state that limitation and list known managed copies.
-8. Re-enrollment requires a new self-recorded consent receipt; restoring
-   an old embedding is prohibited.
+10. The owner gets a replacement/delete queue for managed historical
+    outputs. The source capture and the audit record are **not** silently
+    erased. External files already exported cannot be recalled; the UI
+    must state that limitation and list known managed copies.
+11. Re-enrollment requires a new self-recorded consent receipt; restoring
+    an old embedding is prohibited.
 
-The runner's part is only the preflight gate (step 5) plus refusing
-enrollment under a non-active receipt. It never deletes another
-presenter's files and never touches `managed-outputs.json`.
+The runner's part is the preflight gate (step 8), the locked
+completion publication, and the locked enrollment writes. It never
+deletes another presenter's files. It writes `managed-outputs.json`
+only at completion publication, under the presenter lock.
 
 ## Local-first proof
 

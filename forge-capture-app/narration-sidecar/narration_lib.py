@@ -8,10 +8,12 @@ helpers and does all heavy work behind lazy imports inside functions.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
 import os
+import time
 from pathlib import Path
 
 # Marker precedence: .done > .failed > .processing > .queued
@@ -382,3 +384,115 @@ def resolve_marker(job_dir) -> str | None:
 def marker_path(job_dir, status: str) -> Path:
     """Path of the marker file for a status (``.queued`` etc.)."""
     return Path(job_dir) / f".{status}"
+
+
+# --- Presenter lock (fix round 2) -------------------------------------------
+# One cross-process OS advisory lock per presenter, on the same file the
+# Rust core locks (``<root>/presenters/<presenter_id>/.narration-lock``):
+# flock on POSIX, LockFileEx via msvcrt.locking on Windows — the same
+# underlying mechanism the Rust ``fs2`` crate uses, so the Tauri app
+# process and this runner genuinely exclude each other. The OS releases
+# the lock if a holder dies, so a crashed process can never wedge the
+# presenter. Hold it only around the short critical sections (job
+# creation is Rust-side; here: completion publication and the
+# enrollment writes) — the render itself runs unlocked. A timeout fails
+# closed: the caller must NOT proceed with the gated operation.
+PRESENTER_LOCK_FILE = ".narration-lock"
+PRESENTER_LOCK_TIMEOUT_SECONDS = 30.0
+PRESENTER_LOCK_POLL_SECONDS = 0.05
+
+
+def presenter_id_valid(presenter_id) -> bool:
+    """Presenter ids are directory names (mirrors the Rust core rule):
+    lowercase letters, digits, hyphens; 1–64 chars; no leading or
+    trailing hyphen. Anything else — including ``/``, ``\\``, ``..`` —
+    must never escape its own directory."""
+    return (
+        isinstance(presenter_id, str)
+        and 0 < len(presenter_id) <= 64
+        and not presenter_id.startswith("-")
+        and not presenter_id.endswith("-")
+        and all(
+            c.isascii() and (c.islower() or c.isdigit() or c == "-")
+            for c in presenter_id
+        )
+    )
+
+
+def _acquire_lock_fd(fd, timeout, presenter_id) -> None:
+    """Block until the advisory lock on ``fd`` is held or ``timeout``
+    seconds pass (then raise TimeoutError — fail closed)."""
+    deadline = time.monotonic() + timeout
+    if os.name == "nt":
+        import msvcrt
+
+        while True:
+            try:
+                # msvcrt.locking locks from the current file position.
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"timed out waiting {timeout}s for the narration lock "
+                        f"for presenter {presenter_id!r} (another process holds it)"
+                    )
+                time.sleep(PRESENTER_LOCK_POLL_SECONDS)
+    else:
+        import fcntl
+
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"timed out waiting {timeout}s for the narration lock "
+                        f"for presenter {presenter_id!r} (another process holds it)"
+                    )
+                time.sleep(PRESENTER_LOCK_POLL_SECONDS)
+
+
+def _release_lock_fd(fd) -> None:
+    """Best-effort unlock; closing the fd releases the lock regardless."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def presenter_lock(root, presenter_id, timeout=PRESENTER_LOCK_TIMEOUT_SECONDS):
+    """Hold a presenter's narration lock for the ``with`` block.
+
+    Serializes this process against the Tauri app's job creation and
+    revocation for the same presenter. Raises ValueError on an invalid
+    presenter id and TimeoutError when another process holds the lock
+    past ``timeout`` — both fail closed: do not proceed with the gated
+    operation. Releasing the context manager (including on exception)
+    always frees the presenter.
+    """
+    if not presenter_id_valid(presenter_id):
+        raise ValueError(f"invalid presenter id: {presenter_id!r}")
+    presenter_dir = Path(root) / "presenters" / presenter_id
+    presenter_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = presenter_dir / PRESENTER_LOCK_FILE
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        _acquire_lock_fd(fd, timeout, presenter_id)
+        try:
+            yield
+        finally:
+            _release_lock_fd(fd)
+    finally:
+        os.close(fd)

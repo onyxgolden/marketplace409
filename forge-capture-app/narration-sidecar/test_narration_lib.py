@@ -675,3 +675,258 @@ def test_runner_process_job_rejects_tampered_script(tmp_path):
     assert "script_sha256 mismatch" in result["failure_reason"]
     assert "pinned in code (no receipt.json yet)" in result["failure_reason"]
     assert (job_dir / ".failed").exists()
+
+
+# --- presenter lock (fix round 2) -------------------------------------------
+
+def test_presenter_id_valid_accepts_good_ids():
+    for good in ("tyler-welch", "josh-morgan", "a", "abc-123"):
+        assert lib.presenter_id_valid(good), good
+
+
+def test_presenter_id_valid_rejects_bad_ids():
+    for bad in ("", "-abc", "abc-", "Tyler-Welch", "a/b", "a\\b", "..",
+                "a" * 65, "a_b", "a b", "a.b"):
+        assert not lib.presenter_id_valid(bad), bad
+
+
+def test_presenter_lock_acquire_release(tmp_path):
+    root = tmp_path
+    with lib.presenter_lock(root, "tyler-welch"):
+        assert (root / "presenters" / "tyler-welch"
+                / lib.PRESENTER_LOCK_FILE).is_file()
+    # Re-acquiring after release succeeds.
+    with lib.presenter_lock(root, "tyler-welch"):
+        pass
+
+
+def test_presenter_lock_rejects_invalid_id(tmp_path):
+    with pytest.raises(ValueError, match="invalid presenter id"):
+        with lib.presenter_lock(tmp_path, "../escape"):
+            pass
+
+
+def test_presenter_lock_is_per_presenter(tmp_path):
+    with lib.presenter_lock(tmp_path, "tyler-welch"):
+        with lib.presenter_lock(tmp_path, "josh-morgan"):
+            pass
+
+
+def test_presenter_lock_times_out_when_held(tmp_path):
+    import threading
+
+    # Hold the lock in a thread; a second acquisition with a short
+    # timeout must fail closed instead of waiting out the 30 s default.
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with lib.presenter_lock(tmp_path, "tyler-welch"):
+            acquired.set()
+            release.wait(timeout=10)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    assert acquired.wait(timeout=5)
+    try:
+        with pytest.raises(TimeoutError, match="timed out"):
+            with lib.presenter_lock(tmp_path, "tyler-welch", timeout=0.3):
+                pass
+    finally:
+        release.set()
+        t.join(timeout=5)
+
+
+def test_presenter_lock_released_on_exception(tmp_path):
+    with pytest.raises(RuntimeError, match="boom"):
+        with lib.presenter_lock(tmp_path, "tyler-welch"):
+            raise RuntimeError("boom")
+    # The lock is free again.
+    with lib.presenter_lock(tmp_path, "tyler-welch", timeout=1):
+        pass
+
+
+def test_presenter_lock_cross_process_contention(tmp_path):
+    """A second PROCESS holding the lock must block this process.
+
+    flock/msvcrt locks are per open-file description, so a thread-only
+    test cannot prove the cross-process exclusion the revocation
+    protocol depends on (Tauri app vs runner are separate processes).
+    """
+    script = tmp_path / "hold_lock.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
+        "from narration_lib import presenter_lock\n"
+        f"with presenter_lock({str(tmp_path)!r}, 'tyler-welch'):\n"
+        "    print('holding', flush=True)\n"
+        "    time.sleep(3)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout.readline().strip() == "holding"
+        with pytest.raises(TimeoutError, match="timed out"):
+            with lib.presenter_lock(tmp_path, "tyler-welch", timeout=0.5):
+                pass
+        # After the holder exits, acquisition succeeds.
+        proc.wait(timeout=10)
+        with lib.presenter_lock(tmp_path, "tyler-welch", timeout=2):
+            pass
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=5)
+
+
+# --- runner completion publication (fix round 2) -----------------------------
+
+def _completion_spool(tmp_path):
+    """Spool with active consent + a valid processing job ready to run.
+
+    Returns (root, job_dir, job_id). Heavy work (probe/enroll/TTS/
+    render) is stubbed by the caller via monkeypatch; only the
+    consent checks, binding verification, and completion publication
+    run for real.
+    """
+    root = tmp_path
+    pdir = root / "presenters" / "tyler-welch"
+    pdir.mkdir(parents=True)
+    artifact = pdir / "consent-artifact.mp4"
+    artifact.write_bytes(b"fake video bytes")
+    (pdir / "consent.json").write_text(json.dumps({
+        "version": 1, "presenter_id": "tyler-welch", "status": "active",
+        "scope": ["voice"],
+        "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
+        "consent_artifact_path": "consent-artifact.mp4"}))
+    capture = tmp_path / "capture.mp4"
+    capture.write_bytes(b"fake capture bytes")
+    capture_sha = lib.sha256_file(capture)
+    job_id = lib.canonical_job_id(
+        "tyler-welch", 1, "openvoice-v2", "checkpoints_v2_0417",
+        runner.WEIGHTS_SHA256_PINNED, capture_sha, _BINDING_SCRIPT_HASH)
+    job_dir = root / "jobs" / job_id
+    job_dir.mkdir(parents=True)
+    (job_dir / ".processing").touch()
+    manifest = _binding_manifest(job_id, capture_sha256=capture_sha)
+    manifest["capture_path"] = str(capture)
+    (job_dir / "job.json").write_text(json.dumps(manifest))
+    (job_dir / "script.json").write_text(json.dumps(_binding_script(job_id)))
+    ckpt = tmp_path / "ckpt" / "converter"
+    ckpt.mkdir(parents=True)
+    (ckpt / "config.json").write_text("{}")
+    return root, job_dir, job_id
+
+
+def _stub_heavy_runner(monkeypatch, revoke_during_render=False):
+    """Stub the model/ffmpeg work out of process_job. When
+    ``revoke_during_render`` is set, the fake render flips consent to
+    revoked first — the verdict's interleaving: the render finished
+    while consent was active, revocation landed before publication.
+    """
+    monkeypatch.setattr(runner, "probe_audio_duration_sec",
+                        lambda *a: 45.0)
+    monkeypatch.setattr(runner, "enroll_presenter",
+                        lambda *a, **k: {"reference_audio_sha256": "a" * 64,
+                                         "status": "active"})
+
+    def fake_segments(*a, **k):
+        return ([{"step_id": "s1", "audio_file": "segments/s1.wav",
+                   "audio_sha256": "a" * 64, "duration_sec": 4.2,
+                   "real_time_factor": 0.5},
+                 {"step_id": "s2", "audio_file": "segments/s2.wav",
+                   "audio_sha256": "b" * 64, "duration_sec": 8.3,
+                   "real_time_factor": 0.5}], [])
+
+    monkeypatch.setattr(runner, "_generate_segments", fake_segments)
+
+    def fake_render(root, job_dir, manifest, script, capture_path,
+                    segment_wavs, captions_path, ffmpeg_bin, ffprobe_bin,
+                    weights, verified_script_sha256):
+        if revoke_during_render:
+            consent_path = (root / "presenters" / "tyler-welch"
+                            / "consent.json")
+            consent = json.loads(consent_path.read_text())
+            consent["status"] = "revoked"
+            consent["revoked_at"] = "2026-11-12T09:00:00Z"
+            consent["revoke_reason"] = "test revocation"
+            consent_path.write_text(json.dumps(consent))
+        out = job_dir / "output.mp4"
+        out.write_bytes(b"fake narrated mp4")
+        sha = lib.sha256_file(out)
+        render = {"output_file": "output.mp4", "output_sha256": sha,
+                  "output_bytes": out.stat().st_size,
+                  "ffmpeg_version": "test", "ffmpeg_command": ["ffmpeg"],
+                  "captions_file": "captions.vtt", "render_sec": 0.1}
+        (job_dir / "render-manifest.json").write_text(json.dumps({
+            "version": 1, "job_id": job_dir.name, "output_hash": sha}))
+        return render, {"version": 1}
+
+    monkeypatch.setattr(runner, "_render", fake_render)
+
+
+def test_runner_completion_publishes_under_active_consent(tmp_path, monkeypatch):
+    root, job_dir, job_id = _completion_spool(tmp_path)
+    _stub_heavy_runner(monkeypatch)
+    rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe")
+    assert rc == 0
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "done"
+    assert result["render"]["output_sha256"] == lib.sha256_file(
+        job_dir / "output.mp4")
+    assert (job_dir / ".done").exists()
+    assert not (job_dir / ".processing").exists()
+    assert not (job_dir / ".failed").exists()
+    outputs = json.loads(
+        (root / "managed-outputs.json").read_text())["outputs"]
+    assert len(outputs) == 1
+    assert outputs[0]["job_id"] == job_id
+    assert outputs[0]["status"] == "active"
+
+
+def test_runner_completion_revoked_mid_render_fails_closed(tmp_path, monkeypatch):
+    """The verdict's interleaving at the runner level: the render
+    finished while consent was active, revocation landed before
+    publication. The job must fail as consent_revoked and publish
+    NOTHING — no result success, no managed output, no .done."""
+    root, job_dir, job_id = _completion_spool(tmp_path)
+    _stub_heavy_runner(monkeypatch, revoke_during_render=True)
+    rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe")
+    assert rc == 2
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "failed"
+    assert "consent_revoked" in result["failure_reason"]
+    assert (job_dir / ".failed").exists()
+    assert not (job_dir / ".done").exists()
+    assert not (job_dir / "output.mp4").exists()
+    assert not (job_dir / "captions.vtt").exists()
+    assert not (root / "managed-outputs.json").exists()
+
+
+def test_runner_completion_holds_presenter_lock(tmp_path, monkeypatch):
+    """Publication happens UNDER the presenter lock: a nested lock
+    acquisition attempted while result.json is being written must
+    time out — proving the completion critical section is serialized
+    against revocation, not merely checked before it."""
+    root, job_dir, job_id = _completion_spool(tmp_path)
+    _stub_heavy_runner(monkeypatch)
+    real_write_json = runner.write_json
+    lock_seen_held = []
+
+    def spying_write_json(path, data):
+        if Path(path).name == "result.json" and Path(path).parent == job_dir:
+            try:
+                with lib.presenter_lock(root, "tyler-welch", timeout=0.3):
+                    lock_seen_held.append(False)
+            except TimeoutError:
+                lock_seen_held.append(True)
+        return real_write_json(path, data)
+
+    monkeypatch.setattr(runner, "write_json", spying_write_json)
+    rc = runner.process_job(root, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe")
+    assert rc == 0
+    assert lock_seen_held == [True]

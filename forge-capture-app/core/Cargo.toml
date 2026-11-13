@@ -16,6 +16,12 @@ serde_json = "1.0"
 # SHA-256 for the annotation sidecar's source-binding contract (annotations.rs).
 # Pure-Rust, no native deps, widely audited.
 sha2 = "0.10"
+# Cross-platform advisory file locks (flock on Unix, LockFileEx on
+# Windows). The narration presenter lock (narration.rs) serializes
+# consent-gated job creation, completion publication, and revocation
+# across the Tauri app process and the Python runner process; the
+# Python side takes the same lock on the same file with fcntl/msvcrt.
+fs2 = "0.4"
 # GS-C6 fix-round-7: HMAC-SHA256 for the OverrideAuthority record MAC
 # (sop_redaction.rs) -- same RustCrypto family as sha2 above, pure-Rust,
 # no native deps, already in the dependency tree transitively.
