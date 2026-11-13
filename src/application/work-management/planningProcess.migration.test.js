@@ -40,6 +40,18 @@
 //     complexity_change event is appended in the same transaction) —
 //     rollback, actor derivation, cross-workspace, stale-write,
 //     duplicate-request and success legs are all proved here.
+//   - Fix round 4 (P1-2): the stub packages table carries the
+//     production rung-1 version trigger (fires on EVERY update),
+//     so the combined RPC's version contract is proved against
+//     the real schema: one logical save advances the version
+//     exactly once, even when percent_complete changes — and the
+//     success, stale-write, replay, and two-session concurrent
+//     legs all run against that trigger-faithful schema.
+//   - Fix round 4 (P1-1): the request-ID namespace is package-
+//     level, shared by the standalone complexity RPC and the
+//     combined update RPC under one canonical payload
+//     {complexity, updates}; cross-RPC reuse is proved in both
+//     directions, same and different complexity.
 //   - Set-status RPC (F2): status rules, evidence/attestation for
 //     Complete, reason for N/A and Needs Revision, fresh evidence on
 //     return from Needs Revision, self-review ban with owner override,
@@ -177,6 +189,24 @@ const PREREQ_SQL = `
   create unique index uq_forge_work_packages_source
     on forge_work_packages (owner_id, source_system, source_record_id)
     where source_record_id is not null;
+  -- Fix round 4 (P1-2): the production rung-1 version trigger
+  -- (20261002120000_forge_work_management_rung1.sql,
+  -- forge_work_packages_version_bump) — it fires on EVERY update
+  -- and sets NEW.version := OLD.version + 1. The stub used to omit
+  -- it, which hid the combined RPC's double version advancement
+  -- on percent-changing saves; the stub now carries the real
+  -- trigger verbatim, so every leg below proves the version
+  -- contract against the production schema.
+  create or replace function forge_work_packages_version_bump()
+  returns trigger language plpgsql as $$
+  begin
+    NEW.version := OLD.version + 1;
+    return NEW;
+  end $$;
+  drop trigger if exists forge_work_packages_version_bump_trg on forge_work_packages;
+  create trigger forge_work_packages_version_bump_trg
+    before update on forge_work_packages
+    for each row execute function forge_work_packages_version_bump();
 `;
 
 const SEED_SQL = `
@@ -1137,10 +1167,13 @@ describe("planning-process migration", () => {
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
   });
 
-  it60("combined update RPC: a request ID first used by the standalone complexity RPC fails closed (fix round 3, P1-2)", async () => {
-    // The standalone complexity RPC stores no canonical payload, so
-    // a combined call reusing its request ID cannot prove the
-    // payload matches: it must conflict, never silently replay.
+  it60("combined update RPC: a request ID first used by the standalone complexity RPC conflicts on a different payload (fix round 3, P1-2; fix round 4, P1-1)", async () => {
+    // The standalone complexity RPC stores the canonical payload
+    // {complexity, updates: {}}; a combined call reusing its
+    // request ID with a different payload cannot prove the payload
+    // matches: it must conflict, never silently replay. (The
+    // same-payload replay in the other direction is proved by the
+    // cross-RPC leg below.)
     const first = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_comb_xrpc_1" });
     expect(first.planning_complexity).toBe("high");
     await expectRpcError(db, OWNER_A,
@@ -1151,6 +1184,97 @@ describe("planning-process migration", () => {
     expect(rows[0].planning_complexity).toBe("high");
     expect(rows[0].version).toBe(2);
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("cross-RPC request-ID reuse: a combined receipt with field updates conflicts in the standalone RPC, same and different complexity (fix round 4, P1-1)", async () => {
+    // The verdict's counterexample, reverse direction: R commits
+    // high + {priority: critical} through the combined RPC. A later
+    // standalone complexity call reusing R with the SAME complexity
+    // must NOT replay — the combined receipt carries field updates
+    // the standalone call does not — and neither must a reuse with a
+    // different complexity.
+    const first = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", { priority: "critical" },
+      { requestId: "req_xrpc_c2s_1" });
+    expect(first.planning_complexity).toBe("high");
+    expect(first.priority).toBe("critical");
+    expect(first.version).toBe(2);
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'high', 2, 'req_xrpc_c2s_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_complexity('${OWNER_A}', 'pkg_a', 'low', 2, 'req_xrpc_c2s_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    // Neither failed reuse applied anything: priority still
+    // critical, complexity still high, version unmoved, one event.
+    const { rows } = await db.query(`select priority, planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].priority).toBe("critical");
+    expect(rows[0].planning_complexity).toBe("high");
+    expect(rows[0].version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("cross-RPC request-ID reuse: the same canonical payload replays in both directions (fix round 4, P1-1)", async () => {
+    // Standalone first, then combined with the same logical
+    // operation: complexity high, no field updates. The combined
+    // call's canonical payload {complexity: high, updates: {}} is
+    // identical to the standalone receipt's, so it replays —
+    // no second event, version unmoved.
+    const first = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_xrpc_both_1" });
+    expect(first.planning_complexity).toBe("high");
+    expect(first.version).toBe(2);
+    const replay = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", {},
+      { requestId: "req_xrpc_both_1" });
+    expect(replay.planning_complexity).toBe("high");
+    expect(replay.version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+    // Combined first, then standalone with the same logical
+    // operation: the combined receipt's payload is {complexity:
+    // high, updates: {}} (empty updates), so the standalone call
+    // replays it — no second event, version unmoved. (The combined
+    // save itself still applies and bumps once, 2 → 3, as every
+    // applied combined save does.)
+    const second = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", {},
+      { requestId: "req_xrpc_both_2" });
+    expect(second.version).toBe(3);
+    const { rows: raw2 } = await db.query(`select request_payload from forge_work_planning_process_revisions where work_package_id = 'pkg_a' and request_id = 'req_xrpc_both_2';`);
+    expect(raw2[0].request_payload).toEqual({ complexity: "high", updates: {} });
+    const replay2 = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_xrpc_both_2" });
+    expect(replay2.planning_complexity).toBe("high");
+    expect(replay2.version).toBe(3);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(2);
+  });
+
+  it60("combined update RPC: successive percent-changing saves advance the version exactly once each under the production version trigger (fix round 4, P1-2)", async () => {
+    // The verdict's schema-faithfulness leg: the stub now carries
+    // the production rung-1 version trigger (fires on EVERY
+    // update), so a percent-changing save must still land at
+    // exactly +1 — the old two-statement save advanced it by two
+    // here (one explicit +1, one trigger firing on the second
+    // UPDATE). Successive saves pin the exact version each time,
+    // and a stale write at the superseded version still 409s.
+    const first = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+      { progress_basis: "quantity", planned_qty: 10, planned_unit: "each", earned_qty: 5 },
+      { requestId: "req_pct_trg_1" });
+    expect(first.version).toBe(2);
+    expect(Number(first.percent_complete)).toBe(50);
+    const second = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", null,
+      { earned_qty: 10 }, { requestId: "req_pct_trg_2" });
+    expect(second.version).toBe(3);
+    expect(Number(second.percent_complete)).toBe(100);
+    const third = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", null,
+      { earned_qty: 0 }, { requestId: "req_pct_trg_3" });
+    expect(third.version).toBe(4);
+    expect(Number(third.percent_complete)).toBe(0);
+    // Stale write at the version before the last save: 409, and
+    // nothing lands.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 3, 'req_pct_trg_stale', 'high', '{"title": "Stale"}'::jsonb);`,
+      "WPP10_STALE_VERSION");
+    const { rows } = await db.query(`select version, percent_complete, planning_complexity from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].version).toBe(4);
+    expect(Number(rows[0].percent_complete)).toBe(0);
+    expect(rows[0].planning_complexity).toBe("high");
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(3);
   });
 
   it60("combined update RPC: a verifier change rides in the same transaction as fields and complexity (fix round 3, P1-1)", async () => {
@@ -1420,6 +1544,52 @@ describe.skipIf(!HAS_REAL_PG)("planning-process migration: real-PostgreSQL subse
       const { rows: revs } = await pgClient.query(`
         select count(*)::int as n from forge_work_planning_process_revisions
         where owner_id = '${OWNER_A}' and work_package_id = 'pkg_real' and template_step_id = 'pdf-01';
+      `);
+      expect(revs[0].n).toBe(1);
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+    }
+  });
+
+  it60("two sessions calling the combined update at the same version: one wins, the other gets 409, exactly one version bump under the production trigger (fix round 4, P1-2)", async () => {
+    // The concurrent-writer leg for the combined RPC, against the
+    // trigger-faithful schema: both sessions read version 1 and
+    // attempt percent-changing combined saves at that version with
+    // different request IDs. Exactly one applies (version 2,
+    // percent 50, one receipt); the loser gets 409 and lands
+    // nothing — and the winner's version is exactly 2, not 3, so
+    // the trigger fired once for the one logical save.
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    try {
+      const change = (client, requestId) => pgAsUser(client, OWNER_A, `
+        select forge_work_planning_process_update_package(
+          '${OWNER_A}', 'pkg_real', 1, '${requestId}', 'high',
+          '{"progress_basis": "quantity", "planned_qty": 10, "planned_unit": "each", "earned_qty": 5}'::jsonb);
+      `);
+      const results = await Promise.allSettled([
+        change(clientA, "req_comb_race_a"),
+        change(clientB, "req_comb_race_b"),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(String(rejected[0].reason?.message ?? rejected[0].reason)).toMatch(/WPP10_STALE_VERSION/);
+      const { rows: pkg } = await pgClient.query(`
+        select planning_complexity, percent_complete, version from forge_work_packages
+        where owner_id = '${OWNER_A}' and id = 'pkg_real';
+      `);
+      expect(pkg).toHaveLength(1);
+      expect(pkg[0].planning_complexity).toBe("high");
+      expect(Number(pkg[0].percent_complete)).toBe(50);
+      expect(pkg[0].version).toBe(2);
+      const { rows: revs } = await pgClient.query(`
+        select count(*)::int as n from forge_work_planning_process_revisions
+        where owner_id = '${OWNER_A}' and work_package_id = 'pkg_real' and template_step_id is null;
       `);
       expect(revs[0].n).toBe(1);
     } finally {

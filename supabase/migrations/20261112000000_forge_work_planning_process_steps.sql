@@ -1385,6 +1385,14 @@ select p.owner_id,
 -- Complexity events have template_step_id NULL, so the revisions
 -- unique index (which treats NULLs as distinct) cannot enforce
 -- request-id idempotency for them — the RPC checks explicitly.
+-- The request-ID namespace is PACKAGE-level, shared with the
+-- combined update RPC (fix round 4, P1-1): both RPCs store the same
+-- canonical payload {complexity, updates} on every receipt (a
+-- standalone call stores updates: {}), and idempotency compares
+-- that whole payload. A combined receipt with field/verifier
+-- updates therefore conflicts here, a combined receipt with empty
+-- updates replays, and a prior receipt with no stored payload
+-- (pre-fix) fails closed — exactly as the combined RPC does.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_work_planning_process_set_complexity(
@@ -1406,7 +1414,8 @@ declare
   v_pkg public.forge_work_packages%rowtype;
   v_request_id text;
   v_old_complexity text;
-  v_prev_complexity text;
+  v_payload jsonb;
+  v_prev_payload jsonb;
 begin
   -- Entry guard: a reader with only .read gets the honest
   -- COMPLEXITY_FORBIDDEN (403), not a WORKSPACE_FORBIDDEN (404)
@@ -1453,23 +1462,45 @@ begin
     raise exception 'WPP10_PACKAGE_TERMINAL';
   end if;
 
-  -- Explicit idempotency: complexity events have template_step_id
-  -- NULL, so the revisions unique index cannot enforce request-id
-  -- uniqueness for them. A replay with the same payload returns the
-  -- current package row; reuse with a different payload is a
-  -- conflict.
-  select new_values ->> 'complexity'
-    into v_prev_complexity
+  -- Explicit idempotency (fix round 4, P1-1): complexity events
+  -- have template_step_id NULL, so the revisions unique index
+  -- cannot enforce request-id uniqueness for them — and the
+  -- request-ID namespace is PACKAGE-level, shared with the combined
+  -- update RPC. The canonical payload of a standalone complexity
+  -- call is {complexity, updates: {}} — the same shape the combined
+  -- RPC stores — so the lookup below covers every package-level
+  -- receipt (complexity_change AND package_update), not just this
+  -- RPC's own events. A replay with the same canonical payload
+  -- returns the current package row; reuse with a different payload
+  -- is a conflict. A prior receipt with NO stored payload (pre-fix)
+  -- cannot prove the payload matches: fail closed, exactly as the
+  -- combined RPC does.
+  v_payload := jsonb_build_object(
+    'complexity', p_complexity,
+    'updates', '{}'::jsonb
+  );
+  select request_payload
+    into v_prev_payload
     from public.forge_work_planning_process_revisions r
     where r.owner_id = p_owner_id
       and r.work_package_id = p_package_id
       and r.template_step_id is null
-      and r.action = 'complexity_change'
-      and r.request_id = v_request_id;
-  if v_prev_complexity is not null then
-    if v_prev_complexity = p_complexity then
+      and r.request_id = v_request_id
+    order by r.recorded_at desc, r.id desc
+    limit 1;
+  if v_prev_payload is not null then
+    if v_prev_payload = v_payload then
       return row_to_json(v_pkg)::jsonb;
     end if;
+    raise exception 'WPP10_REQUEST_ID_CONFLICT';
+  end if;
+  perform 1
+    from public.forge_work_planning_process_revisions r
+    where r.owner_id = p_owner_id
+      and r.work_package_id = p_package_id
+      and r.template_step_id is null
+      and r.request_id = v_request_id;
+  if found then
     raise exception 'WPP10_REQUEST_ID_CONFLICT';
   end if;
 
@@ -1504,7 +1535,7 @@ begin
   insert into public.forge_work_planning_process_revisions
     (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
      old_status, new_status, reason, evidence_reference, evidence_digest, attestation,
-     is_override, request_id, old_values, new_values)
+     is_override, request_id, request_payload, old_values, new_values)
   values (
     p_owner_id,
     'forge_ppr_' || replace(gen_random_uuid()::text, '-', ''),
@@ -1521,6 +1552,7 @@ begin
     null,
     false,
     v_request_id,
+    v_payload,
     jsonb_build_object('complexity', v_old_complexity),
     jsonb_build_object('complexity', p_complexity)
   );
@@ -1569,8 +1601,12 @@ grant execute on function public.forge_work_planning_process_set_complexity(text
 -- date-order and earned/planned range rules (checked on the updated
 -- row before the event insert, so a violation rolls the whole save
 -- back). percent_complete is derived server-side from the merged
--- row (same rules as derivePercentComplete in the application
--- domain), never taken from the payload. The capability gate is the
+-- candidate (same rules as derivePercentComplete in the application
+-- domain) and set in the SAME guarded UPDATE (fix round 4, P1-2):
+-- the production rung-1 version trigger fires on every UPDATE, so
+-- a second UPDATE for percent would advance the version twice for
+-- one logical save. One UPDATE here means exactly one version
+-- advancement per applied save, in production and in tests. The capability gate is the
 -- complexity gate (owner/co-owner or planner.packages.edit) — the
 -- same authority the standalone complexity RPC requires, so this
 -- RPC never widens who may change complexity; plain edits by other
@@ -1611,6 +1647,15 @@ declare
   v_payload jsonb;
   v_prev_payload jsonb;
   v_pct numeric;
+  -- Fix round 4 (P1-2): the merged progress inputs, for deriving
+  -- percent_complete from the locked row overridden by p_updates
+  -- BEFORE the guarded UPDATE (see below).
+  v_merged_basis text;
+  v_merged_planned_qty numeric;
+  v_merged_planned_unit text;
+  v_merged_earned_qty numeric;
+  v_merged_planned_manhours numeric;
+  v_merged_earned_manhours numeric;
 begin
   if not (public.has_workspace_access(p_owner_id)
           or public.has_planner_permission(p_owner_id, 'planner.planning_steps.read')
@@ -1764,6 +1809,40 @@ begin
     perform set_config('forge_work.lifecycle_rpc', 'on', true);
   end if;
 
+  -- Fix round 4 (P1-2): percent_complete is derived here, from
+  -- the MERGED candidate (locked row overridden by p_updates), and
+  -- set in the single guarded UPDATE below. The previous shape
+  -- derived it AFTER the first UPDATE and issued a second UPDATE
+  -- when the percentage changed — and the production rung-1 version
+  -- trigger fires on EVERY update, so a percent-changing save
+  -- advanced the version twice for one logical request while the
+  -- migration-test stub (which omitted the trigger) asserted +1.
+  -- One UPDATE, one trigger firing, exactly one version
+  -- advancement; the derivation is identical to the old post-update
+  -- one (same rules as derivePercentComplete in the application
+  -- domain), only evaluated on the merged inputs instead of the
+  -- already-updated row.
+  v_merged_basis := case when p_updates ? 'progress_basis' then (p_updates->>'progress_basis') else v_pkg.progress_basis end;
+  v_merged_planned_qty := case when p_updates ? 'planned_qty' then (p_updates->>'planned_qty')::numeric else v_pkg.planned_qty end;
+  v_merged_planned_unit := case when p_updates ? 'planned_unit' then (p_updates->>'planned_unit') else v_pkg.planned_unit end;
+  v_merged_earned_qty := case when p_updates ? 'earned_qty' then (p_updates->>'earned_qty')::numeric else v_pkg.earned_qty end;
+  v_merged_planned_manhours := case when p_updates ? 'planned_manhours' then (p_updates->>'planned_manhours')::numeric else v_pkg.planned_manhours end;
+  v_merged_earned_manhours := case when p_updates ? 'earned_manhours' then (p_updates->>'earned_manhours')::numeric else v_pkg.earned_manhours end;
+  v_pct := case
+    when v_merged_basis = 'quantity'
+      and v_merged_planned_qty is not null and v_merged_planned_qty > 0
+      and v_merged_planned_unit is not null and v_merged_earned_qty is not null
+      then least(100, greatest(0, round((v_merged_earned_qty / v_merged_planned_qty * 100)::numeric, 1)))
+    when v_merged_basis = 'manhours'
+      and v_merged_planned_manhours is not null and v_merged_planned_manhours > 0
+      and v_merged_earned_manhours is not null
+      then least(100, greatest(0, round((v_merged_earned_manhours / v_merged_planned_manhours * 100)::numeric, 1)))
+    when v_merged_basis in ('milestone_weights', 'manual')
+      and v_pkg.percent_complete is not null
+      then least(100, greatest(0, round(v_pkg.percent_complete::numeric, 1)))
+    else null
+  end;
+
   -- Conditional UPDATE on the version: the atomic guard. Zero rows
   -- means another writer moved the package since the caller's read
   -- — a 409, and (because the complexity event is inserted after
@@ -1794,6 +1873,7 @@ begin
         earned_manhours = case when p_updates ? 'earned_manhours' then (p_updates->>'earned_manhours')::numeric else earned_manhours end,
         actual_manhours = case when p_updates ? 'actual_manhours' then (p_updates->>'actual_manhours')::numeric else actual_manhours end,
         progress_basis = case when p_updates ? 'progress_basis' then (p_updates->>'progress_basis') else progress_basis end,
+        percent_complete = v_pct,
         progress_updated_by = case when p_updates ? 'progress_updated_by' then (p_updates->>'progress_updated_by') else progress_updated_by end,
         source_system = case when p_updates ? 'source_system' then (p_updates->>'source_system') else source_system end,
         source_record_id = case when p_updates ? 'source_record_id' then (p_updates->>'source_record_id') else source_record_id end,
@@ -1891,31 +1971,12 @@ begin
     );
   end if;
 
-  -- percent_complete is derived server-side from the merged row
-  -- (same rules as derivePercentComplete in the application domain):
-  -- quantity/manhours bases divide earned by planned; milestone
-  -- weights/manual keep the stored value, clamped 0..100; anything
-  -- else is null (unknown, never zero-by-default).
-  v_pct := case
-    when v_pkg.progress_basis = 'quantity'
-      and v_pkg.planned_qty is not null and v_pkg.planned_qty > 0
-      and v_pkg.planned_unit is not null and v_pkg.earned_qty is not null
-      then least(100, greatest(0, round((v_pkg.earned_qty / v_pkg.planned_qty * 100)::numeric, 1)))
-    when v_pkg.progress_basis = 'manhours'
-      and v_pkg.planned_manhours is not null and v_pkg.planned_manhours > 0
-      and v_pkg.earned_manhours is not null
-      then least(100, greatest(0, round((v_pkg.earned_manhours / v_pkg.planned_manhours * 100)::numeric, 1)))
-    when v_pkg.progress_basis in ('milestone_weights', 'manual')
-      and v_pkg.percent_complete is not null
-      then least(100, greatest(0, round(v_pkg.percent_complete::numeric, 1)))
-    else null
-  end;
-  if v_pct is distinct from v_pkg.percent_complete then
-    update public.forge_work_packages
-      set percent_complete = v_pct
-      where owner_id = p_owner_id and id = v_pkg.id
-      returning * into v_pkg;
-  end if;
+  -- percent_complete was derived from the merged candidate and
+  -- set in the guarded UPDATE above (fix round 4, P1-2) — there is
+  -- no second UPDATE here. The old two-statement save derived it
+  -- after the first UPDATE and re-updated when it changed, which
+  -- the production version trigger counted as a second version
+  -- advancement for one logical save.
 
   return row_to_json(v_pkg)::jsonb;
 end;
