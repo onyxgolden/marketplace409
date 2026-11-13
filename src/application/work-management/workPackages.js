@@ -293,22 +293,28 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     }
     return { ok: true, package: data.package, budgetRevision: data.revision || null };
   }
-  // F5 (fix round 2, P1-A): a planning-complexity change rides along
-  // with other edits in one PATCH, and the whole save must commit or
-  // roll back together. The old flow applied the complexity FIRST
-  // through its own RPC (a committed transaction) and only then ran
-  // the property resolution / merged validation / generic UPDATE —
-  // so a failure after the RPC left complexity changed and the
-  // version advanced while the save reported failure. The new flow
-  // does ALL fallible work before ANY write (property resolution,
-  // normalization, merged-candidate validation, mode/package-type
-  // check, verifier check), then takes ONE write path: a save that
-  // carries a complexity change goes through the combined RPC
+  // F5 (fix round 2, P1-A; fix round 3, P1-1): a planning-complexity
+  // change rides along with other edits in one PATCH, and the whole
+  // save must commit or roll back together. The old flow applied the
+  // complexity FIRST through its own RPC (a committed transaction)
+  // and only then ran the property resolution / merged validation /
+  // generic UPDATE — so a failure after the RPC left complexity
+  // changed and the version advanced while the save reported failure.
+  // The new flow does ALL fallible work before ANY write (property
+  // resolution, normalization, merged-candidate validation,
+  // mode/package-type check, verifier check), then takes ONE write
+  // path: a save that carries a complexity change OR a
+  // designated-verifier change goes through the combined RPC
   // forge_work_planning_process_update_package (field updates +
-  // complexity change + complexity_change event in one transaction);
-  // a save with no complexity change keeps the existing single
+  // complexity change + verifier change + audit receipt in one
+  // transaction); a save with neither keeps the existing single
   // generic UPDATE (already one transaction). An unchanged
-  // complexity value skips the combined RPC entirely.
+  // complexity value skips the combined RPC entirely unless a
+  // verifier change rides along. The verifier NEVER travels via a
+  // second RPC after the save — the old tail could fail after the
+  // package fields, complexity, version bump, and audit event had
+  // committed, which is the same partial-save class this flow
+  // closes.
   let newComplexity = null;
   if (patch.planning_complexity !== undefined
       && patch.planning_complexity !== (pkg.planning_complexity || "standard")) {
@@ -374,31 +380,41 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   // left inconsistent.
   const modePackageTypeError = validatePackageTypeForMode(merged.package_type, inferEffectiveMode(merged));
   if (modePackageTypeError) return { ok: false, httpStatus: 400, error: modePackageTypeError };
-  // designated_verifier is owner-only and travels outside EDITABLE_FIELDS.
+  // designated_verifier is owner-only and travels INSIDE the
+  // combined RPC's p_updates (fix round 3, P1-1) — key present =
+  // supplied, JSON null = clear. It never travels via a second RPC
+  // after the save. The RPC re-enforces the owner-only invariant
+  // server-side (the caller must BE the workspace owner).
   let verifierChange = null;
+  let hasVerifierChange = false;
   if (patch.designated_verifier !== undefined) {
     if (actor !== ownerId) {
       return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
     }
+    hasVerifierChange = true;
     verifierChange = patch.designated_verifier || null;
   }
-  if (newComplexity !== null) {
+  if (newComplexity !== null || hasVerifierChange) {
     // Combined save: one RPC call, one transaction. The RPC checks
     // the version against the freshly-read row (pkg.version) and
-    // applies the field updates, the complexity change and the audit
-    // event together — a failure at any point (stale version, source
-    // conflict, merged-candidate invariant) rolls all of it back, so
-    // the package and the complexity audit are never half-applied.
-    // A source-column conflict maps to 409 here, exactly as on the
-    // generic path; other WPP10 failures map through the shared
-    // planning-process mapper (unknown RPC errors still throw).
+    // applies the field updates, the complexity change, the verifier
+    // change, and the audit receipt together — a failure at any
+    // point (stale version, source conflict, merged-candidate
+    // invariant, forbidden verifier) rolls all of it back, so the
+    // package and the audit are never half-applied. A source-column
+    // conflict maps to 409 here, exactly as on the generic path;
+    // other WPP10 failures map through the shared planning-process
+    // mapper (unknown RPC errors still throw).
+    const combinedUpdates = hasVerifierChange
+      ? { ...filtered, designated_verifier: verifierChange }
+      : filtered;
     const { data, error } = await db.rpc("forge_work_planning_process_update_package", {
       p_owner_id: ownerId,
       p_package_id: packageId,
       p_expected_version: pkg.version ?? 1,
       p_request_id: crypto.randomUUID(),
       p_complexity: newComplexity,
-      p_updates: filtered,
+      p_updates: combinedUpdates,
     });
     if (error) {
       const mapped = mapSourceColumnError(error, "uq_forge_work_packages_source");
@@ -407,9 +423,6 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     }
     const updated = Array.isArray(data) ? data[0] : data;
     if (!updated) throw new Error("forge_work_planning_process_update_package returned no row.");
-    if (verifierChange !== null || patch.designated_verifier !== undefined) {
-      return setDesignatedVerifier(db, { ownerId, actor, packageId, verifier: verifierChange });
-    }
     return { ok: true, package: updated };
   }
   const now = new Date().toISOString();
@@ -435,30 +448,7 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   if (!data) {
     return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
   }
-  if (verifierChange !== null || patch.designated_verifier !== undefined) {
-    return setDesignatedVerifier(db, { ownerId, actor, packageId, verifier: verifierChange });
-  }
   return { ok: true, package: data };
-}
-
-// Owner-only verifier designation, via the guarded RPC (the lifecycle
-// trigger rejects direct designated_verifier writes).
-export async function setDesignatedVerifier(db, { ownerId, actor, packageId, verifier }) {
-  if (actor !== ownerId) {
-    return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
-  }
-  const { data, error } = await db.rpc("forge_work_set_designated_verifier", {
-    p_owner_id: ownerId, p_package_id: packageId,
-    p_verifier: verifier || "",
-  });
-  if (error) throw error;
-  if (!data || data.ok !== true) {
-    const err = (data && data.error) || "unknown";
-    if (err === "not_found") return { ok: false, httpStatus: 404, error: "Work package not found." };
-    if (err === "forbidden") return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
-    throw new Error(`forge_work_set_designated_verifier: ${err}`);
-  }
-  return { ok: true, package: data.package };
 }
 
 // Latest stored attestation per gate. A gate counts as satisfied when its

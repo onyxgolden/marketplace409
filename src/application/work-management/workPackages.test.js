@@ -432,6 +432,66 @@ describe("planning-process hooks (F1: create binds the template via trigger; F5:
     expect(db.from).not.toHaveBeenCalledWith("forge_work_planning_process_revisions");
   });
 
+  it("a verifier change with a complexity change goes through ONE combined RPC call — no second verifier RPC (fix round 3, P1-1)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard", designated_verifier: null }, error: null });
+    const rpcPkg = { ...PKG, planning_complexity: "mid", designated_verifier: "user_9",
+      title: "Turnaround — north rack", version: 4, updated_at: "2026-11-12T00:00:00Z" };
+    const db = mockDb([getChain], async () => ({ data: rpcPkg, error: null }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", designated_verifier: "user_9", title: "Turnaround — north rack" } });
+    expect(result.ok).toBe(true);
+    expect(result.package).toEqual(rpcPkg);
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_update_package", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
+      p_expected_version: 3, p_request_id: expect.any(String),
+      p_complexity: "mid",
+      p_updates: expect.objectContaining({ title: "Turnaround — north rack", designated_verifier: "user_9" }),
+    });
+    // The verifier NEVER travels via a second RPC after the save.
+    expect(db.rpc.mock.calls.map((c) => c[0])).not.toContain("forge_work_set_designated_verifier");
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage
+  });
+
+  it("a verifier-only change routes through the combined RPC with no complexity value — never the generic update (fix round 3, P1-1)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard", designated_verifier: null }, error: null });
+    const rpcPkg = { ...PKG, designated_verifier: "user_9", version: 4, updated_at: "2026-11-12T00:00:00Z" };
+    const db = mockDb([getChain], async () => ({ data: rpcPkg, error: null }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", patch: { designated_verifier: "user_9" } });
+    expect(result.ok).toBe(true);
+    expect(result.package).toEqual(rpcPkg);
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_update_package", expect.objectContaining({
+      p_complexity: null,
+      p_updates: expect.objectContaining({ designated_verifier: "user_9" }),
+    }));
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
+  });
+
+  it("a non-owner verifier change is rejected before any write (fix round 3, P1-1)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { designated_verifier: "user_9" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(403);
+    expect(result.error).toMatch(/Only the workspace owner may designate a verifier/);
+    expect(db.rpc).not.toHaveBeenCalled();
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage
+  });
+
+  it("a combined RPC verifier failure maps to 403 with no generic update (fix round 3, P1-1)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain], async () => ({ data: null, error: { message: "WPP10_VERIFIER_FORBIDDEN" } }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", designated_verifier: "user_9" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(403);
+    expect(result.error).toMatch(/designate a verifier/);
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
+  });
+
   it("a combined RPC failure fails the whole save — no partial generic update (F5 fix round 2)", async () => {
     const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
     const db = mockDb([getChain], async () => ({ data: null, error: { message: "WPP10_STALE_VERSION" } }));

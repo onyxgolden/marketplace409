@@ -190,6 +190,9 @@ export function mapPlanningProcessRpcError(error) {
   if (message.includes("WPP10_COMPLEXITY_FORBIDDEN")) {
     return { ok: false, httpStatus: 403, error: "You don't have permission to change the planning complexity." };
   }
+  if (message.includes("WPP10_VERIFIER_FORBIDDEN")) {
+    return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
+  }
   if (message.includes("WPP10_INVALID_STATUS")) {
     return { ok: false, httpStatus: 400, error: `Status must be one of: ${PLANNING_PROCESS_STATUS_VALUES.join(", ")}.` };
   }

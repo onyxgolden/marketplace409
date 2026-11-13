@@ -380,7 +380,7 @@ create table if not exists public.forge_work_planning_process_revisions (
   work_package_id text not null,
   template_step_id text,
   actor_id text not null,
-  action text not null check (action in ('status_change', 'evidence_link_change', 'complexity_change')),
+  action text not null check (action in ('status_change', 'evidence_link_change', 'complexity_change', 'package_update')),
   old_status text check (old_status is null or old_status in ('N/A', 'In-Progress', 'Complete', 'Needs Revision', 'Reviewed')),
   new_status text check (new_status is null or new_status in ('N/A', 'In-Progress', 'Complete', 'Needs Revision', 'Reviewed')),
   reason text
@@ -415,6 +415,27 @@ create table if not exists public.forge_work_planning_process_revisions (
 -- column.
 alter table public.forge_work_planning_process_revisions
   add column if not exists request_payload jsonb;
+
+-- Fix round 3 (P1-2): the 'package_update' receipt action for
+-- combined saves that change no complexity. Guarded so a re-apply
+-- over a table created by the fix-round-2 file still gains the
+-- value: the inline column CHECK gets the generated name
+-- <table>_action_check.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.forge_work_planning_process_revisions'::regclass
+      and conname = 'forge_work_planning_process_revisions_action_check'
+      and pg_get_constraintdef(oid) not like '%package_update%'
+  ) then
+    alter table public.forge_work_planning_process_revisions
+      drop constraint forge_work_planning_process_revisions_action_check;
+    alter table public.forge_work_planning_process_revisions
+      add constraint forge_work_planning_process_revisions_action_check
+        check (action in ('status_change', 'evidence_link_change', 'complexity_change', 'package_update'));
+  end if;
+end $$;
 
 create index if not exists idx_forge_work_planning_process_revisions_package
   on public.forge_work_planning_process_revisions (owner_id, work_package_id, recorded_at desc, id);
@@ -1513,7 +1534,8 @@ grant execute on function public.forge_work_planning_process_set_complexity(text
 
 -- ---------------------------------------------------------------------------
 -- 12. RPC: forge_work_planning_process_update_package — the single
---     transaction for a combined package save (fix round 2, P1-A).
+--     transaction for a combined package save (fix round 2, P1-A;
+--     fix round 3, P1-1/P1-2).
 --
 -- The edit form sends planning complexity together with unrelated
 -- package fields. Applying the complexity first through its own RPC
@@ -1521,32 +1543,49 @@ grant execute on function public.forge_work_planning_process_set_complexity(text
 -- a property/validation/version failure after the complexity commit
 -- left complexity changed and the version advanced while the save
 -- reported failure. This RPC is the one write path for a save that
--- carries a complexity change: it locks the package row, checks the
--- expected version, applies the field updates AND the complexity
--- change AND the complexity_change audit event in ONE transaction —
--- any failure rolls all of it back. A save with no complexity
--- change keeps the existing single generic UPDATE (already one
--- transaction); it never calls this RPC.
+-- carries a complexity change OR a designated-verifier change: it
+-- locks the package row, checks the expected version, applies the
+-- field updates AND the complexity change AND the designated
+-- verifier AND the audit receipt in ONE transaction — any failure
+-- rolls all of it back. A save with neither a complexity change
+-- nor a verifier change keeps the existing single generic UPDATE
+-- (already one transaction); it never calls this RPC.
 --
 -- p_updates is the service-resolved, service-validated field payload
 -- (EDITABLE_FIELDS only, planning_complexity stripped — complexity
 -- travels only via p_complexity; status/code/percent_complete are
 -- never accepted here). Only keys PRESENT in p_updates are touched;
--- an explicit JSON null clears the column. The RPC re-enforces the
--- server-side invariants a direct caller could bypass: the enum
--- lists for mode/package_type/priority/progress_basis, ISO date
--- shape, and the merged-candidate date-order and earned/planned
--- range rules (checked on the updated row before the event insert,
--- so a violation rolls the whole save back). percent_complete is
--- derived server-side from the merged row (same rules as
--- derivePercentComplete in the application domain), never taken from
--- the payload. The capability gate is the complexity gate
--- (owner/co-owner or planner.packages.edit) — the same authority
--- the standalone complexity RPC requires, so this RPC never widens
--- who may change complexity; plain edits by other callers keep the
--- RLS-gated generic path. A complexity value equal to the current
--- value writes no audit event (a no-op complexity with field
--- updates still applies the fields and bumps the version once).
+-- an explicit JSON null clears the column. A designated_verifier
+-- change travels INSIDE p_updates (key present = supplied, JSON
+-- null = clear): the verifier RPC's owner-only invariant is
+-- re-enforced here (the caller must BE the workspace owner, not
+-- merely a co-owner — same strict rule as
+-- forge_work_set_designated_verifier), and the lifecycle guard's
+-- transaction-local bypass flag is set before the UPDATE so the
+-- trigger accepts the verifier write from this RPC. The RPC
+-- re-enforces the server-side invariants a direct caller could
+-- bypass: the enum lists for mode/package_type/priority/
+-- progress_basis, ISO date shape, and the merged-candidate
+-- date-order and earned/planned range rules (checked on the updated
+-- row before the event insert, so a violation rolls the whole save
+-- back). percent_complete is derived server-side from the merged
+-- row (same rules as derivePercentComplete in the application
+-- domain), never taken from the payload. The capability gate is the
+-- complexity gate (owner/co-owner or planner.packages.edit) — the
+-- same authority the standalone complexity RPC requires, so this
+-- RPC never widens who may change complexity; plain edits by other
+-- callers keep the RLS-gated generic path.
+--
+-- Idempotency (fix round 3, P1-2): every applied call records
+-- exactly one receipt event carrying the canonical FULL payload
+-- (complexity plus the normalized field updates, verifier included)
+-- in request_payload. A real complexity change keeps the
+-- complexity_change event; any other combined save records a
+-- package_update receipt — so a no-op-complexity call's request ID
+-- is recorded and replayable, never silently unrecorded. A replay
+-- compares the stored ORIGINAL payload; a different payload is a
+-- conflict, and a prior row with no stored payload (pre-fix) fails
+-- closed.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_work_planning_process_update_package(
@@ -1569,7 +1608,8 @@ declare
   v_pkg public.forge_work_packages%rowtype;
   v_request_id text;
   v_old_complexity text;
-  v_prev_complexity text;
+  v_payload jsonb;
+  v_prev_payload jsonb;
   v_pct numeric;
 begin
   if not (public.has_workspace_access(p_owner_id)
@@ -1596,6 +1636,29 @@ begin
   end if;
   if char_length(v_request_id) > 128 then
     raise exception 'WPP10_INVALID_REQUEST_ID';
+  end if;
+
+  -- Fix round 3 (P1-2): the canonical full payload — the caller's
+  -- raw inputs as supplied: the complexity value (null = not
+  -- supplied) plus the normalized field updates (a designated
+  -- verifier change travels inside p_updates). Built from the raw
+  -- parameters, never re-derived from the row. jsonb comparison is
+  -- order-insensitive, so the stored payload is a stable canonical
+  -- record (same idiom as set_status).
+  v_payload := jsonb_build_object(
+    'complexity', p_complexity,
+    'updates', coalesce(p_updates, '{}'::jsonb)
+  );
+
+  -- Fix round 3 (P1-1): a designated-verifier change is owner-only
+  -- — the caller must BE the workspace owner (auth.uid() =
+  -- p_owner_id), not merely a co-owner or a capability holder.
+  -- Same strict rule as forge_work_set_designated_verifier.
+  -- Checked before the complexity gate and before any write, so a
+  -- forbidden verifier change can never leave fields, complexity,
+  -- or a version bump applied behind it.
+  if (p_updates ? 'designated_verifier') and v_actor <> p_owner_id then
+    raise exception 'WPP10_VERIFIER_FORBIDDEN';
   end if;
 
   if not (v_is_owner
@@ -1646,28 +1709,60 @@ begin
     raise exception 'WPP10_PACKAGE_TERMINAL';
   end if;
 
-  -- Complexity idempotency (same rule as the standalone complexity
-  -- RPC): a replay with the same complexity returns the current row;
-  -- reuse with a different complexity is a conflict. Only applies
-  -- when this save carries a complexity change.
-  if p_complexity is not null then
-    select new_values ->> 'complexity'
-      into v_prev_complexity
-      from public.forge_work_planning_process_revisions r
-      where r.owner_id = p_owner_id
-        and r.work_package_id = p_package_id
-        and r.template_step_id is null
-        and r.action = 'complexity_change'
-        and r.request_id = v_request_id;
-    if v_prev_complexity is not null then
-      if v_prev_complexity = p_complexity then
-        return row_to_json(v_pkg)::jsonb;
-      end if;
-      raise exception 'WPP10_REQUEST_ID_CONFLICT';
+  -- Idempotency (fix round 3, P1-2): a request ID already recorded
+  -- for this package (package-level event: template_step_id NULL)
+  -- replays the current row without re-applying, but ONLY for the
+  -- same canonical FULL payload. Reuse with a different payload is
+  -- a conflict — the old lookup compared only the complexity, so a
+  -- reuse with the same complexity but different field updates was
+  -- silently accepted as a replay. Checked before the version gate
+  -- (a replay's expected version is stale by definition). Because
+  -- the comparison uses the stored ORIGINAL payload, an intervening
+  -- field or complexity change never turns an exact retry into a
+  -- conflict, and the replay response is the current row.
+  select request_payload
+    into v_prev_payload
+    from public.forge_work_planning_process_revisions r
+    where r.owner_id = p_owner_id
+      and r.work_package_id = p_package_id
+      and r.template_step_id is null
+      and r.request_id = v_request_id
+    order by r.recorded_at desc, r.id desc
+    limit 1;
+  if v_prev_payload is not null then
+    if v_prev_payload = v_payload then
+      return row_to_json(v_pkg)::jsonb;
     end if;
+    raise exception 'WPP10_REQUEST_ID_CONFLICT';
+  end if;
+  -- A pre-fix revision row (no stored payload) with this request ID
+  -- cannot prove the payload matches: fail closed — the caller
+  -- must use a fresh request ID. This also covers a request ID
+  -- first used by the standalone complexity RPC, whose events carry
+  -- no stored payload.
+  perform 1
+    from public.forge_work_planning_process_revisions r
+    where r.owner_id = p_owner_id
+      and r.work_package_id = p_package_id
+      and r.template_step_id is null
+      and r.request_id = v_request_id;
+  if found then
+    raise exception 'WPP10_REQUEST_ID_CONFLICT';
   end if;
 
   v_old_complexity := v_pkg.planning_complexity;
+
+  -- Fix round 3 (P1-1): the lifecycle guard trigger rejects direct
+  -- designated_verifier writes unless the transaction-local bypass
+  -- flag is set — same mechanism the standalone verifier RPC uses.
+  -- Set it only when this save carries a verifier change; the flag
+  -- is transaction-local and can never leak into another
+  -- transaction. The UPDATE below is the only statement that can
+  -- move the verifier in this save, so the whole save stays one
+  -- transaction.
+  if (p_updates ? 'designated_verifier') then
+    perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  end if;
 
   -- Conditional UPDATE on the version: the atomic guard. Zero rows
   -- means another writer moved the package since the caller's read
@@ -1703,6 +1798,7 @@ begin
         source_system = case when p_updates ? 'source_system' then (p_updates->>'source_system') else source_system end,
         source_record_id = case when p_updates ? 'source_record_id' then (p_updates->>'source_record_id') else source_record_id end,
         planning_complexity = case when p_complexity is null then planning_complexity else p_complexity end,
+        designated_verifier = case when p_updates ? 'designated_verifier' then nullif((p_updates->>'designated_verifier'), '') else designated_verifier end,
         version = version + 1,
         updated_by = v_actor,
         updated_at = now(),
@@ -1732,16 +1828,22 @@ begin
     raise exception 'WPP10_INVALID_PACKAGE_UPDATE: earned_manhours must be within 0..planned_manhours';
   end if;
 
-  -- The complexity audit event, in the same transaction as the
-  -- update above: no event without the change, no change without
-  -- the event. A complexity equal to the current value writes no
-  -- event (a no-op complexity with field updates still applies the
-  -- fields and bumps the version once).
+  -- The audit receipt, in the same transaction as the update
+  -- above: exactly one event per applied request ID, carrying the
+  -- canonical full payload in request_payload so a later reuse of
+  -- the request ID can be compared against the ORIGINAL call (fix
+  -- round 3, P1-2). A real complexity change keeps the
+  -- complexity_change event (same old/new shape as before); any
+  -- other combined save — no-op or absent complexity with field
+  -- and/or verifier updates — records a package_update receipt
+  -- instead, so its request ID is recorded and replayable. A
+  -- no-op-complexity call no longer leaves its request ID
+  -- unrecorded.
   if p_complexity is not null and v_old_complexity <> p_complexity then
     insert into public.forge_work_planning_process_revisions
       (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
        old_status, new_status, reason, evidence_reference, evidence_digest, attestation,
-       is_override, request_id, old_values, new_values)
+       is_override, request_id, request_payload, old_values, new_values)
     values (
       p_owner_id,
       'forge_ppr_' || replace(gen_random_uuid()::text, '-', ''),
@@ -1758,8 +1860,34 @@ begin
       null,
       false,
       v_request_id,
+      v_payload,
       jsonb_build_object('complexity', v_old_complexity),
       jsonb_build_object('complexity', p_complexity)
+    );
+  else
+    insert into public.forge_work_planning_process_revisions
+      (owner_id, id, instance_id, work_package_id, template_step_id, actor_id, action,
+       old_status, new_status, reason, evidence_reference, evidence_digest, attestation,
+       is_override, request_id, request_payload, old_values, new_values)
+    values (
+      p_owner_id,
+      'forge_ppr_' || replace(gen_random_uuid()::text, '-', ''),
+      null,
+      p_package_id,
+      null,
+      v_actor,
+      'package_update',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      false,
+      v_request_id,
+      v_payload,
+      jsonb_build_object('complexity', v_old_complexity),
+      v_payload
     );
   end if;
 

@@ -168,6 +168,10 @@ const PREREQ_SQL = `
     progress_updated_by text,
     source_system text,
     source_record_id text,
+    -- Fix round 3 (P1-1): the combined RPC sets designated_verifier
+    -- inside the same transaction; the stub carries the column the
+    -- real table has (rung 1).
+    designated_verifier text,
     primary key (owner_id, id)
   );
   create unique index uq_forge_work_packages_source
@@ -1059,14 +1063,35 @@ describe("planning-process migration", () => {
       "WPP10_PACKAGE_TERMINAL");
   });
 
-  it60("combined update RPC: no-op complexity still applies fields with no event; request-ID replay/conflict mirror the complexity RPC (fix round 2, P1-A)", async () => {
+  it60("combined update RPC: no-op complexity still applies fields and records a package_update receipt; request-ID replay/conflict compare the full payload (fix round 3, P1-2)", async () => {
     // Same complexity value as the current row: fields still apply
-    // and the version still bumps once, but no audit event is written.
-    const noop = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "standard", { title: "Renamed" });
+    // and the version still bumps once, and the save records a
+    // package_update receipt carrying the canonical full payload —
+    // the request ID is recorded and replayable (fix round 3, P1-2:
+    // a no-op-complexity call no longer leaves its request ID
+    // unrecorded).
+    const noop = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "standard", { title: "Renamed" },
+      { requestId: "req_comb_noop_1" });
     expect(noop.planning_complexity).toBe("standard");
     expect(noop.title).toBe("Renamed");
     expect(noop.version).toBe(2);
-    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+    const noopEvents = await revisionsFor(db, "pkg_a");
+    expect(noopEvents).toHaveLength(1);
+    expect(noopEvents[0].action).toBe("package_update");
+    expect(noopEvents[0].request_id).toBe("req_comb_noop_1");
+    const { rows: noopRaw } = await db.query(`select request_payload, new_values from forge_work_planning_process_revisions where work_package_id = 'pkg_a';`);
+    expect(noopRaw[0].request_payload).toEqual({ complexity: "standard", updates: { title: "Renamed" } });
+    expect(noopRaw[0].new_values).toEqual({ complexity: "standard", updates: { title: "Renamed" } });
+    // A no-op-complexity retry with the same full payload replays;
+    // the same request ID with different fields is a conflict.
+    const noopReplay = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "standard", { title: "Renamed" },
+      { requestId: "req_comb_noop_1" });
+    expect(noopReplay.version).toBe(2);
+    expect(noopReplay.title).toBe("Renamed");
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 2, 'req_comb_noop_1', 'standard', '{"title": "Other"}'::jsonb);`,
+      "WPP10_REQUEST_ID_CONFLICT");
     // A real change with a request ID: replay returns the current
     // row with no second event; reuse with a different complexity
     // is a conflict.
@@ -1081,7 +1106,118 @@ describe("planning-process migration", () => {
       { requestId: "req_comb_dup_1" });
     expect(replay.planning_complexity).toBe("high");
     expect(replay.version).toBe(3);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(2);
+  });
+
+  it60("combined update RPC: same request ID with the same complexity but different fields is a conflict, not a silent replay (fix round 3, P1-2)", async () => {
+    // The verdict's counterexample: R commits high + {priority:
+    // critical}; reusing R with high + {priority: low} must raise
+    // WPP10_REQUEST_ID_CONFLICT, not return the current row as a
+    // successful replay.
+    const first = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", { priority: "critical" },
+      { requestId: "req_comb_full_1" });
+    expect(first.planning_complexity).toBe("high");
+    expect(first.priority).toBe("critical");
+    expect(first.version).toBe(2);
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 2, 'req_comb_full_1', 'high', '{"priority": "low"}'::jsonb);`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    // The failed reuse applied nothing: priority is still critical,
+    // version unmoved, still one event.
+    const { rows } = await db.query(`select priority, planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].priority).toBe("critical");
+    expect(rows[0].planning_complexity).toBe("high");
+    expect(rows[0].version).toBe(2);
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+    // The exact same full payload replays.
+    const replay = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", { priority: "critical" },
+      { requestId: "req_comb_full_1" });
+    expect(replay.version).toBe(2);
+    expect(replay.priority).toBe("critical");
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("combined update RPC: a request ID first used by the standalone complexity RPC fails closed (fix round 3, P1-2)", async () => {
+    // The standalone complexity RPC stores no canonical payload, so
+    // a combined call reusing its request ID cannot prove the
+    // payload matches: it must conflict, never silently replay.
+    const first = await setComplexity(db, OWNER_A, OWNER_A, "pkg_a", "high", { requestId: "req_comb_xrpc_1" });
+    expect(first.planning_complexity).toBe("high");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 2, 'req_comb_xrpc_1', 'high', '{"title": "No"}'::jsonb);`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    const { rows } = await db.query(`select title, planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].title).toBeNull();
+    expect(rows[0].planning_complexity).toBe("high");
+    expect(rows[0].version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
+  });
+
+  it60("combined update RPC: a verifier change rides in the same transaction as fields and complexity (fix round 3, P1-1)", async () => {
+    // The owner designates a verifier in the same save that changes
+    // complexity and fields: all three land together, version bumps
+    // once, one complexity_change event carries the full payload
+    // (the verifier inside updates).
+    const updated = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+      { title: "Turnaround — north rack", designated_verifier: MEMBER_D });
+    expect(updated.planning_complexity).toBe("high");
+    expect(updated.title).toBe("Turnaround — north rack");
+    expect(updated.designated_verifier).toBe(MEMBER_D);
+    expect(updated.version).toBe(2);
+    const events = await revisionsFor(db, "pkg_a");
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe("complexity_change");
+    const { rows: raw } = await db.query(`select request_payload from forge_work_planning_process_revisions where work_package_id = 'pkg_a';`);
+    expect(raw[0].request_payload).toEqual({ complexity: "high", updates: { title: "Turnaround — north rack", designated_verifier: MEMBER_D } });
+    // A verifier-only save (complexity already high) takes the same
+    // path: the verifier lands with the fields, version bumps once,
+    // and the save records a package_update receipt.
+    const second = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+      { title: "Turnaround — south rack", designated_verifier: MEMBER_E });
+    expect(second.planning_complexity).toBe("high");
+    expect(second.title).toBe("Turnaround — south rack");
+    expect(second.designated_verifier).toBe(MEMBER_E);
+    expect(second.version).toBe(3);
+    const after = await revisionsFor(db, "pkg_a");
+    expect(after).toHaveLength(2);
+    expect(after[1].action).toBe("package_update");
+    // Clearing the verifier (explicit JSON null) lands in the same
+    // transaction as the fields it rides with.
+    const cleared = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+      { title: "Turnaround — final", designated_verifier: null });
+    expect(cleared.designated_verifier).toBeNull();
+    expect(cleared.title).toBe("Turnaround — final");
+    expect(cleared.version).toBe(4);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(3);
+  });
+
+  it60("combined update RPC: a forbidden verifier change fails the whole save — no field, complexity, version, event, or verifier change survives (fix round 3, P1-1)", async () => {
+    // A co-owner passes has_workspace_access but is NOT the owner:
+    // designating a verifier is forbidden, and the failure must
+    // roll the entire save back — fields, complexity, version,
+    // audit event, and verifier all untouched.
+    await expectRpcError(db, MEMBER_C,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_comb_ver_1', 'high', '{"title": "Should not land", "designated_verifier": "${MEMBER_D}"}'::jsonb);`,
+      "WPP10_VERIFIER_FORBIDDEN");
+    const { rows } = await db.query(`select title, planning_complexity, version, designated_verifier from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].title).toBeNull();
+    expect(rows[0].planning_complexity).toBe("standard");
+    expect(rows[0].version).toBe(1);
+    expect(rows[0].designated_verifier).toBeNull();
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+    // A Planner assignee HAS planner.packages.edit but still may
+    // not designate a verifier: same forbidden failure, same
+    // nothing-survives.
+    await provisionAndAssign(db, MEMBER_D, "planner");
+    await expectRpcError(db, MEMBER_D,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_comb_ver_2', 'high', '{"title": "Should not land", "designated_verifier": "${MEMBER_E}"}'::jsonb);`,
+      "WPP10_VERIFIER_FORBIDDEN");
+    const { rows: after } = await db.query(`select title, planning_complexity, version, designated_verifier from forge_work_packages where id = 'pkg_a';`);
+    expect(after[0].title).toBeNull();
+    expect(after[0].planning_complexity).toBe("standard");
+    expect(after[0].version).toBe(1);
+    expect(after[0].designated_verifier).toBeNull();
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
   });
 
   it60("RLS: anon cannot select at all; a stranger's owner sees nothing; direct writes are denied", async () => {
@@ -1121,8 +1257,8 @@ describe("planning-process migration", () => {
       select p.proname, p.proacl from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'
-        and p.proname in ('forge_work_planning_process_checklist', 'forge_work_planning_process_set_status', 'forge_work_planning_process_set_complexity');`);
-    expect(fns.rows).toHaveLength(3);
+        and p.proname in ('forge_work_planning_process_checklist', 'forge_work_planning_process_set_status', 'forge_work_planning_process_set_complexity', 'forge_work_planning_process_update_package');`);
+    expect(fns.rows).toHaveLength(4);
     for (const fn of fns.rows) {
       const acl = String(fn.proacl || "");
       expect(acl).toContain("authenticated=X");
