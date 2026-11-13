@@ -9,6 +9,13 @@ import {
   normalizePlannedCostCents,
   parsePlannedBudgetToCents,
 } from "./packageCosts.js";
+import { PLANNING_PROCESS_COMPLEXITY_KEYS } from "./planningProcess.js";
+
+// Planning-process complexity (PDF scale): Low 75% / Standard 100% /
+// Mid 150% / High 200% / H-High 300% of the standard 40 planning
+// hours. Stored per package; per-step MHRS is template MHRS x this
+// multiplier, computed — never stored per step, never overridden.
+export const WP_PLANNING_COMPLEXITIES = PLANNING_PROCESS_COMPLEXITY_KEYS;
 
 export const WP_STATUS = Object.freeze({
   DRAFT: "draft",
@@ -366,6 +373,9 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
   // sends package_type without mode context, per the no-regression gate.
   if (input.mode !== undefined && !WP_MODES.includes(input.mode)) {
     errors.push(`mode must be one of: ${WP_MODES.join(", ")}.`);
+  }
+  if (input.planning_complexity !== undefined && !WP_PLANNING_COMPLEXITIES.includes(input.planning_complexity)) {
+    errors.push(`planning_complexity must be one of: ${WP_PLANNING_COMPLEXITIES.join(", ")}.`);
   }
   if (input.priority !== undefined && !WP_PRIORITIES.includes(input.priority)) {
     errors.push(`priority must be one of: ${WP_PRIORITIES.join(", ")}.`);

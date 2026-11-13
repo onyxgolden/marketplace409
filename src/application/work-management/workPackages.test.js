@@ -384,6 +384,59 @@ const PAULA_UNITS = [
   { id: "unit_b", property_id: "308-paula", label: "308 Paula", status: "active" },
 ];
 
+describe("planning-process hooks (F3: create binds the template; decision 3: complexity changes are audited)", () => {
+  it("create stores the requested complexity and attempts the checklist ensure (best-effort)", async () => {
+    const insertChain = chain({ data: { ...PKG, id: "forge_wp_new", code: "WP-0007" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", package_type: "rental_turn", planning_complexity: "mid" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planning_complexity: "mid" }));
+    // The ensure is attempted via the checklist RPC even though the
+    // mocked RPC answers with a bare number (not a checklist) — the
+    // service treats that as unavailable and creation still succeeds.
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_checklist",
+      { p_owner_id: "owner_1", p_package_id: "forge_wp_new" });
+  });
+
+  it("create defaults complexity to standard when the caller sends none", async () => {
+    const insertChain = chain({ data: { ...PKG, id: "forge_wp_new", code: "WP-0007" }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", package_type: "rental_turn" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planning_complexity: "standard" }));
+  });
+
+  it("a complexity change records a complexity_change audit event", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const updateChain = chain({ data: { ...PKG, planning_complexity: "mid" }, error: null });
+    const auditChain = chain({ data: null, error: null });
+    const db = mockDb([getChain, updateChain, auditChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid" } });
+    expect(result.ok).toBe(true);
+    expect(db.from).toHaveBeenCalledWith("forge_work_planning_process_revisions");
+    expect(auditChain.insert).toHaveBeenCalledWith(expect.objectContaining({
+      action: "complexity_change",
+      actor_id: "user_9",
+      old_values: { planning_complexity: "standard" },
+      new_values: { planning_complexity: "mid" },
+    }));
+  });
+
+  it("an unrelated edit records no complexity audit event", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const updateChain = chain({ data: { ...PKG, title: "Renamed" }, error: null });
+    const auditChain = chain({ data: null, error: null });
+    const db = mockDb([getChain, updateChain, auditChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Renamed" } });
+    expect(result.ok).toBe(true);
+    expect(auditChain.insert).not.toHaveBeenCalled();
+  });
+});
+
 describe("updateWorkPackage date normalization (D6)", () => {
   it("persists the live-shaped PATCH: planned_finish:null and the new property", async () => {
     const getChain = chain({ data: DATELESS_PKG, error: null });

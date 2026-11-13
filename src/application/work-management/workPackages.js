@@ -18,6 +18,7 @@ import {
   normalizePlannedCostCents,
   parsePlannedBudgetToCents,
 } from "@/domains/work-management/packageCosts.js";
+import { getPlanningSummary, ensurePlanningChecklist, recordPlanningComplexityChange } from "./planningProcess.js";
 
 const TABLES = Object.freeze({
   packages: "forge_work_packages",
@@ -56,6 +57,7 @@ const EDITABLE_FIELDS = [
   "responsible_party", "planned_start", "planned_finish",
   "asset_id", "equipment_tag", "unit", "area", "system", "location_id",
   "work_order_ref", "workscope_code", "mode",
+  "planning_complexity",
   "planned_qty", "planned_unit", "planned_manhours",
   "earned_qty", "earned_manhours", "actual_manhours",
   "progress_basis", "progress_updated_by",
@@ -176,6 +178,7 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     description: input.description ?? null,
     package_type: input.package_type ?? "other",
     mode,
+    planning_complexity: input.planning_complexity ?? "standard",
     priority: input.priority ?? "normal",
     project_id: input.project_id ?? null,
     property_id: property.propertyId,
@@ -216,6 +219,12 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     if (mapped) return mapped;
     throw error;
   }
+  // F3: a package binds to a template version at creation and gets
+  // exactly 22 checklist rows atomically (via the ensure RPC).
+  // Best-effort: pre-migration this is a no-op, and the checklist
+  // GET re-ensures idempotently on first open — creation never fails
+  // on it. planning_template_version stays the database default (1).
+  await ensurePlanningChecklist(db, { ownerId, packageId: data.id });
   return { ok: true, package: data };
 }
 
@@ -366,6 +375,18 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   }
   if (!data) {
     return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
+  }
+  // Verdict decision 3: a complexity change recalculates derived MHRS
+  // and is audited. Best-effort (the revisions table does not exist
+  // pre-migration) and never fails the edit it annotates.
+  if (filtered.planning_complexity !== undefined
+      && filtered.planning_complexity !== (pkg.planning_complexity || "standard")) {
+    await recordPlanningComplexityChange(db, {
+      ownerId, packageId, actorId: actor,
+      oldComplexity: pkg.planning_complexity || "standard",
+      newComplexity: filtered.planning_complexity,
+      requestId: crypto.randomUUID(),
+    });
   }
   if (verifierChange !== null || patch.designated_verifier !== undefined) {
     return setDesignatedVerifier(db, { ownerId, actor, packageId, verifier: verifierChange });
@@ -756,6 +777,17 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
     } catch {
       result.deletionEligibility = null;
     }
+  }
+  // Planning-process earned value for the Overview tab (the package's
+  // Planning Progress widget). Same affordance discipline as the delete
+  // eligibility above: getPlanningSummary itself swallows a missing
+  // table / bad template and returns null, so a pre-migration detail
+  // view keeps rendering with the field absent.
+  try {
+    const summary = await getPlanningSummary(db, { ownerId, packageId });
+    result.planningSummary = summary.ok ? summary.summary : null;
+  } catch {
+    result.planningSummary = null;
   }
   return result;
 }

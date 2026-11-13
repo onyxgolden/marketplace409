@@ -62,6 +62,24 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       if (failOptions) return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
       return { ok: true, json: async () => ({ properties }) };
     }
+    if (url === `/api/work-packages/${BASE_PKG.id}/planning-process` && (!options.method || options.method === "GET")) {
+      return {
+        ok: true,
+        json: async () => ({
+          checklist: {
+            packageId: BASE_PKG.id, complexity: "standard", templateVersion: 1,
+            canUpdate: true, canReview: false,
+            constructionReadiness: {
+              status: "not_established",
+              detail: "No package-level release decision exists yet. Planning percent never authorizes construction or releases an IFC drawing.",
+            },
+            template: [{ stepKey: "pdf-01", version: 1, stepNumber: 1, sortOrder: 1, name: "P & I.D. / MFD", role: "Planning", creditPct: 5, mhrsStandard: 2, description: "P&ID marked up." }],
+            instances: [{ id: "inst_pdf_01", workPackageId: BASE_PKG.id, templateVersion: 1, templateStepId: "pdf-01", status: "Complete", evidenceLink: null, reviewedBy: null, reviewedAt: null, submittedBy: null, version: 1, updatedBy: "user_1", updatedAt: "t1" }],
+            progress: { percentComplete: 5, earnedCreditPct: 5, totalCreditPct: 100, earnedMhrs: 2, totalMhrs: 40, stepsTotal: 1, stepsEarned: 1, stepsByStatus: { "N/A": 0, Complete: 1, Reviewed: 0, "In-Progress": 0, "Needs Revision": 0 }, initialized: true },
+          },
+        }),
+      };
+    }
     if (url === `/api/work-packages/${BASE_PKG.id}` && options.method === "PATCH") {
       patches.push(JSON.parse(options.body));
       if (patchImpl) return patchImpl();
@@ -636,16 +654,26 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     return [...container.querySelectorAll("h2")].map((h) => h.textContent);
   }
 
-  it("renders all eight tabs with Overview selected by default", () => {
+  it("renders all nine tabs with Overview selected by default", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((b) => b.textContent);
     expect(tabs).toEqual([
-      "Overview", "Work steps", "Milestones", "Permits",
+      "Overview", "Work steps", "Planning Checklist", "Milestones", "Permits",
       "IFA→IFC redlines", "Budget & Change Orders", "Documents", "Activity / Audit",
     ]);
     expect(tabButton(container, "Overview").getAttribute("aria-selected")).toBe("true");
     expect(headings(container)).toContain("Package");
+  });
+
+  it("switching to Planning Checklist mounts the checklist with its computed progress", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await act(async () => { tabButton(container, "Planning Checklist").click(); });
+    expect(tabButton(container, "Planning Checklist").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Planning progress");
+    expect(container.textContent).toContain("P & I.D. / MFD");
+    expect(container.textContent).toContain("Earned 2 of 40 planning hours");
   });
 
   it("switching to Milestones shows the placeholder and hides the Overview panels", () => {
