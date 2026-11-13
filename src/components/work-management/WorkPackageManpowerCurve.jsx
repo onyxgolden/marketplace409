@@ -12,7 +12,8 @@
 
 import { useMemo, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -25,8 +26,8 @@ const CHART_COLORS = [
   "#6d28d9", "#0e7490", "#b91c1c", "#334155", "#a16207",
 ];
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -146,6 +147,7 @@ function CurveChart({ days, crafts, visibleCrafts, showCapacity }) {
 
 function PlacementControl({ packageId, step, outageDays, baselineVersion, readOnly, onSaved }) {
   const placement = step.placement;
+  const pageQuery = usePageQuery();
   const [startDay, setStartDay] = useState(placement ? String(placement.startDayIndex) : "1");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -156,7 +158,7 @@ function PlacementControl({ packageId, step, outageDays, baselineVersion, readOn
     setBusy(true);
     setMessage("");
     try {
-      await api(`/api/work-packages/${packageId}/manpower-curve/placements`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/manpower-curve/placements`, {
         method: "PUT",
         body: JSON.stringify({
           stepId: step.stepId,
@@ -179,7 +181,7 @@ function PlacementControl({ packageId, step, outageDays, baselineVersion, readOn
     setBusy(true);
     setMessage("");
     try {
-      await api(`/api/work-packages/${packageId}/manpower-curve/placements/${placement.id}`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/manpower-curve/placements/${placement.id}`, {
         method: "DELETE",
         body: JSON.stringify({ expectedVersion: placement.version, reason: reason.trim() }),
       });
@@ -234,10 +236,12 @@ function PlacementControl({ packageId, step, outageDays, baselineVersion, readOn
 }
 
 export default function WorkPackageManpowerCurve({ packageId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [refreshKey, setRefreshKey] = useState(0);
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:manpower-curve:${refreshKey}`,
-    () => api(`/api/work-packages/${packageId}/manpower-curve`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "manpower-curve", refreshKey),
+    () => api(pageQuery, `/api/work-packages/${packageId}/manpower-curve`),
     { ttlMs: 10_000 },
   );
   const [showCapacity, setShowCapacity] = useState(true);

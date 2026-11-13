@@ -17,7 +17,8 @@
 
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -26,8 +27,8 @@ const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 const btnDanger = `${btn} border border-red-300 text-red-700 hover:bg-red-50`;
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -69,6 +70,8 @@ function shortId(value) {
 // One review round: redlines, decision form, audit events. Detail is
 // fetched only while the round is expanded.
 function ReviewRound({ packageId, drawingId, review, onChanged }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
   const [decision, setDecision] = useState("APPROVE");
   const [reason, setReason] = useState("");
@@ -81,8 +84,8 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
   const [resolvingId, setResolvingId] = useState(null);
 
   const { data, error: loadError, refresh } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:reviews:${review.id}:detail` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews", review.id, "detail") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}`),
     { ttlMs: 10_000 },
   );
   const redlines = data?.redlines || [];
@@ -93,7 +96,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     event.preventDefault();
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: review.version, decision, reason: reason.trim() }),
       });
@@ -109,7 +112,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     event.preventDefault();
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: review.drawingRevisionId,
@@ -134,7 +137,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
     const form = resolveForm[redline.id] || {};
     setBusy(true); setError("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: redline.version,
@@ -294,6 +297,8 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
 // releases, field hand-redline history, and the actions that move a
 // drawing through review. Lists are fetched only while expanded.
 function DrawingReviewWorkspace({ packageId, row, onChanged }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -308,23 +313,23 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
 
   const drawingId = row.drawingId;
   const { data: revisionsData, refresh: refreshRevisions } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:revisions` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "revisions") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
     { ttlMs: 10_000 },
   );
   const { data: reviewsData, refresh: refreshReviews } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:reviews` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`),
     { ttlMs: 10_000 },
   );
   const { data: releasesData, refresh: refreshReleases } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:ifc-releases` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "ifc-releases") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`),
     { ttlMs: 10_000 },
   );
   const { data: fieldData, refresh: refreshField } = useStaleWhileRevalidate(
-    expanded ? `work-packages:${packageId}:drawings:${drawingId}:field-redlines` : null,
-    () => api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`),
+    expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "field-redlines") : null,
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`),
     { ttlMs: 10_000 },
   );
 
@@ -346,7 +351,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/revisions`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`, {
         method: "POST",
         body: JSON.stringify({
           revisionCode: revisionForm.revisionCode.trim(),
@@ -366,7 +371,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: reviewForm.drawingRevisionId,
@@ -386,7 +391,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/ifc-releases`, {
         method: "POST",
         body: JSON.stringify({
           reviewId: ifcForm.reviewId,
@@ -409,7 +414,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
         method: "POST",
         body: JSON.stringify({
           drawingRevisionId: fieldForm.drawingRevisionId,
@@ -431,7 +436,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     const form = reconcileForm[fieldRedline.id] || {};
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
         method: "POST",
         body: JSON.stringify({
           ...(form.reconciledRevisionId ? { reconciledRevisionId: form.reconciledRevisionId } : {}),
@@ -449,7 +454,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
     event.preventDefault();
     setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/work-packages/${packageId}/drawings/${drawingId}/retire`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/retire`, {
         method: "POST",
         body: JSON.stringify({ reason: retireReason.trim() }),
       });
@@ -701,9 +706,11 @@ function DrawingReviewWorkspace({ packageId, row, onChanged }) {
 }
 
 export default function WorkPackageDrawingReadiness({ packageId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:drawing-readiness`,
-    () => api(`/api/work-packages/${packageId}/drawings/readiness`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/readiness`),
     { ttlMs: 10_000 },
   );
   const drawings = data?.drawings || [];

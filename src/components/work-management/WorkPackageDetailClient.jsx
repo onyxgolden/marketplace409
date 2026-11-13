@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
@@ -14,7 +14,8 @@ import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { withPageQuery } from "./workspaceQuery.js";
+import { PackagePageProvider } from "./packagePageContext.jsx";
 import WorkPackageProjectLink from "./WorkPackageProjectLink.jsx";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
 import { PLANNING_PROCESS_COMPLEXITIES, complexityLabel } from "@/domains/work-management/planningProcess.js";
@@ -73,7 +74,7 @@ function editFormFromPackage(p) {
   };
 }
 
-export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null }) {
+export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null, forgeProjectParam = null }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
   const [transitions, setTransitions] = useState(initial.transitions);
@@ -168,11 +169,28 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     });
   }
 
+  // This component sits ABOVE the PackagePageProvider it renders (the
+  // provider wraps its returned tree), so its own fetches cannot read the
+  // context — they use the server-validated scope straight from props.
+  // Child panels read the same scope from the provider via usePageQuery().
+  const pageQuery = useCallback(
+    (path) => withPageQuery(path, { workspace: workspaceParam, forgeProject: forgeProjectParam }),
+    [workspaceParam, forgeProjectParam],
+  );
+
   function switchTab(tab) {
     setActiveTab(tab);
-    const params = new URLSearchParams();
+    // Slice-7: preserve the page's existing query params. The old code
+    // rebuilt the URL with only tab + workspace, silently dropping
+    // ?forgeProject=, so every panel fetch after a tab switch lost its
+    // project scope and failed closed 404 while the server-rendered
+    // header still looked fine. The validated scope from props is
+    // re-asserted so the URL can never lose it.
+    const params = new URLSearchParams(window.location.search);
     if (tab !== "overview") params.set("tab", tab);
+    else params.delete("tab");
     if (workspaceParam) params.set("workspace", workspaceParam);
+    if (forgeProjectParam) params.set("forgeProject", forgeProjectParam);
     const query = params.toString();
     const url = query ? `${window.location.pathname}?${query}` : window.location.pathname;
     // D10: router.replace() goes through the App Router's navigation
@@ -190,7 +208,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   async function call(path, method, body) {
     setBusy(true);
     setError("");
-    const response = await fetch(withWorkspaceQuery(path), {
+    const response = await fetch(pageQuery(path), {
       method,
       headers: { "content-type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
@@ -207,7 +225,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   // package — the slug itself is the fallback label.
   useEffect(() => {
     let cancelled = false;
-    fetch(withWorkspaceQuery("/api/work-packages/property-options"))
+    fetch(pageQuery("/api/work-packages/property-options"))
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Unable to load properties.");
@@ -316,7 +334,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     deleteBusyRef.current = true;
     setDeleteError("");
     try {
-      const response = await fetch(withWorkspaceQuery(`/api/work-packages/${pkg.id}`), {
+      const response = await fetch(pageQuery(`/api/work-packages/${pkg.id}`), {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -454,6 +472,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   const isTerminal = pkg.status === WP_STATUS.VERIFIED_CLOSED || pkg.status === WP_STATUS.CANCELLED;
 
   return (
+    <PackagePageProvider workspace={workspaceParam} forgeProject={forgeProjectParam}>
     <div className="mt-6">
       {error && (
         <p role="alert" className="flex items-start justify-between gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -1012,5 +1031,6 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
         </div>
       )}
     </div>
+    </PackagePageProvider>
   );
 }

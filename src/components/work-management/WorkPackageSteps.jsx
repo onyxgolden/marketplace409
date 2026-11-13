@@ -17,7 +17,8 @@
 import { Fragment, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
 
@@ -43,8 +44,8 @@ const COMMON_CRAFTS = [
   "Operator", "Supervisor",
 ];
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -101,11 +102,13 @@ function StepHistory({ packageId, stepId }) {
   // offset. "Show more" loads the next page and appends it — the
   // page size never grows, so no request can exceed the service's
   // 200-row limit however long the history gets.
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [pages, setPages] = useState(1);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:revisions:pages:${pages}`,
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", stepId, "revisions", "pages", pages),
     () => fetchPagedRows(
-      (page) => api(`/api/work-packages/${packageId}/work-steps/${stepId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
+      (page) => api(pageQuery, `/api/work-packages/${packageId}/work-steps/${stepId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
       pages,
     ),
     { ttlMs: 10_000 },
@@ -138,11 +141,13 @@ function StepHistory({ packageId, stepId }) {
 function LinkHistory({ packageId, stepId, linkId }) {
   // Bounded reads, same shape as step history: fixed-size pages
   // with a growing offset, appended — never a cumulative limit.
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [pages, setPages] = useState(1);
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${stepId}:drawings:${linkId}:revisions:pages:${pages}`,
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", stepId, "drawings", linkId, "revisions", "pages", pages),
     () => fetchPagedRows(
-      (page) => api(`/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
+      (page) => api(pageQuery, `/api/work-packages/${packageId}/work-steps/${stepId}/drawings/${linkId}/revisions?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.revisions),
       pages,
     ),
     { ttlMs: 10_000 },
@@ -183,6 +188,8 @@ function drawingDisplay(link) {
 // the drawing, and a deleted drawing detaches the link (kept in
 // history) instead of deleting the step's record of it.
 function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [linkDrawingId, setLinkDrawingId] = useState("");
   const [refinementNote, setRefinementNote] = useState("");
   const [linkError, setLinkError] = useState("");
@@ -196,9 +203,9 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   const [pages, setPages] = useState(1);
 
   const { data, error, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:${step.id}:drawings:pages:${pages}`,
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", step.id, "drawings", "pages", pages),
     () => fetchPagedRows(
-      (page) => api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.links),
+      (page) => api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}/drawings?limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`).then((b) => b.links),
       pages,
     ),
     { ttlMs: 10_000 },
@@ -211,8 +218,8 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   // so one fetch serves both). An IFA link is preliminary — it never
   // authorizes construction use; only an IFC release does.
   const { data: readinessData } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:drawing-readiness`,
-    () => api(`/api/work-packages/${packageId}/drawings/readiness`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/readiness`),
     { ttlMs: 10_000 },
   );
   const readinessByDrawingId = new Map(
@@ -223,7 +230,7 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
     event.preventDefault();
     setLinkBusy(true); setLinkError("");
     try {
-      await api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}/drawings`, {
         method: "POST",
         body: JSON.stringify({
           drawingId: linkDrawingId,
@@ -242,7 +249,7 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
   async function onConfirmRetireLink(link) {
     setLinkBusy(true); setLinkError("");
     try {
-      await api(`/api/work-packages/${packageId}/work-steps/${step.id}/drawings/${link.id}/retire`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}/drawings/${link.id}/retire`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: link.version, reason: retireReason }),
       });
@@ -355,9 +362,11 @@ function StepDrawings({ packageId, step, drawings, busy, onChanged }) {
 // plan, not a per-step assignment — steps are not attributed to
 // assignments in this slice.
 function AssignmentContext({ packageId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:assignment-context`,
-    () => api(`/api/work-packages/${packageId}/craft-assignments`).then((b) => b.dayTotals),
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", "assignment-context"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/craft-assignments`).then((b) => b.dayTotals),
     { ttlMs: 10_000 },
   );
   if (error) return null;
@@ -386,9 +395,11 @@ function AssignmentContext({ packageId }) {
 // the takeoff quantity is installed so far. Steps carry no percent
 // complete in this slice, so this is context only.
 function ProgressContext({ packageId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:progress-context`,
-    () => api(`/api/work-packages/${packageId}/progress/summary`).then((b) => b.summary),
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", "progress-context"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/progress/summary`).then((b) => b.summary),
     { ttlMs: 10_000 },
   );
   if (error) return null;
@@ -426,13 +437,13 @@ function ProgressContext({ packageId }) {
 // package with few steps still costs two requests and no more.
 const LIST_PAGE_SIZE = 100;
 
-async function fetchAllSteps(packageId) {
+async function fetchAllSteps(pageQuery, packageId) {
   const active = [];
   let offset = 0;
   let generation = 0;
   let packageStatus = "";
   for (;;) {
-    const page = await api(
+    const page = await api(pageQuery, 
       `/api/work-packages/${packageId}/work-steps?includeRetired=false&limit=${LIST_PAGE_SIZE}&offset=${offset}`,
     );
     if (offset === 0) {
@@ -446,7 +457,7 @@ async function fetchAllSteps(packageId) {
   const retired = [];
   offset = 0;
   for (;;) {
-    const page = await api(
+    const page = await api(pageQuery, 
       `/api/work-packages/${packageId}/work-steps?retiredOnly=true&limit=${LIST_PAGE_SIZE}&offset=${offset}`,
     );
     retired.push(...(page.steps || []));
@@ -481,6 +492,8 @@ async function fetchPagedRows(fetchPage, pageCount) {
 }
 
 export default function WorkPackageSteps({ packageId, onChanged = null }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [showRetired, setShowRetired] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -510,8 +523,8 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   // Retired steps are fetched too (they are the only supersession
   // candidates), but hidden from the list unless asked for.
   const { data, error: loadError, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:work-steps:all`,
-    () => fetchAllSteps(packageId),
+    scopedSWRKey(pageContext, "work-packages", packageId, "work-steps", "all"),
+    () => fetchAllSteps(pageQuery, packageId),
     { ttlMs: 10_000 },
   );
   const steps = data?.steps || [];
@@ -523,8 +536,8 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   const stepById = new Map(steps.map((s) => [s.id, s]));
 
   const { data: drawingsData } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:drawings`,
-    () => api(`/api/work-packages/${packageId}/drawings`).then((b) => b.drawings),
+    scopedSWRKey(pageContext, "work-packages", packageId, "drawings"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings`).then((b) => b.drawings),
     { ttlMs: 10_000 },
   );
   const drawings = drawingsData || [];
@@ -568,7 +581,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const created = await api(`/api/work-packages/${packageId}/work-steps`, {
+      const created = await api(pageQuery, `/api/work-packages/${packageId}/work-steps`, {
         method: "POST", body: JSON.stringify(createBody(form)),
       });
       setForm({
@@ -601,7 +614,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const updated = await api(`/api/work-packages/${packageId}/work-steps/${step.id}`, {
+      const updated = await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: step.version,
@@ -621,7 +634,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   async function onConfirmRetire(step) {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const retired = await api(`/api/work-packages/${packageId}/work-steps/${step.id}/retire`, {
+      const retired = await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}/retire`, {
         method: "POST",
         body: JSON.stringify({
           expectedVersion: step.version,
@@ -648,7 +661,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     // page to reorder it. The generation guard still applies.
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const moved = await api(`/api/work-packages/${packageId}/work-steps/${step.id}/move`, {
+      const moved = await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}/move`, {
         method: "POST",
         body: JSON.stringify({
           targetSequenceNo: target + 1,
@@ -678,7 +691,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     } else {
       patch[field] = value;
     }
-    const updated = await api(`/api/work-packages/${packageId}/work-steps/${step.id}`, {
+    const updated = await api(pageQuery, `/api/work-packages/${packageId}/work-steps/${step.id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
@@ -702,7 +715,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
     }
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const created = await api(`/api/work-packages/${packageId}/work-steps`, {
+      const created = await api(pageQuery, `/api/work-packages/${packageId}/work-steps`, {
         method: "POST", body: JSON.stringify(createBody(draft)),
       });
       setDrafts((current) => current.map((d, i) => (i === index ? {

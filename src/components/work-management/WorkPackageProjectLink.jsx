@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import HierarchyProjectSelector, { UNASSIGNED_VALUE } from "./HierarchyProjectSelector.jsx";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery } from "./packagePageContext.jsx";
 
 function chainName(selection) {
   if (!selection) return "Unassigned";
@@ -27,6 +27,7 @@ export default function WorkPackageProjectLink({
   onLinked,
 }) {
   const router = useRouter();
+  const pageQuery = usePageQuery();
   const [currentName, setCurrentName] = useState(currentForgeProjectId ? "Loading…" : "Unassigned");
   const [picked, setPicked] = useState("");
   const [pickedName, setPickedName] = useState("");
@@ -48,7 +49,7 @@ export default function WorkPackageProjectLink({
   useEffect(() => {
     if (!currentForgeProjectId) return undefined;
     let cancelled = false;
-    fetch(withWorkspaceQuery(`/api/forge/hierarchy?projectId=${encodeURIComponent(currentForgeProjectId)}`))
+    fetch(pageQuery(`/api/forge/hierarchy?projectId=${encodeURIComponent(currentForgeProjectId)}`))
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || "Could not load the project.");
@@ -77,7 +78,7 @@ export default function WorkPackageProjectLink({
     setError("");
     try {
       const response = await fetch(
-        withWorkspaceQuery(`/api/work-packages/${encodeURIComponent(packageId)}/project-link`),
+        pageQuery(`/api/work-packages/${encodeURIComponent(packageId)}/project-link`),
         {
           method: "POST",
           headers: { "content-type": "application/json" },

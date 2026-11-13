@@ -35,7 +35,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery } from "./packagePageContext.jsx";
 import {
   PLANNING_PROCESS_STATUSES,
   complexityLabel,
@@ -48,8 +48,8 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -78,6 +78,7 @@ function formatWhenUtc(value) {
 }
 
 function StepHistory({ packageId, checklist }) {
+  const pageQuery = usePageQuery();
   const [open, setOpen] = useState(false);
   const [pages, setPages] = useState(1);
   const [revisions, setRevisions] = useState(null);
@@ -101,7 +102,7 @@ function StepHistory({ packageId, checklist }) {
     try {
       const all = [];
       for (let page = 0; page < pageCount; page += 1) {
-        const body = await api(
+        const body = await api(pageQuery, 
           `/api/work-packages/${packageId}/planning-process/revisions?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
         );
         all.push(...(body.revisions || []));
@@ -177,6 +178,7 @@ function StepHistory({ packageId, checklist }) {
 }
 
 export default function WorkPackagePlanningProcess({ packageId }) {
+  const pageQuery = usePageQuery();
   const [checklist, setChecklist] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -192,7 +194,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
     setLoading(true);
     setError("");
     try {
-      const body = await api(`/api/work-packages/${packageId}/planning-process`);
+      const body = await api(pageQuery, `/api/work-packages/${packageId}/planning-process`);
       if (body.notApplied) {
         setChecklist({ notApplied: true });
         return;
@@ -242,7 +244,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
     setError("");
     setMessage("");
     try {
-      await api(`/api/work-packages/${packageId}/planning-process`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/planning-process`, {
         method: "PATCH",
         body: JSON.stringify({
           templateStepId: step.stepKey,
@@ -256,7 +258,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
           requestId: crypto.randomUUID(),
         }),
       });
-      const body = await api(`/api/work-packages/${packageId}/planning-process`);
+      const body = await api(pageQuery, `/api/work-packages/${packageId}/planning-process`);
       setChecklist(body.checklist);
       setPending(null);
       setMessage(
@@ -277,7 +279,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
     setError("");
     setMessage("");
     try {
-      await api(`/api/work-packages/${packageId}/planning-process`, {
+      await api(pageQuery, `/api/work-packages/${packageId}/planning-process`, {
         method: "PATCH",
         body: JSON.stringify({
           templateStepId: step.stepKey,
@@ -287,7 +289,7 @@ export default function WorkPackagePlanningProcess({ packageId }) {
           requestId: crypto.randomUUID(),
         }),
       });
-      const body = await api(`/api/work-packages/${packageId}/planning-process`);
+      const body = await api(pageQuery, `/api/work-packages/${packageId}/planning-process`);
       setChecklist(body.checklist);
       setEvidenceDrafts((prev) => ({ ...prev, [step.stepKey]: draft }));
       setMessage(`Evidence link saved for "${step.name}".`);

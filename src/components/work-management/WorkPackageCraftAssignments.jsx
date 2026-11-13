@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { scopedSWRKey } from "./workspaceQuery.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -17,8 +18,8 @@ const COMMON_CRAFTS = [
   "Operator", "Supervisor",
 ];
 
-async function api(path, options) {
-  const response = await fetch(withWorkspaceQuery(path), {
+async function api(pageQuery, path, options) {
+  const response = await fetch(pageQuery(path), {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
@@ -77,9 +78,11 @@ function snapshotSummary(values) {
 }
 
 function AssignmentHistory({ packageId, assignmentId }) {
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const { data, error, isLoading } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:craft-assignments:${assignmentId}:revisions`,
-    () => api(`/api/work-packages/${packageId}/craft-assignments/${assignmentId}/revisions`).then((b) => b.revisions),
+    scopedSWRKey(pageContext, "work-packages", packageId, "craft-assignments", assignmentId, "revisions"),
+    () => api(pageQuery, `/api/work-packages/${packageId}/craft-assignments/${assignmentId}/revisions`).then((b) => b.revisions),
     { ttlMs: 10_000 },
   );
   if (isLoading) return <p className="mt-2 text-xs text-slate-500">Loading history…</p>;
@@ -112,6 +115,8 @@ function AssignmentHistory({ packageId, assignmentId }) {
 // every change stays in the assignment's history.
 export default function WorkPackageCraftAssignments({ packageId, onChanged = null }) {
   const today = chicagoToday();
+  const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState("");
   const [craftFilter, setCraftFilter] = useState("");
@@ -140,8 +145,8 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     ...(showRetired ? { includeRetired: "true" } : {}),
   }).toString();
   const { data, error: loadError, isLoading, refresh } = useStaleWhileRevalidate(
-    `work-packages:${packageId}:craft-assignments:${query}`,
-    () => api(`/api/work-packages/${packageId}/craft-assignments?${query}`),
+    scopedSWRKey(pageContext, "work-packages", packageId, "craft-assignments", query),
+    () => api(pageQuery, `/api/work-packages/${packageId}/craft-assignments?${query}`),
     { ttlMs: 10_000 },
   );
   const assignments = data?.assignments || [];
@@ -192,7 +197,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const created = await api(`/api/work-packages/${packageId}/craft-assignments`, {
+      const created = await api(pageQuery, `/api/work-packages/${packageId}/craft-assignments`, {
         method: "POST", body: JSON.stringify(createBody(form)),
       });
       setForm({
@@ -222,7 +227,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
     event.preventDefault();
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const updated = await api(`/api/work-packages/${packageId}/craft-assignments/${assignment.id}`, {
+      const updated = await api(pageQuery, `/api/work-packages/${packageId}/craft-assignments/${assignment.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           expectedVersion: assignment.version,
@@ -241,7 +246,7 @@ export default function WorkPackageCraftAssignments({ packageId, onChanged = nul
   async function onConfirmRetire(assignment) {
     setBusy(true); setError(""); setConfirmation("");
     try {
-      const retired = await api(`/api/work-packages/${packageId}/craft-assignments/${assignment.id}/retire`, {
+      const retired = await api(pageQuery, `/api/work-packages/${packageId}/craft-assignments/${assignment.id}/retire`, {
         method: "POST",
         body: JSON.stringify({
           expectedVersion: assignment.version,
