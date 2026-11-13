@@ -74,6 +74,13 @@ export const PLANNER_CAPABILITIES = Object.freeze([
   Object.freeze({ key: "planner.roles.read", label: "View roles", category: "Administration" }),
   Object.freeze({ key: "planner.roles.manage", label: "Manage roles", category: "Administration" }),
   Object.freeze({ key: "planner.audit.read", label: "View audit log", category: "Administration" }),
+
+  // Shared client -> site -> project hierarchy (foundation migration
+  // 20261112010000): read on every starter role, manage on Planner Admin
+  // only. The .read key flows into ALL_READS below, so the three
+  // ALL_READS-based starter sets pick it up automatically.
+  Object.freeze({ key: "forge.hierarchy.read", label: "View clients, sites, and projects", category: "Hierarchy" }),
+  Object.freeze({ key: "forge.hierarchy.manage", label: "Manage clients, sites, and projects", category: "Hierarchy" }),
 ]);
 
 export const PLANNER_CAPABILITY_KEYS = Object.freeze(PLANNER_CAPABILITIES.map((c) => c.key));
@@ -112,6 +119,7 @@ export const STARTER_ROLE_CAPABILITIES = Object.freeze({
     "planner.drawings.upload", "planner.drawings.link", "planner.drawings.delete",
     "planner.baselines.freeze", "planner.baselines.select",
     "planner.planning_steps.update", "planner.planning_steps.review",
+    "forge.hierarchy.manage",
   ]),
   planner: Object.freeze([
     "planner.packages.read", "planner.drawings.read", "planner.steps.read", "planner.crafts.read",
@@ -120,12 +128,14 @@ export const STARTER_ROLE_CAPABILITIES = Object.freeze({
     "planner.packages.edit", "planner.steps.edit", "planner.crafts.assign",
     "planner.manpower.placements.edit", "planner.progress.add", "planner.drawings.link",
     "planner.planning_steps.read", "planner.planning_steps.update",
+    "forge.hierarchy.read",
   ]),
   scheduler: Object.freeze([
     "planner.packages.read", "planner.steps.read", "planner.crafts.read", "planner.manpower.read",
     "planner.baselines.read",
     "planner.crafts.assign", "planner.manpower.placements.edit",
     "planner.planning_steps.read",
+    "forge.hierarchy.read",
   ]),
   reviewer: Object.freeze([...ALL_READS, "planner.reports.export", "planner.planning_steps.review"]),
   read_only: Object.freeze([...ALL_READS]),

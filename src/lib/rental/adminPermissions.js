@@ -101,6 +101,13 @@ export const RENTAL_ADMIN_CAPABILITIES = [
   { key: "rental.audit.read", label: "View the role change log", description: "See who changed a role, and when.", surface: "Team & roles" },
   { key: "rental.staff.invite", label: "Invite team members", description: "Invite someone to join the team.", surface: "Team & roles" },
   { key: "rental.roles.manage", label: "Manage roles", description: "Create, edit, assign, and retire roles. Given only by the owner or co-owner.", surface: "Team & roles" },
+  // Shared client -> site -> project hierarchy (foundation migration
+  // 20261112010000): read on every starter role, manage on Rental Admin
+  // only. These keys resolve through the rental role framework in
+  // has_forge_hierarchy_permission — never through has_rental_permission's
+  // legacy R17 branch, which would over-grant them.
+  { key: "forge.hierarchy.read", label: "View clients, sites, and projects", description: "See the shared client, site, and project hierarchy in the selector.", surface: "Hierarchy" },
+  { key: "forge.hierarchy.manage", label: "Manage clients, sites, and projects", description: "Create, edit, archive, reparent, and delete clients, sites, and projects.", surface: "Hierarchy" },
 ];
 
 export const RENTAL_ADMIN_CAPABILITY_KEYS = RENTAL_ADMIN_CAPABILITIES.map((c) => c.key);
@@ -135,6 +142,7 @@ export const RENTAL_ADMIN_STARTER_ROLES = [
       "rental.documents.read", "rental.documents.upload", "rental.documents.edit", "rental.documents.delete",
       "rental.reports.read", "rental.settings.read", "rental.reports.export", "rental.settings.edit",
       "rental.staff.read", "rental.roles.read", "rental.audit.read",
+      "forge.hierarchy.read", "forge.hierarchy.manage",
     ],
   },
   {
@@ -150,6 +158,7 @@ export const RENTAL_ADMIN_STARTER_ROLES = [
       "rental.maintenance.read", "rental.maintenance.create", "rental.maintenance.edit", "rental.maintenance.assign",
       "rental.documents.read", "rental.documents.upload", "rental.documents.edit",
       "rental.reports.read",
+      "forge.hierarchy.read",
     ],
   },
   {
@@ -161,6 +170,7 @@ export const RENTAL_ADMIN_STARTER_ROLES = [
       "rental.billing.read", "rental.payments.read", "rental.charges.read", "rental.schedules.read",
       "rental.deposits.read", "rental.reports.read", "rental.settings.read",
       "rental.payments.record_offline", "rental.deposits.record",
+      "forge.hierarchy.read",
     ],
   },
   {
@@ -170,6 +180,7 @@ export const RENTAL_ADMIN_STARTER_ROLES = [
     keys: [
       "rental.dashboard.read", "rental.properties.read", "rental.tenants.read",
       "rental.leases.read", "rental.maintenance.read", "rental.reports.read",
+      "forge.hierarchy.read",
     ],
   },
 ];
@@ -233,6 +244,8 @@ export const RENTAL_ADMIN_ENFORCEMENT = {
   "rental.audit.read": { enforced: "api", where: "The audit RPC requires this key (or owner/co-owner) to read the role change log." },
   "rental.staff.invite": { enforced: "later", where: "Team invites use the existing team panel in slice 1." },
   "rental.roles.manage": { enforced: "api", where: "The role RPCs require this key (or owner/co-owner) to create, edit, assign, and retire roles. Staff admins are bound by a fixed ceiling: they can only grant keys they hold, never this key, and never an owner-only finance key." },
+  "forge.hierarchy.read": { enforced: "api", where: "The hierarchy selector and validate-selection RPCs require this key (or owner/co-owner) to read the shared hierarchy." },
+  "forge.hierarchy.manage": { enforced: "api", where: "The hierarchy mutation RPCs require this key (or owner/co-owner) to create, edit, archive, reparent, and delete clients, sites, and projects." },
 };
 
 // Plain-English labels for a set of keys (used by the admin page and by
