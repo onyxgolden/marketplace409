@@ -183,6 +183,14 @@ describe("validatePackageInput", () => {
   it("accepts a valid create input", () => {
     expect(validatePackageInput({ title: "Turnover", package_type: "rental_turn" }).ok).toBe(true);
   });
+  it("accepts each planning-process complexity and rejects an unknown one", () => {
+    for (const c of ["low", "standard", "mid", "high", "h_high"]) {
+      expect(validatePackageInput({ title: "x", planning_complexity: c }).ok).toBe(true);
+    }
+    const r = validatePackageInput({ title: "x", planning_complexity: "extreme" });
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/planning_complexity/);
+  });
   it("rejects blank title and bad enums", () => {
     const r = validatePackageInput({ title: " ", package_type: "spaceship", priority: "urgent" });
     expect(r.ok).toBe(false);

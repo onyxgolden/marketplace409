@@ -33,6 +33,16 @@ export const PLANNER_CAPABILITIES = Object.freeze([
   Object.freeze({ key: "planner.steps.reorder", label: "Reorder work steps", category: "Steps" }),
   Object.freeze({ key: "planner.steps.retire", label: "Retire work steps", category: "Steps" }),
 
+  // Planning-process checklist (Josh's Packaged Planning Process PDF):
+  // .read views the checklist; .update changes statuses (except
+  // Reviewed); .review marks a step Reviewed. Starter grants mirror
+  // the migration: Planner Admin holds all three, Planner holds read
+  // + update, Scheduler and Read-only hold read, Reviewer holds read
+  // + review.
+  Object.freeze({ key: "planner.planning_steps.read", label: "View planning-process checklist", category: "Planning process" }),
+  Object.freeze({ key: "planner.planning_steps.update", label: "Change planning-process statuses", category: "Planning process" }),
+  Object.freeze({ key: "planner.planning_steps.review", label: "Mark planning-process steps Reviewed", category: "Planning process" }),
+
   Object.freeze({ key: "planner.crafts.read", label: "View craft assignments", category: "Crafts" }),
   Object.freeze({ key: "planner.crafts.assign", label: "Assign crafts", category: "Crafts" }),
   Object.freeze({ key: "planner.crafts.reassign", label: "Reassign crafts", category: "Crafts" }),
@@ -101,6 +111,7 @@ export const STARTER_ROLE_CAPABILITIES = Object.freeze({
     "planner.permits.annotations.link", "planner.permits.annotations.unlink",
     "planner.drawings.upload", "planner.drawings.link", "planner.drawings.delete",
     "planner.baselines.freeze", "planner.baselines.select",
+    "planner.planning_steps.update", "planner.planning_steps.review",
   ]),
   planner: Object.freeze([
     "planner.packages.read", "planner.drawings.read", "planner.steps.read", "planner.crafts.read",
@@ -108,13 +119,15 @@ export const STARTER_ROLE_CAPABILITIES = Object.freeze({
     "planner.reports.read",
     "planner.packages.edit", "planner.steps.edit", "planner.crafts.assign",
     "planner.manpower.placements.edit", "planner.progress.add", "planner.drawings.link",
+    "planner.planning_steps.read", "planner.planning_steps.update",
   ]),
   scheduler: Object.freeze([
     "planner.packages.read", "planner.steps.read", "planner.crafts.read", "planner.manpower.read",
     "planner.baselines.read",
     "planner.crafts.assign", "planner.manpower.placements.edit",
+    "planner.planning_steps.read",
   ]),
-  reviewer: Object.freeze([...ALL_READS, "planner.reports.export"]),
+  reviewer: Object.freeze([...ALL_READS, "planner.reports.export", "planner.planning_steps.review"]),
   read_only: Object.freeze([...ALL_READS]),
 });
 

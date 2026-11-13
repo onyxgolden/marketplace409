@@ -10,11 +10,13 @@ import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
 import WorkPackageDrawingReadiness from "./WorkPackageDrawingReadiness.jsx";
 import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
+import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
+import { PLANNING_PROCESS_COMPLEXITIES, complexityLabel } from "@/domains/work-management/planningProcess.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -22,13 +24,15 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-// UI-density redesign: 8 tabs (the Milestones tab is a placeholder until
+// UI-density redesign: 9 tabs (the Milestones tab is a placeholder until
 // slice 9 builds it — see the tabset correction). Tab order: the schedule
-// spine (Work steps, then Milestones) follows the package overview; Budget
-// & Change Orders sits after the IFA→IFC redlines per the brief.
+// spine (Work steps, then the Planning process build checklist, then
+// Milestones) follows the package overview; Budget & Change Orders sits
+// after the IFA→IFC redlines per the brief.
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "steps", label: "Work steps" },
+  { id: "planning", label: "Planning Checklist" },
   { id: "milestones", label: "Milestones" },
   { id: "permits", label: "Permits" },
   { id: "redlines", label: "IFA→IFC redlines" },
@@ -64,6 +68,7 @@ function editFormFromPackage(p) {
     project_id: p.project_id || "",
     planned_finish: p.planned_finish || "", property_id: p.property_id || "",
     mode: inferEffectiveMode(p), package_type: p.package_type || "other",
+    planning_complexity: p.planning_complexity || "standard",
   };
 }
 
@@ -74,6 +79,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   const [attestations, setAttestations] = useState(initial.attestations);
   const [baselines, setBaselines] = useState(initial.baselines);
   const [changes, setChanges] = useState(initial.scopeChanges);
+  // Planning-process earned value for the Overview widget (null before
+  // the migration applies, or when the package has no checklist yet —
+  // the Planning tab creates it on first open). Refreshed with the
+  // package, never cached separately, so a complexity edit re-reads it.
+  const [planningSummary, setPlanningSummary] = useState(initial.planningSummary ?? null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -219,6 +229,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     setAttestations(data.attestations);
     setBaselines(data.baselines);
     setChanges(data.scopeChanges);
+    setPlanningSummary(data.planningSummary ?? null);
     setDeletionEligibility(data.deletionEligibility ?? null);
     setEditForm(editFormFromPackage(data.package));
     setEditing(false);
@@ -532,6 +543,19 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className={label} htmlFor="edit_planning_complexity">Planning complexity</label>
+                  <select id="edit_planning_complexity" className={input} value={editForm.planning_complexity}
+                    onChange={(e) => setEditForm({ ...editForm, planning_complexity: e.target.value })}>
+                    {PLANNING_PROCESS_COMPLEXITIES.map((c) => (
+                      <option key={c.key} value={c.key}>{c.label} — {c.standardMhrs} planning hours</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Scales the planning-process checklist hours (standard is 40 hours). It never changes
+                    the checklist steps or their credit — only the hours shown per step.
+                  </p>
+                </div>
                 {editForm.mode === "commercial" && (
                   <div>
                     <label className={label} htmlFor="edit_property_id">Property (optional)</label>
@@ -593,6 +617,19 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <Field title="Actual start" value={pkg.actual_start} />
                 <Field title="Actual finish" value={pkg.actual_finish} />
                 <Field title="Progress" value={pkg.percent_complete != null ? `${pkg.percent_complete}% (${pkg.progress_basis || "unknown basis"})` : "unknown"} />
+                <Field
+                  title="Planning progress"
+                  value={
+                    !planningSummary
+                      ? "Unavailable — open the Planning Checklist tab"
+                      : !planningSummary.progress.initialized
+                        ? "Not started — open the Planning Checklist tab"
+                        : planningSummary.progress.percentComplete === 100
+                          ? "100% (all planning hours earned) — construction readiness not established"
+                          : `${planningSummary.progress.percentComplete}% (${planningSummary.progress.earnedMhrs} of ${planningSummary.progress.totalMhrs} planning hours earned)`
+                  }
+                />
+                <Field title="Planning complexity" value={complexityLabel(pkg.planning_complexity || "standard")} />
                 <Field title="Equipment tag" value={pkg.equipment_tag} />
                 <Field title="Work order ref" value={pkg.work_order_ref} />
               </dl>
@@ -756,6 +793,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
           <WorkPackageSteps packageId={pkg.id} />
           <WorkPackageManpowerCurve packageId={pkg.id} />
           <WorkPackageCraftAssignments packageId={pkg.id} />
+        </div>
+      )}
+
+      {activeTab === "planning" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackagePlanningProcess packageId={pkg.id} />
         </div>
       )}
 

@@ -8,10 +8,10 @@ import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPacka
 
 export const dynamic = "force-dynamic";
 
-// UI-density redesign: the detail page is tabbed (8 tabs; the Milestones tab
+// UI-density redesign: the detail page is tabbed (9 tabs; the Milestones tab
 // is a placeholder until slice 9 builds it). ?tab= deep-links to a tab;
 // anything unknown falls back to Overview.
-const TABS = ["overview", "steps", "milestones", "permits", "redlines", "budget", "documents", "activity"];
+const TABS = ["overview", "steps", "planning", "milestones", "permits", "redlines", "budget", "documents", "activity"];
 
 export default async function WorkPackagePage({ params, searchParams }) {
   const query = (await searchParams) || {};
