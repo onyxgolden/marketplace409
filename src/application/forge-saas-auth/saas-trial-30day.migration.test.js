@@ -80,6 +80,16 @@
 //     renewal-first wins and the revoke then revokes the fresh
 //     window. Final entitlement is revoked in both orderings; trial
 //     grant/audit + security-audit + receipt counts consistent.
+//   - Fix-round-3 (TRIAL-OBS-3 ruling): a non-owner replaying a
+//     stored REVOKE receipt is denied PLATFORM_OWNER_ONLY; the
+//     platform owner can still replay it and mismatched payloads
+//     still conflict (PGlite + real-PG legs).
+//   - Fix-round-3 rebase verification (real-PG only, runs LAST):
+//     with PR #802's slice-7 migration (20261113020000) applied, the
+//     trial migration re-applies idempotently and its guarded §9
+//     rewrites now COVER the slice-7 policies (drawing artifacts,
+//     work drawings, controlled-drawings storage policies) with the
+//     entitlement predicate.
 //
 // Roles, the auth.uid() stub, auth.users, workspace_members, and the
 // has_workspace_access() copy mirror production. The extensions.digest
@@ -115,12 +125,17 @@ const OWNER_E = "55555555-5555-4555-8555-555555555555";
 // Fix-round-2 workspaces (real-PG leg only): I is the generic-grant
 // non-owner replay fixture; J and K are the two revoke-vs-renewal
 // race orderings.
+// Fix-round-3 workspaces (real-PG leg only): L is the revoke
+// non-owner replay fixture; M is the post-merge slice-7 integration
+// fixture.
 const OWNER_F = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const OWNER_G = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const OWNER_H = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const OWNER_I = "12121212-1212-4121-8121-121212121212";
 const OWNER_J = "13131313-1313-4131-8131-131313131313";
 const OWNER_K = "14141414-1414-4141-8141-141414141414";
+const OWNER_L = "15151515-1515-4151-8151-151515151515";
+const OWNER_M = "16161616-1616-4161-8161-161616161616";
 const MEMBER_C = "66666666-6666-4666-8666-666666666666";
 const MEMBER_D = "77777777-7777-4777-8777-777777777777";
 const MEMBER_N = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -167,6 +182,7 @@ const CAPTURE_LIBRARY_MIGRATION = "20260922040007_capture_library.sql";
 const PLANNING_STEPS_MIGRATION = "20261112000000_forge_work_planning_process_steps.sql";
 const FOUNDATION_B_MIGRATION = "20261113000000_forge_work_package_project_link.sql";
 const AUTH_MIGRATION = "20261113010000_saas_auth_pr1.sql";
+const SLICE7_MIGRATION = "20261113020000_forge_work_controlled_drawing_intake.sql";
 const THIS_MIGRATION = "20261113030000_saas_trial_30day.sql";
 
 // Full chain in production timestamp order. Shared by the PGlite and
@@ -488,6 +504,8 @@ const trialWorkspaceList = (db, uid, search, queryFn) =>
   rpc(db, uid, `select forge_platform_trial_workspace_list(${sqlStr(search)}) as v;`, queryFn);
 const genericGrant = (db, uid, ownerId, appKey, source, reason, req = reqId(), queryFn) =>
   rpc(db, uid, `select forge_app_entitlement_grant(${sqlStr(ownerId)}, ${sqlStr(appKey)}, ${sqlStr(source)}, null, null, ${sqlStr(reason)}, ${sqlStr(req)}) as v;`, queryFn);
+const revoke = (db, uid, ownerId, appKey, reason, req = reqId(), queryFn) =>
+  rpc(db, uid, `select forge_app_entitlement_revoke(${sqlStr(ownerId)}, ${sqlStr(appKey)}, ${sqlStr(reason)}, ${sqlStr(req)}) as v;`, queryFn);
 
 describe("saas trial 30day migration (PGlite)", () => {
   let db;
@@ -1218,6 +1236,42 @@ describe("saas trial 30day migration (PGlite)", () => {
     const { rows: receipts } = await db.query(`select count(*)::int as n from forge_auth_idempotency_receipts where request_id = '${req}';`);
     expect(receipts[0].n).toBe(1);
   });
+
+  it60("non-owner replay of a stored revoke receipt is denied", async () => {
+    // Fix-round-3 (TRIAL-OBS-3 ruling): the platform-owner check now
+    // precedes the idempotency replay in the redefined revoke too, so
+    // a caller who is not (or no longer) a platform owner can never
+    // receive a stored result by replaying a known request id.
+    // Authorized replay by the platform owner is unchanged, and the
+    // request-ID/payload conflict semantics are untouched.
+    const granted = await genericGrant(db, OPERATOR_O, OWNER_B, "planner", "owner_manual", "revoke replay setup", reqId());
+    expect(granted).toMatchObject({ status: "active", source: "owner_manual" });
+    const req = reqId();
+    const revoked = await revoke(db, OPERATOR_O, OWNER_B, "planner", "revoke replay check", req);
+    expect(revoked).toMatchObject({ status: "revoked" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_app_entitlement_revoke('${OWNER_B}', 'planner', 'revoke replay check', '${req}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    await expectRpcError(db, STRANGER_S,
+      `select forge_app_entitlement_revoke('${OWNER_B}', 'planner', 'revoke replay check', '${req}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayed = await revoke(db, OPERATOR_O, OWNER_B, "planner", "revoke replay check", req);
+    expect(replayed).toEqual(revoked);
+    // Mismatched payload still conflicts for the authorized owner.
+    await expectRpcError(db, OPERATOR_O,
+      `select forge_app_entitlement_revoke('${OWNER_B}', 'planner', 'different reason', '${req}') as v;`,
+      "FORGE_AUTH_REQUEST_ID_CONFLICT");
+    // A non-owner with a mismatched payload is denied on authorization,
+    // before the conflict check is ever reached.
+    await expectRpcError(db, OWNER_A,
+      `select forge_app_entitlement_revoke('${OWNER_B}', 'planner', 'different reason', '${req}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const { rows: receipts } = await db.query(`select count(*)::int as n from forge_auth_idempotency_receipts where request_id = '${req}';`);
+    expect(receipts[0].n).toBe(1);
+    // No denied replay re-executed the revoke.
+    const { rows: ent } = await db.query(`select status from forge_app_entitlements where owner_id = '${OWNER_B}' and app_key = 'planner';`);
+    expect(ent[0].status).toBe("revoked");
+  });
 });
 
 // Real-PostgreSQL subset. PGlite is single-connection, so the
@@ -1616,6 +1670,33 @@ describe.skipIf(!HAS_REAL_PG)("saas trial 30day migration: real-PostgreSQL subse
     expect(rows[0].n).toBe(1);
   });
 
+  it60("non-owner replay of a stored revoke receipt is denied on real PG", async () => {
+    // Fix-round-3 (TRIAL-OBS-3 ruling, real-PG leg): same shape as the
+    // generic-grant replay test, for the redefined revoke — a
+    // successful revoke as the platform owner, the exact replay as a
+    // second authenticated non-owner, then the authorized owner replay,
+    // plus the mismatched-payload conflict for the owner.
+    await seedPendingWorkspace(OWNER_L, "Replay Workspace L");
+    const granted = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_entitlement_grant('${OWNER_L}', 'planner', 'owner_manual', null, null, 'revoke replay setup', '${reqId()}') as v;`);
+    expect(granted).toMatchObject({ status: "active", source: "owner_manual" });
+    const req = reqId();
+    const revoked = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_entitlement_revoke('${OWNER_L}', 'planner', 'revoke replay check', '${req}') as v;`);
+    expect(revoked).toMatchObject({ status: "revoked" });
+    await pgExpectRpcError(pgClient, OWNER_A,
+      `select forge_app_entitlement_revoke('${OWNER_L}', 'planner', 'revoke replay check', '${req}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayed = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_entitlement_revoke('${OWNER_L}', 'planner', 'revoke replay check', '${req}') as v;`);
+    expect(replayed).toEqual(revoked);
+    await pgExpectRpcError(pgClient, OPERATOR_O,
+      `select forge_app_entitlement_revoke('${OWNER_L}', 'planner', 'different reason', '${req}') as v;`,
+      "FORGE_AUTH_REQUEST_ID_CONFLICT");
+    const { rows } = await pgClient.query(`select count(*)::int as n from forge_auth_idempotency_receipts where request_id = '${req}';`);
+    expect(rows[0].n).toBe(1);
+  });
+
   it60("revoke-vs-renewal race, revoke started first: revoke wins, renewal refuses, revocation stands", async () => {
     // Fix-round-2 P1, ordering 1. The blocker session holds the shared
     // workspace/app lock (trial_serialize); both the revoke and the
@@ -1719,5 +1800,51 @@ describe.skipIf(!HAS_REAL_PG)("saas trial 30day migration: real-PostgreSQL subse
       await clientC.query("rollback;").catch(() => {});
       await clientC.end().catch(() => {});
     }
+  });
+
+  it60("post-merge slice-7 integration: trial migration re-applies cleanly with #802 applied, and its guarded rewrites cover the slice-7 policies", async () => {
+    // Fix-round-3 rebase verification (verdict branch-base note).
+    // This test runs LAST in the real-PG describe: applying the
+    // slice-7 migration mutates the shared cluster, and no later test
+    // may depend on the pre-#802 policy state.
+    //
+    // Main is now 100d2859 (PR #802 merged), so in production the
+    // trial migration runs AFTER 20261113020000. Its §9 rewrites are
+    // guarded on pg_policies: with #802 applied they must now COVER
+    // the slice-7 policies instead of skipping them, and the trial
+    // migration must still re-apply idempotently on top.
+    await pgClient.query(loadMigrationSql(SLICE7_MIGRATION));
+    const { rows: art } = await pgClient.query(`select to_regclass('public.forge_wp_drawing_artifacts') as t;`);
+    expect(art[0].t).toBe("forge_wp_drawing_artifacts");
+    // Re-apply the trial migration on top of the slice-7 schema.
+    await pgClient.query(loadMigrationSql(THIS_MIGRATION));
+    const { rows: policies } = await pgClient.query(`
+      select schemaname, tablename, policyname, qual, with_check
+        from pg_policies
+       where (schemaname = 'public' and tablename = 'forge_wp_drawing_artifacts' and policyname = 'forge_wp_drawing_artifacts_select')
+          or (schemaname = 'public' and tablename = 'forge_work_drawings' and policyname = 'forge_work_drawings_workspace_select')
+          or (schemaname = 'storage' and tablename = 'objects' and policyname like 'controlled_drawing_objects_%')
+       order by schemaname, tablename, policyname;`);
+    expect(policies.map((p) => `${p.schemaname}.${p.tablename}.${p.policyname}`).sort()).toEqual([
+      "public.forge_work_drawings.forge_work_drawings_workspace_select",
+      "public.forge_wp_drawing_artifacts.forge_wp_drawing_artifacts_select",
+      "storage.objects.controlled_drawing_objects_orphan_cleanup",
+      "storage.objects.controlled_drawing_objects_workspace_insert",
+      "storage.objects.controlled_drawing_objects_workspace_select",
+    ]);
+    for (const p of policies) {
+      const text = `${p.qual ?? ""} ${p.with_check ?? ""}`;
+      expect(text, `${p.schemaname}.${p.tablename}.${p.policyname} must carry the entitlement predicate`).toContain("forge_has_app_entitlement");
+    }
+    // The trial RPCs still work after the re-apply: grant a trial on
+    // a fresh workspace, confirm the gate passes while it is live,
+    // and confirm the redefined revoke still authorizes before replay.
+    await seedPendingWorkspace(OWNER_M, "Post-merge Workspace M");
+    const granted = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_trial_grant('${OWNER_M}', 'planner', 'post-merge check', '${reqId()}') as v;`);
+    expect(granted).toMatchObject({ status: "active", source: "owner_trial" });
+    const revoked = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_entitlement_revoke('${OWNER_M}', 'planner', 'post-merge revoke', '${reqId()}') as v;`);
+    expect(revoked).toMatchObject({ status: "revoked" });
   });
 });

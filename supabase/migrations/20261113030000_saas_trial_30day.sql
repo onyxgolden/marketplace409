@@ -953,20 +953,22 @@ revoke all on function public.forge_app_entitlement_grant(text, text, text, time
 grant execute on function public.forge_app_entitlement_grant(text, text, text, timestamptz, timestamptz, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 8b. forge_app_entitlement_revoke — redefined with ONE trial-slice
---    addition: the revoke takes the shared workspace/app serialization
---    lock (trial_serialize) before its request-id lock and before
---    reading the entitlement, so it serializes with the trial RPCs and
---    the generic grant (section 8). Without it, a revoke racing a
---    trial renewal could commit between the renewal's read and its
---    update, and the renewal would then overwrite the revoked row from
---    its earlier snapshot. Lock order is fixed (workspace/app first,
---    then request id) across the revoke, the generic grant, and all
---    trial RPCs. The expiry worker takes no advisory lock, so no
---    advisory/row-lock deadlock cycle exists. Every other line is
---    byte-identical to the Auth PR 1 definition — including the
---    receipt-before-owner-check order, which fix-round-2 P2 scoped to
---    the generic grant only (see TRIAL-OBS-3 in the control matrix).
+-- 8b. forge_app_entitlement_revoke — redefined with TWO trial-slice
+--    additions: (1) the revoke takes the shared workspace/app
+--    serialization lock (trial_serialize) before its request-id lock
+--    and before reading the entitlement, so it serializes with the
+--    trial RPCs and the generic grant (section 8). Without it, a
+--    revoke racing a trial renewal could commit between the renewal's
+--    read and its update, and the renewal would then overwrite the
+--    revoked row from its earlier snapshot. Lock order is fixed
+--    (workspace/app first, then request id) across the revoke, the
+--    generic grant, and all trial RPCs. The expiry worker takes no
+--    advisory lock, so no advisory/row-lock deadlock cycle exists.
+--    (2) fix round 3 (TRIAL-OBS-3 ruling): the platform-owner check
+--    now runs before the idempotency receipt lookup — the same
+--    authorization-before-replay order as the generic grant (§8) and
+--    the trial RPCs. Every other line is byte-identical to the Auth
+--    PR 1 definition.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_app_entitlement_revoke(
@@ -1004,6 +1006,14 @@ begin
   -- check below must see the first execution's commit, or a
   -- loser would re-execute instead of replaying.
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  -- Fix-round-3 (TRIAL-OBS-3 ruling): authorization precedes the
+  -- idempotency replay — the same order as the generic grant (§8) and
+  -- the three trial RPCs (section 5). A caller who is not currently a
+  -- platform owner must never receive a stored result for a request id
+  -- they did not (or no longer) own.
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
   select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
     from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
   if found then
@@ -1013,9 +1023,6 @@ begin
     return v_result;
   end if;
 
-  if not public.forge_has_platform_role('owner') then
-    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
-  end if;
   select * into v_before from public.forge_app_entitlements
   where owner_id = p_owner_id and app_key = p_app_key;
   if v_before.owner_id is null then raise exception 'FORGE_AUTH_ENTITLEMENT_NOT_FOUND' using errcode = '22023'; end if;
