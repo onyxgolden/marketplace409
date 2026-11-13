@@ -691,7 +691,18 @@ The fix, option 1 of the corrected verdict, implemented literally:
   `whisper_timestamped.transcribe`'s module globals
   (`_silero_vad_model`, `_silero_get_speech_ts`), so the
   library's own load block is skipped entirely — no download, no
-  trust prompt, no shared-cache read. The onnx decision mirrors
+  trust prompt, no shared-cache read. The preload reaches the
+  module through `sys.modules["whisper_timestamped.transcribe"]`,
+  NOT `import whisper_timestamped.transcribe as _wt`: the
+  package's `__init__` binds `transcribe` to the
+  `transcribe_timestamped()` function, shadowing the submodule, so
+  the `as` binding resolves to the function and the install lands
+  on function attributes the library never reads. The first live
+  clean-enrollment proof failed exactly this way (preload logged
+  success while `get_vad_segments` still saw `None` and tried the
+  download); the regression test
+  `test_preload_silero_vad_survives_package_attribute_shadowing`
+  pins the `sys.modules` lookup. The onnx decision mirrors
   the library's exactly (onnx=True whenever onnxruntime imports,
   which it does — it is in the pinned lock — so the FR6
   enrollment's `.onnx` path is the one used). Setup never touches

@@ -1674,7 +1674,18 @@ def _fake_silero_hub(monkeypatch, onnx_runtime_present):
     wt_mod._silero_get_speech_ts = None
     wt_mod._has_onnx = None
     wt_pkg = types.ModuleType("whisper_timestamped")
-    wt_pkg.transcribe = wt_mod
+    # The real package shadows the submodule: its __init__ binds
+    # `transcribe` to the transcribe_timestamped() FUNCTION
+    # (`from .transcribe import transcribe_timestamped as transcribe`),
+    # so `import whisper_timestamped.transcribe as _wt` resolves to
+    # the function, not the module. Model that here: the preload must
+    # reach the real module globals via sys.modules, not the `as`
+    # binding — the live clean-enrollment proof failed exactly this
+    # way on 2026-11-13 (preload "succeeded" onto the function while
+    # get_vad_segments still saw None and tried the download).
+    def _shadow_transcribe(*a, **k):
+        raise AssertionError("shadowed transcribe() function called")
+    wt_pkg.transcribe = _shadow_transcribe
     monkeypatch.setitem(sys.modules, "whisper_timestamped", wt_pkg)
     monkeypatch.setitem(sys.modules, "whisper_timestamped.transcribe",
                         wt_mod)
@@ -1712,6 +1723,30 @@ def test_preload_silero_vad_onnx_when_runtime_present(tmp_path, monkeypatch):
     assert calls[0]["source"] == "local"
     assert calls[0]["onnx"] is True
     assert wt_mod._has_onnx is True
+
+
+def test_preload_silero_vad_survives_package_attribute_shadowing(tmp_path, monkeypatch):
+    """Regression (live clean-enrollment proof, 2026-11-13): the
+    whisper_timestamped package binds `transcribe` to a function that
+    shadows the submodule, so `import ... as _wt` resolves to the
+    function. The preload must install the model into the REAL module
+    globals (via sys.modules) — setting the attributes on the
+    shadowing function is the exact bug: the preload "succeeds" while
+    get_vad_segments still sees None and tries the unpinned download.
+    """
+    silero_dir = tmp_path / "silero-vad"
+    silero_dir.mkdir()
+    calls, wt_mod, fake_model, fake_get_speech_ts = _fake_silero_hub(
+        monkeypatch, onnx_runtime_present=False)
+    assert runner.preload_silero_vad(silero_dir) is False
+    assert wt_mod._silero_vad_model is fake_model
+    assert wt_mod._silero_get_speech_ts is fake_get_speech_ts
+    assert wt_mod._has_onnx is False
+    shadow = sys.modules["whisper_timestamped"].transcribe
+    assert callable(shadow), "fixture must shadow with the function"
+    assert not hasattr(shadow, "_silero_vad_model")
+    assert not hasattr(shadow, "_silero_get_speech_ts")
+    assert not hasattr(shadow, "_has_onnx")
 
 
 def test_enroll_presenter_validates_silero_before_get_se(tmp_path, monkeypatch):

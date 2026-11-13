@@ -838,8 +838,23 @@ def preload_silero_vad(silero_dir) -> bool:
     before they are loaded. Returns the onnx flag used, for the
     enrollment provenance record.
     """
+    import sys  # noqa: F401  (sys.modules lookup below)
     import torch  # lazy: model stack only on the iBUYPOWER
-    import whisper_timestamped.transcribe as _wt
+    import whisper_timestamped.transcribe  # noqa: F401  (ensures the submodule is loaded)
+    # NOTE (2026-11-13, live-proof find): do NOT use
+    # `import whisper_timestamped.transcribe as _wt` here. The
+    # package's __init__ binds the name `transcribe` to the
+    # transcribe_timestamped() FUNCTION
+    # (`from .transcribe import transcribe_timestamped as transcribe`),
+    # shadowing the submodule attribute — so the `as` binding resolves
+    # to the function, and setting _silero_vad_model on it writes
+    # function attributes the library never reads. The live clean-
+    # enrollment proof failed exactly this way ("Problem when
+    # installing silero with version None" with network blocked):
+    # the preload "succeeded" while get_vad_segments still saw None
+    # and tried the unpinned download. sys.modules always holds the
+    # true submodule object.
+    _wt = sys.modules["whisper_timestamped.transcribe"]
 
     try:
         import onnxruntime  # noqa: F401  (mirrors the library's probe)
