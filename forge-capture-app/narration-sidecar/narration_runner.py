@@ -57,12 +57,20 @@ MODEL_VERSION = "checkpoints_v2_0417"
 MODEL_CODE_COMMIT = "74a1d147b17a8c3092dd5430504bd83ef6c7eb23"
 BASE_TTS = "melotts"
 BASE_TTS_COMMIT = "209145371cff8fc3bd60d7be902ea69cbdb7965a"
-CHECKPOINTS_URL = "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip"
-# Weights SHA-256 is NOT known yet (env setup still running on the
-# iBUYPOWER). Filled from C:\forge-bridge\narration\receipt.json
-# (field checkpoints_v2_zip_sha256) when present; otherwise this
-# placeholder is used and the run is flagged in the log.
-WEIGHTS_SHA256_PLACEHOLDER = "<FILL-FROM-RECEIPT:C:\\forge-bridge\\narration\\receipt.json>"
+CHECKPOINTS_SOURCE_URL = "https://huggingface.co/myshell-ai/OpenVoice"
+# Pinned Hugging Face revision of the checkpoints tree. The setup
+# script downloads the nine files under checkpoints/ at this revision
+# and assembles checkpoints_v2_0417.zip with the deterministic builder
+# (narration-sidecar/build_checkpoints_zip.py). The upstream S3 zip
+# (myshell-public-repo-host) is GONE (bucket deleted, verified
+# 2026-11-12); the S3 URL must never be restored here.
+HF_CHECKPOINTS_REVISION = "c70fc8b939bd1d8213994ff7c88e32be39708271"
+# Weights SHA-256: the deterministic checkpoints zip hash, built from
+# the Hugging Face files above. Used when no setup receipt exists yet;
+# the receipt value (the same hash, written by setup) wins at runtime.
+# Do not "re-fill" this from any other source without re-verifying the
+# zip build -- a different file set is a different hash.
+WEIGHTS_SHA256_PINNED = "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb"
 
 DEFAULT_CHECKPOINTS_DIR = r"C:\forge-bridge\narration\checkpoints_v2"
 DEFAULT_RECEIPT_PATH = r"C:\forge-bridge\narration\receipt.json"
@@ -111,12 +119,12 @@ def append_audit(root: Path, event: dict) -> None:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-def weights_sha256(receipt_path: str | None = None) -> str:
-    """Weights hash from the setup receipt, else the placeholder.
+def weights_receipt_path(receipt_path: str | None = None) -> Path | None:
+    """Receipt file carrying a checkpoints hash, else None.
 
-    The setup script records ``checkpoints_v2_zip_sha256`` in
-    C:\\forge-bridge\\narration\\receipt.json. Until that file exists the
-    placeholder is returned and callers must flag it.
+    Candidate order: the explicit path first, then the default setup
+    receipt. A file only counts when it parses and carries a non-empty
+    ``checkpoints_v2_zip_sha256`` value.
     """
     candidates = []
     if receipt_path:
@@ -125,13 +133,33 @@ def weights_sha256(receipt_path: str | None = None) -> str:
     for path in candidates:
         try:
             if path.is_file():
-                receipt = load_json(path)
-                value = receipt.get("checkpoints_v2_zip_sha256")
+                value = load_json(path).get("checkpoints_v2_zip_sha256")
                 if isinstance(value, str) and value and value != "null":
-                    return value.lower()
-        except Exception as exc:  # receipt unreadable: placeholder, flagged
-            log(f"WARNING: could not read receipt {path}: {exc}")
-    return WEIGHTS_SHA256_PLACEHOLDER
+                    return path
+        except Exception:
+            pass  # unreadable receipt: weights_sha256() logs it once
+    return None
+
+
+def weights_sha256(receipt_path: str | None = None) -> str:
+    """Weights hash from the setup receipt, else the pinned value.
+
+    The setup script records ``checkpoints_v2_zip_sha256`` in
+    C:\\forge-bridge\\narration\\receipt.json. Until that file exists
+    the pinned hash of the deterministic checkpoints zip is returned --
+    the same value the receipt will carry, since the zip build is
+    reproducible.
+    """
+    path = weights_receipt_path(receipt_path)
+    if path is None:
+        return WEIGHTS_SHA256_PINNED
+    try:
+        value = load_json(path).get("checkpoints_v2_zip_sha256")
+        if isinstance(value, str) and value and value != "null":
+            return value.lower()
+    except Exception as exc:  # receipt unreadable: pinned value, flagged
+        log(f"WARNING: could not read receipt {path}: {exc}")
+    return WEIGHTS_SHA256_PINNED
 
 
 def resolve_checkpoints_dir(cli_dir: str | None) -> Path:
@@ -430,7 +458,7 @@ def make_result(job_id, status, failure_reason=None, segments=None,
             "model_id": MODEL_ID,
             "model_version": MODEL_VERSION,
             "code_commit": MODEL_CODE_COMMIT,
-            "weights_sha256": weights or WEIGHTS_SHA256_PLACEHOLDER,
+            "weights_sha256": weights or WEIGHTS_SHA256_PINNED,
             "base_tts": BASE_TTS,
             "base_tts_commit": BASE_TTS_COMMIT,
         },
@@ -495,10 +523,9 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
     presenter_id = manifest["presenter_id"]
     consent_version = manifest.get("consent_receipt_version", 1)
     weights = weights_sha256(receipt_path)
-    if weights == WEIGHTS_SHA256_PLACEHOLDER:
-        log("WARNING: weights SHA-256 unknown (no receipt.json yet); "
-            "using <FILL-FROM-RECEIPT> placeholder — fill from "
-            "C:\\forge-bridge\\narration\\receipt.json")
+    weights_from_receipt = weights_receipt_path(receipt_path) is not None
+    if not weights_from_receipt:
+        log("weights SHA-256 from pinned code value (no receipt.json yet)")
 
     log(f"job {job_id} started (presenter {presenter_id})")
     append_audit(root, {"event": "job_started", "job_id": job_id,
@@ -528,18 +555,18 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
         # creation must fail closed here, never render.
         # Boundary note: the job-id recomputation uses the runner's
         # resolved weights hash (setup receipt when present, else the
-        # <FILL-FROM-RECEIPT> placeholder). A job created before the
-        # weights receipt is filled and run after it is filled will
-        # fail closed on job-id mismatch — that is the safe direction;
-        # the failure reason names the weights source, so the cause is
-        # visible instead of looking like a tampered script. Do not
-        # work around it by falling back to another weights value.
+        # pinned code value). Both are the same hash by construction
+        # -- the receipt carries the deterministic zip hash the code
+        # pins -- so no mismatch can arise from the receipt appearing
+        # later. The failure reason names the weights source, so the
+        # cause is visible instead of looking like a tampered script.
+        # Do not work around it by falling back to another weights value.
         binding_errors = verify_job_binding(manifest, script, job_id, weights)
         if binding_errors:
             weights_source = (
                 "setup receipt (receipt.json)"
-                if weights != WEIGHTS_SHA256_PLACEHOLDER
-                else "placeholder <FILL-FROM-RECEIPT> (no receipt.json yet)")
+                if weights_from_receipt
+                else "pinned in code (no receipt.json yet)")
             return _fail(root, job_dir, job_id,
                          "job binding verification failed "
                          f"(weights_sha256 from {weights_source}): "

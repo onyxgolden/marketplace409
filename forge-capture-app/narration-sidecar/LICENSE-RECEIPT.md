@@ -10,15 +10,25 @@ so it is not an admissible fallback.
 - License: **MIT** (commercial use stated by upstream)
 - Repository: https://github.com/myshell-ai/OpenVoice
 - Pinned code commit: `74a1d147b17a8c3092dd5430504bd83ef6c7eb23`
-- Checkpoints: https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip
-- Checkpoints (V2 weights) SHA-256: `<FILL-FROM-RECEIPT:C:\forge-bridge\narration\receipt.json>`
-  - **NOT YET KNOWN** — the iBUYPOWER env setup is still running. The
-    setup script records the zip hash as `checkpoints_v2_zip_sha256` in
-    `C:\forge-bridge\narration\receipt.json`; fill this line (and the
-    runner's weights hash, which reads the same receipt at runtime) from
-    that file before the first benchmark run. Until then every
-    `result.json` / `render-manifest.json` carries the same placeholder
-    string and the runner logs a warning.
+- Checkpoints source: https://huggingface.co/myshell-ai/OpenVoice
+  (official Hugging Face repo, pinned revision
+  `c70fc8b939bd1d8213994ff7c88e32be39708271`). The upstream S3 zip
+  (`https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip`)
+  is GONE — the bucket was deleted (`NoSuchBucket`, verified 2026-11-12).
+  The setup script downloads the nine files of the repo's `checkpoints/`
+  tree at the pinned revision and assembles `checkpoints_v2_0417.zip`
+  with the deterministic builder
+  (`narration-sidecar/build_checkpoints_zip.py`).
+- Checkpoints (V2 weights) SHA-256: `200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`
+  - The SHA-256 of the deterministic zip (420,897,181 bytes), built
+    2026-11-13 from the Hugging Face files above and verified
+    byte-identical across two independent builds. The setup script
+    rebuilds the same zip on the iBUYPOWER and records the same hash
+    as `checkpoints_v2_zip_sha256` in
+    `C:\forge-bridge\narration\receipt.json`; the Rust core
+    (`CHECKPOINTS_ZIP_SHA256`) and the runner
+    (`WEIGHTS_SHA256_PINNED`) pin this value. A receipt carrying a
+    different hash is not this weights set.
 - Use in slice A: zero-shot tone-color cloning only. No training, no
   durable per-person model.
 

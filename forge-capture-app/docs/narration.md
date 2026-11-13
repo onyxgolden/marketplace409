@@ -191,7 +191,7 @@ statement must be readable and its hash must match the receipt.
   "consent_artifact_sha256": "<sha256>",
   "model_id": "openvoice-v2", "model_version": "checkpoints_v2_0417",
   "model_code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-  "weights_sha256": "<FILL-FROM-RECEIPT:C:\\forge-bridge\\narration\\receipt.json>",
+  "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb",
   "reference_audio_sha256": "<sha256 of reference.wav>",
   "preprocessing_version": "openvoice-se-extractor-vad-v1",
   "speaker_embedding_path": "speaker_embedding.json",
@@ -258,7 +258,7 @@ unique step ids, sorted, no overlaps.
   "model": { "model_id": "openvoice-v2",
              "model_version": "checkpoints_v2_0417",
              "code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-             "weights_sha256": "<FILL-FROM-RECEIPT:...>",
+             "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb",
              "base_tts": "melotts",
              "base_tts_commit": "209145371cff8fc3bd60d7be902ea69cbdb7965a" },
   "consent_receipt_version": 1,
@@ -281,7 +281,7 @@ always be `[]`.
                     "reference_audio_sha256": "<sha256>" },
   "model_hashes": { "model_id": "openvoice-v2",
                     "code_commit": "74a1d147b17a8c3092dd5430504bd83ef6c7eb23",
-                    "weights_sha256": "<FILL-FROM-RECEIPT:...>" },
+                    "weights_sha256": "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb" },
   "ffmpeg_version": "ffmpeg version 7.1 ...",
   "ffmpeg_command": ["ffmpeg", "-y", "-i", "..."],
   "consent_receipt_version": 1,
@@ -392,16 +392,21 @@ Prerequisites: the env setup script has finished (venv at
 setup script's `...\narration\src\checkpoints_v2` layout — and the
 receipt at `C:\forge-bridge\narration\receipt.json`).
 
-**Known blocker (2026-11-12, verified from both the iBUYPOWER and
-this VM):** the documented OpenVoice V2 checkpoints URL
+**Weights source (resolved 2026-11-13):** the documented OpenVoice V2
+checkpoints URL
 (`https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip`)
 is dead — S3 `NoSuchBucket`, the bucket `myshell-public-repo-host`
-does not exist. Env setup run 5 died at that download (no receipt,
-no checkpoints) and no replacement source is verified yet. Until a
-replacement weights source is decided, the setup cannot complete, the
-weights hash stays `<FILL-FROM-RECEIPT>`, and no live enrollment or
-generation proof is possible. Do NOT substitute an unverified mirror
-or invent a hash.
+does not exist (verified 2026-11-12 from both the iBUYPOWER and this
+VM; env setup run 5 died at that download). The replacement source is
+the official Hugging Face repo `myshell-ai/OpenVoice` (pinned revision
+`c70fc8b939bd1d8213994ff7c88e32be39708271`): the setup downloads the
+nine files of the repo's `checkpoints/` tree and assembles
+`checkpoints_v2_0417.zip` with the deterministic builder
+(`narration-sidecar/build_checkpoints_zip.py`). The zip SHA-256 is
+`200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`,
+pinned in the Rust core, the runner, and `LICENSE-RECEIPT.md`. The
+live enrollment / generation proof still needs a setup run with the
+new step 6 — it is not claimed as done here.
 
 Copy the sidecar into place first:
 
@@ -444,7 +449,7 @@ timestamps; no secrets are logged. Log file: wherever the
 | Gate | How this slice proves it |
 | --- | --- |
 | 1 Consent denial | Preflight in `process_job` + `enroll_presenter`; revoked/missing/mismatched receipt fails the job before any model work. Verified on the dev VM with a revoked-consent spool (exit 2, `consent_revoked`). |
-| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). **Open item — BLOCKED:** weights SHA-256 still `<FILL-FROM-RECEIPT>`; the documented checkpoints URL is dead (S3 `NoSuchBucket`, verified 2026-11-12), so no receipt exists and no replacement source is verified yet. |
+| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). Weights SHA-256 pinned (`200e6e39…82e3fb`, deterministic zip from Hugging Face `myshell-ai/OpenVoice` @ `c70fc8b9…`); the setup rebuilds the same zip and records the same hash. The dead S3 URL is replaced in `setup-env.ps1` step 6. |
 | 5 Narration-only utility | The render is complete with only capture footage + narration + captions; there is no face track to remove. |
 | 6 Audio/video quality | Script validation (no overlaps, timing within duration), per-segment duration/RTF, captions verbatim from the approved script; human review (gate 10) is the evidence. |
 | 7 Local-first proof | `outbound_requests: []` + `resources` + per-segment RTF + `render_sec`/`output_bytes` in every `result.json`; no network code in the runner. |

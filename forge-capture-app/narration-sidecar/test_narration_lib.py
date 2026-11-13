@@ -339,9 +339,9 @@ def test_resolve_marker_precedence(tmp_path):
 
 # --- Runner stdlib-only behavior (no torch needed) -------------------------
 
-def test_runner_weights_placeholder_when_no_receipt(tmp_path):
+def test_runner_weights_pinned_when_no_receipt(tmp_path):
     assert runner.weights_sha256(str(tmp_path / "nope.json")) == \
-        runner.WEIGHTS_SHA256_PLACEHOLDER
+        runner.WEIGHTS_SHA256_PINNED
 
 
 def test_runner_weights_from_receipt(tmp_path):
@@ -651,12 +651,12 @@ def test_runner_process_job_rejects_tampered_script(tmp_path):
         "scope": ["voice"],
         "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
         "consent_artifact_path": "consent-artifact.mp4"}))
-    # Job created with the placeholder weights (no receipt.json here),
+    # Job created with the pinned weights (no receipt.json here),
     # then the script text tampered after creation.
     script_hash = _BINDING_SCRIPT_HASH
     job_id = lib.canonical_job_id(
         "tyler-welch", 1, "openvoice-v2", "checkpoints_v2_0417",
-        runner.WEIGHTS_SHA256_PLACEHOLDER, _BINDING_CAPTURE_SHA256,
+        runner.WEIGHTS_SHA256_PINNED, _BINDING_CAPTURE_SHA256,
         script_hash)
     job_dir = tmp_path / "jobs" / job_id
     job_dir.mkdir(parents=True)
@@ -673,5 +673,5 @@ def test_runner_process_job_rejects_tampered_script(tmp_path):
     assert result["status"] == "failed"
     assert "job binding verification failed" in result["failure_reason"]
     assert "script_sha256 mismatch" in result["failure_reason"]
-    assert "placeholder" in result["failure_reason"]
+    assert "pinned in code (no receipt.json yet)" in result["failure_reason"]
     assert (job_dir / ".failed").exists()

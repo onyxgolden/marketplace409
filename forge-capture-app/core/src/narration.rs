@@ -47,13 +47,18 @@ pub const OPENVOICE_CODE_COMMIT: &str = "74a1d147b17a8c3092dd5430504bd83ef6c7eb2
 pub const MELOTTS_CODE_COMMIT: &str = "209145371cff8fc3bd60d7be902ea69cbdb7965a";
 /// SHA-256 of the checkpoints zip.
 ///
-/// PLACEHOLDER — the live weights hash is not known yet: the environment
-/// setup is still running on the iBUYPOWER and no verified weights file
-/// exists to hash. Replace this exact string with the real 64-char
-/// lowercase hex digest once the weights are downloaded and hashed on
-/// the iBUYPOWER. Until then, any receipt carrying this value is
-/// unverified and must not be treated as a pinned-weights proof.
-pub const CHECKPOINTS_ZIP_SHA256: &str = "<FILL-FROM-RECEIPT>";
+/// The deterministic zip built from the official Hugging Face repo
+/// (`myshell-ai/OpenVoice`, revision
+/// `c70fc8b939bd1d8213994ff7c88e32be39708271`) by
+/// `narration-sidecar/build_checkpoints_zip.py`: the nine files of the
+/// `checkpoints/` tree (base_speakers/EN, base_speakers/ZH, converter)
+/// packed as `checkpoints_v2/...` with fixed timestamps, permissions,
+/// and order. The upstream S3 zip this used to come from is gone
+/// (bucket deleted); the setup script rebuilds the same bytes, so the
+/// receipt's `checkpoints_v2_zip_sha256` equals this value. Any
+/// receipt carrying a different value is not this pinned weights set.
+pub const CHECKPOINTS_ZIP_SHA256: &str =
+    "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb";
 
 /// Hard cap on narration segments accepted in one script.
 pub const MAX_SEGMENTS: usize = 1000;
@@ -2178,8 +2183,13 @@ mod tests {
         );
         assert_eq!(MAX_SEGMENTS, 1000);
         assert_eq!(MAX_SEGMENT_TEXT_CHARS, 5000);
-        // Placeholder until the live weights hash is known.
-        assert_eq!(CHECKPOINTS_ZIP_SHA256, "<FILL-FROM-RECEIPT>");
+        // Pinned weights hash: the deterministic checkpoints zip
+        // (Hugging Face myshell-ai/OpenVoice @ c70fc8b9...).
+        assert!(is_sha256_hex(CHECKPOINTS_ZIP_SHA256));
+        assert_eq!(
+            CHECKPOINTS_ZIP_SHA256,
+            "200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb"
+        );
     }
 
     // --- revocation transaction (P1-2) ---

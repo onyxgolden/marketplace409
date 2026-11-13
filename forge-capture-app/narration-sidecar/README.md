@@ -31,16 +31,19 @@ still running as of this writing):
 Setup script: `~/workspace/forge-ai-drop/tools/narration/setup-env.ps1`
 (in forge-ai-drop). Do **not** pip-install torch on the dev VM.
 
-## Weights hash — still pending
+## Weights hash — pinned
 
-The checkpoints zip SHA-256 is not known yet (setup still running).
-`LICENSE-RECEIPT.md` and the runner carry the placeholder
-`<FILL-FROM-RECEIPT:C:\forge-bridge\narration\receipt.json>`. Once the
-setup finishes, read `checkpoints_v2_zip_sha256` from
-`C:\forge-bridge\narration\receipt.json` and fill it into
-`LICENSE-RECEIPT.md`. The runner reads the same receipt at runtime, so
-its `result.json` / `render-manifest.json` hashes fill automatically —
-until then it logs a warning on every job.
+The checkpoints zip SHA-256 is
+`200e6e3992b28fce86a7c65d02a5921c33a4b34a4d724b5ed2564a43eb82e3fb`
+(the deterministic zip built from the official Hugging Face repo
+`myshell-ai/OpenVoice` at revision `c70fc8b9...`; see
+`LICENSE-RECEIPT.md` and `build_checkpoints_zip.py`). It is pinned in
+`LICENSE-RECEIPT.md`, the runner (`WEIGHTS_SHA256_PINNED`), and the
+Rust core (`CHECKPOINTS_ZIP_SHA256`). The setup script rebuilds the
+same zip on the iBUYPOWER and records the same hash as
+`checkpoints_v2_zip_sha256` in `C:\forge-bridge\narration\receipt.json`;
+the runner reads that receipt at runtime, so its `result.json` /
+`render-manifest.json` hashes match the pinned value.
 
 ## Running it (iBUYPOWER, PowerShell)
 
