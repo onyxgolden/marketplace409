@@ -219,10 +219,18 @@ begin
   -- Serialize concurrent grants for the same workspace/app (two different
   -- request ids would otherwise both pass the one-initial check and race
   -- the partial unique index). Lock order is fixed (workspace/app first,
-  -- then request id) across all trial RPCs; the expiry worker takes no
-  -- advisory lock, so no advisory/row-lock deadlock cycle exists.
+  -- then request id) across all trial RPCs and the generic entitlement
+  -- grant (section 8), which takes the same workspace/app lock; the
+  -- expiry worker takes no advisory lock, so no advisory/row-lock
+  -- deadlock cycle exists.
   perform pg_advisory_xact_lock(hashtext(p_owner_id || '|' || p_app_key), hashtext('trial_serialize'));
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  -- Authorization precedes the idempotency replay: a caller who is not
+  -- currently a platform owner must never receive a stored result for
+  -- a request id they did not (or no longer) own.
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
   select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
     from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
   if found then
@@ -230,10 +238,6 @@ begin
       raise exception 'FORGE_AUTH_REQUEST_ID_CONFLICT' using errcode = '23505';
     end if;
     return v_result;
-  end if;
-
-  if not public.forge_has_platform_role('owner') then
-    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
   end if;
 
   -- Server-enforced availability: Capture stays disabled until PR 4.
@@ -343,8 +347,18 @@ begin
   end if;
 
   v_payload_hash := encode(extensions.digest(convert_to('trial_renew|' || p_owner_id || '|' || p_app_key || '|' || v_reason, 'UTF8'), 'sha256'), 'hex');
+  -- Shared workspace/app serialization lock (trial_serialize), same key
+  -- as the grant/convert RPCs and the generic entitlement grant
+  -- (section 8); lock order is fixed (workspace/app first, then
+  -- request id) across all of them.
   perform pg_advisory_xact_lock(hashtext(p_owner_id || '|' || p_app_key), hashtext('trial_serialize'));
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  -- Authorization precedes the idempotency replay: a caller who is not
+  -- currently a platform owner must never receive a stored result for
+  -- a request id they did not (or no longer) own.
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
   select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
     from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
   if found then
@@ -352,10 +366,6 @@ begin
       raise exception 'FORGE_AUTH_REQUEST_ID_CONFLICT' using errcode = '23505';
     end if;
     return v_result;
-  end if;
-
-  if not public.forge_has_platform_role('owner') then
-    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
   end if;
 
   if not coalesce((select enabled from public.forge_app_trial_availability where app_key = p_app_key), false) then
@@ -540,8 +550,18 @@ begin
   end if;
 
   v_payload_hash := encode(extensions.digest(convert_to('trial_convert|' || p_owner_id || '|' || p_app_key || '|' || v_reason, 'UTF8'), 'sha256'), 'hex');
+  -- Shared workspace/app serialization lock (trial_serialize), same key
+  -- as the grant/renew RPCs and the generic entitlement grant
+  -- (section 8); lock order is fixed (workspace/app first, then
+  -- request id) across all of them.
   perform pg_advisory_xact_lock(hashtext(p_owner_id || '|' || p_app_key), hashtext('trial_serialize'));
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  -- Authorization precedes the idempotency replay: a caller who is not
+  -- currently a platform owner must never receive a stored result for
+  -- a request id they did not (or no longer) own.
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
   select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
     from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
   if found then
@@ -549,10 +569,6 @@ begin
       raise exception 'FORGE_AUTH_REQUEST_ID_CONFLICT' using errcode = '23505';
     end if;
     return v_result;
-  end if;
-
-  if not public.forge_has_platform_role('owner') then
-    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
   end if;
 
   select status into v_workspace_status from public.forge_workspaces where owner_id = p_owner_id;
@@ -807,10 +823,14 @@ revoke all on function public.forge_check_app_access(text, text, text) from publ
 grant execute on function public.forge_check_app_access(text, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 8. forge_app_entitlement_grant — redefined with ONE added guard: the
---    generic grant path refuses to overwrite an owner_trial row
---    (FORGE_AUTH_TRIAL_MUST_CONVERT). Trials convert only through
---    forge_app_trial_convert_to_paid. Every other line is byte-identical
+-- 8. forge_app_entitlement_grant — redefined with TWO trial-slice
+--    additions: (1) the generic grant path refuses to overwrite an
+--    owner_trial row (FORGE_AUTH_TRIAL_MUST_CONVERT); trials convert
+--    only through forge_app_trial_convert_to_paid. (2) the generic
+--    grant takes the shared workspace/app serialization lock
+--    (trial_serialize) before its first entitlement read, so it
+--    serializes with the trial RPCs; the entitlement read below is
+--    therefore a post-lock re-read. Every other line is byte-identical
 --    to the Auth PR 1 definition.
 -- ---------------------------------------------------------------------------
 
@@ -854,6 +874,14 @@ begin
   end if;
   if p_reason is null or char_length(btrim(p_reason)) < 1 then raise exception 'FORGE_AUTH_REASON_REQUIRED' using errcode = '22023'; end if;
   v_payload_hash := encode(extensions.digest(convert_to('entitlement_grant|' || p_owner_id || '|' || p_app_key || '|' || p_source || '|' || coalesce(p_starts_at::text, '') || '|' || coalesce(p_ends_at::text, '') || '|' || btrim(p_reason), 'UTF8'), 'sha256'), 'hex');
+  -- Trial slice (20261113030000): serialize with the trial RPCs on the
+  -- shared workspace/app lock before reading the entitlement row, so a
+  -- concurrent trial grant cannot commit between our read and our
+  -- upsert (and vice versa). Lock order is fixed (workspace/app first,
+  -- then request id) across the generic grant and all trial RPCs. The
+  -- entitlement read below is therefore a post-lock re-read: if a trial
+  -- committed first, v_before shows owner_trial and the guard refuses.
+  perform pg_advisory_xact_lock(hashtext(p_owner_id || '|' || p_app_key), hashtext('trial_serialize'));
   -- Serialize concurrent duplicate request ids: the receipt
   -- check below must see the first execution's commit, or a
   -- loser would re-execute instead of replaying.

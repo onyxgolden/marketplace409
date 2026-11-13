@@ -56,6 +56,18 @@
 //   - Re-apply is idempotent.
 //   - Owner-console read RPCs: overview + workspace list, owner-only,
 //     non-disclosing.
+//   - Fix-round-1 P2: a non-owner replaying a stored trial receipt
+//     (grant/renew/convert) is denied PLATFORM_OWNER_ONLY; the
+//     platform owner can still replay it (authorized replay
+//     unchanged). Real-PG leg repeats the grant replay denial.
+//   - Fix-round-1 P1 (real-PG only): deterministic two-session
+//     generic-vs-trial races for BOTH lock orderings, with a blocker
+//     session holding the shared workspace/app lock until both RPCs
+//     are waiting on it — generic-first wins with the trial refusing
+//     NOT_PENDING, trial-first wins with the generic refusing
+//     TRIAL_MUST_CONVERT; final entitlement + grant/audit/receipt
+//     counts consistent in both cases, and the generic grant never
+//     overwrites an owner_trial row.
 //
 // Roles, the auth.uid() stub, auth.users, workspace_members, and the
 // has_workspace_access() copy mirror production. The extensions.digest
@@ -86,6 +98,11 @@ const OWNER_B = "22222222-2222-4222-8222-222222222222";
 const OWNER_C = "33333333-3333-4333-8333-333333333333";
 const OWNER_D = "44444444-4444-4444-8444-444444444444";
 const OWNER_E = "55555555-5555-4555-8555-555555555555";
+// Fix-round-1 race/replay workspaces (real-PG leg only): F and G are
+// the two lock-ordering race fixtures, H the non-owner replay fixture.
+const OWNER_F = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const OWNER_G = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const OWNER_H = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const MEMBER_C = "66666666-6666-4666-8666-666666666666";
 const MEMBER_D = "77777777-7777-4777-8777-777777777777";
 const MEMBER_N = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -1119,6 +1136,48 @@ describe("saas trial 30day migration (PGlite)", () => {
     const { rows } = await db.query(`select count(*)::int as n from forge_app_trial_grants where owner_id = '${OWNER_A}';`);
     expect(rows[0].n).toBe(1);
   });
+
+  it60("non-owner replay of a stored trial receipt is denied (grant/renew/convert)", async () => {
+    // Fix-round-1 P2: the platform-owner check now precedes the
+    // idempotency replay in all three trial mutation RPCs, so a caller
+    // who is not (or no longer) a platform owner can never receive a
+    // stored result by replaying a known request id. Authorized replay
+    // by the platform owner is unchanged.
+    const grantReq = reqId();
+    const granted = await trialGrant(db, OPERATOR_O, OWNER_A, "planner", "replay grant", grantReq);
+    await expectRpcError(db, OWNER_A,
+      `select forge_app_trial_grant('${OWNER_A}', 'planner', 'replay grant', '${grantReq}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    await expectRpcError(db, STRANGER_S,
+      `select forge_app_trial_grant('${OWNER_A}', 'planner', 'replay grant', '${grantReq}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayedGrant = await trialGrant(db, OPERATOR_O, OWNER_A, "planner", "replay grant", grantReq);
+    expect(replayedGrant).toEqual(granted);
+
+    // Renew leg: expire the window, renew as the owner, replay as a non-owner.
+    await expireTrialWindow(db, OWNER_A, "planner");
+    const renewReq = reqId();
+    const renewed = await trialRenew(db, OPERATOR_O, OWNER_A, "planner", "replay renew", renewReq);
+    await expectRpcError(db, OWNER_A,
+      `select forge_app_trial_renew('${OWNER_A}', 'planner', 'replay renew', '${renewReq}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayedRenew = await trialRenew(db, OPERATOR_O, OWNER_A, "planner", "replay renew", renewReq);
+    expect(replayedRenew).toEqual(renewed);
+
+    // Convert leg.
+    const convertReq = reqId();
+    const converted = await trialConvert(db, OPERATOR_O, OWNER_A, "planner", "replay convert", convertReq);
+    expect(converted).toMatchObject({ status: "active", source: "owner_manual" });
+    await expectRpcError(db, OWNER_A,
+      `select forge_app_trial_convert_to_paid('${OWNER_A}', 'planner', 'replay convert', '${convertReq}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayedConvert = await trialConvert(db, OPERATOR_O, OWNER_A, "planner", "replay convert", convertReq);
+    expect(replayedConvert).toEqual(converted);
+
+    // No denied replay created a second row anywhere.
+    const { rows: grants } = await db.query(`select count(*)::int as n from forge_app_trial_grants where owner_id = '${OWNER_A}';`);
+    expect(grants[0].n).toBe(2); // 1 initial + 1 renewal; conversion writes no grant row.
+  });
 });
 
 // Real-PostgreSQL subset. PGlite is single-connection, so the
@@ -1337,5 +1396,152 @@ describe.skipIf(!HAS_REAL_PG)("saas trial 30day migration: real-PostgreSQL subse
     await pgExpectRpcError(pgClient, MEMBER_D,
       `select forge_work_planning_process_checklist('${OWNER_A}', 'forge_wp_nope') as v;`,
       "WPP10_PACKAGE_NOT_FOUND");
+  });
+
+  // Fix-round-1 P1 helpers. seedPendingWorkspace creates a fresh ACTIVE
+  // workspace with a PENDING planner entitlement — the starting state
+  // both race legs need. waitForUngrantedAdvisoryLocks polls pg_locks
+  // until the expected number of sessions are blocked on an advisory
+  // lock, so the barrier release below is deterministic (both RPCs are
+  // inside their functions, past validation, waiting on the shared
+  // workspace/app lock) instead of a Promise.all scheduling race.
+  async function seedPendingWorkspace(ownerId, displayName) {
+    await pgClient.query(`insert into auth.users (id, email, email_confirmed_at) values ('${ownerId}', 'race-${ownerId.slice(0, 8)}@example.test', now()) on conflict (id) do nothing;`);
+    await pgClient.query(`insert into forge_workspaces (owner_id, display_name, status, created_by, updated_by) values ('${ownerId}', '${displayName}', 'active', '${OPERATOR_O}', '${OPERATOR_O}');`);
+    await pgClient.query(`insert into forge_app_entitlements (owner_id, app_key, status, source, granted_by) values ('${ownerId}', 'planner', 'pending', null, null);`);
+  }
+
+  async function waitForUngrantedAdvisoryLocks(n, timeoutMs = 15000) {
+    const started = Date.now();
+    for (;;) {
+      const { rows } = await pgClient.query(
+        `select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted;`);
+      if (rows[0].n >= n) return;
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(`timed out waiting for ${n} ungranted advisory locks (saw ${rows[0].n})`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  it60("generic-vs-trial race, generic started first: generic wins, trial refuses, no overwrite", async () => {
+    // Fix-round-1 P1, ordering 1. The blocker session holds the shared
+    // workspace/app lock (trial_serialize); both RPCs start and block
+    // on it before either reads the entitlement. Releasing the blocker
+    // grants the lock to the first waiter (the generic grant, started
+    // first); the trial grant then re-reads post-lock and must refuse
+    // with NOT_PENDING — it must not replace the manual entitlement,
+    // and no trial grant/audit/receipt row may exist for the loser.
+    await seedPendingWorkspace(OWNER_F, "Race Workspace F");
+    const reqGeneric = reqId();
+    const reqTrial = reqId();
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    const clientC = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    await clientC.connect();
+    try {
+      await clientC.query("begin;");
+      await clientC.query(`select pg_advisory_xact_lock(hashtext('${OWNER_F}|planner'), hashtext('trial_serialize'));`);
+      const pGeneric = pgAsUser(clientA, OPERATOR_O,
+        `select forge_app_entitlement_grant('${OWNER_F}', 'planner', 'owner_manual', null, null, 'race generic first', '${reqGeneric}') as v;`);
+      await waitForUngrantedAdvisoryLocks(1);
+      const pTrial = pgAsUser(clientB, OPERATOR_O,
+        `select forge_app_trial_grant('${OWNER_F}', 'planner', 'race trial second', '${reqTrial}') as v;`);
+      await waitForUngrantedAdvisoryLocks(2);
+      await clientC.query("commit;");
+      const results = await Promise.allSettled([pGeneric, pTrial]);
+      expect(results[0].status, `generic grant must win; trial result: ${JSON.stringify(results[1])}`).toBe("fulfilled");
+      expect(results[0].value.rows[0].v).toMatchObject({ status: "active", source: "owner_manual" });
+      expect(results[1].status).toBe("rejected");
+      expect(String(results[1].reason?.message ?? results[1].reason)).toContain("FORGE_AUTH_TRIAL_NOT_PENDING");
+      const { rows: ent } = await pgClient.query(`select status, source from forge_app_entitlements where owner_id = '${OWNER_F}' and app_key = 'planner';`);
+      expect(ent[0]).toEqual({ status: "active", source: "owner_manual" });
+      const { rows: grants } = await pgClient.query(`select count(*)::int as n from forge_app_trial_grants where owner_id = '${OWNER_F}';`);
+      expect(grants[0].n).toBe(0);
+      const { rows: audit } = await pgClient.query(`select count(*)::int as n from forge_app_trial_audit where owner_id = '${OWNER_F}';`);
+      expect(audit[0].n).toBe(0);
+      const { rows: receipts } = await pgClient.query(`select count(*)::int as n from forge_auth_idempotency_receipts where request_id in ('${reqGeneric}', '${reqTrial}');`);
+      expect(receipts[0].n).toBe(1); // only the winner wrote a receipt
+      const { rows: winnerReceipt } = await pgClient.query(`select action from forge_auth_idempotency_receipts where request_id = '${reqGeneric}';`);
+      expect(winnerReceipt[0].action).toBe("entitlement_grant");
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+      await clientC.query("rollback;").catch(() => {});
+      await clientC.end().catch(() => {});
+    }
+  });
+
+  it60("generic-vs-trial race, trial started first: trial wins, generic refuses, no overwrite", async () => {
+    // Fix-round-1 P1, ordering 2. Same barrier, opposite start order:
+    // the trial grant is the first waiter, so it wins; the generic
+    // grant then re-reads post-lock, sees owner_trial, and must refuse
+    // with TRIAL_MUST_CONVERT — it must never overwrite the trial row.
+    await seedPendingWorkspace(OWNER_G, "Race Workspace G");
+    const reqTrial = reqId();
+    const reqGeneric = reqId();
+    const clientA = new Client(pgCfg);
+    const clientB = new Client(pgCfg);
+    const clientC = new Client(pgCfg);
+    await clientA.connect();
+    await clientB.connect();
+    await clientC.connect();
+    try {
+      await clientC.query("begin;");
+      await clientC.query(`select pg_advisory_xact_lock(hashtext('${OWNER_G}|planner'), hashtext('trial_serialize'));`);
+      const pTrial = pgAsUser(clientA, OPERATOR_O,
+        `select forge_app_trial_grant('${OWNER_G}', 'planner', 'race trial first', '${reqTrial}') as v;`);
+      await waitForUngrantedAdvisoryLocks(1);
+      const pGeneric = pgAsUser(clientB, OPERATOR_O,
+        `select forge_app_entitlement_grant('${OWNER_G}', 'planner', 'owner_manual', null, null, 'race generic second', '${reqGeneric}') as v;`);
+      await waitForUngrantedAdvisoryLocks(2);
+      await clientC.query("commit;");
+      const results = await Promise.allSettled([pTrial, pGeneric]);
+      expect(results[0].status, `trial grant must win; generic result: ${JSON.stringify(results[1])}`).toBe("fulfilled");
+      expect(results[0].value.rows[0].v).toMatchObject({ status: "active", source: "owner_trial" });
+      expect(results[1].status).toBe("rejected");
+      expect(String(results[1].reason?.message ?? results[1].reason)).toContain("FORGE_AUTH_TRIAL_MUST_CONVERT");
+      const { rows: ent } = await pgClient.query(`select status, source from forge_app_entitlements where owner_id = '${OWNER_G}' and app_key = 'planner';`);
+      expect(ent[0]).toEqual({ status: "active", source: "owner_trial" });
+      const { rows: grants } = await pgClient.query(`select count(*)::int as n from forge_app_trial_grants where owner_id = '${OWNER_G}' and grant_kind = 'initial';`);
+      expect(grants[0].n).toBe(1);
+      const { rows: audit } = await pgClient.query(`select count(*)::int as n from forge_app_trial_audit where owner_id = '${OWNER_G}' and event = 'granted';`);
+      expect(audit[0].n).toBe(1);
+      const { rows: g } = await pgClient.query(`select extract(epoch from (ends_at - starts_at))::int as seconds from forge_app_trial_grants where owner_id = '${OWNER_G}';`);
+      expect(g[0].seconds).toBe(2592000);
+      const { rows: receipts } = await pgClient.query(`select count(*)::int as n from forge_auth_idempotency_receipts where request_id in ('${reqTrial}', '${reqGeneric}');`);
+      expect(receipts[0].n).toBe(1); // only the winner wrote a receipt
+      const { rows: winnerReceipt } = await pgClient.query(`select action from forge_auth_idempotency_receipts where request_id = '${reqTrial}';`);
+      expect(winnerReceipt[0].action).toBe("trial_grant");
+    } finally {
+      await clientA.end().catch(() => {});
+      await clientB.end().catch(() => {});
+      await clientC.query("rollback;").catch(() => {});
+      await clientC.end().catch(() => {});
+    }
+  });
+
+  it60("non-owner replay of a stored trial receipt is denied on real PG", async () => {
+    // Fix-round-1 P2 (real-PG leg): create a successful trial grant as
+    // the platform owner, then replay the EXACT request as a second
+    // authenticated non-owner (the workspace owner, who holds no
+    // platform role). The replay must raise PLATFORM_OWNER_ONLY rather
+    // than return the stored result; the receipt survives and the
+    // platform owner can still replay it.
+    await seedPendingWorkspace(OWNER_H, "Replay Workspace H");
+    const req = reqId();
+    const granted = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_trial_grant('${OWNER_H}', 'planner', 'replay check', '${req}') as v;`);
+    expect(granted).toMatchObject({ status: "active", source: "owner_trial" });
+    await pgExpectRpcError(pgClient, OWNER_A,
+      `select forge_app_trial_grant('${OWNER_H}', 'planner', 'replay check', '${req}') as v;`,
+      "FORGE_AUTH_PLATFORM_OWNER_ONLY");
+    const replayed = await pgRpc(pgClient, OPERATOR_O,
+      `select forge_app_trial_grant('${OWNER_H}', 'planner', 'replay check', '${req}') as v;`);
+    expect(replayed).toEqual(granted);
+    const { rows } = await pgClient.query(`select count(*)::int as n from forge_app_trial_grants where owner_id = '${OWNER_H}';`);
+    expect(rows[0].n).toBe(1);
   });
 });
