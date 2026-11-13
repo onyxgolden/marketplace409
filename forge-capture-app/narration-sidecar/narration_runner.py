@@ -162,6 +162,66 @@ BERT_MODEL_FILES = {
         "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3",
 }
 
+# Silero VAD for enrollment (post-merge corrective fix, 2026-11-13):
+# the enrollment VAD was the last unpinned model dependency. Pinned
+# OpenVoice calls whisper_timestamped.transcribe.get_vad_segments(
+# ..., method="silero") through se_extractor.split_audio_vad, and in
+# the exact locked whisper-timestamped==1.14.2 the default "silero"
+# method has no version: when ~/.cache/torch/hub/
+# snakers4_silero-vad_master is absent it runs torch.hub.load(
+# repo_or_dir="snakers4/silero-vad", model="silero_vad",
+# source="github") — the moving default branch, downloaded into the
+# shared Torch cache after a one-off trust_repo=True. The first real
+# enrollment (fix round 6) stopped at exactly that trust prompt.
+# A clean/offline machine could not reproduce enrollment from
+# setup-env.ps1, later clean machines could receive different
+# Silero bytes at the same head, and the receipt recorded no Silero
+# revision or hash while result.json claimed outbound_requests [].
+# The pin below is the master HEAD as of the FR6 enrollment
+# (2026-11-13 ~05:50 CST; commit 2026-10-22, merge PR #815) — the
+# exact bytes the successful Tyler enrollment used. Setup downloads
+# the codeload tarball at this revision, verifies the tarball hash,
+# extracts ONLY the eight files torch.hub.load actually needs into
+# the narration-owned SILERO_DIR, and verifies each file hash; the
+# runner validates receipt + installed bytes (validate_silero_model)
+# and pre-loads the model from the validated local dir
+# (preload_silero_vad) before any enrollment, so whisper-timestamped
+# never calls torch.hub.load itself. The staged set is exactly the
+# hubconf load path: hubconf.py imports silero_vad.utils_vad (which
+# imports silero_vad.model at package import), and the onnx=True
+# path loads data/silero_vad.onnx (opset 16) while onnx=False loads
+# data/silero_vad.jit — both model files are pinned so either
+# branch is validated. onnxruntime IS in the pinned lock, so the
+# FR6 enrollment ran the .onnx path. The other data files in the
+# upstream tree (op15, sequence, half, openvino, safetensors) are
+# never loaded by hubconf's silero_vad() and are NOT staged.
+# Per-file SHA-256s verified 2026-11-13 from the codeload tarball
+# at this revision (tarball SHA-256 below).
+SILERO_REPO = "snakers4/silero-vad"
+SILERO_SOURCE_URL = "https://github.com/snakers4/silero-vad"
+SILERO_REVISION = "066409f3d9db45a30d21dfcbf9147826ffdd7052"
+SILERO_TARBALL_SHA256 = ("ad33d84807fb1715af77239695ba83be624ad1130e"
+                         "dba38202f8e1f38fc5a915")
+SILERO_FILES = {
+    "hubconf.py":
+        "2637a3a91d061a6e921853f5de5430f873c292662b46e5fd61edaf648b4ae5bd",
+    "LICENSE":
+        "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b",
+    "src/silero_vad/__init__.py":
+        "45fcf7e268eb0ba83ccee737b1a86cc94d7cf7487e2a1c0a31b9b72b899201f1",
+    "src/silero_vad/utils_vad.py":
+        "7e0f9b3334ee4feb79abcf2251be12458329077bce28c8540878ed9d35e5aa6b",
+    "src/silero_vad/model.py":
+        "40762a80d1278605480f75f90c6510c1a4ab71bd230f45c334e4f9c5e402181d",
+    "src/silero_vad/data/__init__.py":
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/silero_vad/data/silero_vad.onnx":
+        "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+    "src/silero_vad/data/silero_vad.jit":
+        "e1122837f4154c511485fe0b9c64455f7b929c96fbb8d79fbdb336383ebd3720",
+}
+DEFAULT_SILERO_DIR = r"C:\forge-bridge\narration\silero-vad"
+
 # MeloTTS English speaker keys (model.hps.data.spk2id) the runner can
 # select from, as observed in the live myshell-ai/MeloTTS-English
 # config.json at MELO_MODEL_REVISION above (fetched 2026-11-13): the runner picks the first key
@@ -658,6 +718,160 @@ def resolve_melotts_dir(cli_dir: str | None) -> Path:
     return Path(DEFAULT_MELOTTS_DIR)
 
 
+def resolve_silero_dir(cli_dir: str | None) -> Path:
+    """Resolve the pinned Silero VAD staging dir.
+
+    Env NARRATION_SILERO_DIR wins, then --silero-dir, then the
+    default the setup script stages to. Unlike the checkpoints dir
+    there is no src fallback: setup stages the eight pinned files
+    directly under the default.
+    """
+    env_dir = os.environ.get("NARRATION_SILERO_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if cli_dir:
+        return Path(cli_dir)
+    return Path(DEFAULT_SILERO_DIR)
+
+
+def _silero_receipt_key(rel: str) -> str:
+    """Receipt field holding the recorded hash of one Silero file."""
+    return {
+        "hubconf.py": "silero_hubconf_sha256",
+        "LICENSE": "silero_license_sha256",
+        "src/silero_vad/__init__.py": "silero_package_init_sha256",
+        "src/silero_vad/utils_vad.py": "silero_utils_vad_sha256",
+        "src/silero_vad/model.py": "silero_model_sha256",
+        "src/silero_vad/data/__init__.py": "silero_data_init_sha256",
+        "src/silero_vad/data/silero_vad.onnx": "silero_onnx_sha256",
+        "src/silero_vad/data/silero_vad.jit": "silero_jit_sha256",
+    }[rel]
+
+
+def validate_silero_model(receipt_path: str | None,
+                          silero_dir) -> str:
+    """Validate the pinned Silero VAD before any enrollment (post-merge
+    corrective fix: the first enrollment used to download unpinned
+    Silero bytes from the moving default branch while the result
+    reported no outbound requests).
+
+    The setup receipt must carry (see validate_weights_receipt for
+    the receipt rules): a receipt must exist and parse; it must
+    carry ``silero_repo`` exactly equal to ``SILERO_REPO`` and
+    ``silero_revision`` exactly equal to ``SILERO_REVISION``; it
+    must carry ``silero_dir`` naming the directory the VAD files
+    were staged to, equal to ``silero_dir``; and it must record
+    per-file SHA-256s for every file in ``SILERO_FILES`` equal to
+    the pin. Then every file in ``SILERO_FILES`` must exist under
+    ``silero_dir`` and hash to its pinned value.
+
+    Returns the validated Silero revision. Raises RuntimeError on
+    any mismatch — the caller fails the job closed (never enrolls
+    against unvalidated VAD bytes).
+    """
+    if receipt_path is None:
+        receipt_path = DEFAULT_RECEIPT_PATH
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"setup receipt missing: {path} (run the env setup first)")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"setup receipt unreadable: {path}: {exc}")
+    repo = receipt.get("silero_repo")
+    if not isinstance(repo, str) or repo != SILERO_REPO:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned Silero repo "
+            f"{SILERO_REPO} (has {repo!r}): re-run setup")
+    rev = receipt.get("silero_revision")
+    if not isinstance(rev, str) or rev != SILERO_REVISION:
+        raise RuntimeError(
+            f"setup receipt {path} does not carry the pinned Silero "
+            f"revision {SILERO_REVISION} (has {rev!r}): re-run setup")
+    bound = receipt.get("silero_dir")
+    if not bound:
+        raise RuntimeError(
+            f"setup receipt {path} does not record silero_dir: re-run setup")
+    if not _same_dir(bound, silero_dir):
+        raise RuntimeError(
+            f"setup receipt {path} is bound to silero_dir {bound!r} but "
+            f"the VAD resolved to {silero_dir!r}: refusing to use "
+            "unvalidated Silero VAD bytes")
+    for rel, expected in SILERO_FILES.items():
+        recorded = receipt.get(_silero_receipt_key(rel))
+        if recorded != expected:
+            raise RuntimeError(
+                f"setup receipt {path} does not record the pinned hash for "
+                f"Silero {rel} (has {recorded!r}): re-run setup")
+        installed = Path(silero_dir) / rel
+        if not installed.is_file():
+            raise RuntimeError(
+                f"Silero VAD file missing under {silero_dir}: {rel} "
+                "(incomplete Silero staging — re-run setup)")
+        actual = sha256_file(installed)
+        if actual != expected:
+            raise RuntimeError(
+                f"Silero VAD file changed under {silero_dir}: {rel} "
+                f"(sha256 {actual[:16]}... != pinned {expected[:16]}...)")
+    return rev
+
+
+def preload_silero_vad(silero_dir) -> bool:
+    """Load the validated Silero VAD model and install it into
+    whisper-timestamped, so enrollment VAD never calls torch.hub
+    itself (post-merge corrective fix).
+
+    Pinned whisper-timestamped==1.14.2's get_vad_segments(
+    method="silero") keeps a module-global _silero_vad_model and
+    only loads when it is None — and then it loads from the moving
+    default branch (torch.hub.load(repo_or_dir="snakers4/silero-vad",
+    source="github")) whenever ~/.cache/torch/hub/
+    snakers4_silero-vad_master is absent. Pre-loading here, from the
+    already-validated narration-owned dir via torch.hub.load(
+    source="local"), fills that global first: the library's load
+    block is skipped entirely, so no download, no trust prompt, and
+    no shared-cache read can happen. The onnx decision mirrors the
+    library's exactly (version is None for method="silero", so
+    onnx=True whenever onnxruntime imports). Call only after
+    validate_silero_model — the dir's bytes must be validated
+    before they are loaded. Returns the onnx flag used, for the
+    enrollment provenance record.
+    """
+    import sys  # noqa: F401  (sys.modules lookup below)
+    import torch  # lazy: model stack only on the iBUYPOWER
+    import whisper_timestamped.transcribe  # noqa: F401  (ensures the submodule is loaded)
+    # NOTE (2026-11-13, live-proof find): do NOT use
+    # `import whisper_timestamped.transcribe as _wt` here. The
+    # package's __init__ binds the name `transcribe` to the
+    # transcribe_timestamped() FUNCTION
+    # (`from .transcribe import transcribe_timestamped as transcribe`),
+    # shadowing the submodule attribute — so the `as` binding resolves
+    # to the function, and setting _silero_vad_model on it writes
+    # function attributes the library never reads. The live clean-
+    # enrollment proof failed exactly this way ("Problem when
+    # installing silero with version None" with network blocked):
+    # the preload "succeeded" while get_vad_segments still saw None
+    # and tried the unpinned download. sys.modules always holds the
+    # true submodule object.
+    _wt = sys.modules["whisper_timestamped.transcribe"]
+
+    try:
+        import onnxruntime  # noqa: F401  (mirrors the library's probe)
+        onnx = True
+    except ImportError:
+        onnx = False
+    model, utils = torch.hub.load(
+        repo_or_dir=str(silero_dir), model="silero_vad",
+        onnx=onnx, source="local")
+    _wt._silero_vad_model = model
+    _wt._silero_get_speech_ts = utils[0]
+    _wt._has_onnx = onnx
+    log(f"Silero VAD pre-loaded from validated local dir {silero_dir} "
+        f"(onnx={onnx})")
+    return onnx
+
+
 def resolve_tool(name: str, ffmpeg_dir: str | None) -> str | None:
     """Locate ffmpeg/ffprobe: --ffmpeg-dir, then PATH, then the known
     iBUYPOWER install dir."""
@@ -841,7 +1055,8 @@ class ResourceMonitor:
 # --- Enrollment (lazy heavy imports) ----------------------------------------
 
 def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
-                     receipt_path: str | None = None) -> dict:
+                     receipt_path: str | None = None,
+                     silero_dir: Path | None = None) -> dict:
     """Zero-shot enrollment for a presenter. Returns the VoiceEnrollment dict.
 
     Loads OpenVoice ToneColorConverter + checkpoint, extracts the speaker
@@ -895,6 +1110,22 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
     converter = ToneColorConverter(str(checkpoints_dir / "converter" / "config.json"),
                                    device=device)
     converter.load_ckpt(str(checkpoints_dir / "converter" / "checkpoint.pth"))
+    # Silero VAD provenance (post-merge corrective fix): the
+    # enrollment VAD must be the pinned, validated, narration-owned
+    # staging — never the library's unpinned torch.hub download.
+    # validate_silero_model requires the receipt to carry the pinned
+    # repo/revision/dir binding and every staged file to hash to its
+    # pinned value; preload_silero_vad then loads the model from
+    # that validated local dir and installs it into
+    # whisper-timestamped's module globals, so its get_vad_segments
+    # never calls torch.hub.load itself (no download, no trust
+    # prompt, no shared-cache read). Both run before get_se, on the
+    # fresh-enrollment path only: a reused enrollment derives no new
+    # embedding and consumes no VAD bytes.
+    if silero_dir is None:
+        silero_dir = resolve_silero_dir(None)
+    silero_revision = validate_silero_model(receipt_path, silero_dir)
+    silero_onnx = preload_silero_vad(silero_dir)
     # get_se returns (se_tensor, audio_name): unpack the tuple.
     # Calling .detach() on the tuple raises "'tuple' object has no
     # attribute 'detach'" -- the first real enrollment failed on
@@ -912,6 +1143,16 @@ def enroll_presenter(root: Path, presenter_id: str, checkpoints_dir: Path,
         "weights_sha256": weights_sha256(receipt_path),
         "reference_audio_sha256": ref_sha,
         "preprocessing_version": "openvoice-se-extractor-vad-v1",
+        # Silero VAD provenance (post-merge corrective fix): the VAD
+        # that segmented the reference audio is the pinned,
+        # receipt-bound, hash-validated local staging — recorded
+        # here so the enrollment's provenance covers the dependency
+        # the render's outbound_requests [] cannot describe.
+        "vad_method": "silero",
+        "silero_repo": SILERO_REPO,
+        "silero_revision": silero_revision,
+        "silero_onnx": silero_onnx,
+        "silero_files_sha256": dict(SILERO_FILES),
         "speaker_embedding_path": "speaker_embedding.json",
         "reference_clip_path": "reference.wav",
         "created_at": utc_now(),
@@ -1068,7 +1309,8 @@ def find_queued_job(root: Path):
 def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                 ffmpeg_bin: str, ffprobe_bin: str,
                 receipt_path: str | None = None,
-                melotts_dir: Path | None = None) -> int:
+                melotts_dir: Path | None = None,
+                silero_dir: Path | None = None) -> int:
     """Process one claimed job. Returns 0 on success, 2 on failure."""
     job_id = job_dir.name
     manifest = load_json(job_dir / "job.json")
@@ -1213,7 +1455,7 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                          f"{checkpoints_dir} (env setup unfinished)",
                          consent_receipt_version=consent_version, weights=weights)
         enrollment = enroll_presenter(root, presenter_id, checkpoints_dir,
-                                      receipt_path)
+                                      receipt_path, silero_dir)
         # enroll_presenter sets last_used_at when it writes
         # enrollment.json (under the presenter lock, with a consent
         # re-check) — no second write here: a revocation that landed
@@ -1486,6 +1728,8 @@ def main(argv=None) -> int:
                         help="OpenVoice V2 checkpoints dir (default: C:\\forge-bridge\\narration\\checkpoints_v2)")
     parser.add_argument("--melotts-dir", default=None,
                         help="MeloTTS English base-model dir (default: C:\\forge-bridge\\narration\\melotts-en)")
+    parser.add_argument("--silero-dir", default=None,
+                        help="pinned Silero VAD staging dir (default: C:\\forge-bridge\\narration\\silero-vad)")
     parser.add_argument("--ffmpeg-dir", default=None,
                         help="dir containing ffmpeg.exe/ffprobe.exe (default: PATH, then C:\\forge-bridge\\tools\\ffmpeg\\bin)")
     parser.add_argument("--receipt-path", default=None,
@@ -1501,6 +1745,8 @@ def main(argv=None) -> int:
     log(f"checkpoints: {checkpoints_dir}")
     melotts_dir = resolve_melotts_dir(args.melotts_dir)
     log(f"melotts model: {melotts_dir}")
+    silero_dir = resolve_silero_dir(args.silero_dir)
+    log(f"silero vad: {silero_dir}")
     checkpoints_ok = (checkpoints_dir / "converter" / "config.json").is_file()
     if not checkpoints_ok:
         log(f"WARNING: converter config not found under {checkpoints_dir} "
@@ -1530,7 +1776,7 @@ def main(argv=None) -> int:
             return 2
         try:
             enroll_presenter(root, presenter_id, checkpoints_dir,
-                             args.receipt_path)
+                             args.receipt_path, silero_dir)
         except Exception as exc:
             log(f"enrollment failed for {presenter_id}: {exc}")
             return 2
@@ -1557,7 +1803,7 @@ def main(argv=None) -> int:
         log(f"claimed job {job_dir.name}")
         return process_job(root, job_dir, checkpoints_dir,
                            ffmpeg_bin, ffprobe_bin, args.receipt_path,
-                           melotts_dir)
+                           melotts_dir, silero_dir)
 
     # --loop
     log(f"looping: polling every {POLL_SECONDS}s (Ctrl+C to stop)")
@@ -1574,7 +1820,7 @@ def main(argv=None) -> int:
                 log(f"claimed job {job_dir.name}")
                 process_job(root, job_dir, checkpoints_dir,
                             ffmpeg_bin, ffprobe_bin, args.receipt_path,
-                            melotts_dir)
+                            melotts_dir, silero_dir)
             time.sleep(POLL_SECONDS)
         except KeyboardInterrupt:
             log("loop stopped by user")
