@@ -7,7 +7,7 @@
 --     forge_platform_operators, forge_security_audit,
 --     forge_auth_idempotency_receipts, forge_has_app_entitlement,
 --     forge_has_platform_role, forge_check_app_access,
---     forge_app_entitlement_grant)
+--     forge_app_entitlement_grant, forge_app_entitlement_revoke)
 --   20261113020000 slice-7 PDF blockers (in-flight PR #802, file-only at
 --     the time this migration was written — this file does not depend on it)
 --
@@ -823,15 +823,19 @@ revoke all on function public.forge_check_app_access(text, text, text) from publ
 grant execute on function public.forge_check_app_access(text, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 8. forge_app_entitlement_grant — redefined with TWO trial-slice
+-- 8. forge_app_entitlement_grant — redefined with THREE trial-slice
 --    additions: (1) the generic grant path refuses to overwrite an
 --    owner_trial row (FORGE_AUTH_TRIAL_MUST_CONVERT); trials convert
 --    only through forge_app_trial_convert_to_paid. (2) the generic
 --    grant takes the shared workspace/app serialization lock
 --    (trial_serialize) before its first entitlement read, so it
 --    serializes with the trial RPCs; the entitlement read below is
---    therefore a post-lock re-read. Every other line is byte-identical
---    to the Auth PR 1 definition.
+--    therefore a post-lock re-read. (3) fix-round-2 P2: the
+--    platform-owner check now precedes the idempotency receipt lookup,
+--    like the three trial RPCs (section 5) — a non-owner replaying a
+--    known request id gets FORGE_AUTH_PLATFORM_OWNER_ONLY, never the
+--    stored result. Every other line is byte-identical to the Auth
+--    PR 1 definition.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.forge_app_entitlement_grant(
@@ -886,6 +890,13 @@ begin
   -- check below must see the first execution's commit, or a
   -- loser would re-execute instead of replaying.
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  -- Fix-round-2 P2: authorization precedes the idempotency replay — the
+  -- same order as the three trial RPCs (section 5). A caller who is not
+  -- currently a platform owner must never receive a stored result for
+  -- a request id they did not (or no longer) own.
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
   select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
     from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
   if found then
@@ -895,9 +906,6 @@ begin
     return v_result;
   end if;
 
-  if not public.forge_has_platform_role('owner') then
-    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
-  end if;
   if not exists (select 1 from public.forge_workspaces where owner_id = p_owner_id) then
     raise exception 'FORGE_AUTH_WORKSPACE_NOT_FOUND' using errcode = '22023';
   end if;
@@ -943,6 +951,97 @@ $$;
 
 revoke all on function public.forge_app_entitlement_grant(text, text, text, timestamptz, timestamptz, text, text) from public, anon, service_role;
 grant execute on function public.forge_app_entitlement_grant(text, text, text, timestamptz, timestamptz, text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 8b. forge_app_entitlement_revoke — redefined with ONE trial-slice
+--    addition: the revoke takes the shared workspace/app serialization
+--    lock (trial_serialize) before its request-id lock and before
+--    reading the entitlement, so it serializes with the trial RPCs and
+--    the generic grant (section 8). Without it, a revoke racing a
+--    trial renewal could commit between the renewal's read and its
+--    update, and the renewal would then overwrite the revoked row from
+--    its earlier snapshot. Lock order is fixed (workspace/app first,
+--    then request id) across the revoke, the generic grant, and all
+--    trial RPCs. The expiry worker takes no advisory lock, so no
+--    advisory/row-lock deadlock cycle exists. Every other line is
+--    byte-identical to the Auth PR 1 definition — including the
+--    receipt-before-owner-check order, which fix-round-2 P2 scoped to
+--    the generic grant only (see TRIAL-OBS-3 in the control matrix).
+-- ---------------------------------------------------------------------------
+
+create or replace function public.forge_app_entitlement_revoke(
+  p_owner_id text,
+  p_app_key text,
+  p_reason text,
+  p_request_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_payload_hash text;
+  v_r_action text;
+  v_r_hash text;
+  v_result jsonb;
+  v_before public.forge_app_entitlements%rowtype;
+begin
+  if v_actor is null then raise exception 'FORGE_AUTH_ACTOR_REQUIRED' using errcode = '42501'; end if;
+  if p_request_id is null or trim(p_request_id) = '' then raise exception 'FORGE_AUTH_REQUEST_ID_REQUIRED' using errcode = '22023'; end if;
+  if p_app_key not in ('designer', 'scheduler', 'planner', 'capture') then
+    raise exception 'FORGE_AUTH_UNKNOWN_APP' using errcode = '22023';
+  end if;
+  if p_reason is null or char_length(btrim(p_reason)) < 1 then raise exception 'FORGE_AUTH_REASON_REQUIRED' using errcode = '22023'; end if;
+  v_payload_hash := encode(extensions.digest(convert_to('entitlement_revoke|' || p_owner_id || '|' || p_app_key || '|' || btrim(p_reason), 'UTF8'), 'sha256'), 'hex');
+  -- Trial slice (20261113030000): serialize with the trial RPCs and the
+  -- generic grant on the shared workspace/app lock before the request-id
+  -- lock and before reading the entitlement (see the section header).
+  perform pg_advisory_xact_lock(hashtext(p_owner_id || '|' || p_app_key), hashtext('trial_serialize'));
+  -- Serialize concurrent duplicate request ids: the receipt
+  -- check below must see the first execution's commit, or a
+  -- loser would re-execute instead of replaying.
+  perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
+  select r.action, r.payload_hash, r.result into v_r_action, v_r_hash, v_result
+    from public.forge_auth_idempotency_receipts r where r.request_id = p_request_id;
+  if found then
+    if v_r_action <> 'entitlement_revoke' or v_r_hash <> v_payload_hash then
+      raise exception 'FORGE_AUTH_REQUEST_ID_CONFLICT' using errcode = '23505';
+    end if;
+    return v_result;
+  end if;
+
+  if not public.forge_has_platform_role('owner') then
+    raise exception 'FORGE_AUTH_PLATFORM_OWNER_ONLY' using errcode = '42501';
+  end if;
+  select * into v_before from public.forge_app_entitlements
+  where owner_id = p_owner_id and app_key = p_app_key;
+  if v_before.owner_id is null then raise exception 'FORGE_AUTH_ENTITLEMENT_NOT_FOUND' using errcode = '22023'; end if;
+
+  update public.forge_app_entitlements
+     set status = 'revoked', version = version + 1, updated_at = now()
+   where owner_id = p_owner_id and app_key = p_app_key;
+
+  perform public.forge_audit_event(
+    v_actor, 'platform_operator', p_owner_id, p_app_key, 'entitlement.revoked',
+    'forge_app_entitlements', p_owner_id || '|' || p_app_key,
+    jsonb_build_object('status', v_before.status),
+    jsonb_build_object('status', 'revoked'),
+    btrim(p_reason), p_request_id, 'rpc', 'allowed');
+
+  v_result := jsonb_build_object('owner_id', p_owner_id, 'app_key', p_app_key, 'status', 'revoked');
+  insert into public.forge_auth_idempotency_receipts (request_id, owner_id, action, payload_hash, result)
+  values (p_request_id, p_owner_id, 'entitlement_revoke', v_payload_hash, v_result)
+  on conflict (request_id) do nothing;
+  return v_result;
+end;
+$$;
+
+revoke all on function public.forge_app_entitlement_revoke(text, text, text, text) from public, anon, service_role;
+grant execute on function public.forge_app_entitlement_revoke(text, text, text, text) to authenticated;
+
 -- ---------------------------------------------------------------------------
 -- 9. Planner + Capture data-plane RLS: the live entitlement predicate is
 --    ANDed into every app-specific policy (explicit drop + recreate,
