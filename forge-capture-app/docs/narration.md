@@ -525,8 +525,10 @@ it is missing. The MeloTTS code itself could not install on Python
 headers that are not on the box; tokenizers 0.13.3 has no cp312
 wheel) — setup installs the pinned MeloTTS code `--no-deps` and only
 the runtime deps the EN path executes (`cached_path`, `transformers`,
-`g2p_en`, `pykakasi`, `num2words`, `jamo`, plus the NLTK cmudict data
-for `g2p_en`), then verifies `from melo.api import TTS` imports and
+`g2p_en`, `pykakasi`, `num2words`, `jamo`, `mecab-python3` +
+`unidic-lite` — required at import because `japanese.py` does
+`import MeCab` at module level — plus the NLTK cmudict data for
+`g2p_en`), then verifies `from melo.api import TTS` imports and
 `G2p()` loads before proceeding.
 
 Copy the sidecar into place first:

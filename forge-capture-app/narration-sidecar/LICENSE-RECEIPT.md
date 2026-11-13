@@ -80,10 +80,13 @@ so it is not an admissible fallback.
 - **Code install (fix round 3):** the pinned MeloTTS
   `requirements.txt` cannot install on Python 3.12 (fugashi 1.3.0
   needs MeCab C headers; tokenizers 0.13.3 has no cp312 wheel), and
-  no melo module imports fugashi/mecab/unidic — setup installs the
-  pinned MeloTTS code `--no-deps` plus only the EN-path runtime deps
+  no melo module imports fugashi — setup installs the pinned MeloTTS
+  code `--no-deps` plus only the EN-path runtime deps
   (`cached_path`, `transformers`, `g2p_en`, `pykakasi`, `num2words`,
-  `jamo`, NLTK cmudict data) and verifies the import before proceeding.
+  `jamo`, `mecab-python3` + `unidic-lite` — the last two are required
+  at import because `japanese.py` does `import MeCab` at module
+  level and `cleaner.py` imports it eagerly — NLTK cmudict data) and
+  verifies the import before proceeding.
 
 ## FFmpeg (render assembly)
 
