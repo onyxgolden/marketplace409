@@ -39,6 +39,10 @@
     {
       "path": "/api/rental/cron/tenant-payment-receipts",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/forge/platform/trials/expire",
+      "schedule": "0 * * * *"
     }
   ]
 }

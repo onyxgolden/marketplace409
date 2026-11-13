@@ -59,6 +59,7 @@ describe("checkForgeAppAccess", () => {
       "APP_ROLE_REQUIRED",
       "AUTH_REQUIRED",
       "UNKNOWN_APP",
+      "TRIAL_ENDED",
       "SOMETHING_ELSE",
     ]) {
       const response = appAccessDeniedResponse(reason);
@@ -67,5 +68,32 @@ describe("checkForgeAppAccess", () => {
       expect(body.error).not.toContain(reason);
       expect(body.error.length).toBeGreaterThan(0);
     }
+  });
+
+  it("TRIAL_ENDED says the data is safe and names no code", async () => {
+    const client = clientWith({
+      data: { allowed: false, reason: "TRIAL_ENDED", via: null },
+      error: null,
+    });
+    const result = await checkForgeAppAccess(client, "owner-1", "planner");
+    expect(result.allowed).toBe(false);
+    expect(result.response.status).toBe(403);
+    const body = await result.response.json();
+    expect(body.error).toMatch(/trial has ended/);
+    expect(body.error).toMatch(/data is safe and has not been deleted/);
+    expect(body.error).not.toMatch(/TRIAL_ENDED/);
+  });
+
+  it("TRIAL_ENDED for Capture adds that local capture keeps working", async () => {
+    const client = clientWith({
+      data: { allowed: false, reason: "TRIAL_ENDED", via: null },
+      error: null,
+    });
+    const result = await checkForgeAppAccess(client, "owner-1", "capture");
+    expect(result.allowed).toBe(false);
+    const body = await result.response.json();
+    expect(body.error).toMatch(/trial has ended/);
+    expect(body.error).toMatch(/Local capture, recording, and the files on this device keep working/);
+    expect(body.error).toMatch(/only the cloud library and sync are paused/);
   });
 });
