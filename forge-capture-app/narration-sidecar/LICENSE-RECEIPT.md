@@ -114,11 +114,17 @@ so it is not an admissible fallback.
 - **Pinned lock file (fix round 6):** every Python artifact is
   installed from `tools/narration/requirements-lock.txt` with `pip
   install --require-hashes` — exact versions + SHA-256 hashes for all
-  128 packages of the proven working venv (Python 3.12,
+  133 packages of the proven working venv (Python 3.12,
   cp312/win_amd64), including the CUDA-index torch wheel
-  (`torch==2.14.1+cu130`) and `torchaudio==2.11.1` (PyPI). No unpinned
+  (`torch==2.14.1+cu130`) and `torchaudio==2.11.1` (PyPI), plus the
+  enrollment path's `whisper-timestamped==1.14.2` (the version
+  OpenVoice's pinned `requirements.txt` pins; `se_extractor.py`
+  imports it at module level) and its four resolved deps
+  (`openai-whisper==20250625`, `dtw-python==1.9.0`, `Cython==3.3.1`,
+  `tiktoken==0.14.0`) — the first enrollment failed on the missing
+  import before these were added (fix round 6 live-proof find). No unpinned
   `pip install <name>` remains in the setup. The lock SHA-256
-  (`26ee751a66977300d87ff9b1973056a22732c7268696a57946ae0394ca508d7b`)
+  (`73a4c2524468753bbfcb961d195aef5a0660f2b7d51574911e63830af42d4a07`)
   is recorded in the receipt as `requirements_lock_sha256`; a `-Clean`
   setup run rebuilds the venv from the lock from scratch.
 - **Code install (fix round 3, lock in fix round 6):** the pinned MeloTTS

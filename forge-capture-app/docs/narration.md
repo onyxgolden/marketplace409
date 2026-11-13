@@ -603,14 +603,22 @@ implemented literally per the verdict:
 - **Pinned lock file (reproducible deps).** Setup installs every
   Python artifact from `tools/narration/requirements-lock.txt`
   with `pip install --require-hashes` — exact versions + SHA-256
-  hashes for all 128 packages of the proven working venv (Python
+  hashes for all 133 packages of the proven working venv (Python
   3.12, cp312/win_amd64), including the CUDA-index torch wheel
   (`torch==2.14.1+cu130`, hash verified on the box) and
   `torchaudio==2.11.1` (PyPI — the cu130 index carries no plain
-  2.11.1). No unpinned `pip install <name>` remains in the setup.
+  2.11.1). The lock also carries the enrollment path's
+  `whisper-timestamped==1.14.2` (the version OpenVoice's pinned
+  `requirements.txt` pins; its module-level import in
+  `se_extractor.py` makes it a hard enrollment dependency) plus its
+  four resolved deps (`openai-whisper==20250625`,
+  `dtw-python==1.9.0`, `Cython==3.3.1`, `tiktoken==0.14.0`) — the
+  first enrollment failed on the missing import before this was
+  added (fix round 6 live-proof find). No unpinned `pip install
+  <name>` remains in the setup.
   The git-commit-pinned installs (OpenVoice, MeloTTS code) are not
   in the lock — the commit IS their hash. The lock SHA-256
-  (`26ee751a66977300d87ff9b1973056a22732c7268696a57946ae0394ca508d7b`)
+  (`73a4c2524468753bbfcb961d195aef5a0660f2b7d51574911e63830af42d4a07`)
   is recorded in the setup receipt as `requirements_lock_sha256`.
   The clean-setup proof is a setup run with the `-Clean` switch,
   which removes the venv and rebuilds it from the lock from scratch.
