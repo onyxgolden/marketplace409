@@ -525,13 +525,14 @@ it is missing. The MeloTTS code itself could not install on Python
 headers that are not on the box; tokenizers 0.13.3 has no cp312
 wheel) — setup installs the pinned MeloTTS code `--no-deps` and only
 the runtime deps the EN path executes (`cached_path`, `transformers`,
-`g2p_en`, `pykakasi`, `num2words`, `jamo`, `mecab-python3` +
-`unidic-lite`, `fugashi` — the last three are required at import
-because `japanese.py` does `import MeCab` and instantiates the
-Japanese BERT tokenizer at module level; the pinned fugashi 1.3.0
-has no cp312 wheel, so the latest wheel build is installed instead
-— plus the NLTK cmudict data for `g2p_en`), then verifies `from
-melo.api import TTS` imports and `G2p()` loads before proceeding.
+`g2p_en`, `pykakasi`, `num2words`, `jamo`, `anyascii`,
+`mecab-python3` + `unidic-lite`, `fugashi`, `gruut` + `gruut-ipa` —
+required at import through `cleaner.py`'s eager language-module
+imports; the list was verified with a full AST walk of the pinned
+source after two rounds missed imports a line grep couldn't see —
+plus the NLTK cmudict + perceptron-tagger data for `g2p_en`), then
+verifies `from melo.api import TTS` imports and `G2p()` loads before
+proceeding.
 
 Copy the sidecar into place first:
 

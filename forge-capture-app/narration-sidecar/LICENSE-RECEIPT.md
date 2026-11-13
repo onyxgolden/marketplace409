@@ -82,12 +82,13 @@ so it is not an admissible fallback.
   (fugashi 1.3.0 needs MeCab C headers; tokenizers 0.13.3 has no
   cp312 wheel) — setup installs the pinned MeloTTS code `--no-deps`
   plus only the EN-path runtime deps (`cached_path`, `transformers`,
-  `g2p_en`, `pykakasi`, `num2words`, `jamo`, `mecab-python3` +
-  `unidic-lite`, `fugashi` — the last three are required at import
-  because `japanese.py` does `import MeCab` and instantiates the
-  Japanese BERT tokenizer at module level; the pinned fugashi 1.3.0
-  has no cp312 wheel, so the latest wheel build is installed instead
-  — plus NLTK cmudict data) and verifies the import before proceeding.
+  `g2p_en`, `pykakasi`, `num2words`, `jamo`, `anyascii`,
+  `mecab-python3` + `unidic-lite`, `fugashi`, `gruut` + `gruut-ipa`
+  — the last five are required at import through `cleaner.py`'s
+  eager language-module imports; the list was verified with a full
+  AST walk of the pinned source after two rounds missed imports a
+  line grep couldn't see — plus NLTK cmudict + perceptron-tagger
+  data) and verifies the import before proceeding.
 
 ## FFmpeg (render assembly)
 
