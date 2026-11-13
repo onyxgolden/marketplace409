@@ -2,6 +2,11 @@ import { redirect, notFound } from "next/navigation";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { getWorkPackageDetail } from "@/application/work-management/workPackages";
+import {
+  parseForgeProjectParam,
+  resolvePlannerProjectScope,
+  SCOPE_KINDS,
+} from "@/application/work-management/projectScope";
 import { listLinks } from "@/application/work-management/workLinks";
 import WorkPackageDetailClient from "@/components/work-management/WorkPackageDetailClient";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
@@ -27,10 +32,27 @@ export default async function WorkPackagePage({ params, searchParams }) {
   const workspaceParam = requestedWorkspace && ownerId === requestedWorkspace ? requestedWorkspace : null;
 
   const { packageId } = await params;
+  // PR B: the detail view is project-scoped like the list. No project
+  // selected (or an invalid/archived/cross-owner hint) sends the user
+  // to the list, which is the chooser — the detail never renders
+  // owner-wide, and a package outside the scope is a 404 (same branch
+  // as a nonexistent id, so existence is never leaked).
+  const rawForgeProject = typeof query.forgeProject === "string" ? query.forgeProject : null;
+  const scopeResult = await resolvePlannerProjectScope(forgeApplication.supabaseClient, {
+    ownerId,
+    forgeProject: parseForgeProjectParam(rawForgeProject),
+  });
+  if (!scopeResult.ok || scopeResult.scope.kind === SCOPE_KINDS.NONE) {
+    const back = new URLSearchParams();
+    if (workspaceParam) back.set("workspace", workspaceParam);
+    redirect(back.toString() ? `/forge/work?${back.toString()}` : "/forge/work");
+  }
+  const scope = scopeResult.scope;
   const detail = await getWorkPackageDetail(forgeApplication.supabaseClient, {
     ownerId,
     actor: forgeApplication.user.id,
     packageId,
+    scope,
   });
   // D8(b): a nonexistent id (or a package RLS hides from this actor — same
   // branch for both, so existence is never leaked to an unauthorized
@@ -55,7 +77,14 @@ export default async function WorkPackagePage({ params, searchParams }) {
         workspaces={workspaces}
         currentOwnerId={ownerId}
         basePath={`/forge/work/${packageId}`}
-        preserveParams={{ tab: activeTab !== "overview" ? activeTab : "" }}
+        preserveParams={{
+          tab: activeTab !== "overview" ? activeTab : "",
+          forgeProject: scope.kind === SCOPE_KINDS.PROJECT
+            ? scope.projectId
+            : scope.kind === SCOPE_KINDS.UNASSIGNED
+              ? "unassigned"
+              : "",
+        }}
       />
       <WorkPackageDetailClient
         key={packageId}

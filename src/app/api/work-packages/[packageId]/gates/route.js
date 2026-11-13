@@ -1,5 +1,5 @@
 import { getPackageReadiness, runGateEvaluations } from "@/application/work-management/workGates";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 
 // GET: current readiness of the package — per-gate satisfaction + overall.
 // The package type is derived from the stored package record, never from
@@ -12,6 +12,8 @@ export async function GET(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const readiness = await getPackageReadiness(auth.db, {
       ownerId: auth.ownerId, packageId,
       nowIso: new Date().toISOString(),
@@ -31,6 +33,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const results = await runGateEvaluations(auth.db, {
       ownerId: auth.ownerId, packageId,
       nowIso: new Date().toISOString(),

@@ -384,7 +384,7 @@ describe("PropertyLedgerPage work packages section (Slice 2)", () => {
       if (url === "/api/rental/property-ledger?propertyId=prop-1") {
         return { ok: true, json: async () => ledgerPayload };
       }
-      if (url === "/api/work-packages?propertyId=prop-1") {
+      if (url === "/api/rental/work-packages?propertyId=prop-1") {
         if (failPackages) {
           return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
         }

@@ -1,5 +1,5 @@
 import { freezeBaseline } from "@/application/work-management/workScheduling";
-import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
 
 // POST { baseline: { start, finish, hours, cost } }: freeze a new baseline
 // version. Baselines are immutable — this always inserts a new version.
@@ -8,6 +8,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const b = body.baseline || {};
     if (!b.start || !b.finish || b.hours == null || b.cost == null) {

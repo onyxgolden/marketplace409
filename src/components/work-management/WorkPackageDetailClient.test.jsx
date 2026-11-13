@@ -112,6 +112,15 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
         }),
       };
     }
+    // PR B: the project-link block fetches the hierarchy tree (and the
+    // current assignment's name when the package is linked). An empty
+    // tree keeps the block quiet — no error alert — in these tests.
+    if (typeof url === "string" && url.startsWith("/api/forge/hierarchy?projectId=")) {
+      return { ok: true, json: async () => ({ selection: null }) };
+    }
+    if (url === "/api/forge/hierarchy") {
+      return { ok: true, json: async () => ({ selector: { ownerId: "owner_1", clients: [] } }) };
+    }
     throw new Error(`unexpected fetch ${url}`);
   }));
   return { patches, deletes, freezeRequests };
@@ -783,7 +792,16 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
       if (typeof url === "string" && url.startsWith("/api/work-links")) return { ok: true, json: async () => ({ links: [], documents: [] }) };
       if (typeof url === "string" && url.startsWith("/api/work-documents")) return { ok: true, json: async () => ({ documents: [] }) };
       if (typeof url === "string" && url.startsWith("/api/forge/designer")) return { ok: true, json: async () => ({ projects: [] }) };
-      throw new Error(`unexpected fetch ${url}`);
+      // PR B: the project-link block fetches the hierarchy tree (and the
+    // current assignment's name when the package is linked). An empty
+    // tree keeps the block quiet — no error alert — in these tests.
+    if (typeof url === "string" && url.startsWith("/api/forge/hierarchy?projectId=")) {
+      return { ok: true, json: async () => ({ selection: null }) };
+    }
+    if (url === "/api/forge/hierarchy") {
+      return { ok: true, json: async () => ({ selector: { ownerId: "owner_1", clients: [] } }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
     }));
 
     const container = document.createElement("div");

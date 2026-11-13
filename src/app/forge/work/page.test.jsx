@@ -3,10 +3,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 
 // D5: /forge/work list filters. The page keeps the same owner-scoped read
-// (listWorkPackages with ownerId only) and filters the loaded array in
-// memory from allowlisted ?status / ?propertyId params. These tests mock
-// the auth boundary and the service reads, then render the server
-// component's markup directly — the same pattern as the health page test.
+// (listWorkPackages with ownerId + an explicit project scope) and filters
+// the loaded array in memory from allowlisted ?status / ?propertyId params.
+// These tests mock the auth boundary and the service reads, then render the
+// server component's markup directly — the same pattern as the health page
+// test.
+//
+// PR B: the list is project-scoped — renders default to
+// ?forgeProject=unassigned (the inbox), so the grid renders; a render
+// with no scope shows the project chooser instead (see the chooser test
+// at the end of the D5 suite). Detail / new-package / clear-filters links
+// carry the active scope in their query.
 
 const mocks = vi.hoisted(() => ({
   redirect: vi.fn((href) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
@@ -45,7 +52,10 @@ const PACKAGES = [
 ];
 
 async function renderPage(params = {}) {
-  const element = await WorkPackagesPage({ searchParams: Promise.resolve(params) });
+  // PR B: the list renders under an explicit scope — default to the
+  // Unassigned inbox. Pass forgeProject: undefined explicitly to render
+  // the no-scope chooser state.
+  const element = await WorkPackagesPage({ searchParams: Promise.resolve({ forgeProject: "unassigned", ...params }) });
   return renderToStaticMarkup(element);
 }
 
@@ -69,9 +79,20 @@ describe("/forge/work list filters (D5)", () => {
     expect(html).toContain("Decker turnover");
     expect(html).toContain("Kent kitchen");
     expect(html).toContain("Unassigned repairs");
-    // Same owner-scoped read as before filtering existed: ownerId only,
-    // no status/property filter pushed into the query.
-    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1" });
+    // Same owner-scoped read as before filtering existed: ownerId plus
+    // the explicit Unassigned scope, no status/property filter pushed
+    // into the query.
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "unassigned" } });
+  });
+
+  it("shows the project chooser when no scope is selected (fix round 1)", async () => {
+    const html = await renderPage({ forgeProject: undefined });
+    expect(html).toContain("Choose a project to see its work packages.");
+    expect(html).not.toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    // The read still runs, but under NO_SCOPE — the service answers
+    // with the chooser state, never an all-projects aggregate.
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "none" } });
   });
 
   it("treats status=all and propertyId=all as no filter", async () => {
@@ -134,7 +155,7 @@ describe("/forge/work list filters (D5)", () => {
     mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: PACKAGES });
     const noMatchHtml = await renderPage({ status: "verified_closed" });
     expect(noMatchHtml).toContain("No work packages match these filters");
-    expect(noMatchHtml).toContain('href="/forge/work"');
+    expect(noMatchHtml).toContain('href="/forge/work?forgeProject=unassigned"');
     expect(noMatchHtml).toContain("Clear filters");
   });
 
@@ -163,9 +184,9 @@ describe("/forge/work list filters (D5)", () => {
 
   it("preserves the new-package and detail links", async () => {
     const html = await renderPage();
-    expect(html).toContain('href="/forge/work/new"');
-    expect(html).toContain('href="/forge/work/wp_1"');
-    expect(html).toContain('href="/forge/work/wp_2"');
+    expect(html).toContain('href="/forge/work/new?forgeProject=unassigned"');
+    expect(html).toContain('href="/forge/work/wp_1?forgeProject=unassigned"');
+    expect(html).toContain('href="/forge/work/wp_2?forgeProject=unassigned"');
   });
 
   // D7's other half (stale Status/Property select values left in the DOM
@@ -248,9 +269,9 @@ describe("/forge/work dense grid (UI-density redesign)", () => {
 
   it("keeps rows click-to-open with real detail links", async () => {
     const html = await renderPage();
-    expect(html).toContain('href="/forge/work/wp_1"');
-    expect(html).toContain('href="/forge/work/wp_2"');
-    expect(html).toContain('href="/forge/work/wp_3"');
+    expect(html).toContain('href="/forge/work/wp_1?forgeProject=unassigned"');
+    expect(html).toContain('href="/forge/work/wp_2?forgeProject=unassigned"');
+    expect(html).toContain('href="/forge/work/wp_3?forgeProject=unassigned"');
   });
 
   it("renders the filters as a compact bar, not a bordered card", async () => {
@@ -276,12 +297,14 @@ describe("/forge/work workspace switcher (UI-density redesign)", () => {
     expect(html).toContain("Workspace:");
     expect(html).toContain("My workspace");
     expect(html).toContain("Shared workspace (co owner)");
-    expect(html).toContain('href="/forge/work?workspace=owner_2"');
+    // The switcher preserves the active project scope in its links
+    // (rendered HTML escapes & as &amp; in href attributes).
+    expect(html).toContain('href="/forge/work?forgeProject=unassigned&amp;workspace=owner_2"');
     expect(html).toContain('aria-current="page"');
     // The switch passes the requested workspace through to auth.
     expect(mocks.createAuthenticatedForgeApplication).toHaveBeenCalledWith({ requestedOwnerId: "owner_2" });
     // And the resolved workspace scopes the read.
-    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_2" });
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_2", scope: { kind: "unassigned" } });
   });
 
   it("carries the workspace selection through row links, the new-package link, and the filter form", async () => {
@@ -290,8 +313,8 @@ describe("/forge/work workspace switcher (UI-density redesign)", () => {
       { ownerId: "owner_2", role: "co_owner", label: "Shared workspace" },
     ]);
     const html = await renderPage({ workspace: "owner_2" });
-    expect(html).toContain('href="/forge/work/wp_1?workspace=owner_2"');
-    expect(html).toContain('href="/forge/work/new?workspace=owner_2"');
+    expect(html).toContain('href="/forge/work/wp_1?workspace=owner_2&amp;forgeProject=unassigned"');
+    expect(html).toContain('href="/forge/work/new?workspace=owner_2&amp;forgeProject=unassigned"');
     expect(html).toContain('name="workspace" value="owner_2"');
   });
 });

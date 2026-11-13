@@ -16,7 +16,9 @@ import { workAuth } from "./_lib/auth.js";
 import { createWorkPackage, listWorkPackages } from "@/application/work-management/workPackages";
 import { GET, POST } from "./route.js";
 
-const AUTH = { db: {}, ownerId: "owner_1", actor: "user_9" };
+const NO_SCOPE = { kind: "none" };
+const PROJECT_SCOPE = { kind: "project", projectId: "forge_prj_1" };
+const AUTH = { db: {}, ownerId: "owner_1", actor: "user_9", scope: NO_SCOPE };
 function request(body, method = "GET", query = "") {
   const url = method === "GET" ? `https://test/api/work-packages${query}` : "https://test/api/work-packages";
   return new Request(url, {
@@ -43,7 +45,7 @@ describe("GET /api/work-packages", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.packages).toHaveLength(1);
-    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined, propertyId: undefined });
+    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined, propertyId: undefined, mode: undefined, scope: NO_SCOPE });
   });
   it("passes the property filter through to the service", async () => {
     listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
@@ -51,7 +53,38 @@ describe("GET /api/work-packages", () => {
     expect(response.status).toBe(200);
     expect(listWorkPackages).toHaveBeenCalledWith({}, {
       ownerId: "owner_1", status: undefined, packageType: undefined, propertyId: "1900-west-decker",
+      mode: undefined, scope: NO_SCOPE,
     });
+  });
+  // Fix round 1 (PR #799 P1): the route always passes the validated
+  // scope workAuth resolved. A request that omits ?forgeProject=
+  // hands the service NO_SCOPE — the service answers with the chooser
+  // state, never an owner-wide list. There is no path through this
+  // route that reaches a package list without a scope.
+  it("an omitted forgeProject hands the service NO_SCOPE, never an unscoped list", async () => {
+    listWorkPackages.mockResolvedValue({ ok: true, scope: "none", packages: [], unassignedCount: 2 });
+    const response = await GET(request(null, "GET", ""));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.packages).toHaveLength(0);
+    expect(listWorkPackages).toHaveBeenCalledWith({}, expect.objectContaining({ scope: NO_SCOPE }));
+  });
+  it("passes a selected project scope through to the service", async () => {
+    workAuth.mockResolvedValueOnce({ ...AUTH, scope: PROJECT_SCOPE });
+    listWorkPackages.mockResolvedValue({ ok: true, scope: "project", packages: [{ id: "forge_wp_1", code: "WP-0001" }] });
+    const response = await GET(request(null, "GET", "?forgeProject=forge_prj_1"));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.packages).toHaveLength(1);
+    expect(listWorkPackages).toHaveBeenCalledWith({}, expect.objectContaining({ scope: PROJECT_SCOPE }));
+  });
+  it("an invalid forgeProject hint fails with the scope error", async () => {
+    workAuth.mockResolvedValueOnce({ ...AUTH, scopeError: { ok: false, httpStatus: 400, error: "That project link is not valid." } });
+    const response = await GET(request(null, "GET", "?forgeProject=not-a-project"));
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/not valid/);
+    expect(listWorkPackages).not.toHaveBeenCalled();
   });
   it("creates a package with a property assignment", async () => {
     createWorkPackage.mockResolvedValue({ ok: true, package: { id: "forge_wp_1", code: "WP-0007", property_id: "1900-w-decker" } });

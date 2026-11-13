@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
 import { retireControlEstimate } from "@/application/work-management/changeOrders";
 
 // POST /api/work-packages/[packageId]/control-estimate/retire
@@ -8,6 +8,8 @@ export async function POST(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   try {
     const body = await readJson(request);
     const result = await retireControlEstimate(auth.db, {

@@ -19,6 +19,7 @@ import {
   parsePlannedBudgetToCents,
 } from "@/domains/work-management/packageCosts.js";
 import { getPlanningSummary, mapPlanningProcessRpcError } from "./planningProcess.js";
+import { fetchScopedPackage, constrainPackageQuery, SCOPE_KINDS } from "./projectScope.js";
 
 const TABLES = Object.freeze({
   packages: "forge_work_packages",
@@ -40,7 +41,20 @@ function packageCode(n) {
   return `WP-${String(n).padStart(4, "0")}`;
 }
 
-async function getPackage(db, ownerId, packageId) {
+// PR B: the single parent-chain proof for every Planner surface.
+// When `scope` is given, the package must belong to that scope — a
+// package in another project (or Unassigned, when a project is
+// selected) reads exactly like a nonexistent package (null -> 404),
+// so existence is never leaked across projects. When `scope` is
+// omitted, the owner-only lookup runs: only internal server-side
+// single-row callers omit it — the import apply path transitioning a
+// package it created a moment ago (born Unassigned, so a project
+// scope would 404 it). Every HTTP route passes an explicit scope;
+// the list and the scope proof fail closed without one (fix round 1).
+async function getPackage(db, ownerId, packageId, scope) {
+  if (scope) {
+    return fetchScopedPackage(db, { ownerId, packageId, scope });
+  }
   const { data, error } = await db.from(TABLES.packages).select("*")
     .eq("owner_id", ownerId).eq("id", packageId).maybeSingle();
   if (error) throw error;
@@ -142,6 +156,14 @@ async function resolvePackageProperty(db, ownerId, rawValue) {
 }
 
 export async function createWorkPackage(db, { ownerId, actor, input }) {
+  // PR B: a package is born Unassigned (forge_project_id NULL). The
+  // project link is an explicit, audited assign operation afterwards
+  // (forge_work_package_set_project) — never a create-time field, so a
+  // create can never silently attach to a project the caller did not
+  // select, and bulk assignment cannot ride on creation.
+  if (input.forge_project_id !== undefined && input.forge_project_id !== null) {
+    return { ok: false, httpStatus: 400, error: "Assign a project after creating the package." };
+  }
   const validation = validatePackageInput(input);
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
@@ -229,8 +251,15 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
   return { ok: true, package: data };
 }
 
-export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function updateWorkPackage(db, { ownerId, actor, packageId, patch, scope }) {
+  // PR B: the project link never travels via the generic PATCH — it
+  // goes through forge_work_package_set_project only. Reject it here
+  // instead of silently dropping it, so a client that sends it learns
+  // the right operation instead of believing the link saved.
+  if (patch.forge_project_id !== undefined) {
+    return { ok: false, httpStatus: 400, error: "Project links change only through the assign/unassign action, not by editing the package." };
+  }
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   if (isTerminalStatus(pkg.status)) {
     return { ok: false, httpStatus: 409, error: `Package is ${pkg.status}; reopen it before editing.` };
@@ -480,8 +509,8 @@ function hasVerifierAuthority(pkg, actor, ownerId) {
   return Boolean(pkg.designated_verifier && actor === pkg.designated_verifier);
 }
 
-export async function transitionWorkPackage(db, { ownerId, actor, packageId, to, ctx = {} }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function transitionWorkPackage(db, { ownerId, actor, packageId, to, ctx = {}, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
 
   // ---- Server-side authoritative context (P1-1). The route forwards the
@@ -726,14 +755,14 @@ async function computeDeletionEligibility(db, { ownerId, actor, pkg }) {
   };
 }
 
-export async function getWorkPackageDeletionEligibility(db, { ownerId, actor, packageId }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function getWorkPackageDeletionEligibility(db, { ownerId, actor, packageId, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   const eligibility = await computeDeletionEligibility(db, { ownerId, actor, pkg });
   return { ok: true, eligibility };
 }
 
-export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirmCode, expectedVersion }) {
+export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirmCode, expectedVersion, scope }) {
   if (typeof confirmCode !== "string" || confirmCode.length === 0) {
     return { ok: false, httpStatus: 400, error: "Type the package code to confirm deletion." };
   }
@@ -744,6 +773,18 @@ export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirm
   // mutation time — this check is never the authority.
   if (actor !== ownerId) {
     return { ok: false, httpStatus: 403, error: "Only the workspace owner can delete a work package." };
+  }
+  // PR B: prove the package is in the active scope before the delete
+  // RPC runs — the RPC enforces owner authority, not project scope.
+  // A package outside the scope reads as not found (non-disclosing).
+  // No scope (internal caller only — every HTTP route passes one)
+  // means the owner-only lookup: no extra read, the RPC is the
+  // authority as before.
+  if (scope) {
+    const scopedPkg = await getPackage(db, ownerId, packageId, scope);
+    if (!scopedPkg) {
+      return { ok: false, httpStatus: 404, error: "Work package not found." };
+    }
   }
   const { data, error } = await db.rpc("forge_work_delete_empty_draft_package", {
     p_owner_id: ownerId,
@@ -782,8 +823,8 @@ export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirm
   return { ok: true, deletion: data.deletion || null };
 }
 
-export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function getWorkPackageDetail(db, { ownerId, packageId, actor, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   const [transitions, attestations, baselines, changes, observations] = await Promise.all([
     db.from(TABLES.transitions).select("*").eq("owner_id", ownerId).eq("package_id", packageId).order("at", { ascending: false }),
@@ -829,13 +870,33 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
   return result;
 }
 
-export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode }) {
+export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode, scope }) {
+  // PR B fix round 1: the list is project-scoped, always.
+  // - scope undefined: treated exactly like NO_SCOPE — the chooser
+  //   state (an empty list plus the Unassigned count), never an
+  //   all-projects aggregate. The owner-wide branch is gone: no HTTP
+  //   route may reach an unscoped list by omitting ?forgeProject=.
+  //   The Rental property ledger reads through its own explicit
+  //   boundary instead (listWorkPackagesForRentalLedger, called only
+  //   from /api/rental/work-packages).
+  // - NO_SCOPE (explicit, no project selected): the chooser state —
+  //   an empty list plus the Unassigned count — never an
+  //   all-projects aggregate.
+  // - PROJECT / UNASSIGNED: only packages in that scope.
+  if (scope === undefined || scope.kind === SCOPE_KINDS.NONE) {
+    const { count, error: countError } = await db.from(TABLES.packages)
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", ownerId).is("forge_project_id", null);
+    if (countError) throw countError;
+    return { ok: true, scope: "none", packages: [], unassignedCount: count ?? 0 };
+  }
   // UI-density redesign: the dense grid also shows the estimate (Budget /
   // Actual column reads planned_cost_cents pre-slice-8, Actual blank) and
   // the Owner team (responsible_party.display_name, written by the create
   // form as { domain, type, display_name }).
-  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,updated_at")
+  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,updated_at,forge_project_id")
     .eq("owner_id", ownerId).order("updated_at", { ascending: false });
+  q = constrainPackageQuery(q, scope);
   if (status) q = q.eq("status", status);
   if (packageType) q = q.eq("package_type", packageType);
   // Mode filter: never a bulk rewrite — a pure read-side narrowing of
@@ -847,6 +908,31 @@ export async function listWorkPackages(db, { ownerId, status, packageType, prope
   // packages — alias-tagged submissions were normalized at write, and
   // unassigned (NULL) rows never match an equality filter.
   if (propertyId) q = q.eq("property_id", canonicalPropertySlug(propertyId));
+  const { data, error } = await q;
+  if (error) throw error;
+  return { ok: true, scope: scope.kind, packages: data || [] };
+}
+
+// PR B fix round 1 — the Rental property ledger's read boundary.
+// This is the ONLY owner-wide work-package list left, and it is NOT
+// a Planner path: it is called only from GET /api/rental/work-packages
+// (a separate explicit Rental API boundary), never from the Planner
+// list route. It answers one question — "which packages belong to
+// this canonical property in this workspace?" — for the read-only
+// ledger section on the Rental property page. It takes no project
+// scope (Rental has no project selection until PR F scopes it), it
+// filters by the exact canonical property slug, and it returns the
+// same row shape the ledger renders (id, code, title, status).
+// A caller cannot reach it by omitting ?forgeProject= from the
+// Planner route: that route now fails closed to the chooser state.
+export async function listWorkPackagesForRentalLedger(db, { ownerId, propertyId }) {
+  if (!propertyId || String(propertyId).trim() === "") {
+    return { ok: false, httpStatus: 400, error: "A property is required to list its work packages." };
+  }
+  const q = db.from(TABLES.packages).select("id,code,title,status")
+    .eq("owner_id", ownerId)
+    .eq("property_id", canonicalPropertySlug(propertyId))
+    .order("updated_at", { ascending: false });
   const { data, error } = await q;
   if (error) throw error;
   return { ok: true, packages: data || [] };
@@ -876,8 +962,8 @@ export async function listPackagePropertyOptions(db, { ownerId }) {
   return { ok: true, properties };
 }
 
-export async function recordGateAttestation(db, { ownerId, actor, packageId, gate, statement, notApplicable, naReason }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function recordGateAttestation(db, { ownerId, actor, packageId, gate, statement, notApplicable, naReason, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   // Gate keys come from the canonical set (WP_GATES) — the UI drives its
   // selector from defaultGatesFor(package_type), and the server rejects
@@ -902,8 +988,8 @@ export async function recordGateAttestation(db, { ownerId, actor, packageId, gat
   return { ok: true, attestation: data };
 }
 
-export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membership }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membership, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   if (!Array.isArray(membership) || membership.length === 0) {
     return { ok: false, httpStatus: 400, error: "A baseline needs at least one scope item." };
@@ -933,8 +1019,8 @@ export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membe
   return { ok: true, baseline: data.baseline };
 }
 
-export async function proposeScopeChange(db, { ownerId, actor, packageId, baselineVersion, changeType, description }) {
-  const pkg = await getPackage(db, ownerId, packageId);
+export async function proposeScopeChange(db, { ownerId, actor, packageId, baselineVersion, changeType, description, scope }) {
+  const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   if (!pkg.scope_baseline_id) {
     return { ok: false, httpStatus: 409, error: "Freeze a scope baseline before proposing changes." };
@@ -960,9 +1046,20 @@ export async function proposeScopeChange(db, { ownerId, actor, packageId, baseli
 // baseline, advances the package pointer, and marks the change — all in ONE
 // transaction. Any failure rolls back every row; a racing rejection and
 // approval cannot both land.
-export async function decideScopeChange(db, { ownerId, actor, changeId, approve, newMembership }) {
+export async function decideScopeChange(db, { ownerId, actor, changeId, approve, newMembership, scope }) {
   if (approve && (!Array.isArray(newMembership) || newMembership.length === 0)) {
     return { ok: false, httpStatus: 400, error: "Approving a change requires the new membership list." };
+  }
+  // PR B: the decide RPC resolves by change id only, so prove the
+  // change's package is in the active scope first. A change whose
+  // package is outside the scope reads as not found (non-disclosing).
+  if (scope) {
+    const { data: changeRow, error: changeError } = await db.from(TABLES.changes)
+      .select("package_id").eq("owner_id", ownerId).eq("id", changeId).maybeSingle();
+    if (changeError) throw changeError;
+    if (!changeRow) return { ok: false, httpStatus: 404, error: "Scope change not found." };
+    const scopedPkg = await getPackage(db, ownerId, changeRow.package_id, scope);
+    if (!scopedPkg) return { ok: false, httpStatus: 404, error: "Scope change not found." };
   }
   const { data, error } = await db.rpc("forge_work_decide_scope_change", {
     p_owner_id: ownerId, p_change_id: changeId,
@@ -1039,9 +1136,16 @@ export async function createLocation(db, { ownerId, actor, input }) {
   return { ok: true, location: data };
 }
 
-export async function recordInspectionObservation(db, { ownerId, actor, input }) {
+export async function recordInspectionObservation(db, { ownerId, actor, input, scope }) {
   if (!input.package_id) {
     return { ok: false, httpStatus: 400, error: "package_id is required." };
+  }
+  // PR B: prove the package is in the active scope before inserting
+  // a child observation under it — a guessed package id outside the
+  // scope must not gain a child row (or reveal the package exists).
+  if (scope) {
+    const scopedPkg = await getPackage(db, ownerId, input.package_id, scope);
+    if (!scopedPkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   }
   const now = new Date().toISOString();
   const { data, error } = await db.from(TABLES.observations).insert({

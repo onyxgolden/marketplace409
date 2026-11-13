@@ -7,6 +7,7 @@
 // per-row and do not stop the rest.
 import { NextResponse } from "next/server";
 import { workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
+import { SCOPE_KINDS, provePackageInScope } from "@/application/work-management/projectScope";
 import {
   IMPORT_SOURCE_SYSTEMS,
   validateAndPlanWorkPackageImport,
@@ -43,7 +44,23 @@ export async function POST(request) {
     if (rows.length > MAX_IMPORT_ROWS) {
       return NextResponse.json({ error: `This import has ${rows.length} rows — split it into files of ${MAX_IMPORT_ROWS} rows or fewer.` }, { status: 400 });
     }
-    const context = await loadImportContext(auth.db, { ownerId: auth.ownerId, kind, packageId });
+    // PR B fix round 1: same scoping as preview, and then some — the
+    // confirm requires an explicit scope (a request without
+    // ?forgeProject= is refused here, 400, before any matching or
+    // applying), and for a step import the target package's membership
+    // in that scope is re-proved right before applying: the plan was
+    // built against the preview-time proof, and a package that left
+    // the scope since then must not receive steps. There is no
+    // owner-wide match pool or apply path anymore.
+    if (auth.scopeError) return fail(auth.scopeError);
+    if (auth.scope.kind === SCOPE_KINDS.NONE) {
+      return NextResponse.json(
+        { error: "Choose a project (or Unassigned) before importing." },
+        { status: 400 },
+      );
+    }
+    const runScope = auth.scope;
+    const context = await loadImportContext(auth.db, { ownerId: auth.ownerId, kind, packageId, scope: runScope });
     if (!context.ok) return fail(context);
     const plan = validateAndPlanWorkPackageImport({
       kind,
@@ -61,6 +78,10 @@ export async function POST(request) {
         errors: plan.errors,
       }, { status: 400 });
     }
+    if (kind === "steps") {
+      const proof = await provePackageInScope(auth.db, { ownerId: auth.ownerId, packageId, scope: runScope });
+      if (!proof.ok) return fail(proof);
+    }
     const results = await applyWorkPackageImport(auth.db, {
       ownerId: auth.ownerId,
       actor: auth.actor,
@@ -70,6 +91,7 @@ export async function POST(request) {
       sourceSystem,
       sourceTrackingAvailable: context.sourceTrackingAvailable,
       mode,
+      scope: runScope,
     });
     return ok({
       success: true,

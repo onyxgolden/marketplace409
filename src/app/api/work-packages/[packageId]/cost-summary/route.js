@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError } from "../../_lib/auth.js";
 import { getPackageCostSummary } from "@/application/work-management/packageCosts";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await getPackageCostSummary(auth.db, {
       ownerId: auth.ownerId,
       packageId,

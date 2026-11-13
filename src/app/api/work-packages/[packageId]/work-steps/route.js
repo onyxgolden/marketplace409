@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
 import { listWorkSteps, createWorkStep } from "@/application/work-management/workSteps";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const search = new URL(request.url).searchParams;
     const includeRetiredParam = search.get("includeRetired");
     const retiredOnlyParam = search.get("retiredOnly");
@@ -33,6 +35,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createWorkStep(auth.db, {
       ownerId: auth.ownerId,

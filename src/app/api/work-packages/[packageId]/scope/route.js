@@ -1,5 +1,5 @@
 import { freezeScopeBaseline, proposeScopeChange } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 
 // GET: current baseline (derived head of the supersession chain) + changes.
 // POST { action: "freeze", membership } — freeze the initial baseline.
@@ -10,6 +10,8 @@ export async function GET(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const [baselines, changes] = await Promise.all([
       auth.db.from("forge_work_scope_baselines").select("*")
         .eq("owner_id", auth.ownerId).eq("package_id", packageId).order("version", { ascending: true }),
@@ -29,6 +31,8 @@ export async function POST(request, { params }) {
     const auth = await workAuth(request);
     if (auth.error) return auth.error;
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     if (body.action === "freeze") {
       const result = await freezeScopeBaseline(auth.db, {

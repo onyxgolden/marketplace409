@@ -5,7 +5,7 @@
 // reason, attestation) through the guarded RPC. The request ID is the
 // idempotency key: the client sends one fresh UUID per logical change;
 // the route generates one when omitted so every event carries one.
-import { workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../_lib/auth.js";
 import { getPlanningChecklist, setPlanningStepStatus } from "@/application/work-management/planningProcess";
 
 export async function GET(request, { params }) {
@@ -13,6 +13,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const result = await getPlanningChecklist(auth.db, {
       ownerId: auth.ownerId,
       packageId,
@@ -32,6 +34,8 @@ export async function PATCH(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     // Fix round 1, F2: optimistic concurrency is mandatory — a
     // missing/invalid expectedVersion is a 400 here, before the RPC.

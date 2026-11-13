@@ -27,6 +27,7 @@
 // invalidates an in-flight edit.
 import { createWorkPackage, updateWorkPackage, transitionWorkPackage, listPackagePropertyOptions } from "./workPackages.js";
 import { createWorkStep, updateWorkStep, listWorkSteps } from "./workSteps.js";
+import { constrainPackageQuery, provePackageInScope, SCOPE_KINDS } from "./projectScope.js";
 
 // The source-tracking columns exist only once the editable-grid
 // migration has been applied. Probe for them: a missing-column error
@@ -45,12 +46,24 @@ export async function probeSourceTracking(db, ownerId) {
 // columns only when the probe says they exist — selecting them before
 // the migration applies would fail every package import (and the list
 // page, which is why listWorkPackages itself does not select them).
-export async function listPackagesForImport(db, { ownerId }) {
+// PR B fix round 1 (PRB-IMPORT-1): a scoped import run matches/updates
+// only packages already in that scope. A missing or NO_SCOPE scope is
+// refused here (the routes reject it with 400 first; this throw is the
+// tripwire if the function is ever called from anywhere else). There
+// is no owner-wide match pool anymore. Imports never auto-link:
+// created packages are born Unassigned (createWorkPackage rejects
+// forge_project_id outright).
+export async function listPackagesForImport(db, { ownerId, scope }) {
+  if (!scope || scope.kind === SCOPE_KINDS.NONE) {
+    throw new Error("A project scope is required to list packages for import.");
+  }
   const tracked = await probeSourceTracking(db, ownerId);
   const columns = tracked
     ? "id, code, title, status, source_system, source_record_id"
     : "id, code, title, status";
-  const { data, error } = await db.from("forge_work_packages").select(columns).eq("owner_id", ownerId);
+  let q = db.from("forge_work_packages").select(columns).eq("owner_id", ownerId);
+  q = constrainPackageQuery(q, scope);
+  const { data, error } = await q;
   if (error) throw error;
   return { packages: data || [], sourceTrackingAvailable: tracked };
 }
@@ -76,13 +89,24 @@ export async function listStepsForImport(db, { ownerId, packageId }) {
 // Everything the preview/confirm routes need to plan an import:
 // existing rows to match against, property options for matching the
 // Property column, and whether source tracking is available.
-export async function loadImportContext(db, { ownerId, kind, packageId }) {
+// PR B fix round 1: a missing or NO_SCOPE scope is refused (400)
+// before any matching — the match pool is scope-only.
+export async function loadImportContext(db, { ownerId, kind, packageId, scope }) {
+  if (!scope || scope.kind === SCOPE_KINDS.NONE) {
+    return { ok: false, httpStatus: 400, error: "Choose a project (or Unassigned) before importing." };
+  }
   if (kind === "packages") {
     const propertyResult = await listPackagePropertyOptions(db, { ownerId });
     const properties = propertyResult.ok ? propertyResult.properties : [];
-    const { packages, sourceTrackingAvailable } = await listPackagesForImport(db, { ownerId });
+    const { packages, sourceTrackingAvailable } = await listPackagesForImport(db, { ownerId, scope });
     return { ok: true, existingPackages: packages, sourceTrackingAvailable, properties };
   }
+  // Steps import targets one package: prove it is in the active scope
+  // before any step in it is matched or created. The proof runs
+  // unconditionally now — a missing scope is refused above, so there
+  // is no path where a step import skips it.
+  const proof = await provePackageInScope(db, { ownerId, packageId, scope });
+  if (!proof.ok) return proof;
   const tracked = await probeSourceTracking(db, ownerId);
   const stepsResult = await listStepsForImport(db, { ownerId, packageId });
   if (!stepsResult.ok) return stepsResult;
@@ -106,7 +130,7 @@ function sameValue(a, b) {
 
 export async function applyWorkPackageImport(db, {
   ownerId, actor, kind, plan, packageId,
-  sourceSystem = null, sourceTrackingAvailable = false, mode = null,
+  sourceSystem = null, sourceTrackingAvailable = false, mode = null, scope,
 }) {
   const results = { created: [], updated: [], warnings: [], errors: [] };
   const trackSource = sourceTrackingAvailable && sourceSystem;
@@ -141,6 +165,10 @@ export async function applyWorkPackageImport(db, {
         }
         let pkg = created.package;
         if (item.statusTarget && item.statusTarget !== pkg.status) {
+          // No scope here on purpose: this package was created by
+          // this run a moment ago (born Unassigned), so a project
+          // scope would 404 it. The run itself was scope-checked in
+          // loadImportContext; the transition touches only this row.
           const moved = await transitionWorkPackage(db, {
             ownerId, actor, packageId: pkg.id, to: item.statusTarget,
           });
@@ -207,7 +235,7 @@ export async function applyWorkPackageImport(db, {
         }
         let pkg = current;
         if (Object.keys(patch).length > 0) {
-          const updated = await updateWorkPackage(db, { ownerId, actor, packageId: item.id, patch });
+          const updated = await updateWorkPackage(db, { ownerId, actor, packageId: item.id, patch, scope });
           if (!updated.ok) {
             results.errors.push({ rowIndex: item.rowIndex, message: updated.error });
             continue;
@@ -216,7 +244,7 @@ export async function applyWorkPackageImport(db, {
         }
         if (item.statusTarget && item.statusTarget !== pkg.status) {
           const moved = await transitionWorkPackage(db, {
-            ownerId, actor, packageId: item.id, to: item.statusTarget,
+            ownerId, actor, packageId: item.id, to: item.statusTarget, scope,
           });
           if (!moved.ok) {
             results.warnings.push({

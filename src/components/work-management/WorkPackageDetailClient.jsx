@@ -15,6 +15,7 @@ import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
+import WorkPackageProjectLink from "./WorkPackageProjectLink.jsx";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
 import { PLANNING_PROCESS_COMPLEXITIES, complexityLabel } from "@/domains/work-management/planningProcess.js";
 
@@ -325,8 +326,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        // Leave only after the server confirmed the delete.
-        router.push("/forge/work");
+        // Leave only after the server confirmed the delete. Keep the
+        // current scope (workspace + project) so the list lands where
+        // the user was working, not on the chooser.
+        const back = window.location.search;
+        router.push(back ? `/forge/work${back}` : "/forge/work");
         return;
       }
       if (response.status === 409) {
@@ -636,6 +640,22 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             )}
             {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
           </section>
+
+          {/* PR B: the package -> FORGE project assignment. A separate,
+             clearly-delimited block (not folded into the edit form) so
+             the link can never ride along on a generic PATCH — it goes
+             through the audited project-link RPC only. */}
+          <WorkPackageProjectLink
+            packageId={pkg.id}
+            packageCode={pkg.code}
+            currentForgeProjectId={pkg.forge_project_id || null}
+            version={pkg.version}
+            onLinked={(nextPackage) => {
+              if (!nextPackage) return;
+              setPkg(nextPackage);
+              setEditForm(editFormFromPackage(nextPackage));
+            }}
+          />
 
           <section className="rounded-lg border border-slate-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-slate-900">Lifecycle</h2>

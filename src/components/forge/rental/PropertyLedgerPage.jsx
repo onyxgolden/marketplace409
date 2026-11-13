@@ -923,7 +923,10 @@ function PropertyWorkPackages({ propertyId }) {
   // effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/work-packages?propertyId=${encodeURIComponent(propertyId)}`)
+    // PR B fix round 1: the ledger's package read goes through the
+    // explicit Rental boundary (GET /api/rental/work-packages) — the
+    // Planner list route no longer serves unscoped reads.
+    fetch(`/api/rental/work-packages?propertyId=${encodeURIComponent(propertyId)}`)
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Unable to load work packages.");

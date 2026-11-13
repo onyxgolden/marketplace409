@@ -37,6 +37,8 @@ describe("PlannerNavBar", () => {
     expect(hrefs).toContain("/forge/work/documents");
     expect(hrefs).toContain("/forge/work/admin");
     expect(hrefs).toContain("/forge/work/new");
+    // PR B: the Unassigned packages inbox is a main Planner view too.
+    expect(hrefs).toContain("/forge/work?forgeProject=unassigned");
   });
 
   it("marks the current view as the active link", () => {
@@ -71,5 +73,33 @@ describe("PlannerNavBar", () => {
     const { container } = render();
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     for (const href of hrefs) expect(href).not.toContain("workspace=");
+  });
+
+  it("carries the current ?forgeProject= selection onto every link (PR B)", () => {
+    mockSearch = "forgeProject=forge_prj_1";
+    const { container } = render();
+    const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/forge/work?forgeProject=forge_prj_1");
+    expect(hrefs).toContain("/forge/work/documents?forgeProject=forge_prj_1");
+    expect(hrefs).toContain("/forge/work/admin?forgeProject=forge_prj_1");
+    expect(hrefs).toContain("/forge/work/new?forgeProject=forge_prj_1");
+    // The Unassigned entry sets the scope instead of carrying it.
+    expect(hrefs).toContain("/forge/work?forgeProject=unassigned");
+  });
+
+  it("marks the Unassigned inbox active only when its scope is selected (PR B)", () => {
+    mockSearch = "forgeProject=unassigned";
+    const { container } = render();
+    const inboxLink = [...container.querySelectorAll("a")].find(
+      (a) => a.textContent === "Unassigned packages",
+    );
+    expect(inboxLink.getAttribute("href")).toBe("/forge/work?forgeProject=unassigned");
+    expect(inboxLink.getAttribute("aria-current")).toBe("page");
+    const listLink = [...container.querySelectorAll("a")].find(
+      (a) => a.textContent === "Work Packages",
+    );
+    // Same href (the scope is carried), but the list entry is not the
+    // active one while the inbox scope is selected.
+    expect(listLink.getAttribute("aria-current")).toBeNull();
   });
 });

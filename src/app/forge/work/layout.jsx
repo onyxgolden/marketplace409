@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import WorkspaceShell from "@/components/workspace-shell";
 import PlannerNavBar from "@/components/work-management/PlannerNavBar";
+import PlannerProjectScopeBar from "@/components/work-management/PlannerProjectScopeBar";
 
 // Promoted out of Forge's own ForgeApplicationRail into its own sibling
 // workspace (PROMOTED_PREFIXES in ForgeApplicationRail.jsx already includes
@@ -19,6 +20,9 @@ import PlannerNavBar from "@/components/work-management/PlannerNavBar";
 export default function WorkPackagePlannerLayout({ children }) {
   return (
     <WorkspaceShell forgeCommandPalette>
+      <Suspense fallback={null}>
+        <PlannerProjectScopeBar />
+      </Suspense>
       <Suspense fallback={null}>
         <PlannerNavBar />
       </Suspense>

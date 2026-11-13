@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../../../../_lib/auth.js";
 import { resolveRedline } from "@/application/work-management/drawingReviews";
 
 export async function PATCH(request, { params }) {
@@ -6,6 +6,8 @@ export async function PATCH(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, drawingId, reviewId, redlineId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await resolveRedline(auth.db, {
       ownerId: auth.ownerId, packageId, drawingId, reviewId, redlineId, input: body,

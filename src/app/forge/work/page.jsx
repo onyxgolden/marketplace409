@@ -3,6 +3,11 @@ import Link from "next/link";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { listWorkPackages, listPackagePropertyOptions } from "@/application/work-management/workPackages";
+import {
+  parseForgeProjectParam,
+  resolvePlannerProjectScope,
+  SCOPE_KINDS,
+} from "@/application/work-management/projectScope";
 import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
@@ -74,11 +79,33 @@ export default async function WorkPackagesPage({ searchParams }) {
     ? `?workspace=${encodeURIComponent(requestedWorkspace)}`
     : "";
 
+  // PR B: the list is project-scoped. ?forgeProject= is parsed and
+  // validated server-side on every load (unknown / archived /
+  // cross-owner ids fail non-disclosing — never a silent substitute);
+  // no hint means the chooser state, never an all-projects aggregate.
+  const rawForgeProject = typeof params.forgeProject === "string" ? params.forgeProject : null;
+  const scopeResult = await resolvePlannerProjectScope(db, {
+    ownerId,
+    forgeProject: parseForgeProjectParam(rawForgeProject),
+  });
+  const scope = scopeResult.ok ? scopeResult.scope : { kind: SCOPE_KINDS.NONE };
+  const scopeError = scopeResult.ok ? null : scopeResult.error;
+  const forgeProjectParam = scope.kind === SCOPE_KINDS.PROJECT
+    ? scope.projectId
+    : scope.kind === SCOPE_KINDS.UNASSIGNED
+      ? "unassigned"
+      : "";
+  // Detail links (and the filter form) carry the active scope so a
+  // row click never drops the user back to the chooser.
+  const scopeQuery = forgeProjectParam ? `forgeProject=${encodeURIComponent(forgeProjectParam)}` : "";
+  const pageQuery = [workspaceQuery.replace(/^\?/, ""), scopeQuery].filter(Boolean).join("&");
+  const pageQueryString = pageQuery ? `?${pageQuery}` : "";
+
   // Same owner-scoped read as before — no new endpoint or query. Filters
   // are applied to the already-loaded array in memory (D5), so a filter
   // can never widen the result beyond this owner's packages.
-  const [{ ok, packages }, propertyResult] = await Promise.all([
-    listWorkPackages(db, { ownerId }),
+  const [{ ok, packages, unassignedCount }, propertyResult] = await Promise.all([
+    listWorkPackages(db, { ownerId, scope }),
     listPackagePropertyOptions(db, { ownerId }).catch(() => ({ ok: false, properties: [] })),
   ]);
 
@@ -86,11 +113,24 @@ export default async function WorkPackagesPage({ searchParams }) {
   const filtered = ok ? filterPackages(packages, filters) : [];
   const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all";
   const properties = propertyResult.ok ? propertyResult.properties : [];
-  const clearHref = workspaceQuery ? `/forge/work${workspaceQuery}` : "/forge/work";
+  const clearHref = pageQueryString ? `/forge/work${pageQueryString}` : "/forge/work";
   // "New package" carries the active mode filter so a package created
   // while viewing Industrial defaults to Industrial (and likewise for
   // Commercial); "all" carries nothing, leaving the form's own default.
-  const newPackageModeQuery = filters.mode !== "all" ? `${workspaceQuery ? "&" : "?"}mode=${filters.mode}` : "";
+  const newPackageModeQuery = filters.mode !== "all" ? `${pageQueryString ? "&" : "?"}mode=${filters.mode}` : "";
+  const newPackageHref = `/forge/work/new${pageQueryString}${newPackageModeQuery}`;
+  const selection = scope.kind === SCOPE_KINDS.PROJECT ? scope.selection : null;
+  const heading = scope.kind === SCOPE_KINDS.UNASSIGNED
+    ? "Unassigned packages"
+    : scope.kind === SCOPE_KINDS.PROJECT
+      ? selection?.project?.name || "Work Packages"
+      : "Work Packages";
+  const subheading = scope.kind === SCOPE_KINDS.UNASSIGNED
+    ? "Packages not assigned to a project yet — assign one from its detail page."
+    : scope.kind === SCOPE_KINDS.PROJECT
+      ? [selection?.client?.name, selection?.site?.name].filter(Boolean).join(" › ")
+        || "Rung 1: the authoritative Work Package core domain. Typed links, readiness, and dashboards arrive in later rungs."
+      : "Rung 1: the authoritative Work Package core domain. Typed links, readiness, and dashboards arrive in later rungs.";
 
   // D7: a blank add-row is an unsaved draft with no property yet — it must
   // follow the same filter rule as a real row with that shape, not render
@@ -103,11 +143,8 @@ export default async function WorkPackagesPage({ searchParams }) {
     <main className="mx-auto w-full max-w-7xl px-4 py-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Work Packages</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Rung 1: the authoritative Work Package core domain. Typed links, readiness, and
-            dashboards arrive in later rungs.
-          </p>
+          <h1 className="text-2xl font-bold">{heading}</h1>
+          <p className="mt-1 text-sm text-slate-500">{subheading}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* D11: these two links had no dark: overrides at all -- a
@@ -128,7 +165,7 @@ export default async function WorkPackagesPage({ searchParams }) {
             Admin
           </Link>
           <Link
-            href={`/forge/work/new${workspaceQuery}${newPackageModeQuery}`}
+            href={newPackageHref}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
             New package
@@ -144,13 +181,40 @@ export default async function WorkPackagesPage({ searchParams }) {
           status: filters.status !== "all" ? filters.status : "",
           propertyId: filters.propertyId !== "all" ? filters.propertyId : "",
           mode: filters.mode !== "all" ? filters.mode : "",
+          forgeProject: forgeProjectParam,
         }}
       />
 
-      {ok && packages.length > 0 && (
+      {scope.kind === SCOPE_KINDS.NONE && (
+        <div className="mt-8 rounded-lg border border-dashed border-slate-300 p-6">
+          <p className="font-medium text-slate-900 dark:text-slate-100">
+            {scopeError
+              ? "That project could not be found, is archived, or belongs to another workspace — choose a project to see its work packages."
+              : "Choose a project to see its work packages."}
+          </p>
+          <p className="mt-1 text-sm text-slate-500">
+            Pick a client, then a site, then a project in the selector above
+            {unassignedCount > 0 && (
+              <>
+                {" "}— or open the{" "}
+                <Link href={`/forge/work?forgeProject=unassigned${workspaceQuery ? `&${workspaceQuery.slice(1)}` : ""}`} className="font-medium text-blue-700 hover:underline">
+                  Unassigned packages inbox ({unassignedCount} {unassignedCount === 1 ? "package" : "packages"})
+                </Link>
+                {" "}to assign packages that do not belong to a project yet.
+              </>
+            )}
+            .
+          </p>
+        </div>
+      )}
+
+      {ok && packages.length > 0 && scope.kind !== SCOPE_KINDS.NONE && (
         <form method="get" action="/forge/work" className="mt-6 flex flex-wrap items-center gap-3">
           {requestedWorkspace && ownerId === requestedWorkspace && (
             <input type="hidden" name="workspace" value={requestedWorkspace} />
+          )}
+          {forgeProjectParam && (
+            <input type="hidden" name="forgeProject" value={forgeProjectParam} />
           )}
           {/* D11: a bare <select> has no text/background color of its own
              in dark mode; it inherited the page's white text with the
@@ -201,10 +265,24 @@ export default async function WorkPackagesPage({ searchParams }) {
         </form>
       )}
 
-      {!ok ? (
+      {scope.kind === SCOPE_KINDS.NONE ? null : !ok ? (
         <p className="mt-8 rounded-lg bg-red-50 p-4 text-sm text-red-700">
           Unable to load work packages.
         </p>
+      ) : filtered.length === 0 && !hasFilters && scope.kind === SCOPE_KINDS.UNASSIGNED ? (
+        <>
+          <div className="mt-8 rounded-lg border border-dashed border-slate-300 p-6 text-center">
+            <p className="text-slate-500">No unassigned packages — every package belongs to a project.</p>
+            <p className="mt-1 text-sm text-slate-500">New packages created here start unassigned and appear in this inbox.</p>
+          </div>
+          <WorkPackageListGrid
+            initialPackages={filtered}
+            properties={properties}
+            workspaceQuery={pageQueryString}
+            activeMode={filters.mode !== "all" ? filters.mode : "industrial"}
+            blankRowCount={blankRowCount}
+          />
+        </>
       ) : filtered.length === 0 && hasFilters && blankRowCount === 0 ? (
         <div className="mt-8 rounded-lg border border-dashed border-slate-300 p-6 text-center">
           <p className="text-slate-500">No work packages match these filters.</p>
@@ -219,7 +297,7 @@ export default async function WorkPackagesPage({ searchParams }) {
         <WorkPackageListGrid
           initialPackages={filtered}
           properties={properties}
-          workspaceQuery={workspaceQuery}
+          workspaceQuery={pageQueryString}
           activeMode={filters.mode !== "all" ? filters.mode : "industrial"}
           blankRowCount={blankRowCount}
         />

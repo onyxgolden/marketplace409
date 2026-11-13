@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../../_lib/auth.js";
 import { listStepDrawings, createStepDrawingLink } from "@/application/work-management/workSteps";
 
 export async function GET(request, { params }) {
@@ -6,6 +6,8 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, stepId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const search = new URL(request.url).searchParams;
     const result = await listStepDrawings(auth.db, {
       ownerId: auth.ownerId,
@@ -26,6 +28,8 @@ export async function POST(request, { params }) {
   if (auth.error) return auth.error;
   try {
     const { packageId, stepId } = await params;
+    const scopeCheck = await requirePackageScope(auth, packageId);
+    if (scopeCheck) return scopeCheck;
     const body = await readJson(request);
     const result = await createStepDrawingLink(auth.db, {
       ownerId: auth.ownerId,

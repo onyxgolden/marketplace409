@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("../../../_lib/auth.js", () => ({
   workAuth: vi.fn(),
+  requirePackageScope: vi.fn(async () => null),
   ok: (body, status = 200) => Response.json(body, { status }),
   fail: (result) => Response.json({
     error: result.error,

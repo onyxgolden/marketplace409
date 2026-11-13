@@ -64,7 +64,8 @@ describe("probeSourceTracking / listPackagesForImport", () => {
     const probe = chain({ data: [], error: null });
     const list = chain({ data: [{ id: "wp_1", code: "WP-0001" }], error: null });
     const db = mockDb([probe, list]);
-    const result = await listPackagesForImport(db, { ownerId: "owner_1" });
+    // Fix round 1: the match pool needs an explicit scope.
+    const result = await listPackagesForImport(db, { ownerId: "owner_1", scope: { kind: "project", projectId: "forge_prj_1" } });
     expect(result.sourceTrackingAvailable).toBe(true);
     expect(result.packages).toHaveLength(1);
     expect(list.select).toHaveBeenCalledWith(expect.stringContaining("source_system"));
@@ -74,7 +75,7 @@ describe("probeSourceTracking / listPackagesForImport", () => {
     const probe = chain({ data: null, error: { code: "42703", message: 'column "source_system" does not exist' } });
     const list = chain({ data: [{ id: "wp_1", code: "WP-0001" }], error: null });
     const db = mockDb([probe, list]);
-    const result = await listPackagesForImport(db, { ownerId: "owner_1" });
+    const result = await listPackagesForImport(db, { ownerId: "owner_1", scope: { kind: "project", projectId: "forge_prj_1" } });
     expect(result.sourceTrackingAvailable).toBe(false);
     expect(list.select).toHaveBeenCalledWith("id, code, title, status");
   });

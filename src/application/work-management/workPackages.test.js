@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { SCOPE_KINDS } from "./projectScope.js";
 import {
   createWorkPackage, updateWorkPackage, transitionWorkPackage,
   getWorkPackageDetail, listWorkPackages, listPackagePropertyOptions,
@@ -828,27 +829,31 @@ describe("getWorkPackageDetail", () => {
 });
 
 describe("listWorkPackages", () => {
+  // Fix round 1: the list is project-scoped — these tests pass an
+  // explicit scope. The unscoped (fail-closed) behavior is covered in
+  // workPackages.projectScope.test.js.
+  const PROJECT_SCOPE = { kind: SCOPE_KINDS.PROJECT, projectId: "forge_prj_1" };
   it("lists with optional filters", async () => {
     const db = mockDb([chain({ data: [PKG], error: null })]);
-    const result = await listWorkPackages(db, { ownerId: "owner_1", status: "draft" });
+    const result = await listWorkPackages(db, { ownerId: "owner_1", status: "draft", scope: PROJECT_SCOPE });
     expect(result.ok).toBe(true);
     expect(result.packages).toHaveLength(1);
   });
   it("selects the mode column", async () => {
     const listChain = chain({ data: [PKG], error: null });
     const db = mockDb([listChain]);
-    await listWorkPackages(db, { ownerId: "owner_1" });
+    await listWorkPackages(db, { ownerId: "owner_1", scope: PROJECT_SCOPE });
     expect(listChain.select).toHaveBeenCalledWith(expect.stringContaining("mode"));
   });
   it("filters by mode when provided, and not at all when omitted", async () => {
     const withMode = chain({ data: [PKG], error: null });
     const db1 = mockDb([withMode]);
-    await listWorkPackages(db1, { ownerId: "owner_1", mode: "commercial" });
+    await listWorkPackages(db1, { ownerId: "owner_1", mode: "commercial", scope: PROJECT_SCOPE });
     expect(withMode.eq).toHaveBeenCalledWith("mode", "commercial");
 
     const withoutMode = chain({ data: [PKG], error: null });
     const db2 = mockDb([withoutMode]);
-    await listWorkPackages(db2, { ownerId: "owner_1" });
+    await listWorkPackages(db2, { ownerId: "owner_1", scope: PROJECT_SCOPE });
     expect(withoutMode.eq).not.toHaveBeenCalledWith("mode", expect.anything());
   });
 });

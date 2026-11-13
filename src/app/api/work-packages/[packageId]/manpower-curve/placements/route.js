@@ -1,4 +1,4 @@
-import { workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
+import { requirePackageScope, workAuth, ok, fail, serverError, readJson } from "../../../_lib/auth.js";
 import { setStepPlacement } from "@/application/work-management/manpowerCurve";
 
 // PUT /api/work-packages/[packageId]/manpower-curve/placements
@@ -10,6 +10,8 @@ export async function PUT(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;
   const { packageId } = await params;
+  const scopeCheck = await requirePackageScope(auth, packageId);
+  if (scopeCheck) return scopeCheck;
   try {
     const body = await readJson(request);
     const result = await setStepPlacement(auth.db, { ownerId: auth.ownerId, packageId, input: body });

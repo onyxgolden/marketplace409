@@ -10,6 +10,7 @@
 // / P6 connection: files only, per the brief.
 import { NextResponse } from "next/server";
 import { workAuth, ok, fail, serverError } from "../../_lib/auth.js";
+import { SCOPE_KINDS } from "@/application/work-management/projectScope";
 import {
   PACKAGE_IMPORT_COLUMNS,
   STEP_IMPORT_COLUMNS,
@@ -148,7 +149,23 @@ export async function POST(request) {
     if (mapped.length > MAX_IMPORT_ROWS) {
       return NextResponse.json({ error: `This file has ${mapped.length} rows — split it into files of ${MAX_IMPORT_ROWS} rows or fewer.` }, { status: 400 });
     }
-    const context = await loadImportContext(auth.db, { ownerId: auth.ownerId, kind, packageId });
+    // PR B fix round 1: an import run requires an explicit scope —
+    // a PROJECT or UNASSIGNED selection. A request without
+    // ?forgeProject= resolves to NO_SCOPE and is refused here (400),
+    // before any matching: there is no owner-wide match pool anymore.
+    // The Planner import dialog sends the scope from the page URL
+    // (withWorkspaceQuery); the chooser page has no import control.
+    if (auth.scopeError) return fail(auth.scopeError);
+    if (auth.scope.kind === SCOPE_KINDS.NONE) {
+      return NextResponse.json(
+        { error: "Choose a project (or Unassigned) before importing." },
+        { status: 400 },
+      );
+    }
+    const context = await loadImportContext(auth.db, {
+      ownerId: auth.ownerId, kind, packageId,
+      scope: auth.scope,
+    });
     if (!context.ok) return fail(context);
     const plan = validateAndPlanWorkPackageImport({
       kind,
