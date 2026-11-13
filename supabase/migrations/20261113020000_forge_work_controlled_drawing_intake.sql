@@ -381,6 +381,51 @@ begin
     raise exception 'WPP7_PACKAGE_TERMINAL';
   end if;
 
+  -- Fix round 2: re-check the receipt AFTER the package lock. The
+  -- pre-lock lookup above can miss a receipt committed by a concurrent
+  -- duplicate that was still in flight: both callers pass the first
+  -- lookup, serialize on this lock, and the winner commits before the
+  -- loser acquires it. Without this recheck the loser resolves the
+  -- winner's drawing and hits the revision unique constraint
+  -- (WPP7_DUPLICATE_REVISION) instead of replaying the winner's
+  -- receipt. Same binding as the primary replay branch above; the
+  -- later artifact-insert unique_violation fallback stays as defense
+  -- in depth.
+  select * into v_existing
+  from public.forge_wp_drawing_artifacts
+  where owner_id = p_owner_id and request_id = p_request_id;
+  if found then
+    if lower(v_existing.content_sha256) <> lower(p_content_sha256)
+       or v_existing.object_path <> p_object_path
+       or v_existing.purpose <> 'ifa_issued'
+       or v_existing.package_id <> p_package_id then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    select * into v_replay_drawing
+    from public.forge_work_drawings
+    where owner_id = p_owner_id and id = v_existing.drawing_id;
+    if not found then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    select * into v_replay_revision
+    from public.forge_wp_drawing_revisions
+    where owner_id = p_owner_id and id = v_existing.revision_id;
+    if not found then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    if v_replay_drawing.drawing_number <> btrim(p_drawing_number)
+       or v_replay_drawing.drawing_type <> p_drawing_type
+       or v_replay_revision.revision_code <> btrim(p_revision_code)
+       or (v_replay_drawing.line_number is not null and p_line_number is not null
+           and btrim(v_replay_drawing.line_number) <> btrim(p_line_number)) then
+      raise exception 'WPP7_IDEMPOTENCY_CONFLICT';
+    end if;
+    return query
+      select * from public.forge_wp_drawing_artifacts
+      where owner_id = p_owner_id and id = v_existing.id;
+    return;
+  end if;
+
   -- An explicitly linked P&ID parent must be a p_id drawing in the same
   -- package. (Takeoff's WPP1-002 rule, enforced here for the intake's
   -- optional parent as well.)
@@ -466,9 +511,11 @@ begin
     raise exception 'WPP7_DUPLICATE_REVISION';
   end;
 
-  -- The artifact row is the idempotent audit receipt. The request-id
-  -- unique index is the final arbiter for a concurrent duplicate
-  -- finalize: the loser replays the winner's receipt below.
+  -- The artifact row is the idempotent audit receipt. A concurrent
+  -- duplicate is normally replayed by the post-package-lock recheck
+  -- above; the request-id unique index here is defense in depth for
+  -- the final insert, and its fallback below replays the winner's
+  -- receipt with the same binding.
   v_artifact_id := 'forge_wpda_' || replace(gen_random_uuid()::text, '-', '');
   begin
     insert into public.forge_wp_drawing_artifacts (

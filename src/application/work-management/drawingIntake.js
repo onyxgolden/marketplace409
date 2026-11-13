@@ -286,7 +286,10 @@ export async function uploadControlledDrawing(db, { ownerId, packageId, input, f
  * Stages a drafter-issued PDF as an IFC candidate for one drawing. No
  * revision is created: the bytes stay pending until the IFC release
  * attaches them. The staged bytes must differ from the latest issued
- * revision (enforced by the RPC).
+ * revision (enforced by the RPC). When the RPC deduplicates to an
+ * already-staged candidate for the same drawing + digest, the object
+ * this call just uploaded is removed and the existing candidate is
+ * returned as a deduplicated replay.
  */
 export async function stageIfcArtifact(db, { ownerId, packageId, drawingId, input, file }) {
   const validation = validateIfcStageInput(input);
@@ -338,7 +341,18 @@ export async function stageIfcArtifact(db, { ownerId, packageId, drawingId, inpu
     await removeObject(db, objectPath);
     return mapDrawingReviewRpcError(error);
   }
-  return { ok: true, replayed: false, artifact: toCamelArtifact(rpcRow(data)) };
+  const artifact = toCamelArtifact(rpcRow(data));
+  if (artifact.objectPath !== objectPath) {
+    // Fix round 2: the RPC deduplicated to a pre-existing candidate
+    // for the same drawing + digest — the object this invocation just
+    // uploaded is unreferenced. Remove it through the orphan-cleanup
+    // policy and report the existing candidate as a deduplicated
+    // replay, so staging the same PDF under fresh request ids never
+    // accumulates orphaned copies in the bucket.
+    await removeObject(db, objectPath);
+    return { ok: true, replayed: true, artifact };
+  }
+  return { ok: true, replayed: false, artifact };
 }
 
 /** Lists a drawing's stored artifacts (issued + staged), newest first. A missing table reads as an empty list. */

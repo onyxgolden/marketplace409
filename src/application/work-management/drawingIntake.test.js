@@ -316,8 +316,14 @@ describe("stageIfcArtifact", () => {
   const STAGE_ROW = { ...ARTIFACT_ROW, purpose: "ifc_candidate", revision_id: null, request_id: "req-stage" };
 
   it("stages bytes with no revision created, through the stage RPC", async () => {
-    const rpc = vi.fn(async () => ({ data: STAGE_ROW, error: null }));
-    const db = mockDb([chain({ data: null, error: null })], {}, rpc);
+    const remove = vi.fn(async () => ({ error: null }));
+    // The RPC row for a fresh stage names the path this call just
+    // uploaded (owner/package/request/sha) — nothing to clean up.
+    const rpc = vi.fn(async () => ({
+      data: { ...STAGE_ROW, object_path: `owner_1/pkg_1/req-stage/${PDF_SHA}.pdf` },
+      error: null,
+    }));
+    const db = mockDb([chain({ data: null, error: null })], { "controlled-drawings": { remove } }, rpc);
     const result = await stageIfcArtifact(db, {
       ownerId: "owner_1", packageId: "pkg_1", drawingId: "forge_wdwg_1",
       input: { requestId: "req-stage" }, file: FILE,
@@ -329,6 +335,30 @@ describe("stageIfcArtifact", () => {
     expect(rpc.mock.calls[0][0]).toBe("forge_wp_drawing_ifc_stage");
     expect(rpc.mock.calls[0][1].p_drawing_id).toBe("forge_wdwg_1");
     expect(rpc.mock.calls[0][1].p_content_sha256).toBe(PDF_SHA);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  // Fix round 2: when the stage RPC deduplicates to a pre-existing
+  // candidate, the object this call just uploaded is unreferenced —
+  // remove it and return the existing candidate as a replay.
+  it("removes the newly uploaded object when the stage RPC deduplicates to a pre-existing candidate", async () => {
+    const existingPath = `owner_1/pkg_1/req-first/${PDF_SHA}.pdf`;
+    const remove = vi.fn(async () => ({ error: null }));
+    const rpc = vi.fn(async () => ({
+      data: { ...STAGE_ROW, id: "forge_wpa_old", object_path: existingPath, request_id: "req-first" },
+      error: null,
+    }));
+    const db = mockDb([chain({ data: null, error: null })], { "controlled-drawings": { remove } }, rpc);
+    const result = await stageIfcArtifact(db, {
+      ownerId: "owner_1", packageId: "pkg_1", drawingId: "forge_wdwg_1",
+      input: { requestId: "req-stage2" }, file: FILE,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.replayed).toBe(true);
+    expect(result.artifact.id).toBe("forge_wpa_old");
+    expect(result.artifact.objectPath).toBe(existingPath);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith([`owner_1/pkg_1/req-stage2/${PDF_SHA}.pdf`]);
   });
 
   it("replays the same staged bytes and 409s the same-digest-as-IFA guard from the RPC", async () => {

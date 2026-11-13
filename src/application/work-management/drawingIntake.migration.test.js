@@ -946,6 +946,7 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
   let pgDir;
   let pgClient;
   let pgClient2;
+  let pgClient3;
   let pgCfg;
 
   beforeAll(async () => {
@@ -962,6 +963,8 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
     await pgClient.connect();
     pgClient2 = new Client(pgCfg);
     await pgClient2.connect();
+    pgClient3 = new Client(pgCfg);
+    await pgClient3.connect();
     await pgClient.query(PREREQ_SQL);
     await pgClient.query(loadMigrationSql(SLICE3));
     await pgClient.query(loadMigrationSql(SLICE4));
@@ -981,6 +984,7 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
   afterAll(async () => {
     try { await pgClient?.end(); } catch { /* already closed */ }
     try { await pgClient2?.end(); } catch { /* already closed */ }
+    try { await pgClient3?.end(); } catch { /* already closed */ }
     if (pgDir) {
       try { execSync(`runuser -u ${PG_RUN_USER} -- "${PG_BIN}/pg_ctl" -D "${pgDir}" stop -m fast`, { stdio: "pipe" }); } catch { /* already stopped */ }
       rmSync(pgDir, { recursive: true, force: true });
@@ -1030,5 +1034,79 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
       where drawing_id = '${first.rows[0].drawing_id}';
     `);
     expect(revRows[0].n).toBe(1);
+  });
+
+  // Fix round 2 (deterministic): both RPC sessions must pass the
+  // initial receipt lookup BEFORE either can acquire the package
+  // lock. A third session holds the package lock while both RPCs
+  // start; the test releases it only once pg_stat_activity shows
+  // both backends waiting on the lock. Without the post-lock
+  // receipt recheck the loser raises WPP7_DUPLICATE_REVISION here
+  // instead of replaying the winner.
+  it60("concurrent duplicate intakes replay the winner when both pass the receipt lookup first (lock barrier)", async () => {
+    const sql = `
+      select * from forge_wp_drawing_controlled_intake(
+        '${OWNER_A}', 'pkg_real', 'W-0005-3', 'isometric', '0',
+        '${objectPath(OWNER_A, "pkg_real", "req-real-race2", SHA_C)}', '${SHA_C}',
+        1024, 'req-real-race2', '2"-PL-103', null, null, null, null, null);
+    `;
+    const { rows: pidRowsA } = await pgClient.query("select pg_backend_pid() as pid;");
+    const { rows: pidRowsB } = await pgClient2.query("select pg_backend_pid() as pid;");
+    const pids = [pidRowsA[0].pid, pidRowsB[0].pid];
+    let promiseA;
+    let promiseB;
+    await pgClient3.query("begin;");
+    try {
+      await pgClient3.query(`
+        select status from forge_work_packages
+        where owner_id = '${OWNER_A}' and id = 'pkg_real' for update;
+      `);
+      promiseA = pgAsUser(pgClient, OWNER_A, sql);
+      promiseB = pgAsUser(pgClient2, OWNER_A, sql);
+      // Barrier: wait until both RPC backends are blocked on the
+      // package lock before releasing it — that is what makes the
+      // interleaving deterministic instead of a scheduling race.
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        const { rows: waiting } = await pgClient3.query(
+          `select pid from pg_stat_activity where pid = any($1::int[]) and wait_event_type = 'Lock';`,
+          [pids],
+        );
+        if (waiting.length >= pids.length) break;
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for both RPC sessions to block on the package lock (waiting: ${waiting.map((r) => r.pid).join(",") || "none"})`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await pgClient3.query("commit;");
+      const settled = await Promise.allSettled([promiseA, promiseB]);
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") throw outcome.reason;
+      }
+      const first = settled[0].value;
+      const second = settled[1].value;
+      expect(first.rows[0].id).toBe(second.rows[0].id);
+      const { rows } = await pgClient.query(`
+        select count(*)::int as n from forge_wp_drawing_artifacts where request_id = 'req-real-race2';
+      `);
+      expect(rows[0].n).toBe(1);
+      const { rows: drawingRows } = await pgClient.query(`
+        select count(*)::int as n from forge_work_drawings
+        where owner_id = '${OWNER_A}' and package_id = 'pkg_real' and drawing_number = 'W-0005-3';
+      `);
+      expect(drawingRows[0].n).toBe(1);
+      const { rows: revRows } = await pgClient.query(`
+        select count(*)::int as n from forge_wp_drawing_revisions
+        where drawing_id = '${first.rows[0].drawing_id}';
+      `);
+      expect(revRows[0].n).toBe(1);
+    } finally {
+      // Never leave the holder transaction open or the RPC promises
+      // floating: a failure above must not deadlock the rest of the
+      // suite. (Rollback after a successful commit is a harmless
+      // warning, swallowed here.)
+      await pgClient3.query("rollback;").catch(() => {});
+      if (promiseA && promiseB) await Promise.allSettled([promiseA, promiseB]);
+    }
   });
 });
