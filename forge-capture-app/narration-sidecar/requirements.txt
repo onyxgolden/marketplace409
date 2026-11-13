@@ -1,0 +1,32 @@
+# FORGE Capture Phase 3 Slice A — narration sidecar dependencies.
+#
+# INSTALLED BY: ~/workspace/forge-ai-drop/tools/narration/setup-env.ps1
+# on the iBUYPOWER (venv C:\forge-bridge\narration\venv).
+#
+# DO NOT pip-install torch on the dev VM (no GPU, 6 GB RAM). This file
+# documents the pins; the setup script performs the install.
+#
+# PyTorch (CUDA 12.6) is installed by the setup script from the CUDA
+# index URL, not from this file:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+#
+# OpenVoice V2 (MIT), pinned commit — installed --no-deps:
+openvoice @ git+https://github.com/myshell-ai/OpenVoice.git@74a1d147b17a8c3092dd5430504bd83ef6c7eb23
+# MeloTTS (MIT), pinned commit (base TTS for OpenVoice V2):
+melotts @ git+https://github.com/myshell-ai/MeloTTS.git@209145371cff8fc3bd60d7be902ea69cbdb7965a
+# MeloTTS / OpenVoice runtime dependencies:
+librosa
+pydub
+eng_to_ipa
+inflect
+unidecode
+pypinyin
+cn2an
+jieba
+langid
+faster-whisper
+# Runner resource monitoring (optional at runtime; psutil absent means
+# the resource module is used on POSIX, or peak RAM stays null):
+psutil
+# Test-only (dev VM):
+pytest
