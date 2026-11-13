@@ -223,6 +223,7 @@ describe("setPlanningStepStatus", () => {
       ["WPP10_REVIEW_BASIS_REQUIRED", 400, /already on the record/],
       ["WPP10_REVIEW_EVIDENCE_SAME_REQUEST", 400, /cannot add new evidence/],
       ["WPP10_INVALID_COMPLEXITY", 400, /Planning complexity must be one of/],
+      ["WPP10_INVALID_PACKAGE_UPDATE", 400, /package update is not valid/],
       ["WPP10_COMPLEXITY_FORBIDDEN", 403, /don't have permission to change the planning complexity/],
       ["WPP10_PACKAGE_TERMINAL", 409, /closed/],
     ];

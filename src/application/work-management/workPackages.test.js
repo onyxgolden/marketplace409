@@ -384,7 +384,7 @@ const PAULA_UNITS = [
   { id: "unit_b", property_id: "308-paula", label: "308 Paula", status: "active" },
 ];
 
-describe("planning-process hooks (F1: create binds the template via trigger; F5: complexity changes go through the guarded RPC)", () => {
+describe("planning-process hooks (F1: create binds the template via trigger; F5: complexity changes go through the combined RPC in one transaction)", () => {
   it("create stores the requested complexity and does NOT call the checklist RPC (the trigger creates the rows)", async () => {
     const insertChain = chain({ data: { ...PKG, id: "forge_wp_new", code: "WP-0007" }, error: null });
     const db = mockDb([insertChain]);
@@ -407,32 +407,50 @@ describe("planning-process hooks (F1: create binds the template via trigger; F5:
     expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planning_complexity: "standard" }));
   });
 
-  it("a complexity change goes through the guarded complexity RPC (F5), not a client-side revisions insert", async () => {
+  it("a complexity change with other fields goes through ONE combined RPC call (F5 fix round 2), not a complexity RPC plus a generic update", async () => {
     const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
-    const updateChain = chain({ data: { ...PKG, planning_complexity: "mid" }, error: null });
-    const rpcPkg = { ...PKG, planning_complexity: "mid", version: 4, updated_at: "2026-11-12T00:00:00Z" };
-    const db = mockDb([getChain, updateChain], async () => ({ data: rpcPkg, error: null }));
+    const rpcPkg = { ...PKG, planning_complexity: "mid", title: "Turnaround — north rack",
+      version: 4, updated_at: "2026-11-12T00:00:00Z" };
+    const db = mockDb([getChain], async () => ({ data: rpcPkg, error: null }));
     const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
-      packageId: "forge_wp_1", patch: { planning_complexity: "mid" } });
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", title: "Turnaround — north rack" } });
     expect(result.ok).toBe(true);
-    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_set_complexity", {
-      p_owner_id: "owner_1", p_package_id: "forge_wp_1", p_complexity: "mid",
+    expect(result.package).toEqual(rpcPkg);
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_planning_process_update_package", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
       p_expected_version: 3, p_request_id: expect.any(String),
+      p_complexity: "mid",
+      p_updates: expect.objectContaining({ title: "Turnaround — north rack" }),
     });
-    // No client-side revisions insert: the RPC appends the event.
+    // The combined payload never carries planning_complexity itself.
+    expect(db.rpc.mock.calls[0][1].p_updates).not.toHaveProperty("planning_complexity");
+    // No separate complexity RPC, no generic UPDATE, no client-side
+    // revisions insert: the combined RPC is the only write.
+    expect(db.rpc.mock.calls.map((c) => c[0])).not.toContain("forge_work_planning_process_set_complexity");
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage
     expect(db.from).not.toHaveBeenCalledWith("forge_work_planning_process_revisions");
-    // The generic UPDATE no longer carries planning_complexity.
-    const payload = updateChain.update.mock.calls[0][0];
-    expect(payload).not.toHaveProperty("planning_complexity");
   });
 
-  it("a complexity RPC failure fails the whole save — no partial generic update (F5)", async () => {
+  it("a combined RPC failure fails the whole save — no partial generic update (F5 fix round 2)", async () => {
     const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
     const db = mockDb([getChain], async () => ({ data: null, error: { message: "WPP10_STALE_VERSION" } }));
     const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
-      packageId: "forge_wp_1", patch: { planning_complexity: "mid" } });
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", title: "Turnaround — north rack" } });
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(409);
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
+  });
+
+  it("a combined RPC source conflict maps to 409 with no generic update (F5 fix round 2)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain], async () => ({ data: null,
+      error: { code: "23505", message: 'duplicate key value violates unique constraint "uq_forge_work_packages_source"' } }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", source_system: "sap", source_record_id: "SRC-1" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(result.error).toMatch(/already imported/);
     expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
   });
 
@@ -445,6 +463,29 @@ describe("planning-process hooks (F1: create binds the template via trigger; F5:
     expect(result.ok).toBe(true);
     expect(db.rpc).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalledWith("forge_work_planning_process_revisions");
+  });
+
+  it("a bad merged candidate is rejected before any write, even with a complexity change (F5 fix round 2)", async () => {
+    const getChain = chain({ data: { ...PKG, progress_basis: "quantity",
+      planned_qty: 10, planned_unit: "each", earned_qty: 0, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", earned_qty: 20 } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(db.rpc).not.toHaveBeenCalled();
+    expect(db.from).toHaveBeenCalledTimes(1); // only getPackage; no generic update
+  });
+
+  it("an unknown property is rejected before any write, even with a complexity change (F5 fix round 2)", async () => {
+    const getChain = chain({ data: { ...PKG, planning_complexity: "standard" }, error: null });
+    const db = mockDb([getChain, chain({ data: [], error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planning_complexity: "mid", property_id: "no-such-house" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(404);
+    expect(result.error).toBe("Property not found.");
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
 

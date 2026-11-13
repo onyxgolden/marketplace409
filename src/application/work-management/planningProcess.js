@@ -184,6 +184,9 @@ export function mapPlanningProcessRpcError(error) {
   if (message.includes("WPP10_INVALID_COMPLEXITY")) {
     return { ok: false, httpStatus: 400, error: `Planning complexity must be one of: ${PLANNING_PROCESS_COMPLEXITY_KEYS.join(", ")}.` };
   }
+  if (message.includes("WPP10_INVALID_PACKAGE_UPDATE")) {
+    return { ok: false, httpStatus: 400, error: "The package update is not valid — check the mode, package type, priority, progress basis, dates and progress values." };
+  }
   if (message.includes("WPP10_COMPLEXITY_FORBIDDEN")) {
     return { ok: false, httpStatus: 403, error: "You don't have permission to change the planning complexity." };
   }

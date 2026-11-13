@@ -132,8 +132,47 @@ const PREREQ_SQL = `
     version integer not null default 1,
     updated_by text,
     updated_at timestamptz,
+    -- Fix round 2 (P1-A): the combined update RPC touches the full
+    -- editable field set, so the stub carries every column it can
+    -- set (types per createWorkPackage), plus the import-source
+    -- unique index the post-write rollback leg needs. The real
+    -- table carries the same columns (source index per migration
+    -- 20261109000000).
+    title text,
+    description text,
+    package_type text,
+    priority text,
+    project_id text,
+    property_id text,
+    responsible_party jsonb,
+    planned_start date,
+    planned_finish date,
+    asset_id text,
+    equipment_tag text,
+    unit text,
+    area text,
+    system text,
+    location_id text,
+    work_order_ref text,
+    workscope_code text,
+    mode text,
+    planned_qty numeric,
+    planned_unit text,
+    planned_manhours numeric,
+    earned_qty numeric,
+    earned_manhours numeric,
+    actual_manhours numeric,
+    progress_basis text,
+    percent_complete numeric,
+    progress_updated_at timestamptz,
+    progress_updated_by text,
+    source_system text,
+    source_record_id text,
     primary key (owner_id, id)
   );
+  create unique index uq_forge_work_packages_source
+    on forge_work_packages (owner_id, source_system, source_record_id)
+    where source_record_id is not null;
 `;
 
 const SEED_SQL = `
@@ -224,6 +263,27 @@ async function setComplexity(db, uid, ownerId, packageId, complexity, opts = {})
     select forge_work_planning_process_set_complexity(
       '${ownerId}', '${packageId}', ${sqlStr(complexity)},
       ${sqlInt(expectedVersion)}, ${sqlStr(requestId)}) as v;`);
+  return rows[0].v;
+}
+
+async function updatePackage(db, uid, ownerId, packageId, complexity, updates, opts = {}) {
+  // Same convenience as setComplexity, for the combined update RPC
+  // (fix round 2, P1-A): read the package's current version and
+  // generate a fresh request ID unless the leg passes them
+  // explicitly. p_updates is passed as a JSON literal.
+  let expectedVersion = opts.expectedVersion;
+  if (expectedVersion === undefined) {
+    const { rows } = await db.query(`
+      select version from forge_work_packages
+      where owner_id = '${ownerId}' and id = '${packageId}';`);
+    expectedVersion = rows[0]?.version ?? 1;
+  }
+  const requestId = opts.requestId ?? `req_${randomUUID().replace(/-/g, "")}`;
+  const { rows } = await asUser(db, uid, `
+    select forge_work_planning_process_update_package(
+      '${ownerId}', '${packageId}', ${sqlInt(expectedVersion)},
+      ${sqlStr(requestId)}, ${sqlStr(complexity)},
+      '${JSON.stringify(updates ?? {}).replace(/'/g, "''")}'::jsonb) as v;`);
   return rows[0].v;
 }
 
@@ -663,6 +723,39 @@ describe("planning-process migration", () => {
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
   });
 
+  it60("omitted-evidence replay survives an intervening evidence change (fix round 2, P1-B)", async () => {
+    // Original call: Complete with an attestation and NO evidence
+    // link (evidence omitted). The canonical payload records that
+    // omission explicitly.
+    const first = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { attestation: "Walked the plot plan; it matches the scope.", requestId: "req_omit_1" });
+    expect(first.version).toBe(2);
+    expect(first.evidence_link).toBeNull();
+    // An intervening change (different request ID) replaces the
+    // evidence link on the same step.
+    const changed = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { evidenceLink: "https://example.com/plot-v2.pdf", expectedVersion: 2, requestId: "req_omit_2" });
+    expect(changed.version).toBe(3);
+    expect(changed.evidence_link).toBe("https://example.com/plot-v2.pdf");
+    // Replaying the ORIGINAL call (same request ID, evidence still
+    // omitted) must replay — not conflict — even though the row's
+    // stored evidence changed in between.
+    const replay = await setStatus(db, OWNER_A, OWNER_A, "pkg_a", "pdf-01", "Complete",
+      { attestation: "Walked the plot plan; it matches the scope.", requestId: "req_omit_1" });
+    expect(replay.version).toBe(3);
+    expect(replay.evidence_link).toBe("https://example.com/plot-v2.pdf");
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(2);
+    // Controls: the same request ID with a supplied evidence link,
+    // or with the evidence explicitly cleared, is a DIFFERENT raw
+    // payload — a conflict, not a replay.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', 'https://example.com/plot-v2.pdf', null, 'Walked the plot plan; it matches the scope.', 3, 'req_omit_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_set_status('${OWNER_A}', 'pkg_a', 'pdf-01', 'Complete', '', null, 'Walked the plot plan; it matches the scope.', 3, 'req_omit_1');`,
+      "WPP10_REQUEST_ID_CONFLICT");
+  });
+
   it60("Reviewed needs a distinct prior submission with an existing basis, and no new evidence in the same decision (F3)", async () => {
     await provisionAndAssign(db, MEMBER_D, "planner_admin");
     // In-Progress has no submission to review.
@@ -882,6 +975,113 @@ describe("planning-process migration", () => {
     expect(noop.planning_complexity).toBe("standard");
     expect(noop.version).toBe(1);
     expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+  });
+
+  it60("combined update RPC: fields + complexity + one event commit together, version bumps once (fix round 2, P1-A)", async () => {
+    // Quantity basis with earned/planned set: percent derives to 50.
+    const updated = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+      { title: "Turnaround — north rack", priority: "high", progress_basis: "quantity",
+        planned_qty: 10, planned_unit: "each", earned_qty: 5,
+        planned_start: "2026-11-02", planned_finish: "2026-11-20" });
+    expect(updated.planning_complexity).toBe("high");
+    expect(updated.title).toBe("Turnaround — north rack");
+    expect(updated.priority).toBe("high");
+    expect(updated.version).toBe(2);
+    expect(Number(updated.percent_complete)).toBe(50);
+    expect(updated.updated_by).toBe(OWNER_A);
+    const events = await revisionsFor(db, "pkg_a");
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe("complexity_change");
+    expect(events[0].actor_id).toBe(OWNER_A);
+    expect(events[0].template_step_id).toBeNull();
+    const { rows: raw } = await db.query(`select old_values, new_values from forge_work_planning_process_revisions where work_package_id = 'pkg_a';`);
+    expect(raw[0].old_values).toEqual({ complexity: "standard" });
+    expect(raw[0].new_values).toEqual({ complexity: "high" });
+  });
+
+  it60("combined update RPC: a post-write failure rolls back fields, complexity and event together (fix round 2, P1-A)", async () => {
+    // A same-owner package already holds the source key: this
+    // save violates the import-source unique index AFTER the
+    // complexity change would have applied — the whole save must
+    // roll back, leaving no half-applied package or event.
+    await db.query(`update forge_work_packages set source_system = 'rentec', source_record_id = 'SRC-1' where id = 'pkg_cancelled';`);
+    let caught = null;
+    try {
+      await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high",
+        { title: "Should not land", source_system: "rentec", source_record_id: "SRC-1" },
+        { requestId: "req_comb_rollback_1" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught, "expected the source conflict to raise").not.toBeNull();
+    expect(String(caught.code || caught.message)).toMatch(/23505|uq_forge_work_packages_source/);
+    const { rows } = await db.query(`select title, planning_complexity, version, source_system from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].title).toBeNull();
+    expect(rows[0].planning_complexity).toBe("standard");
+    expect(rows[0].version).toBe(1);
+    expect(rows[0].source_system).toBeNull();
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+  });
+
+  it60("combined update RPC: stale version and invalid field payload roll everything back (fix round 2, P1-A)", async () => {
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 99, 'req_comb_stale_1', 'high', '{"title": "Stale"}'::jsonb);`,
+      "WPP10_STALE_VERSION");
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_comb_inv_1', 'high', '{"mode": "orbital"}'::jsonb);`,
+      "WPP10_INVALID_PACKAGE_UPDATE");
+    // A merged-candidate violation (finish before start) is caught
+    // on the updated row before the event insert — same rollback.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_comb_inv_2', 'high', '{"planned_start": "2026-11-20", "planned_finish": "2026-11-02"}'::jsonb);`,
+      "WPP10_INVALID_PACKAGE_UPDATE");
+    const { rows } = await db.query(`select title, planning_complexity, version from forge_work_packages where id = 'pkg_a';`);
+    expect(rows[0].title).toBeNull();
+    expect(rows[0].planning_complexity).toBe("standard");
+    expect(rows[0].version).toBe(1);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+  });
+
+  it60("combined update RPC: capability and terminal gates (fix round 2, P1-A)", async () => {
+    // A Reviewer assignee has no planner.packages.edit.
+    await provisionAndAssign(db, MEMBER_E, "reviewer");
+    await expectRpcError(db, MEMBER_E,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 1, 'req_comb_cap_1', 'high', '{"title": "No"}'::jsonb);`,
+      "WPP10_COMPLEXITY_FORBIDDEN");
+    // A Planner assignee HAS planner.packages.edit and can use it.
+    await provisionAndAssign(db, MEMBER_D, "planner");
+    const updated = await updatePackage(db, MEMBER_D, OWNER_A, "pkg_a", "high", { title: "Planner save" });
+    expect(updated.planning_complexity).toBe("high");
+    expect(updated.title).toBe("Planner save");
+    // A terminal package rejects the combined save outright.
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_cancelled', 1, 'req_comb_cap_2', 'high', '{"title": "No"}'::jsonb);`,
+      "WPP10_PACKAGE_TERMINAL");
+  });
+
+  it60("combined update RPC: no-op complexity still applies fields with no event; request-ID replay/conflict mirror the complexity RPC (fix round 2, P1-A)", async () => {
+    // Same complexity value as the current row: fields still apply
+    // and the version still bumps once, but no audit event is written.
+    const noop = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "standard", { title: "Renamed" });
+    expect(noop.planning_complexity).toBe("standard");
+    expect(noop.title).toBe("Renamed");
+    expect(noop.version).toBe(2);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(0);
+    // A real change with a request ID: replay returns the current
+    // row with no second event; reuse with a different complexity
+    // is a conflict.
+    const first = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", { priority: "critical" },
+      { requestId: "req_comb_dup_1" });
+    expect(first.planning_complexity).toBe("high");
+    expect(first.version).toBe(3);
+    await expectRpcError(db, OWNER_A,
+      `select forge_work_planning_process_update_package('${OWNER_A}', 'pkg_a', 3, 'req_comb_dup_1', 'low', '{"priority": "low"}'::jsonb);`,
+      "WPP10_REQUEST_ID_CONFLICT");
+    const replay = await updatePackage(db, OWNER_A, OWNER_A, "pkg_a", "high", { priority: "critical" },
+      { requestId: "req_comb_dup_1" });
+    expect(replay.planning_complexity).toBe("high");
+    expect(replay.version).toBe(3);
+    expect((await revisionsFor(db, "pkg_a"))).toHaveLength(1);
   });
 
   it60("RLS: anon cannot select at all; a stranger's owner sees nothing; direct writes are denied", async () => {

@@ -18,7 +18,7 @@ import {
   normalizePlannedCostCents,
   parsePlannedBudgetToCents,
 } from "@/domains/work-management/packageCosts.js";
-import { getPlanningSummary, setPlanningComplexity } from "./planningProcess.js";
+import { getPlanningSummary, mapPlanningProcessRpcError } from "./planningProcess.js";
 
 const TABLES = Object.freeze({
   packages: "forge_work_packages",
@@ -293,27 +293,26 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     }
     return { ok: true, package: data.package, budgetRevision: data.revision || null };
   }
-  // F5 (fix round 1): a planning-complexity change travels only
-  // through the guarded RPC — the package update and its
-  // complexity_change event are one database transaction. The edit
-  // form sends the whole form in one PATCH, so a complexity change
-  // rides along with other edits: apply it FIRST via the RPC (using
-  // the freshly-read package version), then strip it from the generic
-  // path below and rebase the concurrency match on the RPC-returned
-  // row. If the RPC fails, the whole save fails — a complexity change
-  // is never partially applied alongside unrelated fields. An
-  // unchanged complexity value skips the RPC entirely.
-  let basePkg = pkg;
+  // F5 (fix round 2, P1-A): a planning-complexity change rides along
+  // with other edits in one PATCH, and the whole save must commit or
+  // roll back together. The old flow applied the complexity FIRST
+  // through its own RPC (a committed transaction) and only then ran
+  // the property resolution / merged validation / generic UPDATE —
+  // so a failure after the RPC left complexity changed and the
+  // version advanced while the save reported failure. The new flow
+  // does ALL fallible work before ANY write (property resolution,
+  // normalization, merged-candidate validation, mode/package-type
+  // check, verifier check), then takes ONE write path: a save that
+  // carries a complexity change goes through the combined RPC
+  // forge_work_planning_process_update_package (field updates +
+  // complexity change + complexity_change event in one transaction);
+  // a save with no complexity change keeps the existing single
+  // generic UPDATE (already one transaction). An unchanged
+  // complexity value skips the combined RPC entirely.
+  let newComplexity = null;
   if (patch.planning_complexity !== undefined
       && patch.planning_complexity !== (pkg.planning_complexity || "standard")) {
-    const complexityResult = await setPlanningComplexity(db, {
-      ownerId, packageId,
-      complexity: patch.planning_complexity,
-      expectedVersion: pkg.version ?? 1,
-      requestId: crypto.randomUUID(),
-    });
-    if (!complexityResult.ok) return complexityResult;
-    basePkg = complexityResult.package;
+    newComplexity = patch.planning_complexity;
   }
   // Property reassignment/clearing is validated and canonicalized
   // server-side, same as create. A missing property_id field leaves the
@@ -349,15 +348,19 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     if (normalizedPatch[key] !== undefined) filtered[key] = normalizedPatch[key];
   }
   if (resolvedPropertyId !== undefined) filtered.property_id = resolvedPropertyId;
-  // F5: complexity is already applied (or unchanged) above — the
-  // generic UPDATE must never touch it.
+  // Complexity travels only via the combined RPC's p_complexity — it
+  // is never part of the p_updates payload.
   delete filtered.planning_complexity;
   // Validate the FULLY MERGED candidate against persisted denominators and
   // earned amounts — never the patch alone. A patch of { earned_qty: 20 }
   // against a stored planned_qty of 10 must be rejected, not clamped.
   // Stored status/code/percent_complete are stripped first: the hand-set
-  // guards target client input, not values already in the row.
-  const merged = { ...basePkg, ...filtered };
+  // guards target client input, not values already in the row. The new
+  // complexity value is folded into the candidate so its enum is also
+  // checked pre-write (an invalid complexity is a 400 here, never a
+  // half-applied save).
+  const merged = { ...pkg, ...filtered };
+  if (newComplexity !== null) merged.planning_complexity = newComplexity;
   const { status: _s, code: _c, percent_complete: _p, ...validatable } = merged;
   const validation = validatePackageInput(validatable, { isEdit: true });
   if (!validation.ok) {
@@ -379,6 +382,36 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     }
     verifierChange = patch.designated_verifier || null;
   }
+  if (newComplexity !== null) {
+    // Combined save: one RPC call, one transaction. The RPC checks
+    // the version against the freshly-read row (pkg.version) and
+    // applies the field updates, the complexity change and the audit
+    // event together — a failure at any point (stale version, source
+    // conflict, merged-candidate invariant) rolls all of it back, so
+    // the package and the complexity audit are never half-applied.
+    // A source-column conflict maps to 409 here, exactly as on the
+    // generic path; other WPP10 failures map through the shared
+    // planning-process mapper (unknown RPC errors still throw).
+    const { data, error } = await db.rpc("forge_work_planning_process_update_package", {
+      p_owner_id: ownerId,
+      p_package_id: packageId,
+      p_expected_version: pkg.version ?? 1,
+      p_request_id: crypto.randomUUID(),
+      p_complexity: newComplexity,
+      p_updates: filtered,
+    });
+    if (error) {
+      const mapped = mapSourceColumnError(error, "uq_forge_work_packages_source");
+      if (mapped) return mapped;
+      return mapPlanningProcessRpcError(error);
+    }
+    const updated = Array.isArray(data) ? data[0] : data;
+    if (!updated) throw new Error("forge_work_planning_process_update_package returned no row.");
+    if (verifierChange !== null || patch.designated_verifier !== undefined) {
+      return setDesignatedVerifier(db, { ownerId, actor, packageId, verifier: verifierChange });
+    }
+    return { ok: true, package: updated };
+  }
   const now = new Date().toISOString();
   const withDerived = { ...merged, updated_by: actor, updated_at: now };
   withDerived.percent_complete = derivePercentComplete(withDerived);
@@ -389,12 +422,10 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   // Optimistic concurrency: commit only against the version read. A
   // concurrent transition (e.g. another request closing the package) moves
   // updated_at, so this matches zero rows and the edit is rejected with 409
-  // instead of silently landing on a terminal package. (basePkg is the
-  // RPC-returned row when a complexity change rode along — its
-  // updated_at is the one to match.)
+  // instead of silently landing on a terminal package.
   let query = db.from(TABLES.packages).update(updatePayload)
     .eq("owner_id", ownerId).eq("id", packageId);
-  if (basePkg.updated_at) query = query.eq("updated_at", basePkg.updated_at);
+  if (pkg.updated_at) query = query.eq("updated_at", pkg.updated_at);
   const { data, error } = await query.select("*").maybeSingle();
   if (error) {
     const mapped = mapSourceColumnError(error, "uq_forge_work_packages_source");
