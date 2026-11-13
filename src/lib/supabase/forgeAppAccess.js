@@ -27,6 +27,8 @@ const DENIAL_MESSAGES = {
     "This app isn't enabled for your workspace yet. Ask the workspace owner to enable it.",
   CAPABILITY_DENIED:
     "You don't have permission to do that in this app.",
+  APP_ROLE_REQUIRED:
+    "You don't have a role in this app yet. Ask the workspace owner to assign you one.",
   AUTH_REQUIRED: "Sign in to continue.",
   UNKNOWN_APP: "That app isn't available.",
   UNKNOWN_CAPABILITY: "You don't have permission to do that in this app.",

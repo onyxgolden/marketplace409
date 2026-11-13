@@ -56,6 +56,7 @@ describe("checkForgeAppAccess", () => {
       "NO_MEMBERSHIP",
       "ENTITLEMENT_NOT_ACTIVE",
       "CAPABILITY_DENIED",
+      "APP_ROLE_REQUIRED",
       "AUTH_REQUIRED",
       "UNKNOWN_APP",
       "SOMETHING_ELSE",

@@ -200,22 +200,47 @@ $$;
 -- several active memberships: the old LIMIT 1 was unordered. Single
 -- membership behavior is unchanged; multi-membership resolves to the
 -- lowest owner_id until PR 2 stores an explicit selection.
+--
+-- Fix round 1 (P2): the actor is NEVER caller-supplied. The parameter
+-- stays (dropping the one-argument signature would orphan the
+-- pre-existing dependents that call it, and the grants ride the
+-- signature), but any explicit argument that is not the authenticated
+-- user is refused with insufficient_privilege: an authenticated caller
+-- passing another user's UUID learns nothing about that user's
+-- workspace. The only in-repo callers that pass an explicit argument
+-- are log_team_audit (R17 + repair), which pass actor := auth.uid()
+-- verbatim, so no legitimate caller is affected. No separate
+-- privileged internal resolver is created: no internal caller needs
+-- to resolve for anyone but the authenticated user.
 create or replace function public.resolve_effective_owner_id(p_actor uuid default auth.uid())
 returns text
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 set row_security = off
 as $$
+begin
+  if p_actor is distinct from auth.uid() then
+    raise exception 'resolve_effective_owner_id: actor must be the authenticated user'
+      using errcode = 'insufficient_privilege';
+  end if;
+  return (
     select coalesce(
         (select owner_id from workspace_members
          where member_user_id = p_actor and status = 'active'
          order by owner_id
          limit 1),
         p_actor::text
-    );
+    )
+  );
+end;
 $$;
+
+-- The replacement above keeps the 2026-08-29 grants, but this
+-- migration owns the function now: state the ACL explicitly.
+revoke all on function public.resolve_effective_owner_id(uuid) from public, anon, service_role;
+grant execute on function public.resolve_effective_owner_id(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 2. forge_workspaces — the workspace registry, keyed by the existing
@@ -873,6 +898,62 @@ $$;
 revoke all on function public.forge_has_app_capability(text, text, text) from public, anon, service_role;
 grant execute on function public.forge_has_app_capability(text, text, text) to authenticated;
 
+-- Fix round 1 (P1): does the caller hold an ACTIVE assignment to an
+-- ACTIVE role in this app? Planner/scheduler use their own role
+-- frameworks; designer/capture use the canonical tables. Both the
+-- assignment AND the role must be unretired: revoking either denies
+-- on the next request. Owner and co-owner never reach this helper
+-- from the gate (their structural bypass lives in
+-- forge_check_app_access); called directly it answers only the
+-- assignment question, so it returns false for an owner who holds no
+-- assignment in the app.
+create or replace function public.forge_has_app_role(p_owner_id text, p_app_key text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select case
+    when p_app_key not in ('designer', 'scheduler', 'planner', 'capture') then false
+    when p_app_key = 'planner' then exists (
+      select 1
+      from public.forge_planner_user_role_assignments ura
+      join public.forge_planner_roles r
+        on r.owner_id = ura.owner_id and r.id = ura.role_id
+      where ura.owner_id = p_owner_id
+        and ura.assignee_user_id = auth.uid()::text
+        and ura.retired_at is null
+        and r.retired_at is null
+    )
+    when p_app_key = 'scheduler' then exists (
+      select 1
+      from public.forge_scheduling_user_role_assignments ura
+      join public.forge_scheduling_roles r
+        on r.owner_id = ura.owner_id and r.id = ura.role_id
+      where ura.owner_id = p_owner_id
+        and ura.assignee_user_id = auth.uid()::text
+        and ura.retired_at is null
+        and r.retired_at is null
+    )
+    else exists (
+      select 1
+      from public.forge_app_user_role_assignments ura
+      join public.forge_app_roles r
+        on r.owner_id = ura.owner_id and r.app_key = ura.app_key and r.id = ura.role_id
+      where ura.owner_id = p_owner_id
+        and ura.app_key = p_app_key
+        and ura.user_id = auth.uid()::text
+        and ura.retired_at is null
+        and r.retired_at is null
+    )
+  end;
+$$;
+
+revoke all on function public.forge_has_app_role(text, text) from public, anon, service_role;
+grant execute on function public.forge_has_app_role(text, text) to authenticated;
+
 -- The gate RPC the server helper calls. VOLATILE (not STABLE) because the
 -- support-context path writes an audit row. Returns one jsonb object so
 -- the server can render a plain-words denial reason.
@@ -953,6 +1034,25 @@ begin
 
   if not public.forge_has_app_entitlement(p_owner_id, p_app_key) then
     return jsonb_build_object('allowed', false, 'reason', 'ENTITLEMENT_NOT_ACTIVE', 'via', null);
+  end if;
+
+  -- Fix round 1 (P1): a no-capability entry requires an app role.
+  -- Without this, any active member passed every entitled app's
+  -- entry gate even with no role in that app (cross-app bypass).
+  -- Owner/co-owner keep their structural bypass; the
+  -- platform-operator support-context path already returned above.
+  -- Pre-role entry routes (provisioning / invite acceptance) do not
+  -- call this gate — they use their own authenticated SECURITY
+  -- DEFINER RPC boundary — so this never blocks onboarding.
+  if p_capability_key is null
+     and p_owner_id <> v_actor::text
+     and not exists (
+       select 1 from public.workspace_members
+       where owner_id = p_owner_id and member_user_id = v_actor
+         and status = 'active' and role = 'co_owner'
+     )
+     and not public.forge_has_app_role(p_owner_id, p_app_key) then
+    return jsonb_build_object('allowed', false, 'reason', 'APP_ROLE_REQUIRED', 'via', null);
   end if;
 
   if p_capability_key is not null
