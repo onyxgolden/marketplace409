@@ -91,18 +91,49 @@ so it is not an admissible fallback.
   mis-resolved BERT file fails the job closed. The setup also runs a
   real-library cold-cache proof (fresh `HF_HOME`, sockets blocked,
   one English segment) that must print `COLD CACHE PROOF OK`.
-- **Code install (fix round 3):** the pinned MeloTTS
+- **Lazy-import patch (fix round 6):** the pinned MeloTTS dispatcher
+  (`melo/text/__init__.py::get_bert`) imports ALL five language BERT
+  modules before choosing the requested language, and several
+  construct tokenizers at import — so the first English segment
+  needed all five tokenizer caches just to import the dispatcher,
+  while setup seeds/validates only `bert-base-uncased`. Setup applies
+  the pinned patch `tools/narration/melotts-lazy-bert.patch` (SHA-256
+  `2318ba2a92ac7a0b10beb296c9c4d30d8024131b97f018549894e0cda4a7e3a9`,
+  verified before applying, idempotent via the `FORGE lazy-import
+  patch` marker, re-verified in all three patched files) to the
+  installed MeloTTS code: `cleaner.py` and `get_bert` lazily import
+  only the selected language module, and `english.py` defines
+  `distribute_phone` locally instead of importing it from `japanese`.
+  After the patch, an English segment imports/constructs ONLY the EN
+  tokenizer + model. The receipt records `melotts_patch_sha256`.
+  The cold-cache proof (below) is rebuilt on an explicit allowlist
+  from empty — only the validated EN BERT alias snapshot — and never
+  copies ambient `models--*` caches. Setup does NOT delete the shared
+  `models--google-bert--bert-base-uncased` seed folder (fix round 6
+  P2: shared cache state is not narration-owned).
+- **Pinned lock file (fix round 6):** every Python artifact is
+  installed from `tools/narration/requirements-lock.txt` with `pip
+  install --require-hashes` — exact versions + SHA-256 hashes for all
+  128 packages of the proven working venv (Python 3.12,
+  cp312/win_amd64), including the CUDA-index torch wheel
+  (`torch==2.14.1+cu130`) and `torchaudio==2.11.1` (PyPI). No unpinned
+  `pip install <name>` remains in the setup. The lock SHA-256
+  (`d417674385350e846e14c354d03b6de2d58539482c3d7482e8506bd14a5d29a9`)
+  is recorded in the receipt as `requirements_lock_sha256`; a `-Clean`
+  setup run rebuilds the venv from the lock from scratch.
+- **Code install (fix round 3, lock in fix round 6):** the pinned MeloTTS
   `requirements.txt` cannot install on Python 3.12 as written
   (fugashi 1.3.0 needs MeCab C headers; tokenizers 0.13.3 has no
   cp312 wheel) — setup installs the pinned MeloTTS code `--no-deps`
-  plus only the EN-path runtime deps (`cached_path`, `transformers`,
-  `g2p_en`, `pykakasi`, `num2words`, `jamo`, `anyascii`,
-  `mecab-python3` + `unidic-lite`, `fugashi`, `gruut` + `gruut-ipa`
-  — the last five are required at import through `cleaner.py`'s
-  eager language-module imports; the list was verified with a full
-  AST walk of the pinned source after two rounds missed imports a
-  line grep couldn't see — plus NLTK cmudict + perceptron-tagger
-  data) and verifies the import before proceeding.
+  plus the EN-path runtime deps from the pinned lock file
+  (`cached_path`, `transformers`, `g2p_en`, `pykakasi`, `num2words`,
+  `jamo`, `anyascii`, `mecab-python3` + `unidic-lite`, `fugashi`,
+  `gruut` + `gruut-ipa` — retained in the lock even though the
+  lazy-import patch means the EN path no longer reaches the JP/KO/FR/
+  ES modules at import; the list was verified with a full AST walk of
+  the pinned source after two rounds missed imports a line grep
+  couldn't see — plus NLTK cmudict + perceptron-tagger data) and
+  verifies the import (against the patched code) before proceeding.
 
 ## FFmpeg (render assembly)
 
@@ -124,7 +155,9 @@ The setup script (`tools/narration/setup-env.ps1` in forge-ai-drop)
 writes a machine receipt to `C:\forge-bridge\narration\receipt.json`
 with the Python version, FFmpeg version + zip hash, OpenVoice commit +
 LICENSE hash, MeloTTS commit, checkpoints zip hash, MeloTTS English
-base-model revision + per-file hashes + install dir, torch version, GPU
-name, and the import smoke-test result, plus a frozen requirements
-list at `C:\forge-bridge\narration\requirements-frozen.txt`. A clean
-local install reproduces one segment from those pins (acceptance gate 2).
+base-model revision + per-file hashes + install dir, BERT revision +
+per-file hashes + snapshot dir, the requirements-lock SHA-256 and the
+MeloTTS lazy-import patch SHA-256, torch version, GPU name, and the
+import smoke-test result, plus a frozen requirements list at
+`C:\forge-bridge\narration\requirements-frozen.txt`. A clean local
+install reproduces one segment from those pins (acceptance gate 2).

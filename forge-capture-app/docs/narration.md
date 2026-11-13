@@ -558,23 +558,90 @@ validated snapshot — and fails the job closed on any mismatch.
 `result.json`'s model block records the BERT repo, revision, and
 all six hashes. The setup's step-7 import smoke runs with
 `HF_HUB_OFFLINE=1`, and step 7b is the real-library cold-cache
-proof: a FRESH `HF_HOME` holding only the setup-seeded snapshots,
-sockets blocked, one real English segment through the pinned
-`TTS` — it must print `COLD CACHE PROOF OK` or the setup fails.
-The `models--google-bert--bert-base-uncased` folder stays as the
-seed source; the alias folder is the runtime identity. The MeloTTS code itself could
+proof (fix round 6: rebuilt on an explicit allowlist — see below):
+a FRESH `HF_HOME` holding ONLY the validated EN BERT alias
+snapshot, sockets blocked, one real English segment through the
+pinned `TTS` — it must print `COLD CACHE PROOF OK` or the setup
+fails. The `models--google-bert--bert-base-uncased` folder stays as
+the seed source and is never deleted (fix round 6 P2: setup must
+not delete shared cache state); the alias folder is the runtime
+identity.
+
+**Fix round 6 — lazy-import patch, pinned lock, allowlist proof
+cache:** the fix-round-5 BERT pin closed the identity/hash gap,
+but the cold-cache proof still copied EVERY ambient `models--*`
+directory from the user's global cache, and the pinned MeloTTS
+dispatcher (`melo/text/__init__.py::get_bert`) imports ALL five
+language BERT modules before choosing the requested language,
+several of which construct tokenizers at import (EN
+`bert-base-uncased`, KO `kykim/bert-kor-base`, FR
+`dbmdz/bert-base-french-europeana-cased`, ES
+`dccuchile/bert-base-spanish-wwm-uncased`, ZH
+`bert-base-multilingual-uncased`, JP
+`tohoku-nlp/bert-base-japanese-v3`) — so the first English segment
+needed all five tokenizer caches just to import the dispatcher,
+while setup seeds/validates only `bert-base-uncased`. The fix,
+implemented literally per the verdict:
+
+- **Lazy-import patch (preferred correction).** Setup applies
+  `tools/narration/melotts-lazy-bert.patch` (SHA-256
+  `2318ba2a92ac7a0b10beb296c9c4d30d8024131b97f018549894e0cda4a7e3a9`)
+  to the installed MeloTTS code right after the pinned-code install:
+  `cleaner.py` replaces its top-level import of all six language
+  modules with a lazy `_get_language_module()` (importlib, cached);
+  `get_bert` replaces its seven eager `from .*_bert import
+  get_bert_feature` lines with an import of only the selected
+  language module; `english.py` defines `distribute_phone` locally
+  instead of importing it from `japanese` (the same 8-line pure
+  function `french.py`, `korean.py`, and `spanish.py` already define
+  locally). After the patch, an English segment imports/constructs
+  ONLY the EN tokenizer + model. The patch is verified by SHA-256
+  before applying, the apply is idempotent (skipped when the
+  `FORGE lazy-import patch` marker is already present), and the
+  marker is re-verified in all three patched files. The setup
+  receipt records `melotts_patch_sha256`.
+- **Pinned lock file (reproducible deps).** Setup installs every
+  Python artifact from `tools/narration/requirements-lock.txt`
+  with `pip install --require-hashes` — exact versions + SHA-256
+  hashes for all 128 packages of the proven working venv (Python
+  3.12, cp312/win_amd64), including the CUDA-index torch wheel
+  (`torch==2.14.1+cu130`, hash verified on the box) and
+  `torchaudio==2.11.1` (PyPI — the cu130 index carries no plain
+  2.11.1). No unpinned `pip install <name>` remains in the setup.
+  The git-commit-pinned installs (OpenVoice, MeloTTS code) are not
+  in the lock — the commit IS their hash. The lock SHA-256
+  (`d417674385350e846e14c354d03b6de2d58539482c3d7482e8506bd14a5d29a9`)
+  is recorded in the setup receipt as `requirements_lock_sha256`.
+  The clean-setup proof is a setup run with the `-Clean` switch,
+  which removes the venv and rebuilds it from the lock from scratch.
+- **Allowlist proof cache.** Step 7b no longer copies any ambient
+  cache: the proof `HF_HOME` is assembled from an explicit
+  setup-owned allowlist, starting from empty — ONLY the validated
+  EN BERT alias snapshot, copied file by file from the validated
+  `$BertCache` (never from the global cache) and re-verified by
+  pinned SHA-256 after copying, with a `refs/main` pointer at the
+  pinned revision. The proof script's speaker pick uses
+  `spk2id.keys()` (run 13 failed by iterating the HParams object
+  directly). P2: setup does NOT delete the shared
+  `models--google-bert--bert-base-uncased` folder (or any shared
+  cache state) — it is the seed source, not narration-owned.
+The MeloTTS code itself could
 not install on Python 3.12 from its pinned `requirements.txt`
 (fugashi 1.3.0 needs MeCab C headers that are not on the box;
 tokenizers 0.13.3 has no cp312 wheel) — setup installs the pinned
-MeloTTS code `--no-deps` and only the runtime deps the EN path
-executes (`cached_path`, `transformers`, `g2p_en`, `pykakasi`,
+MeloTTS code `--no-deps` and the runtime deps from the pinned lock
+file (`cached_path`, `transformers`, `g2p_en`, `pykakasi`,
 `num2words`, `jamo`, `anyascii`, `mecab-python3` + `unidic-lite`,
-`fugashi`, `gruut` + `gruut-ipa` — required at import through
-`cleaner.py`'s eager language-module imports; the list was verified
-with a full AST walk of the pinned source after two rounds missed
-imports a line grep couldn't see — plus the NLTK cmudict +
-perceptron-tagger data for `g2p_en`), then verifies `from melo.api
-import TTS` imports and `G2p()` loads before proceeding.
+`fugashi`, `gruut` + `gruut-ipa`, plus the NLTK cmudict +
+perceptron-tagger data for `g2p_en`). The deps are retained in the
+lock even though the lazy-import patch means the EN generation path
+no longer reaches the JP/KO/FR/ES modules at import: they are the
+proven working venv contents, they are hash-pinned, and they would
+be needed again if a non-EN path were ever used. The list was
+verified with a full AST walk of the pinned source after two rounds
+missed imports a line grep couldn't see. Setup then verifies `from
+melo.api import TTS` imports and `G2p()` loads (against the patched
+code) before proceeding.
 
 Copy the sidecar into place first:
 
