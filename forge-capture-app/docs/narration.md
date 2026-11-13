@@ -66,6 +66,20 @@ mid-spool never yields a half job.
    "consent_missing" | "consent_revoked" | "consent_hash_mismatch"}`,
    the `.failed` marker, and an audit event — and the job stops. A
    queued job revoked before start **cannot run** (acceptance gate 1).
+
+   **Job binding (fix round 1):** immediately after preflight and
+   script-shape validation — still before capture checks, enrollment,
+   or any model work — the runner recomputes the canonical
+   empty-`job_id` script SHA-256 and the canonical job id from the
+   manifest inputs and requires them to equal
+   `job.json.script_sha256` and the job directory id. A script edited
+   after job creation fails the job closed (no render, no enrollment,
+   no model load) — the runner renders only the bytes the manifest
+   bound. `render-manifest.json` records the verified recomputed hash,
+   never a copy of the manifest's. The Rust core and the Python sidecar
+   pin the same canonicalization: the fixture hash
+   `20365a7f6b97b835e373964a13e9498738ca347643f924db08eaf36161c1d34b` is
+   asserted in both test suites.
 4. **Enrollment (zero-shot only, lazy model load):** if
    `enrollment.json` is missing or not `active`, the runner loads the
    OpenVoice `ToneColorConverter` (`checkpoints_v2/converter/`) and
@@ -114,7 +128,16 @@ mid-spool never yields a half job.
    event, and exits non-zero.
 9. **Human acceptance** (`acceptance.json`, presenter + reviewer
    decisions on the exact output hash) is a separate review step in the
-   UI — the runner never writes it and never self-approves.
+   UI — the runner never writes it and never self-approves. Acceptance
+   binds the decision to the bytes actually reviewed (fix round 1):
+   the Tauri side hashes the live output file at acceptance time and
+   requires the live hash to equal BOTH `result.json`'s
+   `output_sha256` and `render-manifest.json`'s `output_hash` — a
+   replaced or corrupted file, a mismatched manifest, or a missing
+   manifest refuses acceptance. The output path is resolved as a plain
+   file name under the job directory only. On acceptance the render
+   manifest records the verdict AND `acceptance_receipt_path`
+   (`"acceptance.json"`), and the manifest write is checked.
 
 ### Marker files
 
@@ -264,9 +287,14 @@ always be `[]`.
   "consent_receipt_version": 1,
   "output_hash": "<sha256 of output.mp4>",
   "caption_path": "captions.vtt",
-  "acceptance_receipt": null
+  "acceptance_receipt": null,
+  "acceptance_receipt_path": null
 }
 ```
+
+`acceptance_receipt_path` is `"acceptance.json"` once a human has
+accepted the output (fix round 1); `null` before that. Old manifests
+without the field still parse.
 
 ### `AcceptanceReceipt` (`jobs/<job_id>/acceptance.json`)
 
@@ -285,30 +313,55 @@ always be `[]`.
 
 ## Revocation behavior
 
-Revocation is a transaction owned by the Tauri side, not the runner:
+Revocation is a fail-closed, restartable transaction owned by the
+Tauri side (`forge-capture-core::execute_revocation`), not the runner:
 
-1. The consent receipt is marked `revoked` (with `revoked_at` /
-   `revoke_reason` + an audit event).
-2. New/queued jobs are rejected at the next preflight — the runner
+1. **Durable pending state first.** Before any mutation, the plan
+   (deleted assets, blocked jobs, unpublished outputs, processing jobs
+   seen at plan time) is written to
+   `presenters/<id>/revocation-pending.json` (two-phase write). The
+   receipt's `revoked_at` and reason are the transaction's identity.
+2. **Effects apply in order, each verified on disk:** consent receipt
+   → `revoked` (with `revoked_at` / `revoke_reason` + audit event);
+   enrollment → `revoked`; derived voice assets deleted with absence
+   verified (a missing asset counts as confirmed-absent); each queued
+   job blocked — `.queued` removed and verified gone, `result.json`
+   written `failed` / `consent_revoked`, `.failed` verified present;
+   managed outputs re-read, marked `consent_revoked`, re-read again
+   and verified.
+3. **No success receipt until every required effect is confirmed.**
+   The final receipt (`revocation-<stamp>.json`) lists only confirmed
+   effects. Any failure saves the pending state with `last_error` and
+   returns an error — never a success receipt with unconfirmed effects.
+   Filesystem errors are never ignored.
+4. **Restartable.** A re-run with a pending state present resumes the
+   transaction (same `revoked_at`/reason, confirmed lists carried
+   forward, already-done effects skipped); a re-run after completion
+   errors `"already revoked"`. A corrupt pending state, unreadable
+   consent receipt, or corrupt enrollment fails closed before anything
+   is claimed done.
+5. New/queued jobs are rejected at the next preflight — the runner
    re-checks consent at every job start, so a job queued before the
-   revocation cannot run afterward.
-3. Derived voice assets unique to that presenter (reference clip,
+   revocation cannot run afterward. A job already processing when
+   revocation lands is named in the audit event; the runner's
+   completion-time re-check drops its output.
+6. Derived voice assets unique to that presenter (reference clip,
    speaker embedding, model caches) are deleted from managed storage;
    only the minimum consent/revocation audit and hashes are retained.
-4. Every managed generated output for that presenter is marked
+   Every managed generated output for that presenter is marked
    `consent_revoked` in `managed-outputs.json`, removed from
    active/published library views, and blocked from download, re-render,
    duplication, or republishing.
-5. The owner gets a replacement/delete queue for managed historical
+7. The owner gets a replacement/delete queue for managed historical
    outputs. The source capture and the audit record are **not** silently
    erased. External files already exported cannot be recalled; the UI
    must state that limitation and list known managed copies.
-6. Re-enrollment requires a new self-recorded consent receipt; restoring
+8. Re-enrollment requires a new self-recorded consent receipt; restoring
    an old embedding is prohibited.
 
-The runner's part is only step 2 (the gate) plus refusing enrollment
-under a non-active receipt. It never deletes another presenter's files
-and never touches `managed-outputs.json`.
+The runner's part is only the preflight gate (step 5) plus refusing
+enrollment under a non-active receipt. It never deletes another
+presenter's files and never touches `managed-outputs.json`.
 
 ## Local-first proof
 
@@ -338,6 +391,17 @@ Prerequisites: the env setup script has finished (venv at
 `C:\forge-bridge\narration\checkpoints_v2` — the runner also checks the
 setup script's `...\narration\src\checkpoints_v2` layout — and the
 receipt at `C:\forge-bridge\narration\receipt.json`).
+
+**Known blocker (2026-11-12, verified from both the iBUYPOWER and
+this VM):** the documented OpenVoice V2 checkpoints URL
+(`https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip`)
+is dead — S3 `NoSuchBucket`, the bucket `myshell-public-repo-host`
+does not exist. Env setup run 5 died at that download (no receipt,
+no checkpoints) and no replacement source is verified yet. Until a
+replacement weights source is decided, the setup cannot complete, the
+weights hash stays `<FILL-FROM-RECEIPT>`, and no live enrollment or
+generation proof is possible. Do NOT substitute an unverified mirror
+or invent a hash.
 
 Copy the sidecar into place first:
 
@@ -380,7 +444,7 @@ timestamps; no secrets are logged. Log file: wherever the
 | Gate | How this slice proves it |
 | --- | --- |
 | 1 Consent denial | Preflight in `process_job` + `enroll_presenter`; revoked/missing/mismatched receipt fails the job before any model work. Verified on the dev VM with a revoked-consent spool (exit 2, `consent_revoked`). |
-| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). **Open item:** weights SHA-256 still `<FILL-FROM-RECEIPT>` until the env setup finishes. |
+| 2 License/reproducibility | `narration-sidecar/LICENSE-RECEIPT.md` + setup receipt (`receipt.json`, frozen requirements). **Open item — BLOCKED:** weights SHA-256 still `<FILL-FROM-RECEIPT>`; the documented checkpoints URL is dead (S3 `NoSuchBucket`, verified 2026-11-12), so no receipt exists and no replacement source is verified yet. |
 | 5 Narration-only utility | The render is complete with only capture footage + narration + captions; there is no face track to remove. |
 | 6 Audio/video quality | Script validation (no overlaps, timing within duration), per-segment duration/RTF, captions verbatim from the approved script; human review (gate 10) is the evidence. |
 | 7 Local-first proof | `outbound_requests: []` + `resources` + per-segment RTF + `render_sec`/`output_bytes` in every `result.json`; no network code in the runner. |

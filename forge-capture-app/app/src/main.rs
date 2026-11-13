@@ -5385,28 +5385,6 @@ fn narration_read_enrollment_opt(
     serde_json::from_slice(&bytes).ok()
 }
 
-fn narration_read_managed_outputs(
-    root: &std::path::Path,
-) -> Vec<narr::ManagedOutputRecord> {
-    let bytes = match std::fs::read(root.join("managed-outputs.json")) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-    serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|v| v.get("outputs").cloned())
-        .and_then(|o| serde_json::from_value::<Vec<narr::ManagedOutputRecord>>(o).ok())
-        .unwrap_or_default()
-}
-
-fn narration_write_managed_outputs(
-    root: &std::path::Path,
-    outputs: &[narr::ManagedOutputRecord],
-) -> Result<(), String> {
-    let doc = serde_json::json!({ "version": 1, "outputs": outputs });
-    narration_write_json_two_phase(&root.join("managed-outputs.json"), &doc)
-}
-
 /// Job status from marker-file presence (`.done` > `.failed` >
 /// `.processing` > `.queued`), via the core wrapper around
 /// `ai_edit::status_from_presence`. `None` means no marker is present.
@@ -6249,7 +6227,9 @@ fn narration_list_jobs() -> Result<Vec<NarrationJobListDto>, String> {
 /// speaker embedding) are deleted, queued jobs are blocked with a
 /// `consent_revoked` failure, managed outputs are unpublished, and every
 /// step lands in the immutable audit log. The source capture, the consent
-/// artifact, and the audit log are never deleted. A job already
+/// artifact, and the audit log are never deleted. A durable pending state
+/// makes the transaction restartable: a re-run resumes it instead of
+/// reporting success with unconfirmed effects. A job already
 /// processing when revocation lands is named in the audit event; the
 /// runner re-checks consent before writing its result, so its output
 /// cannot land as an active managed record.
@@ -6259,181 +6239,12 @@ fn narration_revoke_consent(
     presenterId: String,
     reason: String,
 ) -> Result<narr::RevocationReceipt, String> {
-    if reason.trim().is_empty() {
-        return Err("a revocation reason is required".to_string());
-    }
+    // Thin wrapper: the fail-closed, restartable transaction lives in
+    // the core crate (narr::execute_revocation) so its fault-injection
+    // behaviour is covered by core tests. This shell only resolves the
+    // narration root and maps the error.
     let root = narration_root_dir()?;
-    let mut receipt = narration_read_consent(&root, &presenterId)?;
-    if receipt.status == "revoked" {
-        return Err(format!(
-            "consent for presenter {presenterId} is already revoked"
-        ));
-    }
-    let presenter_dir = narration_presenter_dir(&root, &presenterId)?;
-    let enrollment = narration_read_enrollment_opt(&root, &presenterId);
-    // Collect this presenter's queued + processing jobs.
-    let mut queued: Vec<String> = Vec::new();
-    let mut processing: Vec<String> = Vec::new();
-    let jobs_dir = root.join("jobs");
-    if let Ok(entries) = std::fs::read_dir(&jobs_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !narration_job_id_valid(&name) {
-                continue;
-            }
-            let job_dir = jobs_dir.join(&name);
-            let Ok(bytes) = std::fs::read(job_dir.join("job.json")) else {
-                continue;
-            };
-            let Ok(manifest) =
-                serde_json::from_slice::<narr::NarrationJobManifest>(&bytes)
-            else {
-                continue;
-            };
-            if manifest.presenter_id != presenterId {
-                continue;
-            }
-            match narration_job_status(&job_dir).as_deref() {
-                Some("queued") => queued.push(name),
-                Some("processing") => processing.push(name),
-                _ => {}
-            }
-        }
-    }
-    let managed = narration_read_managed_outputs(&root);
-    // The plan needs an enrollment to name the derived assets. When none
-    // exists yet (never enrolled), use the conventional paths — the apply
-    // step below deletes only files that actually exist.
-    let enrollment_for_plan = enrollment.clone().unwrap_or(narr::VoiceEnrollment {
-        version: 1,
-        presenter_id: presenterId.clone(),
-        consent_receipt_version: receipt.version,
-        consent_artifact_sha256: receipt.artifact_sha256.clone(),
-        model_id: narr::MODEL_ID_OPENVOICE_V2.to_string(),
-        model_version: narr::MODEL_VERSION_V2.to_string(),
-        model_code_commit: narr::OPENVOICE_CODE_COMMIT.to_string(),
-        weights_sha256: narr::CHECKPOINTS_ZIP_SHA256.to_string(),
-        reference_audio_sha256: String::new(),
-        preprocessing_version: String::new(),
-        speaker_embedding_path: None,
-        reference_clip_path: "reference.wav".to_string(),
-        created_at: receipt.granted_at.clone(),
-        last_used_at: None,
-        status: "pending".to_string(),
-    });
-    let revoked_at = forge_capture_core::timestamp::now_utc_iso8601();
-    let plan = narr::revocation_plan(
-        &presenterId,
-        &enrollment_for_plan,
-        &queued,
-        &managed,
-        &revoked_at,
-        reason.trim(),
-    );
-    // --- Apply the transaction ---
-    receipt.status = "revoked".to_string();
-    receipt.revoked_at = Some(revoked_at.clone());
-    receipt.revoke_reason = Some(reason.trim().to_string());
-    receipt.audit_events.push(narr::ConsentAuditEvent {
-        event: "consent_revoked".to_string(),
-        at: revoked_at.clone(),
-        by: "owner".to_string(),
-        detail: reason.trim().to_string(),
-    });
-    narr::validate_consent_receipt(&receipt).map_err(|e| e.to_string())?;
-    narration_write_json_two_phase(&presenter_dir.join("consent.json"), &receipt)?;
-    if let Some(mut enr) = enrollment {
-        enr.status = "revoked".to_string();
-        narration_write_json_two_phase(&presenter_dir.join("enrollment.json"), &enr)?;
-    }
-    // Derived assets only, resolved inside the PRESENTER dir (the plan's
-    // paths — "reference.wav", "speaker_embedding.json" — are
-    // presenter-dir-relative, matching the runner's enrollment layout).
-    // The consent artifact, source captures, and audit log are never in
-    // this list.
-    for rel in &plan.deleted_assets {
-        let target = presenter_dir.join(rel);
-        let Ok(canon_dir) = presenter_dir.canonicalize() else {
-            continue;
-        };
-        let Ok(canon_target) = target.canonicalize() else {
-            continue; // already gone
-        };
-        if canon_target.starts_with(&canon_dir) {
-            let _ = std::fs::remove_file(&canon_target);
-        }
-    }
-    // Block queued jobs with an explicit consent_revoked failure.
-    for job_id in &plan.blocked_jobs {
-        let job_dir = match narration_job_dir(&root, job_id) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let _ = std::fs::remove_file(job_dir.join(".queued"));
-        let manifest: narr::NarrationJobManifest =
-            match std::fs::read(job_dir.join("job.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-            {
-                Some(m) => m,
-                None => continue,
-            };
-        let failed = narr::NarrationResult {
-            version: 1,
-            job_id: job_id.clone(),
-            status: "failed".to_string(),
-            failure_reason: Some("consent_revoked".to_string()),
-            segments: Vec::new(),
-            render: None,
-            resources: narr::NarrationResources {
-                peak_vram_mib: None,
-                peak_ram_mib: None,
-                gpu: "unknown".to_string(),
-            },
-            outbound_requests: Vec::new(),
-            model: narr::NarrationModelReceipt {
-                model_id: narr::MODEL_ID_OPENVOICE_V2.to_string(),
-                model_version: narr::MODEL_VERSION_V2.to_string(),
-                code_commit: narr::OPENVOICE_CODE_COMMIT.to_string(),
-                weights_sha256: narr::CHECKPOINTS_ZIP_SHA256.to_string(),
-                base_tts: "melotts".to_string(),
-                base_tts_commit: narr::MELOTTS_CODE_COMMIT.to_string(),
-            },
-            consent_receipt_version: manifest.consent_receipt_version,
-            completed_at: revoked_at.clone(),
-        };
-        let _ = narration_write_json_two_phase(&job_dir.join("result.json"), &failed);
-        let _ = std::fs::write(job_dir.join(".failed"), b"");
-    }
-    // Unpublish managed outputs.
-    if !plan.unpublished_outputs.is_empty() {
-        let mut outputs = managed;
-        for rec in outputs.iter_mut() {
-            if plan.unpublished_outputs.contains(&rec.job_id) {
-                rec.status = "consent_revoked".to_string();
-            }
-        }
-        narration_write_managed_outputs(&root, &outputs)?;
-    }
-    // Revocation receipt + audit trail.
-    let stamp = revoked_at.replace(['-', ':'], "");
-    narration_write_json_two_phase(
-        &presenter_dir.join(format!("revocation-{stamp}.json")),
-        &plan,
-    )?;
-    narration_append_audit(
-        &root,
-        serde_json::json!({
-            "event": "consent_revoked",
-            "presenter_id": presenterId,
-            "reason": reason.trim(),
-            "deleted_assets": plan.deleted_assets.len(),
-            "blocked_jobs": plan.blocked_jobs,
-            "unpublished_outputs": plan.unpublished_outputs,
-            "processing_at_revocation": processing,
-        }),
-    )?;
-    Ok(plan)
+    narr::execute_revocation(&root, &presenterId, &reason)
 }
 
 /// Record human acceptance for a finished narration job (acceptance gate
@@ -6468,11 +6279,13 @@ fn narration_accept_output(
         .map_err(|e| format!("job {} has no result.json: {e}", dto.job_id))?;
     let result: narr::NarrationResult = serde_json::from_slice(&bytes)
         .map_err(|e| format!("job {} result.json is corrupt: {e}", dto.job_id))?;
-    let output_sha256 = result
-        .render
-        .as_ref()
-        .map(|r| r.output_sha256.clone())
-        .ok_or_else(|| format!("job {} has no rendered output", dto.job_id))?;
+    // Bind the decision to the bytes actually reviewed: hash the live
+    // output now and require it to equal BOTH the result and the render
+    // manifest. A done job without a readable, valid render manifest
+    // fails closed. The manifest comes back parsed for the receipt
+    // attachment below.
+    let (output_sha256, mut manifest) =
+        narr::verify_acceptance_output(&job_dir, &result)?;
     let now = forge_capture_core::timestamp::now_utc_iso8601();
     let mut receipt = narr::AcceptanceReceipt {
         version: 1,
@@ -6490,17 +6303,12 @@ fn narration_accept_output(
     let verdict = narr::acceptance_verdict(&receipt);
     receipt.verdict = verdict.to_string();
     narration_write_json_two_phase(&job_dir.join("acceptance.json"), &receipt)?;
-    // Attach the verdict to the render manifest when one exists.
-    let manifest_path = job_dir.join("render-manifest.json");
-    if let Ok(bytes) = std::fs::read(&manifest_path) {
-        if let Ok(mut manifest) =
-            serde_json::from_slice::<narr::RenderManifest>(&bytes)
-        {
-            manifest.acceptance_receipt = Some(verdict.to_string());
-            let _ =
-                narration_write_json_two_phase(&manifest_path, &manifest);
-        }
-    }
+    // Attach the verdict AND the receipt artifact reference to the
+    // render manifest. This write is checked: a failed manifest update
+    // fails the command rather than silently dropping the linkage.
+    manifest.acceptance_receipt = Some(verdict.to_string());
+    manifest.acceptance_receipt_path = Some("acceptance.json".to_string());
+    narration_write_json_two_phase(&job_dir.join("render-manifest.json"), &manifest)?;
     narration_append_audit(
         &root,
         serde_json::json!({

@@ -42,11 +42,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from narration_lib import (  # noqa: E402
     build_ffmpeg_command,
     build_vtt,
+    canonical_script_sha256,
     marker_path,
     resolve_marker,
     sha256_file,
     validate_result_dict,
     validate_script_dict,
+    verify_job_binding,
 )
 
 # --- Pinned model identity (scope brief: pin exact code + weights) -------
@@ -520,6 +522,31 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                          "script.json job_id does not match job directory",
                          consent_receipt_version=consent_version, weights=weights)
 
+        # Job binding (P1-1): recompute the canonical empty-job_id
+        # script hash and the canonical job id BEFORE capture checks,
+        # enrollment, or any model work — a script edited after job
+        # creation must fail closed here, never render.
+        # Boundary note: the job-id recomputation uses the runner's
+        # resolved weights hash (setup receipt when present, else the
+        # <FILL-FROM-RECEIPT> placeholder). A job created before the
+        # weights receipt is filled and run after it is filled will
+        # fail closed on job-id mismatch — that is the safe direction;
+        # the failure reason names the weights source, so the cause is
+        # visible instead of looking like a tampered script. Do not
+        # work around it by falling back to another weights value.
+        binding_errors = verify_job_binding(manifest, script, job_id, weights)
+        if binding_errors:
+            weights_source = (
+                "setup receipt (receipt.json)"
+                if weights != WEIGHTS_SHA256_PLACEHOLDER
+                else "placeholder <FILL-FROM-RECEIPT> (no receipt.json yet)")
+            return _fail(root, job_dir, job_id,
+                         "job binding verification failed "
+                         f"(weights_sha256 from {weights_source}): "
+                         + "; ".join(binding_errors),
+                         consent_receipt_version=consent_version, weights=weights)
+        verified_script_sha256 = canonical_script_sha256(script)
+
         capture_path = Path(manifest["capture_path"])
         if not capture_path.is_file():
             return _fail(root, job_dir, job_id,
@@ -574,7 +601,8 @@ def process_job(root: Path, job_dir: Path, checkpoints_dir: Path,
                                      encoding="utf-8")
             render, render_manifest = _render(
                 root, job_dir, manifest, script, capture_path, segment_wavs,
-                captions_path, ffmpeg_bin, ffprobe_bin, weights)
+                captions_path, ffmpeg_bin, ffprobe_bin, weights,
+                verified_script_sha256)
 
         resources = {"peak_vram_mib": monitor.peak_vram_mib,
                      "peak_ram_mib": monitor.peak_ram_mib,
@@ -718,8 +746,15 @@ def upsert_managed_output(root: Path, presenter_id: str, job_id: str,
 
 
 def _render(root, job_dir, manifest, script, capture_path, segment_wavs,
-            captions_path, ffmpeg_bin, ffprobe_bin, weights):
-    """FFmpeg assembly + render manifest. Returns (render dict, manifest dict)."""
+            captions_path, ffmpeg_bin, ffprobe_bin, weights,
+            verified_script_sha256):
+    """FFmpeg assembly + render manifest. Returns (render dict, manifest dict).
+
+    ``verified_script_sha256`` is the recomputed canonical script hash
+    that passed ``verify_job_binding`` in ``process_job`` — the render
+    manifest records that verified value, never a copy of
+    ``manifest.script_sha256``.
+    """
     job_id = job_dir.name
     output_path = job_dir / "output.mp4"
     capture_has_audio = probe_has_audio_stream(ffprobe_bin, capture_path)
@@ -750,7 +785,7 @@ def _render(root, job_dir, manifest, script, capture_path, segment_wavs,
         "job_id": job_id,
         "input_hashes": {
             "capture_sha256": manifest.get("capture_sha256"),
-            "script_sha256": manifest.get("script_sha256"),
+            "script_sha256": verified_script_sha256,
             "reference_audio_sha256": sha256_file(
                 root / "presenters" / manifest["presenter_id"] / "reference.wav"),
         },

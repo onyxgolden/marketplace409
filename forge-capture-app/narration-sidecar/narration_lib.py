@@ -9,6 +9,7 @@ helpers and does all heavy work behind lazy imports inside functions.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -186,6 +187,112 @@ def validate_script_dict(script) -> list:
             errors.append(f"{where} overlaps the previous segment")
         prev_start = start if prev_start is None else max(prev_start, start)
         prev_end = end if prev_end is None else max(prev_end, end)
+    return errors
+
+
+def canonical_script_json(script) -> str:
+    """Canonical JSON of a NarrationScript in its pre-assignment form.
+
+    Rebuilds the script as an ordered dict with EXACTLY the Rust
+    ``NarrationScript`` / ``NarrationSegment`` struct fields, in struct
+    order, with ``job_id`` forced to ``""`` — the empty-``job_id`` form
+    the Rust core hashes at creation (``narration_create_job`` builds
+    the script with ``job_id ""``, hashes it, derives the canonical job
+    id from that hash, and only then stores the script with the real
+    job id). Unknown keys are dropped: Rust's struct ignores them on
+    deserialize, so they were never part of the hashed value.
+
+    Top level: version, job_id (""), presenter_id,
+    capture_duration_sec (coerced to float), segments. Each segment:
+    step_id, text, source_evidence, capture_start_sec (float),
+    capture_end_sec (float), audio_hash (default None), correction
+    (default None). Serialized compact (``separators=(",", ":")``,
+    ``ensure_ascii=False``) to match ``serde_json::to_string``.
+
+    Assumption: Python's float repr matches Rust serde_json/ryu for
+    ordinary second values — capture times are small, non-exotic
+    decimals (``45.0 -> "45.0"``, ``4.2 -> "4.2"`` on both sides).
+    """
+    segments = []
+    for seg in script.get("segments") or []:
+        segments.append({
+            "step_id": seg.get("step_id"),
+            "text": seg.get("text"),
+            "source_evidence": seg.get("source_evidence"),
+            "capture_start_sec": float(seg.get("capture_start_sec")),
+            "capture_end_sec": float(seg.get("capture_end_sec")),
+            "audio_hash": seg.get("audio_hash"),
+            "correction": seg.get("correction"),
+        })
+    canonical = {
+        "version": script.get("version"),
+        "job_id": "",
+        "presenter_id": script.get("presenter_id"),
+        "capture_duration_sec": float(script.get("capture_duration_sec")),
+        "segments": segments,
+    }
+    return json.dumps(canonical, separators=(",", ":"), ensure_ascii=False)
+
+
+def canonical_script_sha256(script) -> str:
+    """SHA-256 hex of the script's canonical empty-``job_id`` JSON."""
+    return hashlib.sha256(
+        canonical_script_json(script).encode("utf-8")).hexdigest()
+
+
+def verify_job_binding(manifest, script, job_id, weights_sha256) -> list:
+    """Verify a job's script + manifest binding. Returns error strings
+    (empty means OK). Checks, in order:
+
+    (a) ``script.job_id`` equals the job directory name;
+    (b) the recomputed canonical script hash equals
+        ``manifest.script_sha256``;
+    (c) the canonical job id recomputed from the manifest inputs
+        (presenter_id, consent_receipt_version, model_id,
+        model_version, weights_sha256, capture_sha256, and the
+        RECOMPUTED script hash — not the manifest's) equals the job
+        directory name;
+    (d) that same recomputed id equals ``manifest.job_id``.
+
+    Using the recomputed script hash in (c) means a tampered script
+    fails at (b) first, and a stale manifest hash fails at (c).
+    """
+    if not isinstance(script, dict):
+        return ["script must be a JSON object"]
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
+    errors = []
+    if script.get("job_id") != job_id:
+        errors.append(
+            f"script job_id {script.get('job_id')!r} does not match "
+            f"job directory {job_id!r}")
+    try:
+        recomputed_script_sha256 = canonical_script_sha256(script)
+    except Exception as exc:
+        return errors + [f"script canonicalization failed: {exc}"]
+    if recomputed_script_sha256 != manifest.get("script_sha256"):
+        errors.append(
+            "script_sha256 mismatch: recomputed "
+            f"{recomputed_script_sha256} != manifest "
+            f"{manifest.get('script_sha256')!r}; the script was changed "
+            "after job creation")
+    recomputed_job_id = canonical_job_id(
+        manifest.get("presenter_id"),
+        manifest.get("consent_receipt_version"),
+        manifest.get("model_id"),
+        manifest.get("model_version"),
+        weights_sha256,
+        manifest.get("capture_sha256"),
+        recomputed_script_sha256,
+    )
+    if recomputed_job_id != job_id:
+        errors.append(
+            f"canonical job id {recomputed_job_id!r} does not match "
+            f"job directory {job_id!r}")
+    if recomputed_job_id != manifest.get("job_id"):
+        errors.append(
+            f"canonical job id {recomputed_job_id!r} does not match "
+            f"manifest job_id {manifest.get('job_id')!r}")
     return errors
 
 

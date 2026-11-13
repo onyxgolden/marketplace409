@@ -450,3 +450,228 @@ def test_probe_has_audio_stream(tmp_path):
                     "-c:v", "libx264", "-c:a", "aac", "-shortest",
                     str(with_audio)], check=True, capture_output=True)
     assert runner.probe_has_audio_stream(FFPROBE, with_audio) is True
+
+
+# --- Job binding (P1-1) -----------------------------------------------------
+#
+# ONE fixed fixture script for all binding tests. Its canonical
+# empty-job_id JSON and SHA-256 are pinned as literals below so the
+# Rust side can pin the same values (same fixture, same hash).
+# Fixture JSON (as stored on disk, with the real job_id):
+#   {"version": 1, "job_id": "<canonical id>", "presenter_id": "tyler-welch",
+#    "capture_duration_sec": 45.0,
+#    "segments": [
+#      {"step_id": "s1", "text": "Open the valve.",
+#       "source_evidence": "transcript 00:00–00:04",
+#       "capture_start_sec": 0.0, "capture_end_sec": 4.2,
+#       "audio_hash": null, "correction": null},
+#      {"step_id": "s2", "text": "Check the gauge.",
+#       "source_evidence": "transcript 00:04–00:12",
+#       "capture_start_sec": 4.2, "capture_end_sec": 12.5,
+#       "audio_hash": null, "correction": null}]}
+# Canonical empty-job_id JSON (job_id forced to ""):
+#   {"version":1,"job_id":"","presenter_id":"tyler-welch","capture_duration_sec":45.0,
+#    "segments":[{"step_id":"s1","text":"Open the valve.",
+#    "source_evidence":"transcript 00:00–00:04","capture_start_sec":0.0,
+#    "capture_end_sec":4.2,"audio_hash":null,"correction":null},
+#    {"step_id":"s2","text":"Check the gauge.",
+#    "source_evidence":"transcript 00:04–00:12","capture_start_sec":4.2,
+#    "capture_end_sec":12.5,"audio_hash":null,"correction":null}]}
+# Canonical script SHA-256:
+#   20365a7f6b97b835e373964a13e9498738ca347643f924db08eaf36161c1d34b
+
+_BINDING_SCRIPT_HASH = (
+    "20365a7f6b97b835e373964a13e9498738ca347643f924db08eaf36161c1d34b")
+_BINDING_CANONICAL_JSON = (
+    '{"version":1,"job_id":"","presenter_id":"tyler-welch",'
+    '"capture_duration_sec":45.0,"segments":['
+    '{"step_id":"s1","text":"Open the valve.",'
+    '"source_evidence":"transcript 00:00\u201300:04",'
+    '"capture_start_sec":0.0,"capture_end_sec":4.2,'
+    '"audio_hash":null,"correction":null},'
+    '{"step_id":"s2","text":"Check the gauge.",'
+    '"source_evidence":"transcript 00:04\u201300:12",'
+    '"capture_start_sec":4.2,"capture_end_sec":12.5,'
+    '"audio_hash":null,"correction":null}]}')
+_BINDING_WEIGHTS = "w" * 64
+_BINDING_CAPTURE_SHA256 = "c" * 64
+
+
+def _binding_script(job_id):
+    """The one fixed binding fixture script, with the given job_id."""
+    return {
+        "version": 1, "job_id": job_id, "presenter_id": "tyler-welch",
+        "capture_duration_sec": 45.0,
+        "segments": [
+            {"step_id": "s1", "text": "Open the valve.",
+             "source_evidence": "transcript 00:00\u201300:04",
+             "capture_start_sec": 0.0, "capture_end_sec": 4.2,
+             "audio_hash": None, "correction": None},
+            {"step_id": "s2", "text": "Check the gauge.",
+             "source_evidence": "transcript 00:04\u201300:12",
+             "capture_start_sec": 4.2, "capture_end_sec": 12.5,
+             "audio_hash": None, "correction": None},
+        ],
+    }
+
+
+def _binding_job_id(script_hash=None, weights=_BINDING_WEIGHTS,
+                    capture_sha256=_BINDING_CAPTURE_SHA256):
+    return lib.canonical_job_id(
+        "tyler-welch", 1, "openvoice-v2", "checkpoints_v2_0417",
+        weights, capture_sha256,
+        script_hash if script_hash is not None else _BINDING_SCRIPT_HASH)
+
+
+def _binding_manifest(job_id, script_hash=None,
+                      capture_sha256=_BINDING_CAPTURE_SHA256):
+    return {
+        "version": 1, "job_id": job_id, "job_type": "narrate",
+        "presenter_id": "tyler-welch", "consent_receipt_version": 1,
+        "capture_file": "capture.mp4",
+        "capture_path": "C:\\capture.mp4",
+        "capture_sha256": capture_sha256,
+        "model_id": "openvoice-v2", "model_version": "checkpoints_v2_0417",
+        "script_sha256": script_hash if script_hash is not None
+        else _BINDING_SCRIPT_HASH,
+        "created_at": "2026-11-12T00:00:00Z", "status": "queued",
+    }
+
+
+def test_canonical_script_json_pinned():
+    script = _binding_script("narr-0123456789abcdef")
+    assert lib.canonical_script_json(script) == _BINDING_CANONICAL_JSON
+
+
+def test_canonical_script_sha256_pinned():
+    script = _binding_script("narr-0123456789abcdef")
+    assert lib.canonical_script_sha256(script) == _BINDING_SCRIPT_HASH
+    # The stored job_id must not affect the hash (empty-job_id form).
+    assert lib.canonical_script_sha256(_binding_script("")) == \
+        _BINDING_SCRIPT_HASH
+
+
+def test_canonical_script_json_drops_unknown_keys_and_coerces_ints():
+    script = _binding_script("narr-0123456789abcdef")
+    script["extra_top_level"] = "not part of the Rust struct"
+    script["capture_duration_sec"] = 45  # int form of the same f64
+    script["segments"][0]["extra_segment_key"] = 123
+    assert lib.canonical_script_json(script) == _BINDING_CANONICAL_JSON
+    assert lib.canonical_script_sha256(script) == _BINDING_SCRIPT_HASH
+
+
+def test_verify_job_binding_happy_path():
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    assert lib.verify_job_binding(
+        _binding_manifest(job_id), script, job_id,
+        _BINDING_WEIGHTS) == []
+
+
+def test_verify_job_binding_tampered_text_fails_hash_check():
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    script["segments"][0]["text"] = "Close the valve."
+    errs = lib.verify_job_binding(
+        _binding_manifest(job_id), script, job_id, _BINDING_WEIGHTS)
+    assert errs
+    assert any("script_sha256 mismatch" in e for e in errs)
+
+
+def test_verify_job_binding_tampered_timing_fails_hash_check():
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    script["segments"][1]["capture_end_sec"] = 13.5
+    errs = lib.verify_job_binding(
+        _binding_manifest(job_id), script, job_id, _BINDING_WEIGHTS)
+    assert errs
+    assert any("script_sha256 mismatch" in e for e in errs)
+
+
+def test_verify_job_binding_different_presenter_fails_job_id_check():
+    # Same job_id string, but the script names another presenter.
+    # The manifest hash is updated to the new script so (b) passes and
+    # the failure lands squarely on the job-id check (c).
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    script["presenter_id"] = "gabby-test"
+    new_hash = lib.canonical_script_sha256(script)
+    assert new_hash != _BINDING_SCRIPT_HASH
+    errs = lib.verify_job_binding(
+        _binding_manifest(job_id, script_hash=new_hash), script, job_id,
+        _BINDING_WEIGHTS)
+    assert errs
+    assert any("canonical job id" in e for e in errs)
+    assert not any("script_sha256 mismatch" in e for e in errs)
+
+
+def test_verify_job_binding_different_capture_fails_job_id_check():
+    # Same script and job_id string, but the manifest binds a different
+    # capture hash: the recomputed canonical id no longer matches.
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    manifest = _binding_manifest(job_id, capture_sha256="d" * 64)
+    errs = lib.verify_job_binding(manifest, script, job_id, _BINDING_WEIGHTS)
+    assert errs
+    assert any("canonical job id" in e for e in errs)
+
+
+def test_verify_job_binding_manifest_job_id_mismatch():
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    manifest = _binding_manifest(job_id)
+    manifest["job_id"] = "narr-0000000000000000"
+    errs = lib.verify_job_binding(manifest, script, job_id, _BINDING_WEIGHTS)
+    assert len(errs) == 1
+    assert "manifest job_id" in errs[0]
+
+
+def test_verify_job_binding_same_payload_replay_verifies():
+    job_id = _binding_job_id()
+    script = _binding_script(job_id)
+    manifest = _binding_manifest(job_id)
+    assert lib.verify_job_binding(
+        manifest, script, job_id, _BINDING_WEIGHTS) == []
+    assert lib.verify_job_binding(
+        manifest, script, job_id, _BINDING_WEIGHTS) == []
+
+
+def test_runner_process_job_rejects_tampered_script(tmp_path):
+    """End-to-end wiring: a tampered script fails the job closed in
+    process_job BEFORE capture checks (the capture file does not even
+    exist here, yet the failure reason is the binding, not the
+    missing capture), with the weights source named."""
+    # Consent preflight must pass so the job reaches the binding check.
+    pdir = tmp_path / "presenters" / "tyler-welch"
+    pdir.mkdir(parents=True)
+    artifact = pdir / "consent-artifact.mp4"
+    artifact.write_bytes(b"fake video bytes")
+    (pdir / "consent.json").write_text(json.dumps({
+        "version": 1, "presenter_id": "tyler-welch", "status": "active",
+        "scope": ["voice"],
+        "artifact_sha256": lib.sha256_bytes(b"fake video bytes"),
+        "consent_artifact_path": "consent-artifact.mp4"}))
+    # Job created with the placeholder weights (no receipt.json here),
+    # then the script text tampered after creation.
+    script_hash = _BINDING_SCRIPT_HASH
+    job_id = lib.canonical_job_id(
+        "tyler-welch", 1, "openvoice-v2", "checkpoints_v2_0417",
+        runner.WEIGHTS_SHA256_PLACEHOLDER, _BINDING_CAPTURE_SHA256,
+        script_hash)
+    job_dir = tmp_path / "jobs" / job_id
+    job_dir.mkdir(parents=True)
+    (job_dir / ".processing").touch()
+    (job_dir / "job.json").write_text(json.dumps(
+        _binding_manifest(job_id, capture_sha256=_BINDING_CAPTURE_SHA256)))
+    script = _binding_script(job_id)
+    script["segments"][0]["text"] = "Tampered after creation."
+    (job_dir / "script.json").write_text(json.dumps(script))
+    rc = runner.process_job(tmp_path, job_dir, tmp_path / "ckpt",
+                            "ffmpeg", "ffprobe")
+    assert rc == 2
+    result = json.loads((job_dir / "result.json").read_text())
+    assert result["status"] == "failed"
+    assert "job binding verification failed" in result["failure_reason"]
+    assert "script_sha256 mismatch" in result["failure_reason"]
+    assert "placeholder" in result["failure_reason"]
+    assert (job_dir / ".failed").exists()

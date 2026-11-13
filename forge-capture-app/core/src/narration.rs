@@ -9,10 +9,15 @@
 //! consent receipts and their preflight gate, voice enrollment, the
 //! narration script, deterministic job ids, render manifests, acceptance
 //! receipts, and the revocation transaction. The local runner (documented
-//! in the Phase 3 scope brief) performs the filesystem moves, the TTS
-//! generation, and the FFmpeg assembly; the Tauri shell owns the OS
-//! boundary. Nothing here touches the network, the filesystem, or a
-//! voice sample.
+//! in the Phase 3 scope brief) performs the TTS generation and the FFmpeg
+//! assembly; the Tauri shell owns the OS boundary and resolves the
+//! narration root. This module also owns the two filesystem-bound,
+//! fail-closed operations the Tauri commands wrap thinly — the revocation
+//! transaction ([`execute_revocation`]) and the acceptance output
+//! verification ([`verify_acceptance_output`]) — which operate on
+//! `std::fs` paths under the narration root so their fault-injection
+//! behaviour is testable in this crate. Nothing here touches the network
+//! or a voice sample.
 //!
 //! Field names are contractual: the Python runner and the UI depend on
 //! them exactly as written. Do not rename a field without updating both.
@@ -23,6 +28,9 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 
 /// Spool subdirectory for narration jobs.
 pub const NARRATION_DIR: &str = "narration";
@@ -240,6 +248,12 @@ pub struct RenderManifest {
     pub output_hash: String,
     pub caption_path: String,
     pub acceptance_receipt: Option<String>,
+    /// Path of the acceptance receipt artifact, relative to the job
+    /// directory (`"acceptance.json"` once a human decision is recorded).
+    /// `None` on manifests written before acceptance; old manifests
+    /// without this field still parse.
+    #[serde(default)]
+    pub acceptance_receipt_path: Option<String>,
 }
 
 /// Human acceptance: presenter and reviewer decisions bound to the exact
@@ -567,6 +581,20 @@ pub fn narration_status_from_presence(
     .map(|status| status.as_str())
 }
 
+/// Shared detail line for a `consent_revoked` audit event, naming the
+/// confirmed effect counts. Used by the planner and by the transaction's
+/// final receipt so both describe the same counts in the same words.
+fn revocation_detail(
+    presenter_id: &str,
+    deleted: usize,
+    blocked: usize,
+    unpublished: usize,
+) -> String {
+    format!(
+        "Revoked consent for presenter {presenter_id}: deleted {deleted} derived assets, blocked {blocked} queued jobs, unpublished {unpublished} managed outputs. Source capture and audit log retained."
+    )
+}
+
 /// Build the revocation transaction for a presenter.
 ///
 /// `deleted_assets` lists ONLY derived voice assets — the reference clip
@@ -599,11 +627,11 @@ pub fn revocation_plan(
         .filter(|o| o.presenter_id == presenter_id && o.status == "active")
         .map(|o| o.job_id.clone())
         .collect();
-    let detail = format!(
-        "Revoked consent for presenter {presenter_id}: deleted {} derived assets, blocked {} queued jobs, unpublished {} managed outputs. Source capture and audit log retained.",
+    let detail = revocation_detail(
+        presenter_id,
         deleted_assets.len(),
         blocked_jobs.len(),
-        unpublished_outputs.len()
+        unpublished_outputs.len(),
     );
     RevocationReceipt {
         version: 1,
@@ -620,6 +648,849 @@ pub fn revocation_plan(
             detail,
         }],
     }
+}
+
+/// Durable pending state for a consent revocation transaction, written
+/// to `presenters/<presenter_id>/revocation-pending.json` (two-phase)
+/// BEFORE anything is mutated, so a crash or failed effect leaves a
+/// recoverable record and a re-run of the command resumes instead of
+/// starting over or reporting success with unconfirmed effects. The
+/// file is removed only after the final receipt is published and the
+/// audit event appended.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RevocationState {
+    pub version: u32,
+    pub presenter_id: String,
+    /// ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+    pub revoked_at: String,
+    pub reason: String,
+    pub planned_deleted_assets: Vec<String>,
+    pub planned_blocked_jobs: Vec<String>,
+    pub planned_unpublished_outputs: Vec<String>,
+    /// Effects actually verified on disk (a missing asset counts as
+    /// confirmed-absent: already gone is gone).
+    pub confirmed_deleted_assets: Vec<String>,
+    pub confirmed_blocked_jobs: Vec<String>,
+    pub confirmed_unpublished_outputs: Vec<String>,
+    /// Jobs already processing when revocation landed; recorded in the
+    /// audit, not blocked (the runner's completion re-check handles
+    /// them).
+    pub processing_at_revocation: Vec<String>,
+    /// `"pending"` while work remains; `"complete"` is never persisted —
+    /// completion is the removal of this file.
+    pub status: String,
+    pub last_error: Option<String>,
+    /// True once the final receipt file has been written AND the audit
+    /// event appended; a resume with this set skips re-publishing so a
+    /// retried run cannot append the audit event twice.
+    pub receipt_published: bool,
+}
+
+/// Pending-state filename inside a presenter directory.
+pub const REVOCATION_PENDING_FILE: &str = "revocation-pending.json";
+/// [`RevocationState::status`] while the transaction is unfinished.
+pub const REVOCATION_STATE_PENDING: &str = "pending";
+
+/// Presenter ids are directory names: lowercase letters, digits, hyphens.
+/// Anything else (including `/`, `\`, `..`) is rejected — a presenter id
+/// must never escape its own directory. (Mirrors the Tauri shell's rule.)
+pub fn presenter_id_valid(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && !id.ends_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Canonical narration job id: `narr-` + 16 lowercase hex chars.
+/// (Mirrors the Tauri shell's rule.)
+pub fn narration_job_id_valid(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("narr-")
+        && id[5..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Two-phase JSON write (temp file + rename) so a crash can never leave a
+/// half-written receipt or manifest under a final name.
+fn write_json_two_phase<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| format!("cannot encode {}: {e}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!(
+        "{}.part",
+        path.extension().unwrap_or_default().to_string_lossy()
+    ));
+    fs::write(&tmp, text.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("cannot finalize {}: {e}", path.display())
+    })?;
+    Ok(())
+}
+
+/// Streamed SHA-256 hex of a file's live bytes.
+fn sha256_file_hex(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut f =
+        fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let mut h = Sha256::new();
+    let mut buf = [0u8; 1024 * 1024];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+
+/// Append one JSON line to the append-only audit log. The audit log is
+/// never rewritten or deleted — not even by revocation.
+fn append_audit(root: &Path, event: serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    let audit_dir = root.join("audit");
+    fs::create_dir_all(&audit_dir)
+        .map_err(|e| format!("cannot create audit dir: {e}"))?;
+    let mut line = serde_json::Map::new();
+    line.insert(
+        "at".to_string(),
+        serde_json::Value::String(crate::timestamp::now_utc_iso8601()),
+    );
+    if let serde_json::Value::Object(map) = event {
+        for (k, v) in map {
+            line.insert(k, v);
+        }
+    }
+    let text = serde_json::to_string(&serde_json::Value::Object(line))
+        .map_err(|e| format!("cannot encode audit event: {e}"))?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_dir.join("audit-log.jsonl"))
+        .map_err(|e| format!("cannot open audit log: {e}"))?;
+    f.write_all(text.as_bytes())
+        .and_then(|_| f.write_all(b"\n"))
+        .map_err(|e| format!("cannot append to audit log: {e}"))?;
+    Ok(())
+}
+
+/// Job status from marker-file presence (`.done` > `.failed` >
+/// `.processing` > `.queued`). `None` means no marker is present.
+fn narration_job_status(job_dir: &Path) -> Option<String> {
+    let has = |name: &str| job_dir.join(name).exists();
+    narration_status_from_presence(
+        has(".queued"),
+        has(".processing"),
+        has(".done"),
+        has(".failed"),
+        false,
+    )
+    .map(|s| s.to_string())
+}
+
+/// Read a presenter's enrollment when one exists. A present but corrupt
+/// enrollment is a hard error, not a silent "never enrolled".
+fn read_enrollment_opt(
+    presenter_dir: &Path,
+) -> Result<Option<VoiceEnrollment>, String> {
+    let bytes = match fs::read(presenter_dir.join("enrollment.json")) {
+        Ok(b) => b,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read enrollment: {e}")),
+    };
+    serde_json::from_slice(&bytes)
+        .map_err(|e| format!("enrollment is corrupt: {e}"))
+        .map(Some)
+}
+
+/// Scan the jobs spool for this presenter's queued and processing jobs.
+/// A job directory whose manifest cannot be read or parsed is a hard
+/// error: a queued job of this presenter could be hiding behind it, and
+/// revocation must not claim success while a runnable job is unaccounted
+/// for.
+fn scan_jobs(
+    root: &Path,
+    presenter_id: &str,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut queued: Vec<String> = Vec::new();
+    let mut processing: Vec<String> = Vec::new();
+    let jobs_dir = root.join("jobs");
+    let entries = match fs::read_dir(&jobs_dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok((queued, processing)),
+        Err(e) => return Err(format!("cannot list narration jobs: {e}")),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot list narration jobs: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !narration_job_id_valid(&name) {
+            continue;
+        }
+        let job_dir = jobs_dir.join(&name);
+        let bytes = fs::read(job_dir.join("job.json"))
+            .map_err(|e| format!("cannot read job manifest for {name}: {e}"))?;
+        let manifest: NarrationJobManifest = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("job manifest for {name} is corrupt: {e}"))?;
+        if manifest.presenter_id != presenter_id {
+            continue;
+        }
+        match narration_job_status(&job_dir).as_deref() {
+            Some("queued") => queued.push(name),
+            Some("processing") => processing.push(name),
+            _ => {}
+        }
+    }
+    queued.sort();
+    processing.sort();
+    Ok((queued, processing))
+}
+
+/// Read the managed-outputs index. Missing means no managed outputs;
+/// present-but-corrupt is a hard error.
+fn read_managed_outputs(root: &Path) -> Result<Vec<ManagedOutputRecord>, String> {
+    let bytes = match fs::read(root.join("managed-outputs.json")) {
+        Ok(b) => b,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("cannot read managed outputs: {e}")),
+    };
+    let doc: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("managed outputs are corrupt: {e}"))?;
+    doc.get("outputs")
+        .cloned()
+        .map(|o| {
+            serde_json::from_value::<Vec<ManagedOutputRecord>>(o)
+                .map_err(|e| format!("managed outputs are corrupt: {e}"))
+        })
+        .transpose()?
+        .ok_or_else(|| "managed outputs are corrupt: missing \"outputs\"".to_string())
+}
+
+/// Write the managed-outputs index (two-phase).
+fn write_managed_outputs(
+    root: &Path,
+    outputs: &[ManagedOutputRecord],
+) -> Result<(), String> {
+    let doc = serde_json::json!({ "version": 1, "outputs": outputs });
+    write_json_two_phase(&root.join("managed-outputs.json"), &doc)
+}
+
+/// Record a failure in the pending state (with `last_error`) and return
+/// the message to surface. The state save itself is best-effort: if it
+/// also fails, the save error is appended so the caller still sees the
+/// original failure.
+fn save_pending_error(
+    pending_path: &Path,
+    state: &mut RevocationState,
+    msg: String,
+) -> String {
+    state.last_error = Some(msg.clone());
+    state.status = REVOCATION_STATE_PENDING.to_string();
+    match write_json_two_phase(pending_path, &*state) {
+        Ok(()) => msg,
+        Err(e) => format!("{msg}; could not save revocation pending state: {e}"),
+    }
+}
+
+/// The `consent_revoked` failure result written into a blocked queued job.
+fn failed_job_result(
+    job_id: &str,
+    consent_receipt_version: u32,
+    revoked_at: &str,
+) -> NarrationResult {
+    NarrationResult {
+        version: 1,
+        job_id: job_id.to_string(),
+        status: "failed".to_string(),
+        failure_reason: Some("consent_revoked".to_string()),
+        segments: Vec::new(),
+        render: None,
+        resources: NarrationResources {
+            peak_vram_mib: None,
+            peak_ram_mib: None,
+            gpu: "unknown".to_string(),
+        },
+        outbound_requests: Vec::new(),
+        model: NarrationModelReceipt {
+            model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+            model_version: MODEL_VERSION_V2.to_string(),
+            code_commit: OPENVOICE_CODE_COMMIT.to_string(),
+            weights_sha256: CHECKPOINTS_ZIP_SHA256.to_string(),
+            base_tts: "melotts".to_string(),
+            base_tts_commit: MELOTTS_CODE_COMMIT.to_string(),
+        },
+        consent_receipt_version,
+        completed_at: revoked_at.to_string(),
+    }
+}
+
+/// Execute a consent revocation as a fail-closed, restartable
+/// transaction (scope brief: "Revocation is a transaction, not a note").
+///
+/// `root` is the narration spool root (`.../narration`), holding
+/// `presenters/<presenter_id>/`, `jobs/`, `managed-outputs.json`, and
+/// `audit/`.
+///
+/// Order of effects, each verified before the next begins:
+/// 1. The plan is computed and the pending state is written (two-phase)
+///    BEFORE anything mutates — a crash after this point is recoverable
+///    by re-running the command.
+/// 2. `consent.json` is marked revoked (validated first, as before).
+/// 3. `enrollment.json` is marked revoked when present.
+/// 4. Each planned derived asset is deleted and its absence verified
+///    (a missing file counts as confirmed-absent).
+/// 5. Each queued job is blocked: `.queued` removed (verified gone),
+///    `result.json` written `failed`/`consent_revoked` (two-phase),
+///    `.failed` written (verified present).
+/// 6. Managed outputs are unpublished, the index re-read, and every
+///    planned status change verified.
+/// 7. The final receipt — built from CONFIRMED effects only, never the
+///    plan — is written, and the audit event appended.
+/// 8. Only then is the pending-state file removed and the receipt
+///    returned.
+///
+/// On ANY failure the pending state is saved with `last_error` and an
+/// `Err` is returned — a success receipt is never published with
+/// unconfirmed effects. Re-running the command resumes: when consent is
+/// already revoked AND a pending state exists, the stored
+/// `revoked_at`/`reason` and confirmed lists are reused and the
+/// remaining effects applied. Consent already revoked with NO pending
+/// state is `Err("already revoked")`, as before.
+///
+/// The consent artifact, source captures, and audit log are never
+/// deleted. Processing (in-flight) jobs are recorded in the audit but
+/// not blocked. Re-enrollment after revocation still requires a new
+/// consent receipt.
+pub fn execute_revocation(
+    root: &Path,
+    presenter_id: &str,
+    reason: &str,
+) -> Result<RevocationReceipt, String> {
+    if reason.trim().is_empty() {
+        return Err("a revocation reason is required".to_string());
+    }
+    if !presenter_id_valid(presenter_id) {
+        return Err(format!("invalid presenter id: {presenter_id}"));
+    }
+    let reason = reason.trim().to_string();
+    let presenter_dir = root.join("presenters").join(presenter_id);
+    let pending_path = presenter_dir.join(REVOCATION_PENDING_FILE);
+
+    // Resume state, when a previous attempt left one behind.
+    let mut state = match fs::read(&pending_path) {
+        Ok(bytes) => Some(
+            serde_json::from_slice::<RevocationState>(&bytes)
+                .map_err(|e| format!("revocation pending state is corrupt: {e}"))?,
+        ),
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read revocation pending state: {e}")),
+    };
+    if let Some(s) = &state {
+        if s.presenter_id != presenter_id {
+            return Err(
+                "revocation pending state belongs to a different presenter".to_string(),
+            );
+        }
+        if s.version != 1 {
+            return Err("revocation pending state version must be 1".to_string());
+        }
+    }
+
+    let consent_path = presenter_dir.join("consent.json");
+    let mut receipt: ConsentReceipt = match fs::read(&consent_path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| format!("consent receipt for {presenter_id} is corrupt: {e}"))?,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Err(format!(
+                "no consent receipt registered for presenter {presenter_id}"
+            ));
+        }
+        Err(e) => {
+            return Err(format!(
+                "cannot read consent receipt for {presenter_id}: {e}"
+            ));
+        }
+    };
+    if receipt.status == "revoked" && state.is_none() {
+        return Err(format!(
+            "consent for presenter {presenter_id} is already revoked"
+        ));
+    }
+    validate_consent_receipt(&receipt).map_err(|e| e.to_string())?;
+
+    let revoked_at: String;
+    let reason_owned: String;
+    if let Some(s) = &state {
+        // Resume: the stored revocation instant and reason are the
+        // transaction's identity; the caller's reason is ignored.
+        revoked_at = s.revoked_at.clone();
+        reason_owned = s.reason.clone();
+    } else {
+        // Fresh transaction: plan first, then durably record the plan
+        // BEFORE mutating anything.
+        let enrollment = read_enrollment_opt(&presenter_dir)?;
+        let (queued, processing) = scan_jobs(root, presenter_id)?;
+        let managed = read_managed_outputs(root)?;
+        // The plan needs an enrollment to name the derived assets. When
+        // none exists yet (never enrolled), use the conventional paths —
+        // the apply step below deletes only files that actually exist.
+        let enrollment_for_plan = enrollment.clone().unwrap_or(VoiceEnrollment {
+            version: 1,
+            presenter_id: presenter_id.to_string(),
+            consent_receipt_version: receipt.version,
+            consent_artifact_sha256: receipt.artifact_sha256.clone(),
+            model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+            model_version: MODEL_VERSION_V2.to_string(),
+            model_code_commit: OPENVOICE_CODE_COMMIT.to_string(),
+            weights_sha256: CHECKPOINTS_ZIP_SHA256.to_string(),
+            reference_audio_sha256: String::new(),
+            preprocessing_version: String::new(),
+            speaker_embedding_path: None,
+            reference_clip_path: "reference.wav".to_string(),
+            created_at: receipt.granted_at.clone(),
+            last_used_at: None,
+            status: "pending".to_string(),
+        });
+        revoked_at = crate::timestamp::now_utc_iso8601();
+        let plan = revocation_plan(
+            presenter_id,
+            &enrollment_for_plan,
+            &queued,
+            &managed,
+            &revoked_at,
+            &reason,
+        );
+        let fresh = RevocationState {
+            version: 1,
+            presenter_id: presenter_id.to_string(),
+            revoked_at: revoked_at.clone(),
+            reason: reason.clone(),
+            planned_deleted_assets: plan.deleted_assets.clone(),
+            planned_blocked_jobs: plan.blocked_jobs.clone(),
+            planned_unpublished_outputs: plan.unpublished_outputs.clone(),
+            confirmed_deleted_assets: Vec::new(),
+            confirmed_blocked_jobs: Vec::new(),
+            confirmed_unpublished_outputs: Vec::new(),
+            processing_at_revocation: processing,
+            status: REVOCATION_STATE_PENDING.to_string(),
+            last_error: None,
+            receipt_published: false,
+        };
+        write_json_two_phase(&pending_path, &fresh)
+            .map_err(|e| format!("cannot record revocation pending state: {e}"))?;
+        state = Some(fresh);
+        reason_owned = reason.clone();
+    }
+    let mut state = state.unwrap();
+    // Every failure below saves the pending state (with `last_error`)
+    // and returns `Err` — never a success receipt with unconfirmed
+    // effects.
+    let fail = |state: &mut RevocationState, msg: String| -> String {
+        save_pending_error(&pending_path, state, msg)
+    };
+
+    // (a) consent.json -> revoked.
+    if receipt.status != "revoked" {
+        receipt.status = "revoked".to_string();
+        receipt.revoked_at = Some(revoked_at.clone());
+        receipt.revoke_reason = Some(reason_owned.clone());
+        receipt.audit_events.push(ConsentAuditEvent {
+            event: "consent_revoked".to_string(),
+            at: revoked_at.clone(),
+            by: "owner".to_string(),
+            detail: reason_owned.clone(),
+        });
+        validate_consent_receipt(&receipt).map_err(|e| e.to_string())?;
+        if let Err(e) = write_json_two_phase(&consent_path, &receipt) {
+            return Err(fail(
+                &mut state,
+                format!("cannot write revoked consent receipt: {e}"),
+            ));
+        }
+        if let Err(e) = write_json_two_phase(&pending_path, &state) {
+            return Err(fail(
+                &mut state,
+                format!("cannot save revocation pending state: {e}"),
+            ));
+        }
+    }
+
+    // (b) enrollment.json -> revoked when present.
+    match read_enrollment_opt(&presenter_dir) {
+        Ok(Some(mut enr)) => {
+            if enr.status != "revoked" {
+                enr.status = "revoked".to_string();
+                if let Err(e) =
+                    write_json_two_phase(&presenter_dir.join("enrollment.json"), &enr)
+                {
+                    return Err(fail(
+                        &mut state,
+                        format!("cannot write revoked enrollment: {e}"),
+                    ));
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return Err(fail(&mut state, e)),
+    }
+    if let Err(e) = write_json_two_phase(&pending_path, &state) {
+        return Err(fail(
+            &mut state,
+            format!("cannot save revocation pending state: {e}"),
+        ));
+    }
+
+    // (c) Delete each planned derived asset, verifying absence.
+    let canon_dir = match presenter_dir.canonicalize() {
+        Ok(d) => d,
+        Err(e) => {
+            return Err(fail(
+                &mut state,
+                format!("cannot resolve presenter directory: {e}"),
+            ));
+        }
+    };
+    let mut deleted = state.confirmed_deleted_assets.clone();
+    for rel in state.planned_deleted_assets.clone() {
+        if deleted.contains(&rel) {
+            continue;
+        }
+        let target = presenter_dir.join(&rel);
+        match fs::symlink_metadata(&target) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                // Already gone counts as confirmed-absent.
+            }
+            Err(e) => {
+                return Err(fail(
+                    &mut state,
+                    format!("cannot inspect derived asset {rel}: {e}"),
+                ));
+            }
+            Ok(_) => {
+                let canon_target = match target.canonicalize() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return Err(fail(
+                            &mut state,
+                            format!("cannot resolve derived asset {rel}: {e}"),
+                        ));
+                    }
+                };
+                if !canon_target.starts_with(&canon_dir) {
+                    return Err(fail(
+                        &mut state,
+                        format!("derived asset {rel} escapes the presenter directory"),
+                    ));
+                }
+                if let Err(e) = fs::remove_file(&canon_target) {
+                    return Err(fail(
+                        &mut state,
+                        format!("cannot delete derived asset {rel}: {e}"),
+                    ));
+                }
+                match fs::symlink_metadata(&target) {
+                    Err(e) if e.kind() == ErrorKind::NotFound => {}
+                    _ => {
+                        return Err(fail(
+                            &mut state,
+                            format!("derived asset {rel} still exists after deletion"),
+                        ));
+                    }
+                }
+            }
+        }
+        deleted.push(rel);
+    }
+    state.confirmed_deleted_assets = deleted;
+    if let Err(e) = write_json_two_phase(&pending_path, &state) {
+        return Err(fail(
+            &mut state,
+            format!("cannot save revocation pending state: {e}"),
+        ));
+    }
+
+    // (d) Block each queued job, verifying every write.
+    let mut blocked = state.confirmed_blocked_jobs.clone();
+    for job_id in state.planned_blocked_jobs.clone() {
+        if blocked.contains(&job_id) {
+            continue;
+        }
+        if !narration_job_id_valid(&job_id) {
+            return Err(fail(
+                &mut state,
+                format!("planned blocked job {job_id} is not a valid narration job id"),
+            ));
+        }
+        let job_dir = root.join("jobs").join(&job_id);
+        match fs::remove_file(job_dir.join(".queued")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(fail(
+                    &mut state,
+                    format!("cannot remove .queued marker for job {job_id}: {e}"),
+                ));
+            }
+        }
+        if fs::symlink_metadata(job_dir.join(".queued")).is_ok() {
+            return Err(fail(
+                &mut state,
+                format!(".queued marker for job {job_id} still exists after removal"),
+            ));
+        }
+        let manifest_bytes = match fs::read(job_dir.join("job.json")) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(fail(
+                    &mut state,
+                    format!("cannot read job manifest for {job_id}: {e}"),
+                ));
+            }
+        };
+        let manifest: NarrationJobManifest = match serde_json::from_slice(&manifest_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(fail(
+                    &mut state,
+                    format!("job manifest for {job_id} is corrupt: {e}"),
+                ));
+            }
+        };
+        let failed = failed_job_result(
+            &job_id,
+            manifest.consent_receipt_version,
+            &revoked_at,
+        );
+        if let Err(e) = write_json_two_phase(&job_dir.join("result.json"), &failed) {
+            return Err(fail(
+                &mut state,
+                format!("cannot write failed result for job {job_id}: {e}"),
+            ));
+        }
+        if let Err(e) = fs::write(job_dir.join(".failed"), b"") {
+            return Err(fail(
+                &mut state,
+                format!("cannot write .failed marker for job {job_id}: {e}"),
+            ));
+        }
+        if !job_dir.join(".failed").exists() {
+            return Err(fail(
+                &mut state,
+                format!(".failed marker for job {job_id} is missing after write"),
+            ));
+        }
+        blocked.push(job_id);
+        state.confirmed_blocked_jobs = blocked.clone();
+        if let Err(e) = write_json_two_phase(&pending_path, &state) {
+            return Err(fail(
+                &mut state,
+                format!("cannot save revocation pending state: {e}"),
+            ));
+        }
+    }
+
+    // (e) Unpublish managed outputs, then re-read and verify.
+    if !state.planned_unpublished_outputs.is_empty() {
+        let mut outputs = match read_managed_outputs(root) {
+            Ok(o) => o,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        let mut changed = false;
+        for rec in outputs.iter_mut() {
+            if state.planned_unpublished_outputs.contains(&rec.job_id)
+                && rec.status != "consent_revoked"
+            {
+                rec.status = "consent_revoked".to_string();
+                changed = true;
+            }
+        }
+        if changed {
+            if let Err(e) = write_managed_outputs(root, &outputs) {
+                return Err(fail(
+                    &mut state,
+                    format!("cannot write managed outputs: {e}"),
+                ));
+            }
+        }
+        let verified = match read_managed_outputs(root) {
+            Ok(o) => o,
+            Err(e) => return Err(fail(&mut state, e)),
+        };
+        for job_id in state.planned_unpublished_outputs.clone() {
+            match verified.iter().find(|r| r.job_id == job_id) {
+                Some(rec) if rec.status == "consent_revoked" => {}
+                Some(rec) => {
+                    return Err(fail(
+                        &mut state,
+                        format!(
+                            "managed output {job_id} still has status {}",
+                            rec.status
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(fail(
+                        &mut state,
+                        format!("managed output {job_id} is missing after unpublish"),
+                    ));
+                }
+            }
+        }
+        state.confirmed_unpublished_outputs = state.planned_unpublished_outputs.clone();
+        if let Err(e) = write_json_two_phase(&pending_path, &state) {
+            return Err(fail(
+                &mut state,
+                format!("cannot save revocation pending state: {e}"),
+            ));
+        }
+    }
+
+    // (f) Publish the final receipt from CONFIRMED effects only, then
+    // append the audit event. A resume with `receipt_published` set
+    // skips this so the audit event is never appended twice.
+    let final_receipt = RevocationReceipt {
+        version: 1,
+        presenter_id: presenter_id.to_string(),
+        revoked_at: revoked_at.clone(),
+        reason: reason_owned.clone(),
+        deleted_assets: state.confirmed_deleted_assets.clone(),
+        blocked_jobs: state.confirmed_blocked_jobs.clone(),
+        unpublished_outputs: state.confirmed_unpublished_outputs.clone(),
+        audit_events: vec![ConsentAuditEvent {
+            event: "consent_revoked".to_string(),
+            at: revoked_at.clone(),
+            by: presenter_id.to_string(),
+            detail: revocation_detail(
+                presenter_id,
+                state.confirmed_deleted_assets.len(),
+                state.confirmed_blocked_jobs.len(),
+                state.confirmed_unpublished_outputs.len(),
+            ),
+        }],
+    };
+    if !state.receipt_published {
+        let stamp = revoked_at.replace(['-', ':'], "");
+        if let Err(e) = write_json_two_phase(
+            &presenter_dir.join(format!("revocation-{stamp}.json")),
+            &final_receipt,
+        ) {
+            return Err(fail(
+                &mut state,
+                format!("cannot write revocation receipt: {e}"),
+            ));
+        }
+        if let Err(e) = append_audit(
+            root,
+            serde_json::json!({
+                "event": "consent_revoked",
+                "presenter_id": presenter_id,
+                "reason": reason_owned,
+                "deleted_assets": final_receipt.deleted_assets.len(),
+                "blocked_jobs": final_receipt.blocked_jobs,
+                "unpublished_outputs": final_receipt.unpublished_outputs,
+                "processing_at_revocation": state.processing_at_revocation,
+            }),
+        ) {
+            return Err(fail(
+                &mut state,
+                format!("cannot append revocation to audit log: {e}"),
+            ));
+        }
+        state.receipt_published = true;
+        if let Err(e) = write_json_two_phase(&pending_path, &state) {
+            return Err(fail(
+                &mut state,
+                format!("cannot save revocation pending state: {e}"),
+            ));
+        }
+    }
+
+    // (g) Only now remove the pending state and return the receipt.
+    if let Err(e) = fs::remove_file(&pending_path) {
+        return Err(fail(
+            &mut state,
+            format!("cannot remove revocation pending state: {e}"),
+        ));
+    }
+    Ok(final_receipt)
+}
+
+/// Hash the live rendered output for a finished narration job and bind
+/// the acceptance decision to those exact bytes (acceptance gate 10:
+/// presenter and reviewer receipts on the exact output hash).
+///
+/// Reads and parses `render-manifest.json` from the job directory — a
+/// done job without a readable, valid manifest fails closed — validates
+/// it, resolves the render's `output_file` as a plain file name under
+/// the job directory (any `/`, `\`, or absolute path is rejected, so a
+/// tampered `result.json` can never make acceptance hash a file outside
+/// the job), hashes the live bytes (streamed SHA-256), and requires the
+/// live hash to equal BOTH `result.render.output_sha256` and the
+/// manifest's `output_hash`. Returns the live hash and the parsed
+/// manifest (so the caller can attach the acceptance receipt to it).
+pub fn verify_acceptance_output(
+    job_dir: &Path,
+    result: &NarrationResult,
+) -> Result<(String, RenderManifest), String> {
+    let manifest_bytes = fs::read(job_dir.join("render-manifest.json")).map_err(|e| {
+        if e.kind() == ErrorKind::NotFound {
+            format!("job {} has no render-manifest.json", result.job_id)
+        } else {
+            format!("cannot read render manifest: {e}")
+        }
+    })?;
+    let manifest: RenderManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| format!("render manifest is corrupt: {e}"))?;
+    validate_render_manifest(&manifest).map_err(|e| e)?;
+    let render = result
+        .render
+        .as_ref()
+        .ok_or_else(|| format!("job {} has no rendered output", result.job_id))?;
+    let live = hash_render_output(job_dir, render)?;
+    if live != render.output_sha256 {
+        return Err(format!(
+            "live output hash {live} does not match result.json output_sha256 {}",
+            render.output_sha256
+        ));
+    }
+    if live != manifest.output_hash {
+        return Err(format!(
+            "live output hash {live} does not match render manifest output_hash {}",
+            manifest.output_hash
+        ));
+    }
+    Ok((live, manifest))
+}
+
+/// Resolve a render's `output_file` under the job directory and hash the
+/// live bytes. The file name is taken literally — never a path — so the
+/// hash can only ever cover a file inside this job's directory.
+fn hash_render_output(
+    job_dir: &Path,
+    render: &NarrationRenderResult,
+) -> Result<String, String> {
+    let name = render.output_file.as_str();
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || Path::new(name).is_absolute()
+    {
+        return Err(format!(
+            "render output_file {name:?} is not a plain file name under the job directory"
+        ));
+    }
+    let file_name = Path::new(name).file_name().ok_or_else(|| {
+        format!("render output_file {name:?} is not a plain file name under the job directory")
+    })?;
+    sha256_file_hex(&job_dir.join(file_name))
 }
 
 #[cfg(test)]
@@ -723,6 +1594,7 @@ mod tests {
             output_hash: hex_64('e'),
             caption_path: "narration/captions.vtt".to_string(),
             acceptance_receipt: None,
+            acceptance_receipt_path: None,
         }
     }
 
@@ -1047,6 +1919,47 @@ mod tests {
         assert_ne!(script_sha256(&changed), h1);
     }
 
+    /// Cross-language pin: the Python sidecar recomputes this exact hash
+    /// from the same fixture (`narration_lib.canonical_script_sha256`,
+    /// empty-`job_id` canonical form). If this test fails, the two sides
+    /// disagree on the canonical JSON and the runner's binding gate will
+    /// reject every job — fix the canonicalization, never the pin.
+    /// Fixture note: the `source_evidence` strings contain a non-ASCII
+    /// en dash (U+2013), exercising the UTF-8 (not `\uXXXX`) path.
+    #[test]
+    fn script_sha256_matches_python_canonicalization() {
+        let script = NarrationScript {
+            version: 1,
+            job_id: String::new(),
+            presenter_id: "tyler-welch".to_string(),
+            capture_duration_sec: 45.0,
+            segments: vec![
+                NarrationSegment {
+                    step_id: "s1".to_string(),
+                    text: "Open the valve.".to_string(),
+                    source_evidence: "transcript 00:00\u{2013}00:04".to_string(),
+                    capture_start_sec: 0.0,
+                    capture_end_sec: 4.2,
+                    audio_hash: None,
+                    correction: None,
+                },
+                NarrationSegment {
+                    step_id: "s2".to_string(),
+                    text: "Check the gauge.".to_string(),
+                    source_evidence: "transcript 00:04\u{2013}00:12".to_string(),
+                    capture_start_sec: 4.2,
+                    capture_end_sec: 12.5,
+                    audio_hash: None,
+                    correction: None,
+                },
+            ],
+        };
+        assert_eq!(
+            script_sha256(&script),
+            "20365a7f6b97b835e373964a13e9498738ca347643f924db08eaf36161c1d34b"
+        );
+    }
+
     // --- render manifest ---
 
     #[test]
@@ -1267,5 +2180,572 @@ mod tests {
         assert_eq!(MAX_SEGMENT_TEXT_CHARS, 5000);
         // Placeholder until the live weights hash is known.
         assert_eq!(CHECKPOINTS_ZIP_SHA256, "<FILL-FROM-RECEIPT>");
+    }
+
+    // --- revocation transaction (P1-2) ---
+
+    fn unique_suffix() -> u64 {
+        static COUNTER: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "forge-narration-test-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_json<T: Serialize>(path: &Path, value: &T) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, serde_json::to_string_pretty(value).unwrap()).unwrap();
+    }
+
+    fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let digest = Sha256::digest(bytes);
+        digest.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    struct RevocationFixture {
+        root: std::path::PathBuf,
+        presenter_dir: std::path::PathBuf,
+        queued_job_id: String,
+        processing_job_id: String,
+        managed_job_id: String,
+    }
+
+    /// Full spool: active consent + enrollment (reference.wav +
+    /// speaker_embedding.json), one queued job, one processing job, one
+    /// active managed output.
+    fn revocation_fixture() -> RevocationFixture {
+        let root = temp_dir();
+        let presenter_dir = root.join("presenters").join("tyler-welch");
+        std::fs::create_dir_all(&presenter_dir).unwrap();
+        write_json(&presenter_dir.join("consent.json"), &valid_receipt());
+        let mut enrollment = valid_enrollment();
+        enrollment.reference_clip_path = "reference.wav".to_string();
+        enrollment.speaker_embedding_path = Some("speaker_embedding.json".to_string());
+        write_json(&presenter_dir.join("enrollment.json"), &enrollment);
+        std::fs::write(presenter_dir.join("reference.wav"), b"fake reference audio")
+            .unwrap();
+        std::fs::write(
+            presenter_dir.join("speaker_embedding.json"),
+            b"fake embedding",
+        )
+        .unwrap();
+        let queued_job_id = "narr-aaaaaaaaaaaaaaaa".to_string();
+        let processing_job_id = "narr-cccccccccccccccc".to_string();
+        for (job_id, marker) in [
+            (&queued_job_id, ".queued"),
+            (&processing_job_id, ".processing"),
+        ] {
+            let job_dir = root.join("jobs").join(job_id);
+            std::fs::create_dir_all(&job_dir).unwrap();
+            write_json(
+                &job_dir.join("job.json"),
+                &NarrationJobManifest {
+                    version: 1,
+                    job_id: job_id.clone(),
+                    job_type: JOB_TYPE_NARRATE.to_string(),
+                    presenter_id: "tyler-welch".to_string(),
+                    consent_receipt_version: 1,
+                    capture_file: "capture.mp4".to_string(),
+                    capture_path: "library/capture.mp4".to_string(),
+                    capture_sha256: hex_64('a'),
+                    model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+                    model_version: MODEL_VERSION_V2.to_string(),
+                    script_sha256: hex_64('b'),
+                    created_at: "2026-11-12T08:00:00Z".to_string(),
+                    status: "queued".to_string(),
+                },
+            );
+            std::fs::write(job_dir.join(marker), b"").unwrap();
+        }
+        let managed_job_id = "narr-bbbbbbbbbbbbbbbb".to_string();
+        write_json(
+            &root.join("managed-outputs.json"),
+            &serde_json::json!({ "version": 1, "outputs": [ManagedOutputRecord {
+                job_id: managed_job_id.clone(),
+                presenter_id: "tyler-welch".to_string(),
+                output_file: "out.mp4".to_string(),
+                output_sha256: hex_64('e'),
+                status: "active".to_string(),
+                published_at: Some("2026-11-12T08:00:00Z".to_string()),
+                saved_to_forge: true,
+            }] }),
+        );
+        RevocationFixture {
+            root,
+            presenter_dir,
+            queued_job_id,
+            processing_job_id,
+            managed_job_id,
+        }
+    }
+
+    fn read_pending_state(presenter_dir: &Path) -> RevocationState {
+        read_json(&presenter_dir.join(REVOCATION_PENDING_FILE))
+    }
+
+    fn read_consent(presenter_dir: &Path) -> ConsentReceipt {
+        read_json(&presenter_dir.join("consent.json"))
+    }
+
+    fn read_managed_outputs_doc(root: &Path) -> Vec<ManagedOutputRecord> {
+        let doc: serde_json::Value = read_json(&root.join("managed-outputs.json"));
+        serde_json::from_value(doc["outputs"].clone()).unwrap()
+    }
+
+    #[test]
+    fn revocation_transaction_happy_path() {
+        let fx = revocation_fixture();
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Presenter withdrew consent.")
+                .unwrap();
+        // The receipt lists CONFIRMED effects only.
+        assert_eq!(
+            receipt.deleted_assets,
+            vec![
+                "reference.wav".to_string(),
+                "speaker_embedding.json".to_string(),
+            ]
+        );
+        assert_eq!(receipt.blocked_jobs, vec![fx.queued_job_id.clone()]);
+        assert_eq!(
+            receipt.unpublished_outputs,
+            vec![fx.managed_job_id.clone()]
+        );
+        assert_eq!(receipt.presenter_id, "tyler-welch");
+        assert_eq!(receipt.reason, "Presenter withdrew consent.");
+        assert!(!receipt.revoked_at.is_empty());
+        assert_eq!(receipt.audit_events.len(), 1);
+        assert_eq!(receipt.audit_events[0].event, "consent_revoked");
+
+        // Consent + enrollment are revoked; derived assets are gone.
+        let consent = read_consent(&fx.presenter_dir);
+        assert_eq!(consent.status, "revoked");
+        assert_eq!(consent.revoked_at.as_deref(), Some(receipt.revoked_at.as_str()));
+        assert_eq!(
+            consent.revoke_reason.as_deref(),
+            Some("Presenter withdrew consent.")
+        );
+        let enrollment: VoiceEnrollment = read_json(&fx.presenter_dir.join("enrollment.json"));
+        assert_eq!(enrollment.status, "revoked");
+        assert!(!fx.presenter_dir.join("reference.wav").exists());
+        assert!(!fx.presenter_dir.join("speaker_embedding.json").exists());
+
+        // Queued job is blocked with an explicit failure.
+        let job_dir = fx.root.join("jobs").join(&fx.queued_job_id);
+        assert!(!job_dir.join(".queued").exists());
+        assert!(job_dir.join(".failed").exists());
+        let failed: NarrationResult = read_json(&job_dir.join("result.json"));
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.failure_reason.as_deref(), Some("consent_revoked"));
+        assert_eq!(failed.job_id, fx.queued_job_id);
+
+        // The processing job is untouched (runner's completion re-check
+        // handles it), and the managed output is unpublished.
+        let processing_dir = fx.root.join("jobs").join(&fx.processing_job_id);
+        assert!(processing_dir.join(".processing").exists());
+        assert!(!processing_dir.join("result.json").exists());
+        let outputs = read_managed_outputs_doc(&fx.root);
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].status, "consent_revoked");
+
+        // Pending state removed; receipt file published and identical to
+        // the returned receipt; audit appended with the processing job.
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        let stamp = receipt.revoked_at.replace(['-', ':'], "");
+        let filed: RevocationReceipt =
+            read_json(&fx.presenter_dir.join(format!("revocation-{stamp}.json")));
+        assert_eq!(filed, receipt);
+        let audit = std::fs::read_to_string(fx.root.join("audit").join("audit-log.jsonl"))
+            .unwrap();
+        assert!(audit.contains("consent_revoked"));
+        assert!(audit.contains(&fx.processing_job_id));
+        assert!(audit.contains("processing_at_revocation"));
+    }
+
+    #[test]
+    fn revocation_transaction_deletion_fault_is_restartable() {
+        let fx = revocation_fixture();
+        // Make the reference clip undeletable: a directory in its place,
+        // so remove_file fails.
+        std::fs::remove_file(fx.presenter_dir.join("reference.wav")).unwrap();
+        std::fs::create_dir(fx.presenter_dir.join("reference.wav")).unwrap();
+        let err = execute_revocation(&fx.root, "tyler-welch", "Presenter withdrew consent.")
+            .unwrap_err();
+        assert!(
+            err.contains("reference.wav"),
+            "error names the failed asset: {err}"
+        );
+        // Pending state retained with the failure recorded; nothing is
+        // confirmed deleted. Consent was already marked revoked before
+        // the failure — the retry resumes from that state.
+        let state = read_pending_state(&fx.presenter_dir);
+        assert_eq!(state.status, "pending");
+        assert!(state
+            .last_error
+            .as_ref()
+            .is_some_and(|e| e.contains("reference.wav")));
+        assert!(state.confirmed_deleted_assets.is_empty());
+        assert_eq!(read_consent(&fx.presenter_dir).status, "revoked");
+        assert!(fx.presenter_dir.join("reference.wav").is_dir());
+
+        // Fix the fault and re-run: the transaction completes.
+        std::fs::remove_dir(fx.presenter_dir.join("reference.wav")).unwrap();
+        std::fs::write(fx.presenter_dir.join("reference.wav"), b"fake reference audio")
+            .unwrap();
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Presenter withdrew consent.")
+                .unwrap();
+        assert_eq!(
+            receipt.deleted_assets,
+            vec![
+                "reference.wav".to_string(),
+                "speaker_embedding.json".to_string(),
+            ]
+        );
+        assert_eq!(receipt.blocked_jobs, vec![fx.queued_job_id.clone()]);
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        assert!(!fx.presenter_dir.join("reference.wav").exists());
+        assert!(!fx.presenter_dir.join("speaker_embedding.json").exists());
+    }
+
+    #[test]
+    fn revocation_transaction_result_write_fault_is_restartable() {
+        let fx = revocation_fixture();
+        // A directory where the queued job's result.json must land, so
+        // the two-phase write cannot finalize.
+        let job_dir = fx.root.join("jobs").join(&fx.queued_job_id);
+        std::fs::create_dir(job_dir.join("result.json")).unwrap();
+        let err =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap_err();
+        assert!(
+            err.contains("result.json"),
+            "error names the failed write: {err}"
+        );
+        // Pending state retained; the job is NOT confirmed blocked even
+        // though its .queued marker was already removed.
+        let state = read_pending_state(&fx.presenter_dir);
+        assert!(state
+            .last_error
+            .as_ref()
+            .is_some_and(|e| e.contains("result.json")));
+        assert!(!state.confirmed_blocked_jobs.contains(&fx.queued_job_id));
+        assert!(!job_dir.join(".queued").exists());
+
+        // Fix the fault and re-run: the job is blocked.
+        std::fs::remove_dir(job_dir.join("result.json")).unwrap();
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        assert_eq!(receipt.blocked_jobs, vec![fx.queued_job_id.clone()]);
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        let failed: NarrationResult = read_json(&job_dir.join("result.json"));
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.failure_reason.as_deref(), Some("consent_revoked"));
+        assert!(job_dir.join(".failed").exists());
+    }
+
+    #[test]
+    fn revocation_transaction_managed_outputs_fault_is_restartable() {
+        let fx = revocation_fixture();
+        // A directory where managed-outputs.json must be read, so the
+        // plan cannot even be computed.
+        std::fs::remove_file(fx.root.join("managed-outputs.json")).unwrap();
+        std::fs::create_dir(fx.root.join("managed-outputs.json")).unwrap();
+        let err =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap_err();
+        assert!(
+            err.contains("managed outputs"),
+            "error names managed outputs: {err}"
+        );
+        // Nothing was mutated: the plan-time read fails before the
+        // pending state is recorded, so there is nothing to resume and
+        // consent is still active.
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        assert_eq!(read_consent(&fx.presenter_dir).status, "active");
+
+        // Fix the fault and re-run: the transaction completes.
+        std::fs::remove_dir(fx.root.join("managed-outputs.json")).unwrap();
+        write_json(
+            &fx.root.join("managed-outputs.json"),
+            &serde_json::json!({ "version": 1, "outputs": [ManagedOutputRecord {
+                job_id: fx.managed_job_id.clone(),
+                presenter_id: "tyler-welch".to_string(),
+                output_file: "out.mp4".to_string(),
+                output_sha256: hex_64('e'),
+                status: "active".to_string(),
+                published_at: Some("2026-11-12T08:00:00Z".to_string()),
+                saved_to_forge: true,
+            }] }),
+        );
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        assert_eq!(
+            receipt.unpublished_outputs,
+            vec![fx.managed_job_id.clone()]
+        );
+        assert_eq!(read_managed_outputs_doc(&fx.root)[0].status, "consent_revoked");
+    }
+
+    #[test]
+    fn revocation_transaction_audit_fault_is_restartable() {
+        let fx = revocation_fixture();
+        // A regular file where the audit directory must be, so the audit
+        // append fails after the receipt file is written.
+        std::fs::write(fx.root.join("audit"), b"not a directory").unwrap();
+        let err =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap_err();
+        assert!(err.contains("audit"), "error names the audit log: {err}");
+        // Pending state retained with the failure recorded; the receipt
+        // file was already written but the transaction is not complete.
+        let state = read_pending_state(&fx.presenter_dir);
+        assert!(state
+            .last_error
+            .as_ref()
+            .is_some_and(|e| e.contains("audit")));
+        assert!(!state.receipt_published);
+        let stamp = state.revoked_at.replace(['-', ':'], "");
+        assert!(fx
+            .presenter_dir
+            .join(format!("revocation-{stamp}.json"))
+            .exists());
+
+        // Fix the fault and re-run: the transaction completes, the audit
+        // event is appended exactly once, and the pending state is gone.
+        std::fs::remove_file(fx.root.join("audit")).unwrap();
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        assert!(!fx.presenter_dir.join(REVOCATION_PENDING_FILE).exists());
+        let audit = std::fs::read_to_string(fx.root.join("audit").join("audit-log.jsonl"))
+            .unwrap();
+        assert_eq!(audit.matches("consent_revoked").count(), 1);
+        assert!(audit.contains(&receipt.revoked_at));
+    }
+
+    #[test]
+    fn revocation_second_run_without_pending_errors_already_revoked() {
+        let fx = revocation_fixture();
+        execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        let err = execute_revocation(&fx.root, "tyler-welch", "Withdrawn again.")
+            .unwrap_err();
+        assert!(err.contains("already revoked"), "second revoke errors: {err}");
+    }
+
+    #[test]
+    fn revocation_without_enrollment_still_revokes_consent() {
+        let fx = revocation_fixture();
+        std::fs::remove_file(fx.presenter_dir.join("enrollment.json")).unwrap();
+        let receipt =
+            execute_revocation(&fx.root, "tyler-welch", "Withdrawn.").unwrap();
+        assert_eq!(read_consent(&fx.presenter_dir).status, "revoked");
+        // The conventional reference.wav path is still deleted.
+        assert_eq!(receipt.deleted_assets, vec!["reference.wav".to_string()]);
+        assert!(!fx.presenter_dir.join("reference.wav").exists());
+    }
+
+    // --- acceptance output verification (P1-3) ---
+
+    /// A done job directory: output.mp4 + result.json + render-manifest.json
+    /// all agreeing on the live output hash.
+    fn acceptance_fixture() -> (std::path::PathBuf, NarrationResult, RenderManifest, String) {
+        let job_dir = temp_dir();
+        let output_bytes = b"fake narrated mp4 bytes";
+        std::fs::write(job_dir.join("output.mp4"), output_bytes).unwrap();
+        let hash = sha256_hex(output_bytes);
+        let result = NarrationResult {
+            version: 1,
+            job_id: "narr-0123456789abcdef".to_string(),
+            status: "done".to_string(),
+            failure_reason: None,
+            segments: vec![],
+            render: Some(NarrationRenderResult {
+                output_file: "output.mp4".to_string(),
+                output_sha256: hash.clone(),
+                output_bytes: output_bytes.len() as u64,
+                ffmpeg_version: "7.1".to_string(),
+                ffmpeg_command: "ffmpeg -i capture.mp4 -i narration.wav -c:v copy out.mp4"
+                    .to_string(),
+                captions_file: "captions.vtt".to_string(),
+                render_sec: 1.5,
+            }),
+            resources: NarrationResources {
+                peak_vram_mib: None,
+                peak_ram_mib: None,
+                gpu: "test-gpu".to_string(),
+            },
+            outbound_requests: vec![],
+            model: NarrationModelReceipt {
+                model_id: MODEL_ID_OPENVOICE_V2.to_string(),
+                model_version: MODEL_VERSION_V2.to_string(),
+                code_commit: OPENVOICE_CODE_COMMIT.to_string(),
+                weights_sha256: hex_64('b'),
+                base_tts: "melotts".to_string(),
+                base_tts_commit: MELOTTS_CODE_COMMIT.to_string(),
+            },
+            consent_receipt_version: 1,
+            completed_at: "2026-11-12T09:00:00Z".to_string(),
+        };
+        let mut manifest = valid_render_manifest();
+        manifest.output_hash = hash.clone();
+        write_json(&job_dir.join("render-manifest.json"), &manifest);
+        (job_dir, result, manifest, hash)
+    }
+
+    #[test]
+    fn verify_acceptance_output_happy_path() {
+        let (job_dir, result, manifest, hash) = acceptance_fixture();
+        let (live, returned) = verify_acceptance_output(&job_dir, &result).unwrap();
+        assert_eq!(live, hash);
+        assert_eq!(returned, manifest);
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_replaced_output() {
+        let (job_dir, result, _manifest, _hash) = acceptance_fixture();
+        std::fs::write(job_dir.join("output.mp4"), b"a completely different render")
+            .unwrap();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(err.contains("does not match"), "replacement rejected: {err}");
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_corrupted_output() {
+        let (job_dir, result, _manifest, _hash) = acceptance_fixture();
+        let mut bytes = std::fs::read(job_dir.join("output.mp4")).unwrap();
+        bytes[0] ^= 0xff; // flip one byte
+        std::fs::write(job_dir.join("output.mp4"), bytes).unwrap();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(err.contains("does not match"), "corruption rejected: {err}");
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_manifest_mismatch() {
+        let (job_dir, result, mut manifest, _hash) = acceptance_fixture();
+        manifest.output_hash = hex_64('f'); // valid hex, but not the live hash
+        write_json(&job_dir.join("render-manifest.json"), &manifest);
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("render manifest"),
+            "manifest mismatch rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_missing_output_file() {
+        let (job_dir, result, _manifest, _hash) = acceptance_fixture();
+        std::fs::remove_file(job_dir.join("output.mp4")).unwrap();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(err.contains("cannot open"), "missing output rejected: {err}");
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_missing_and_corrupt_manifest() {
+        let (job_dir, result, _manifest, _hash) = acceptance_fixture();
+        std::fs::remove_file(job_dir.join("render-manifest.json")).unwrap();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("no render-manifest.json"),
+            "missing manifest rejected: {err}"
+        );
+        std::fs::write(job_dir.join("render-manifest.json"), b"{not json").unwrap();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("render manifest is corrupt"),
+            "corrupt manifest rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn verify_acceptance_output_rejects_traversal() {
+        let (job_dir, mut result, mut manifest, _hash) = acceptance_fixture();
+        // An escape file OUTSIDE the job dir whose hash matches the
+        // recorded hashes: if the verifier ever hashed it, this test
+        // would pass by accident — it must refuse before hashing.
+        let escape_name = format!(
+            "forge-narration-escape-{}-{}.mp4",
+            std::process::id(),
+            unique_suffix()
+        );
+        let escape_path = job_dir.parent().unwrap().join(&escape_name);
+        let escape_bytes = b"bytes that live outside the job dir";
+        std::fs::write(&escape_path, escape_bytes).unwrap();
+        let escape_hash = sha256_hex(escape_bytes);
+        result.render.as_mut().unwrap().output_sha256 = escape_hash.clone();
+        manifest.output_hash = escape_hash;
+        write_json(&job_dir.join("render-manifest.json"), &manifest);
+        result.render.as_mut().unwrap().output_file = format!("../{escape_name}");
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("not a plain file name"),
+            "traversal rejected: {err}"
+        );
+        // An absolute path is rejected too, without reading the file.
+        result.render.as_mut().unwrap().output_file = job_dir
+            .join("output.mp4")
+            .to_string_lossy()
+            .into_owned();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("not a plain file name"),
+            "absolute path rejected: {err}"
+        );
+        // A backslash separator is rejected too.
+        result.render.as_mut().unwrap().output_file = "subdir\\output.mp4".to_string();
+        let err = verify_acceptance_output(&job_dir, &result).unwrap_err();
+        assert!(
+            err.contains("not a plain file name"),
+            "backslash path rejected: {err}"
+        );
+        std::fs::remove_file(&escape_path).unwrap();
+    }
+
+    #[test]
+    fn render_manifest_acceptance_receipt_path_round_trips() {
+        let mut m = valid_render_manifest();
+        m.acceptance_receipt = Some("PASS".to_string());
+        m.acceptance_receipt_path = Some("acceptance.json".to_string());
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"acceptance_receipt_path\":\"acceptance.json\""));
+        let back: RenderManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.acceptance_receipt_path.as_deref(),
+            Some("acceptance.json")
+        );
+        assert_eq!(back.acceptance_receipt.as_deref(), Some("PASS"));
+        // Old manifests without the field still parse, with None.
+        let old = serde_json::json!({
+            "version": 1,
+            "job_id": "narr-0123456789abcdef",
+            "input_hashes": {
+                "capture_sha256": hex_64('a'),
+                "script_sha256": hex_64('b'),
+                "reference_audio_sha256": hex_64('c'),
+            },
+            "model_hashes": {
+                "model_id": MODEL_ID_OPENVOICE_V2,
+                "code_commit": OPENVOICE_CODE_COMMIT,
+                "weights_sha256": hex_64('d'),
+            },
+            "ffmpeg_version": "7.1",
+            "ffmpeg_command": "ffmpeg -i capture.mp4 out.mp4",
+            "consent_receipt_version": 1,
+            "output_hash": hex_64('e'),
+            "caption_path": "narration/captions.vtt",
+            "acceptance_receipt": null,
+        });
+        let parsed: RenderManifest = serde_json::from_value(old).unwrap();
+        assert_eq!(parsed.acceptance_receipt_path, None);
     }
 }
