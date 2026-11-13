@@ -941,6 +941,13 @@ grant execute on function public.forge_hierarchy_validate_selection(text, text) 
 --     FORGE_HIERARCHY_PARENT_INACTIVE. The parent row is locked
 --     FOR SHARE before the status decision so a concurrent archive
 --     cannot slip in between the check and the insert/update.
+--     That parent check is a FIRST-EXECUTION check only: the
+--     same-request receipt is looked up and resolved BEFORE it, so
+--     an exact retry replays the committed row even if the parent
+--     was inactivated or archived after the first execution. The
+--     payload is canonicalized first so the replay comparison is
+--     safe; the request advisory lock (creates) or the entity row
+--     lock (updates) serializes same-request callers.
 --   * Action label on update: a parent change is 'reparent'; else a
 --     move to 'archived' is 'archive'; else a move out of 'archived'
 --     is 'restore'; else 'update'. old/new values always carry the
@@ -1090,24 +1097,11 @@ begin
   if p_client_id is null or btrim(p_client_id) = '' then
     raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
   end if;
-  -- The parent must exist in THIS workspace AND be active: a guessed
-  -- id from another workspace fails here, never at the FK (clean
-  -- error, no leak), and a site under an archived/inactive client
-  -- would be unreachable in the selector. The parent row is locked
-  -- FOR SHARE so a concurrent archive cannot slip in between this
-  -- check and the insert — the archiver's FOR UPDATE waits, then
-  -- this check sees the archived state and rejects.
-  select * into v_parent from public.forge_clients
-  where owner_id = p_owner_id and id = p_client_id for share;
-  if not found then
-    raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
-  end if;
-  if v_parent.status = 'archived' then
-    raise exception 'FORGE_HIERARCHY_ARCHIVED';
-  end if;
-  if v_parent.status <> 'active' then
-    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-  end if;
+  -- The parent-status check lives AFTER the replay lookup below:
+  -- an exact retry must replay the committed row even if the
+  -- parent was inactivated/archived after the first execution, so
+  -- the receipt is resolved before any current-state parent
+  -- decision. The check still runs for every first execution.
   v_name := btrim(coalesce(p_name, ''));
   if v_name = '' or char_length(v_name) > 200 or v_name ~ '[[:cntrl:]]' then
     raise exception 'FORGE_HIERARCHY_INVALID_NAME';
@@ -1142,6 +1136,10 @@ begin
   -- create above: no row exists to lock yet).
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
 
+  -- Replay: same request id + same payload returns the created row.
+  -- This runs BEFORE the parent-status check below: the receipt is
+  -- the record of a committed logical operation, and a later parent
+  -- inactivation/archive must not re-decide an exact retry.
   select a.entity_id, a.new_values into v_replay
     from public.forge_hierarchy_audit a
     where a.owner_id = p_owner_id and a.action = 'create' and a.entity_type = 'site'
@@ -1155,6 +1153,26 @@ begin
       raise exception 'FORGE_HIERARCHY_NOT_FOUND';
     end if;
     return row_to_json(v_row)::jsonb;
+  end if;
+
+  -- First execution only: the parent must exist in THIS workspace
+  -- AND be active. A guessed id from another workspace fails here,
+  -- never at the FK (clean error, no leak), and a site under an
+  -- archived/inactive client would be unreachable in the selector.
+  -- The parent row is locked FOR SHARE so a concurrent archive
+  -- cannot slip in between this check and the insert — the
+  -- archiver's FOR UPDATE waits, then this check sees the archived
+  -- state and rejects.
+  select * into v_parent from public.forge_clients
+  where owner_id = p_owner_id and id = p_client_id for share;
+  if not found then
+    raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
+  end if;
+  if v_parent.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_parent.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
   end if;
 
   if exists (select 1 from public.forge_sites
@@ -1225,37 +1243,11 @@ begin
   if p_site_id is null or btrim(p_site_id) = '' then
     raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
   end if;
-  -- The parent site must exist in THIS workspace AND be active, and
-  -- so must its client: the client resolves through the site FK
-  -- chain, so a project cannot point at a site under one client and
-  -- claim another — and a project under an archived/inactive site or
-  -- client would be unreachable in the selector. Both ancestors are
-  -- locked FOR SHARE (site first, then its client — the site lock
-  -- pins the client_id while the client lock is taken) so a
-  -- concurrent archive/reparent cannot slip in between the check
-  -- and the insert.
-  select * into v_site from public.forge_sites
-  where owner_id = p_owner_id and id = p_site_id for share;
-  if not found then
-    raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
-  end if;
-  if v_site.status = 'archived' then
-    raise exception 'FORGE_HIERARCHY_ARCHIVED';
-  end if;
-  if v_site.status <> 'active' then
-    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-  end if;
-  select * into v_client from public.forge_clients
-  where owner_id = p_owner_id and id = v_site.client_id for share;
-  if not found then
-    raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
-  end if;
-  if v_client.status = 'archived' then
-    raise exception 'FORGE_HIERARCHY_ARCHIVED';
-  end if;
-  if v_client.status <> 'active' then
-    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-  end if;
+  -- The parent-status checks live AFTER the replay lookup below:
+  -- an exact retry must replay the committed row even if the site
+  -- or its client was inactivated/archived after the first
+  -- execution, so the receipt is resolved before any current-state
+  -- parent decision. The checks still run for every first execution.
   v_name := btrim(coalesce(p_name, ''));
   if v_name = '' or char_length(v_name) > 200 or v_name ~ '[[:cntrl:]]' then
     raise exception 'FORGE_HIERARCHY_INVALID_NAME';
@@ -1299,6 +1291,10 @@ begin
   -- create above: no row exists to lock yet).
   perform pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_request_id));
 
+  -- Replay: same request id + same payload returns the created row.
+  -- This runs BEFORE the parent-status checks below: the receipt is
+  -- the record of a committed logical operation, and a later parent
+  -- inactivation/archive must not re-decide an exact retry.
   select a.entity_id, a.new_values into v_replay
     from public.forge_hierarchy_audit a
     where a.owner_id = p_owner_id and a.action = 'create' and a.entity_type = 'project'
@@ -1312,6 +1308,38 @@ begin
       raise exception 'FORGE_HIERARCHY_NOT_FOUND';
     end if;
     return row_to_json(v_row)::jsonb;
+  end if;
+
+  -- First execution only: the parent site must exist in THIS
+  -- workspace AND be active, and so must its client. The client
+  -- resolves through the site FK chain, so a project cannot point
+  -- at a site under one client and claim another — and a project
+  -- under an archived/inactive site or client would be unreachable
+  -- in the selector. Both ancestors are locked FOR SHARE (site
+  -- first, then its client — the site lock pins the client_id while
+  -- the client lock is taken) so a concurrent archive/reparent
+  -- cannot slip in between the check and the insert.
+  select * into v_site from public.forge_sites
+  where owner_id = p_owner_id and id = p_site_id for share;
+  if not found then
+    raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+  end if;
+  if v_site.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_site.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+  end if;
+  select * into v_client from public.forge_clients
+  where owner_id = p_owner_id and id = v_site.client_id for share;
+  if not found then
+    raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+  end if;
+  if v_client.status = 'archived' then
+    raise exception 'FORGE_HIERARCHY_ARCHIVED';
+  end if;
+  if v_client.status <> 'active' then
+    raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
   end if;
 
   if v_code is not null and exists (select 1 from public.forge_projects
@@ -1530,6 +1558,7 @@ declare
   v_change jsonb := '{}'::jsonb;
   v_action text;
   v_moved integer;
+  v_reparent boolean;
   v_parent public.forge_clients%rowtype;
   v_replay record;
   v_new public.forge_sites%rowtype;
@@ -1559,29 +1588,21 @@ begin
   end if;
 
   -- Reparent: a new client_id moves the site (and its projects with
-  -- it — counted in the audit, never silent). The target client must
-  -- exist in this workspace AND be active: a move under an
-  -- archived/inactive client would make the site unreachable in the
-  -- selector. The target row is locked FOR SHARE so a concurrent
-  -- archive cannot slip in between the check and the update; the
-  -- check runs only on an actual move, not a same-parent re-statement.
+  -- it — counted in the audit, never silent). The target-parent
+  -- eligibility check is deferred until AFTER the replay lookup
+  -- below: a same-request replay must return the committed row even
+  -- if the entity was moved again since, or the original target was
+  -- inactivated/archived. The check still runs for every first
+  -- execution, and only on an actual move, not a same-parent
+  -- re-statement.
   v_client_id := v_old.client_id;
+  v_reparent := false;
   if p_client_id is not null then
     if btrim(p_client_id) = '' then
       raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
     end if;
     if p_client_id <> v_old.client_id then
-      select * into v_parent from public.forge_clients
-      where owner_id = p_owner_id and id = p_client_id for share;
-      if not found then
-        raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
-      end if;
-      if v_parent.status = 'archived' then
-        raise exception 'FORGE_HIERARCHY_ARCHIVED';
-      end if;
-      if v_parent.status <> 'active' then
-        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-      end if;
+      v_reparent := true;
     end if;
     v_client_id := p_client_id;
     v_change := v_change || jsonb_build_object('client_id', v_client_id);
@@ -1669,6 +1690,25 @@ begin
     end if;
     select * into v_new from public.forge_sites where owner_id = p_owner_id and id = p_site_id;
     return row_to_json(v_new)::jsonb;
+  end if;
+
+  -- First execution only: the reparent target must exist in THIS
+  -- workspace AND be active — a move under an archived/inactive
+  -- client would make the site unreachable in the selector. The
+  -- target row is locked FOR SHARE so a concurrent archive cannot
+  -- slip in between the check and the update.
+  if v_reparent then
+    select * into v_parent from public.forge_clients
+    where owner_id = p_owner_id and id = v_client_id for share;
+    if not found then
+      raise exception 'FORGE_HIERARCHY_CLIENT_NOT_FOUND';
+    end if;
+    if v_parent.status = 'archived' then
+      raise exception 'FORGE_HIERARCHY_ARCHIVED';
+    end if;
+    if v_parent.status <> 'active' then
+      raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+    end if;
   end if;
 
   -- Optimistic concurrency is mandatory even for a no-op: a caller
@@ -1763,6 +1803,7 @@ declare
   v_status text;
   v_change jsonb := '{}'::jsonb;
   v_action text;
+  v_reparent boolean;
   v_site public.forge_sites%rowtype;
   v_client public.forge_clients%rowtype;
   v_constraint text;
@@ -1793,41 +1834,20 @@ begin
     raise exception 'FORGE_HIERARCHY_NOT_FOUND';
   end if;
 
-  -- Reparent: a new site_id moves the project. The target site must
-  -- exist in this workspace AND be active, and so must its client
-  -- (the client follows the site — no client_id lives on this row,
-  -- so a cross-client move is exactly a site move). Both ancestors
-  -- are locked FOR SHARE (site first, then its client) so a
-  -- concurrent archive/reparent cannot slip in between the check
-  -- and the update; the check runs only on an actual move.
+  -- Reparent: a new site_id moves the project. The target-site and
+  -- target-client eligibility checks are deferred until AFTER the
+  -- replay lookup below: a same-request replay must return the
+  -- committed row even if the project was moved again since, or the
+  -- original target was inactivated/archived. The checks still run
+  -- for every first execution, and only on an actual move.
   v_site_id := v_old.site_id;
+  v_reparent := false;
   if p_site_id is not null then
     if btrim(p_site_id) = '' then
       raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
     end if;
     if p_site_id <> v_old.site_id then
-      select * into v_site from public.forge_sites
-      where owner_id = p_owner_id and id = p_site_id for share;
-      if not found then
-        raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
-      end if;
-      if v_site.status = 'archived' then
-        raise exception 'FORGE_HIERARCHY_ARCHIVED';
-      end if;
-      if v_site.status <> 'active' then
-        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-      end if;
-      select * into v_client from public.forge_clients
-      where owner_id = p_owner_id and id = v_site.client_id for share;
-      if not found then
-        raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
-      end if;
-      if v_client.status = 'archived' then
-        raise exception 'FORGE_HIERARCHY_ARCHIVED';
-      end if;
-      if v_client.status <> 'active' then
-        raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
-      end if;
+      v_reparent := true;
     end if;
     v_site_id := p_site_id;
     v_change := v_change || jsonb_build_object('site_id', v_site_id);
@@ -1912,6 +1932,37 @@ begin
     end if;
     select * into v_new from public.forge_projects where owner_id = p_owner_id and id = p_project_id;
     return row_to_json(v_new)::jsonb;
+  end if;
+
+  -- First execution only: the reparent target site must exist in
+  -- THIS workspace AND be active, and so must its client (the client
+  -- follows the site — no client_id lives on this row, so a
+  -- cross-client move is exactly a site move). Both ancestors are
+  -- locked FOR SHARE (site first, then its client) so a concurrent
+  -- archive/reparent cannot slip in between the check and the update.
+  if v_reparent then
+    select * into v_site from public.forge_sites
+    where owner_id = p_owner_id and id = v_site_id for share;
+    if not found then
+      raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+    end if;
+    if v_site.status = 'archived' then
+      raise exception 'FORGE_HIERARCHY_ARCHIVED';
+    end if;
+    if v_site.status <> 'active' then
+      raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+    end if;
+    select * into v_client from public.forge_clients
+    where owner_id = p_owner_id and id = v_site.client_id for share;
+    if not found then
+      raise exception 'FORGE_HIERARCHY_SITE_NOT_FOUND';
+    end if;
+    if v_client.status = 'archived' then
+      raise exception 'FORGE_HIERARCHY_ARCHIVED';
+    end if;
+    if v_client.status <> 'active' then
+      raise exception 'FORGE_HIERARCHY_PARENT_INACTIVE';
+    end if;
   end if;
 
   -- Optimistic concurrency is mandatory even for a no-op: a caller

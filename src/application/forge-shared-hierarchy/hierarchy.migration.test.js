@@ -19,7 +19,11 @@
 //     has_forge_hierarchy_permission queries the rental role tables
 //     directly instead.
 //   - Request-id idempotency per entity (same change-set replays,
-//     different change-set conflicts); mandatory expected_version on
+//     different change-set conflicts); a same-request receipt is
+//     resolved BEFORE any parent-status decision, so exact
+//     create/reparent retries replay even after the parent was
+//     later inactivated/archived (first execution still enforces
+//     the active-parent rule); mandatory expected_version on
 //     update/delete (stale = 409); no-op updates bump nothing and
 //     audit nothing; archive/restore/reparent are recorded actions
 //     (reparent names the moved-child count); delete is archive-first
@@ -808,6 +812,118 @@ describe("forge shared hierarchy migration (PR A)", () => {
     const moved = await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: otherSite.id },
       { expectedVersion: 1, requestId: "req_par_18" });
     expect(moved.site_id).toBe(otherSite.id);
+  });
+
+  it60("create replays survive a later parent inactive/archive; a different payload still conflicts", async () => {
+    // Fix round 2: the same-request receipt is resolved BEFORE the
+    // parent-status decision, so an exact retry replays the committed
+    // row even after the parent was inactivated or archived. The
+    // parent checks still apply to first execution.
+    const client = await createClient(db, OWNER_A, OWNER_A, "Replay Co");
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "Replay Yard",
+      { requestId: "req_rpl_1" });
+    // Archive the parent, then retry the EXACT create: it replays.
+    await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_rpl_2" });
+    const replayedSite = await createSite(db, OWNER_A, OWNER_A, client.id, "Replay Yard",
+      { requestId: "req_rpl_1" });
+    expect(replayedSite.id).toBe(site.id);
+    expect((await auditFor(db, OWNER_A, "site", site.id))).toHaveLength(1);
+    // Same request id, different payload: conflict, not ARCHIVED.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_create('${OWNER_A}', '${client.id}', 'Other Yard', 'other', null, null, null, null, null, null, 'req_rpl_1');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    // Inactive parent: same shape — exact retry replays, a first
+    // execution under it still rejects.
+    const quiet = await createClient(db, OWNER_A, OWNER_A, "Quiet Co");
+    const quietSite = await createSite(db, OWNER_A, OWNER_A, quiet.id, "Quiet Yard",
+      { requestId: "req_rpl_3" });
+    await updateClient(db, OWNER_A, OWNER_A, quiet.id,
+      { status: "inactive" }, { expectedVersion: 1, requestId: "req_rpl_4" });
+    const replayedQuiet = await createSite(db, OWNER_A, OWNER_A, quiet.id, "Quiet Yard",
+      { requestId: "req_rpl_3" });
+    expect(replayedQuiet.id).toBe(quietSite.id);
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_create('${OWNER_A}', '${quiet.id}', 'New Yard', 'other', null, null, null, null, null, null, 'req_rpl_5');`,
+      "FORGE_HIERARCHY_PARENT_INACTIVE");
+    // Project create: exact replay after the SITE is archived, and
+    // after the grandparent CLIENT is archived.
+    const live = await createClient(db, OWNER_A, OWNER_A, "Live Co");
+    const liveSite = await createSite(db, OWNER_A, OWNER_A, live.id, "Live Yard");
+    const project = await createProject(db, OWNER_A, OWNER_A, liveSite.id, "Live Job",
+      { projectCode: "RPL-1", requestId: "req_rpl_6" });
+    await updateSite(db, OWNER_A, OWNER_A, liveSite.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_rpl_7" });
+    const replayedProject = await createProject(db, OWNER_A, OWNER_A, liveSite.id, "Live Job",
+      { projectCode: "RPL-1", requestId: "req_rpl_6" });
+    expect(replayedProject.id).toBe(project.id);
+    expect((await auditFor(db, OWNER_A, "project", project.id))).toHaveLength(1);
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_create('${OWNER_A}', '${liveSite.id}', 'Other Job', 'RPL-1', null, null, null, null, 'req_rpl_6');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    const live2 = await createClient(db, OWNER_A, OWNER_A, "Live2 Co");
+    const live2Site = await createSite(db, OWNER_A, OWNER_A, live2.id, "Live2 Yard");
+    const project2 = await createProject(db, OWNER_A, OWNER_A, live2Site.id, "Live2 Job",
+      { requestId: "req_rpl_8" });
+    await updateClient(db, OWNER_A, OWNER_A, live2.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_rpl_9" });
+    const replayed2 = await createProject(db, OWNER_A, OWNER_A, live2Site.id, "Live2 Job",
+      { requestId: "req_rpl_8" });
+    expect(replayed2.id).toBe(project2.id);
+  });
+
+  it60("reparent replays survive a later move plus target-parent state change", async () => {
+    // Fix round 2: the reparent target check runs AFTER the replay
+    // lookup, so an exact reparent retry replays the committed row
+    // even if the entity moved again and the original target was
+    // inactivated/archived since.
+    const clientA = await createClient(db, OWNER_A, OWNER_A, "Move Co A");
+    const clientB = await createClient(db, OWNER_A, OWNER_A, "Move Co B");
+    const clientC = await createClient(db, OWNER_A, OWNER_A, "Move Co C");
+    const site = await createSite(db, OWNER_A, OWNER_A, clientA.id, "Moving Yard");
+    // Reparent to B with req_rpm_1 (version 1 -> 2).
+    const moved = await updateSite(db, OWNER_A, OWNER_A, site.id, { clientId: clientB.id },
+      { expectedVersion: 1, requestId: "req_rpm_1" });
+    expect(moved.client_id).toBe(clientB.id);
+    expect(moved.version).toBe(2);
+    // Move again to C (version 2 -> 3), then archive the original target B.
+    await updateSite(db, OWNER_A, OWNER_A, site.id, { clientId: clientC.id },
+      { expectedVersion: 2, requestId: "req_rpm_2" });
+    await updateClient(db, OWNER_A, OWNER_A, clientB.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_rpm_3" });
+    // Retry the ORIGINAL reparent (to B) with its original request id
+    // and version: it replays the committed row — now under C — with
+    // no new audit row.
+    const replayed = await updateSite(db, OWNER_A, OWNER_A, site.id, { clientId: clientB.id },
+      { expectedVersion: 1, requestId: "req_rpm_1" });
+    expect(replayed.client_id).toBe(clientC.id);
+    expect(replayed.version).toBe(3);
+    expect((await auditFor(db, OWNER_A, "site", site.id))).toHaveLength(3);
+    // Same request id, different target: conflict, not ARCHIVED.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_update('${OWNER_A}', '${site.id}', '${clientA.id}', null, null, null, null, null, null, null, null, null, 1, 'req_rpm_1');`,
+      "FORGE_HIERARCHY_REQUEST_ID_CONFLICT");
+    // A fresh reparent to the archived B still rejects.
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_site_update('${OWNER_A}', '${site.id}', '${clientB.id}', null, null, null, null, null, null, null, null, null, 3, 'req_rpm_4');`,
+      "FORGE_HIERARCHY_ARCHIVED");
+    // Project reparent: same shape through the site chain.
+    const site1 = await createSite(db, OWNER_A, OWNER_A, clientA.id, "First Yard");
+    const site2 = await createSite(db, OWNER_A, OWNER_A, clientA.id, "Second Yard");
+    const site3 = await createSite(db, OWNER_A, OWNER_A, clientA.id, "Third Yard");
+    const project = await createProject(db, OWNER_A, OWNER_A, site1.id, "Moving Job");
+    const movedProject = await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: site2.id },
+      { expectedVersion: 1, requestId: "req_rpm_5" });
+    expect(movedProject.site_id).toBe(site2.id);
+    await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: site3.id },
+      { expectedVersion: 2, requestId: "req_rpm_6" });
+    await updateSite(db, OWNER_A, OWNER_A, site2.id,
+      { status: "archived" }, { expectedVersion: 1, requestId: "req_rpm_7" });
+    const replayedProject = await updateProject(db, OWNER_A, OWNER_A, project.id, { siteId: site2.id },
+      { expectedVersion: 1, requestId: "req_rpm_5" });
+    expect(replayedProject.site_id).toBe(site3.id);
+    expect(replayedProject.version).toBe(3);
+    expect((await auditFor(db, OWNER_A, "project", project.id))).toHaveLength(3);
   });
 
   it60("delete: a request id used by an update, archive, or reparent conflicts; an exact delete replay returns deleted", async () => {
