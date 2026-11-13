@@ -674,6 +674,27 @@ def resolve_tool(name: str, ffmpeg_dir: str | None) -> str | None:
     return None
 
 
+def prepend_ffmpeg_to_path(ffmpeg_bin: str) -> None:
+    """Put the resolved ffmpeg/ffprobe directory on PATH.
+
+    The runner resolves ffmpeg by absolute path for its own calls, but
+    the libraries it drives shell out to bare ``ffmpeg``: OpenVoice's
+    ``se_extractor`` (via ``whisper.audio.load_audio``) and pydub's
+    ``AudioSegment`` both spawn ``ffmpeg`` from PATH. Without this the
+    first real enrollment fails with ``[WinError 2] The system cannot
+    find the file specified`` even though the runner found ffmpeg fine
+    (fix round 6 live-proof find). Idempotent: the dir is prepended
+    only when it is not already on PATH.
+    """
+    ffmpeg_dir = str(Path(ffmpeg_bin).parent)
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep) if path else []
+    if not any(os.path.normcase(p) == os.path.normcase(ffmpeg_dir)
+               for p in parts):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + path
+        log(f"ffmpeg dir added to PATH: {ffmpeg_dir}")
+
+
 def ffmpeg_version(ffmpeg_bin: str) -> str:
     try:
         out = subprocess.run([ffmpeg_bin, "-version"], capture_output=True,
@@ -1488,6 +1509,10 @@ def main(argv=None) -> int:
             "Expected at C:\\forge-bridge\\tools\\ffmpeg\\bin")
         return 2
     log(f"ffmpeg: {ffmpeg_bin} ({ffmpeg_version(ffmpeg_bin)})")
+    # Libraries driven by enrollment/generation (whisper, pydub) spawn
+    # bare `ffmpeg` from PATH; the runner's own absolute path is not
+    # enough (fix round 6 live-proof find: WinError 2 in enrollment).
+    prepend_ffmpeg_to_path(ffmpeg_bin)
 
     if args.enroll_only:
         presenter_id = args.enroll_only

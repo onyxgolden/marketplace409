@@ -27,6 +27,19 @@ FFPROBE = shutil.which("ffprobe")
 
 # --- hashing ---------------------------------------------------------------
 
+def test_prepend_ffmpeg_to_path(monkeypatch):
+    # Fix round 6 live-proof find: whisper/pydub spawn bare `ffmpeg`
+    # from PATH, so the runner must export its resolved ffmpeg dir.
+    monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
+    runner.prepend_ffmpeg_to_path("/opt/ffmpeg/bin/ffmpeg")
+    parts = os.environ["PATH"].split(os.pathsep)
+    assert parts[0] == "/opt/ffmpeg/bin"
+    assert parts[1:] == ["/usr/bin", "/bin"]
+    # Idempotent: a second call does not duplicate the dir.
+    runner.prepend_ffmpeg_to_path("/opt/ffmpeg/bin/ffmpeg")
+    assert os.environ["PATH"].split(os.pathsep).count("/opt/ffmpeg/bin") == 1
+
+
 def test_load_json_reads_utf8_bom_file(tmp_path):
     # Fix round 6 live-proof find: the setup receipt is written by
     # PowerShell Out-File -Encoding utf8, which emits a UTF-8 BOM;
