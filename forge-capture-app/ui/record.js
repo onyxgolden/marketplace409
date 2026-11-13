@@ -394,12 +394,26 @@ export class RecordingSession {
         // byteLength, ... } shape onStop() resolves with, so a caller can
         // treat a track-end exactly like a manual stop — preview/save
         // offered, never silently lost.
+        // FR1 (2026-11-13, PR #792 review P1): a rejected stop() used to
+        // turn this IIFE into an unhandled rejection that never emitted
+        // "ended" — the UI's only source-end recovery path got nothing.
+        // Emit the failure as an ended-with-error result instead: the
+        // session is still alive (stop() reset it to "recording"), so the
+        // caller can retry Stop manually. Never swallow it silently.
         void (async () => {
-          const result = await this.stop();
-          this.emit("ended", {
-            message: "The shared source ended (the browser picker was closed) — stopping.",
-            result,
-          });
+          try {
+            const result = await this.stop();
+            this.emit("ended", {
+              message: "The shared source ended (the browser picker was closed) — stopping.",
+              result,
+            });
+          } catch (e) {
+            this.emit("ended", {
+              message: "The shared source ended (the browser picker was closed) — stopping.",
+              result: null,
+              error: e,
+            });
+          }
         })();
       }
     };
@@ -460,6 +474,14 @@ export class RecordingSession {
     this.stopPromise = this.finishStop();
     try {
       return await this.stopPromise;
+    } catch (e) {
+      // FR1 (2026-11-13, PR #792 review P1): a failed stop used to strand
+      // the session in "stopping" forever (stopPromise nulled, so a retry
+      // returned null) — no recovery path. The recorded chunks are still
+      // in this.chunks, so return to "recording" and let the caller retry
+      // the stop instead of leaving the bytes unreachable.
+      this.state = "recording";
+      throw e;
     } finally {
       this.stopPromise = null;
     }
@@ -726,6 +748,11 @@ export function renderRecordControls(container, deps = {}) {
 
   const startBtn = el("button", { id: "rec-start", class: "primary" }, "Start recording");
   const stopBtn = el("button", { id: "rec-stop", hidden: true }, "Stop");
+  // FR1 (2026-11-13, PR #792 review P1): shown only when a stop result
+  // could not be turned into a preview (blob.arrayBuffer() failed). The
+  // bytes are retained in pendingResult, so retrying the conversion can
+  // still recover the recording instead of losing it silently.
+  const retryBtn = el("button", { id: "rec-retry-preview", hidden: true }, "Retry preview");
   const status = el("p", { class: "status", role: "status", id: "rec-status" });
 
   section.append(
@@ -736,7 +763,7 @@ export function renderRecordControls(container, deps = {}) {
     el("p", { class: "hint" }, "Cursor overlays need a full-monitor capture whose size matches a known monitor. Window captures record without the overlay rather than drawing it in the wrong place."),
     label("Max length ", maxSel),
     el("label", { class: "inline" }, audioChk, " Include system audio (only when the screen picker offers it)"),
-    el("div", { class: "row" }, startBtn, stopBtn),
+    el("div", { class: "row" }, startBtn, stopBtn, retryBtn),
     status,
   );
 
@@ -783,7 +810,7 @@ export function renderRecordControls(container, deps = {}) {
 
   function setBusy(v) {
     busy = v;
-    for (const b of [startBtn, stopBtn, saveBtn, trimBtn, gifBtn, discardBtn, combineBtn]) b.disabled = v;
+    for (const b of [startBtn, stopBtn, retryBtn, saveBtn, trimBtn, gifBtn, discardBtn, combineBtn]) b.disabled = v;
   }
 
   function refreshMonitors() {
@@ -863,8 +890,24 @@ export function renderRecordControls(container, deps = {}) {
     // stop Jason could previously reach) now carries its result and is
     // presented through the exact same preview/save path a manual Stop
     // uses, instead of leaving a dangling warning with nothing to save.
-    session.on("ended", ({ message, result }) => {
-      void presentStopResult(result, { endedNote: message });
+    // FR1 (2026-11-13, PR #792 review P1): the automatic stop after a
+    // source-end can fail, and presentStopResult itself can fail while
+    // converting the blob. Both used to escape as unhandled rejections
+    // with the recording lost. An ended-with-error keeps the session
+    // alive (stop() reset it to "recording") so the user retries Stop
+    // manually; a presentStopResult failure is caught here too, as a
+    // belt-and-braces behind its own internal handling.
+    session.on("ended", ({ message, result, error }) => {
+      if (error) {
+        setStatus(
+          `${message} Automatic stop failed: ${error.message || error}. The recording is still held — click Stop to try again.`,
+          "error",
+        );
+        return;
+      }
+      void presentStopResult(result, { endedNote: message }).catch((e) => {
+        setStatus(`Couldn't show the recording: ${e.message || e}`, "error");
+      });
     });
     session.on("error", (e) => {
       setStatus(`Recording error: ${e.message || e}`, "error");
@@ -872,6 +915,7 @@ export function renderRecordControls(container, deps = {}) {
     startBtn.hidden = true;
     stopBtn.hidden = false;
     previewWrap.hidden = true;
+    retryBtn.hidden = true;
     setStatus("Pick a screen, window, or tab to share…");
     try {
       const { mime, trackInfo } = await session.start({ mode, region, cursorMode, includeAudio, format, maxDurationMs });
@@ -913,12 +957,32 @@ export function renderRecordControls(container, deps = {}) {
     session = null;
     startBtn.hidden = false;
     stopBtn.hidden = true;
+    retryBtn.hidden = true;
     if (!result || result.byteLength === 0) {
       const prefix = endedNote ? `${endedNote} ` : "";
       setStatus(`${prefix}The recording came back empty — nothing was captured.`, "error");
       return;
     }
-    const byteArray = new Uint8Array(await result.blob.arrayBuffer());
+    // FR1 (2026-11-13, PR #792 review P1): retain the original result
+    // BEFORE the conversion. arrayBuffer() used to run before
+    // pendingResult was assigned, so a failed conversion lost the only
+    // reference to the bytes, the rejection escaped unhandled, and the
+    // preview/save controls were never presented with session already
+    // reset to null — no retry. A transient conversion failure now keeps
+    // the blob in pendingResult, shows an actionable error, and offers
+    // Retry preview (see onRetryPreview) instead of losing the recording.
+    pendingResult = result;
+    let byteArray;
+    try {
+      byteArray = new Uint8Array(await result.blob.arrayBuffer());
+    } catch (e) {
+      retryBtn.hidden = false;
+      setStatus(
+        `${endedNote ? `${endedNote} ` : ""}Couldn't read the recording for preview (${e.message || e}). Your recording is kept — click “Retry preview” to try again, or Discard to throw it away.`,
+        "error",
+      );
+      return;
+    }
     pendingResult = { ...result, byteArray };
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = URL.createObjectURL(result.blob);
@@ -940,9 +1004,27 @@ export function renderRecordControls(container, deps = {}) {
     }, PREVIEW_REVOKE_DELAY_MS);
   }
 
+  // FR1 (2026-11-13, PR #792 review P1): re-runs presentStopResult
+  // against the result retained in pendingResult after a failed
+  // blob.arrayBuffer(). A transient conversion failure is recoverable
+  // this way — the bytes were never dropped, so the preview/save flow
+  // can still complete on the retry.
+  async function onRetryPreview() {
+    if (!pendingResult || busy) return;
+    setBusy(true);
+    try {
+      await presentStopResult(pendingResult);
+    } catch (e) {
+      setStatus(`Retry failed: ${e.message || e}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function clearPending() {
     pendingResult = null;
     previewWrap.hidden = true;
+    retryBtn.hidden = true;
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
       previewUrl = null;
@@ -1184,6 +1266,7 @@ export function renderRecordControls(container, deps = {}) {
   });
   startBtn.addEventListener("click", () => void onStart());
   stopBtn.addEventListener("click", () => void onStop());
+  retryBtn.addEventListener("click", () => void onRetryPreview());
   saveBtn.addEventListener("click", () => void onSave());
   trimBtn.addEventListener("click", () => void onTrimSave());
   gifBtn.addEventListener("click", () => void onExportGif(null));

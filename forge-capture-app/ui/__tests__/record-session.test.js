@@ -183,6 +183,50 @@ describe("RecordingSession lifecycle", () => {
     expect(s.state).toBe("stopped");
   });
 
+  // FR1 (2026-11-13, PR #792 review P1): a rejected stop() on track end
+  // used to become an unhandled rejection that never emitted "ended" —
+  // the UI's only source-end recovery path got nothing, and the session
+  // was stranded in "stopping" with no retry. The ended event must now
+  // carry the failure explicitly, and the session must stay retryable.
+  it("a rejected stop() on track end emits an ended-with-error result — never a silent loss", async () => {
+    const stream = fakeStream();
+    const s = new RecordingSession(deps({ mediaDevices: { getDisplayMedia: async () => stream } }));
+    const ended = [];
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      s.on("ended", (e) => ended.push(e));
+      await s.start({ mode: "monitor", cursorMode: "none", format: "webm" });
+      await new Promise((r) => setTimeout(r, 20)); // let the fake recorder emit its chunks
+      // Force the teardown to fail: the real stop() must surface the
+      // rejection (not strand the session) and onended must emit it.
+      const origFinishStop = s.finishStop;
+      s.finishStop = async () => {
+        throw new Error("teardown failed");
+      };
+      stream.__video.onended();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(ended.length).toBe(1);
+      expect(ended[0].message).toMatch(/shared source ended/);
+      expect(ended[0].result).toBe(null);
+      expect(ended[0].error).toBeInstanceOf(Error);
+      expect(ended[0].error.message).toMatch(/teardown failed/);
+      expect(unhandled.length).toBe(0);
+      // Recovery path: the session is back in "recording", not stranded
+      // in "stopping" — restoring the real teardown and stopping again
+      // recovers the recording.
+      expect(s.state).toBe("recording");
+      s.finishStop = origFinishStop;
+      const recovered = await s.stop();
+      expect(recovered).not.toBe(null);
+      expect(recovered.byteLength).toBe(300);
+      expect(s.state).toBe("stopped");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("RecordingError is exported from both modules as the same class", () => {
     expect(RecordingError).toBe(CoreRecordingError);
   });
