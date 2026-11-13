@@ -388,8 +388,33 @@ export class RecordingSession {
     };
     videoTrack.onended = () => {
       if (this.state === "recording") {
-        this.emit("ended", { message: "The shared source ended (the browser picker was closed) — stopping." });
-        void this.stop();
+        // Defect #3 fix: capture stop()'s result instead of discarding it
+        // (`void this.stop()` built a valid blob and threw it away). The
+        // "ended" payload now carries the same { blob, mime, durationMs,
+        // byteLength, ... } shape onStop() resolves with, so a caller can
+        // treat a track-end exactly like a manual stop — preview/save
+        // offered, never silently lost.
+        // FR1 (2026-11-13, PR #792 review P1): a rejected stop() used to
+        // turn this IIFE into an unhandled rejection that never emitted
+        // "ended" — the UI's only source-end recovery path got nothing.
+        // Emit the failure as an ended-with-error result instead: the
+        // session is still alive (stop() reset it to "recording"), so the
+        // caller can retry Stop manually. Never swallow it silently.
+        void (async () => {
+          try {
+            const result = await this.stop();
+            this.emit("ended", {
+              message: "The shared source ended (the browser picker was closed) — stopping.",
+              result,
+            });
+          } catch (e) {
+            this.emit("ended", {
+              message: "The shared source ended (the browser picker was closed) — stopping.",
+              result: null,
+              error: e,
+            });
+          }
+        })();
       }
     };
 
@@ -449,6 +474,14 @@ export class RecordingSession {
     this.stopPromise = this.finishStop();
     try {
       return await this.stopPromise;
+    } catch (e) {
+      // FR1 (2026-11-13, PR #792 review P1): a failed stop used to strand
+      // the session in "stopping" forever (stopPromise nulled, so a retry
+      // returned null) — no recovery path. The recorded chunks are still
+      // in this.chunks, so return to "recording" and let the caller retry
+      // the stop instead of leaving the bytes unreachable.
+      this.state = "recording";
+      throw e;
     } finally {
       this.stopPromise = null;
     }
@@ -648,6 +681,11 @@ export function renderRecordControls(container, deps = {}) {
 
   const section = el("section", { class: "card" });
   const supportNote = el("p", { class: "hint", id: "rec-support" });
+  // Defect #2 fix: the Video tab had no always-visible storage location —
+  // stills (main.js `#captures-dir`) and Test Audio (meeting.js `Saved to:`)
+  // both show where a file lands; recordings only did after a successful
+  // manual Save. This line is populated once below and never hidden.
+  const capturesDirNote = el("p", { class: "hint", id: "rec-captures-dir" }, "Loading storage location…");
   section.append(
     el("h2", {}, "Screen recording"),
     el(
@@ -656,6 +694,7 @@ export function renderRecordControls(container, deps = {}) {
       "Record the screen, a window, or a region to WebM (VP9/VP8) or MP4 — encoded by this machine, saved locally. ",
       "Nothing is uploaded anywhere; the file lands in the captures folder next to stills.",
     ),
+    capturesDirNote,
     supportNote,
   );
 
@@ -709,6 +748,11 @@ export function renderRecordControls(container, deps = {}) {
 
   const startBtn = el("button", { id: "rec-start", class: "primary" }, "Start recording");
   const stopBtn = el("button", { id: "rec-stop", hidden: true }, "Stop");
+  // FR1 (2026-11-13, PR #792 review P1): shown only when a stop result
+  // could not be turned into a preview (blob.arrayBuffer() failed). The
+  // bytes are retained in pendingResult, so retrying the conversion can
+  // still recover the recording instead of losing it silently.
+  const retryBtn = el("button", { id: "rec-retry-preview", hidden: true }, "Retry preview");
   const status = el("p", { class: "status", role: "status", id: "rec-status" });
 
   section.append(
@@ -719,7 +763,7 @@ export function renderRecordControls(container, deps = {}) {
     el("p", { class: "hint" }, "Cursor overlays need a full-monitor capture whose size matches a known monitor. Window captures record without the overlay rather than drawing it in the wrong place."),
     label("Max length ", maxSel),
     el("label", { class: "inline" }, audioChk, " Include system audio (only when the screen picker offers it)"),
-    el("div", { class: "row" }, startBtn, stopBtn),
+    el("div", { class: "row" }, startBtn, stopBtn, retryBtn),
     status,
   );
 
@@ -766,7 +810,7 @@ export function renderRecordControls(container, deps = {}) {
 
   function setBusy(v) {
     busy = v;
-    for (const b of [startBtn, stopBtn, saveBtn, trimBtn, gifBtn, discardBtn, combineBtn]) b.disabled = v;
+    for (const b of [startBtn, stopBtn, retryBtn, saveBtn, trimBtn, gifBtn, discardBtn, combineBtn]) b.disabled = v;
   }
 
   function refreshMonitors() {
@@ -776,6 +820,19 @@ export function renderRecordControls(container, deps = {}) {
       })
       .catch(() => {
         sessionDeps.monitors = [];
+      });
+  }
+
+  // Defect #2 fix: always show the captures folder, the same way main.js's
+  // stills tab does via `invoke("captures_dir_path")` — never only after a
+  // save. Best-effort: a failure here must not block recording.
+  function loadCapturesDir() {
+    invoke("captures_dir_path")
+      .then((dir) => {
+        capturesDirNote.textContent = dir ? `Recordings save to: ${dir}` : "Storage location unavailable.";
+      })
+      .catch(() => {
+        capturesDirNote.textContent = "Storage location unavailable.";
       });
   }
 
@@ -829,8 +886,28 @@ export function renderRecordControls(container, deps = {}) {
     session.on("warning", ({ message }) => {
       setStatus(message, "warning");
     });
-    session.on("ended", ({ message }) => {
-      setStatus(message, "warning");
+    // Defect #3 fix: an "ended" stop (the shared source closed — the only
+    // stop Jason could previously reach) now carries its result and is
+    // presented through the exact same preview/save path a manual Stop
+    // uses, instead of leaving a dangling warning with nothing to save.
+    // FR1 (2026-11-13, PR #792 review P1): the automatic stop after a
+    // source-end can fail, and presentStopResult itself can fail while
+    // converting the blob. Both used to escape as unhandled rejections
+    // with the recording lost. An ended-with-error keeps the session
+    // alive (stop() reset it to "recording") so the user retries Stop
+    // manually; a presentStopResult failure is caught here too, as a
+    // belt-and-braces behind its own internal handling.
+    session.on("ended", ({ message, result, error }) => {
+      if (error) {
+        setStatus(
+          `${message} Automatic stop failed: ${error.message || error}. The recording is still held — click Stop to try again.`,
+          "error",
+        );
+        return;
+      }
+      void presentStopResult(result, { endedNote: message }).catch((e) => {
+        setStatus(`Couldn't show the recording: ${e.message || e}`, "error");
+      });
     });
     session.on("error", (e) => {
       setStatus(`Recording error: ${e.message || e}`, "error");
@@ -838,6 +915,7 @@ export function renderRecordControls(container, deps = {}) {
     startBtn.hidden = true;
     stopBtn.hidden = false;
     previewWrap.hidden = true;
+    retryBtn.hidden = true;
     setStatus("Pick a screen, window, or tab to share…");
     try {
       const { mime, trackInfo } = await session.start({ mode, region, cursorMode, includeAudio, format, maxDurationMs });
@@ -861,31 +939,83 @@ export function renderRecordControls(container, deps = {}) {
     setStatus("Stopping…");
     try {
       const result = await session.stop();
-      session = null;
-      startBtn.hidden = false;
-      stopBtn.hidden = true;
-      if (!result || result.byteLength === 0) {
-        setStatus("The recording came back empty — nothing was captured.", "error");
-        return;
-      }
-      const byteArray = new Uint8Array(await result.blob.arrayBuffer());
-      pendingResult = { ...result, byteArray };
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      previewUrl = URL.createObjectURL(result.blob);
-      previewVideo.src = previewUrl;
-      trimEnd.value = (result.durationMs / 1000).toFixed(1);
-      trimStart.value = "0";
-      previewWrap.hidden = false;
-      setStatus(`Recorded ${formatDuration(result.durationMs)} · ${formatBytes(result.byteLength)}. Preview, trim, save, or export a GIF.`, "ok");
-      setTimeout(() => {
-        if (previewUrl) {
-          URL.revokeObjectURL(previewUrl);
-          previewUrl = null;
-          previewVideo.removeAttribute("src");
-        }
-      }, PREVIEW_REVOKE_DELAY_MS);
+      await presentStopResult(result);
     } catch (e) {
       setStatus(`Stop failed: ${e.message || e}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Defect #3 fix — the one place that turns a RecordingSession.stop()
+  // result into UI state, shared by a manual Stop click and a track-ended
+  // stop (the shared screen was closed). Before this fix, the ended path
+  // called stop() and threw the result away (`void this.stop()`): the
+  // bytes existed but nothing downstream of record.js ever saw them, so
+  // the only way Jason could reach to end a recording destroyed it.
+  async function presentStopResult(result, { endedNote = null } = {}) {
+    session = null;
+    startBtn.hidden = false;
+    stopBtn.hidden = true;
+    retryBtn.hidden = true;
+    if (!result || result.byteLength === 0) {
+      const prefix = endedNote ? `${endedNote} ` : "";
+      setStatus(`${prefix}The recording came back empty — nothing was captured.`, "error");
+      return;
+    }
+    // FR1 (2026-11-13, PR #792 review P1): retain the original result
+    // BEFORE the conversion. arrayBuffer() used to run before
+    // pendingResult was assigned, so a failed conversion lost the only
+    // reference to the bytes, the rejection escaped unhandled, and the
+    // preview/save controls were never presented with session already
+    // reset to null — no retry. A transient conversion failure now keeps
+    // the blob in pendingResult, shows an actionable error, and offers
+    // Retry preview (see onRetryPreview) instead of losing the recording.
+    pendingResult = result;
+    let byteArray;
+    try {
+      byteArray = new Uint8Array(await result.blob.arrayBuffer());
+    } catch (e) {
+      retryBtn.hidden = false;
+      setStatus(
+        `${endedNote ? `${endedNote} ` : ""}Couldn't read the recording for preview (${e.message || e}). Your recording is kept — click “Retry preview” to try again, or Discard to throw it away.`,
+        "error",
+      );
+      return;
+    }
+    pendingResult = { ...result, byteArray };
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(result.blob);
+    previewVideo.src = previewUrl;
+    trimEnd.value = (result.durationMs / 1000).toFixed(1);
+    trimStart.value = "0";
+    previewWrap.hidden = false;
+    const prefix = endedNote ? `${endedNote} ` : "";
+    setStatus(
+      `${prefix}Recorded ${formatDuration(result.durationMs)} · ${formatBytes(result.byteLength)}. Preview, trim, save, or export a GIF.`,
+      "ok",
+    );
+    setTimeout(() => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+        previewVideo.removeAttribute("src");
+      }
+    }, PREVIEW_REVOKE_DELAY_MS);
+  }
+
+  // FR1 (2026-11-13, PR #792 review P1): re-runs presentStopResult
+  // against the result retained in pendingResult after a failed
+  // blob.arrayBuffer(). A transient conversion failure is recoverable
+  // this way — the bytes were never dropped, so the preview/save flow
+  // can still complete on the retry.
+  async function onRetryPreview() {
+    if (!pendingResult || busy) return;
+    setBusy(true);
+    try {
+      await presentStopResult(pendingResult);
+    } catch (e) {
+      setStatus(`Retry failed: ${e.message || e}`, "error");
     } finally {
       setBusy(false);
     }
@@ -894,6 +1024,7 @@ export function renderRecordControls(container, deps = {}) {
   function clearPending() {
     pendingResult = null;
     previewWrap.hidden = true;
+    retryBtn.hidden = true;
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
       previewUrl = null;
@@ -1135,6 +1266,7 @@ export function renderRecordControls(container, deps = {}) {
   });
   startBtn.addEventListener("click", () => void onStart());
   stopBtn.addEventListener("click", () => void onStop());
+  retryBtn.addEventListener("click", () => void onRetryPreview());
   saveBtn.addEventListener("click", () => void onSave());
   trimBtn.addEventListener("click", () => void onTrimSave());
   gifBtn.addEventListener("click", () => void onExportGif(null));
@@ -1144,9 +1276,40 @@ export function renderRecordControls(container, deps = {}) {
   });
   combineBtn.addEventListener("click", () => void onCombine());
 
+  // Defect #1 fix: while recording, the only Stop a user could reach was
+  // inside the app window — unreachable once a fullscreen/maximized video
+  // sits on top of it (Jason's exact symptom), and the only way out (closing
+  // the recorded screen) is the data-loss path defect #3 fixes. A global
+  // shortcut fires the real stop handler (preview + save offered, see
+  // presentStopResult above) from anywhere, without raising the app window
+  // or touching the recorded screen — unlike the Ctrl+PrintScreen window
+  // shortcut, this listener must never call focus/raise.
+  async function listenStopHotkey() {
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.transformCallback !== "function") return;
+    // Same `plugin:event|listen` convention as main.js's listenEvent /
+    // listenHotkeyEvents — fire-and-forget for this page's lifetime, no
+    // unlisten (this app never tears one down elsewhere either).
+    const handlerId = internals.transformCallback(() => {
+      if (session && session.state === "recording" && !busy) void onStop();
+    });
+    try {
+      await internals.invoke("plugin:event|listen", {
+        event: "stop-recording-requested",
+        target: { kind: "Any" },
+        handler: handlerId,
+      });
+    } catch {
+      /* best effort — the global hotkey degrades gracefully, same as the
+         capture shortcuts' own registration (see main.rs register_capture_shortcuts) */
+    }
+  }
+
   renderList();
   refreshMonitors();
+  loadCapturesDir();
   probe();
+  void listenStopHotkey();
 
   return {
     destroy() {
