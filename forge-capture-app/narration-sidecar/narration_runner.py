@@ -276,7 +276,12 @@ def default_narration_root() -> Path:
 
 
 def load_json(path: Path):
-    with open(path, "r", encoding="utf-8") as f:
+    # utf-8-sig: the setup receipt is written by PowerShell Out-File
+    # -Encoding utf8, which emits a UTF-8 BOM; plain utf-8 rejects it
+    # ("Unexpected UTF-8 BOM") and the first real enrollment failed
+    # on exactly that (fix round 6 live-proof find). utf-8-sig strips
+    # a BOM when present and reads a BOM-free file identically.
+    with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 

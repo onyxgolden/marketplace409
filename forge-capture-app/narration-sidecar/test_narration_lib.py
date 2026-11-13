@@ -27,6 +27,20 @@ FFPROBE = shutil.which("ffprobe")
 
 # --- hashing ---------------------------------------------------------------
 
+def test_load_json_reads_utf8_bom_file(tmp_path):
+    # Fix round 6 live-proof find: the setup receipt is written by
+    # PowerShell Out-File -Encoding utf8, which emits a UTF-8 BOM;
+    # load_json with plain utf-8 rejects it ("Unexpected UTF-8 BOM")
+    # and the first real enrollment failed on exactly that.
+    bom_path = tmp_path / "receipt-bom.json"
+    bom_path.write_bytes(b"\xef\xbb\xbf" + json.dumps(
+        {"checkpoints_v2_zip_sha256": "ab" * 32}).encode("utf-8"))
+    assert runner.load_json(bom_path)["checkpoints_v2_zip_sha256"] == "ab" * 32
+    plain_path = tmp_path / "receipt-plain.json"
+    plain_path.write_text(json.dumps({"a": 1}), encoding="utf-8")
+    assert runner.load_json(plain_path) == {"a": 1}
+
+
 def test_sha256_bytes_matches_hashlib():
     assert lib.sha256_bytes(b"hello") == hashlib.sha256(b"hello").hexdigest()
 
