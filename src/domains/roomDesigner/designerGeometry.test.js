@@ -30,6 +30,10 @@ import {
   parseDimensionInput,
   fitViewToBounds,
   phoneAutoFitView,
+  PLAN_DETAIL_LABEL_MIN_SCALE,
+  PLAN_TAG_LABEL_MIN_SCALE,
+  showPlanDetailLabels,
+  showPlanTagLabels,
   pointInPolygon,
   polygonArea,
   rotatePoint,
@@ -1002,5 +1006,42 @@ describe("crosshairHudBox — viewport-safe HUD placement", () => {
 
   it("returns null when the canvas is shorter than the box", () => {
     expect(crosshairHudBox({ cx: 50, cy: 10, w: 800, h: 20, ...box })).toBeNull();
+  });
+});
+
+describe("plan label scale thresholds (FCCU label-overlap fix)", () => {
+  // Thresholds are sized from the FCCU sample's measured fit scales
+  // (bounds 7680x5064 in): desktop 1400x800 fits at 0.139, phone
+  // 390x700 at 0.0445; interactive zoom never goes below MIN_SCALE
+  // (0.35), so normal working zoom is unchanged.
+
+  it("exposes the thresholds as constants", () => {
+    expect(PLAN_DETAIL_LABEL_MIN_SCALE).toBe(0.25);
+    expect(PLAN_TAG_LABEL_MIN_SCALE).toBe(0.09);
+  });
+
+  it("hides detail labels below 0.25 and shows them at/above it", () => {
+    expect(showPlanDetailLabels(0.0445)).toBe(false); // phone fit
+    expect(showPlanDetailLabels(0.139)).toBe(false); // desktop fit, 1400x800
+    expect(showPlanDetailLabels(0.159)).toBe(false); // desktop fit, 1600x900
+    expect(showPlanDetailLabels(0.249)).toBe(false);
+    expect(showPlanDetailLabels(0.25)).toBe(true);
+    expect(showPlanDetailLabels(0.35)).toBe(true); // MIN_SCALE working zoom
+    expect(showPlanDetailLabels(1.6)).toBe(true); // DEFAULT_VIEW
+  });
+
+  it("hides short tags below 0.09 and shows them at/above it", () => {
+    expect(showPlanTagLabels(0.0445)).toBe(false); // phone fit
+    expect(showPlanTagLabels(0.089)).toBe(false);
+    expect(showPlanTagLabels(0.09)).toBe(true);
+    expect(showPlanTagLabels(0.139)).toBe(true); // desktop fit
+    expect(showPlanTagLabels(1.6)).toBe(true);
+  });
+
+  it("never shows labels for a missing or non-finite scale", () => {
+    for (const bad of [undefined, null, NaN, Infinity, -Infinity, 0]) {
+      expect(showPlanDetailLabels(bad)).toBe(false);
+      expect(showPlanTagLabels(bad)).toBe(false);
+    }
   });
 });

@@ -79,3 +79,28 @@ describe("temaPrimitiveToSvg", () => {
     expect(out({ kind: "text", x: 0, y: 0, text: "AES", size: 5, role: "label" })).toContain(">AES<");
   });
 });
+
+describe("drawTemaSymbol label gating (FCCU label-overlap fix)", () => {
+  // The description label is "Shell-and-tube exchanger (TEMA,
+  // configurable) · AES"; the aria-label also mentions AES, so the
+  // description assertion uses the label's own wording.
+  const description = "Shell-and-tube exchanger (TEMA, configurable)";
+
+  it("hides the tag and the description below the tag threshold", () => {
+    const html = render(assembly, { tag: "E-101" }, { scale: 0.0445 });
+    expect(html).not.toContain("E-101");
+    expect(html).not.toContain(description);
+  });
+
+  it("shows the tag but not the description between the thresholds", () => {
+    const html = render(assembly, { tag: "E-101" }, { scale: 0.139 });
+    expect(html).toContain("E-101");
+    expect(html).not.toContain(description);
+  });
+
+  it("shows both at normal working zoom", () => {
+    const html = render(assembly, { tag: "E-101" }, { scale: 1 });
+    expect(html).toContain("E-101");
+    expect(html).toContain(description);
+  });
+});

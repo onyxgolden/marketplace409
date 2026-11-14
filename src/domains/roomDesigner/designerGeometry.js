@@ -257,6 +257,42 @@ export const PHONE_AUTO_FIT_MIN_SCALE = 0.02;
 /** Margin (px) left around the drawing by a phone auto-fit. */
 export const PHONE_AUTO_FIT_PADDING_PX = 24;
 
+/**
+ * View scale (screen px per plan inch) below which the long "detail"
+ * plan labels are hidden: pipe/wall dimension labels, equipment
+ * description lines, room areas, annotation/deck/sheet labels, and
+ * org-chart text. Canvas labels render at a FIXED screen size while the
+ * geometry shrinks with the view, so at a fit-to-view scale a large
+ * plant (the FCCU sample: 7680x5064 in) renders its labels as one
+ * unreadable pile. Sized from the FCCU sample's measured fit scales:
+ * desktop 1400x800 fits at 0.139 and 1600x900 at 0.159, so the
+ * threshold sits above every fit-to-view scale and below MIN_SCALE
+ * (0.35) — interactive zoom never goes below 0.35, so normal working
+ * zoom is unchanged and labels return as the user zooms in.
+ */
+export const PLAN_DETAIL_LABEL_MIN_SCALE = 0.25;
+
+/**
+ * View scale below which even the short tag labels hide: equipment
+ * tags (R-101), furniture codes, room names. At the phone fit (0.0445)
+ * the tightest FCCU tag spacing (216 in) is ~10 screen px while a tag
+ * is ~33 px wide, so tags pile too. At the desktop fit (0.139) that
+ * spacing is ~30 px and tags stay legible, so the threshold sits
+ * between the two fits: tags survive a desktop fit-to-view and hide
+ * on a phone fit, returning as the user zooms in.
+ */
+export const PLAN_TAG_LABEL_MIN_SCALE = 0.09;
+
+/** Whether the long "detail" plan labels render at this view scale. */
+export function showPlanDetailLabels(scale) {
+  return Number.isFinite(scale) && scale >= PLAN_DETAIL_LABEL_MIN_SCALE;
+}
+
+/** Whether the short tag labels render at this view scale. */
+export function showPlanTagLabels(scale) {
+  return Number.isFinite(scale) && scale >= PLAN_TAG_LABEL_MIN_SCALE;
+}
+
 /** Size (plan inches) a zero-size bounds dimension is padded to, centered,
  * before fitting — a single straight wall has no extent on one axis but
  * still needs a finite rect to fit. */
