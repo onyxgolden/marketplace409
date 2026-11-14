@@ -24,6 +24,7 @@ import {
   snapScalar,
   PHONE_AUTO_FIT_BREAKPOINT_PX,
   fitViewToBounds,
+  showPlanDetailLabels,
   underlayContainsPoint,
   underlayDisplaySizeIn,
   underlayRotationDeg,
@@ -1695,6 +1696,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // ---- rendering ----
   const thicknessPx = Math.max(3, design.settings.wallThicknessIn * view.scale);
 
+  // Scale-gated plan labels (FCCU label-overlap fix): canvas labels render
+  // at a fixed screen size while the geometry shrinks with the view, so at
+  // a fit-to-view scale the long "detail" labels pile into an unreadable
+  // mass. Below 0.25 the detail labels hide. Interactive zoom never goes
+  // below 0.35, so normal working zoom is unchanged and labels return as
+  // the user zooms in. The short tags are gated the same way inside the
+  // symbol routines (see symbolDrawRoutines.jsx), which receive `scale`.
+  const showDetailLabels = showPlanDetailLabels(view.scale);
+
   // Visio-style grid: light minor lines every gridIn, emphasized major
   // lines every MAJOR_GRID_EVERY minor lines (every 30″ on the 6″ default).
   const minorPx = gridIn * view.scale;
@@ -1752,9 +1762,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       <g key={deck.id} pointerEvents="none">
         <rect x={x} y={y} width={Math.abs(b.x - a.x)} height={Math.abs(b.y - a.y)}
           fill="rgba(160,116,74,0.12)" stroke={color} strokeWidth={thicknessPx} strokeDasharray="10 6" />
-        <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
-          {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
-        </text>
+        {/* Deck label — a detail label, hidden at fit-to-view scales. */}
+        {showDetailLabels && (
+          <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
+            {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
+          </text>
+        )}
       </g>
     );
   };
@@ -1792,7 +1805,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           );
         })}
         {renderOpenings(wall, isSelected)}
-        {dim && (() => {
+        {/* Dimension label — a detail label, hidden at fit-to-view scales. */}
+        {dim && showDetailLabels && (() => {
           const a = toScreen(dim.lineA);
           const b = toScreen(dim.lineB);
           const t1a = toScreen(dim.tickA.a);
@@ -2002,7 +2016,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             />
           );
         })}
-        {label}
+        {/* Pipe dimension label — a detail label, hidden at fit-to-view
+            scales, where dozens of them stack into an unreadable pile. */}
+        {showDetailLabels && label}
         {isSelected &&
           (run.points || []).map((v, i) => {
             const s = toScreen(v);
@@ -2055,9 +2071,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           fill="none" stroke={stroke} strokeWidth={isSelected ? 3 : 2}
           strokeDasharray="12 8"
         />
-        <text x={tl.x + 10} y={tl.y - 10} fontSize={13} fontWeight={700} fill={stroke}>
-          {`${getSheetSize(sheet.sizeId).label} · ${sheet.orientation} · ${fitScaleLabel(sheet.fitScale)}`}
-        </text>
+        {/* Sheet label — a detail label, hidden at fit-to-view scales. */}
+        {showDetailLabels && (
+          <text x={tl.x + 10} y={tl.y - 10} fontSize={13} fontWeight={700} fill={stroke}>
+            {`${getSheetSize(sheet.sizeId).label} · ${sheet.orientation} · ${fitScaleLabel(sheet.fitScale)}`}
+          </text>
+        )}
       </g>
     );
   };
@@ -2078,11 +2097,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           const strokeW = Math.max(1, (a.strokeWidthIn || 0.75) * view.scale * 0.6);
           if (a.kind === "label") {
             const p = pts[0];
-            return (
+            // VSDX annotation label — a detail label, hidden at
+            // fit-to-view scales; the annotation path itself still draws.
+            return showDetailLabels ? (
               <text key={a.id} x={p.x} y={p.y} fontSize={13} fill="#94a3b8" textAnchor="middle">
                 {a.text || ""}
               </text>
-            );
+            ) : null;
           }
           const path = pts.map((pt, i) => `${i === 0 ? "M" : "L"}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(" ");
           return (
@@ -2663,7 +2684,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderRulers()}
         {renderCrosshair()}
       </svg>
-      <SystemsLegend design={design} />
+      <SystemsLegend design={design} narrow={canvasSize.w > 0 && canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX} />
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="max-w-md rounded-lg bg-gray-900/90 p-6 text-center shadow-xl">
@@ -2782,13 +2803,41 @@ function openingEndpoints(opening, walls) {
 
 // Plan legend: one swatch per system that has members (bottom-left, never
 // intercepts the pointer). Underground pipe is explained when present.
-function SystemsLegend({ design }) {
+function SystemsLegend({ design, narrow }) {
   const entries = systemLegend(design);
   const underground = (design.pipes || []).some((p) => p.underground);
+  // Secondary panels are closed by default: on a narrow (phone) canvas
+  // the always-open legend covers the bottom-left of the drawing. The
+  // user can still open it (and close it again) — the toggle is their
+  // explicit choice, so it wins over the default from then on.
+  const [userOpen, setUserOpen] = useState(null);
+  const open = userOpen ?? !narrow;
   if (!entries.length && !underground) return null;
+  if (!open) {
+    return (
+      <button
+        type="button"
+        data-testid="systems-legend-toggle"
+        onClick={() => setUserOpen(true)}
+        className="pointer-events-auto absolute bottom-12 left-3 rounded bg-gray-900/90 px-3 py-1.5 text-[11px] font-semibold text-gray-200 shadow"
+      >
+        Systems
+      </button>
+    );
+  }
   return (
     <div className="pointer-events-none absolute bottom-12 left-3 rounded bg-gray-900/90 px-3 py-2 text-[11px] text-gray-200 shadow" data-testid="systems-legend">
-      <p className="mb-1 font-semibold uppercase tracking-wide text-gray-400">Systems</p>
+      <p className="mb-1 flex items-center justify-between gap-4 font-semibold uppercase tracking-wide text-gray-400">
+        Systems
+        <button
+          type="button"
+          onClick={() => setUserOpen(false)}
+          aria-label="Collapse systems legend"
+          className="pointer-events-auto rounded px-1 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+        >
+          ✕
+        </button>
+      </p>
       {entries.map((e) => (
         <p key={e.id} className="flex items-center gap-2">
           <span className="inline-block h-2.5 w-5 rounded-sm" style={{ background: e.color }} />

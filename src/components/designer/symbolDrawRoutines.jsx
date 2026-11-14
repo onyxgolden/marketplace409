@@ -14,7 +14,7 @@
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { cabinetCode } from "@/domains/roomDesigner/cabinetCodes";
-import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
+import { polygonArea, showPlanDetailLabels, showPlanTagLabels } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
@@ -87,10 +87,14 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
         />
       )}
       {/* Cabinets read by their code at the current size (B24, W2430),
-          the way cabinet layouts are labeled; other pieces by name. */}
-      <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
-        {code || symbol.label}
-      </text>
+          the way cabinet layouts are labeled; other pieces by name.
+          Short tag — hidden only at the lowest scales, where even a
+          3-character code is wider than the piece it labels. */}
+      {showPlanTagLabels(scale) && (
+        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
+          {code || symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -141,15 +145,20 @@ export function drawRoomSymbol({ instance, toScreen, scale, highlighted }) {
       {/* A photo's own colors make the label unreadable at a glance; give it
           a small dark backing pill, same convention a map legend would use
           over imagery — the plain tint background never needed this. */}
-      {pattern && (
+      {pattern && showPlanTagLabels(scale) && (
         <rect x={c.x - 60} y={c.y - 16} width={120} height={30} rx={6} fill="#0f172a" fillOpacity={0.72} />
       )}
-      <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"}>
-        {instance.label}
-      </text>
-      <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"}>
-        {area.toFixed(0)} sq ft
-      </text>
+      {/* Room name is a short tag; the area line is a detail label. */}
+      {showPlanTagLabels(scale) && (
+        <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"}>
+          {instance.label}
+        </text>
+      )}
+      {showPlanDetailLabels(scale) && (
+        <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"}>
+          {area.toFixed(0)} sq ft
+        </text>
+      )}
     </g>
   );
 }
@@ -172,9 +181,12 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
         stroke={selectionStroke(highlighted, "#374151")}
         strokeWidth={highlighted ? 3 : 1.5}
       />
-      <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db">
-        {symbol.label}
-      </text>
+      {/* Short tag — hidden only at the lowest scales. */}
+      {showPlanTagLabels(scale) && (
+        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -329,9 +341,12 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
               x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={3}
               fill="#1f2937" stroke={highlighted ? "#f59e0b" : "#fbbf24"} strokeWidth={sw}
             />
-            <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
-              {label}
-            </text>
+            {/* In-glyph tag — a short label, hidden only at the lowest scales. */}
+            {showPlanTagLabels(scale) && (
+              <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
+                {label}
+              </text>
+            )}
           </g>
         );
       }
@@ -345,9 +360,13 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {symbol.label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales
+          where dozens of them stack into an unreadable pile. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -550,9 +569,13 @@ export function drawBuildingElementSymbol({ symbol, instance, toScreen, scale, h
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {symbol.label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales
+          where dozens of them stack into an unreadable pile. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -671,9 +694,13 @@ export function drawSiteOutdoorSymbol({ symbol, instance, toScreen, scale, highl
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {symbol.label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales
+          where dozens of them stack into an unreadable pile. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -755,9 +782,13 @@ export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highli
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {symbol.label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales
+          where dozens of them stack into an unreadable pile. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -1290,14 +1321,18 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
       {components}
-      {instance.tag && (
+      {/* Short tag — survives a desktop fit-to-view, hides on a phone fit. */}
+      {instance.tag && showPlanTagLabels(scale) && (
         <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
-      <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {symbol.label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {symbol.label}
+        </text>
+      )}
     </g>
   );
 }
@@ -1519,36 +1554,42 @@ export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
           strokeWidth={highlighted || isRoot ? 2.5 : 1.5}
         />
         <rect width={boxW} height={Math.max(4, boxH * 0.09)} rx={4} fill={accent} opacity={0.9} />
-        {lines.map((line, i) => (
-          <text
-            key={i}
-            x={boxW / 2}
-            y={firstBaseline + i * lineHeight}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize={line.size}
-            fontWeight={line.weight}
-            fill={line.fill}
-          >
-            {line.text}
-          </text>
-        ))}
+        {/* Node text is detail-tier: at a fit-to-view scale the boxes
+            are a few px wide and the 11–15px lines pile on each other. */}
+        {showPlanDetailLabels(scale) &&
+          lines.map((line, i) => (
+            <text
+              key={i}
+              x={boxW / 2}
+              y={firstBaseline + i * lineHeight}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={line.size}
+              fontWeight={line.weight}
+              fill={line.fill}
+            >
+              {line.text}
+            </text>
+          ))}
       </g>
     );
   });
 
   return (
     <g key={chart.id}>
-      <text
-        x={anchor.x}
-        y={anchor.y - 16}
-        textAnchor="middle"
-        fontSize={17}
-        fontWeight={700}
-        fill="#f1f5f9"
-      >
-        {fitLabel(chart.name, 40)}
-      </text>
+      {/* Chart title is detail-tier, like the node text. */}
+      {showPlanDetailLabels(scale) && (
+        <text
+          x={anchor.x}
+          y={anchor.y - 16}
+          textAnchor="middle"
+          fontSize={17}
+          fontWeight={700}
+          fill="#f1f5f9"
+        >
+          {fitLabel(chart.name, 40)}
+        </text>
+      )}
       {boxes.length === 0 ? (
         <g transform={`translate(${anchor.x - boxW / 2} ${anchor.y})`}>
           <rect
@@ -1560,16 +1601,18 @@ export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
             strokeWidth={1.5}
             strokeDasharray="8 5"
           />
-          <text
-            x={boxW / 2}
-            y={boxH / 2}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize={13}
-            fill="#94a3b8"
-          >
-            Empty chart — add people
-          </text>
+          {showPlanDetailLabels(scale) && (
+            <text
+              x={boxW / 2}
+              y={boxH / 2}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={13}
+              fill="#94a3b8"
+            >
+              Empty chart — add people
+            </text>
+          )}
         </g>
       ) : (
         <>

@@ -7,6 +7,10 @@
 // this file only maps each primitive + role to SVG.
 
 import { temaDrawing } from "@/domains/roomDesigner/temaGeometry";
+import {
+  showPlanDetailLabels,
+  showPlanTagLabels,
+} from "@/domains/roomDesigner/designerGeometry";
 import { uprightTextTransform } from "./uprightText";
 
 /** Map one geometry primitive to SVG. `scale` converts plan inches to screen px. */
@@ -91,14 +95,18 @@ export function drawTemaSymbol({ symbol, instance, toScreen, scale, highlighted 
         <circle key={`anchor-${a.id}`} data-anchor={a.id} cx={a.x * scale} cy={a.y * scale} r={4}
           fill="none" stroke="#22d3ee" strokeWidth={1.5} />
       ))}
-      {instance.tag && (
+      {/* Short tag — survives a desktop fit-to-view, hides on a phone fit. */}
+      {instance.tag && showPlanTagLabels(scale) && (
         <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
-      <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
-        {label}
-      </text>
+      {/* Description line — a detail label, hidden at fit-to-view scales. */}
+      {showPlanDetailLabels(scale) && (
+        <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
+          {label}
+        </text>
+      )}
     </g>
   );
 }
