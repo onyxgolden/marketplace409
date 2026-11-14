@@ -1,4 +1,6 @@
-// SaaS 30-day trial — hourly expiry worker.
+// SaaS 30-day trial — daily expiry worker (`30 12 * * *` UTC —
+// Vercel Hobby allows only daily crons; the live predicate denies
+// an expired trial regardless, this worker only flips status/audit).
 //
 // GET /api/forge/platform/trials/expire runs
 // forge_app_trial_expire_due (worker-role only, EXECUTE to
