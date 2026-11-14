@@ -42,7 +42,7 @@
     },
     {
       "path": "/api/forge/platform/trials/expire",
-      "schedule": "0 * * * *"
+      "schedule": "30 12 * * *"
     }
   ]
 }
