@@ -567,6 +567,14 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     const reconciledRevision = form.reconciledRevisionId
       ? revisions.find((r) => r.id === form.reconciledRevisionId)
       : null;
+    // Slice-7 friction fix round 1 (F1): always name the source
+    // field-redline's original marked-up revision, resolved from
+    // fieldRedline.drawingRevisionId. A missing record gets the same
+    // truthful unavailable-ID fallback as the round's bound revision
+    // — it is never silently omitted.
+    const originalRevisionLabel = revisionLabel(revisions, fieldRedline.drawingRevisionId);
+    const originalRevisionText = originalRevisionLabel
+      ?? `Revision record unavailable (ID ${shortId(fieldRedline.drawingRevisionId)})`;
     setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
@@ -577,8 +585,8 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setNotice(reconciledRevision
-        ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
-        : `Field hand-redline reconciled for drawing ${row.drawingNumber}.`);
+        ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled as Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
+        : `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText} — retired without a new revision.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);

@@ -649,7 +649,44 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     await act(async () => {});
     const notice = container.querySelector('[role="status"]');
     expect(notice).not.toBeNull();
-    expect(notice.textContent).toBe("Field hand-redline reconciled for drawing P-101, Rev 1 (IFA).");
+    expect(notice.textContent).toBe("Field hand-redline reconciled for drawing P-101, Rev 0 (IFA), reconciled as Rev 1 (IFA).");
+  });
+
+  it("confirms retiring a field hand-redline without a new revision, still naming the original revision", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    // No reconciled revision selected: the empty option is
+    // "Retire without a new revision".
+    await act(async () => { findButton(container, "Reconcile").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Field hand-redline reconciled for drawing P-101, Rev 0 (IFA) — retired without a new revision.");
+  });
+
+  it("uses the truthful unavailable-ID fallback when the original marked-up revision is missing", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_missing", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "recon-rev-forge_wpdfr_1", "forge_wpdrv_2"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Reconcile").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toContain("Revision record unavailable (ID");
+    expect(notice.textContent).toContain("reconciled as Rev 1 (IFA)");
   });
 
   it("confirms retiring a drawing by name", async () => {

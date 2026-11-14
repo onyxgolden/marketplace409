@@ -130,7 +130,14 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
   const controlledDrawingsRef = useRef([]);
   const controlledCycleRef = useRef(0);
   const controlledRetryRef = useRef(null);
-  const controlledPackageRef = useRef(null);
+  // Slice-7 friction fix round 1 (F4): the controlled-drawings
+  // reset identity is the FULL page scope — workspace + project +
+  // package — via the exact scoped readiness key, not packageId
+  // alone. The same package ID can render under a different
+  // workspace/project context; the old scope's drawings must be
+  // cleared the moment that identity changes.
+  const controlledScopeKey = scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness");
+  const controlledScopeRef = useRef(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // D18: distinguishes "still loading" from "loaded and genuinely empty" --
@@ -184,10 +191,12 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     // in the calling effect body — the same rule the mount effect's
     // own fetch follows.
     await Promise.resolve();
-    // A new package starts from an empty list: the previous package's
-    // drawings must never stay on screen while the new one loads.
-    if (controlledPackageRef.current !== packageId) {
-      controlledPackageRef.current = packageId;
+    // A new scope starts from an empty list: the previous scope's
+    // drawings must never stay on screen while the new one loads —
+    // even when the package ID is unchanged and only the workspace
+    // or project context moved.
+    if (controlledScopeRef.current !== controlledScopeKey) {
+      controlledScopeRef.current = controlledScopeKey;
       controlledDrawingsRef.current = [];
       setControlledDrawings([]);
       setControlledLoaded(false);
@@ -236,7 +245,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       });
       if (cycle !== controlledCycleRef.current) return;
     }
-  }, [pageQuery, packageId]);
+  }, [pageQuery, packageId, controlledScopeKey]);
 
   async function refresh() {
     setError("");

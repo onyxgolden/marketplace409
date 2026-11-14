@@ -7,6 +7,7 @@ import { clearSWRCache, getCacheEntry, seedCacheEntry } from "@/hooks/swrCache";
 import { scopedSWRKey } from "./workspaceQuery.js";
 
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
+import { PackagePageProvider } from "./packagePageContext.jsx";
 
 function deferred() {
   let resolve;
@@ -451,6 +452,107 @@ describe("WorkPackageDocuments controlled drawings loading states (F4)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("clears the old scope's drawings immediately when workspace/project changes with the same packageId, and a delayed response cannot leave them visible", async () => {
+    // Friction fix round 1 (F4): the reset identity is the full
+    // scope key, not packageId alone. Same package under a new
+    // workspace/project must drop the prior scope's list at once.
+    const gate = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (typeof url === "string" && url.startsWith("/api/work-links")) {
+        return { ok: true, json: async () => ({ links: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/work-documents")) {
+        return { ok: true, json: async () => ({ documents: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
+        return { ok: true, json: async () => ({ projects: [] }) };
+      }
+      if (typeof url === "string" && url.includes("/drawings/readiness")) {
+        if (url.includes("workspace=owner-b")) {
+          await gate.promise;
+          return { ok: true, json: async () => ({ drawings: [DRAWING_2] }) };
+        }
+        return { ok: true, json: async () => ({ drawings: [DRAWING_1] }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    act(() => {
+      root.render(
+        <PackagePageProvider workspace="owner-a" forgeProject="proj-a">
+          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+        </PackagePageProvider>,
+      );
+    });
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-1");
+    act(() => {
+      root.render(
+        <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
+          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+        </PackagePageProvider>,
+      );
+    });
+    await act(async () => {});
+    // The old scope's drawings are gone immediately — before the
+    // new scope's delayed response resolves.
+    expect(controlledSectionText(container)).not.toContain("W-0005-1");
+    expect(controlledSectionText(container)).toContain("Loading controlled drawings…");
+    await act(async () => { gate.resolve(); await gate.promise; });
+    await act(async () => {});
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-2");
+    expect(controlledSectionText(container)).not.toContain("W-0005-1");
+  });
+
+  it("a failed response after a workspace change cannot leave the old scope's drawings visible", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (typeof url === "string" && url.startsWith("/api/work-links")) {
+        return { ok: true, json: async () => ({ links: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/work-documents")) {
+        return { ok: true, json: async () => ({ documents: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
+        return { ok: true, json: async () => ({ projects: [] }) };
+      }
+      if (typeof url === "string" && url.includes("/drawings/readiness")) {
+        if (url.includes("workspace=owner-b")) {
+          return { ok: false, json: async () => ({ error: "Readiness unavailable." }) };
+        }
+        return { ok: true, json: async () => ({ drawings: [DRAWING_1] }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    act(() => {
+      root.render(
+        <PackagePageProvider workspace="owner-a" forgeProject="proj-a">
+          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+        </PackagePageProvider>,
+      );
+    });
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-1");
+    act(() => {
+      root.render(
+        <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
+          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+        </PackagePageProvider>,
+      );
+    });
+    await act(async () => {});
+    await act(async () => {});
+    expect(controlledSectionText(container)).not.toContain("W-0005-1");
+    expect(controlledSectionText(container)).toContain("Could not load controlled drawings");
   });
 
   it("keeps the existing list visible with a Refreshing… label while a refresh is in flight", async () => {
