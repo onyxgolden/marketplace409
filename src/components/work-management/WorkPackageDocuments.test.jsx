@@ -18,11 +18,27 @@ function renderDocuments(props = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  mountedRoots.push(root);
   act(() => {
     root.render(<WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} {...props} />);
   });
   return { container, root };
 }
+
+// Slice-7 friction fix (F4): the controlled load schedules bounded
+// revalidation retries, so every mounted root must be unmounted in
+// afterEach — clearing the DOM alone never runs the effect cleanup,
+// and a stray retry would fetch against the next test's stub.
+const mountedRoots = [];
+
+function controlledSectionText(container) {
+  const heading = [...container.querySelectorAll("h3")].find((h) => h.textContent === "Controlled drawings");
+  expect(heading).not.toBeUndefined();
+  return heading.nextElementSibling?.textContent || "";
+}
+
+const DRAWING_1 = { drawingId: "forge_wdwg_1", drawingNumber: "W-0005-1", drawingType: "p_id", badge: "IFA — Awaiting review" };
+const DRAWING_2 = { drawingId: "forge_wdwg_2", drawingNumber: "W-0005-2", drawingType: "isometric", badge: "IFA — Awaiting review" };
 
 function selectControlledFile(container, name = "W-0005-2.pdf") {
   const input = container.querySelector('#controlled-drawing-intake input[type="file"]');
@@ -60,8 +76,17 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  mountedRoots.forEach((root) => {
+    try {
+      root.unmount();
+    } catch {
+      // Already unmounted by the test itself.
+    }
+  });
+  mountedRoots.length = 0;
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  vi.useRealTimers();
   document.body.innerHTML = "";
   clearSWRCache();
 });
@@ -190,12 +215,6 @@ describe("WorkPackageDocuments controlled drawings + upload refresh", () => {
     return { calls, readinessCalls: () => readinessCall };
   }
 
-  function controlledSectionText(container) {
-    const heading = [...container.querySelectorAll("h3")].find((h) => h.textContent === "Controlled drawings");
-    expect(heading).not.toBeUndefined();
-    return heading.nextElementSibling?.textContent || "";
-  }
-
   it("renders controlled drawings as a distinct subsection, separate from Designer-linked Drawings", async () => {
     stubFetchStateful({
       designerProjects: [{ id: "proj_1", name: "FCCU Plot Plan (Fictional)" }],
@@ -218,11 +237,23 @@ describe("WorkPackageDocuments controlled drawings + upload refresh", () => {
     expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
   });
 
-  it("shows the empty controlled state when no controlled drawings exist", async () => {
-    stubFetchStateful({ readinessRounds: [[]] });
-    const { container } = renderDocuments();
-    await act(async () => {});
-    expect(controlledSectionText(container)).toContain("No controlled drawings uploaded yet.");
+  it("shows the empty controlled state only after the bounded revalidation window", async () => {
+    // Friction fix (F4): a first empty answer is revalidated (2 short
+    // retries) before the definitive empty state may render — the list
+    // was slow to populate after the live S7 test upload.
+    vi.useFakeTimers();
+    try {
+      const { readinessCalls } = stubFetchStateful({ readinessRounds: [[]] });
+      const { container } = renderDocuments();
+      await act(async () => {});
+      expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => {});
+      expect(controlledSectionText(container)).toContain("No controlled drawings uploaded yet.");
+      expect(readinessCalls()).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refreshes the controlled list after upload and invalidates only the exact scoped readiness key", async () => {
@@ -248,6 +279,7 @@ describe("WorkPackageDocuments controlled drawings + upload refresh", () => {
     setControlledText(container, "Drawing number", "W-0005-2");
     selectControlledFile(container);
     await submitControlledForm(container);
+    await act(async () => {});
 
     expect(calls.some((c) => c.url.includes("/drawings/intake") && c.method === "POST")).toBe(true);
     // The Documents refresh re-fetched readiness — the new drawing is listed.
@@ -269,5 +301,211 @@ describe("WorkPackageDocuments controlled drawings + upload refresh", () => {
     expect(container.querySelector("#controlled-drawing-number").value).toBe("W-0005-1");
     expect(container.querySelector("#controlled-drawing-type").value).toBe("p_id");
     expect(onIntakeDrawingConsumed).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Slice-7 friction fix (F4): the controlled-drawings subsection must
+// never flash a definitive empty state while a response is still in
+// flight or a bounded revalidation is pending, must keep the list
+// visible during refresh, and must cancel retries on unmount or
+// package-scope change.
+describe("WorkPackageDocuments controlled drawings loading states (F4)", () => {
+  // readiness: an array of per-call entries, or a function
+  // (url, callIndex) => entry. An entry is either an array of drawings
+  // or { drawings, delay?, error? }.
+  function stubFetchControlled(readiness) {
+    const resolve = typeof readiness === "function"
+      ? readiness
+      : (url, i) => readiness[Math.min(i, readiness.length - 1)];
+    let readinessCall = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
+      if (typeof url === "string" && url.startsWith("/api/work-links")) {
+        return { ok: true, json: async () => ({ links: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/work-documents")) {
+        return { ok: true, json: async () => ({ documents: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
+        return { ok: true, json: async () => ({ projects: [] }) };
+      }
+      if (typeof url === "string" && url.includes("/drawings/intake")) {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact: { id: "forge_wpa_2", drawingId: "forge_wdwg_2", contentSha256: "c".repeat(64) },
+            drawing: { id: "forge_wdwg_2" }, revision: { id: "forge_wpdrv_2" }, replayed: false,
+          }),
+        };
+      }
+      if (typeof url === "string" && url.includes("/drawings/readiness")) {
+        const entry = resolve(url, readinessCall);
+        readinessCall += 1;
+        if (entry && entry.delay) await entry.delay.promise;
+        if (entry && entry.error) return { ok: false, json: async () => ({ error: entry.error }) };
+        const drawings = Array.isArray(entry) ? entry : (entry?.drawings ?? []);
+        return { ok: true, json: async () => ({ drawings }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    return { readinessCalls: () => readinessCall };
+  }
+
+  it("shows loading, never a false empty, while the readiness response is delayed", async () => {
+    const gate = deferred();
+    stubFetchControlled([{ delay: gate, drawings: [DRAWING_1] }]);
+    const { container } = renderDocuments();
+    expect(controlledSectionText(container)).toContain("Loading controlled drawings…");
+    expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+    await act(async () => { gate.resolve(); await gate.promise; });
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-1");
+    expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+  });
+
+  it("revalidates a transient empty answer and shows the drawing without flashing none", async () => {
+    vi.useFakeTimers();
+    try {
+      const { readinessCalls } = stubFetchControlled([[], [DRAWING_1]]);
+      const { container } = renderDocuments();
+      await act(async () => {});
+      expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      await act(async () => {});
+      expect(controlledSectionText(container)).toContain("W-0005-1");
+      expect(readinessCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the true empty state only after the bounded revalidation window is exhausted", async () => {
+    vi.useFakeTimers();
+    try {
+      const { readinessCalls } = stubFetchControlled([[], [], []]);
+      const { container } = renderDocuments();
+      await act(async () => {});
+      expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => {});
+      expect(controlledSectionText(container)).toContain("No controlled drawings uploaded yet.");
+      expect(readinessCalls()).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels an outstanding revalidation retry on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const { readinessCalls } = stubFetchControlled([[]]);
+      const { root } = renderDocuments();
+      await act(async () => {});
+      expect(readinessCalls()).toBe(1);
+      act(() => { root.unmount(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(readinessCalls()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the old package's retry on scope change and never shows its drawings", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = [];
+      vi.stubGlobal("fetch", vi.fn(async (url) => {
+        calls.push(url);
+        if (typeof url === "string" && url.startsWith("/api/work-links")) {
+          return { ok: true, json: async () => ({ links: [] }) };
+        }
+        if (typeof url === "string" && url.startsWith("/api/work-documents")) {
+          return { ok: true, json: async () => ({ documents: [] }) };
+        }
+        if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
+          return { ok: true, json: async () => ({ projects: [] }) };
+        }
+        if (typeof url === "string" && url.includes("/drawings/readiness")) {
+          if (url.includes("forge_wp_1")) return { ok: true, json: async () => ({ drawings: [] }) };
+          return { ok: true, json: async () => ({ drawings: [DRAWING_1] }) };
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }));
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      mountedRoots.push(root);
+      act(() => {
+        root.render(<WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />);
+      });
+      await act(async () => {});
+      expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+      act(() => {
+        root.render(<WorkPackageDocuments packageId="forge_wp_2" initialLinks={[]} />);
+      });
+      await act(async () => {});
+      expect(controlledSectionText(container)).toContain("W-0005-1");
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => {});
+      expect(calls.filter((u) => u.includes("forge_wp_1") && u.includes("/drawings/readiness"))).toHaveLength(1);
+      expect(controlledSectionText(container)).toContain("W-0005-1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the existing list visible with a Refreshing… label while a refresh is in flight", async () => {
+    const gate = deferred();
+    let readinessCall = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
+      if (typeof url === "string" && url.startsWith("/api/work-links")) {
+        return { ok: true, json: async () => ({ links: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/work-documents")) {
+        return { ok: true, json: async () => ({ documents: [] }) };
+      }
+      if (typeof url === "string" && url.startsWith("/api/forge/designer")) {
+        return { ok: true, json: async () => ({ projects: [] }) };
+      }
+      if (typeof url === "string" && url.includes("/drawings/intake")) {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact: { id: "forge_wpa_2", drawingId: "forge_wdwg_2", contentSha256: "c".repeat(64) },
+            drawing: { id: "forge_wdwg_2" }, revision: { id: "forge_wpdrv_2" }, replayed: false,
+          }),
+        };
+      }
+      if (typeof url === "string" && url.includes("/drawings/readiness")) {
+        readinessCall += 1;
+        if (readinessCall === 2) await gate.promise;
+        return { ok: true, json: async () => ({ drawings: readinessCall === 1 ? [DRAWING_1] : [DRAWING_1, DRAWING_2] }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    const { container } = renderDocuments();
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-1");
+    setControlledText(container, "Drawing number", "W-0005-2");
+    selectControlledFile(container);
+    const form = container.querySelector("#controlled-drawing-intake form");
+    act(() => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await act(async () => {});
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-1");
+    expect(container.textContent).toContain("Refreshing…");
+    expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
+    await act(async () => { gate.resolve(); await gate.promise; });
+    await act(async () => {});
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("W-0005-2");
+    expect(container.textContent).not.toContain("Refreshing…");
+  });
+
+  it("shows an error, not the empty state, when the readiness fetch fails", async () => {
+    stubFetchControlled([{ error: "Readiness unavailable." }]);
+    const { container } = renderDocuments();
+    await act(async () => {});
+    expect(controlledSectionText(container)).toContain("Could not load controlled drawings");
+    expect(container.textContent).not.toContain("No controlled drawings uploaded yet.");
   });
 });

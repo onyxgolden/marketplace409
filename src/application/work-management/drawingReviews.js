@@ -151,6 +151,12 @@ function toCamelRelease(row) {
     version: row.version,
     retiredAt: row.retired_at ?? null,
     retiredBy: row.retired_by ?? null,
+    // Slice-7 friction fix (F3b): the UI branches on release.isActive,
+    // but the mapper never exposed it, so undefined rendered every
+    // release — even a newly issued one — as superseded. Active state
+    // is derived only from the persisted retirement state, never from
+    // list position, timestamp, or revision number.
+    isActive: row.retired_at == null,
   };
 }
 

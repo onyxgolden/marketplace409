@@ -93,8 +93,14 @@ function defaultReviews() {
   };
 }
 
-function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews() } = {}) {
+function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {} } = {}) {
   const calls = [];
+  // Slice-7 friction fix: the round detail's redlines are stateful so
+  // a resolve can be observed (the redline flips to RESOLVED on the
+  // next detail fetch) instead of always re-rendering OPEN.
+  const redlinesByReview = {
+    forge_wpdrvw_1: [{ id: "forge_wpdrl_1", comment: "Move this nozzle 50 mm up.", severity: "REQUIRED", resolution: "OPEN", version: 1, anchorPage: 2 }],
+  };
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     const method = options.method || "GET";
     calls.push({ url, method, body: options.body });
@@ -102,9 +108,40 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
     if (parsed.pathname === "/api/work-packages/pkg_1/drawings/readiness") {
       return { ok: true, json: async () => fixture };
     }
-    const match = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/drawings\/(dwg_\d+)\/(revisions|reviews|ifc-releases|field-redlines)(?:\/(.+))?$/);
+    const match = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/drawings\/(dwg_\d+)\/(revisions|reviews|ifc-releases|field-redlines|artifacts|ifc-stage|retire)(?:\/(.+))?$/);
     if (match) {
-      const [, drawingId, resource, reviewId] = match;
+      const [, drawingId, resource, rest] = match;
+      if (resource === "reviews" && rest && rest.endsWith("/decision") && method === "POST") {
+        if (fail.decision) return { ok: false, json: async () => ({ error: "Review is stale — reload and try again." }) };
+        const reviewId = rest.split("/")[0];
+        const body = JSON.parse(options.body);
+        const review = (reviewsMap[drawingId] || []).find((r) => r.id === reviewId);
+        if (review) {
+          review.state = body.decision === "RETURN_TO_DRAFTER" ? "RETURNED" : body.decision === "APPROVE_WITH_REDLINES" ? "APPROVED_WITH_REDLINES" : "APPROVED";
+          review.version += 1;
+          review.closedAt = "2026-11-13T12:00:00Z";
+          review.decisionReason = body.reason;
+        }
+        return { ok: true, json: async () => ({ review }) };
+      }
+      if (resource === "reviews" && rest && rest.endsWith("/redlines") && method === "POST") {
+        if (fail.redline) return { ok: false, json: async () => ({ error: "Could not add the redline." }) };
+        const body = JSON.parse(options.body);
+        const redline = { id: "forge_wpdrl_2", comment: body.comment, severity: body.severity, resolution: "OPEN", version: 1, anchorPage: body.anchorPage ?? null };
+        (redlinesByReview[rest.split("/")[0]] = redlinesByReview[rest.split("/")[0]] || []).push(redline);
+        return { ok: true, json: async () => ({ redline }) };
+      }
+      if (resource === "reviews" && rest && rest.includes("/redlines/") && method === "PATCH") {
+        const [reviewId, , redlineId] = rest.split("/");
+        const body = JSON.parse(options.body);
+        const redline = (redlinesByReview[reviewId] || []).find((r) => r.id === redlineId);
+        if (redline) {
+          redline.resolution = body.resolution;
+          redline.resolutionNote = body.resolutionNote || null;
+          redline.version += 1;
+        }
+        return { ok: true, json: async () => ({ redline }) };
+      }
       if (resource === "reviews" && method === "POST") {
         const body = JSON.parse(options.body);
         const review = {
@@ -115,15 +152,13 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
         (reviewsMap[drawingId] = reviewsMap[drawingId] || []).push(review);
         return { ok: true, json: async () => ({ review }) };
       }
-      if (resource === "revisions") {
-        return { ok: true, json: async () => ({ revisions: revisionsMap[drawingId] || [] }) };
-      }
-      if (resource === "reviews" && reviewId) {
+      if (resource === "reviews" && rest && method === "GET") {
+        const reviewId = rest.split("/")[0];
         return {
           ok: true,
           json: async () => ({
             review: { id: reviewId, roundNo: 1, state: "OPEN", version: 1 },
-            redlines: [{ id: "forge_wpdrl_1", comment: "Move this nozzle 50 mm up.", severity: "REQUIRED", resolution: "OPEN", version: 1, anchorPage: 2 }],
+            redlines: redlinesByReview[reviewId] || [],
             events: [{ id: "forge_wpdre_1", eventType: "REVIEW_OPENED", createdAt: "2026-11-08T11:00:00Z" }],
           }),
         };
@@ -131,11 +166,46 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
       if (resource === "reviews") {
         return { ok: true, json: async () => ({ reviews: reviewsMap[drawingId] || [] }) };
       }
+      if (resource === "revisions") {
+        return { ok: true, json: async () => ({ revisions: revisionsMap[drawingId] || [] }) };
+      }
+      if (resource === "ifc-stage" && method === "POST") {
+        if (fail.stage) return { ok: false, json: async () => ({ error: "Could not stage the IFC PDF." }) };
+        const artifact = { id: "forge_wpa_9", purpose: "ifc_candidate", originalFilename: "W-0005-1-TEST-ISO-IFC.pdf", contentSha256: "c".repeat(64), createdAt: "2026-11-13T11:00:00Z", retiredAt: null };
+        (artifactsMap[drawingId] = artifactsMap[drawingId] || []).push(artifact);
+        return { ok: true, json: async () => ({ artifact }) };
+      }
+      if (resource === "artifacts") {
+        return { ok: true, json: async () => ({ artifacts: artifactsMap[drawingId] || [] }) };
+      }
+      if (resource === "ifc-releases" && method === "POST") {
+        if (fail.issue) return { ok: false, json: async () => ({ error: "Could not issue the IFC revision." }) };
+        const body = JSON.parse(options.body);
+        const release = { id: "forge_wpdifc_9", ifcRevisionCode: body.ifcRevisionCode, releasedAt: "2026-11-13T12:00:00Z", isActive: true, retiredAt: null };
+        (releasesMap[drawingId] = releasesMap[drawingId] || []).push(release);
+        return { ok: true, json: async () => ({ release }) };
+      }
       if (resource === "ifc-releases") {
-        return { ok: true, json: async () => ({ releases: [] }) };
+        return { ok: true, json: async () => ({ releases: releasesMap[drawingId] || [] }) };
+      }
+      if (resource === "field-redlines" && rest && rest.endsWith("/reconcile") && method === "POST") {
+        const fieldId = rest.split("/")[0];
+        const field = (fieldRedlinesMap[drawingId] || []).find((f) => f.id === fieldId);
+        if (field) field.recordState = "RECONCILED";
+        return { ok: true, json: async () => ({ fieldRedline: field }) };
+      }
+      if (resource === "field-redlines" && method === "POST") {
+        if (fail.field) return { ok: false, json: async () => ({ error: "Could not capture the field hand-redline." }) };
+        const body = JSON.parse(options.body);
+        const field = { id: "forge_wpdfr_9", drawingRevisionId: body.drawingRevisionId, artifactRef: body.artifactRef, sha256: body.sha256, fieldReason: body.fieldReason, recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-13T11:00:00Z" };
+        (fieldRedlinesMap[drawingId] = fieldRedlinesMap[drawingId] || []).push(field);
+        return { ok: true, json: async () => ({ fieldRedline: field }) };
       }
       if (resource === "field-redlines") {
-        return { ok: true, json: async () => ({ fieldRedlines: [] }) };
+        return { ok: true, json: async () => ({ fieldRedlines: fieldRedlinesMap[drawingId] || [] }) };
+      }
+      if (resource === "retire" && method === "POST") {
+        return { ok: true, json: async () => ({ drawing: { drawingId, retiredAt: "2026-11-13T12:00:00Z" } }) };
       }
     }
     throw new Error(`unexpected fetch ${method} ${url}`);
@@ -170,6 +240,46 @@ function selectOption(container, selectId, value) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
   setter.call(select, value);
   select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function setText(container, inputId, value) {
+  const input = container.querySelector(`#${inputId}`);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  setter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function setStageFile(container, name = "W-0005-1-TEST-ISO-IFC.pdf") {
+  const form = [...container.querySelectorAll("form")].find((f) => f.textContent.includes("Stage an IFC PDF"));
+  const input = form.querySelector('input[type="file"]');
+  const file = new File([new TextEncoder().encode("%PDF-1.7\n%test\n%%EOF\n")], name, { type: "application/pdf" });
+  Object.defineProperty(input, "files", { value: [file] });
+  act(() => {
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+// jsdom does not fire a submit event when a submit button is clicked
+// on a form containing a file input, so the stage form is submitted
+// by dispatching the event directly — the same pattern
+// WorkPackageDocuments.test.jsx uses for the controlled upload form.
+async function submitStageForm(container) {
+  const form = [...container.querySelectorAll("form")].find((f) => f.textContent.includes("Stage an IFC PDF"));
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await act(async () => {});
+  await act(async () => {});
+}
+
+async function expandRound(container, label) {
+  await act(async () => { findButton(container, label).click(); });
+  await act(async () => {});
+}
+
+function roundItem(container, label) {
+  const button = findButton(container, label);
+  return button?.closest("li") || null;
 }
 
 beforeEach(() => {
@@ -342,5 +452,235 @@ describe("WorkPackageDrawingReadiness", () => {
     await expandDrawing(container, "P-101");
     expect(container.textContent).not.toContain("Open a review round");
     expect(container.textContent).toContain("Round 1 — OPEN");
+  });
+});
+
+// Slice-7 friction fix round (F1/F3): success confirmations name the
+// drawing, revision and outcome; a round shows its exact bound
+// revision; a release label follows its persisted retirement state.
+describe("WorkPackageDrawingReadiness friction fix", () => {
+  it("confirms opening a review round with drawing and revision", async () => {
+    setupFetch({ fixture: singleDrawingFixture(), reviewsMap: { dwg_1: [] } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "review-rev-dwg_1", "forge_wpdrv_2"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Open review").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Review round opened for drawing P-101, Rev 1.");
+    expect(container.textContent).toContain("Round 1 — OPEN");
+  });
+
+  it("shows the round's exact bound revision in the summary and detail, not the latest", async () => {
+    // The dwg_1 round is bound to Rev 0 (forge_wpdrv_1) while Rev 1
+    // is the latest revision — the round must name Rev 0.
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const item = roundItem(container, "Round 1 — OPEN");
+    expect(item).not.toBeNull();
+    expect(item.textContent).toContain("Drawing P-101 · Rev 0 (IFA)");
+    await expandRound(container, "Round 1 — OPEN");
+    expect(item.textContent).toContain("Revision under review: Rev 0 (IFA)");
+    expect(item.textContent).not.toContain("Revision record unavailable");
+  });
+
+  it("falls back truthfully when the bound revision is not in the loaded list", async () => {
+    setupFetch({
+      reviewsMap: {
+        dwg_1: [{ id: "forge_wpdrvw_1", roundNo: 1, state: "OPEN", version: 1, drawingRevisionId: "forge_wpdrv_missing", openedAt: "2026-11-08T11:00:00Z" }],
+        dwg_2: [],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const item = roundItem(container, "Round 1 — OPEN");
+    expect(item).not.toBeNull();
+    expect(item.textContent).toContain("Revision record unavailable (ID ");
+    await expandRound(container, "Round 1 — OPEN");
+    expect(item.textContent).toContain("Revision under review: Revision record unavailable (ID ");
+  });
+
+  it("confirms adding a redline with drawing and bound revision", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
+    await act(async () => { findButton(container, "Add redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Redline added to drawing P-101, Rev 0 (IFA).");
+  });
+
+  it("confirms resolving a redline and shows the resolved state", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { findButton(container, "Resolve").click(); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Save resolution").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Redline resolved for drawing P-101, Rev 0 (IFA).");
+    expect(container.textContent).toContain("RESOLVED");
+  });
+
+  it("confirms recording a decision with drawing, revision and outcome", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
+    await act(async () => { findButton(container, "Record decision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Review decision recorded for drawing P-101, Rev 0 (IFA): approved.");
+  });
+
+  it("a failed decision shows the error and no success notice, clearing the stale one", async () => {
+    setupFetch({ fail: { decision: true } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    // A successful redline first, so a stale confirmation exists.
+    await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
+    await act(async () => { findButton(container, "Add redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    expect(container.querySelector('[role="status"]').textContent).toContain("Redline added");
+    // The failing decision must clear it and show the error instead.
+    await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
+    await act(async () => { findButton(container, "Record decision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    expect(container.textContent).toContain("Review is stale");
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.textContent).not.toContain("Review decision recorded");
+  });
+
+  it("confirms staging an IFC PDF as staged, not issued, naming file and drawing", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("IFC PDF W-0005-1-TEST-ISO-IFC.pdf staged for drawing ISO-200 — it is staged, not yet issued.");
+    expect(container.textContent).toContain("Staged: W-0005-1-TEST-ISO-IFC.pdf");
+  });
+
+  it("confirms issuing an IFC revision with drawing and code, and clears a stale stage notice on failure", async () => {
+    setupFetch({ fail: { issue: true } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    expect(container.querySelector('[role="status"]').textContent).toContain("staged for drawing ISO-200");
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "2"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    expect(container.textContent).toContain("Could not issue the IFC revision.");
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.textContent).not.toContain("IFC revision 2 for drawing ISO-200 issued for construction.");
+  });
+
+  it("confirms issuing an IFC revision with drawing and code", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "2"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
+  });
+
+  it("confirms capturing a field hand-redline with drawing and revision", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "field-rev-dwg_1", "forge_wpdrv_2"); });
+    await act(async () => { setText(container, "field-ref-dwg_1", "scan-1.pdf"); });
+    await act(async () => { setText(container, "field-sha-dwg_1", "d".repeat(64)); });
+    await act(async () => { setText(container, "field-reason-dwg_1", "Marked up on site."); });
+    await act(async () => { findButton(container, "Capture field hand-redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toContain("Field hand-redline captured for drawing P-101, Rev 1 (IFA) as a historical record.");
+  });
+
+  it("confirms reconciling a field hand-redline with drawing and revision", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "recon-rev-forge_wpdfr_1", "forge_wpdrv_2"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Reconcile").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Field hand-redline reconciled for drawing P-101, Rev 1 (IFA).");
+  });
+
+  it("confirms retiring a drawing by name", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { findButton(container, "Retire drawing").click(); });
+    await act(async () => { setText(container, "retire-reason-dwg_1", "Superseded by a new package."); });
+    await act(async () => { findButton(container, "Retire drawing").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Drawing P-101 retired. Its review history is kept.");
+  });
+
+  it("renders a new release active and a retired release retired, never superseded by default", async () => {
+    setupFetch({
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionCode: "2", releasedAt: "2026-11-13T12:00:00Z", isActive: true, retiredAt: null },
+          { id: "forge_wpdifc_1", ifcRevisionCode: "1", releasedAt: "2026-11-10T12:00:00Z", isActive: false, retiredAt: "2026-11-13T11:00:00Z" },
+        ],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("IFC revision 2 · released");
+    expect(container.textContent).toContain("· active");
+    expect(container.textContent).toContain("IFC revision 1 · released");
+    expect(container.textContent).toContain("· retired");
+    expect(container.textContent).not.toContain("superseded");
   });
 });
