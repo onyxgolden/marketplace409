@@ -67,9 +67,26 @@ function shortId(value) {
   return value ? String(value).slice(-8) : "—";
 }
 
+// Slice-7 friction fix (F1/F3a): resolve a human-readable revision
+// label from the already-loaded revisions list. Returns null when the
+// revision is not in the list — callers must fall back to a truthful
+// "unavailable" message, never silently substitute the latest
+// revision or show an opaque id as the only reference.
+function revisionLabel(revisions, revisionId) {
+  const revision = (revisions || []).find((r) => r.id === revisionId);
+  if (!revision) return null;
+  return `Rev ${revision.revisionCode} (${revision.issuedAs})`;
+}
+
+function decisionOutcomeLabel(decision) {
+  if (decision === "APPROVE_WITH_REDLINES") return "approved with redlines";
+  if (decision === "RETURN_TO_DRAFTER") return "returned to drafter";
+  return "approved";
+}
+
 // One review round: redlines, decision form, audit events. Detail is
 // fetched only while the round is expanded.
-function ReviewRound({ packageId, drawingId, review, onChanged }) {
+function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, revisionsReady, onChanged }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
@@ -77,11 +94,32 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Slice-7 friction fix (F1): this round's own success confirmation.
+  // It is set only after the server mutation succeeds, and cleared
+  // when a new mutation begins or fails — a stale confirmation must
+  // never survive into the next action.
+  const [notice, setNotice] = useState("");
   const [redlineForm, setRedlineForm] = useState({
     comment: "", severity: "REQUIRED", anchorPage: "", anchorX: "", anchorY: "",
   });
   const [resolveForm, setResolveForm] = useState({});
   const [resolvingId, setResolvingId] = useState(null);
+
+  // Slice-7 friction fix (F3a): the exact revision this round
+  // governs, resolved from the loaded revisions list via the server's
+  // stored drawingRevisionId. The server binding stays authoritative;
+  // this is display-only. While the revisions list is still loading,
+  // no revision claim is made at all; once loaded, a missing revision
+  // is reported truthfully instead of substituting the latest.
+  const boundLabel = revisionLabel(revisions, review.drawingRevisionId);
+  const boundRevisionText = boundLabel
+    ? `Drawing ${drawingNumber} · ${boundLabel}`
+    : revisionsReady
+      ? `Drawing ${drawingNumber} · Revision record unavailable (ID ${shortId(review.drawingRevisionId)})`
+      : `Drawing ${drawingNumber}`;
+  const boundRevisionDetail = boundLabel
+    ?? (revisionsReady ? `Revision record unavailable (ID ${shortId(review.drawingRevisionId)})` : "Loading revision…");
+
 
   const { data, error: loadError, refresh } = useStaleWhileRevalidate(
     expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews", review.id, "detail") : null,
@@ -94,12 +132,16 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
 
   async function submitDecision(event) {
     event.preventDefault();
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: review.version, decision, reason: reason.trim() }),
       });
+      const label = revisionLabel(revisions, review.drawingRevisionId);
+      setNotice(label
+        ? `Review decision recorded for drawing ${drawingNumber}, ${label}: ${decisionOutcomeLabel(decision)}.`
+        : `Review decision recorded for drawing ${drawingNumber}: ${decisionOutcomeLabel(decision)}.`);
       setReason("");
       await refresh();
       if (onChanged) onChanged();
@@ -110,7 +152,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
 
   async function submitRedline(event) {
     event.preventDefault();
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
         method: "POST",
@@ -124,6 +166,10 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
           idempotencyKey: newIdempotencyKey(),
         }),
       });
+      const label = revisionLabel(revisions, review.drawingRevisionId);
+      setNotice(label
+        ? `Redline added to drawing ${drawingNumber}, ${label}.`
+        : `Redline added to drawing ${drawingNumber}.`);
       setRedlineForm({ comment: "", severity: "REQUIRED", anchorPage: "", anchorX: "", anchorY: "" });
       await refresh();
       if (onChanged) onChanged();
@@ -135,7 +181,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
   async function submitResolve(event, redline) {
     event.preventDefault();
     const form = resolveForm[redline.id] || {};
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
         method: "PATCH",
@@ -145,6 +191,11 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
           resolutionNote: (form.resolutionNote || "").trim(),
         }),
       });
+      const label = revisionLabel(revisions, review.drawingRevisionId);
+      const verb = (form.resolution || "RESOLVED") === "ACCEPTED_AS_NOTED" ? "accepted as noted" : "resolved";
+      setNotice(label
+        ? `Redline ${verb} for drawing ${drawingNumber}, ${label}.`
+        : `Redline ${verb} for drawing ${drawingNumber}.`);
       setResolvingId(null);
       await refresh();
       if (onChanged) onChanged();
@@ -163,11 +214,17 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
           opened {formatWhen(review.openedAt)}
           {review.closedAt ? ` · closed ${formatWhen(review.closedAt)}` : ""}
         </span>
+        <span className="text-xs text-slate-500">{boundRevisionText}</span>
         {review.decisionReason && <span className="text-xs text-slate-500">— {review.decisionReason}</span>}
       </div>
       {expanded && (
         <div className="mt-3 space-y-3">
           {loadError && <p className="text-xs text-red-600">{loadError}</p>}
+          {notice && <p className="text-xs text-green-700" role="status">{notice}</p>}
+          <p className="text-xs text-slate-600">
+            <span className="font-medium text-slate-700">Revision under review: </span>
+            {boundRevisionDetail}
+          </p>
           <div>
             <p className="text-xs font-medium text-slate-700">Redlines ({redlines.length})</p>
             {redlines.length === 0 ? (
@@ -407,6 +464,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   async function submitStage(event) {
     event.preventDefault();
     if (!stageFile) return;
+    const stagedName = stageFile.name;
     setStaging(true); setError(""); setNotice("");
     try {
       const body = new FormData();
@@ -420,7 +478,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
       if (!response.ok) throw new Error(data.error || "Could not stage the IFC PDF.");
       setStageFile(null);
       event.target.reset();
-      setNotice("IFC PDF staged — it stays pending until the release below attaches it.");
+      setNotice(`IFC PDF ${stagedName} staged for drawing ${row.drawingNumber} — it is staged, not yet issued.`);
       await refreshArtifacts();
     } catch (e) {
       setError(e.message);
@@ -429,6 +487,9 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
 
   async function submitReview(event) {
     event.preventDefault();
+    // Slice-7 friction fix (F1): resolve the chosen revision's code
+    // before the form is cleared, so the confirmation names it.
+    const chosenRevision = ifaRevisions.find((r) => r.id === reviewForm.drawingRevisionId);
     setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
@@ -440,7 +501,9 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setReviewForm({ drawingRevisionId: "", reason: "" });
-      setNotice("Review round opened.");
+      setNotice(chosenRevision
+        ? `Review round opened for drawing ${row.drawingNumber}, Rev ${chosenRevision.revisionCode}.`
+        : `Review round opened for drawing ${row.drawingNumber}.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -449,6 +512,9 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
 
   async function submitIfc(event) {
     event.preventDefault();
+    // Slice-7 friction fix (F1): capture the entered IFC revision
+    // code before the form is cleared, so the confirmation names it.
+    const issuedCode = ifcForm.ifcRevisionCode.trim();
     setBusy(true); setError(""); setNotice("");
     try {
       // Slice-7 PDF blockers: the IFC bytes come from a staged artifact,
@@ -464,7 +530,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setIfcForm({ reviewId: "", ifcRevisionCode: "", stagedArtifactId: "", reason: "" });
-      setNotice(`IFC revision ${ifcForm.ifcRevisionCode.trim()} issued for construction.`);
+      setNotice(`IFC revision ${issuedCode} for drawing ${row.drawingNumber} issued for construction.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -473,6 +539,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
 
   async function submitField(event) {
     event.preventDefault();
+    const markedRevision = reviewableRevisions.find((r) => r.id === fieldForm.drawingRevisionId);
     setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
@@ -485,7 +552,9 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setFieldForm({ drawingRevisionId: "", artifactRef: "", sha256: "", fieldReason: "" });
-      setNotice("Field hand-redline captured as a historical record. It is not an issued IFC revision.");
+      setNotice(markedRevision
+        ? `Field hand-redline captured for drawing ${row.drawingNumber}, Rev ${markedRevision.revisionCode} (${markedRevision.issuedAs}) as a historical record. It is not an issued IFC revision.`
+        : `Field hand-redline captured for drawing ${row.drawingNumber} as a historical record. It is not an issued IFC revision.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -495,6 +564,17 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   async function submitReconcile(event, fieldRedline) {
     event.preventDefault();
     const form = reconcileForm[fieldRedline.id] || {};
+    const reconciledRevision = form.reconciledRevisionId
+      ? revisions.find((r) => r.id === form.reconciledRevisionId)
+      : null;
+    // Slice-7 friction fix round 1 (F1): always name the source
+    // field-redline's original marked-up revision, resolved from
+    // fieldRedline.drawingRevisionId. A missing record gets the same
+    // truthful unavailable-ID fallback as the round's bound revision
+    // — it is never silently omitted.
+    const originalRevisionLabel = revisionLabel(revisions, fieldRedline.drawingRevisionId);
+    const originalRevisionText = originalRevisionLabel
+      ?? `Revision record unavailable (ID ${shortId(fieldRedline.drawingRevisionId)})`;
     setBusy(true); setError(""); setNotice("");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
@@ -504,7 +584,18 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
           ...(form.reason ? { reason: form.reason.trim() } : {}),
         }),
       });
-      setNotice("Field hand-redline reconciled.");
+      // Slice-7 friction fix round 2 (F1): branch on whether a
+      // reconciliation revision ID was SUBMITTED, not on whether its
+      // record was found. A submitted ID whose record is unavailable
+      // must never be described as "retired without a new revision"
+      // — the server may have reconciled against it. Only an
+      // actually empty selection means retirement without a new
+      // revision.
+      setNotice(!form.reconciledRevisionId
+        ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText} — retired without a new revision.`
+        : reconciledRevision
+          ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled as Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
+          : `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled against a revision record that is unavailable (ID ${shortId(form.reconciledRevisionId)}).`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -520,7 +611,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         body: JSON.stringify({ reason: retireReason.trim() }),
       });
       setConfirmRetire(false);
-      setNotice("Drawing retired. Its review history is kept.");
+      setNotice(`Drawing ${row.drawingNumber} retired. Its review history is kept.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -550,7 +641,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
       {expanded && (
         <div className="mt-3 space-y-4">
           {error && <p className="text-xs text-red-600">{error}</p>}
-          {notice && <p className="text-xs text-green-700">{notice}</p>}
+          {notice && <p className="text-xs text-green-700" role="status">{notice}</p>}
           <div>
             <p className="text-xs font-medium text-slate-700">Revisions</p>
             {revisions.length === 0 ? (
@@ -583,7 +674,10 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
             ) : (
               <ul className="mt-1 space-y-2">
                 {reviews.map((review) => (
-                  <ReviewRound key={review.id} packageId={packageId} drawingId={drawingId} review={review} onChanged={refreshAll} />
+                  <ReviewRound key={review.id} packageId={packageId} drawingId={drawingId}
+                    drawingNumber={row.drawingNumber} review={review}
+                    revisions={revisions} revisionsReady={revisionsData != null}
+                    onChanged={refreshAll} />
                 ))}
               </ul>
             )}
@@ -618,7 +712,13 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 {releases.map((release) => (
                   <li key={release.id}>
                     IFC revision {release.ifcRevisionCode} · released {formatWhen(release.releasedAt)}
-                    {release.isActive ? " · active" : " · superseded"}
+                    {/* Slice-7 friction fix (F3b): isActive now comes
+                        from the read model (retired_at == null). A
+                        retired release reads "retired", not
+                        "superseded": retirement also happens when the
+                        drawing itself is retired, so it does not
+                        always mean a later release replaced it. */}
+                    {release.isActive ? " · active" : " · retired"}
                   </li>
                 ))}
               </ul>

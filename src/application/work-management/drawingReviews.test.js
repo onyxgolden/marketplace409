@@ -415,6 +415,38 @@ describe("createIfcRelease / listIfcReleases", () => {
     expect(result.ok).toBe(true);
     expect(result.releases).toHaveLength(1);
   });
+
+  // Slice-7 friction fix (F3b): isActive is derived only from the
+  // persisted retirement state — a non-retired release is active even
+  // when it is the only release on file, and a retired one is not.
+  it("marks a non-retired release active and a retired release inactive", async () => {
+    const retired = { ...RELEASE_ROW, id: "forge_wpdifc_0", retired_at: "2026-11-10T00:00:00Z", retired_by: "user_1" };
+    const db = mockDb([
+      chain({ data: DRAWING_ROW, error: null }),
+      chain({ data: [RELEASE_ROW, retired], error: null }),
+    ]);
+    const result = await listIfcReleases(db, { ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1" });
+    expect(result.ok).toBe(true);
+    expect(result.releases).toHaveLength(2);
+    expect(result.releases[0]).toMatchObject({ id: "forge_wpdifc_1", isActive: true });
+    expect(result.releases[1]).toMatchObject({ id: "forge_wpdifc_0", isActive: false });
+  });
+
+  it("marks a newly created release active", async () => {
+    const db = mockDb(
+      [chain({ data: PKG_ROW, error: null })],
+      [{ data: RELEASE_ROW, error: null }],
+    );
+    const result = await createIfcRelease(db, {
+      ownerId: OWNER, packageId: "pkg_1", drawingId: "dwg_1",
+      input: {
+        reviewId: "forge_wpdrvw_1", ifcRevisionCode: "C",
+        stagedArtifactId: "forge_wpa_2",
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.release).toMatchObject({ id: "forge_wpdifc_1", isActive: true });
+  });
 });
 
 describe("createFieldRedline / reconcileFieldRedline / listFieldRedlines", () => {

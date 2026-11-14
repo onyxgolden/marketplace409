@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LINK_RELATIONSHIPS, LINK_STATUS_LABELS,
 } from "@/domains/work-management/workLinks.js";
@@ -70,30 +70,46 @@ function dedupeProjects(projects) {
 // The Documents-tab fetches, shared by the mount effect and the
 // event-handler refresh: pure fetch + parse, no setState, so the
 // effect can await it without tripping the set-state-in-effect rule.
-// The readiness snapshot is the controlled-drawing list for this
-// package; it is non-fatal here — if the readiness endpoint is
-// unavailable, the Documents tab still works and the Redlines panel
-// reports its own error.
+// Slice-7 friction fix (F4): the readiness snapshot is loaded
+// separately (see fetchControlledDrawings) so the controlled-drawings
+// subsection can track its own loading/refreshing/empty/error state
+// instead of sharing the broad Documents `loaded` flag.
 async function fetchDocumentsData(pageQuery, packageId) {
-  const [linksRes, libRes, designerRes, readinessRes] = await Promise.all([
+  const [linksRes, libRes, designerRes] = await Promise.all([
     fetch(pageQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`)),
     fetch(pageQuery("/api/work-documents")),
     fetch(pageQuery("/api/forge/designer")),
-    fetch(pageQuery(`/api/work-packages/${packageId}/drawings/readiness`)),
   ]);
   const linksData = await linksRes.json();
   if (!linksRes.ok) throw new Error(linksData.error || "Could not load links.");
   const libData = await libRes.json();
   if (!libRes.ok) throw new Error(libData.error || "Could not load the document library.");
   const designerData = await designerRes.json();
-  const readinessData = readinessRes.ok ? await readinessRes.json().catch(() => ({})) : {};
   return {
     links: linksData.links || [],
     library: libData.documents || [],
     designerProjects: dedupeProjects(designerData.projects || designerData.designer_projects || []),
-    controlledDrawings: readinessData.drawings || [],
   };
 }
+
+// Slice-7 friction fix (F4): the controlled-drawings list is the
+// readiness snapshot for this package. Unlike the other Documents
+// data it is non-fatal when the endpoint is unavailable — but a
+// failed fetch is an ERROR, never an empty list: callers keep the
+// previous list and render the error distinctly.
+async function fetchControlledDrawings(pageQuery, packageId) {
+  const readinessRes = await fetch(pageQuery(`/api/work-packages/${packageId}/drawings/readiness`));
+  const readinessData = await readinessRes.json().catch(() => ({}));
+  if (!readinessRes.ok) throw new Error(readinessData.error || "Could not load controlled drawings.");
+  return readinessData.drawings || [];
+}
+
+// Slice-7 friction fix (F4): bounded revalidation for a transient
+// empty readiness response — one or two short retries, then the true
+// empty state. The snapshot can lag a just-completed IFC issue by a
+// beat, so an empty first answer is not yet proof of "none".
+const CONTROLLED_REVALIDATE_ATTEMPTS = 2;
+const CONTROLLED_REVALIDATE_DELAY_MS = 400;
 
 export default function WorkPackageDocuments({ packageId, initialLinks = [], onNavigateToTab = null, initialDrawing = null, onIntakeDrawingConsumed = null }) {
   const pageQuery = usePageQuery();
@@ -102,6 +118,36 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
   const [library, setLibrary] = useState([]);
   const [designerProjects, setDesignerProjects] = useState([]);
   const [controlledDrawings, setControlledDrawings] = useState([]);
+  // Slice-7 friction fix (F4): the controlled-drawings subsection
+  // tracks its own load state, separate from the broad Documents
+  // `loaded` flag. controlledLoaded means a successful readiness
+  // response completed; the definitive empty state renders only after
+  // that AND the bounded revalidation window is exhausted.
+  const [controlledLoading, setControlledLoading] = useState(true);
+  const [controlledRefreshing, setControlledRefreshing] = useState(false);
+  const [controlledLoaded, setControlledLoaded] = useState(false);
+  const [controlledError, setControlledError] = useState("");
+  const controlledDrawingsRef = useRef([]);
+  const controlledCycleRef = useRef(0);
+  const controlledRetryRef = useRef(null);
+  // Slice-7 friction fix round 1 (F4): the controlled-drawings
+  // reset identity is the FULL page scope — workspace + project +
+  // package — via the exact scoped readiness key, not packageId
+  // alone. The same package ID can render under a different
+  // workspace/project context; the old scope's drawings must be
+  // cleared the moment that identity changes.
+  const controlledScopeKey = scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness");
+  const controlledScopeRef = useRef(null);
+  // Slice-7 friction fix round 2 (F4): the scope key the STORED
+  // controlled-drawings list was loaded for. The render itself is
+  // scope-aware: the stored list is shown only when this key equals
+  // the current scope key. The reset effect runs after the first
+  // render under a new scope, so without this the previous scope's
+  // drawings would commit once under the new scope before the
+  // effect clears them. Updated only when the stored list is
+  // replaced (scope-change reset, successful response, accepted
+  // empty) — never on a failed fetch, which keeps the old list.
+  const controlledListScopeRef = useRef(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // D18: distinguishes "still loading" from "loaded and genuinely empty" --
@@ -131,7 +177,6 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       setLinks(data.links);
       setLibrary(data.library);
       setDesignerProjects(data.designerProjects);
-      setControlledDrawings(data.controlledDrawings);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -139,9 +184,86 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     }
   }, [pageQuery, packageId]);
 
+  // Slice-7 friction fix (F4): load the controlled-drawings list
+  // with its own loading/refreshing state and a bounded revalidation
+  // for a transient empty answer. A new load cycle (mount, scope
+  // change, explicit refresh) cancels the previous cycle's pending
+  // retry, and stale responses never overwrite the fresh package's
+  // list. A failed fetch keeps the previous list and surfaces the
+  // error distinctly — it is never rendered as "none".
+  const loadControlledDrawings = useCallback(async () => {
+    const cycle = ++controlledCycleRef.current;
+    if (controlledRetryRef.current) {
+      clearTimeout(controlledRetryRef.current);
+      controlledRetryRef.current = null;
+    }
+    // Every setState below runs after this await, never synchronously
+    // in the calling effect body — the same rule the mount effect's
+    // own fetch follows.
+    await Promise.resolve();
+    // A new scope starts from an empty list: the previous scope's
+    // drawings must never stay on screen while the new one loads —
+    // even when the package ID is unchanged and only the workspace
+    // or project context moved.
+    if (controlledScopeRef.current !== controlledScopeKey) {
+      controlledScopeRef.current = controlledScopeKey;
+      controlledDrawingsRef.current = [];
+      controlledListScopeRef.current = controlledScopeKey;
+      setControlledDrawings([]);
+      setControlledLoaded(false);
+    }
+    if (controlledDrawingsRef.current.length > 0) {
+      setControlledRefreshing(true);
+    } else {
+      setControlledLoading(true);
+    }
+    setControlledError("");
+    let attempts = 0;
+    for (;;) {
+      let drawings;
+      try {
+        drawings = await fetchControlledDrawings(pageQuery, packageId);
+      } catch (e) {
+        if (cycle !== controlledCycleRef.current) return;
+        setControlledError(e.message);
+        setControlledLoading(false);
+        setControlledRefreshing(false);
+        return;
+      }
+      if (cycle !== controlledCycleRef.current) return;
+      if (drawings.length > 0) {
+        controlledDrawingsRef.current = drawings;
+        controlledListScopeRef.current = controlledScopeKey;
+        setControlledDrawings(drawings);
+        setControlledLoaded(true);
+        setControlledLoading(false);
+        setControlledRefreshing(false);
+        return;
+      }
+      // Empty successful response: revalidate a bounded number of
+      // times in case the snapshot is still settling after a
+      // just-completed mutation, then accept the true empty state.
+      if (attempts >= CONTROLLED_REVALIDATE_ATTEMPTS) {
+        controlledDrawingsRef.current = [];
+        controlledListScopeRef.current = controlledScopeKey;
+        setControlledDrawings([]);
+        setControlledLoaded(true);
+        setControlledLoading(false);
+        setControlledRefreshing(false);
+        return;
+      }
+      attempts += 1;
+      await new Promise((resolve) => {
+        controlledRetryRef.current = setTimeout(resolve, CONTROLLED_REVALIDATE_DELAY_MS);
+      });
+      if (cycle !== controlledCycleRef.current) return;
+    }
+  }, [pageQuery, packageId, controlledScopeKey]);
+
   async function refresh() {
     setError("");
     await loadAll();
+    await loadControlledDrawings();
   }
 
   // Slice-7 review-gating fix: a successful controlled upload (fresh
@@ -165,25 +287,38 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
 
   // Mount + scope change: the cancellation guard is the stale-response
   // guard — a slow fetch from a previous package/scope never overwrites
-  // the fresh one after a workspace switch or tab navigation.
+  // the fresh one after a workspace switch or tab navigation. The
+  // controlled-drawings cycle has its own guard (see
+  // loadControlledDrawings): a scope change starts a new cycle and
+  // cancels the previous one's pending retry.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Both loads start together; the controlled load's state updates
+      // run after awaits, never synchronously in the effect body.
+      const controlledPromise = loadControlledDrawings();
       try {
         const data = await fetchDocumentsData(pageQuery, packageId);
         if (cancelled) return;
         setLinks(data.links);
         setLibrary(data.library);
         setDesignerProjects(data.designerProjects);
-        setControlledDrawings(data.controlledDrawings);
       } catch (e) {
         if (!cancelled) setError(e.message);
       } finally {
         if (!cancelled) setLoaded(true);
       }
+      if (!cancelled) await controlledPromise;
     })();
-    return () => { cancelled = true; };
-  }, [pageQuery, packageId]);
+    return () => {
+      cancelled = true;
+      controlledCycleRef.current += 1;
+      if (controlledRetryRef.current) {
+        clearTimeout(controlledRetryRef.current);
+        controlledRetryRef.current = null;
+      }
+    };
+  }, [pageQuery, packageId, loadControlledDrawings]);
 
   async function onLinkExisting(event) {
     event.preventDefault();
@@ -298,6 +433,18 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     );
   }
 
+  // Slice-7 friction fix round 2 (F4): the render itself is
+  // scope-aware, not only the asynchronous loader. The stored list
+  // is rendered only when the scope key it was loaded for equals the
+  // current scope key; the first render under a new scope shows the
+  // loading state until that scope's response arrives, even though
+  // the reset effect has not run yet. The stale loading/loaded
+  // flags from the previous scope are ignored while mismatched, so
+  // the new scope never shows a definitive empty state — or the old
+  // scope's drawings — before its own response.
+  const controlledListMatchesScope = controlledListScopeRef.current === controlledScopeKey;
+  const visibleControlledDrawings = controlledListMatchesScope ? controlledDrawings : [];
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Drawings &amp; documents</h2>
@@ -316,17 +463,31 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       )}
 
       <h3 className="mt-4 text-xs font-semibold text-slate-700">Controlled drawings</h3>
-      {controlledDrawings.length > 0 ? (
-        <ul className="mt-2 space-y-2">
-          {controlledDrawings.map((drawing) => (
-            <li key={drawing.drawingId} className="rounded border border-slate-100 p-3 text-xs">
-              <span className="font-medium text-slate-900">{drawing.drawingNumber} ({drawing.drawingType})</span>
-              <span className="ml-2 text-slate-500">{drawing.badge}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
+      {visibleControlledDrawings.length > 0 ? (
+        <>
+          <ul className="mt-2 space-y-2">
+            {visibleControlledDrawings.map((drawing) => (
+              <li key={drawing.drawingId} className="rounded border border-slate-100 p-3 text-xs">
+                <span className="font-medium text-slate-900">{drawing.drawingNumber} ({drawing.drawingType})</span>
+                <span className="ml-2 text-slate-500">{drawing.badge}</span>
+              </li>
+            ))}
+          </ul>
+          {controlledRefreshing && (
+            <p className="mt-1 text-xs text-slate-500" aria-live="polite">Refreshing…</p>
+          )}
+          {controlledError && (
+            <p className="mt-1 text-xs text-red-600">Could not refresh controlled drawings: {controlledError}</p>
+          )}
+        </>
+      ) : !controlledListMatchesScope || controlledLoading ? (
+        <p className="mt-1 text-xs text-slate-500" aria-live="polite">Loading controlled drawings…</p>
+      ) : controlledError ? (
+        <p className="mt-1 text-xs text-red-600">Could not load controlled drawings: {controlledError}</p>
+      ) : controlledLoaded ? (
         <p className="mt-1 text-xs text-slate-500">No controlled drawings uploaded yet.</p>
+      ) : (
+        <p className="mt-1 text-xs text-slate-500" aria-live="polite">Loading controlled drawings…</p>
       )}
 
       <h3 className="mt-4 text-xs font-semibold text-slate-700">Documents</h3>
