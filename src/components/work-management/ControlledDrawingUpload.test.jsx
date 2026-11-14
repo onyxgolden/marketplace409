@@ -128,6 +128,104 @@ describe("ControlledDrawingUpload", () => {
     expect(secondId).toBe(firstId);
   });
 
+  // Slice-7 review-gating fix (S7-RG-04/05): the drawing-number input
+  // starts EMPTY with an instructional placeholder — never an example
+  // that looks like a value on a controlled input, which blocks
+  // submit under the browser's required validation.
+  it("starts with an empty drawing number and an instructional placeholder, never an example value", () => {
+    const { container } = renderUpload();
+    const input = container.querySelector("#controlled-drawing-number");
+    expect(input.value).toBe("");
+    expect(input.getAttribute("placeholder")).toBe("Enter drawing number");
+    expect(input.getAttribute("placeholder")).not.toBe("W-0005-1");
+  });
+
+  it("prefills from a real existing drawing and submits the prefilled values", async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (typeof url === "string" && url.includes("/drawings/intake")) {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact: { id: "forge_wpa_1", drawingId: "forge_wdwg_1", contentSha256: SHA },
+            drawing: { id: "forge_wdwg_1" }, revision: { id: "forge_wpdrv_1" }, replayed: false,
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = renderUpload({
+      initialDrawing: { drawingNumber: "W-0005-1", drawingType: "p_id" },
+    });
+    expect(container.querySelector("#controlled-drawing-number").value).toBe("W-0005-1");
+    expect(container.querySelector("#controlled-drawing-type").value).toBe("p_id");
+    selectFile(container);
+    await submitForm(container);
+    expect(fetchMock.mock.calls[0][1].body.get("drawingNumber")).toBe("W-0005-1");
+    expect(fetchMock.mock.calls[0][1].body.get("drawingType")).toBe("p_id");
+    expect(container.textContent).toContain("Uploaded W-0005-1 revision 0 as IFA");
+  });
+
+  it("calls onUploaded with the server identifiers on a successful upload", async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (typeof url === "string" && url.includes("/drawings/intake")) {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact: { id: "forge_wpa_1", drawingId: "forge_wdwg_1", contentSha256: SHA },
+            drawing: { id: "forge_wdwg_1" }, revision: { id: "forge_wpdrv_1" }, replayed: false,
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onUploaded = vi.fn();
+    const { container } = renderUpload({ onUploaded });
+    setText(container, "Drawing number", "W-0005-1");
+    selectFile(container);
+    await submitForm(container);
+    expect(onUploaded).toHaveBeenCalledTimes(1);
+    expect(onUploaded).toHaveBeenCalledWith({
+      drawingId: "forge_wdwg_1", artifactId: "forge_wpa_1", revisionId: "forge_wpdrv_1",
+      sha256: SHA, replayed: false, drawingNumber: "W-0005-1", revisionCode: "0",
+    });
+  });
+
+  it("calls onUploaded on an idempotent replay", async () => {
+    const replayMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        artifact: { id: "forge_wpa_1", drawingId: "forge_wdwg_1", contentSha256: SHA },
+        drawing: { id: "forge_wdwg_1" }, revision: { id: "forge_wpdrv_1" }, replayed: true,
+      }),
+    }));
+    vi.stubGlobal("fetch", replayMock);
+    const onUploaded = vi.fn();
+    const { container } = renderUpload({ onUploaded });
+    setText(container, "Drawing number", "W-0005-1");
+    selectFile(container);
+    await submitForm(container);
+    expect(onUploaded).toHaveBeenCalledTimes(1);
+    expect(onUploaded.mock.calls[0][0].replayed).toBe(true);
+    expect(container.textContent).toContain("already received — showing the original upload");
+  });
+
+  it("never calls onUploaded on a failed upload", async () => {
+    const failMock = vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ error: "This PDF is identical to an existing IFA revision. Upload a PDF with changed content to create a new revision." }),
+    }));
+    vi.stubGlobal("fetch", failMock);
+    const onUploaded = vi.fn();
+    const { container } = renderUpload({ onUploaded });
+    setText(container, "Drawing number", "W-0005-1");
+    selectFile(container);
+    await submitForm(container);
+    expect(onUploaded).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("This PDF is identical to an existing IFA revision");
+  });
+
   it("opens the preview through a signed URL fetched after the click", async () => {
     const tab = { location: {}, opener: "x" };
     vi.spyOn(window, "open").mockReturnValue(tab);

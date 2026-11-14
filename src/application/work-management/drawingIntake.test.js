@@ -273,6 +273,23 @@ describe("uploadControlledDrawing", () => {
     expect(remove).toHaveBeenCalledWith([`owner_1/pkg_1/req-1/${PDF_SHA}.pdf`]);
   });
 
+  it("409s with the plain-language message and removes the object when the RPC rejects duplicate IFA content", async () => {
+    const remove = vi.fn(async () => ({ error: null }));
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "WPP7_DUPLICATE_CONTENT" } }));
+    const db = mockDb(
+      [chain({ data: null, error: null })],
+      { "controlled-drawings": { remove } },
+      rpc,
+    );
+    const result = await uploadControlledDrawing(db, { ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE });
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 409,
+      error: "This PDF is identical to an existing IFA revision. Upload a PDF with changed content to create a new revision.",
+    });
+    expect(remove).toHaveBeenCalledWith([`owner_1/pkg_1/req-1/${PDF_SHA}.pdf`]);
+  });
+
   it("503s when the artifacts table does not exist yet (migration not applied)", async () => {
     const db = mockDb([chain({ data: null, error: { code: "42P01", message: 'relation "forge_wp_drawing_artifacts" does not exist' } })]);
     const result = await uploadControlledDrawing(db, { ownerId: "owner_1", packageId: "pkg_1", input: INPUT, file: FILE });

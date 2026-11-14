@@ -31,18 +31,24 @@ function newRequestId() {
   return `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export default function ControlledDrawingUpload({ packageId, onNavigateToTab = null }) {
+export default function ControlledDrawingUpload({ packageId, onNavigateToTab = null, onUploaded = null, initialDrawing = null }) {
   const pageQuery = usePageQuery();
-  const [form, setForm] = useState({
-    drawingType: "isometric",
-    drawingNumber: "",
-    lineNumber: "",
-    revisionCode: "0",
+  // Slice-7 review-gating fix: the form starts empty unless a real
+  // existing drawing was passed in (e.g. from a drawing's review
+  // workspace) — that is a genuine prefill, and it is consumed once
+  // by the parent. No example value is ever shown as a placeholder
+  // on a controlled input: a placeholder that looks like a value
+  // blocks submit under the browser's required validation.
+  const [form, setForm] = useState(() => ({
+    drawingType: initialDrawing?.drawingType || "isometric",
+    drawingNumber: initialDrawing?.drawingNumber || "",
+    lineNumber: initialDrawing?.lineNumber || "",
+    revisionCode: initialDrawing?.revisionCode || "0",
     issueDate: localToday(),
     issuerRef: "",
     title: "",
     pIdDrawingId: "",
-  });
+  }));
   const [file, setFile] = useState(null);
   const [requestId, setRequestId] = useState(() => newRequestId());
   const [busy, setBusy] = useState(false);
@@ -95,6 +101,21 @@ export default function ControlledDrawingUpload({ packageId, onNavigateToTab = n
         sha256: data.artifact?.contentSha256 || "",
         replayed: data.replayed === true,
       });
+      // Slice-7 review-gating fix: report a successful upload (fresh
+      // or idempotent replay) to the parent so the Documents tab can
+      // refresh its lists and invalidate the readiness cache. Never
+      // called on failure — a failed upload must not present as done.
+      if (onUploaded) {
+        onUploaded({
+          drawingId: data.artifact?.drawingId || null,
+          artifactId: data.artifact?.id || null,
+          revisionId: data.revision?.id || null,
+          sha256: data.artifact?.contentSha256 || "",
+          replayed: data.replayed === true,
+          drawingNumber: form.drawingNumber.trim(),
+          revisionCode: form.revisionCode.trim(),
+        });
+      }
       setFile(null);
       event.target.reset();
     } catch (caught) {
@@ -172,7 +193,7 @@ export default function ControlledDrawingUpload({ packageId, onNavigateToTab = n
           <div>
             <label className={label} htmlFor="controlled-drawing-number">Drawing number</label>
             <input id="controlled-drawing-number" className={input} value={form.drawingNumber}
-              placeholder="W-0005-1"
+              placeholder="Enter drawing number"
               onChange={(e) => setForm((f) => ({ ...f, drawingNumber: e.target.value }))} required />
           </div>
           <div>
