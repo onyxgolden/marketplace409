@@ -157,6 +157,17 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     setActiveTab(TABS.some((tab) => tab.id === initialTab) ? initialTab : "overview");
   }
 
+  // Slice-7 review-gating fix: "Upload a controlled PDF" from a
+  // drawing's review workspace carries that drawing's real metadata
+  // into the intake form — a genuine prefill, never a placeholder
+  // that looks filled. The prefill is consumed once by Documents on
+  // mount, so a later direct visit to Documents starts empty.
+  const [pendingIntakeDrawing, setPendingIntakeDrawing] = useState(null);
+  function navigateToIntake(drawing) {
+    setPendingIntakeDrawing(drawing);
+    switchTab("documents");
+  }
+
   // D16: "Review linked records" on the Budget tab was a dead anchor
   // (#work-package-links only exists in the DOM while Overview is the
   // active tab — tabs are conditionally rendered, not merely hidden).
@@ -863,7 +874,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "redlines" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageDrawingReadiness packageId={pkg.id} onNavigateToTab={(tab) => switchTab(tab)} />
+          <WorkPackageDrawingReadiness packageId={pkg.id} onNavigateToTab={(tab) => switchTab(tab)} onNavigateToIntake={navigateToIntake} />
         </div>
       )}
 
@@ -885,7 +896,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "documents" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} onNavigateToTab={(tab) => switchTab(tab)} />
+          <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} onNavigateToTab={(tab) => switchTab(tab)}
+            initialDrawing={pendingIntakeDrawing} onIntakeDrawingConsumed={() => setPendingIntakeDrawing(null)} />
         </div>
       )}
 

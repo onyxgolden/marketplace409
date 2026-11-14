@@ -24,6 +24,15 @@
 //     authoritative, artifact flips to ifc_issued, snapshot badge
 //     IFC), the typed-path same-digest guard, and retire retiring the
 //     drawing's artifacts;
+//   - Duplicate IFA content (20261113040000): a new request id
+//     uploading bytes identical to a non-retired IFA revision on the
+//     same drawing is rejected (WPP7_DUPLICATE_CONTENT) with no new
+//     revision or artifact; the same-request replay still works, the
+//     same bytes on a different drawing are allowed, the SHA match is
+//     case-normalized, and a retired revision's bytes do not block;
+//     a real-PG16 two-session lock-barrier race proves exactly one
+//     revision survives when two concurrent identical uploads
+//     serialize;
 //   - Reapply: the migration applies cleanly a second time.
 // A real-PostgreSQL subset runs the full lifecycle and the concurrent
 // duplicate-intake race (one artifact row, both callers the same
@@ -53,6 +62,7 @@ const SLICE4 = "20261107010000_forge_work_package_craft_assignments_slice4.sql";
 const SLICE5 = "20261107020000_forge_work_package_work_steps_slice5.sql";
 const SLICE7 = "20261107040000_forge_work_package_ifa_ifc_slice7.sql";
 const THIS = "20261113020000_forge_work_controlled_drawing_intake.sql";
+const THIS2 = "20261113040000_slice7_duplicate_ifa_content.sql";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -186,6 +196,7 @@ async function setupDb() {
   await db.exec(loadMigrationSql(SLICE5));
   await db.exec(loadMigrationSql(SLICE7));
   await db.exec(loadMigrationSql(THIS));
+  await db.exec(loadMigrationSql(THIS2));
   await db.exec(SEED_SQL);
   return db;
 }
@@ -781,6 +792,105 @@ describe("slice-7 PDF blockers migration: controlled intake RPC", () => {
   });
 });
 
+describe("slice-7 review-gating fix: duplicate IFA content (20261113040000)", () => {
+  let db;
+  beforeEach(async () => { db = await setupDb(); }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("rejects a same-SHA IFA re-upload under a new request id and creates no revision or artifact", async () => {
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-1", line: '2"-PL-101',
+    });
+    expect(first.purpose).toBe("ifa_issued");
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A, requestId: "req-dup-2", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_DUPLICATE_CONTENT/);
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(1);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(1);
+  });
+
+  it60("a same-request-id replay still returns the original receipt after a duplicate rejection", async () => {
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-3", line: '2"-PL-101',
+    });
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A, requestId: "req-dup-4", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_DUPLICATE_CONTENT/);
+    // The rejection did not poison the original receipt: the same
+    // request id replays the winner, and nothing new was created.
+    const replay = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-3", line: '2"-PL-101',
+    });
+    expect(replay.id).toBe(first.id);
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(1);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(1);
+  });
+
+  it60("allows the same bytes on a different drawing", async () => {
+    await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-5", line: '2"-PL-101',
+    });
+    const other = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-2", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-6", line: '2"-PL-101',
+    });
+    expect(other.purpose).toBe("ifa_issued");
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(2);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(2);
+  });
+
+  it60("rejects an uppercase SHA matching an existing IFA revision (case-normalized)", async () => {
+    await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-7", line: '2"-PL-101',
+    });
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A.toUpperCase(), requestId: "req-dup-8", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_DUPLICATE_CONTENT/);
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(1);
+  });
+
+  it60("allows re-issuing the bytes of a retired IFA revision", async () => {
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-9", line: '2"-PL-101',
+    });
+    // Retire the revision the way the retire RPC does: the revisions
+    // CHECK requires retired_by whenever retired_at is set.
+    await db.query(`
+      update forge_wp_drawing_revisions set retired_at = now(), retired_by = '${OWNER_A}'
+      where owner_id = '${OWNER_A}' and id = '${first.revision_id}';
+    `);
+    const reissued = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A, requestId: "req-dup-10", line: '2"-PL-101',
+    });
+    expect(reissued.purpose).toBe("ifa_issued");
+    expect(await countRows(db, "select * from forge_wp_drawing_revisions")).toBe(2);
+    expect(await countRows(db, "select * from forge_wp_drawing_artifacts")).toBe(2);
+  });
+
+  it60("the duplicate-content migration applies cleanly a second time (idempotent DDL)", async () => {
+    await db.exec(loadMigrationSql(THIS2));
+    const first = await intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "0",
+      sha: SHA_A, requestId: "req-dup-11", line: '2"-PL-101',
+    });
+    expect(first.purpose).toBe("ifa_issued");
+    await expect(intakeDrawing(db, OWNER_A, {
+      packageId: "pkg_a", number: "W-0005-1", type: "isometric", code: "1",
+      sha: SHA_A, requestId: "req-dup-12", line: '2"-PL-101',
+    })).rejects.toThrow(/WPP7_DUPLICATE_CONTENT/);
+  });
+});
+
 describe("slice-7 PDF blockers migration: IFC stage + staged release", () => {
   let db;
   beforeEach(async () => { db = await setupDb(); }, 60000);
@@ -971,6 +1081,7 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
     await pgClient.query(loadMigrationSql(SLICE5));
     await pgClient.query(loadMigrationSql(SLICE7));
     await pgClient.query(loadMigrationSql(THIS));
+    await pgClient.query(loadMigrationSql(THIS2));
     await pgClient.query(`
       insert into forge_work_packages (owner_id, id, status) values
         ('${OWNER_A}', 'pkg_real', 'in_progress');
@@ -1105,6 +1216,73 @@ describe.skipIf(!HAS_REAL_PG)("slice-7 PDF blockers migration: real-PostgreSQL s
       // floating: a failure above must not deadlock the rest of the
       // suite. (Rollback after a successful commit is a harmless
       // warning, swallowed here.)
+      await pgClient3.query("rollback;").catch(() => {});
+      if (promiseA && promiseB) await Promise.allSettled([promiseA, promiseB]);
+    }
+  });
+
+  // Slice-7 review-gating fix (S7-RG-09): the same lock-barrier
+  // shape as the fix-round-2 replay test, but the two sessions use
+  // DIFFERENT request ids and DIFFERENT revision codes with the SAME
+  // bytes on the SAME drawing. Idempotent replay cannot save the
+  // loser here — the duplicate-content check must: exactly one
+  // intake succeeds, the other gets WPP7_DUPLICATE_CONTENT, and
+  // exactly one revision and one artifact survive. The codes must
+  // differ, or the unique revision-code constraint would mask the
+  // duplicate-content check.
+  it60("concurrent identical uploads under different request ids serialize to one revision (lock barrier)", async () => {
+    const sqlFor = (requestId, code) => `
+      select * from forge_wp_drawing_controlled_intake(
+        '${OWNER_A}', 'pkg_real', 'W-0005-9', 'isometric', '${code}',
+        '${objectPath(OWNER_A, "pkg_real", requestId, SHA_A)}', '${SHA_A}',
+        1024, '${requestId}', '2"-PL-109', null, null, null, null, null);
+    `;
+    const { rows: pidRowsA } = await pgClient.query("select pg_backend_pid() as pid;");
+    const { rows: pidRowsB } = await pgClient2.query("select pg_backend_pid() as pid;");
+    const pids = [pidRowsA[0].pid, pidRowsB[0].pid];
+    let promiseA;
+    let promiseB;
+    await pgClient3.query("begin;");
+    try {
+      await pgClient3.query(`
+        select status from forge_work_packages
+        where owner_id = '${OWNER_A}' and id = 'pkg_real' for update;
+      `);
+      promiseA = pgAsUser(pgClient, OWNER_A, sqlFor("req-real-dup-1", "0"));
+      promiseB = pgAsUser(pgClient2, OWNER_A, sqlFor("req-real-dup-2", "1"));
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        const { rows: waiting } = await pgClient3.query(
+          `select pid from pg_stat_activity where pid = any($1::int[]) and wait_event_type = 'Lock';`,
+          [pids],
+        );
+        if (waiting.length >= pids.length) break;
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for both RPC sessions to block on the package lock (waiting: ${waiting.map((r) => r.pid).join(",") || "none"})`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await pgClient3.query("commit;");
+      const settled = await Promise.allSettled([promiseA, promiseB]);
+      const fulfilled = settled.filter((o) => o.status === "fulfilled");
+      const rejected = settled.filter((o) => o.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason.message).toMatch(/WPP7_DUPLICATE_CONTENT/);
+      const winner = fulfilled[0].value;
+      expect(winner.rows).toHaveLength(1);
+      expect(winner.rows[0].purpose).toBe("ifa_issued");
+      const { rows } = await pgClient.query(`
+        select count(*)::int as n from forge_wp_drawing_artifacts
+        where drawing_id = '${winner.rows[0].drawing_id}';
+      `);
+      expect(rows[0].n).toBe(1);
+      const { rows: revRows } = await pgClient.query(`
+        select count(*)::int as n from forge_wp_drawing_revisions
+        where drawing_id = '${winner.rows[0].drawing_id}';
+      `);
+      expect(revRows[0].n).toBe(1);
+    } finally {
       await pgClient3.query("rollback;").catch(() => {});
       if (promiseA && promiseB) await Promise.allSettled([promiseA, promiseB]);
     }

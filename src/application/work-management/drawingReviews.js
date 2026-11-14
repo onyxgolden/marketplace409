@@ -261,6 +261,11 @@ export function mapDrawingReviewRpcError(error) {
   if (message.includes("WPP7_DUPLICATE_REVISION")) {
     return { ok: false, httpStatus: 409, error: "A revision with this code already exists for the drawing." };
   }
+  if (message.includes("WPP7_DUPLICATE_CONTENT")) {
+    // Slice-7 review-gating fix: a same-SHA IFA re-upload under a new
+    // request id is not a new revision — plain words, no hash jargon.
+    return { ok: false, httpStatus: 409, error: "This PDF is identical to an existing IFA revision. Upload a PDF with changed content to create a new revision." };
+  }
   if (message.includes("WPP7_DUPLICATE_OPEN_REVIEW")) {
     return { ok: false, httpStatus: 409, error: "This revision already has an open review." };
   }

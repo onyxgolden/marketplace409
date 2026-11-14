@@ -5,7 +5,9 @@ import {
   LINK_RELATIONSHIPS, LINK_STATUS_LABELS,
 } from "@/domains/work-management/workLinks.js";
 import { DOCUMENT_KIND_SUGGESTIONS, DOCUMENT_KIND_LABELS } from "@/domains/work-management/workDocuments.js";
-import { usePageQuery } from "./packagePageContext.jsx";
+import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
+import { invalidate } from "@/hooks/swrCache.js";
+import { scopedSWRKey } from "./workspaceQuery.js";
 import ControlledDrawingUpload from "./ControlledDrawingUpload.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
@@ -65,32 +67,41 @@ function dedupeProjects(projects) {
   return result;
 }
 
-// The three Documents-tab fetches, shared by the mount effect and the
+// The Documents-tab fetches, shared by the mount effect and the
 // event-handler refresh: pure fetch + parse, no setState, so the
 // effect can await it without tripping the set-state-in-effect rule.
+// The readiness snapshot is the controlled-drawing list for this
+// package; it is non-fatal here — if the readiness endpoint is
+// unavailable, the Documents tab still works and the Redlines panel
+// reports its own error.
 async function fetchDocumentsData(pageQuery, packageId) {
-  const [linksRes, libRes, designerRes] = await Promise.all([
+  const [linksRes, libRes, designerRes, readinessRes] = await Promise.all([
     fetch(pageQuery(`/api/work-links?packageId=${encodeURIComponent(packageId)}`)),
     fetch(pageQuery("/api/work-documents")),
     fetch(pageQuery("/api/forge/designer")),
+    fetch(pageQuery(`/api/work-packages/${packageId}/drawings/readiness`)),
   ]);
   const linksData = await linksRes.json();
   if (!linksRes.ok) throw new Error(linksData.error || "Could not load links.");
   const libData = await libRes.json();
   if (!libRes.ok) throw new Error(libData.error || "Could not load the document library.");
   const designerData = await designerRes.json();
+  const readinessData = readinessRes.ok ? await readinessRes.json().catch(() => ({})) : {};
   return {
     links: linksData.links || [],
     library: libData.documents || [],
     designerProjects: dedupeProjects(designerData.projects || designerData.designer_projects || []),
+    controlledDrawings: readinessData.drawings || [],
   };
 }
 
-export default function WorkPackageDocuments({ packageId, initialLinks = [], onNavigateToTab = null }) {
+export default function WorkPackageDocuments({ packageId, initialLinks = [], onNavigateToTab = null, initialDrawing = null, onIntakeDrawingConsumed = null }) {
   const pageQuery = usePageQuery();
+  const pageContext = usePackagePageContext();
   const [links, setLinks] = useState(initialLinks);
   const [library, setLibrary] = useState([]);
   const [designerProjects, setDesignerProjects] = useState([]);
+  const [controlledDrawings, setControlledDrawings] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // D18: distinguishes "still loading" from "loaded and genuinely empty" --
@@ -120,6 +131,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       setLinks(data.links);
       setLibrary(data.library);
       setDesignerProjects(data.designerProjects);
+      setControlledDrawings(data.controlledDrawings);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -131,6 +143,25 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     setError("");
     await loadAll();
   }
+
+  // Slice-7 review-gating fix: a successful controlled upload (fresh
+  // or idempotent replay) refreshes this tab's controlled-drawing
+  // list and invalidates the Redlines panel's scoped readiness
+  // cache, so returning to Redlines fetches the new drawing instead
+  // of serving the stale "no drawings" entry. The key is scoped to
+  // this workspace/project: another scope must never be invalidated.
+  async function onControlledUploaded() {
+    invalidate(scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness"));
+    await refresh();
+  }
+
+  // Slice-7 review-gating fix: a drawing prefill belongs to the
+  // single navigation that carried it here. Consume it on mount so a
+  // later direct visit to Documents does not inherit a stale drawing.
+  useEffect(() => {
+    if (initialDrawing && onIntakeDrawingConsumed) onIntakeDrawingConsumed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mount + scope change: the cancellation guard is the stale-response
   // guard — a slow fetch from a previous package/scope never overwrites
@@ -144,6 +175,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
         setLinks(data.links);
         setLibrary(data.library);
         setDesignerProjects(data.designerProjects);
+        setControlledDrawings(data.controlledDrawings);
       } catch (e) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -283,6 +315,20 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
         <p className="mt-1 text-xs text-slate-500">No drawings linked yet.</p>
       )}
 
+      <h3 className="mt-4 text-xs font-semibold text-slate-700">Controlled drawings</h3>
+      {controlledDrawings.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {controlledDrawings.map((drawing) => (
+            <li key={drawing.drawingId} className="rounded border border-slate-100 p-3 text-xs">
+              <span className="font-medium text-slate-900">{drawing.drawingNumber} ({drawing.drawingType})</span>
+              <span className="ml-2 text-slate-500">{drawing.badge}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-xs text-slate-500">No controlled drawings uploaded yet.</p>
+      )}
+
       <h3 className="mt-4 text-xs font-semibold text-slate-700">Documents</h3>
       {documentLinks.length > 0 ? (
         <ul className="mt-2 space-y-2">{documentLinks.map(renderLinkRow)}</ul>
@@ -354,7 +400,8 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
         <p className="text-xs text-slate-400">Uploading links the document to this package automatically.</p>
       </form>
 
-      <ControlledDrawingUpload packageId={packageId} onNavigateToTab={onNavigateToTab} />
+      <ControlledDrawingUpload packageId={packageId} onNavigateToTab={onNavigateToTab}
+        onUploaded={onControlledUploaded} initialDrawing={initialDrawing} />
     </section>
   );
 }

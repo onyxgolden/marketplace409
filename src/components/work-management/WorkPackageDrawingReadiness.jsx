@@ -296,7 +296,7 @@ function ReviewRound({ packageId, drawingId, review, onChanged }) {
 // One drawing's review workspace: revisions, review rounds, IFC
 // releases, field hand-redline history, and the actions that move a
 // drawing through review. Lists are fetched only while expanded.
-function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = null }) {
+function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = null, onNavigateToIntake = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [expanded, setExpanded] = useState(false);
@@ -317,8 +317,17 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   // intake section on the Documents tab and scroll it into view once
   // it mounts.
   function navigateToIntake() {
-    if (!onNavigateToTab) return;
-    onNavigateToTab("documents");
+    if (onNavigateToIntake) {
+      // Slice-7 review-gating fix: the intake form is prefilled from
+      // this drawing's real metadata — a genuine prefill, never
+      // placeholder text that looks filled. The readiness snapshot
+      // carries no line number, so it stays blank and user-entered.
+      onNavigateToIntake({ drawingNumber: row.drawingNumber, drawingType: row.drawingType });
+    } else if (onNavigateToTab) {
+      onNavigateToTab("documents");
+    } else {
+      return;
+    }
     requestAnimationFrame(() => {
       document.getElementById("controlled-drawing-intake")?.scrollIntoView({ block: "start" });
     });
@@ -359,7 +368,33 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   const fieldRedlines = fieldData?.fieldRedlines || [];
   const artifacts = artifactsData?.artifacts || [];
   const stagedCandidates = artifacts.filter((a) => a.purpose === "ifc_candidate" && !a.retiredAt);
-  const latestRevision = row.latestRevision;
+  // Slice-7 review-gating fix: the readiness snapshot emits FLAT
+  // latest-revision fields (latestRevisionId, latestRevisionCode,
+  // latestIssuedAs — see toCamelReadinessDrawing); the API never emits
+  // a nested row.latestRevision object, so gating the review actions
+  // on it hid the workflow even with issued IFA revisions. Derive the
+  // reviewable revisions from the revisions endpoint instead. The
+  // brief's latest-revision resolution (match row.latestRevisionId,
+  // fall back to the newest non-retired IFA row) is embodied in the
+  // selector ordering below: the endpoint lists newest ISSUED first
+  // (issued_at DESC — the drafter's issue date, which can be
+  // backdated), while the snapshot's latest is newest CREATED first,
+  // so the two can disagree and the pointer match is the authority.
+  // The gates need the derived SETS, not a single resolved row; the
+  // header label reads the flat snapshot fields (available before
+  // expansion, when revisions have not loaded yet). The server RPC
+  // stays authoritative: it validates the chosen revision belongs to
+  // this drawing and is eligible for review.
+  // Puts the snapshot's latest revision first when it is in the list,
+  // preserving the endpoint's newest-first order otherwise.
+  function latestFirst(list) {
+    if (!row.latestRevisionId) return list;
+    const idx = list.findIndex((r) => r.id === row.latestRevisionId);
+    if (idx <= 0) return list;
+    return [list[idx], ...list.slice(0, idx), ...list.slice(idx + 1)];
+  }
+  const ifaRevisions = latestFirst(revisions.filter((r) => r.issuedAs === "IFA" && !r.retiredAt));
+  const reviewableRevisions = latestFirst(revisions.filter((r) => !r.retiredAt));
   const openReview = reviews.find((r) => r.state === "OPEN")
     || (row.latestReview?.state === "OPEN" ? row.latestReview : null);
   const approvedReview = reviews.find((r) => r.state === "APPROVED" || r.state === "APPROVED_WITH_REDLINES");
@@ -510,7 +545,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
             {row.pendingFieldRedlines} field hand-redline{row.pendingFieldRedlines === 1 ? "" : "s"} awaiting reconciliation
           </span>
         )}
-        {latestRevision && <span className="text-xs text-slate-500">Rev {latestRevision.revisionCode} · {latestRevision.issuedAs}</span>}
+        {row.latestRevisionCode && <span className="text-xs text-slate-500">Rev {row.latestRevisionCode} · {row.latestIssuedAs}</span>}
       </div>
       {expanded && (
         <div className="mt-3 space-y-4">
@@ -552,7 +587,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 ))}
               </ul>
             )}
-            {!row.retiredAt && !openReview && latestRevision && (
+            {!row.retiredAt && !openReview && ifaRevisions.length > 0 && (
               <form className="mt-2 space-y-2 rounded border border-slate-100 p-3" onSubmit={submitReview}>
                 <p className="text-xs font-medium text-slate-700">Open a review round</p>
                 <div>
@@ -560,7 +595,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                   <select id={`review-rev-${drawingId}`} className={input} value={reviewForm.drawingRevisionId}
                     onChange={(e) => setReviewForm((f) => ({ ...f, drawingRevisionId: e.target.value }))} required>
                     <option value="">Select a revision…</option>
-                    {revisions.filter((r) => r.issuedAs === "IFA").map((revision) => (
+                    {ifaRevisions.map((revision) => (
                       <option key={revision.id} value={revision.id}>Rev {revision.revisionCode}</option>
                     ))}
                   </select>
@@ -690,7 +725,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 ))}
               </ul>
             )}
-            {!row.retiredAt && latestRevision && (
+            {!row.retiredAt && reviewableRevisions.length > 0 && (
               <form className="mt-2 space-y-2 rounded border border-slate-100 p-3" onSubmit={submitField}>
                 <p className="text-xs font-medium text-slate-700">Capture a field hand-redline</p>
                 <div>
@@ -698,7 +733,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                   <select id={`field-rev-${drawingId}`} className={input} value={fieldForm.drawingRevisionId}
                     onChange={(e) => setFieldForm((f) => ({ ...f, drawingRevisionId: e.target.value }))} required>
                     <option value="">Select a revision…</option>
-                    {revisions.map((revision) => (
+                    {reviewableRevisions.map((revision) => (
                       <option key={revision.id} value={revision.id}>Rev {revision.revisionCode} ({revision.issuedAs})</option>
                     ))}
                   </select>

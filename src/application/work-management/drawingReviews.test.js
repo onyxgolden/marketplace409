@@ -536,6 +536,29 @@ describe("getDrawingReadiness", () => {
     expect(result.counts).toMatchObject({ drawingsTotal: 1, pendingReview: 1, openRequiredRedlines: 1 });
   });
 
+  it("maps the exact snake_case snapshot shape to flat latest-revision fields with no nested latestRevision", async () => {
+    // Slice-7 review-gating fix: the snapshot emits FLAT pointer
+    // fields only. The component used to gate on a nested
+    // row.latestRevision the API never emits — this test pins the
+    // real contract so a nested-object fixture can never mask it again.
+    const db = mockDb(
+      [chain({ data: PKG_ROW, error: null })],
+      [{ data: SNAPSHOT, error: null }],
+    );
+    const result = await getDrawingReadiness(db, { ownerId: OWNER, packageId: "pkg_1" });
+    expect(result.ok).toBe(true);
+    expect(result.drawings[0]).toMatchObject({
+      latestRevisionId: "forge_wpdrv_1",
+      latestRevisionCode: "A",
+      latestIssuedAs: "IFA",
+      latestReviewId: "forge_wpdrvw_1",
+      latestReviewRoundNo: 1,
+      latestReviewState: "OPEN",
+    });
+    expect(result.drawings[0].latestRevision).toBeUndefined();
+    expect(result.drawings[0].latestReview).toBeUndefined();
+  });
+
   it("returns an empty snapshot when the RPC does not exist yet", async () => {
     const db = mockDb(
       [chain({ data: PKG_ROW, error: null })],
@@ -571,6 +594,14 @@ describe("mapDrawingReviewRpcError", () => {
       .toMatchObject({ ok: false, httpStatus: 409 });
     expect(mapDrawingReviewRpcError(new Error("WPP7_DECISION_FORBIDDEN")))
       .toMatchObject({ ok: false, httpStatus: 403 });
+    // Slice-7 review-gating fix: a same-SHA IFA re-upload under a new
+    // request id is a 409 with a plain-language message.
+    expect(mapDrawingReviewRpcError(new Error("WPP7_DUPLICATE_CONTENT")))
+      .toEqual({
+        ok: false,
+        httpStatus: 409,
+        error: "This PDF is identical to an existing IFA revision. Upload a PDF with changed content to create a new revision.",
+      });
   });
 
   it("throws unknown errors so the route turns them into a 500", () => {
