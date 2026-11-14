@@ -138,6 +138,16 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
   // cleared the moment that identity changes.
   const controlledScopeKey = scopedSWRKey(pageContext, "work-packages", packageId, "drawing-readiness");
   const controlledScopeRef = useRef(null);
+  // Slice-7 friction fix round 2 (F4): the scope key the STORED
+  // controlled-drawings list was loaded for. The render itself is
+  // scope-aware: the stored list is shown only when this key equals
+  // the current scope key. The reset effect runs after the first
+  // render under a new scope, so without this the previous scope's
+  // drawings would commit once under the new scope before the
+  // effect clears them. Updated only when the stored list is
+  // replaced (scope-change reset, successful response, accepted
+  // empty) — never on a failed fetch, which keeps the old list.
+  const controlledListScopeRef = useRef(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // D18: distinguishes "still loading" from "loaded and genuinely empty" --
@@ -198,6 +208,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     if (controlledScopeRef.current !== controlledScopeKey) {
       controlledScopeRef.current = controlledScopeKey;
       controlledDrawingsRef.current = [];
+      controlledListScopeRef.current = controlledScopeKey;
       setControlledDrawings([]);
       setControlledLoaded(false);
     }
@@ -222,6 +233,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       if (cycle !== controlledCycleRef.current) return;
       if (drawings.length > 0) {
         controlledDrawingsRef.current = drawings;
+        controlledListScopeRef.current = controlledScopeKey;
         setControlledDrawings(drawings);
         setControlledLoaded(true);
         setControlledLoading(false);
@@ -233,6 +245,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       // just-completed mutation, then accept the true empty state.
       if (attempts >= CONTROLLED_REVALIDATE_ATTEMPTS) {
         controlledDrawingsRef.current = [];
+        controlledListScopeRef.current = controlledScopeKey;
         setControlledDrawings([]);
         setControlledLoaded(true);
         setControlledLoading(false);
@@ -420,6 +433,18 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
     );
   }
 
+  // Slice-7 friction fix round 2 (F4): the render itself is
+  // scope-aware, not only the asynchronous loader. The stored list
+  // is rendered only when the scope key it was loaded for equals the
+  // current scope key; the first render under a new scope shows the
+  // loading state until that scope's response arrives, even though
+  // the reset effect has not run yet. The stale loading/loaded
+  // flags from the previous scope are ignored while mismatched, so
+  // the new scope never shows a definitive empty state — or the old
+  // scope's drawings — before its own response.
+  const controlledListMatchesScope = controlledListScopeRef.current === controlledScopeKey;
+  const visibleControlledDrawings = controlledListMatchesScope ? controlledDrawings : [];
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Drawings &amp; documents</h2>
@@ -438,10 +463,10 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
       )}
 
       <h3 className="mt-4 text-xs font-semibold text-slate-700">Controlled drawings</h3>
-      {controlledDrawings.length > 0 ? (
+      {visibleControlledDrawings.length > 0 ? (
         <>
           <ul className="mt-2 space-y-2">
-            {controlledDrawings.map((drawing) => (
+            {visibleControlledDrawings.map((drawing) => (
               <li key={drawing.drawingId} className="rounded border border-slate-100 p-3 text-xs">
                 <span className="font-medium text-slate-900">{drawing.drawingNumber} ({drawing.drawingType})</span>
                 <span className="ml-2 text-slate-500">{drawing.badge}</span>
@@ -455,7 +480,7 @@ export default function WorkPackageDocuments({ packageId, initialLinks = [], onN
             <p className="mt-1 text-xs text-red-600">Could not refresh controlled drawings: {controlledError}</p>
           )}
         </>
-      ) : controlledLoading ? (
+      ) : !controlledListMatchesScope || controlledLoading ? (
         <p className="mt-1 text-xs text-slate-500" aria-live="polite">Loading controlled drawings…</p>
       ) : controlledError ? (
         <p className="mt-1 text-xs text-red-600">Could not load controlled drawings: {controlledError}</p>

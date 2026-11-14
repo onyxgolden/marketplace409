@@ -584,9 +584,18 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
           ...(form.reason ? { reason: form.reason.trim() } : {}),
         }),
       });
-      setNotice(reconciledRevision
-        ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled as Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
-        : `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText} — retired without a new revision.`);
+      // Slice-7 friction fix round 2 (F1): branch on whether a
+      // reconciliation revision ID was SUBMITTED, not on whether its
+      // record was found. A submitted ID whose record is unavailable
+      // must never be described as "retired without a new revision"
+      // — the server may have reconciled against it. Only an
+      // actually empty selection means retirement without a new
+      // revision.
+      setNotice(!form.reconciledRevisionId
+        ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText} — retired without a new revision.`
+        : reconciledRevision
+          ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled as Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
+          : `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled against a revision record that is unavailable (ID ${shortId(form.reconciledRevisionId)}).`);
       await refreshAll();
     } catch (e) {
       setError(e.message);

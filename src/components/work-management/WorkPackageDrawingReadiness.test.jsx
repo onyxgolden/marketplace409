@@ -689,6 +689,36 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     expect(notice.textContent).toContain("reconciled as Rev 1 (IFA)");
   });
 
+  it("does not claim retirement when the selected reconciliation revision record is unavailable", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    // Friction fix round 2 (F1): a reconciliation revision ID was
+    // submitted, but its record is absent from the loaded revisions
+    // list — unavailable, not unselected. jsdom resets a select to
+    // "" when its value matches no option, so the ID is put into
+    // the form state through the change event itself (writable, so
+    // React's later value sync cannot throw): this is the state a
+    // revision selected from a list that no longer contains it
+    // would leave behind.
+    const select = container.querySelector("#recon-rev-forge_wpdfr_1");
+    Object.defineProperty(select, "value", { value: "forge_wpdrv_missing", writable: true, configurable: true });
+    await act(async () => { select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Reconcile").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).not.toContain("retired without a new revision");
+    expect(notice.textContent).toContain("Rev 0 (IFA)");
+    expect(notice.textContent).toContain("reconciled against a revision record that is unavailable");
+  });
+
   it("confirms retiring a drawing by name", async () => {
     setupFetch();
     const { container } = await renderPanel();

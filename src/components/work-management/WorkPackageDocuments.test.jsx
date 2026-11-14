@@ -2,6 +2,7 @@
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache, getCacheEntry, seedCacheEntry } from "@/hooks/swrCache";
 import { scopedSWRKey } from "./workspaceQuery.js";
@@ -491,12 +492,22 @@ describe("WorkPackageDocuments controlled drawings loading states (F4)", () => {
     });
     await act(async () => {});
     expect(controlledSectionText(container)).toContain("W-0005-1");
+    // Friction fix round 2 (F4): flushSync commits the new scope
+    // synchronously, but the reset effect's microtask has not run
+    // yet — so this assertion observes the FIRST commit under the
+    // new scope. The old scope's drawings must never be committed
+    // under the new scope, not merely cleared after the effect.
+    // (The render itself is scope-aware.)
     act(() => {
-      root.render(
-        <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
-          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
-        </PackagePageProvider>,
-      );
+      flushSync(() => {
+        root.render(
+          <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
+            <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+          </PackagePageProvider>,
+        );
+      });
+      expect(controlledSectionText(container)).not.toContain("W-0005-1");
+      expect(controlledSectionText(container)).toContain("Loading controlled drawings…");
     });
     await act(async () => {});
     // The old scope's drawings are gone immediately — before the
@@ -542,12 +553,21 @@ describe("WorkPackageDocuments controlled drawings loading states (F4)", () => {
     });
     await act(async () => {});
     expect(controlledSectionText(container)).toContain("W-0005-1");
+    // Friction fix round 2 (F4): flushSync commits the new scope
+    // synchronously, but the reset effect's microtask has not run
+    // yet — so this assertion observes the FIRST commit under the
+    // new scope, before the reset effect or the failed response.
+    // The old scope's drawings must never render here.
     act(() => {
-      root.render(
-        <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
-          <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
-        </PackagePageProvider>,
-      );
+      flushSync(() => {
+        root.render(
+          <PackagePageProvider workspace="owner-b" forgeProject="proj-b">
+            <WorkPackageDocuments packageId="forge_wp_1" initialLinks={[]} />
+          </PackagePageProvider>,
+        );
+      });
+      expect(controlledSectionText(container)).not.toContain("W-0005-1");
+      expect(controlledSectionText(container)).toContain("Loading controlled drawings…");
     });
     await act(async () => {});
     await act(async () => {});
