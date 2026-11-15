@@ -370,6 +370,15 @@ describe("WorkPackageDetailClient Project field (D3)", () => {
     const { container } = renderDetail({ ...BASE_PKG, project_id: "Decker refresh", property_id: "1900-w-decker" });
     await settle();
     openEdit(container);
+    // Slice-7 confirmation-placement fix (R3): a save with no changes
+    // no longer PATCHes, so this payload-shape test makes a trivial
+    // change first — trailing whitespace on the title, which the
+    // payload passes through unchanged, so the asserted Project and
+    // property values are unaffected. (A trailing space on Project
+    // itself would be a server no-op: the payload trims it away.)
+    const titleInput = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(titleInput, "Turnover ");
+    act(() => { titleInput.dispatchEvent(new Event("input", { bubbles: true })); });
     await saveEdit(container);
     expect(patches).toHaveLength(1);
     expect(patches[0].project_id).toBe("Decker refresh");
@@ -388,6 +397,13 @@ describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
     const { container } = renderDetail(BASE_PKG); // planned_finish: null
     await settle();
     openEdit(container);
+    // Slice-7 confirmation-placement fix (R3): a save with no changes
+    // no longer PATCHes, so this payload-shape test makes a trivial
+    // change first — trailing whitespace on the title, which the
+    // payload passes through, so the asserted date value is unchanged.
+    const titleInput = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(titleInput, "Turnover ");
+    act(() => { titleInput.dispatchEvent(new Event("input", { bubbles: true })); });
     const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
     await act(async () => { saveButton.click(); });
     await settle();
@@ -402,6 +418,11 @@ describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
     openEdit(container);
     const dateInput = container.querySelector('input[type="date"]');
     expect(dateInput.value).toBe("2026-11-10");
+    // Slice-7 confirmation-placement fix (R3): see the test above —
+    // a trivial title change first, so a PATCH is actually sent.
+    const titleInput = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(titleInput, "Turnover ");
+    act(() => { titleInput.dispatchEvent(new Event("input", { bubbles: true })); });
     const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
     await act(async () => { saveButton.click(); });
     await settle();
@@ -441,6 +462,12 @@ describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
     const { container } = renderDetail(BASE_PKG);
     await settle();
     openEdit(container);
+    // Slice-7 confirmation-placement fix (R3): a save with no changes
+    // sends no PATCH, so a trivial title change first puts a real
+    // save in flight for the disabled-buttons assertion.
+    const titleInput = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(titleInput, "Turnover ");
+    act(() => { titleInput.dispatchEvent(new Event("input", { bubbles: true })); });
     const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
     const cancelButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
     act(() => { saveButton.click(); });
@@ -449,6 +476,119 @@ describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
     await act(async () => { releasePatch(); });
     await settle();
     expect([...container.querySelectorAll("button")].find((b) => b.textContent === "Edit")).toBeTruthy();
+  });
+});
+
+// Slice-7 save-confirmation placement fix (brief 2026-11-15, R3):
+// a Package Edit Save with no changes must confirm truthfully — never
+// claim data was saved when no mutation occurred, and never PATCH a
+// no-op. The confirmation renders in the edit form footer while
+// editing and below the Package header once the form closes on save.
+describe("WorkPackageDetailClient Package Edit confirmation (Slice-7 R3)", () => {
+  function openEdit(container) {
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+  }
+
+  function setTitle(container, value) {
+    const input = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+    act(() => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+
+  function setProjectInput(container, value) {
+    const input = container.querySelector("#edit_project_id");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+    act(() => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+
+  async function saveEdit(container) {
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+  }
+
+  function packageSectionStatus(container) {
+    const heading = [...container.querySelectorAll("h2")].find((h) => h.textContent === "Package");
+    return heading.closest("section").querySelector('[role="status"]');
+  }
+
+  it("a no-change save confirms truthfully and sends no PATCH", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    await saveEdit(container);
+    expect(patches).toHaveLength(0);
+    // The form closed and the confirmation sits in the Package
+    // section, naming the package — not claiming a save happened.
+    expect([...container.querySelectorAll("button")].find((b) => b.textContent === "Edit")).toBeTruthy();
+    const notice = packageSectionStatus(container);
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("No changes to Turnover — nothing needed saving.");
+  });
+
+  it("a whitespace-only project change is a server no-op: no PATCH, up-to-date confirmation", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Decker refresh" });
+    await settle();
+    openEdit(container);
+    // The form differs from the persisted package (trailing space),
+    // but the normalized payload is identical — no mutation occurred.
+    setProjectInput(container, "Decker refresh ");
+    await saveEdit(container);
+    expect(patches).toHaveLength(0);
+    const notice = packageSectionStatus(container);
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Turnover is up to date — no changes were needed.");
+  });
+
+  it("a real save confirms with the saved title and sends one PATCH", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    setTitle(container, "Turnover 2");
+    await saveEdit(container);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].title).toBe("Turnover 2");
+    const notice = packageSectionStatus(container);
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Turnover 2 saved.");
+    // The retained notice sits at the bottom of the Package section,
+    // below the read-only fields — not below the header, which is a
+    // full form-height above the Save button on this long form and
+    // would be off-screen after the user scrolled down to save.
+    const section = [...container.querySelectorAll("h2")].find((h) => h.textContent === "Package").closest("section");
+    const dl = section.querySelector("dl");
+    expect(dl.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a failed save shows the error and manufactures no success notice", async () => {
+    const { patches } = stubFetch({ failPatch: true });
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    setTitle(container, "Turnover 2");
+    await saveEdit(container);
+    expect(patches).toHaveLength(1);
+    expect(container.textContent).toContain("Package changed while editing; refresh and retry.");
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    // The form stays open for a retry.
+    expect(container.querySelector("form")).not.toBeNull();
+  });
+
+  it("reopening Edit clears the previous save confirmation", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    setTitle(container, "Turnover 2");
+    await saveEdit(container);
+    expect(packageSectionStatus(container).textContent).toBe("Turnover 2 saved.");
+    // Starting a new edit clears that action's previous confirmation.
+    openEdit(container);
+    expect(container.querySelector('[role="status"]')).toBeNull();
   });
 });
 

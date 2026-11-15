@@ -72,3 +72,4 @@ mobile/android/captures/
 # Python (brandy receptionist service)
 __pycache__/
 *.pyc
+e2e/placement/dist/
