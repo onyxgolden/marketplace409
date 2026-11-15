@@ -31,6 +31,10 @@ function stubFetch({ snapshot = snapshotWith(), audit = [], handlers = {} } = {}
     if (url === "/api/work-packages/admin/roles" && method === "GET") {
       return { ok: true, status: 200, json: async () => ({ snapshot }) };
     }
+    // The mounted hierarchy manager reads the full inventory on mount.
+    if (url === "/api/forge/hierarchy?includeArchived=true" && method === "GET") {
+      return { ok: true, status: 200, json: async () => ({ inventory: { ownerId: "owner_1", canManage: false, clients: [] } }) };
+    }
     if (url.startsWith("/api/work-packages/admin/audit")) {
       return { ok: true, status: 200, json: async () => ({ entries: audit }) };
     }
@@ -101,6 +105,10 @@ describe("PlannerAdminClient", () => {
     expect(text).toContain("View work packages");
     expect(text).toContain("View audit timeline");
     expect(text).not.toContain("Audit timeline");
+    // The hierarchy manager mounts on the admin page.
+    expect(container.querySelector("[data-testid='planner-hierarchy-manager']")).not.toBeNull();
+    expect(text).toContain("Clients, sites & projects");
+    expect(text).toContain("No clients yet");
   });
 
   it("offers to provision starter roles when none exist yet, and never shows the matrix in that state", async () => {

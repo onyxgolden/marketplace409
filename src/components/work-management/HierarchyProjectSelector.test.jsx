@@ -5,6 +5,11 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a>,
+}));
+
 import HierarchyProjectSelector from "./HierarchyProjectSelector.jsx";
 
 const TREE = {
@@ -181,5 +186,15 @@ describe("HierarchyProjectSelector", () => {
     expect(container.querySelector("[role='alert']").textContent).toMatch(/Could not load/);
     const { client } = selects(container);
     expect(client.disabled).toBe(true);
+  });
+
+  it("links the empty state to the Clients, sites & projects manager", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ selector: { ownerId: "owner_1", clients: [] } }) })));
+    const { container } = renderSelector();
+    await flush();
+    expect(container.textContent).toContain("No projects yet");
+    const link = [...container.querySelectorAll("a")].find((a) => a.textContent.trim() === "Manage clients, sites and projects");
+    expect(link).toBeDefined();
+    expect(link.getAttribute("href")).toBe("/forge/work/admin");
   });
 });

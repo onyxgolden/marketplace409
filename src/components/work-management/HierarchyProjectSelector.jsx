@@ -17,6 +17,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 export const UNASSIGNED_VALUE = "unassigned";
@@ -199,7 +200,10 @@ export default function HierarchyProjectSelector({
       )}
       {!loadError && selector && !hasProjects && (
         <p className="w-full text-sm text-slate-500">
-          No projects yet — add a client, a site, and a project before assigning packages to one.
+          No projects yet — add a client, a site, and a project before assigning packages to one.{" "}
+          <Link className="text-blue-700 underline" href={withWorkspaceQuery("/forge/work/admin")}>
+            Manage clients, sites and projects
+          </Link>
         </p>
       )}
     </div>

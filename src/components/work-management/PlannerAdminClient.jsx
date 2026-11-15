@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PLANNER_CAPABILITIES, starterRoleLabel } from "@/lib/planner/permissions";
+import PlannerHierarchyManager from "./PlannerHierarchyManager.jsx";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
 
 // Work Package Planner admin page (slice 1). Every write here goes through
@@ -542,6 +543,8 @@ export default function PlannerAdminClient() {
           )}
         </section>
       )}
+
+      <PlannerHierarchyManager />
 
       {auditOpen && (
         <div

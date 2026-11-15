@@ -6,9 +6,12 @@ import {
   createHierarchyProject,
   createHierarchySite,
   deleteHierarchyProject,
+  getHierarchyAdminInventory,
   getHierarchySelector,
   mapHierarchyRpcError,
   updateHierarchyClient,
+  updateHierarchyProject,
+  updateHierarchySite,
   validateHierarchySelection,
 } from "./hierarchy.js";
 
@@ -130,6 +133,81 @@ describe("getHierarchySelector", () => {
   });
 });
 
+describe("getHierarchyAdminInventory", () => {
+  it("returns the full camelCased inventory: archived rows, versions, canManage, packageCount", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: {
+        ownerId: OWNER,
+        canManage: true,
+        clients: [
+          {
+            id: "c1",
+            name: "Acme",
+            external_reference: "A-1",
+            notes: "Main client",
+            status: "active",
+            version: 3,
+            sites: [
+              {
+                id: "s1",
+                client_id: "c1",
+                name: "Plant 1",
+                site_type: "industrial",
+                city: "Beaumont",
+                status: "active",
+                version: 2,
+                projects: [
+                  { id: "p1", site_id: "s1", name: "TA 27", project_code: "TA-27", status: "active", version: 5, package_count: 2 },
+                  { id: "p2", site_id: "s1", name: "Revamp", project_code: null, status: "archived", version: 1, package_count: 0 },
+                ],
+              },
+            ],
+          },
+          { id: "c2", name: "Beta", external_reference: null, notes: null, status: "archived", version: 1, sites: [] },
+        ],
+      },
+      error: null,
+    });
+    const result = await getHierarchyAdminInventory(db, { ownerId: OWNER });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_admin_inventory", { p_owner_id: OWNER });
+    const { inventory } = result;
+    expect(inventory.ownerId).toBe(OWNER);
+    expect(inventory.canManage).toBe(true);
+    // Archived rows are present (the selector omits them).
+    expect(inventory.clients).toHaveLength(2);
+    expect(inventory.clients[1].status).toBe("archived");
+    // Complete identity fields + versions survive the mapping.
+    expect(inventory.clients[0].externalReference).toBe("A-1");
+    expect(inventory.clients[0].notes).toBe("Main client");
+    expect(inventory.clients[0].version).toBe(3);
+    expect(inventory.clients[0].sites[0].city).toBe("Beaumont");
+    expect(inventory.clients[0].sites[0].version).toBe(2);
+    const [active, archived] = inventory.clients[0].sites[0].projects;
+    expect(active.projectCode).toBe("TA-27");
+    expect(active.version).toBe(5);
+    expect(active.packageCount).toBe(2);
+    expect(archived.status).toBe("archived");
+    expect(archived.packageCount).toBe(0);
+  });
+
+  it("maps a forbidden RPC error and a missing RPC to 503", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({ data: null, error: { message: "FORGE_HIERARCHY_FORBIDDEN" } });
+    expect(await getHierarchyAdminInventory(db, { ownerId: OWNER })).toMatchObject({ ok: false, httpStatus: 403 });
+    db.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" } });
+    expect(await getHierarchyAdminInventory(db, { ownerId: OWNER })).toMatchObject({ ok: false, httpStatus: 503 });
+  });
+
+  it("requires an owner id and never calls the RPC without one", async () => {
+    const db = mockDb();
+    const result = await getHierarchyAdminInventory(db, { ownerId: null });
+    expect(result.ok).toBe(false);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+});
+
 describe("validateHierarchySelection", () => {
   it("returns the resolved chain camelCased", async () => {
     const db = mockDb();
@@ -247,5 +325,74 @@ describe("updateHierarchyClient / deleteHierarchyProject", () => {
       ownerId: OWNER, projectId: "p1", expectedVersion: 3, requestId: "req_1",
     });
     expect(result).toEqual({ ok: true, deleted: true, id: "p1" });
+  });
+});
+
+describe("updateHierarchy* clear semantics (P1, PR #811 review)", () => {
+  // The RPC contract is null = unchanged, "" = clear. The service
+  // must forward an empty string verbatim — coercing it to null here
+  // would silently keep the old value while the UI says "saved".
+  // (The component was the defective layer; these tests pin the
+  // service side of the contract so a future refactor cannot re-break
+  // it. The migration battery proves "" persists as NULL in real SQL.)
+  it("client update forwards empty strings for externalReference and notes", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "c1", name: "Acme", external_reference: null, status: "active", notes: null, version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchyClient(db, {
+      ownerId: OWNER, clientId: "c1", name: "Acme", externalReference: "", notes: "",
+      expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_client_update", expect.objectContaining({
+      p_external_reference: "",
+      p_notes: "",
+    }));
+  });
+
+  it("site update forwards empty strings for site type and address fields", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "s1", client_id: "c1", name: "Plant 1", site_type: null, address_line1: null, address_line2: null, city: null, region: null, postal_code: null, country_code: null, status: "active", version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchySite(db, {
+      ownerId: OWNER, siteId: "s1", clientId: "c1", name: "Plant 1", siteType: "",
+      addressLine1: "", addressLine2: "", city: "", region: "", postalCode: "",
+      countryCode: "", expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_site_update", expect.objectContaining({
+      p_site_type: "",
+      p_address_line1: "",
+      p_address_line2: "",
+      p_city: "",
+      p_region: "",
+      p_postal_code: "",
+      p_country_code: "",
+    }));
+  });
+
+  it("project update forwards empty strings for code, description, type, and dates", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "p1", site_id: "s1", name: "TA 27", project_code: null, description: null, project_type: null, planned_start: null, planned_finish: null, status: "active", version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchyProject(db, {
+      ownerId: OWNER, projectId: "p1", siteId: "s1", name: "TA 27", projectCode: "",
+      description: "", projectType: "", plannedStart: "", plannedFinish: "",
+      expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_project_update", expect.objectContaining({
+      p_project_code: "",
+      p_description: "",
+      p_project_type: "",
+      p_planned_start: "",
+      p_planned_finish: "",
+    }));
   });
 });

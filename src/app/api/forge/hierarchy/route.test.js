@@ -12,6 +12,7 @@ vi.mock("@/application/forge-shared-hierarchy/hierarchy", () => ({
   deleteHierarchyClient: vi.fn(),
   deleteHierarchyProject: vi.fn(),
   deleteHierarchySite: vi.fn(),
+  getHierarchyAdminInventory: vi.fn(),
   getHierarchySelector: vi.fn(),
   updateHierarchyClient: vi.fn(),
   updateHierarchyProject: vi.fn(),
@@ -24,6 +25,7 @@ import {
   createHierarchyClient,
   createHierarchyProject,
   deleteHierarchyProject,
+  getHierarchyAdminInventory,
   getHierarchySelector,
   updateHierarchyClient,
   validateHierarchySelection,
@@ -71,6 +73,39 @@ describe("GET /api/forge/hierarchy", () => {
     getHierarchySelector.mockResolvedValue({ ok: false, httpStatus: 403, error: "No permission." });
     const response = await GET(new Request("https://test/api/forge/hierarchy"));
     expect(response.status).toBe(403);
+  });
+
+  it("returns the full management inventory for ?includeArchived=true", async () => {
+    const inventory = { ownerId: "owner_1", canManage: true, clients: [{ id: "c1", status: "archived" }] };
+    getHierarchyAdminInventory.mockResolvedValue({ ok: true, inventory });
+    const response = await GET(new Request("https://test/api/forge/hierarchy?includeArchived=true"));
+    expect(response.status).toBe(200);
+    expect(getHierarchyAdminInventory).toHaveBeenCalledWith(AUTH.supabaseClient, { ownerId: "owner_1" });
+    expect((await response.json()).inventory).toEqual(inventory);
+    expect(getHierarchySelector).not.toHaveBeenCalled();
+  });
+
+  it("lets a ?projectId= hint win over ?includeArchived=true", async () => {
+    const selection = { client: { id: "c1" }, site: { id: "s1" }, project: { id: "p1" } };
+    validateHierarchySelection.mockResolvedValue({ ok: true, selection });
+    const response = await GET(new Request("https://test/api/forge/hierarchy?projectId=p1&includeArchived=true"));
+    expect(response.status).toBe(200);
+    expect(validateHierarchySelection).toHaveBeenCalledWith(AUTH.supabaseClient, {
+      ownerId: "owner_1",
+      projectId: "p1",
+    });
+    expect(getHierarchyAdminInventory).not.toHaveBeenCalled();
+    expect(getHierarchySelector).not.toHaveBeenCalled();
+  });
+
+  it("maps the inventory service error status through (migration not applied -> 503)", async () => {
+    getHierarchyAdminInventory.mockResolvedValue({
+      ok: false,
+      httpStatus: 503,
+      error: "The hierarchy feature is not available yet.",
+    });
+    const response = await GET(new Request("https://test/api/forge/hierarchy?includeArchived=true"));
+    expect(response.status).toBe(503);
   });
 
   it("returns the 401 response when unauthenticated", async () => {
@@ -132,6 +167,24 @@ describe("PATCH /api/forge/hierarchy", () => {
     );
     expect(response.status).toBe(400);
     expect(updateHierarchyClient).not.toHaveBeenCalled();
+  });
+
+  it("forwards empty strings for cleared fields (null means unchanged, empty string clears)", async () => {
+    updateHierarchyClient.mockResolvedValue({
+      ok: true,
+      client: { id: "c1", name: "Acme", externalReference: null, notes: null },
+    });
+    const response = await PATCH(
+      new Request("https://test/api/forge/hierarchy", {
+        method: "PATCH",
+        body: JSON.stringify({ entity: "client", id: "c1", name: "Acme", externalReference: "", notes: "", status: "active", expectedVersion: 3, requestId: "req_1" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(updateHierarchyClient).toHaveBeenCalledWith(
+      AUTH.supabaseClient,
+      expect.objectContaining({ externalReference: "", notes: "" }),
+    );
   });
 });
 

@@ -16,6 +16,7 @@ import {
   deleteHierarchyClient,
   deleteHierarchyProject,
   deleteHierarchySite,
+  getHierarchyAdminInventory,
   getHierarchySelector,
   updateHierarchyClient,
   updateHierarchyProject,
@@ -65,6 +66,18 @@ export async function GET(request) {
       });
       if (!result.ok) return fail(result);
       return json({ selection: result.selection });
+    }
+    // Admin management inventory (migration 20261113050000): full
+    // identity records + versions + archived rows, plus the
+    // server-proven canManage flag. A ?projectId= hint above still
+    // wins when both are present — validation is for a selectable
+    // project, not the inventory.
+    if (url.searchParams.get("includeArchived") === "true") {
+      const result = await getHierarchyAdminInventory(authenticated.supabaseClient, {
+        ownerId: authenticated.effectiveOwnerId,
+      });
+      if (!result.ok) return fail(result);
+      return json({ inventory: result.inventory });
     }
     const result = await getHierarchySelector(authenticated.supabaseClient, {
       ownerId: authenticated.effectiveOwnerId,
