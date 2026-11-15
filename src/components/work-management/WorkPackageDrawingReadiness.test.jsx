@@ -5,7 +5,16 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache } from "@/hooks/swrCache";
 
-import WorkPackageDrawingReadiness, { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
+import WorkPackageDrawingReadiness, {
+  badgeClass,
+  formatReviewRoundLabel,
+  formatReviewEvent,
+  reviewEventDescription,
+  reviewOutcomeLabel,
+  fieldRecordStateLabel,
+  fieldArtifactReference,
+} from "./WorkPackageDrawingReadiness.jsx";
+import { PackagePageProvider } from "./packagePageContext.jsx";
 
 const SHA = "a".repeat(64);
 
@@ -93,7 +102,7 @@ function defaultReviews() {
   };
 }
 
-function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {}, hangRevisions = false, hangRevisionsAfterFirst = false, failRevisionsAfterFirst = false } = {}) {
+function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {}, hangRevisions = false, hangRevisionsAfterFirst = false, failRevisionsAfterFirst = false, hangReviews = false, readinessByWorkspace = null } = {}) {
   const calls = [];
   // PR #808 fix round: counts revisions GETs so a test can hang or
   // fail only the revalidation (second and later fetches) while the
@@ -110,7 +119,12 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
     calls.push({ url, method, body: options.body });
     const parsed = new URL(url, "https://test");
     if (parsed.pathname === "/api/work-packages/pkg_1/drawings/readiness") {
-      return { ok: true, json: async () => fixture };
+      // Slice-7 follow-ups (Finding 3, case 7): a scoped panel's
+      // readiness fetch carries ?workspace= / ?forgeProject=, so the
+      // mock can serve a different snapshot per scope — the two
+      // panels must never share one scope's counts.
+      const scoped = readinessByWorkspace?.[parsed.searchParams.get("workspace")];
+      return { ok: true, json: async () => scoped || fixture };
     }
     const match = parsed.pathname.match(/^\/api\/work-packages\/pkg_1\/drawings\/(dwg_\d+)\/(revisions|reviews|ifc-releases|field-redlines|artifacts|ifc-stage|retire)(?:\/(.+))?$/);
     if (match) {
@@ -163,11 +177,16 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
           json: async () => ({
             review: { id: reviewId, roundNo: 1, state: "OPEN", version: 1 },
             redlines: redlinesByReview[reviewId] || [],
-            events: [{ id: "forge_wpdre_1", eventType: "REVIEW_OPENED", createdAt: "2026-11-08T11:00:00Z" }],
+            events: [{ id: "forge_wpdre_1", eventType: "REVIEW_OPENED", occurredAt: "2026-11-08T11:00:00Z", afterState: "OPEN", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" }],
           }),
         };
       }
       if (resource === "reviews") {
+        // Slice-7 follow-ups (Finding 3): the per-drawing open-round
+        // count must say Loading… while this list is in flight and
+        // say unavailable when it fails — never a false 0.
+        if (hangReviews) return new Promise(() => {});
+        if (fail.reviews) return { ok: false, json: async () => ({ error: "Reviews could not be loaded." }) };
         return { ok: true, json: async () => ({ reviews: reviewsMap[drawingId] || [] }) };
       }
       if (resource === "revisions") {
@@ -229,7 +248,7 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
       if (resource === "field-redlines" && method === "POST") {
         if (fail.field) return { ok: false, json: async () => ({ error: "Could not capture the field hand-redline." }) };
         const body = JSON.parse(options.body);
-        const field = { id: "forge_wpdfr_9", drawingRevisionId: body.drawingRevisionId, artifactRef: body.artifactRef, sha256: body.sha256, fieldReason: body.fieldReason, recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-13T11:00:00Z" };
+        const field = { id: "forge_wpdfr_9", drawingRevisionId: body.drawingRevisionId, artifactRef: body.artifactRef, sha256: body.sha256, fieldReason: body.fieldReason, recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-13T11:00:00Z" };
         (fieldRedlinesMap[drawingId] = fieldRedlinesMap[drawingId] || []).push(field);
         return { ok: true, json: async () => ({ fieldRedline: field }) };
       }
@@ -345,7 +364,7 @@ describe("WorkPackageDrawingReadiness", () => {
     setupFetch();
     const { container } = await renderPanel();
     expect(container.textContent).toContain("Drawing readiness");
-    expect(container.textContent).toContain("Pending review");
+    expect(container.textContent).toContain("Drawings awaiting review");
     expect(container.textContent).toContain("IFA — In review");
     // An approved IFA review is never labelled issued IFC.
     expect(container.textContent).toContain("IFA — Approved; IFC not issued");
@@ -360,7 +379,7 @@ describe("WorkPackageDrawingReadiness", () => {
     await expandDrawing(container, "P-101");
     expect(container.textContent).toContain("Rev 1");
     expect(container.textContent).toContain("Rev 0");
-    expect(container.textContent).toContain("Round 1 — OPEN");
+    expect(container.textContent).toContain("Rev 0 (IFA) · Round 1 — Open");
     expect(container.textContent).toContain("No IFC release yet");
   });
 
@@ -368,13 +387,26 @@ describe("WorkPackageDrawingReadiness", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await act(async () => { findButton(container, "Round 1 — OPEN").click(); });
+    await act(async () => { findButton(container, "Rev 0 (IFA) · Round 1 — Open").click(); });
     await act(async () => {});
     expect(container.textContent).toContain("Move this nozzle 50 mm up.");
     expect(container.textContent).toContain("REQUIRED");
     expect(container.textContent).toContain("Decide this round");
     expect(container.textContent).toContain("Add a redline");
-    expect(container.textContent).toContain("REVIEW_OPENED");
+    // Slice-7 follow-ups (Finding 2): history in plain words — the
+    // occurredAt timestamp, the friendly event and outcome, the
+    // bound revision, and a truthful actor attribution. No raw enum,
+    // no actor ID fragment: the mock actor is Jason's own auth UUID
+    // ending in 43af922e — the fragment the live screenshot showed
+    // beside a REVIEW_* event under the old row.
+    const history = [...container.querySelectorAll("p")].find((p) => p.textContent === "History").parentElement;
+    expect(history.textContent).toContain("11/8/2026");
+    expect(history.textContent).toContain("Review opened");
+    expect(history.textContent).toContain("Rev 0 (IFA)");
+    expect(history.textContent).toContain("Recorded by a team member");
+    expect(history.textContent).not.toContain("REVIEW_OPENED");
+    expect(history.textContent).not.toContain("e1b22131");
+    expect(history.textContent).not.toContain("43af922e");
   });
 
   it("shows the field hand-redline disclaimer, never as an issued revision", async () => {
@@ -417,7 +449,7 @@ describe("WorkPackageDrawingReadiness", () => {
     const post = calls.find((c) => c.method === "POST" && c.url.includes("/reviews"));
     expect(post).toBeDefined();
     expect(JSON.parse(post.body).drawingRevisionId).toBe("forge_wpdrv_2");
-    expect(container.textContent).toContain("Round 1 — OPEN");
+    expect(container.textContent).toContain("Rev 1 (IFA) · Round 1 — Open");
     // The round is now open, so the form closes itself.
     expect(container.textContent).not.toContain("Open a review round");
   });
@@ -493,7 +525,7 @@ describe("WorkPackageDrawingReadiness", () => {
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
     expect(container.textContent).not.toContain("Open a review round");
-    expect(container.textContent).toContain("Round 1 — OPEN");
+    expect(container.textContent).toContain("Rev 0 (IFA) · Round 1 — Open");
   });
 });
 
@@ -513,7 +545,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     const notice = container.querySelector('[role="status"]');
     expect(notice).not.toBeNull();
     expect(notice.textContent).toBe("Review round opened for drawing P-101, Rev 1.");
-    expect(container.textContent).toContain("Round 1 — OPEN");
+    expect(container.textContent).toContain("Rev 1 (IFA) · Round 1 — Open");
   });
 
   it("shows the round's exact bound revision in the summary and detail, not the latest", async () => {
@@ -522,10 +554,10 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    const item = roundItem(container, "Round 1 — OPEN");
+    const item = roundItem(container, "Rev 0 (IFA) · Round 1 — Open");
     expect(item).not.toBeNull();
     expect(item.textContent).toContain("Drawing P-101 · Rev 0 (IFA)");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     expect(item.textContent).toContain("Revision under review: Rev 0 (IFA)");
     expect(item.textContent).not.toContain("Revision record unavailable");
   });
@@ -539,10 +571,10 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     });
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    const item = roundItem(container, "Round 1 — OPEN");
+    const item = roundItem(container, "Revision unavailable · Round 1");
     expect(item).not.toBeNull();
     expect(item.textContent).toContain("Revision record unavailable (ID ");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Revision unavailable · Round 1");
     expect(item.textContent).toContain("Revision under review: Revision record unavailable (ID ");
   });
 
@@ -550,7 +582,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
     await act(async () => { findButton(container, "Add redline").click(); });
     await act(async () => {});
@@ -564,7 +596,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { findButton(container, "Resolve").click(); });
     await act(async () => {});
     await act(async () => { findButton(container, "Save resolution").click(); });
@@ -580,7 +612,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
     await act(async () => { findButton(container, "Record decision").click(); });
     await act(async () => {});
@@ -600,7 +632,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     setupFetch({ fail: { decision: true } });
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     // A successful redline first, so a confirmation exists beside
     // the redline form.
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
@@ -701,7 +733,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
   it("confirms reconciling a field hand-redline with drawing and revision", async () => {
     setupFetch({
       fieldRedlinesMap: {
-        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
       },
     });
     const { container } = await renderPanel();
@@ -719,7 +751,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
   it("confirms retiring a field hand-redline without a new revision, still naming the original revision", async () => {
     setupFetch({
       fieldRedlinesMap: {
-        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
       },
     });
     const { container } = await renderPanel();
@@ -737,7 +769,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
   it("uses the truthful unavailable-ID fallback when the original marked-up revision is missing", async () => {
     setupFetch({
       fieldRedlinesMap: {
-        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_missing", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_missing", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
       },
     });
     const { container } = await renderPanel();
@@ -756,7 +788,7 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
   it("does not claim retirement when the selected reconciliation revision record is unavailable", async () => {
     setupFetch({
       fieldRedlinesMap: {
-        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
       },
     });
     const { container } = await renderPanel();
@@ -884,7 +916,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
     await act(async () => { findButton(container, "Add redline").click(); });
     await act(async () => {});
@@ -898,7 +930,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { findButton(container, "Resolve").click(); });
     await act(async () => { selectOption(container, "resolve-forge_wpdrl_1", "ACCEPTED_AS_NOTED"); });
     await act(async () => { findButton(container, "Save resolution").click(); });
@@ -918,7 +950,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
     await act(async () => { findButton(container, "Record decision").click(); });
     await act(async () => {});
@@ -937,7 +969,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { selectOption(container, "decision-forge_wpdrvw_1", "RETURN_TO_DRAFTER"); });
     await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Needs a rework."); });
     await act(async () => { findButton(container, "Record decision").click(); });
@@ -971,7 +1003,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
     setupFetch();
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
     await act(async () => { findButton(container, "Add redline").click(); });
     await act(async () => {});
@@ -1033,7 +1065,7 @@ describe("WorkPackageDrawingReadiness confirmation placement", () => {
   it("PLACEMENT-reconcile: the reconcile confirmation stays in the field item after its form closes", async () => {
     setupFetch({
       fieldRedlinesMap: {
-        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
       },
     });
     const { container } = await renderPanel();
@@ -1235,9 +1267,9 @@ describe("WorkPackageDrawingReadiness IFC revision code", () => {
     await expandDrawing(container, "P-101");
     // The matched release row still renders alongside the rounds.
     expect(releaseRows(container)[0]).toContain("IFC Rev 2");
-    expect(container.textContent).toContain("Round 1 — OPEN");
+    expect(container.textContent).toContain("Rev 0 (IFA) · Round 1 — Open");
     // Redline flow: same payload as before the fix.
-    await expandRound(container, "Round 1 — OPEN");
+    await expandRound(container, "Rev 0 (IFA) · Round 1 — Open");
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
     await act(async () => { findButton(container, "Add redline").click(); });
     await act(async () => {});
@@ -1397,5 +1429,295 @@ describe("WorkPackageDrawingReadiness IFC revision code", () => {
     expect(rows[1]).toContain("ID forge_wpdrv_ifc_9");
     expect(rows[1]).not.toContain("unavailable");
     expect(rows[1]).not.toContain("IFC revision loading…");
+  });
+});
+
+// Slice-7 follow-ups (brief 2026-11-15): duplicate Round 1 labels,
+// raw history identifiers, and the "Pending review" 0 beside an OPEN
+// round — all display-only, all proven against the real API shapes
+// (occurredAt / capturedAt from the mappers, never createdAt).
+describe("WorkPackageDrawingReadiness Slice-7 follow-ups", () => {
+  it("F1: the shared round formatter names the bound revision, never renumbers", () => {
+    const revisions = [
+      { id: "forge_wpdrv_2", revisionCode: "1", issuedAs: "IFA", retiredAt: null },
+      { id: "forge_wpdrv_1", revisionCode: "0", issuedAs: "IFA", retiredAt: null },
+    ];
+    const rev0Round = { roundNo: 1, state: "OPEN", drawingRevisionId: "forge_wpdrv_1" };
+    const rev1Round = { roundNo: 1, state: "APPROVED", drawingRevisionId: "forge_wpdrv_2" };
+    expect(formatReviewRoundLabel(rev0Round, revisions, true)).toBe("Rev 0 (IFA) · Round 1 — Open");
+    expect(formatReviewRoundLabel(rev1Round, revisions, true)).toBe("Rev 1 (IFA) · Round 1 — Approved");
+    // Same round number on two revisions is two distinct rounds, not a duplicate.
+    expect(formatReviewRoundLabel(rev0Round, revisions, true)).not.toBe(formatReviewRoundLabel(rev1Round, revisions, true));
+    // State words are human, never the raw enum.
+    expect(formatReviewRoundLabel({ ...rev0Round, state: "APPROVED_WITH_REDLINES" }, revisions, true)).toContain("Approved with redlines");
+    expect(formatReviewRoundLabel({ ...rev0Round, state: "RETURNED" }, revisions, true)).toContain("Returned to drafter");
+    expect(formatReviewRoundLabel({ ...rev0Round, state: "CANCELLED" }, revisions, true)).toContain("Cancelled");
+    // Loading and missing are distinct neutral states, no raw ID.
+    expect(formatReviewRoundLabel(rev0Round, [], false)).toBe("Revision loading… · Round 1");
+    expect(formatReviewRoundLabel({ ...rev0Round, drawingRevisionId: "forge_wpdrv_missing" }, revisions, true)).toBe("Revision unavailable · Round 1");
+  });
+
+  it("F1: two genuine Round 1s on Rev 0 and Rev 1 render distinctly", async () => {
+    setupFetch({
+      reviewsMap: {
+        dwg_1: [
+          { id: "forge_wpdrvw_1", roundNo: 1, state: "OPEN", version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-08T11:00:00Z" },
+          { id: "forge_wpdrvw_2", roundNo: 1, state: "APPROVED", version: 2, drawingRevisionId: "forge_wpdrv_2", openedAt: "2026-11-09T11:00:00Z" },
+        ],
+        dwg_2: [],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Rev 0 (IFA) · Round 1 — Open");
+    expect(container.textContent).toContain("Rev 1 (IFA) · Round 1 — Approved");
+    // Both buttons exist as separate elements.
+    expect([...container.querySelectorAll("button")].filter((b) => b.textContent.includes("Round 1")).length).toBe(2);
+    expect(container.textContent).toContain("Open review rounds: 1");
+    expect(container.textContent).not.toContain("Review numbering needs verification");
+  });
+
+  it("F1: two rounds sharing revision AND round number warn and stay distinct by opened date", async () => {
+    setupFetch({
+      reviewsMap: {
+        dwg_1: [
+          { id: "forge_wpdrvw_1", roundNo: 1, state: "OPEN", version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-08T11:00:00Z" },
+          { id: "forge_wpdrvw_9", roundNo: 1, state: "OPEN", version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-09T11:00:00Z" },
+        ],
+        dwg_2: [],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    // Both render with the same label — that IS the problem being
+    // surfaced, not hidden by renumbering — and the warning names it.
+    expect([...container.querySelectorAll("button")].filter((b) => b.textContent === "Rev 0 (IFA) · Round 1 — Open").length).toBe(2);
+    expect(container.textContent).toContain("Review numbering needs verification");
+    // The two records stay distinct by the dates they opened.
+    expect(container.textContent).toContain("opened 11/8/2026");
+    expect(container.textContent).toContain("opened 11/9/2026");
+    expect(container.textContent).toContain("Open review rounds: 2");
+  });
+
+  it("F1: the accepted-review IFC picker uses the same revision-qualified label", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    const select = container.querySelector("#ifc-rev-dwg_2");
+    expect(select).not.toBeNull();
+    const options = [...select.querySelectorAll("option")].map((o) => o.textContent);
+    expect(options).toContain("Rev B (IFA) · Round 1 — Approved");
+    expect(options).not.toContain("Round 1 — APPROVED");
+  });
+
+  it("F2: every Slice-7 event type and outcome has a plain-words form, unknowns fall back without raw tokens", () => {
+    expect(reviewEventDescription("REVIEW_OPENED")).toBe("Review opened");
+    expect(reviewEventDescription("REDLINE_ADDED")).toBe("Redline added");
+    expect(reviewEventDescription("REDLINE_RESOLVED")).toBe("Redline resolved");
+    expect(reviewEventDescription("REDLINE_RETIRED")).toBe("Redline retired");
+    expect(reviewEventDescription("REVIEW_APPROVED")).toBe("Review approved");
+    expect(reviewEventDescription("REVIEW_APPROVED_WITH_REDLINES")).toBe("Review approved with redlines");
+    expect(reviewEventDescription("REVIEW_RETURNED")).toBe("Review returned to drafter");
+    expect(reviewEventDescription("REVIEW_CANCELLED")).toBe("Review cancelled");
+    expect(reviewEventDescription("IFC_RELEASED")).toBe("IFC released");
+    expect(reviewEventDescription("IFC_RELEASE_RETIRED")).toBe("IFC release retired");
+    expect(reviewEventDescription("DRAWING_RETIRED")).toBe("Drawing retired");
+    expect(reviewEventDescription("FIELD_REDLINE_CAPTURED")).toBe("Field hand-redline captured");
+    expect(reviewEventDescription("FIELD_REDLINE_RECONCILED")).toBe("Field hand-redline reconciled");
+    expect(reviewEventDescription("SOMETHING_NEW")).toBe("Review activity recorded");
+    expect(reviewOutcomeLabel("OPEN")).toBe("Open");
+    expect(reviewOutcomeLabel("APPROVED_WITH_REDLINES")).toBe("Approved with redlines");
+    expect(reviewOutcomeLabel("RETURNED")).toBe("Returned to drafter");
+    expect(reviewOutcomeLabel("CANCELLED")).toBe("Cancelled");
+    expect(reviewOutcomeLabel("IFC")).toBe("Issued for construction");
+    expect(reviewOutcomeLabel("HISTORICAL_PENDING_RECONCILIATION")).toBe("Awaiting reconciliation");
+    expect(reviewOutcomeLabel("RECONCILED")).toBe("Reconciled");
+    expect(reviewOutcomeLabel("UNKNOWN_STATE")).toBeNull();
+    // A full row: timestamp from occurredAt, description, bound
+    // revision, outcome, attribution — no actor ID anywhere.
+    const row = formatReviewEvent(
+      { eventType: "REVIEW_APPROVED_WITH_REDLINES", occurredAt: "2026-11-09T12:00:00Z", afterState: "APPROVED_WITH_REDLINES", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      "Rev 0 (IFA)",
+    );
+    expect(row).toContain("11/9/2026");
+    expect(row).toContain("Review approved with redlines");
+    expect(row).toContain("Rev 0 (IFA)");
+    expect(row).toContain("Approved with redlines");
+    expect(row).toContain("Recorded by a team member");
+    expect(row).not.toContain("43af922e");
+    // A release event carries no round-revision label — the released
+    // revision is not the round's revision.
+    const releaseRow = formatReviewEvent(
+      { eventType: "IFC_RELEASED", occurredAt: "2026-11-13T12:00:00Z", afterState: "IFC", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      "Rev 0 (IFA)",
+    );
+    expect(releaseRow).toContain("IFC released");
+    expect(releaseRow).toContain("Issued for construction");
+    expect(releaseRow).not.toContain("Rev 0 (IFA)");
+    // Unknown event and outcome: friendly fallback, outcome omitted.
+    const unknownRow = formatReviewEvent(
+      { eventType: "FUTURE_EVENT", occurredAt: "2026-11-13T12:00:00Z", afterState: "FUTURE_STATE", actorId: "x" },
+      "Rev 0 (IFA)",
+    );
+    expect(unknownRow).toContain("Review activity recorded");
+    expect(unknownRow).not.toContain("FUTURE_EVENT");
+    expect(unknownRow).not.toContain("FUTURE_STATE");
+  });
+
+  it("F2: a field reference shows only when it reads as one — opaque IDs say the reference was recorded", () => {
+    expect(fieldArtifactReference("scan-1.pdf")).toBe("Reference: scan-1.pdf");
+    expect(fieldArtifactReference("e1b22131-9100-4a79-bbe2-b82d43af922e")).toBe("Reference recorded");
+    expect(fieldArtifactReference("a".repeat(64))).toBe("Reference recorded");
+    expect(fieldArtifactReference("")).toBeNull();
+    expect(fieldRecordStateLabel("HISTORICAL_PENDING_RECONCILIATION")).toBe("Awaiting reconciliation");
+    expect(fieldRecordStateLabel("RECONCILED")).toBe("Reconciled");
+    expect(fieldRecordStateLabel("RETIRED")).toBe("Retired");
+  });
+
+  it("F2: field hand-redline history shows a human state, the captured timestamp and a labelled reference", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const history = [...container.querySelectorAll("p")].find((p) => p.textContent === "Field hand-redline history").parentElement;
+    expect(history.textContent).toContain("Awaiting reconciliation");
+    // The timestamp comes from capturedAt: the old row read
+    // createdAt, which the mapper never exposes, and rendered "—".
+    expect(history.textContent).toContain("11/8/2026");
+    expect(history.textContent).toContain("Reference: scan-1.pdf");
+    expect(history.textContent).not.toContain("HISTORICAL_PENDING_RECONCILIATION");
+  });
+
+  it("F2: an opaque-UUID field reference renders 'Reference recorded' with no ID fragment", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "e1b22131-9100-4a79-bbe2-b82d43af922e", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const history = [...container.querySelectorAll("p")].find((p) => p.textContent === "Field hand-redline history").parentElement;
+    expect(history.textContent).toContain("Reference recorded");
+    expect(history.textContent).not.toContain("43af922e");
+    expect(history.textContent).not.toContain("e1b22131");
+  });
+
+  it("F3: the summary counts drawings awaiting review and spells out what it counts", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    expect(container.textContent).toContain("Drawings awaiting review");
+    expect(container.textContent).not.toContain("Pending review");
+    expect(container.textContent).toContain("Counts drawings, not review rounds");
+    expect(container.textContent).toContain("active IFC release does not count");
+    // The default fixture has pendingReview 1 and a dwg_1 badge of
+    // IFA — In review: the count and the badge agree, so no warning.
+    expect(container.textContent).not.toContain("Readiness summary may be out of date");
+  });
+
+  it("F3: a 0 count beside an IFA In review badge shows the stale-summary warning with a manual retry", async () => {
+    const fixture = readinessFixture();
+    fixture.counts = { ...fixture.counts, pendingReview: 0 };
+    setupFetch({ fixture });
+    const { container } = await renderPanel();
+    expect(container.textContent).toContain("Readiness summary may be out of date");
+    expect(findButton(container, "Retry")).not.toBeUndefined();
+  });
+
+  it("F3: an active-IFC drawing with a historical OPEN round counts 0 in the summary and 1 in its own open-round count", async () => {
+    const fixture = readinessFixture();
+    fixture.drawings = [{
+      ...fixture.drawings[0],
+      badge: "IFC — Issued for construction", constructionUsable: true,
+      activeIfcRelease: { id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_2", reviewId: "forge_wpdrvw_1", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+    }];
+    fixture.counts = { ...fixture.counts, pendingReview: 0, ifcReleased: 1 };
+    setupFetch({ fixture });
+    const { container } = await renderPanel();
+    // The 0 is correct here: an active IFC does not count — and no
+    // stale warning fires, because the badge is IFC, not IFA In review.
+    expect(container.textContent).not.toContain("Readiness summary may be out of date");
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Open review rounds: 1");
+  });
+
+  it("F3: the per-drawing open-round count says Loading… while the list is in flight, never a false 0", async () => {
+    setupFetch({ hangReviews: true });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Open review rounds: Loading…");
+    expect(container.textContent).not.toContain("Open review rounds: 0");
+  });
+
+  it("F3: a failed reviews fetch says the count is unavailable instead of 0", async () => {
+    setupFetch({ fail: { reviews: true } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Open review rounds: unavailable");
+    expect(container.textContent).not.toContain("Open review rounds: 0");
+  });
+
+  it("F3: a full 200-row reviews page labels the count as shown, not total", async () => {
+    // listReviews pages at 200 rows and returns no total: a full
+    // page means more rounds may exist beyond the loaded list.
+    const many = Array.from({ length: 200 }, (_, i) => ({
+      id: `forge_wpdrvw_${100 + i}`, roundNo: i + 1, state: i === 0 ? "OPEN" : "CANCELLED",
+      version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-08T11:00:00Z",
+    }));
+    setupFetch({ reviewsMap: { dwg_1: many, dwg_2: [] } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Open rounds shown: 1");
+    expect(container.textContent).not.toContain("Open review rounds: 1");
+  });
+
+  it("F3: below the 200-row cap the list is exhaustive, so the count reads as a total", async () => {
+    const many = Array.from({ length: 199 }, (_, i) => ({
+      id: `forge_wpdrvw_${100 + i}`, roundNo: i + 1, state: i === 0 ? "OPEN" : "CANCELLED",
+      version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-08T11:00:00Z",
+    }));
+    setupFetch({ reviewsMap: { dwg_1: many, dwg_2: [] } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    expect(container.textContent).toContain("Open review rounds: 1");
+    expect(container.textContent).not.toContain("Open rounds shown");
+  });
+
+  it("F3: two scopes of the same package keep their own readiness counts", async () => {
+    const fixtureA = readinessFixture();
+    const fixtureB = readinessFixture();
+    fixtureB.counts = { ...fixtureB.counts, pendingReview: 0 };
+    fixtureB.drawings = fixtureB.drawings.map((d) => ({ ...d, badge: "IFA — Approved; IFC not issued" }));
+    setupFetch({ readinessByWorkspace: { ws_a: fixtureA, ws_b: fixtureB } });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <>
+          <div data-scope="a">
+            <PackagePageProvider workspace="ws_a" forgeProject="proj_a">
+              <WorkPackageDrawingReadiness packageId="pkg_1" />
+            </PackagePageProvider>
+          </div>
+          <div data-scope="b">
+            <PackagePageProvider workspace="ws_b" forgeProject="proj_b">
+              <WorkPackageDrawingReadiness packageId="pkg_1" />
+            </PackagePageProvider>
+          </div>
+        </>,
+      );
+    });
+    await act(async () => {});
+    const scopeA = container.querySelector('[data-scope="a"]');
+    const scopeB = container.querySelector('[data-scope="b"]');
+    // Scope A still shows its own 1; scope B shows its own 0 and no
+    // stale warning, because its badges are not IFA In review.
+    expect(scopeA.textContent).toContain("Drawings awaiting review");
+    expect(scopeA.textContent.match(/Drawings awaiting review\s*1/)).not.toBeNull();
+    expect(scopeB.textContent.match(/Drawings awaiting review\s*0/)).not.toBeNull();
+    expect(scopeB.textContent).not.toContain("Readiness summary may be out of date");
   });
 });

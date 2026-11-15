@@ -10,6 +10,15 @@
 //                    redline, resolve, decision, issue, field, retire)
 //   no-open-round  — single P-101 drawing, no rounds (open a review round)
 //   pending-field  — default + one pending field hand-redline (reconcile)
+//   pending-field-opaque — default + one pending field hand-redline
+//                    whose reference is an opaque UUID (Finding 2: the
+//                    row must say "Reference recorded", never the ID)
+//   duplicate-rounds — P-101 with Rev 0 Round 1 OPEN + Rev 1 Round 1
+//                    APPROVED (Slice-7 follow-ups Finding 1)
+//   active-ifc     — P-101 with an active IFC release, a historical OPEN
+//                    round, and a 0 summary count (Finding 3 zero-correct)
+//   stale-summary  — default drawings but a 0 summary count beside the
+//                    IFA In review badge (Finding 3 inconsistent read)
 // The detail page uses the same mock (its endpoints are always served).
 //
 // Exposes window.__placementPatches (detail PATCH bodies, for the
@@ -93,17 +102,68 @@
   }
 
   var fixture = scenario === "no-open-round" ? singleDrawingFixture() : readinessFixture();
+  // Slice-7 follow-ups (Finding 3): active IFC + historical OPEN round
+  // with a correct 0 summary count — the badge is IFC, not IFA In
+  // review, so no stale-summary warning may fire.
+  if (scenario === "active-ifc") {
+    fixture.drawings[0].badge = "IFC — Issued for construction";
+    fixture.drawings[0].constructionUsable = true;
+    fixture.drawings[0].activeIfcRelease = { id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_2", reviewId: "forge_wpdrvw_1", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true };
+    fixture.counts = Object.assign({}, fixture.counts, { pendingReview: 0, ifcReleased: 1 });
+  }
+  // Slice-7 follow-ups (Finding 3): a 0 count beside an IFA In review
+  // badge is an inconsistent read — the stale-summary warning must show.
+  if (scenario === "stale-summary") {
+    fixture.counts = Object.assign({}, fixture.counts, { pendingReview: 0 });
+  }
   var revisionsMap = defaultRevisions();
   var reviewsMap = scenario === "no-open-round"
     ? { dwg_1: [] }
-    : defaultReviews();
-  var releasesMap = {};
-  var fieldRedlinesMap = scenario === "pending-field"
-    ? { dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }] }
+    : scenario === "duplicate-rounds"
+      ? {
+          dwg_1: [
+            { id: "forge_wpdrvw_1", roundNo: 1, state: "OPEN", version: 1, drawingRevisionId: "forge_wpdrv_1", openedAt: "2026-11-08T11:00:00Z" },
+            { id: "forge_wpdrvw_4", roundNo: 1, state: "APPROVED", version: 2, drawingRevisionId: "forge_wpdrv_2", openedAt: "2026-11-09T11:00:00Z" },
+          ],
+          dwg_2: [{ id: "forge_wpdrvw_2", roundNo: 1, state: "APPROVED", version: 2, drawingRevisionId: "forge_wpdrv_9", openedAt: "2026-11-09T11:00:00Z" }],
+        }
+      : defaultReviews();
+  var releasesMap = scenario === "active-ifc"
+    ? { dwg_1: [{ id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_2", reviewId: "forge_wpdrvw_1", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true }] }
     : {};
+  var fieldRedlinesMap = scenario === "pending-field"
+    ? { dwg_1: [
+        { id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-08T12:00:00Z" },
+      ] }
+    : scenario === "pending-field-opaque"
+      ? { dwg_1: [
+          { id: "forge_wpdfr_2", drawingRevisionId: "forge_wpdrv_1", artifactRef: "e1b22131-9100-4a79-bbe2-b82d43af922e", sha256: "e".repeat(64), fieldReason: "Marked up on site, reference filed as an ID.", recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-09T12:00:00Z" },
+        ] }
+      : {};
   var artifactsMap = {};
   var redlinesByReview = {
     forge_wpdrvw_1: [{ id: "forge_wpdrl_1", comment: "Move this nozzle 50 mm up.", severity: "REQUIRED", resolution: "OPEN", version: 1, anchorPage: 2 }],
+  };
+  // Slice-7 follow-ups (Finding 2): the review-detail events carry
+  // the REAL mapper shape — occurredAt (never createdAt), afterState,
+  // and a real actor UUID (Jason's own auth id, ending 43af922e: the
+  // fragment the live screenshot showed beside a REVIEW_* event under
+  // the old row). The history must render friendly words, never the
+  // raw enum or any fragment of that UUID.
+  var eventsByReview = {
+    forge_wpdrvw_1: [
+      { id: "forge_wpdre_1", eventType: "REVIEW_OPENED", occurredAt: "2026-11-08T11:00:00Z", afterState: "OPEN", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      { id: "forge_wpdre_2", eventType: "REDLINE_ADDED", occurredAt: "2026-11-08T12:00:00Z", afterState: "OPEN", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      { id: "forge_wpdre_3", eventType: "REDLINE_RESOLVED", occurredAt: "2026-11-09T10:00:00Z", afterState: "RESOLVED", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+    ],
+    forge_wpdrvw_2: [
+      { id: "forge_wpdre_4", eventType: "REVIEW_OPENED", occurredAt: "2026-11-09T11:00:00Z", afterState: "OPEN", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      { id: "forge_wpdre_5", eventType: "REVIEW_APPROVED", occurredAt: "2026-11-09T12:00:00Z", afterState: "APPROVED", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+    ],
+    forge_wpdrvw_4: [
+      { id: "forge_wpdre_6", eventType: "REVIEW_OPENED", occurredAt: "2026-11-09T11:00:00Z", afterState: "OPEN", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+      { id: "forge_wpdre_7", eventType: "REVIEW_APPROVED", occurredAt: "2026-11-09T12:00:00Z", afterState: "APPROVED", actorId: "e1b22131-9100-4a79-bbe2-b82d43af922e" },
+    ],
   };
 
   var BASE_PKG = {
@@ -196,7 +256,7 @@
         return ok({
           review: { id: detailId, roundNo: 1, state: "OPEN", version: 1 },
           redlines: redlinesByReview[detailId] || [],
-          events: [{ id: "forge_wpdre_1", eventType: "REVIEW_OPENED", createdAt: "2026-11-08T11:00:00Z" }],
+          events: eventsByReview[detailId] || [],
         });
       }
       if (resource === "reviews") {
@@ -237,7 +297,7 @@
       }
       if (resource === "field-redlines" && method === "POST") {
         var fieldBody = JSON.parse(options.body);
-        var newField = { id: "forge_wpdfr_9", drawingRevisionId: fieldBody.drawingRevisionId, artifactRef: fieldBody.artifactRef, sha256: fieldBody.sha256, fieldReason: fieldBody.fieldReason, recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-13T11:00:00Z" };
+        var newField = { id: "forge_wpdfr_9", drawingRevisionId: fieldBody.drawingRevisionId, artifactRef: fieldBody.artifactRef, sha256: fieldBody.sha256, fieldReason: fieldBody.fieldReason, recordState: "HISTORICAL_PENDING_RECONCILIATION", capturedAt: "2026-11-13T11:00:00Z" };
         (fieldRedlinesMap[drawingId] = fieldRedlinesMap[drawingId] || []).push(newField);
         return ok({ fieldRedline: newField });
       }

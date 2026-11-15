@@ -78,6 +78,127 @@ function revisionLabel(revisions, revisionId) {
   return `Rev ${revision.revisionCode} (${revision.issuedAs})`;
 }
 
+// Slice-7 follow-ups (Finding 1): one shared pure formatter for a
+// review round's label, used by the round list button and the
+// accepted-review IFC picker. round_no is per drawing revision
+// (unique(owner_id, drawing_revision_id, round_no)), so two
+// revisions can each correctly have Round 1 — the label must name
+// the bound revision or the two rounds read as duplicates. The
+// source of truth is review.drawingRevisionId matched by exact
+// revision.id; never the latest revision, never renumbering by list
+// position. Loading and missing are distinct neutral states with no
+// raw ID in ordinary UI. The state is the closed migration enum
+// (OPEN, RETURNED, APPROVED, APPROVED_WITH_REDLINES, CANCELLED).
+export function reviewStateLabel(state) {
+  if (state === "OPEN") return "Open";
+  if (state === "APPROVED") return "Approved";
+  if (state === "APPROVED_WITH_REDLINES") return "Approved with redlines";
+  if (state === "RETURNED") return "Returned to drafter";
+  if (state === "CANCELLED") return "Cancelled";
+  return state;
+}
+
+export function formatReviewRoundLabel(review, revisions, revisionsReady) {
+  const label = revisionLabel(revisions, review.drawingRevisionId);
+  if (label) return `${label} · Round ${review.roundNo} — ${reviewStateLabel(review.state)}`;
+  if (!revisionsReady) return `Revision loading… · Round ${review.roundNo}`;
+  return `Revision unavailable · Round ${review.roundNo}`;
+}
+
+// Slice-7 follow-ups (Finding 2): review history in plain words.
+// The event enum is the complete check-constraint list from the
+// Slice-7 migration (forge_wp_drawing_review_events.event_type).
+// The API returns actor IDs but no resolved actor display name, and
+// actor_id is always a real auth user id (auth.uid()) — never a
+// system marker — so no event is ever positively identified as
+// automatic: every row says "Recorded by a team member" rather than
+// inventing a name or showing a truncated ID as if it were a person.
+const REVIEW_EVENT_DESCRIPTIONS = {
+  REVIEW_OPENED: "Review opened",
+  REDLINE_ADDED: "Redline added",
+  REDLINE_RESOLVED: "Redline resolved",
+  REDLINE_RETIRED: "Redline retired",
+  REVIEW_APPROVED: "Review approved",
+  REVIEW_APPROVED_WITH_REDLINES: "Review approved with redlines",
+  REVIEW_RETURNED: "Review returned to drafter",
+  REVIEW_CANCELLED: "Review cancelled",
+  IFC_RELEASED: "IFC released",
+  IFC_RELEASE_RETIRED: "IFC release retired",
+  DRAWING_RETIRED: "Drawing retired",
+  FIELD_REDLINE_CAPTURED: "Field hand-redline captured",
+  FIELD_REDLINE_RECONCILED: "Field hand-redline reconciled",
+};
+
+export function reviewEventDescription(eventType) {
+  return REVIEW_EVENT_DESCRIPTIONS[eventType] || "Review activity recorded";
+}
+
+// Human outcome from an event's after_state. Unknown or absent
+// outcomes are omitted, never rendered as a raw enum token.
+export function reviewOutcomeLabel(afterState) {
+  if (afterState === "OPEN") return "Open";
+  if (afterState === "APPROVED") return "Approved";
+  if (afterState === "APPROVED_WITH_REDLINES") return "Approved with redlines";
+  if (afterState === "RETURNED") return "Returned to drafter";
+  if (afterState === "CANCELLED") return "Cancelled";
+  if (afterState === "IFC") return "Issued for construction";
+  if (afterState === "ACTIVE") return "Active";
+  if (afterState === "RETIRED") return "Retired";
+  if (afterState === "RESOLVED") return "Resolved";
+  if (afterState === "ACCEPTED_AS_NOTED") return "Accepted as noted";
+  if (afterState === "HISTORICAL_PENDING_RECONCILIATION") return "Awaiting reconciliation";
+  if (afterState === "RECONCILED") return "Reconciled";
+  return null;
+}
+
+// Events scoped to the round's own revision: only these may carry
+// the round's bound revision label. Release, retirement and field
+// events are about a different revision (or none), so labelling them
+// with the round's revision would misread — e.g. "IFC released ·
+// Rev 0 (IFA)" next to an IFC release.
+const REVISION_SCOPED_EVENT_TYPES = new Set([
+  "REVIEW_OPENED", "REDLINE_ADDED", "REDLINE_RESOLVED", "REDLINE_RETIRED",
+  "REVIEW_APPROVED", "REVIEW_APPROVED_WITH_REDLINES", "REVIEW_RETURNED", "REVIEW_CANCELLED",
+]);
+
+// One history row: timestamp from occurredAt (the mapper exposes
+// occurredAt, never createdAt — the old row read createdAt and
+// rendered a blank timestamp), plain-language description, the
+// round's bound revision label where the event supports one, human
+// outcome, and a truthful actor attribution. No payload JSON is
+// ever dumped, and no actor ID is ever shown.
+export function formatReviewEvent(event, boundRevisionLabel) {
+  const parts = [`${formatWhen(event.occurredAt)} — ${reviewEventDescription(event.eventType)}`];
+  if (boundRevisionLabel && REVISION_SCOPED_EVENT_TYPES.has(event.eventType)) parts.push(boundRevisionLabel);
+  const outcome = reviewOutcomeLabel(event.afterState);
+  if (outcome) parts.push(outcome);
+  parts.push("Recorded by a team member");
+  return parts.join(" · ");
+}
+
+// Slice-7 follow-ups (Finding 2): field hand-redline history in
+// plain words. record_state is the migration's closed enum
+// (HISTORICAL_PENDING_RECONCILIATION, RECONCILED, RETIRED).
+export function fieldRecordStateLabel(state) {
+  if (state === "HISTORICAL_PENDING_RECONCILIATION") return "Awaiting reconciliation";
+  if (state === "RECONCILED") return "Reconciled";
+  if (state === "RETIRED") return "Retired";
+  return "Recorded";
+}
+
+// A scan/photo reference is human-entered text ("scan-1.pdf") —
+// show it only when it reads as one. A UUID or a long hex hash is
+// an opaque identifier, not a reference a person would recognise:
+// say the reference was recorded, with no ID fragment.
+export function fieldArtifactReference(ref) {
+  if (!ref || !String(ref).trim()) return null;
+  const value = String(ref).trim();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const longHex = /^[0-9a-f]{32,}$/i;
+  if (uuid.test(value) || longHex.test(value)) return "Reference recorded";
+  return `Reference: ${value}`;
+}
+
 // Slice-7 IFC revision-code fix: resolve an IFC release's revision
 // code from the same drawing's already-loaded revisions list, by the
 // persisted ifcRevisionId. The read model (toCamelRelease) never
@@ -216,7 +337,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
         : `Review decision recorded for drawing ${drawingNumber}: ${decisionOutcomeLabel(decision)}.`);
       setReason("");
       await refresh();
-      if (onChanged) onChanged();
+      if (onChanged) await onChanged();
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -244,7 +365,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
         : `Redline added to drawing ${drawingNumber}.`);
       setRedlineForm({ comment: "", severity: "REQUIRED", anchorPage: "", anchorX: "", anchorY: "" });
       await refresh();
-      if (onChanged) onChanged();
+      if (onChanged) await onChanged();
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -271,7 +392,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
         : `Redline ${verb} for drawing ${drawingNumber}.`);
       setResolvingId(null);
       await refresh();
-      if (onChanged) onChanged();
+      if (onChanged) await onChanged();
     } catch (e) {
       setError(e.message);
     } finally { setBusy(false); }
@@ -281,7 +402,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
     <li className="rounded border border-slate-200 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="text-left font-medium text-slate-900 underline decoration-slate-300 underline-offset-2" onClick={() => setExpanded((v) => !v)}>
-          Round {review.roundNo} — {review.state}
+          {formatReviewRoundLabel(review, revisions, revisionsReady)}
         </button>
         <span className="text-xs text-slate-500">
           opened {formatWhen(review.openedAt)}
@@ -432,8 +553,19 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
             <div>
               <p className="text-xs font-medium text-slate-700">History</p>
               <ul className="mt-1 space-y-1 text-xs text-slate-500">
+                {/* Slice-7 follow-ups (Finding 2): history in plain
+                    words — timestamp from occurredAt, friendly event
+                    and outcome, no actor ID. Searched 2026-11-15:
+                    no in-scope template emits "Review round <id>" —
+                    the only "Review round" strings are the
+                    open-review confirmation and the section heading.
+                    The live screenshot's "43af922e" fragment matches
+                    the old row's truncated actor ID (shortId of the
+                    actor's auth UUID) shown beside a REVIEW_* event
+                    in this same list; that row is what this rewrite
+                    replaces. */}
                 {events.map((event) => (
-                  <li key={event.id}>{formatWhen(event.createdAt)} — {event.eventType}{event.actorId ? ` · ${shortId(event.actorId)}` : ""}</li>
+                  <li key={event.id}>{formatReviewEvent(event, boundLabel)}</li>
                 ))}
               </ul>
             </div>
@@ -513,9 +645,14 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
     { ttlMs: 10_000 },
   );
-  const { data: reviewsData, refresh: refreshReviews } = useStaleWhileRevalidate(
+  const { data: reviewsData, error: reviewsError, isLoading: reviewsLoading, refresh: refreshReviews } = useStaleWhileRevalidate(
     expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "reviews") : null,
-    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`),
+    // Slice-7 follow-ups (Finding 3): ask for the full list at the
+    // endpoint's 200-row cap. The response carries no total, so a
+    // full page is the only signal more rounds may exist beyond the
+    // loaded list — the count then reads "Open rounds shown", not
+    // "Open review rounds". Below the cap the list is exhaustive.
+    () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews?limit=200`),
     { ttlMs: 10_000 },
   );
   const { data: releasesData, refresh: refreshReleases } = useStaleWhileRevalidate(
@@ -582,9 +719,37 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     || (row.latestReview?.state === "OPEN" ? row.latestReview : null);
   const approvedReview = reviews.find((r) => r.state === "APPROVED" || r.state === "APPROVED_WITH_REDLINES");
 
+  // Slice-7 follow-ups (Finding 3): this drawing's own open-round
+  // count, from its actually loaded reviews — never a package-wide
+  // sum, never a local estimate of the SQL snapshot count. A
+  // loading list is never a false 0, and a failed fetch says so.
+  const openRoundCount = reviews.filter((r) => r.state === "OPEN").length;
+  const reviewsPageFull = reviews.length >= 200;
+  const openRoundText = reviewsLoading
+    ? "Open review rounds: Loading…"
+    : reviewsError && !reviewsData
+      ? `Open review rounds: unavailable — ${reviewsError}`
+      : `${reviewsPageFull ? "Open rounds shown" : "Open review rounds"}: ${openRoundCount}${reviewsError ? " (may be out of date)" : ""}`;
+
+  // Slice-7 follow-ups (Finding 1): two genuine rounds sharing the
+  // same revision AND round number are an upstream data issue, not
+  // something to hide by client renumbering. Show both records
+  // distinctly by their opened timestamps (already rendered beside
+  // each round) and surface a non-destructive warning.
+  const duplicateRoundNumbers = Object.values(
+    reviews.reduce((groups, review) => {
+      const key = `${review.drawingRevisionId}:${review.roundNo}`;
+      (groups[key] = groups[key] || []).push(review);
+      return groups;
+    }, {}),
+  ).some((group) => group.length > 1);
+
   async function refreshAll() {
     await Promise.all([refreshRevisions(), refreshReviews(), refreshReleases(), refreshField(), refreshArtifacts()]);
-    if (onChanged) onChanged();
+    // Slice-7 follow-ups (Finding 3): explicitly await the scoped
+    // parent readiness cache after a mutation, so the summary counts
+    // reflect the subsequent GET instead of the pre-mutation snapshot.
+    if (onChanged) await onChanged();
   }
 
   async function submitStage(event) {
@@ -795,6 +960,12 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
           </div>
           <div>
             <p className="text-xs font-medium text-slate-700">Review rounds</p>
+            <p className="mt-1 text-xs text-slate-600">{openRoundText}</p>
+            {duplicateRoundNumbers && (
+              <p className="mt-1 text-xs text-amber-700">
+                Review numbering needs verification — two rounds share the same revision and round number. They are shown separately by the dates they opened.
+              </p>
+            )}
             {reviews.length === 0 ? (
               <p className="mt-1 text-xs text-slate-500">No review rounds yet.</p>
             ) : (
@@ -899,7 +1070,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                       onChange={(e) => setIfcForm((f) => ({ ...f, reviewId: e.target.value }))} required>
                       <option value="">Select a review…</option>
                       {reviews.filter((r) => r.state === "APPROVED" || r.state === "APPROVED_WITH_REDLINES").map((review) => (
-                        <option key={review.id} value={review.id}>Round {review.roundNo} — {review.state}</option>
+                        <option key={review.id} value={review.id}>{formatReviewRoundLabel(review, revisions, revisionsData != null)}</option>
                       ))}
                     </select>
                   </div>
@@ -945,7 +1116,13 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                     <span className="font-medium text-slate-900">Field hand-redline — historical record; not an issued IFC revision</span>
                     <span className="block">{field.fieldReason}</span>
                     <span className="text-slate-500">
-                      {field.recordState} · {formatWhen(field.createdAt)} · {shortId(field.artifactRef)}
+                      {/* Slice-7 follow-ups (Finding 2): human state
+                          and reference, no raw enum or ID fragment.
+                          Found while rewriting this row: the mapper
+                          exposes capturedAt, never createdAt, so the
+                          old row rendered a blank timestamp live —
+                          the timestamp now reads the real field. */}
+                      {fieldRecordStateLabel(field.recordState)} · {formatWhen(field.capturedAt)} · {fieldArtifactReference(field.artifactRef) ?? "Reference recorded"}
                     </span>
                     {field.recordState === "HISTORICAL_PENDING_RECONCILIATION" && (
                       <form className="mt-2 space-y-2" onSubmit={(e) => submitReconcile(e, field)}>
@@ -1055,6 +1232,14 @@ export default function WorkPackageDrawingReadiness({ packageId, onNavigateToTab
     returned: 0, openRequiredRedlines: 0, pendingFieldRedlines: 0,
   };
 
+  // Slice-7 follow-ups (Finding 3): the summary count and the
+  // per-drawing badges come from different reads of the same data,
+  // so they can disagree — a badge of IFA In review beside a 0
+  // count is an inconsistent read, not a settled fact. Surface it
+  // with a manual retry; never auto-retry, never fabricate a count.
+  const summaryMayBeStale = !isLoading && data != null && counts.pendingReview === 0 &&
+    drawings.some((row) => row.badge === "IFA — In review" || row.badge === "IFA — Awaiting review");
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Drawing readiness</h2>
@@ -1079,7 +1264,7 @@ export default function WorkPackageDrawingReadiness({ packageId, onNavigateToTab
               <dd className="text-base font-semibold text-green-700">{counts.ifcReleased}</dd>
             </div>
             <div className="rounded border border-slate-100 p-2">
-              <dt className="text-slate-500">Pending review</dt>
+              <dt className="text-slate-500">Drawings awaiting review</dt>
               <dd className="text-base font-semibold text-amber-700">{counts.pendingReview}</dd>
             </div>
             <div className="rounded border border-slate-100 p-2">
@@ -1095,6 +1280,16 @@ export default function WorkPackageDrawingReadiness({ packageId, onNavigateToTab
               <dd className="text-base font-semibold text-amber-700">{counts.pendingFieldRedlines}</dd>
             </div>
           </dl>
+          <p className="mt-2 text-xs text-slate-500">
+            Counts drawings, not review rounds: non-retired, non-withdrawn drawings currently in IFA In review or Awaiting review.
+            A drawing with an active IFC release does not count, even if an older round is still open — see the open-round count under each drawing below.
+          </p>
+          {summaryMayBeStale && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 p-2">
+              <p className="text-xs text-amber-800">Readiness summary may be out of date — a drawing shows IFA In review but the count is 0.</p>
+              <button type="button" className={btnGhost} onClick={() => refresh()}>Retry</button>
+            </div>
+          )}
           <ul className="mt-3 space-y-2">
             {drawings.map((row) => (
               <DrawingReviewWorkspace key={row.drawingId} packageId={packageId} row={row} onChanged={refresh} onNavigateToTab={onNavigateToTab} />
