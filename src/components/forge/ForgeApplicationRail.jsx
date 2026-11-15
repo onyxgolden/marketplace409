@@ -379,8 +379,10 @@ export default function ForgeApplicationRail({
                in the mobile header. */}
             <AccountMenu tone="light" />
 
-            {/* Touch/mouse path to the command palette -- no keyboard on a phone. */}
-            <CommandPaletteTrigger tone="light" />
+            {/* Touch/mouse path to the command palette -- no keyboard on a phone.
+               tooltipSide="left": the trigger sits at the header's right edge, so
+               its hover tooltip must hang left into the viewport (D13). */}
+            <CommandPaletteTrigger tone="light" tooltipSide="left" />
 
             <ThemeToggle
               compact
