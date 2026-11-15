@@ -166,6 +166,36 @@ test.describe("hierarchy manager — tree, confirmations, archive/delete", () =>
     await assertNoOverflow(page);
   });
 
+  test("clearing a site field persists empty and a second save writes nothing (P1, PR #811 review)", async ({ page }) => {
+    await openManager(page);
+    // fetch is mocked in-page (no network request exists), so read the
+    // PATCH bodies from the mock's recorded calls: the clear must send
+    // "" (null means "unchanged" to the RPC and silently keeps the
+    // old value).
+    const patchBodies = () =>
+      page.evaluate(() =>
+        window.__placementCalls.filter((c) => c.method === "PATCH").map((c) => c.body),
+      );
+    await page.getByRole("button", { name: "Edit Plant 1" }).click();
+    const city = page.getByLabel("City");
+    await expect(city).toHaveValue("Beaumont");
+    await city.fill("");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const notice = page.getByText("Plant 1 saved.");
+    await expect(notice).toBeVisible();
+    await scrollAndAssert(page, notice, "clear-city confirmation");
+    const patches = await patchBodies();
+    expect(patches, "one PATCH for the clear").toHaveLength(1);
+    expect(patches[0].city, "the clear sends an empty string, not null").toBe("");
+    // A true clear, not a false success: the reload repopulates empty.
+    await expect(city).toHaveValue("");
+    // A second Save is a truthful no-op — the clear is not re-sent.
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("No changes to Plant 1 — nothing needed saving.")).toBeVisible();
+    expect(await patchBodies(), "no second PATCH for the no-op save").toHaveLength(1);
+    await assertNoOverflow(page);
+  });
+
   test("creating a site then a project under it confirms and joins the tree", async ({ page }) => {
     await openManager(page);
     await page.getByRole("button", { name: "New site under Acme" }).click();

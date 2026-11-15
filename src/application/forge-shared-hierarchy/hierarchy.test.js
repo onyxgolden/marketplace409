@@ -10,6 +10,8 @@ import {
   getHierarchySelector,
   mapHierarchyRpcError,
   updateHierarchyClient,
+  updateHierarchyProject,
+  updateHierarchySite,
   validateHierarchySelection,
 } from "./hierarchy.js";
 
@@ -323,5 +325,74 @@ describe("updateHierarchyClient / deleteHierarchyProject", () => {
       ownerId: OWNER, projectId: "p1", expectedVersion: 3, requestId: "req_1",
     });
     expect(result).toEqual({ ok: true, deleted: true, id: "p1" });
+  });
+});
+
+describe("updateHierarchy* clear semantics (P1, PR #811 review)", () => {
+  // The RPC contract is null = unchanged, "" = clear. The service
+  // must forward an empty string verbatim — coercing it to null here
+  // would silently keep the old value while the UI says "saved".
+  // (The component was the defective layer; these tests pin the
+  // service side of the contract so a future refactor cannot re-break
+  // it. The migration battery proves "" persists as NULL in real SQL.)
+  it("client update forwards empty strings for externalReference and notes", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "c1", name: "Acme", external_reference: null, status: "active", notes: null, version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchyClient(db, {
+      ownerId: OWNER, clientId: "c1", name: "Acme", externalReference: "", notes: "",
+      expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_client_update", expect.objectContaining({
+      p_external_reference: "",
+      p_notes: "",
+    }));
+  });
+
+  it("site update forwards empty strings for site type and address fields", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "s1", client_id: "c1", name: "Plant 1", site_type: null, address_line1: null, address_line2: null, city: null, region: null, postal_code: null, country_code: null, status: "active", version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchySite(db, {
+      ownerId: OWNER, siteId: "s1", clientId: "c1", name: "Plant 1", siteType: "",
+      addressLine1: "", addressLine2: "", city: "", region: "", postalCode: "",
+      countryCode: "", expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_site_update", expect.objectContaining({
+      p_site_type: "",
+      p_address_line1: "",
+      p_address_line2: "",
+      p_city: "",
+      p_region: "",
+      p_postal_code: "",
+      p_country_code: "",
+    }));
+  });
+
+  it("project update forwards empty strings for code, description, type, and dates", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: { id: "p1", site_id: "s1", name: "TA 27", project_code: null, description: null, project_type: null, planned_start: null, planned_finish: null, status: "active", version: 2, created_by: "u", updated_by: "u", created_at: "t", updated_at: "t" },
+      error: null,
+    });
+    const result = await updateHierarchyProject(db, {
+      ownerId: OWNER, projectId: "p1", siteId: "s1", name: "TA 27", projectCode: "",
+      description: "", projectType: "", plannedStart: "", plannedFinish: "",
+      expectedVersion: 1, requestId: "req_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_project_update", expect.objectContaining({
+      p_project_code: "",
+      p_description: "",
+      p_project_type: "",
+      p_planned_start: "",
+      p_planned_finish: "",
+    }));
   });
 });

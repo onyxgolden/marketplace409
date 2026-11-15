@@ -22,7 +22,8 @@
 // The detail page uses the same mock (its endpoints are always served).
 //
 // Exposes window.__placementPatches (detail PATCH bodies, for the
-// no-change-save assertion) and window.__placementCalls (all calls).
+// no-change-save assertion) and window.__placementCalls (all calls,
+// each with the parsed JSON body when the call sent one).
 (function () {
   var scenario = new URLSearchParams(location.search).get("scenario") || "default";
   var SHA = "a".repeat(64);
@@ -283,7 +284,14 @@
   window.fetch = async function (url, options) {
     options = options || {};
     var method = options.method || "GET";
-    window.__placementCalls.push({ url: String(url), method: method });
+    // Record the parsed JSON body when the call sent one, so tests can
+    // assert what a PATCH actually carried ("" vs null matters: the
+    // hierarchy RPC reads null as "unchanged" and "" as "clear").
+    var callBody = null;
+    if (options.body) {
+      try { callBody = JSON.parse(options.body); } catch (e) { callBody = null; }
+    }
+    window.__placementCalls.push({ url: String(url), method: method, body: callBody });
     var parsed;
     try {
       parsed = new URL(String(url), location.origin);

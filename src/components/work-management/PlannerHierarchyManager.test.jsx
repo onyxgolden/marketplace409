@@ -475,4 +475,92 @@ describe("PlannerHierarchyManager", () => {
     expect(links).toContain("/forge/work?forgeProject=unassigned");
     expect(links).toContain("/forge/work/admin");
   });
+
+  // P1 (PR #811 review): clearing an editable optional field must
+  // send the explicit empty string, not null — the RPC contract is
+  // null = unchanged, "" = clear. Sending null silently kept the old
+  // value while the UI still said "saved".
+  it("clearing client notes sends an empty string and the reload shows the field empty", async () => {
+    const tree = structuredClone(BASE_TREE);
+    tree.clients[0].notes = "Old note";
+    const { calls } = stubFetch({ tree });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByLabel(container, "Edit Acme"));
+    const notes = container.querySelector("#hierarchy-form-notes");
+    expect(notes.value).toBe("Old note");
+    setInputValue(notes, "");
+    click(buttonByText(container, "Save"));
+    await flush();
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch).toBeDefined();
+    expect(patch.body.notes).toBe("");
+    expect(patch.body.externalReference).toBe("ACME-1");
+    expect(container.textContent).toContain("Acme saved.");
+    // A true clear, not a false success: the reload repopulates empty.
+    expect(container.querySelector("#hierarchy-form-notes").value).toBe("");
+    // A second Save is a truthful no-op — the clear is not re-sent.
+    const patchCount = calls.filter((c) => c.method === "PATCH").length;
+    click(buttonByText(container, "Save"));
+    await flush();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(patchCount);
+    expect(container.textContent).toContain("No changes to Acme — nothing needed saving.");
+  });
+
+  it("clearing site city and type sends empty strings and the reload shows them empty", async () => {
+    const tree = structuredClone(BASE_TREE);
+    tree.clients[0].sites[0].city = "Beaumont";
+    tree.clients[0].sites[0].siteType = "industrial";
+    const { calls } = stubFetch({ tree });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByLabel(container, "Edit Plant 1"));
+    const city = container.querySelector("#hierarchy-form-city");
+    expect(city.value).toBe("Beaumont");
+    setInputValue(city, "");
+    setInputValue(container.querySelector("#hierarchy-form-site-type"), "");
+    click(buttonByText(container, "Save"));
+    await flush();
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch).toBeDefined();
+    expect(patch.body.city).toBe("");
+    expect(patch.body.siteType).toBe("");
+    expect(container.textContent).toContain("Plant 1 saved.");
+    expect(container.querySelector("#hierarchy-form-city").value).toBe("");
+    expect(container.querySelector("#hierarchy-form-site-type").value).toBe("");
+    const patchCount = calls.filter((c) => c.method === "PATCH").length;
+    click(buttonByText(container, "Save"));
+    await flush();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(patchCount);
+    expect(container.textContent).toContain("No changes to Plant 1 — nothing needed saving.");
+  });
+
+  it("clearing project description and planned start sends empty strings and the reload shows them empty", async () => {
+    const tree = structuredClone(BASE_TREE);
+    const project = tree.clients[0].sites[0].projects[0];
+    project.description = "Old desc";
+    project.plannedStart = "2026-01-15";
+    project.plannedFinish = "2026-06-30";
+    const { calls } = stubFetch({ tree });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByLabel(container, "Edit Turnaround"));
+    setInputValue(container.querySelector("#hierarchy-form-description"), "");
+    setInputValue(container.querySelector("#hierarchy-form-planned-start"), "");
+    click(buttonByText(container, "Save"));
+    await flush();
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch).toBeDefined();
+    expect(patch.body.description).toBe("");
+    expect(patch.body.plannedStart).toBe("");
+    expect(patch.body.plannedFinish).toBe("2026-06-30");
+    expect(container.textContent).toContain("Turnaround saved.");
+    expect(container.querySelector("#hierarchy-form-description").value).toBe("");
+    expect(container.querySelector("#hierarchy-form-planned-start").value).toBe("");
+    const patchCount = calls.filter((c) => c.method === "PATCH").length;
+    click(buttonByText(container, "Save"));
+    await flush();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(patchCount);
+    expect(container.textContent).toContain("No changes to Turnaround — nothing needed saving.");
+  });
 });

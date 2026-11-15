@@ -748,6 +748,59 @@ describe("forge shared hierarchy migration (PR A)", () => {
     expect((await auditFor(db, OWNER_A, "client", client.id))).toHaveLength(2);
   });
 
+  it60("update: an empty string clears an optional field to NULL at every level; null still means unchanged (P1, PR #811 review)", async () => {
+    // Client: null = unchanged (no bump, no audit), "" = clear to NULL.
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial",
+      { externalReference: "ERP-1001", notes: "Old note" });
+    const unchanged = await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { notes: null }, { expectedVersion: 1, requestId: "req_clr_1" });
+    expect(unchanged.notes).toBe("Old note");
+    expect(unchanged.version).toBe(1);
+    expect((await auditFor(db, OWNER_A, "client", client.id))).toHaveLength(1);
+    const cleared = await updateClient(db, OWNER_A, OWNER_A, client.id,
+      { notes: "" }, { expectedVersion: 1, requestId: "req_clr_2" });
+    expect(cleared.version).toBe(2);
+    const [clientRow] = (await db.query(`
+      select notes, external_reference, version from forge_clients
+      where owner_id = '${OWNER_A}' and id = '${client.id}';`)).rows;
+    expect(clientRow.notes).toBeNull();
+    expect(clientRow.external_reference).toBe("ERP-1001");
+    expect(clientRow.version).toBe(2);
+    const clientAudit = await auditFor(db, OWNER_A, "client", client.id);
+    expect(clientAudit).toHaveLength(2);
+    expect(clientAudit[1].new_values.changed.notes).toBeNull();
+
+    // Site: city + site type clear to NULL; the name and parent survive.
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "La Porte Yard",
+      { siteType: "industrial", city: "Beaumont" });
+    const clearedSite = await updateSite(db, OWNER_A, OWNER_A, site.id,
+      { city: "", siteType: "" }, { expectedVersion: 1, requestId: "req_clr_3" });
+    expect(clearedSite.version).toBe(2);
+    const [siteRow] = (await db.query(`
+      select name, site_type, city from forge_sites
+      where owner_id = '${OWNER_A}' and id = '${site.id}';`)).rows;
+    expect(siteRow.name).toBe("La Porte Yard");
+    expect(siteRow.site_type).toBeNull();
+    expect(siteRow.city).toBeNull();
+
+    // Project: description + planned start clear to NULL; the finish
+    // date and code survive untouched.
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround 2027",
+      { projectCode: "TA-27", description: "Old desc", plannedStart: "2026-01-15", plannedFinish: "2026-06-30" });
+    const clearedProject = await updateProject(db, OWNER_A, OWNER_A, project.id,
+      { description: "", plannedStart: "" }, { expectedVersion: 1, requestId: "req_clr_4" });
+    expect(clearedProject.version).toBe(2);
+    const [projectRow] = (await db.query(`
+      select project_code, description, planned_start::text as planned_start,
+             planned_finish::text as planned_finish
+      from forge_projects
+      where owner_id = '${OWNER_A}' and id = '${project.id}';`)).rows;
+    expect(projectRow.project_code).toBe("TA-27");
+    expect(projectRow.description).toBeNull();
+    expect(projectRow.planned_start).toBeNull();
+    expect(projectRow.planned_finish).toBe("2026-06-30");
+  });
+
   it60("stale same-value writes are 409 for client, site, and project; a fresh no-op still returns the row", async () => {
     const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
     const site = await createSite(db, OWNER_A, OWNER_A, client.id, "La Porte Yard");

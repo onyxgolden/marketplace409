@@ -443,22 +443,27 @@ export default function PlannerHierarchyManager() {
                 };
         result = await callJson("/api/forge/hierarchy", { method: "POST", body });
       } else {
+        // PATCH: send the draft strings verbatim, including "" for a
+        // cleared optional field. The RPC contract is null = unchanged,
+        // "" = clear — coercing "" to null here silently kept the old
+        // value while the UI still said "saved" (P1, PR #811 review).
+        // The POST branch below keeps its `|| null` creation defaults.
         const body =
           entity === "client"
-            ? { entity, id, name: draft.name, externalReference: draft.externalReference || null, notes: draft.notes || null, status: draft.status, expectedVersion: openForm.version, requestId }
+            ? { entity, id, name: draft.name, externalReference: draft.externalReference, notes: draft.notes, status: draft.status, expectedVersion: openForm.version, requestId }
             : entity === "site"
               ? {
                   entity,
                   id,
                   clientId: draft.parentId,
                   name: draft.name,
-                  siteType: draft.siteType || null,
-                  addressLine1: draft.addressLine1 || null,
-                  addressLine2: draft.addressLine2 || null,
-                  city: draft.city || null,
-                  region: draft.region || null,
-                  postalCode: draft.postalCode || null,
-                  countryCode: draft.countryCode || null,
+                  siteType: draft.siteType,
+                  addressLine1: draft.addressLine1,
+                  addressLine2: draft.addressLine2,
+                  city: draft.city,
+                  region: draft.region,
+                  postalCode: draft.postalCode,
+                  countryCode: draft.countryCode,
                   status: draft.status,
                   expectedVersion: openForm.version,
                   requestId,
@@ -468,11 +473,11 @@ export default function PlannerHierarchyManager() {
                   id,
                   siteId: draft.parentId,
                   name: draft.name,
-                  projectCode: draft.projectCode || null,
-                  description: draft.description || null,
-                  projectType: draft.projectType || null,
-                  plannedStart: draft.plannedStart || null,
-                  plannedFinish: draft.plannedFinish || null,
+                  projectCode: draft.projectCode,
+                  description: draft.description,
+                  projectType: draft.projectType,
+                  plannedStart: draft.plannedStart,
+                  plannedFinish: draft.plannedFinish,
                   status: draft.status,
                   expectedVersion: openForm.version,
                   requestId,

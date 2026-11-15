@@ -168,6 +168,24 @@ describe("PATCH /api/forge/hierarchy", () => {
     expect(response.status).toBe(400);
     expect(updateHierarchyClient).not.toHaveBeenCalled();
   });
+
+  it("forwards empty strings for cleared fields (null means unchanged, empty string clears)", async () => {
+    updateHierarchyClient.mockResolvedValue({
+      ok: true,
+      client: { id: "c1", name: "Acme", externalReference: null, notes: null },
+    });
+    const response = await PATCH(
+      new Request("https://test/api/forge/hierarchy", {
+        method: "PATCH",
+        body: JSON.stringify({ entity: "client", id: "c1", name: "Acme", externalReference: "", notes: "", status: "active", expectedVersion: 3, requestId: "req_1" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(updateHierarchyClient).toHaveBeenCalledWith(
+      AUTH.supabaseClient,
+      expect.objectContaining({ externalReference: "", notes: "" }),
+    );
+  });
 });
 
 describe("DELETE /api/forge/hierarchy", () => {
