@@ -89,7 +89,16 @@ function revisionLabel(revisions, revisionId) {
 // is still loading, say so; once loaded, a missing record is reported
 // with its full stored ID. A release with no revision reference at
 // all says so outright.
-export function ifcRevisionDisplay(release, revisions, revisionsReady) {
+//
+// PR #808 fix round (P2): readiness is the SWR load state, not
+// merely non-null data. A stale cache can serve old revisions while
+// a revalidation is in flight, and a failed fetch leaves data null
+// with an error — neither proves the referenced revision record is
+// absent. "Unavailable" is justified only after a successful settled
+// fetch; an in-flight fetch stays loading, and a failed fetch says
+// the code could not be verified. A matched record in cached data
+// still renders its exact code.
+export function ifcRevisionDisplay(release, revisions, revisionsState) {
   const revisionId = release?.ifcRevisionId;
   if (!revisionId) return "IFC revision reference missing";
   const match = (revisions || []).find((revision) => revision.id === revisionId);
@@ -97,8 +106,11 @@ export function ifcRevisionDisplay(release, revisions, revisionsReady) {
     if (match.issuedAs === "IFC") return `IFC Rev ${match.revisionCode}`;
     return `IFC revision record inconsistent — matched Rev ${match.revisionCode} is ${match.issuedAs}, not IFC (ID ${revisionId})`;
   }
-  if (!revisionsReady) return "IFC revision loading…";
-  return `IFC revision record unavailable (ID ${revisionId})`;
+  const { loading = false, error = "", settled = false } = revisionsState || {};
+  if (loading) return "IFC revision loading…";
+  if (error) return `IFC revision load failed — unable to verify (ID ${revisionId})`;
+  if (settled) return `IFC revision record unavailable (ID ${revisionId})`;
+  return "IFC revision loading…";
 }
 
 function decisionOutcomeLabel(decision) {
@@ -414,7 +426,12 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   }
 
   const drawingId = row.drawingId;
-  const { data: revisionsData, refresh: refreshRevisions } = useStaleWhileRevalidate(
+  // PR #808 fix round (P2): carry the SWR load state, not just
+  // non-null data, into the release-row decision. A stale cache can
+  // serve old revisions while a revalidation is in flight, and a
+  // failed fetch leaves data null with an error — neither proves the
+  // referenced revision record is absent.
+  const { data: revisionsData, error: revisionsError, isLoading: revisionsLoading, isRefreshing: revisionsRefreshing, refresh: refreshRevisions } = useStaleWhileRevalidate(
     expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "revisions") : null,
     () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
     { ttlMs: 10_000 },
@@ -443,6 +460,15 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   );
 
   const revisions = revisionsData?.revisions || [];
+  // PR #808 fix round (P2): the release row's load state. Loading
+  // while the initial fetch or a stale-data revalidation is in
+  // flight; settled only once a successful response has landed. A
+  // failed fetch surfaces its error alongside any stale cached data.
+  const revisionsState = {
+    loading: revisionsLoading || revisionsRefreshing,
+    error: revisionsError || "",
+    settled: revisionsData != null,
+  };
   const reviews = reviewsData?.reviews || [];
   const releases = releasesData?.releases || [];
   const fieldRedlines = fieldData?.fieldRedlines || [];
@@ -739,7 +765,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                         revisions, matched by exact ifcRevisionId.
                         The read model never exposes ifcRevisionCode,
                         so interpolating it rendered blank. */}
-                    {ifcRevisionDisplay(release, revisions, revisionsData != null)} · released {formatWhen(release.releasedAt)}
+                    {ifcRevisionDisplay(release, revisions, revisionsState)} · released {formatWhen(release.releasedAt)}
                     {/* Slice-7 friction fix (F3b): isActive now comes
                         from the read model (retired_at == null). A
                         retired release reads "retired", not

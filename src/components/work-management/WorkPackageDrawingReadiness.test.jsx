@@ -93,8 +93,12 @@ function defaultReviews() {
   };
 }
 
-function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {}, hangRevisions = false } = {}) {
+function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {}, hangRevisions = false, hangRevisionsAfterFirst = false, failRevisionsAfterFirst = false } = {}) {
   const calls = [];
+  // PR #808 fix round: counts revisions GETs so a test can hang or
+  // fail only the revalidation (second and later fetches) while the
+  // first fetch settles and seeds the cache.
+  let revisionsCalls = 0;
   // Slice-7 friction fix: the round detail's redlines are stateful so
   // a resolve can be observed (the redline flips to RESOLVED on the
   // next detail fetch) instead of always re-rendering OPEN.
@@ -171,7 +175,23 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
         // release rows render while the revisions list is still
         // loading — they must say so, never report "unavailable".
         if (hangRevisions) return new Promise(() => {});
-        return { ok: true, json: async () => ({ revisions: revisionsMap[drawingId] || [] }) };
+        revisionsCalls += 1;
+        // PR #808 fix round: after the first fetch settles (seeding
+        // the cache), later revalidations hang — the component renders
+        // stale cached revisions while a refresh is in flight
+        // (IFC-CODE-08) — or fail, leaving stale data plus an error
+        // (IFC-CODE-10).
+        if (hangRevisionsAfterFirst && revisionsCalls > 1) return new Promise(() => {});
+        if (failRevisionsAfterFirst && revisionsCalls > 1) return { ok: false, json: async () => ({ error: "Revisions could not be loaded." }) };
+        // IFC-CODE-09: the initial revisions fetch rejects outright.
+        if (fail.revisions) return { ok: false, json: async () => ({ error: "Revisions could not be loaded." }) };
+        // PR #808 fix round: return a fresh snapshot per response,
+        // as a real HTTP round-trip would — the map is mutated by
+        // later POSTs, and handing out the live array would let a
+        // newly issued revision leak into already-cached data
+        // without any refetch, masking the stale-cache race the
+        // revalidation tests are proving.
+        return { ok: true, json: async () => ({ revisions: [...(revisionsMap[drawingId] || [])] }) };
       }
       if (resource === "ifc-stage" && method === "POST") {
         if (fail.stage) return { ok: false, json: async () => ({ error: "Could not stage the IFC PDF." }) };
@@ -981,5 +1001,129 @@ describe("WorkPackageDrawingReadiness IFC revision code", () => {
     expect(iso200Item.querySelector('[role="status"]').textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
     // The P-101 release row survived the mutations untouched.
     expect(releaseRows(container)[0]).toContain("IFC Rev 2");
+  });
+
+  it("IFC-CODE-08: a cached revisions list missing a new release's ID stays loading while revalidation is pending", async () => {
+    setupFetch({
+      revisionsMap: {
+        dwg_2: [
+          { id: "forge_wpdrv_3", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+          ...defaultRevisions().dwg_2,
+        ],
+      },
+      releasesMap: {
+        dwg_2: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      // The first revisions fetch settles (seeding the cache); the
+      // revalidation after the issue hangs, so the component renders
+      // stale cached revisions while a refresh is in flight.
+      hangRevisionsAfterFirst: true,
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    let rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC Rev 2");
+    // Issue a second IFC revision (code 3). The POST creates its
+    // revision + release, then refreshAll() revalidates revisions
+    // and releases in parallel: the releases refresh settles with
+    // the new release while the revisions revalidation is still in
+    // flight.
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "3"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    // The old release still renders its exact code from cached data;
+    // the new release — whose revision is not in the stale cached
+    // list — stays loading while the revalidation is pending, and
+    // must never claim the record is unavailable.
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[1]).toContain("IFC revision loading…");
+    expect(rows[1]).not.toContain("unavailable");
+    expect(rows[1]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-09: a revisions fetch that fails outright reports load failure, never perpetual loading or unavailable", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+      fail: { revisions: true },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC revision load failed");
+    expect(rows[0]).toContain("unable to verify");
+    expect(rows[0]).toContain("ID forge_wpdrv_3");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("IFC revision loading…");
+    expect(rows[0]).not.toContain("unavailable");
+    expect(rows[0]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-10: a failed revalidation with stale cached revisions reports load failure for the unmatched release", async () => {
+    setupFetch({
+      revisionsMap: {
+        dwg_2: [
+          { id: "forge_wpdrv_3", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+          ...defaultRevisions().dwg_2,
+        ],
+      },
+      releasesMap: {
+        dwg_2: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      // The first revisions fetch settles (seeding the cache); the
+      // revalidation after the issue fails, leaving stale cached
+      // data plus the error.
+      failRevisionsAfterFirst: true,
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    let rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC Rev 2");
+    // Issue a second IFC revision (code 3). The POST creates its
+    // revision + release, then refreshAll() revalidates: the releases
+    // refresh settles with the new release while the revisions
+    // revalidation fails. The matched old release still renders its
+    // exact code from the stale cache; the unmatched new release
+    // must say the code could not be verified, never "unavailable".
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "3"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[1]).toContain("IFC revision load failed");
+    expect(rows[1]).toContain("unable to verify");
+    expect(rows[1]).toContain("ID forge_wpdrv_ifc_9");
+    expect(rows[1]).not.toContain("unavailable");
+    expect(rows[1]).not.toContain("IFC revision loading…");
   });
 });
