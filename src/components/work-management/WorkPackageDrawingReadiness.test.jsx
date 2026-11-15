@@ -93,8 +93,12 @@ function defaultReviews() {
   };
 }
 
-function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {} } = {}) {
+function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisions(), reviewsMap = defaultReviews(), releasesMap = {}, fieldRedlinesMap = {}, artifactsMap = {}, fail = {}, hangRevisions = false, hangRevisionsAfterFirst = false, failRevisionsAfterFirst = false } = {}) {
   const calls = [];
+  // PR #808 fix round: counts revisions GETs so a test can hang or
+  // fail only the revalidation (second and later fetches) while the
+  // first fetch settles and seeds the cache.
+  let revisionsCalls = 0;
   // Slice-7 friction fix: the round detail's redlines are stateful so
   // a resolve can be observed (the redline flips to RESOLVED on the
   // next detail fetch) instead of always re-rendering OPEN.
@@ -167,7 +171,27 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
         return { ok: true, json: async () => ({ reviews: reviewsMap[drawingId] || [] }) };
       }
       if (resource === "revisions") {
-        return { ok: true, json: async () => ({ revisions: revisionsMap[drawingId] || [] }) };
+        // IFC-CODE-05: a revisions fetch that never resolves, so the
+        // release rows render while the revisions list is still
+        // loading — they must say so, never report "unavailable".
+        if (hangRevisions) return new Promise(() => {});
+        revisionsCalls += 1;
+        // PR #808 fix round: after the first fetch settles (seeding
+        // the cache), later revalidations hang — the component renders
+        // stale cached revisions while a refresh is in flight
+        // (IFC-CODE-08) — or fail, leaving stale data plus an error
+        // (IFC-CODE-10).
+        if (hangRevisionsAfterFirst && revisionsCalls > 1) return new Promise(() => {});
+        if (failRevisionsAfterFirst && revisionsCalls > 1) return { ok: false, json: async () => ({ error: "Revisions could not be loaded." }) };
+        // IFC-CODE-09: the initial revisions fetch rejects outright.
+        if (fail.revisions) return { ok: false, json: async () => ({ error: "Revisions could not be loaded." }) };
+        // PR #808 fix round: return a fresh snapshot per response,
+        // as a real HTTP round-trip would — the map is mutated by
+        // later POSTs, and handing out the live array would let a
+        // newly issued revision leak into already-cached data
+        // without any refetch, masking the stale-cache race the
+        // revalidation tests are proving.
+        return { ok: true, json: async () => ({ revisions: [...(revisionsMap[drawingId] || [])] }) };
       }
       if (resource === "ifc-stage" && method === "POST") {
         if (fail.stage) return { ok: false, json: async () => ({ error: "Could not stage the IFC PDF." }) };
@@ -181,7 +205,15 @@ function setupFetch({ fixture = readinessFixture(), revisionsMap = defaultRevisi
       if (resource === "ifc-releases" && method === "POST") {
         if (fail.issue) return { ok: false, json: async () => ({ error: "Could not issue the IFC revision." }) };
         const body = JSON.parse(options.body);
-        const release = { id: "forge_wpdifc_9", ifcRevisionCode: body.ifcRevisionCode, releasedAt: "2026-11-13T12:00:00Z", isActive: true, retiredAt: null };
+        // Slice-7 IFC revision-code fix: the real API returns the
+        // toCamelRelease() shape — the release carries ifcRevisionId,
+        // never a bare ifcRevisionCode — and issuing creates the IFC
+        // revision row the release points at. The fixture mirrors
+        // that, so the release row renders from the same data live
+        // does.
+        const revision = { id: "forge_wpdrv_ifc_9", revisionCode: body.ifcRevisionCode, issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T12:00:00Z" };
+        (revisionsMap[drawingId] = revisionsMap[drawingId] || []).push(revision);
+        const release = { id: "forge_wpdifc_9", ifcRevisionId: revision.id, reviewId: body.reviewId, releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true };
         (releasesMap[drawingId] = releasesMap[drawingId] || []).push(release);
         return { ok: true, json: async () => ({ release }) };
       }
@@ -280,6 +312,16 @@ async function expandRound(container, label) {
 function roundItem(container, label) {
   const button = findButton(container, label);
   return button?.closest("li") || null;
+}
+
+// Slice-7 IFC revision-code fix: the release rows under the "IFC
+// releases" heading, as rendered text per row — so a test can assert
+// which code and active/retired label belong to the SAME row, not
+// merely that both strings appear somewhere on the page.
+function releaseRows(container) {
+  const heading = [...container.querySelectorAll("p")].find((p) => p.textContent === "IFC releases");
+  const list = heading?.parentElement?.querySelector("ul");
+  return list ? [...list.querySelectorAll("li")].map((li) => li.textContent) : [];
 }
 
 beforeEach(() => {
@@ -734,20 +776,354 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
   });
 
   it("renders a new release active and a retired release retired, never superseded by default", async () => {
+    // Slice-7 IFC revision-code fix: releases mirror the real
+    // toCamelRelease() shape — ifcRevisionId pointing at an IFC
+    // revision in the loaded list, never a fictional
+    // ifcRevisionCode field — and rows render "IFC Rev N".
     setupFetch({
+      revisionsMap: {
+        dwg_1: [
+          { id: "forge_wpdrv_4", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+          { id: "forge_wpdrv_3", revisionCode: "1", issuedAs: "IFC", retiredAt: "2026-11-13T11:00:00Z", createdAt: "2026-11-10T10:00:00Z" },
+          ...defaultRevisions().dwg_1,
+        ],
+      },
       releasesMap: {
         dwg_1: [
-          { id: "forge_wpdifc_2", ifcRevisionCode: "2", releasedAt: "2026-11-13T12:00:00Z", isActive: true, retiredAt: null },
-          { id: "forge_wpdifc_1", ifcRevisionCode: "1", releasedAt: "2026-11-10T12:00:00Z", isActive: false, retiredAt: "2026-11-13T11:00:00Z" },
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_4", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+          { id: "forge_wpdifc_1", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_1", releasedAt: "2026-11-10T12:00:00Z", retiredAt: "2026-11-13T11:00:00Z", isActive: false },
         ],
       },
     });
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
-    expect(container.textContent).toContain("IFC revision 2 · released");
+    expect(container.textContent).toContain("IFC Rev 2 · released");
     expect(container.textContent).toContain("· active");
-    expect(container.textContent).toContain("IFC revision 1 · released");
+    expect(container.textContent).toContain("IFC Rev 1 · released");
     expect(container.textContent).toContain("· retired");
     expect(container.textContent).not.toContain("superseded");
+  });
+});
+
+// Slice-7 IFC revision-code fix (brief 2026-11-14): the release row
+// reads its code from the same drawing's loaded revisions, matched by
+// the persisted ifcRevisionId — the read model never exposes
+// ifcRevisionCode, so the old row rendered blank. Every fixture here
+// mirrors the real toCamelRelease() shape (ifcRevisionId, releasedAt,
+// retiredAt, isActive) and never supplies a fictional
+// ifcRevisionCode field.
+describe("WorkPackageDrawingReadiness IFC revision code", () => {
+  const ifcRevisions = () => ([
+    { id: "forge_wpdrv_3", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+    { id: "forge_wpdrv_6", revisionCode: "5", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-14T10:00:00Z" },
+  ]);
+
+  it("IFC-CODE-01: one matched release shows its own IFC Rev code and active state", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[0]).toContain("released");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("IFC revision ·");
+    expect(rows[0]).not.toContain("unavailable");
+  });
+
+  it("IFC-CODE-02: two releases each show their own code with independent active/retired labels", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+          { id: "forge_wpdifc_5", ifcRevisionId: "forge_wpdrv_6", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-14T12:00:00Z", retiredAt: "2026-11-14T13:00:00Z", isActive: false },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("retired");
+    expect(rows[1]).toContain("IFC Rev 5");
+    expect(rows[1]).toContain("· retired");
+    expect(rows[1]).not.toContain("· active");
+    expect(container.textContent).not.toContain("superseded");
+  });
+
+  it("IFC-CODE-03: shuffled revisions and releases stay bound to their IDs, never to order", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      // Revisions reversed (Rev 5 before Rev 2) and releases reversed
+      // (retired Rev 5 first) — a position-based label would swap them.
+      revisionsMap: { dwg_1: [...ifcRevisions().reverse(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_5", ifcRevisionId: "forge_wpdrv_6", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-14T12:00:00Z", retiredAt: "2026-11-14T13:00:00Z", isActive: false },
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("IFC Rev 5");
+    expect(rows[0]).toContain("· retired");
+    expect(rows[1]).toContain("IFC Rev 2");
+    expect(rows[1]).toContain("· active");
+  });
+
+  it("IFC-CODE-04: a referenced revision ID absent after fetch reports unavailable with the full ID", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_9", ifcRevisionId: "forge_wpdrv_missing", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC revision record unavailable (ID forge_wpdrv_missing)");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-05: while revisions are still loading the row says loading, never unavailable or blank", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+      hangRevisions: true,
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC revision loading…");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("unavailable");
+    expect(rows[0]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-06: a missing reference and a non-IFC match each get an explicit truthful fallback", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_8", ifcRevisionId: "", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+          // Points at Rev 1, which is IFA — must never be labelled IFC.
+          { id: "forge_wpdifc_7", ifcRevisionId: "forge_wpdrv_2", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T11:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("IFC revision reference missing");
+    expect(rows[1]).toContain("inconsistent");
+    expect(rows[1]).toContain("not IFC");
+    expect(rows[1]).toContain("ID forge_wpdrv_2");
+    expect(rows[1]).not.toContain("IFC Rev 1");
+  });
+
+  it("IFC-CODE-07: review rounds, redlines, staged IFC and release rows are unchanged, with unchanged server payloads", async () => {
+    const { calls } = setupFetch({
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    // The matched release row still renders alongside the rounds.
+    expect(releaseRows(container)[0]).toContain("IFC Rev 2");
+    expect(container.textContent).toContain("Round 1 — OPEN");
+    // Redline flow: same payload as before the fix.
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
+    await act(async () => { findButton(container, "Add redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const redlinePost = calls.find((c) => c.method === "POST" && c.url.includes("/redlines") && !c.url.includes("/reconcile"));
+    expect(redlinePost).toBeDefined();
+    expect(JSON.parse(redlinePost.body).drawingRevisionId).toBe("forge_wpdrv_1");
+    const p101Item = findButton(container, "P-101").closest("li");
+    expect(p101Item.querySelector('[role="status"]').textContent).toBe("Redline added to drawing P-101, Rev 0 (IFA).");
+    // Staged-IFC flow on the second drawing: same payloads as before.
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "2"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const issuePost = calls.find((c) => c.method === "POST" && c.url.includes("/ifc-releases"));
+    expect(issuePost).toBeDefined();
+    const issueBody = JSON.parse(issuePost.body);
+    expect(issueBody.ifcRevisionCode).toBe("2");
+    expect(issueBody.stagedArtifactId).toBe("forge_wpa_9");
+    expect(issueBody.reviewId).toBe("forge_wpdrvw_2");
+    const iso200Item = findButton(container, "ISO-200").closest("li");
+    expect(iso200Item.querySelector('[role="status"]').textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
+    // The P-101 release row survived the mutations untouched.
+    expect(releaseRows(container)[0]).toContain("IFC Rev 2");
+  });
+
+  it("IFC-CODE-08: a cached revisions list missing a new release's ID stays loading while revalidation is pending", async () => {
+    setupFetch({
+      revisionsMap: {
+        dwg_2: [
+          { id: "forge_wpdrv_3", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+          ...defaultRevisions().dwg_2,
+        ],
+      },
+      releasesMap: {
+        dwg_2: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      // The first revisions fetch settles (seeding the cache); the
+      // revalidation after the issue hangs, so the component renders
+      // stale cached revisions while a refresh is in flight.
+      hangRevisionsAfterFirst: true,
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    let rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC Rev 2");
+    // Issue a second IFC revision (code 3). The POST creates its
+    // revision + release, then refreshAll() revalidates revisions
+    // and releases in parallel: the releases refresh settles with
+    // the new release while the revisions revalidation is still in
+    // flight.
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "3"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    // The old release still renders its exact code from cached data;
+    // the new release — whose revision is not in the stale cached
+    // list — stays loading while the revalidation is pending, and
+    // must never claim the record is unavailable.
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[1]).toContain("IFC revision loading…");
+    expect(rows[1]).not.toContain("unavailable");
+    expect(rows[1]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-09: a revisions fetch that fails outright reports load failure, never perpetual loading or unavailable", async () => {
+    setupFetch({
+      fixture: singleDrawingFixture(),
+      revisionsMap: { dwg_1: [...ifcRevisions(), ...defaultRevisions().dwg_1] },
+      releasesMap: {
+        dwg_1: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      reviewsMap: { dwg_1: [] },
+      fail: { revisions: true },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    const rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC revision load failed");
+    expect(rows[0]).toContain("unable to verify");
+    expect(rows[0]).toContain("ID forge_wpdrv_3");
+    expect(rows[0]).toContain("· active");
+    expect(rows[0]).not.toContain("IFC revision loading…");
+    expect(rows[0]).not.toContain("unavailable");
+    expect(rows[0]).not.toContain("IFC Rev");
+  });
+
+  it("IFC-CODE-10: a failed revalidation with stale cached revisions reports load failure for the unmatched release", async () => {
+    setupFetch({
+      revisionsMap: {
+        dwg_2: [
+          { id: "forge_wpdrv_3", revisionCode: "2", issuedAs: "IFC", retiredAt: null, createdAt: "2026-11-13T10:00:00Z" },
+          ...defaultRevisions().dwg_2,
+        ],
+      },
+      releasesMap: {
+        dwg_2: [
+          { id: "forge_wpdifc_2", ifcRevisionId: "forge_wpdrv_3", reviewId: "forge_wpdrvw_2", releasedAt: "2026-11-13T12:00:00Z", retiredAt: null, isActive: true },
+        ],
+      },
+      // The first revisions fetch settles (seeding the cache); the
+      // revalidation after the issue fails, leaving stale cached
+      // data plus the error.
+      failRevisionsAfterFirst: true,
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    let rows = releaseRows(container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("IFC Rev 2");
+    // Issue a second IFC revision (code 3). The POST creates its
+    // revision + release, then refreshAll() revalidates: the releases
+    // refresh settles with the new release while the revisions
+    // revalidation fails. The matched old release still renders its
+    // exact code from the stale cache; the unmatched new release
+    // must say the code could not be verified, never "unavailable".
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "3"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    rows = releaseRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("IFC Rev 2");
+    expect(rows[1]).toContain("IFC revision load failed");
+    expect(rows[1]).toContain("unable to verify");
+    expect(rows[1]).toContain("ID forge_wpdrv_ifc_9");
+    expect(rows[1]).not.toContain("unavailable");
+    expect(rows[1]).not.toContain("IFC revision loading…");
   });
 });

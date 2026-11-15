@@ -78,6 +78,41 @@ function revisionLabel(revisions, revisionId) {
   return `Rev ${revision.revisionCode} (${revision.issuedAs})`;
 }
 
+// Slice-7 IFC revision-code fix: resolve an IFC release's revision
+// code from the same drawing's already-loaded revisions list, by the
+// persisted ifcRevisionId. The read model (toCamelRelease) never
+// exposes ifcRevisionCode, so the old row interpolated it and rendered
+// blank. Never derive a code from release order, latest revision,
+// timestamps, or index. A matched record must be IFC-issued; a
+// non-IFC match is an inconsistent record — flagged, never relabelled
+// as IFC. Loading and missing are distinct: while the revisions list
+// is still loading, say so; once loaded, a missing record is reported
+// with its full stored ID. A release with no revision reference at
+// all says so outright.
+//
+// PR #808 fix round (P2): readiness is the SWR load state, not
+// merely non-null data. A stale cache can serve old revisions while
+// a revalidation is in flight, and a failed fetch leaves data null
+// with an error — neither proves the referenced revision record is
+// absent. "Unavailable" is justified only after a successful settled
+// fetch; an in-flight fetch stays loading, and a failed fetch says
+// the code could not be verified. A matched record in cached data
+// still renders its exact code.
+export function ifcRevisionDisplay(release, revisions, revisionsState) {
+  const revisionId = release?.ifcRevisionId;
+  if (!revisionId) return "IFC revision reference missing";
+  const match = (revisions || []).find((revision) => revision.id === revisionId);
+  if (match) {
+    if (match.issuedAs === "IFC") return `IFC Rev ${match.revisionCode}`;
+    return `IFC revision record inconsistent — matched Rev ${match.revisionCode} is ${match.issuedAs}, not IFC (ID ${revisionId})`;
+  }
+  const { loading = false, error = "", settled = false } = revisionsState || {};
+  if (loading) return "IFC revision loading…";
+  if (error) return `IFC revision load failed — unable to verify (ID ${revisionId})`;
+  if (settled) return `IFC revision record unavailable (ID ${revisionId})`;
+  return "IFC revision loading…";
+}
+
 function decisionOutcomeLabel(decision) {
   if (decision === "APPROVE_WITH_REDLINES") return "approved with redlines";
   if (decision === "RETURN_TO_DRAFTER") return "returned to drafter";
@@ -391,7 +426,12 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   }
 
   const drawingId = row.drawingId;
-  const { data: revisionsData, refresh: refreshRevisions } = useStaleWhileRevalidate(
+  // PR #808 fix round (P2): carry the SWR load state, not just
+  // non-null data, into the release-row decision. A stale cache can
+  // serve old revisions while a revalidation is in flight, and a
+  // failed fetch leaves data null with an error — neither proves the
+  // referenced revision record is absent.
+  const { data: revisionsData, error: revisionsError, isLoading: revisionsLoading, isRefreshing: revisionsRefreshing, refresh: refreshRevisions } = useStaleWhileRevalidate(
     expanded ? scopedSWRKey(pageContext, "work-packages", packageId, "drawings", drawingId, "revisions") : null,
     () => api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/revisions`),
     { ttlMs: 10_000 },
@@ -420,6 +460,15 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   );
 
   const revisions = revisionsData?.revisions || [];
+  // PR #808 fix round (P2): the release row's load state. Loading
+  // while the initial fetch or a stale-data revalidation is in
+  // flight; settled only once a successful response has landed. A
+  // failed fetch surfaces its error alongside any stale cached data.
+  const revisionsState = {
+    loading: revisionsLoading || revisionsRefreshing,
+    error: revisionsError || "",
+    settled: revisionsData != null,
+  };
   const reviews = reviewsData?.reviews || [];
   const releases = releasesData?.releases || [];
   const fieldRedlines = fieldData?.fieldRedlines || [];
@@ -711,7 +760,12 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
               <ul className="mt-1 space-y-1 text-xs text-slate-600">
                 {releases.map((release) => (
                   <li key={release.id}>
-                    IFC revision {release.ifcRevisionCode} · released {formatWhen(release.releasedAt)}
+                    {/* Slice-7 IFC revision-code fix: the release's
+                        code comes from the same drawing's loaded
+                        revisions, matched by exact ifcRevisionId.
+                        The read model never exposes ifcRevisionCode,
+                        so interpolating it rendered blank. */}
+                    {ifcRevisionDisplay(release, revisions, revisionsState)} · released {formatWhen(release.releasedAt)}
                     {/* Slice-7 friction fix (F3b): isActive now comes
                         from the read model (retired_at == null). A
                         retired release reads "retired", not
