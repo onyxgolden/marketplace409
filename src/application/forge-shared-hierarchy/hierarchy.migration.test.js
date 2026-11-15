@@ -75,6 +75,25 @@ const PLANNER_ADMIN_MIGRATION = "20261110000000_forge_planner_admin_permissions_
 const RENTAL_ADMIN_MIGRATION = "20261110010000_rental_admin_roles_slice1.sql";
 const SCHEDULING_ADMIN_MIGRATION = "20261110080000_forge_scheduling_admin_permissions_slice1.sql";
 const THIS_MIGRATION = "20261112010000_forge_shared_hierarchy_foundation.sql";
+const PROJECT_LINK_MIGRATION = "20261113000000_forge_work_package_project_link.sql";
+const ADMIN_INVENTORY_MIGRATION = "20261113050000_forge_hierarchy_admin_inventory.sql";
+
+// Minimal production-shaped forge_work_packages for the columns the
+// PR-B link migration and the inventory RPC touch. Created BEFORE the
+// link migration applies (the migration adds forge_project_id itself);
+// mirrors the stub in projectScope.migration.test.js.
+const PACKAGES_STUB_SQL = `
+  create table public.forge_work_packages (
+    owner_id text not null,
+    id text not null,
+    title text,
+    status text not null default 'draft',
+    version integer not null default 1,
+    updated_by text,
+    updated_at timestamptz not null default now(),
+    primary key (owner_id, id)
+  );
+`;
 
 function loadMigrationSql(name) {
   return readFileSync(join(HERE, "..", "..", "..", "supabase", "migrations", name), "utf8");
@@ -139,6 +158,13 @@ async function setupDb() {
   await db.exec(loadMigrationSql(RENTAL_ADMIN_MIGRATION));
   await db.exec(loadMigrationSql(SCHEDULING_ADMIN_MIGRATION));
   await db.exec(loadMigrationSql(THIS_MIGRATION));
+  // Production order: PR-B link (adds forge_work_packages.
+  // forge_project_id), then the admin-inventory slice (whose preflight
+  // requires that column). The inventory slice adds one read RPC and
+  // repairs the project delete — no tables, no RLS changes.
+  await db.exec(PACKAGES_STUB_SQL);
+  await db.exec(loadMigrationSql(PROJECT_LINK_MIGRATION));
+  await db.exec(loadMigrationSql(ADMIN_INVENTORY_MIGRATION));
   await db.exec(SEED_SQL);
   return db;
 }
@@ -291,6 +317,20 @@ async function validateSelection(db, uid, ownerId, projectId) {
     select forge_hierarchy_validate_selection(
       '${ownerId}', ${sqlStr(projectId)}) as v;`);
   return rows[0].v;
+}
+
+async function adminInventory(db, uid, ownerId) {
+  const { rows } = await asUser(db, uid, `select forge_hierarchy_admin_inventory('${ownerId}') as v;`);
+  return rows[0].v;
+}
+
+// Direct package link (test-only seeding: production links packages
+// only through forge_work_package_set_project). Runs as the table
+// owner, bypassing RLS — the FK still enforces a real project.
+async function linkPackage(db, ownerId, packageId, projectId, status = "draft") {
+  await db.query(`
+    insert into forge_work_packages (owner_id, id, title, status, forge_project_id)
+    values ('${ownerId}', '${packageId}', 'Package ${packageId}', '${status}', ${sqlStr(projectId)});`);
 }
 
 async function auditFor(db, ownerId, entityType, entityId) {
@@ -1198,7 +1238,10 @@ describe("forge shared hierarchy migration (PR A)", () => {
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'
           and (p.proname like 'forge_hierarchy_%' or p.proname = 'has_forge_hierarchy_permission');`);
-    expect(fns.rows).toHaveLength(12); // 11 RPCs + has_forge_hierarchy_permission
+    // 12 RPCs (11 foundation + the admin-inventory read RPC) +
+    // has_forge_hierarchy_permission. The inventory slice adds no
+    // tables, so the table half of this leg is unchanged.
+    expect(fns.rows).toHaveLength(13);
     for (const fn of fns.rows) {
       const acl = String(fn.proacl || "");
       expect(acl, fn.proname).toContain("authenticated=X");
@@ -1331,6 +1374,179 @@ describe("forge shared hierarchy migration (PR A)", () => {
   });
 });
 
+// Admin inventory slice (20261113050000): the read-only management
+// inventory RPC + the project-delete package-block repair. Runs on the
+// same fixture as PR A (foundation + PR-B link), extended above.
+describe("forge hierarchy admin inventory migration", () => {
+  let db;
+  beforeEach(async () => { db = await setupDb(); });
+  afterEach(async () => { await db.close(); });
+
+  it60("inventory returns the full tree in any status with complete identity fields, versions, and canManage for the owner", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial",
+      { externalReference: "ERP-1001", notes: "First client." });
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "Plant 1",
+      { siteType: "industrial", addressLine1: "100 Refinery Rd", city: "Beaumont", region: "TX", postalCode: "77701", countryCode: "US" });
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround",
+      { projectCode: "TA-27", description: "Spring turnaround", projectType: "turnaround", plannedStart: "2027-03-01", plannedFinish: "2027-04-15" });
+    const archivedProject = await createProject(db, OWNER_A, OWNER_A, site.id, "Revamp");
+    await updateProject(db, OWNER_A, OWNER_A, archivedProject.id, { status: "archived" }, { expectedVersion: 1 });
+    const archivedClient = await createClient(db, OWNER_A, OWNER_A, "Beta Holdings");
+    await updateClient(db, OWNER_A, OWNER_A, archivedClient.id, { status: "archived" }, { expectedVersion: 1 });
+
+    const inventory = await adminInventory(db, OWNER_A, OWNER_A);
+    expect(inventory.ownerId).toBe(OWNER_A);
+    expect(inventory.canManage).toBe(true);
+    expect(inventory.clients).toHaveLength(2);
+    // Archived rows are present — the selector omits them.
+    const beta = inventory.clients.find((c) => c.name === "Beta Holdings");
+    expect(beta.status).toBe("archived");
+    expect(beta.version).toBe(2);
+    const acme = inventory.clients.find((c) => c.name === "Acme Industrial");
+    // The RPC returns snake_case record fields (the application
+    // service camelCases them — see hierarchy.test.js); the envelope
+    // keys ownerId/canManage are camelCase.
+    expect(acme.external_reference).toBe("ERP-1001");
+    expect(acme.notes).toBe("First client.");
+    expect(acme.version).toBe(1);
+    expect(acme.sites).toHaveLength(1);
+    const plant = acme.sites[0];
+    expect(plant.name).toBe("Plant 1");
+    expect(plant.site_type).toBe("industrial");
+    expect(plant.address_line1).toBe("100 Refinery Rd");
+    expect(plant.city).toBe("Beaumont");
+    expect(plant.region).toBe("TX");
+    expect(plant.postal_code).toBe("77701");
+    expect(plant.country_code).toBe("US");
+    expect(plant.client_id).toBe(client.id);
+    expect(plant.version).toBe(1);
+    expect(plant.projects).toHaveLength(2);
+    const turnaround = plant.projects.find((p) => p.name === "Turnaround");
+    expect(turnaround.project_code).toBe("TA-27");
+    expect(turnaround.description).toBe("Spring turnaround");
+    expect(turnaround.project_type).toBe("turnaround");
+    expect(turnaround.planned_start).toBe("2027-03-01");
+    expect(turnaround.planned_finish).toBe("2027-04-15");
+    expect(turnaround.status).toBe("planned"); // create defaults to planned
+    expect(turnaround.version).toBe(1);
+    expect(turnaround.site_id).toBe(site.id);
+    expect(turnaround.package_count).toBe(0);
+    const revamp = plant.projects.find((p) => p.name === "Revamp");
+    expect(revamp.status).toBe("archived");
+    expect(revamp.version).toBe(2);
+    // The selector, by contrast, hides archived rows entirely.
+    const tree = await selector(db, OWNER_A, OWNER_A);
+    expect(tree.clients).toHaveLength(1);
+    expect(tree.clients[0].sites[0].projects).toHaveLength(1);
+    expect(tree.clients[0].sites[0].projects[0].name).toBe("Turnaround");
+  });
+
+  it60("package_count counts assigned packages in any status, including cancelled", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "Plant 1");
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround");
+    const other = await createProject(db, OWNER_A, OWNER_A, site.id, "Revamp");
+    await linkPackage(db, OWNER_A, "forge_wp_1", project.id, "draft");
+    await linkPackage(db, OWNER_A, "forge_wp_2", project.id, "cancelled");
+    await linkPackage(db, OWNER_A, "forge_wp_3", other.id, "draft");
+    await linkPackage(db, OWNER_A, "forge_wp_4", null, "draft");
+
+    const inventory = await adminInventory(db, OWNER_A, OWNER_A);
+    const projects = inventory.clients[0].sites[0].projects;
+    expect(projects.find((p) => p.name === "Turnaround").package_count).toBe(2);
+    expect(projects.find((p) => p.name === "Revamp").package_count).toBe(1);
+  });
+
+  it60("a read-only staff reader sees the inventory with canManage false; a stranger and a cross-owner caller are forbidden", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    await provisionPlannerAndAssign(db, MEMBER_D, "read_only");
+    const asReader = await adminInventory(db, MEMBER_D, OWNER_A);
+    expect(asReader.canManage).toBe(false);
+    expect(asReader.clients).toHaveLength(1);
+    expect(asReader.clients[0].id).toBe(client.id);
+    // A stranger (no workspace access at all) reaches nothing.
+    const stranger = "99999999-9999-4999-8999-999999999999";
+    await expectRpcError(db, stranger,
+      `select forge_hierarchy_admin_inventory('${OWNER_A}');`,
+      "FORGE_HIERARCHY_FORBIDDEN");
+    // OWNER_B cannot read OWNER_A's inventory, and sees only his own.
+    await expectRpcError(db, OWNER_B,
+      `select forge_hierarchy_admin_inventory('${OWNER_A}');`,
+      "FORGE_HIERARCHY_FORBIDDEN");
+    const own = await adminInventory(db, OWNER_B, OWNER_B);
+    expect(own.canManage).toBe(true);
+    expect(own.clients).toHaveLength(0);
+  });
+
+  it60("project delete with assigned packages raises HAS_CHILDREN naming the count — cancelled counts too; unlinking unblocks", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "Plant 1");
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround");
+    await updateProject(db, OWNER_A, OWNER_A, project.id, { status: "archived" }, { expectedVersion: 1 });
+    await linkPackage(db, OWNER_A, "forge_wp_1", project.id, "draft");
+    await linkPackage(db, OWNER_A, "forge_wp_2", project.id, "cancelled");
+    const caught = await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_delete('${OWNER_A}', '${project.id}', 2, 'req_del_blocked');`,
+      "FORGE_HIERARCHY_HAS_CHILDREN");
+    expect(String(caught.message)).toContain("2 assigned package");
+    // Unlinking both packages unblocks the delete (never silently
+    // cleared by the RPC itself — the test unlinks explicitly).
+    await db.query(`update forge_work_packages set forge_project_id = null where owner_id = '${OWNER_A}';`);
+    const deleted = await deleteProject(db, OWNER_A, OWNER_A, project.id, { expectedVersion: 2, requestId: "req_del_ok" });
+    expect(deleted.deleted).toBe(true);
+    expect(deleted.id).toBe(project.id);
+    const audit = await auditFor(db, OWNER_A, "project", project.id);
+    expect(audit.map((a) => a.action)).toContain("delete");
+  });
+
+  it60("an active project with packages raises NOT_ARCHIVED before the package check", async () => {
+    const client = await createClient(db, OWNER_A, OWNER_A, "Acme Industrial");
+    const site = await createSite(db, OWNER_A, OWNER_A, client.id, "Plant 1");
+    const project = await createProject(db, OWNER_A, OWNER_A, site.id, "Turnaround");
+    await linkPackage(db, OWNER_A, "forge_wp_1", project.id, "draft");
+    await expectRpcError(db, OWNER_A,
+      `select forge_hierarchy_project_delete('${OWNER_A}', '${project.id}', 1, 'req_del_active');`,
+      "FORGE_HIERARCHY_NOT_ARCHIVED");
+  });
+
+  it60("ACL receipt: the inventory RPC executes for authenticated only; anon and direct DML are denied", async () => {
+    const acl = await db.query(`
+      select proacl::text as acl, prosecdef as secdef
+        from pg_proc where proname = 'forge_hierarchy_admin_inventory';`);
+    expect(acl.rows).toHaveLength(1);
+    expect(acl.rows[0].acl).toBe("{postgres=X/postgres,authenticated=X/postgres}");
+    expect(acl.rows[0].secdef).toBe(true);
+    const privs = await db.query(`
+      select has_function_privilege('authenticated', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as auth,
+             has_function_privilege('anon', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as anon,
+             has_function_privilege('service_role', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as svc;`);
+    expect(privs.rows[0]).toEqual({ auth: true, anon: false, svc: false });
+    // The delete repair keeps the same narrow ACL.
+    const delAcl = await db.query(`
+      select proacl::text as acl from pg_proc
+       where proname = 'forge_hierarchy_project_delete';`);
+    expect(delAcl.rows[0].acl).toBe("{postgres=X/postgres,authenticated=X/postgres}");
+    // Anon cannot call the RPC at all.
+    let anonCaught = null;
+    try {
+      await asRole(db, "anon", OWNER_A, `select forge_hierarchy_admin_inventory('${OWNER_A}');`);
+    } catch (error) {
+      anonCaught = error;
+    }
+    expect(anonCaught).not.toBeNull();
+    expect(String(anonCaught.message)).toMatch(/permission denied for function/i);
+    // Direct DML is denied even for the owner (RPC-only write path).
+    await expect(asUser(db, OWNER_A,
+      `insert into forge_clients (owner_id, id, name, created_by, updated_by) values ('${OWNER_A}', 'direct1', 'Direct', '${OWNER_A}', '${OWNER_A}');`))
+      .rejects.toThrow(/permission denied|not allowed|policy/i);
+  });
+
+  it60("re-applying the inventory migration fails loudly on the function-exists preflight", async () => {
+    await expect(db.exec(loadMigrationSql(ADMIN_INVENTORY_MIGRATION)))
+      .rejects.toThrow(/FORGE_HMI_FUNCTION_EXISTS/);
+  });
+});
+
 // Real-PostgreSQL subset. PGlite is single-connection, so the
 // two-session concurrency legs can only run here, against a scratch
 // PG16 cluster. The suite is gated on the binaries existing AND an
@@ -1397,6 +1613,9 @@ describe.skipIf(!HAS_REAL_PG)("forge shared hierarchy migration: real-PostgreSQL
         values ('${OWNER_A}', '${MEMBER_C}', 'active', 'co_owner');
     `);
     await pgClient.query(loadMigrationSql(THIS_MIGRATION));
+    await pgClient.query(PACKAGES_STUB_SQL);
+    await pgClient.query(loadMigrationSql(PROJECT_LINK_MIGRATION));
+    await pgClient.query(loadMigrationSql(ADMIN_INVENTORY_MIGRATION));
   }, 120000);
 
   afterAll(async () => {
@@ -1613,6 +1832,84 @@ describe.skipIf(!HAS_REAL_PG)("forge shared hierarchy migration: real-PostgreSQL
       await locker.query("rollback").catch(() => {});
       await locker.end().catch(() => {});
       await creator.end().catch(() => {});
+    }
+  });
+
+  it60("real PostgreSQL 16: inventory RPC returns the full tree with package_count, and the ACL receipt holds", async () => {
+    // Shared cluster: other legs in this describe create their own
+    // clients, so find by name — never assert a total count here.
+    const client = new Client(pgCfg);
+    await client.connect();
+    try {
+      const { rows: created } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_client_create('${OWNER_A}', 'RealPG Inventory Client', 'RPG-1', null, 'req_realpg_inv_1') as v;`);
+      const clientId = created[0].v.id;
+      const { rows: siteRows } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_site_create('${OWNER_A}', '${clientId}', 'RealPG Yard', 'industrial', null, null, null, null, null, null, 'req_realpg_inv_2') as v;`);
+      const siteId = siteRows[0].v.id;
+      const { rows: projRows } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_create('${OWNER_A}', '${siteId}', 'RealPG Job', 'RPG-01', null, null, null, null, 'req_realpg_inv_3') as v;`);
+      const projectId = projRows[0].v.id;
+      await pgClient.query(`
+        insert into forge_work_packages (owner_id, id, title, status, forge_project_id)
+        values ('${OWNER_A}', 'forge_wp_realpg_1', 'RealPG package', 'cancelled', '${projectId}');`);
+      const { rows: invRows } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_admin_inventory('${OWNER_A}') as v;`);
+      const inventory = invRows[0].v;
+      expect(inventory.canManage).toBe(true);
+      const mine = inventory.clients.find((c) => c.id === clientId);
+      expect(mine).toBeDefined();
+      expect(mine.external_reference).toBe("RPG-1");
+      expect(mine.version).toBe(1);
+      expect(mine.sites).toHaveLength(1);
+      expect(mine.sites[0].site_type).toBe("industrial");
+      const job = mine.sites[0].projects.find((p) => p.id === projectId);
+      expect(job.project_code).toBe("RPG-01");
+      expect(job.version).toBe(1);
+      // A cancelled package still counts.
+      expect(job.package_count).toBe(1);
+    } finally {
+      await client.end().catch(() => {});
+    }
+    const acl = await pgClient.query(`
+      select proacl::text as acl from pg_proc where proname = 'forge_hierarchy_admin_inventory';`);
+    expect(acl.rows[0].acl).toBe("{postgres=X/postgres,authenticated=X/postgres}");
+    const privs = await pgClient.query(`
+      select has_function_privilege('authenticated', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as auth,
+             has_function_privilege('anon', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as anon,
+             has_function_privilege('service_role', 'public.forge_hierarchy_admin_inventory(text)', 'EXECUTE') as svc;`);
+    expect(privs.rows[0]).toEqual({ auth: true, anon: false, svc: false });
+  });
+
+  it60("real PostgreSQL 16: project delete with assigned packages raises HAS_CHILDREN; unlinking unblocks", async () => {
+    const client = new Client(pgCfg);
+    await client.connect();
+    try {
+      const { rows: created } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_client_create('${OWNER_A}', 'RealPG Delete Client', null, null, 'req_realpg_del_1') as v;`);
+      const clientId = created[0].v.id;
+      const { rows: siteRows } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_site_create('${OWNER_A}', '${clientId}', 'RealPG Delete Yard', 'other', null, null, null, null, null, null, 'req_realpg_del_2') as v;`);
+      const siteId = siteRows[0].v.id;
+      const { rows: projRows } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_create('${OWNER_A}', '${siteId}', 'RealPG Delete Job', null, null, null, null, null, 'req_realpg_del_3') as v;`);
+      const projectId = projRows[0].v.id;
+      await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_update('${OWNER_A}', '${projectId}', null, null, null, null, null, null, null, 'archived', 1, 'req_realpg_del_4') as v;`);
+      await pgClient.query(`
+        insert into forge_work_packages (owner_id, id, title, status, forge_project_id)
+        values ('${OWNER_A}', 'forge_wp_realpg_2', 'RealPG delete package', 'draft', '${projectId}');`);
+      await expect(pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_delete('${OWNER_A}', '${projectId}', 2, 'req_realpg_del_5') as v;`))
+        .rejects.toThrow(/FORGE_HIERARCHY_HAS_CHILDREN: project .* still has 1 assigned package/);
+      await pgClient.query(`
+        update forge_work_packages set forge_project_id = null
+        where owner_id = '${OWNER_A}' and id = 'forge_wp_realpg_2';`);
+      const { rows: deleted } = await pgAsUser(client, OWNER_A, `
+        select forge_hierarchy_project_delete('${OWNER_A}', '${projectId}', 2, 'req_realpg_del_6') as v;`);
+      expect(deleted[0].v.deleted).toBe(true);
+    } finally {
+      await client.end().catch(() => {});
     }
   });
 });

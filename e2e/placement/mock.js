@@ -166,6 +166,95 @@
     ],
   };
 
+  // Hierarchy manager (PlannerHierarchyManager): the ROUTE's shape —
+  // camelCase records, as the real GET route returns after the
+  // application service maps the inventory RPC (snake_case records).
+  // The RPC shape itself is proven by the migration + service tests;
+  // the placement mock stands in for the HTTP API, so it serves what
+  // the route serves. Stateful: POST/PATCH/DELETE mutate the tree, so
+  // reloads reflect the mutation exactly as the unit mocks do.
+  // Scenario `hierarchy-readonly` serves canManage false; every other
+  // scenario serves canManage true.
+  function hierarchyInventoryFixture() {
+    return {
+      ownerId: "owner_1",
+      canManage: scenario !== "hierarchy-readonly",
+      clients: [
+        {
+          id: "forge_cli_1", name: "Acme",
+          externalReference: "ACME-1", status: "active", notes: "",
+          version: 3, createdBy: "owner_1", updatedBy: "owner_1",
+          createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+          sites: [
+            {
+              id: "forge_site_1", clientId: "forge_cli_1", name: "Plant 1",
+              siteType: "industrial",
+              addressLine1: "", addressLine2: "", city: "Beaumont", region: "TX",
+              postalCode: "77701", countryCode: "US", status: "active", version: 2,
+              createdBy: "owner_1", updatedBy: "owner_1",
+              createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+              projects: [
+                { id: "forge_prj_1", siteId: "forge_site_1", name: "Turnaround", projectCode: "TA-01", description: "", projectType: "", plannedStart: null, plannedFinish: null, status: "active", version: 5, createdBy: "owner_1", updatedBy: "owner_1", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", packageCount: 2 },
+                { id: "forge_prj_2", siteId: "forge_site_1", name: "Revamp", projectCode: null, description: "", projectType: "", plannedStart: null, plannedFinish: null, status: "archived", version: 1, createdBy: "owner_1", updatedBy: "owner_1", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", packageCount: 0 },
+              ],
+            },
+            {
+              id: "forge_site_2", clientId: "forge_cli_1", name: "Plant 2",
+              siteType: "industrial",
+              addressLine1: "", addressLine2: "", city: "", region: "",
+              postalCode: "", countryCode: "", status: "active", version: 1,
+              createdBy: "owner_1", updatedBy: "owner_1",
+              createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+              projects: [],
+            },
+          ],
+        },
+        {
+          id: "forge_cli_2", name: "Beta",
+          externalReference: "", status: "archived", notes: "",
+          version: 1, createdBy: "owner_1", updatedBy: "owner_1",
+          createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+          sites: [],
+        },
+      ],
+    };
+  }
+  var inventoryState = hierarchyInventoryFixture();
+  var hierarchyCounters = { client: 100, site: 100, project: 100 };
+
+  function hierarchyFind(entity, id) {
+    for (var i = 0; i < inventoryState.clients.length; i++) {
+      var client = inventoryState.clients[i];
+      if (entity === "client" && client.id === id) return client;
+      for (var j = 0; j < client.sites.length; j++) {
+        var site = client.sites[j];
+        if (entity === "site" && site.id === id) return site;
+        for (var k = 0; k < site.projects.length; k++) {
+          if (entity === "project" && site.projects[k].id === id) return site.projects[k];
+        }
+      }
+    }
+    return null;
+  }
+
+  function hierarchyRemove(entity, id) {
+    for (var i = 0; i < inventoryState.clients.length; i++) {
+      var client = inventoryState.clients[i];
+      if (entity === "client" && client.id === id) {
+        inventoryState.clients.splice(i, 1);
+        return;
+      }
+      for (var j = 0; j < client.sites.length; j++) {
+        var site = client.sites[j];
+        if (entity === "site" && site.id === id) {
+          client.sites.splice(j, 1);
+          return;
+        }
+        site.projects = site.projects.filter(function (p) { return !(entity === "project" && p.id === id); });
+      }
+    }
+  }
+
   var BASE_PKG = {
     id: "forge_wp_1", code: "WP-0001", title: "Turnover", status: "draft",
     description: null, package_type: "other", priority: "normal",
@@ -182,6 +271,9 @@
   }
   function fail(body) {
     return { ok: false, status: 400, json: async function () { return body; } };
+  }
+  function status(body, code) {
+    return { ok: code >= 200 && code < 300, status: code, json: async function () { return body; } };
   }
 
   window.__placementPatches = [];
@@ -352,6 +444,66 @@
     }
     if (path.indexOf("/api/forge/designer") === 0) {
       return ok({ projects: [] });
+    }
+    // -- Hierarchy manager inventory (stateful CRUD) -------------------
+    if (path === "/api/forge/hierarchy" && parsed.searchParams.get("includeArchived") === "true" && method === "GET") {
+      return ok({ inventory: inventoryState });
+    }
+    if (path === "/api/forge/hierarchy" && (method === "POST" || method === "PATCH" || method === "DELETE")) {
+      var hBody = JSON.parse(options.body || "{}");
+      var hKey = hBody.entity === "client" ? "client" : hBody.entity === "site" ? "site" : "project";
+      if (method === "POST") {
+        if (hBody.entity === "client") {
+          if (inventoryState.clients.some(function (c) { return c.name.toLowerCase() === String(hBody.name || "").trim().toLowerCase(); })) {
+            return status({ error: "A client with that name already exists." }, 409);
+          }
+          var createdClient = { id: "forge_cli_new" + (hierarchyCounters.client++), name: hBody.name, externalReference: hBody.externalReference || null, status: "active", notes: hBody.notes || null, version: 1, createdBy: "owner_1", updatedBy: "owner_1", createdAt: "2026-11-13T00:00:00Z", updatedAt: "2026-11-13T00:00:00Z", sites: [] };
+          inventoryState.clients.push(createdClient);
+          return status({ client: createdClient }, 201);
+        }
+        if (hBody.entity === "site") {
+          var parentClient = hierarchyFind("client", hBody.clientId);
+          if (!parentClient) return status({ error: "That client could not be found." }, 404);
+          var createdSite = { id: "forge_site_new" + (hierarchyCounters.site++), clientId: hBody.clientId, name: hBody.name, siteType: hBody.siteType || null, addressLine1: hBody.addressLine1 || null, addressLine2: hBody.addressLine2 || null, city: hBody.city || null, region: hBody.region || null, postalCode: hBody.postalCode || null, countryCode: hBody.countryCode || null, status: "active", version: 1, createdBy: "owner_1", updatedBy: "owner_1", createdAt: "2026-11-13T00:00:00Z", updatedAt: "2026-11-13T00:00:00Z", projects: [] };
+          parentClient.sites.push(createdSite);
+          return status({ site: createdSite }, 201);
+        }
+        var parentSite = hierarchyFind("site", hBody.siteId);
+        if (!parentSite) return status({ error: "That site could not be found." }, 404);
+        var createdProject = { id: "forge_prj_new" + (hierarchyCounters.project++), siteId: hBody.siteId, name: hBody.name, projectCode: hBody.projectCode || null, description: hBody.description || null, projectType: hBody.projectType || null, plannedStart: hBody.plannedStart || null, plannedFinish: hBody.plannedFinish || null, status: "planned", version: 1, createdBy: "owner_1", updatedBy: "owner_1", createdAt: "2026-11-13T00:00:00Z", updatedAt: "2026-11-13T00:00:00Z", packageCount: 0 };
+        parentSite.projects.push(createdProject);
+        return status({ project: createdProject }, 201);
+      }
+      var hRecord = hierarchyFind(hBody.entity, hBody.id);
+      if (!hRecord) return status({ error: "That record could not be found." }, 404);
+      if (hBody.expectedVersion !== hRecord.version) {
+        return status({ error: "This record was changed by someone else. Reload and try again." }, 409);
+      }
+      if (method === "PATCH") {
+        for (var hField in hBody) {
+          if (["entity", "id", "expectedVersion", "requestId", "clientId", "siteId"].indexOf(hField) !== -1) continue;
+          if (hBody[hField] === null || hBody[hField] === undefined) continue;
+          hRecord[hField] = hBody[hField];
+        }
+        hRecord.version += 1;
+        var hOut = {};
+        hOut[hKey] = hRecord;
+        return ok(hOut);
+      }
+      if (hRecord.status !== "archived") {
+        return status({ error: "Archive the record first — only archived records can be permanently deleted." }, 409);
+      }
+      if (hBody.entity === "client" && (hRecord.sites || []).length > 0) {
+        return status({ error: "That record still has items under it (" + hRecord.sites.length + " sites). Remove or move the sites first." }, 409);
+      }
+      if (hBody.entity === "site" && (hRecord.projects || []).length > 0) {
+        return status({ error: "That record still has items under it (" + hRecord.projects.length + " projects). Remove or move the projects first." }, 409);
+      }
+      if (hBody.entity === "project" && (hRecord.packageCount || 0) > 0) {
+        return status({ error: "That record still has items under it (" + hRecord.packageCount + " assigned packages). Unassign or explicitly move packages first." }, 409);
+      }
+      hierarchyRemove(hBody.entity, hBody.id);
+      return ok({ deleted: true, id: hBody.id });
     }
     if (path.indexOf("/api/forge/hierarchy") === 0) {
       if (parsed.searchParams.has("projectId")) return ok({ selection: null });

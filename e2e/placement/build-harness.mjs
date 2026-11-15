@@ -34,6 +34,7 @@ const esbuildArgs = (entry, outfile) => [
 for (const [entry, outfile] of [
   ["e2e/placement/harness/readiness-entry.jsx", "e2e/placement/dist/readiness.js"],
   ["e2e/placement/harness/detail-entry.jsx", "e2e/placement/dist/detail.js"],
+  ["e2e/placement/harness/hierarchy-entry.jsx", "e2e/placement/dist/hierarchy.js"],
 ]) {
   execFileSync("npx", esbuildArgs(entry, outfile), { cwd: repoRoot, stdio: "inherit" });
 }
@@ -50,6 +51,7 @@ writeFileSync(path.join(distDir, "tailwind.css"), cssResult.css);
 
 cpSync(path.join(placementDir, "harness", "readiness.html"), path.join(distDir, "readiness.html"));
 cpSync(path.join(placementDir, "harness", "detail.html"), path.join(distDir, "detail.html"));
+cpSync(path.join(placementDir, "harness", "hierarchy.html"), path.join(distDir, "hierarchy.html"));
 cpSync(path.join(placementDir, "mock.js"), path.join(distDir, "mock.js"));
 
 console.log("placement harness built in e2e/placement/dist/");

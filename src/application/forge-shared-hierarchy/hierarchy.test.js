@@ -6,6 +6,7 @@ import {
   createHierarchyProject,
   createHierarchySite,
   deleteHierarchyProject,
+  getHierarchyAdminInventory,
   getHierarchySelector,
   mapHierarchyRpcError,
   updateHierarchyClient,
@@ -127,6 +128,81 @@ describe("getHierarchySelector", () => {
     db.rpc.mockResolvedValue({ data: null, error: { message: "FORGE_HIERARCHY_FORBIDDEN" } });
     const result = await getHierarchySelector(db, { ownerId: OWNER });
     expect(result).toMatchObject({ ok: false, httpStatus: 403 });
+  });
+});
+
+describe("getHierarchyAdminInventory", () => {
+  it("returns the full camelCased inventory: archived rows, versions, canManage, packageCount", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({
+      data: {
+        ownerId: OWNER,
+        canManage: true,
+        clients: [
+          {
+            id: "c1",
+            name: "Acme",
+            external_reference: "A-1",
+            notes: "Main client",
+            status: "active",
+            version: 3,
+            sites: [
+              {
+                id: "s1",
+                client_id: "c1",
+                name: "Plant 1",
+                site_type: "industrial",
+                city: "Beaumont",
+                status: "active",
+                version: 2,
+                projects: [
+                  { id: "p1", site_id: "s1", name: "TA 27", project_code: "TA-27", status: "active", version: 5, package_count: 2 },
+                  { id: "p2", site_id: "s1", name: "Revamp", project_code: null, status: "archived", version: 1, package_count: 0 },
+                ],
+              },
+            ],
+          },
+          { id: "c2", name: "Beta", external_reference: null, notes: null, status: "archived", version: 1, sites: [] },
+        ],
+      },
+      error: null,
+    });
+    const result = await getHierarchyAdminInventory(db, { ownerId: OWNER });
+    expect(result.ok).toBe(true);
+    expect(db.rpc).toHaveBeenCalledWith("forge_hierarchy_admin_inventory", { p_owner_id: OWNER });
+    const { inventory } = result;
+    expect(inventory.ownerId).toBe(OWNER);
+    expect(inventory.canManage).toBe(true);
+    // Archived rows are present (the selector omits them).
+    expect(inventory.clients).toHaveLength(2);
+    expect(inventory.clients[1].status).toBe("archived");
+    // Complete identity fields + versions survive the mapping.
+    expect(inventory.clients[0].externalReference).toBe("A-1");
+    expect(inventory.clients[0].notes).toBe("Main client");
+    expect(inventory.clients[0].version).toBe(3);
+    expect(inventory.clients[0].sites[0].city).toBe("Beaumont");
+    expect(inventory.clients[0].sites[0].version).toBe(2);
+    const [active, archived] = inventory.clients[0].sites[0].projects;
+    expect(active.projectCode).toBe("TA-27");
+    expect(active.version).toBe(5);
+    expect(active.packageCount).toBe(2);
+    expect(archived.status).toBe("archived");
+    expect(archived.packageCount).toBe(0);
+  });
+
+  it("maps a forbidden RPC error and a missing RPC to 503", async () => {
+    const db = mockDb();
+    db.rpc.mockResolvedValue({ data: null, error: { message: "FORGE_HIERARCHY_FORBIDDEN" } });
+    expect(await getHierarchyAdminInventory(db, { ownerId: OWNER })).toMatchObject({ ok: false, httpStatus: 403 });
+    db.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" } });
+    expect(await getHierarchyAdminInventory(db, { ownerId: OWNER })).toMatchObject({ ok: false, httpStatus: 503 });
+  });
+
+  it("requires an owner id and never calls the RPC without one", async () => {
+    const db = mockDb();
+    const result = await getHierarchyAdminInventory(db, { ownerId: null });
+    expect(result.ok).toBe(false);
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
 

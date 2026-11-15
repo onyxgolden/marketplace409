@@ -288,6 +288,45 @@ export async function getHierarchySelector(db, { ownerId }) {
   return { ok: true, selector: toCamelSelector(result.data) };
 }
 
+/** Full management inventory: every client/site/project in ANY status,
+ *  with complete identity fields and optimistic-concurrency versions,
+ *  plus the server-proven canManage flag. Backed by the
+ *  forge_hierarchy_admin_inventory RPC (migration 20261113050000).
+ *  The caller gates on the read capability; a missing RPC (migration
+ *  not applied yet) maps to the same 503 not-applied result as the
+ *  selector, so the admin page keeps rendering. */
+export async function getHierarchyAdminInventory(db, { ownerId }) {
+  const ownerError = requireOwnerId(ownerId);
+  if (ownerError) return ownerError;
+  const result = await callRpc(db, "forge_hierarchy_admin_inventory", { p_owner_id: ownerId });
+  if (!result.ok) return result;
+  return { ok: true, inventory: toCamelInventory(result.data) };
+}
+
+/** Map the inventory RPC's snake_case tree to the service's camelCase
+ *  full rows (the same toCamelClient/Site/Project shapes the
+ *  validate-selection path returns, so edit forms prefill truthfully
+ *  and PATCH/DELETE carry real expectedVersions). Projects also carry
+ *  packageCount — assigned packages (any status) block a hard delete;
+ *  the number is display only, the delete RPC re-counts. */
+function toCamelInventory(inventory) {
+  if (!inventory) return { ownerId: null, canManage: false, clients: [] };
+  return {
+    ownerId: inventory.ownerId ?? inventory.owner_id ?? null,
+    canManage: inventory.canManage ?? inventory.can_manage ?? false,
+    clients: (inventory.clients ?? []).map((client) => ({
+      ...toCamelClient(client),
+      sites: (client.sites ?? []).map((site) => ({
+        ...toCamelSite(site),
+        projects: (site.projects ?? []).map((project) => ({
+          ...toCamelProject(project),
+          packageCount: project.packageCount ?? project.package_count ?? 0,
+        })),
+      })),
+    })),
+  };
+}
+
 export async function validateHierarchySelection(db, { ownerId, projectId }) {
   const ownerError = requireOwnerId(ownerId);
   if (ownerError) return ownerError;
