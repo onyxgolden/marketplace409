@@ -41,8 +41,9 @@
 // tests in WorkPackageDrawingReadiness.test.jsx and
 // WorkPackageDetailClient.test.jsx; the §4D regressions live there too.
 import { test, expect } from "@playwright/test";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
+import { buildHarnessLocked } from "./build-harness-locked.mjs";
 
 // Paths are resolved from the working directory: run the suite from the
 // repo root (`npx playwright test --config=e2e/playwright.placement.config.js`).
@@ -56,10 +57,9 @@ let server;
 
 test.beforeAll(async () => {
   // Every run tests the current source: rebuild the harness first.
-  execFileSync("node", [path.join(placementDir, "build-harness.mjs")], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
+  // Locked: a second spec file in a parallel worker builds the same
+  // dist/ directory — the lock keeps the two builds from interleaving.
+  buildHarnessLocked(repoRoot, placementDir);
   server = spawn("node", [path.join(placementDir, "server.mjs")], { cwd: repoRoot });
   const port = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("placement server did not start")), 15000);
