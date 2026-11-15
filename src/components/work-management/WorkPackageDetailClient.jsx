@@ -7,7 +7,7 @@ import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, a
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
-import WorkPackageDrawingReadiness from "./WorkPackageDrawingReadiness.jsx";
+import WorkPackageDrawingReadiness, { ActionConfirmation } from "./WorkPackageDrawingReadiness.jsx";
 import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
 import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
@@ -90,6 +90,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState(() => editFormFromPackage(initial.package));
+  // Slice-7 confirmation-placement fix (R1/R3): the Package Edit
+  // confirmation, rendered inline at this section (in the edit form
+  // footer while editing, below the Package header once the form
+  // closes on save) — never at a card top, never a toast.
+  const [editNotice, setEditNotice] = useState("");
   const [properties, setProperties] = useState(null);
   const [propertiesError, setPropertiesError] = useState("");
   const [transitionTarget, setTransitionTarget] = useState("");
@@ -270,19 +275,52 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
   async function onSaveEdit(event) {
     event.preventDefault();
+    // Slice-7 confirmation-placement fix (R3): a save with no changes
+    // must confirm truthfully — never claim data was saved when no
+    // mutation occurred, and never PATCH a no-op. The client-detected
+    // no-op (form deep-equals the persisted package) skips the request
+    // entirely; the server no-op (only whitespace/date normalization
+    // differs) is detected by comparing the normalized payload against
+    // the normalized persisted values before sending.
+    setError("");
+    if (JSON.stringify(editForm) === JSON.stringify(editFormFromPackage(pkg))) {
+      setEditNotice(`No changes to ${pkg.title} — nothing needed saving.`);
+      setEditing(false);
+      return;
+    }
     // property_id always present in the patch: a chosen slug assigns, an
     // empty picker clears to null (server canonicalizes and validates).
     // planned_finish likewise: an empty date input serializes to null —
     // the raw "" must never reach the Postgres date column (D6).
-    const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", {
+    const payload = {
       ...editForm,
       // Project is free text (D3): blank clears to null, typed text is kept
       // verbatim after trimming. Independent of property_id.
       project_id: (editForm.project_id || "").trim() || null,
       planned_finish: editForm.planned_finish || null,
       property_id: editForm.property_id || null,
-    });
-    if (response.ok) refresh();
+    };
+    const normalizedPersisted = {
+      ...editFormFromPackage(pkg),
+      project_id: (pkg.project_id || "").trim() || null,
+      planned_finish: pkg.planned_finish || null,
+      property_id: pkg.property_id || null,
+    };
+    if (JSON.stringify(payload) === JSON.stringify(normalizedPersisted)) {
+      setEditNotice(`${pkg.title} is up to date — no changes were needed.`);
+      setEditing(false);
+      return;
+    }
+    const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", payload);
+    if (response.ok) {
+      // Name the title as just saved (the user may have renamed it).
+      setEditNotice(`${editForm.title} saved.`);
+      refresh();
+    } else {
+      // A failed save clears this action's own stale success (R2);
+      // the error itself is shown by the edit form's error state.
+      setEditNotice("");
+    }
   }
 
   // Entering or abandoning the edit form starts from the persisted
@@ -292,6 +330,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   function onStartEdit() {
     setEditForm(editFormFromPackage(pkg));
     setError("");
+    // A new edit clears this action's previous confirmation (R2).
+    setEditNotice("");
     setEditing(true);
   }
 
@@ -614,9 +654,10 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                     )}
                   </div>
                 )}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
                   <button type="button" className={btnGhost} onClick={onCancelEdit} disabled={busy}>Cancel</button>
+                  <ActionConfirmation message={editNotice} />
                 </div>
               </form>
             ) : (
@@ -669,6 +710,21 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
               </dl>
             )}
             {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
+            {/* Slice-7 confirmation-placement fix (R1/R3): the Package
+                Edit confirmation stays at this section's location
+                after the edit form closes on save — rendered at the
+                bottom of the Package section, directly below the
+                read-only fields, which is where the Save button was:
+                the section header sits a full form-height above the
+                Save button on this long form, so a notice below the
+                header would be off-screen after the user scrolled down
+                to save. While editing it renders in the form footer
+                instead. */}
+            {!editing && (
+              <div className="mt-4">
+                <ActionConfirmation message={editNotice} />
+              </div>
+            )}
           </section>
 
           {/* PR B: the package -> FORGE project assignment. A separate,

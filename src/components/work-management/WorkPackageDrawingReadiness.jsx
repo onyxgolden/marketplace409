@@ -119,6 +119,32 @@ function decisionOutcomeLabel(decision) {
   return "approved";
 }
 
+// Slice-7 confirmation-placement fix (R1): an action-local
+// confirmation, rendered inline at the action that produced it. The
+// old shared notice sat at the top of the card, outside the viewport
+// after a save. The check mark is a non-color cue — the message text
+// itself states the outcome — and the status keeps its polite
+// live-region announcement. Rendered only when a message is set; the
+// caller owns the per-action state, so a success never appears beside
+// a different action.
+export function ActionConfirmation({ message }) {
+  if (!message) return null;
+  // min-w-48 (not min-w-0): the action footers are flex flex-wrap, but
+  // a flex-1 item with min-w-0 shrinks to fit the line instead of
+  // wrapping — at phone width the long field-redline confirmation was
+  // crushed into a ~57px column 240px tall, unreadable and pushed off
+  // the viewport. A 192px minimum makes the footer wrap the
+  // confirmation onto its own full-width line when it cannot fit
+  // beside the button (the brief's "action row may wrap"), while on
+  // desktop it still sits beside the button.
+  return (
+    <span className="flex min-w-48 flex-1 flex-wrap items-start gap-1">
+      <span aria-hidden="true" className="text-xs font-medium text-green-800">✓</span>
+      <span className="min-w-0 flex-1 text-xs font-medium text-green-800" role="status">{message}</span>
+    </span>
+  );
+}
+
 // One review round: redlines, decision form, audit events. Detail is
 // fetched only while the round is expanded.
 function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, revisionsReady, onChanged }) {
@@ -129,11 +155,22 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // Slice-7 friction fix (F1): this round's own success confirmation.
-  // It is set only after the server mutation succeeds, and cleared
-  // when a new mutation begins or fails — a stale confirmation must
-  // never survive into the next action.
-  const [notice, setNotice] = useState("");
+  // Slice-7 confirmation-placement fix (R1/R2): one confirmation per
+  // action, rendered inline at that action's form. The old shared
+  // notice rendered at the top of the round detail, outside the
+  // viewport after a save. Each action clears only its own status; a
+  // failed mutation clears only the failing action's status, never
+  // another action's success.
+  const [actionNotices, setActionNotices] = useState({});
+  const setActionNotice = (key, message) =>
+    setActionNotices((prev) => ({ ...prev, [key]: message }));
+  const clearActionNotice = (key) =>
+    setActionNotices((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   const [redlineForm, setRedlineForm] = useState({
     comment: "", severity: "REQUIRED", anchorPage: "", anchorX: "", anchorY: "",
   });
@@ -167,14 +204,14 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
 
   async function submitDecision(event) {
     event.preventDefault();
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("decision");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/decision`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion: review.version, decision, reason: reason.trim() }),
       });
       const label = revisionLabel(revisions, review.drawingRevisionId);
-      setNotice(label
+      setActionNotice("decision", label
         ? `Review decision recorded for drawing ${drawingNumber}, ${label}: ${decisionOutcomeLabel(decision)}.`
         : `Review decision recorded for drawing ${drawingNumber}: ${decisionOutcomeLabel(decision)}.`);
       setReason("");
@@ -187,7 +224,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
 
   async function submitRedline(event) {
     event.preventDefault();
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("redline");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines`, {
         method: "POST",
@@ -202,7 +239,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
         }),
       });
       const label = revisionLabel(revisions, review.drawingRevisionId);
-      setNotice(label
+      setActionNotice("redline", label
         ? `Redline added to drawing ${drawingNumber}, ${label}.`
         : `Redline added to drawing ${drawingNumber}.`);
       setRedlineForm({ comment: "", severity: "REQUIRED", anchorPage: "", anchorX: "", anchorY: "" });
@@ -216,7 +253,8 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
   async function submitResolve(event, redline) {
     event.preventDefault();
     const form = resolveForm[redline.id] || {};
-    setBusy(true); setError(""); setNotice("");
+    const resolveKey = `resolve:${redline.id}`;
+    setBusy(true); setError(""); clearActionNotice(resolveKey);
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews/${review.id}/redlines/${redline.id}`, {
         method: "PATCH",
@@ -228,7 +266,7 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
       });
       const label = revisionLabel(revisions, review.drawingRevisionId);
       const verb = (form.resolution || "RESOLVED") === "ACCEPTED_AS_NOTED" ? "accepted as noted" : "resolved";
-      setNotice(label
+      setActionNotice(resolveKey, label
         ? `Redline ${verb} for drawing ${drawingNumber}, ${label}.`
         : `Redline ${verb} for drawing ${drawingNumber}.`);
       setResolvingId(null);
@@ -255,7 +293,6 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
       {expanded && (
         <div className="mt-3 space-y-3">
           {loadError && <p className="text-xs text-red-600">{loadError}</p>}
-          {notice && <p className="text-xs text-green-700" role="status">{notice}</p>}
           <p className="text-xs text-slate-600">
             <span className="font-medium text-slate-700">Revision under review: </span>
             {boundRevisionDetail}
@@ -301,12 +338,18 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
                             value={(resolveForm[redline.id] || {}).resolutionNote || ""}
                             onChange={(e) => setResolveForm((f) => ({ ...f, [redline.id]: { ...(f[redline.id] || {}), resolutionNote: e.target.value } }))} />
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <button type="submit" className={btnPrimary} disabled={busy}>Save resolution</button>
                           <button type="button" className={btnGhost} onClick={() => setResolvingId(null)}>Cancel</button>
                         </div>
                       </form>
                     )}
+                    {/* Slice-7 confirmation-placement fix: the resolve
+                        confirmation stays at this redline's location
+                        even after the resolve form closes — it is
+                        rendered in the redline item, not inside the
+                        form that unmounts on success. */}
+                    <ActionConfirmation message={actionNotices[`resolve:${redline.id}`]} />
                   </li>
                 ))}
               </ul>
@@ -346,7 +389,10 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
                       onChange={(e) => setRedlineForm((f) => ({ ...f, anchorY: e.target.value }))} />
                   </div>
                 </div>
-                <button type="submit" className={btnPrimary} disabled={busy || !redlineForm.comment.trim()}>Add redline</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="submit" className={btnPrimary} disabled={busy || !redlineForm.comment.trim()}>Add redline</button>
+                  <ActionConfirmation message={actionNotices.redline} />
+                </div>
               </form>
               <form className="space-y-2 rounded border border-slate-100 p-3" onSubmit={submitDecision}>
                 <p className="text-xs font-medium text-slate-700">Decide this round</p>
@@ -368,6 +414,20 @@ function ReviewRound({ packageId, drawingId, drawingNumber, review, revisions, r
               </form>
             </>
           )}
+          {/* Slice-7 confirmation-placement fix: the decision
+              confirmation stays at this round's location even after
+              the decision form closes itself (a decided round hides
+              both forms) — it is rendered in the round detail,
+              directly where the forms were, not at the top of the
+              card. */}
+          <ActionConfirmation message={actionNotices.decision} />
+          {/* Slice-7 confirmation-placement fix: when the round closes
+              (a decision was recorded) the redline form unmounts, so
+              the redline confirmation moves to this same retained
+              location instead of being lost with the form. Exactly one
+              redline confirmation is ever mounted: in the redline
+              form's footer while the round is open, here when closed. */}
+          {!isOpen && <ActionConfirmation message={actionNotices.redline} />}
           {events.length > 0 && (
             <div>
               <p className="text-xs font-medium text-slate-700">History</p>
@@ -394,7 +454,24 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  // Slice-7 confirmation-placement fix (R1/R2): one confirmation per
+  // action, rendered inline at that action's form. The old shared
+  // notice rendered at the top of the drawing workspace, outside the
+  // viewport after a save. Each action clears only its own status; a
+  // failed mutation clears only the failing action's status, never
+  // another action's success. Reconcile confirmations are keyed per
+  // field hand-redline so one field's success never appears beside
+  // another field's form.
+  const [actionNotices, setActionNotices] = useState({});
+  const setActionNotice = (key, message) =>
+    setActionNotices((prev) => ({ ...prev, [key]: message }));
+  const clearActionNotice = (key) =>
+    setActionNotices((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   const [reviewForm, setReviewForm] = useState({ drawingRevisionId: "", reason: "" });
   const [ifcForm, setIfcForm] = useState({ reviewId: "", ifcRevisionCode: "", stagedArtifactId: "", reason: "" });
   const [stageFile, setStageFile] = useState(null);
@@ -514,7 +591,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     event.preventDefault();
     if (!stageFile) return;
     const stagedName = stageFile.name;
-    setStaging(true); setError(""); setNotice("");
+    setStaging(true); setError(""); clearActionNotice("stage");
     try {
       const body = new FormData();
       body.append("file", stageFile);
@@ -527,7 +604,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
       if (!response.ok) throw new Error(data.error || "Could not stage the IFC PDF.");
       setStageFile(null);
       event.target.reset();
-      setNotice(`IFC PDF ${stagedName} staged for drawing ${row.drawingNumber} — it is staged, not yet issued.`);
+      setActionNotice("stage", `IFC PDF ${stagedName} staged for drawing ${row.drawingNumber} — it is staged, not yet issued.`);
       await refreshArtifacts();
     } catch (e) {
       setError(e.message);
@@ -539,7 +616,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     // Slice-7 friction fix (F1): resolve the chosen revision's code
     // before the form is cleared, so the confirmation names it.
     const chosenRevision = ifaRevisions.find((r) => r.id === reviewForm.drawingRevisionId);
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("review");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/reviews`, {
         method: "POST",
@@ -550,7 +627,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setReviewForm({ drawingRevisionId: "", reason: "" });
-      setNotice(chosenRevision
+      setActionNotice("review", chosenRevision
         ? `Review round opened for drawing ${row.drawingNumber}, Rev ${chosenRevision.revisionCode}.`
         : `Review round opened for drawing ${row.drawingNumber}.`);
       await refreshAll();
@@ -564,7 +641,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     // Slice-7 friction fix (F1): capture the entered IFC revision
     // code before the form is cleared, so the confirmation names it.
     const issuedCode = ifcForm.ifcRevisionCode.trim();
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("ifc");
     try {
       // Slice-7 PDF blockers: the IFC bytes come from a staged artifact,
       // never from typed references. The release RPC takes the staged
@@ -579,7 +656,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setIfcForm({ reviewId: "", ifcRevisionCode: "", stagedArtifactId: "", reason: "" });
-      setNotice(`IFC revision ${issuedCode} for drawing ${row.drawingNumber} issued for construction.`);
+      setActionNotice("ifc", `IFC revision ${issuedCode} for drawing ${row.drawingNumber} issued for construction.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -589,7 +666,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   async function submitField(event) {
     event.preventDefault();
     const markedRevision = reviewableRevisions.find((r) => r.id === fieldForm.drawingRevisionId);
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("field");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines`, {
         method: "POST",
@@ -601,7 +678,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
         }),
       });
       setFieldForm({ drawingRevisionId: "", artifactRef: "", sha256: "", fieldReason: "" });
-      setNotice(markedRevision
+      setActionNotice("field", markedRevision
         ? `Field hand-redline captured for drawing ${row.drawingNumber}, Rev ${markedRevision.revisionCode} (${markedRevision.issuedAs}) as a historical record. It is not an issued IFC revision.`
         : `Field hand-redline captured for drawing ${row.drawingNumber} as a historical record. It is not an issued IFC revision.`);
       await refreshAll();
@@ -613,6 +690,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
   async function submitReconcile(event, fieldRedline) {
     event.preventDefault();
     const form = reconcileForm[fieldRedline.id] || {};
+    const reconcileKey = `reconcile:${fieldRedline.id}`;
     const reconciledRevision = form.reconciledRevisionId
       ? revisions.find((r) => r.id === form.reconciledRevisionId)
       : null;
@@ -624,7 +702,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
     const originalRevisionLabel = revisionLabel(revisions, fieldRedline.drawingRevisionId);
     const originalRevisionText = originalRevisionLabel
       ?? `Revision record unavailable (ID ${shortId(fieldRedline.drawingRevisionId)})`;
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice(reconcileKey);
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/field-redlines/${fieldRedline.id}/reconcile`, {
         method: "POST",
@@ -640,7 +718,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
       // — the server may have reconciled against it. Only an
       // actually empty selection means retirement without a new
       // revision.
-      setNotice(!form.reconciledRevisionId
+      setActionNotice(reconcileKey, !form.reconciledRevisionId
         ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText} — retired without a new revision.`
         : reconciledRevision
           ? `Field hand-redline reconciled for drawing ${row.drawingNumber}, ${originalRevisionText}, reconciled as Rev ${reconciledRevision.revisionCode} (${reconciledRevision.issuedAs}).`
@@ -653,14 +731,14 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
 
   async function submitRetire(event) {
     event.preventDefault();
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); clearActionNotice("retire");
     try {
       await api(pageQuery, `/api/work-packages/${packageId}/drawings/${drawingId}/retire`, {
         method: "POST",
         body: JSON.stringify({ reason: retireReason.trim() }),
       });
       setConfirmRetire(false);
-      setNotice(`Drawing ${row.drawingNumber} retired. Its review history is kept.`);
+      setActionNotice("retire", `Drawing ${row.drawingNumber} retired. Its review history is kept.`);
       await refreshAll();
     } catch (e) {
       setError(e.message);
@@ -690,7 +768,6 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
       {expanded && (
         <div className="mt-3 space-y-4">
           {error && <p className="text-xs text-red-600">{error}</p>}
-          {notice && <p className="text-xs text-green-700" role="status">{notice}</p>}
           <div>
             <p className="text-xs font-medium text-slate-700">Revisions</p>
             {revisions.length === 0 ? (
@@ -751,6 +828,13 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 <button type="submit" className={btnPrimary} disabled={busy || !reviewForm.drawingRevisionId}>Open review</button>
               </form>
             )}
+            {/* Slice-7 confirmation-placement fix: the review-open
+                confirmation stays at this section's location even
+                after the form closes itself (an open round hides the
+                form) — it is rendered in the Review rounds section,
+                directly where the form was, not at the top of the
+                card. */}
+            <ActionConfirmation message={actionNotices.review} />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-700">IFC releases</p>
@@ -790,6 +874,7 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                     {staging ? "Staging…" : "Stage IFC PDF"}
                   </button>
                 </div>
+                <ActionConfirmation message={actionNotices.stage} />
                 {stagedCandidates.length > 0 && (
                   <ul className="mt-1 space-y-1 text-xs text-slate-600">
                     {stagedCandidates.map((artifact) => (
@@ -839,7 +924,10 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 {stagedCandidates.length === 0 && (
                   <p className="text-xs text-amber-700">No IFC PDF staged yet — stage one in the form above first.</p>
                 )}
-                <button type="submit" className={btnPrimary} disabled={busy || !ifcForm.reviewId || !ifcForm.stagedArtifactId}>Issue IFC revision</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="submit" className={btnPrimary} disabled={busy || !ifcForm.reviewId || !ifcForm.stagedArtifactId}>Issue IFC revision</button>
+                  <ActionConfirmation message={actionNotices.ifc} />
+                </div>
               </form>
             )}
           </div>
@@ -875,6 +963,13 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                         <button type="submit" className={btnPrimary} disabled={busy}>Reconcile</button>
                       </form>
                     )}
+                    {/* Slice-7 confirmation-placement fix: the
+                        reconcile confirmation stays at this field
+                        redline's location even after the form closes
+                        (a reconciled field hides its form) — it is
+                        rendered in the field item, not inside the form
+                        that unmounts on success. */}
+                    <ActionConfirmation message={actionNotices[`reconcile:${field.id}`]} />
                   </li>
                 ))}
               </ul>
@@ -907,13 +1002,16 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                   <input id={`field-reason-${drawingId}`} className={input} value={fieldForm.fieldReason}
                     onChange={(e) => setFieldForm((f) => ({ ...f, fieldReason: e.target.value }))} required />
                 </div>
-                <button type="submit" className={btnPrimary} disabled={busy}>Capture field hand-redline</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="submit" className={btnPrimary} disabled={busy}>Capture field hand-redline</button>
+                  <ActionConfirmation message={actionNotices.field} />
+                </div>
               </form>
             )}
           </div>
-          {!row.retiredAt && (
-            <div>
-              {confirmRetire ? (
+          <div>
+            {!row.retiredAt && (
+              confirmRetire ? (
                 <form className="space-y-2 rounded border border-red-200 p-3" onSubmit={submitRetire}>
                   <p className="text-xs font-medium text-red-700">Retire this drawing? Open reviews are cancelled and the active IFC release is retired. Review history is kept.</p>
                   <div>
@@ -928,9 +1026,15 @@ function DrawingReviewWorkspace({ packageId, row, onChanged, onNavigateToTab = n
                 </form>
               ) : (
                 <button type="button" className={btnDanger} onClick={() => setConfirmRetire(true)}>Retire drawing</button>
-              )}
-            </div>
-          )}
+              )
+            )}
+            {/* Slice-7 confirmation-placement fix: the retire
+                confirmation stays at this section's location even
+                after the retire controls disappear (a retired drawing
+                hides them) — it is rendered in the section, not
+                inside the form that unmounts on success. */}
+            <ActionConfirmation message={actionNotices.retire} />
+          </div>
         </div>
       )}
     </li>

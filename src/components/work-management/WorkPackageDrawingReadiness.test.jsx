@@ -590,25 +590,35 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     expect(notice.textContent).toBe("Review decision recorded for drawing P-101, Rev 0 (IFA): approved.");
   });
 
-  it("a failed decision shows the error and no success notice, clearing the stale one", async () => {
+  // Slice-7 confirmation-placement fix (R2): a failed mutation
+  // clears only ITS OWN success state. A stale confirmation from a
+  // different action (here: the redline) stays beside that action's
+  // form — it is never cleared by an unrelated failure. This test
+  // previously encoded the old shared-notice rule ("a failed decision
+  // clears the stale one"); the brief's R2 supersedes it.
+  it("a failed decision shows the error and no decision notice, keeping the redline confirmation beside the redline form", async () => {
     setupFetch({ fail: { decision: true } });
     const { container } = await renderPanel();
     await expandDrawing(container, "P-101");
     await expandRound(container, "Round 1 — OPEN");
-    // A successful redline first, so a stale confirmation exists.
+    // A successful redline first, so a confirmation exists beside
+    // the redline form.
     await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
     await act(async () => { findButton(container, "Add redline").click(); });
     await act(async () => {});
     await act(async () => {});
     expect(container.querySelector('[role="status"]').textContent).toContain("Redline added");
-    // The failing decision must clear it and show the error instead.
+    // The failing decision must show the error and no decision
+    // confirmation — and must NOT clear the redline confirmation.
     await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
     await act(async () => { findButton(container, "Record decision").click(); });
     await act(async () => {});
     await act(async () => {});
     expect(container.textContent).toContain("Review is stale");
-    expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.textContent).not.toContain("Review decision recorded");
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].textContent).toContain("Redline added");
   });
 
   it("confirms staging an IFC PDF as staged, not issued, naming file and drawing", async () => {
@@ -623,7 +633,13 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     expect(container.textContent).toContain("Staged: W-0005-1-TEST-ISO-IFC.pdf");
   });
 
-  it("confirms issuing an IFC revision with drawing and code, and clears a stale stage notice on failure", async () => {
+  // Slice-7 confirmation-placement fix (R2): a failed mutation
+  // clears only ITS OWN success state. A stale confirmation from a
+  // different action (here: the stage) stays beside that action's
+  // form — it is never cleared by an unrelated failure. This test
+  // previously encoded the old shared-notice rule ("clears a stale
+  // stage notice on failure"); the brief's R2 supersedes it.
+  it("confirms issuing an IFC revision with drawing and code, and a failed issue keeps the stage notice beside the stage form", async () => {
     setupFetch({ fail: { issue: true } });
     const { container } = await renderPanel();
     await expandDrawing(container, "ISO-200");
@@ -638,8 +654,11 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     await act(async () => {});
     await act(async () => {});
     expect(container.textContent).toContain("Could not issue the IFC revision.");
-    expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.textContent).not.toContain("IFC revision 2 for drawing ISO-200 issued for construction.");
+    // The stage confirmation is untouched by the failed issue.
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].textContent).toContain("staged for drawing ISO-200");
   });
 
   it("confirms issuing an IFC revision with drawing and code", async () => {
@@ -655,7 +674,10 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     await act(async () => { findButton(container, "Issue IFC revision").click(); });
     await act(async () => {});
     await act(async () => {});
-    const notice = container.querySelector('[role="status"]');
+    // Two confirmations are present (stage + issue); read the issue
+    // confirmation from the issue form's footer, not the first status
+    // in the drawing, which is the stage confirmation.
+    const notice = findButton(container, "Issue IFC revision").closest("form").querySelector('[role="status"]');
     expect(notice).not.toBeNull();
     expect(notice.textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
   });
@@ -802,6 +824,251 @@ describe("WorkPackageDrawingReadiness friction fix", () => {
     expect(container.textContent).toContain("IFC Rev 1 · released");
     expect(container.textContent).toContain("· retired");
     expect(container.textContent).not.toContain("superseded");
+  });
+});
+
+// Slice-7 save-confirmation placement fix (brief 2026-11-15, R1/R2):
+// jsdom cannot measure viewport rectangles (getBoundingClientRect
+// returns zeros), so these tests assert PLACEMENT — each confirmation
+// renders inside its own action's form or, where the form closes on
+// success, at that action's retained location in the same section —
+// never at the top of the card — plus wording (brief 4B) and
+// isolation (brief 4C). Real viewport geometry (in-viewport
+// immediately after success, no scroll, no horizontal clipping,
+// desktop 1280x800 + phone 390x844) is proven by the Playwright
+// placement spec in e2e/placement/ (brief 4A).
+describe("WorkPackageDrawingReadiness confirmation placement", () => {
+  // The status belonging to the action whose submit button reads
+  // `buttonText`: the [role="status"] inside that button's form.
+  function statusInForm(container, buttonText) {
+    const button = findButton(container, buttonText);
+    if (!button) return null;
+    const form = button.closest("form");
+    return form ? form.querySelector('[role="status"]') : null;
+  }
+
+  it("PLACEMENT-stage: the stage confirmation renders inside the stage form, not at the top of the drawing", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(1);
+    const notice = statusInForm(container, "Stage IFC PDF");
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("IFC PDF W-0005-1-TEST-ISO-IFC.pdf staged for drawing ISO-200 — it is staged, not yet issued.");
+    // The old card-top notice was a direct child of the expanded
+    // body; this one is nested inside its action's form.
+    expect(notice.closest("form")).not.toBeNull();
+  });
+
+  it("PLACEMENT-review: the review-open confirmation stays in the Review rounds section after the form closes itself", async () => {
+    setupFetch({ fixture: singleDrawingFixture(), reviewsMap: { dwg_1: [] } });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "review-rev-dwg_1", "forge_wpdrv_2"); });
+    await act(async () => { findButton(container, "Open review").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // The form hid itself (an open round exists now) but the
+    // confirmation must remain at the section's location.
+    expect(findButton(container, "Open review")).toBeUndefined();
+    const section = [...container.querySelectorAll("p")].find((p) => p.textContent === "Review rounds").parentElement;
+    const notice = section.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Review round opened for drawing P-101, Rev 1.");
+  });
+
+  it("PLACEMENT-redline: the redline confirmation renders inside the redline form", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
+    await act(async () => { findButton(container, "Add redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = statusInForm(container, "Add redline");
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Redline added to drawing P-101, Rev 0 (IFA).");
+  });
+
+  it("PLACEMENT-resolve: an accepted-as-noted redline confirms in its own redline item, after the resolve form closes", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { findButton(container, "Resolve").click(); });
+    await act(async () => { selectOption(container, "resolve-forge_wpdrl_1", "ACCEPTED_AS_NOTED"); });
+    await act(async () => { findButton(container, "Save resolution").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // The resolve form closed; the confirmation stays in the
+    // redline item it belongs to — and says accepted as noted,
+    // not simply resolved (brief 4B).
+    expect(findButton(container, "Save resolution")).toBeUndefined();
+    const item = [...container.querySelectorAll("li")].find((li) => li.textContent.includes("Move this nozzle 50 mm up."));
+    const notice = item.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Redline accepted as noted for drawing P-101, Rev 0 (IFA).");
+  });
+
+  it("PLACEMENT-decision: the decision confirmation stays in the round detail after both forms close", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
+    await act(async () => { findButton(container, "Record decision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // Both forms closed with the round; the confirmation must
+    // remain in the round detail, not vanish with the form.
+    expect(findButton(container, "Record decision")).toBeUndefined();
+    expect(findButton(container, "Add redline")).toBeUndefined();
+    const round = findButton(container, "Round 1").closest("li");
+    const notice = round.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Review decision recorded for drawing P-101, Rev 0 (IFA): approved.");
+  });
+
+  it("WORDING-decision: a returned-to-drafter decision says so in plain words", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { selectOption(container, "decision-forge_wpdrvw_1", "RETURN_TO_DRAFTER"); });
+    await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Needs a rework."); });
+    await act(async () => { findButton(container, "Record decision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Review decision recorded for drawing P-101, Rev 0 (IFA): returned to drafter.");
+  });
+
+  it("ISOLATION-stage+issue: stage and issue confirmations coexist, each inside its own form", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    await act(async () => { selectOption(container, "ifc-rev-dwg_2", "forge_wpdrvw_2"); });
+    await act(async () => { setText(container, "ifc-code-dwg_2", "2"); });
+    await act(async () => { selectOption(container, "ifc-file-dwg_2", "forge_wpa_9"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Issue IFC revision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(2);
+    expect(statusInForm(container, "Stage IFC PDF").textContent).toContain("staged for drawing ISO-200");
+    expect(statusInForm(container, "Issue IFC revision").textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
+  });
+
+  it("ISOLATION-redline+decision: both confirmations survive, each at its own action's location", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await expandRound(container, "Round 1 — OPEN");
+    await act(async () => { setText(container, "redline-comment-forge_wpdrvw_1", "Check the weld note."); });
+    await act(async () => { findButton(container, "Add redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => { setText(container, "decision-reason-forge_wpdrvw_1", "Looks good."); });
+    await act(async () => { findButton(container, "Record decision").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // The round closed, so the redline form is gone — but its
+    // confirmation moved to the retained location alongside the
+    // decision confirmation. Neither action's success appears
+    // beside the other; each names its own action.
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(2);
+    expect(statuses.map((s) => s.textContent)).toContain("Redline added to drawing P-101, Rev 0 (IFA).");
+    expect(statuses.map((s) => s.textContent)).toContain("Review decision recorded for drawing P-101, Rev 0 (IFA): approved.");
+  });
+
+  it("ISOLATION-failure: a failed field capture clears no other action's confirmation", async () => {
+    setupFetch({ fail: { field: true } });
+    const { container } = await renderPanel();
+    // The stage form only renders on a drawing with an approved
+    // review (ISO-200); the field form lives on P-101.
+    await expandDrawing(container, "ISO-200");
+    setStageFile(container);
+    await submitStageForm(container);
+    expect(container.querySelector('[role="status"]').textContent).toContain("staged for drawing ISO-200");
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "field-rev-dwg_1", "forge_wpdrv_2"); });
+    await act(async () => { setText(container, "field-ref-dwg_1", "scan-1.pdf"); });
+    await act(async () => { setText(container, "field-sha-dwg_1", "d".repeat(64)); });
+    await act(async () => { setText(container, "field-reason-dwg_1", "Marked up on site."); });
+    await act(async () => { findButton(container, "Capture field hand-redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    expect(container.textContent).toContain("Could not capture the field hand-redline.");
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].textContent).toContain("staged for drawing ISO-200");
+  });
+
+  it("PLACEMENT-field: the field hand-redline confirmation renders inside the field form", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "field-rev-dwg_1", "forge_wpdrv_2"); });
+    await act(async () => { setText(container, "field-ref-dwg_1", "scan-1.pdf"); });
+    await act(async () => { setText(container, "field-sha-dwg_1", "d".repeat(64)); });
+    await act(async () => { setText(container, "field-reason-dwg_1", "Marked up on site."); });
+    await act(async () => { findButton(container, "Capture field hand-redline").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    const notice = statusInForm(container, "Capture field hand-redline");
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toContain("Field hand-redline captured for drawing P-101, Rev 1 (IFA) as a historical record.");
+    expect(notice.textContent).toContain("It is not an issued IFC revision.");
+  });
+
+  it("PLACEMENT-reconcile: the reconcile confirmation stays in the field item after its form closes", async () => {
+    setupFetch({
+      fieldRedlinesMap: {
+        dwg_1: [{ id: "forge_wpdfr_1", drawingRevisionId: "forge_wpdrv_1", artifactRef: "scan-1.pdf", sha256: "d".repeat(64), fieldReason: "Marked up on site.", recordState: "HISTORICAL_PENDING_RECONCILIATION", createdAt: "2026-11-08T12:00:00Z" }],
+      },
+    });
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { selectOption(container, "recon-rev-forge_wpdfr_1", "forge_wpdrv_2"); });
+    await act(async () => {});
+    await act(async () => { findButton(container, "Reconcile").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    expect(findButton(container, "Reconcile")).toBeUndefined();
+    const item = [...container.querySelectorAll("li")].find((li) => li.textContent.includes("Marked up on site."));
+    const notice = item.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Field hand-redline reconciled for drawing P-101, Rev 0 (IFA), reconciled as Rev 1 (IFA).");
+  });
+
+  it("PLACEMENT-retire: the retire confirmation stays in the drawing after the retire form closes", async () => {
+    setupFetch();
+    const { container } = await renderPanel();
+    await expandDrawing(container, "P-101");
+    await act(async () => { findButton(container, "Retire drawing").click(); });
+    await act(async () => { setText(container, "retire-reason-dwg_1", "Superseded by a new package."); });
+    await act(async () => { findButton(container, "Retire drawing").click(); });
+    await act(async () => {});
+    await act(async () => {});
+    // The confirm form closed (its reason input is gone). The mock
+    // does not flip the drawing row to retired, so the trigger button
+    // shows again — in the live app the retired row hides it, and the
+    // section-level confirmation survives either way.
+    expect(container.querySelector("#retire-reason-dwg_1")).toBeNull();
+    const notice = container.querySelector('[role="status"]');
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toBe("Drawing P-101 retired. Its review history is kept.");
   });
 });
 
@@ -998,7 +1265,12 @@ describe("WorkPackageDrawingReadiness IFC revision code", () => {
     expect(issueBody.stagedArtifactId).toBe("forge_wpa_9");
     expect(issueBody.reviewId).toBe("forge_wpdrvw_2");
     const iso200Item = findButton(container, "ISO-200").closest("li");
-    expect(iso200Item.querySelector('[role="status"]').textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
+    // Two confirmations are present (stage + issue); read the issue
+    // confirmation from the issue form's footer, not the first status
+    // in the drawing, which is the stage confirmation.
+    const issueNotice = findButton(iso200Item, "Issue IFC revision").closest("form").querySelector('[role="status"]');
+    expect(issueNotice).not.toBeNull();
+    expect(issueNotice.textContent).toBe("IFC revision 2 for drawing ISO-200 issued for construction.");
     // The P-101 release row survived the mutations untouched.
     expect(releaseRows(container)[0]).toContain("IFC Rev 2");
   });
