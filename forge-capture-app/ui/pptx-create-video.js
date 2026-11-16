@@ -33,6 +33,28 @@ import {
   validateProjectManifest,
   validateProjectTitle,
 } from "./pptx-project-core.js";
+import {
+  NARRATION_SOURCE,
+  STEP_KIND,
+  applyGeneratedDraft,
+  buildInitialSteps,
+  canRevertStep,
+  findStep,
+  hasUnsavedEditsSinceGeneration,
+  markGenerationFailed,
+  requestRegenerate,
+  revertStepToOriginal,
+  setInitialSteps,
+  setStepText,
+  stepsPendingGeneration,
+  undoStepEdit,
+} from "./pptx-narration-core.js";
+
+const NARRATION_SOURCE_LABEL = {
+  [NARRATION_SOURCE.SPEAKER_NOTES]: "Speaker notes",
+  [NARRATION_SOURCE.LOCAL_MODEL_DRAFT]: "AI draft",
+  [NARRATION_SOURCE.MANUAL]: "Manual",
+};
 
 const CHUNK_BYTES = 1024 * 1024; // 1 MiB, same as the media upload path.
 
@@ -110,10 +132,21 @@ export function mountPptxCreateVideo(deps = {}) {
         </div>
         <div id="pptx-warnings" class="pptx-warnings" hidden></div>
         <div id="pptx-slide-grid" class="pptx-slide-grid"></div>
+        <div class="row pptx-narration-row">
+          <button type="button" id="pptx-review-narration" class="primary-btn">Review narration →</button>
+        </div>
         <div class="row pptx-danger-row">
           <button type="button" id="pptx-delete" class="ghost-btn">Delete this project…</button>
         </div>
-        <p class="pptx-hint">Narration, voice and video export come in later steps — this step only imports the deck and picks the slides.</p>
+        <p class="pptx-hint">Voice and video export come in later steps.</p>
+      </div>
+      <div id="pptx-narration-view" hidden>
+        <div class="row pptx-project-head">
+          <button type="button" id="pptx-narration-back" class="ghost-btn">← Back to project</button>
+          <span id="pptx-narration-status" class="pptx-hint" role="status" aria-live="polite"></span>
+        </div>
+        <p class="pptx-intro">Cover, one paragraph per slide, and an ending — all editable before any voice or video work happens.</p>
+        <ol id="pptx-narration-steps" class="pptx-narration-steps"></ol>
       </div>
     </div>`;
 
@@ -121,6 +154,7 @@ export function mountPptxCreateVideo(deps = {}) {
   const statusEl = $("pptx-status");
   const listView = $("pptx-list-view");
   const projectView = $("pptx-project-view");
+  const narrationView = $("pptx-narration-view");
 
   function setStatus(text, kind) {
     statusEl.textContent = text;
@@ -163,6 +197,7 @@ export function mountPptxCreateVideo(deps = {}) {
     for (const url of thumbUrls.values()) URL.revokeObjectURL(url);
     thumbUrls = new Map();
     projectView.hidden = true;
+    narrationView.hidden = true;
     listView.hidden = false;
   }
 
@@ -364,6 +399,7 @@ export function mountPptxCreateVideo(deps = {}) {
 
   async function openProjectView(project, rendered) {
     listView.hidden = true;
+    narrationView.hidden = true;
     projectView.hidden = false;
     $("pptx-title").value = project.title;
     $("pptx-project-count").textContent = `${project.slides.length} slides`;
@@ -543,6 +579,147 @@ export function mountPptxCreateVideo(deps = {}) {
     }
   }
 
+  // -- Narration review (Slice 2) --------------------------------------------
+
+  function setNarrationStatus(text) {
+    $("pptx-narration-status").textContent = text || "";
+  }
+
+  function slideForStep(step) {
+    return manifest.slides.find((s) => s.id === step.slideId) || null;
+  }
+
+  function renderNarrationSteps() {
+    const list = $("pptx-narration-steps");
+    list.innerHTML = "";
+    for (const step of manifest.steps) {
+      const li = document.createElement("li");
+      li.className = "pptx-narration-step";
+      li.dataset.stepId = step.id;
+
+      const head = document.createElement("div");
+      head.className = "pptx-narration-step-head";
+      const title = document.createElement("strong");
+      title.textContent = step.title;
+      const sourceTag = document.createElement("span");
+      sourceTag.className = "pptx-source-tag";
+      sourceTag.textContent = step.needsGeneration
+        ? "Drafting…"
+        : NARRATION_SOURCE_LABEL[step.sourceKind] || step.sourceKind;
+      head.append(title, sourceTag);
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "pptx-narration-text";
+      textarea.rows = 4;
+      textarea.value = step.currentText;
+      textarea.disabled = step.needsGeneration;
+      textarea.setAttribute("aria-label", `Narration for ${step.title}`);
+      textarea.addEventListener("change", () => onEditStepText(step.id, textarea.value));
+
+      const actions = document.createElement("div");
+      actions.className = "row pptx-narration-step-actions";
+      if (step.sourceKind === NARRATION_SOURCE.LOCAL_MODEL_DRAFT && !step.needsGeneration) {
+        const regenBtn = document.createElement("button");
+        regenBtn.type = "button";
+        regenBtn.className = "ghost-btn small";
+        regenBtn.textContent = "Regenerate";
+        regenBtn.addEventListener("click", () => onRegenerateStep(step.id));
+        actions.appendChild(regenBtn);
+      }
+      if (step.previousText !== null) {
+        const undoBtn = document.createElement("button");
+        undoBtn.type = "button";
+        undoBtn.className = "ghost-btn small";
+        undoBtn.textContent = "Undo";
+        undoBtn.addEventListener("click", () => onUndoStep(step.id));
+        actions.appendChild(undoBtn);
+      }
+      if (canRevertStep(step)) {
+        const revertBtn = document.createElement("button");
+        revertBtn.type = "button";
+        revertBtn.className = "ghost-btn small";
+        revertBtn.textContent = step.sourceKind === NARRATION_SOURCE.SPEAKER_NOTES ? "Revert to speaker notes" : "Revert to AI draft";
+        revertBtn.addEventListener("click", () => onRevertStep(step.id));
+        actions.appendChild(revertBtn);
+      }
+
+      const errorP = document.createElement("p");
+      errorP.className = "pptx-hint";
+      if (step.generationError) errorP.textContent = step.generationError;
+
+      li.append(head, textarea, actions, errorP);
+      list.appendChild(li);
+    }
+  }
+
+  async function onEditStepText(stepId, text) {
+    manifest = setStepText(manifest, stepId, text);
+    renderNarrationSteps();
+    await saveManifest("Narration saved.");
+  }
+
+  async function onUndoStep(stepId) {
+    manifest = undoStepEdit(manifest, stepId);
+    renderNarrationSteps();
+    await saveManifest("Undid the last edit.");
+  }
+
+  async function onRevertStep(stepId) {
+    manifest = revertStepToOriginal(manifest, stepId);
+    renderNarrationSteps();
+    await saveManifest("Reverted to the original draft.");
+  }
+
+  async function onRegenerateStep(stepId) {
+    const step = findStep(manifest, stepId);
+    if (hasUnsavedEditsSinceGeneration(step)) {
+      const ok = window.confirm(`“${step.title}” has edits you made after the last draft. Regenerating replaces your current text with a brand new AI draft. Continue?`);
+      if (!ok) return;
+    }
+    manifest = requestRegenerate(manifest, stepId);
+    renderNarrationSteps();
+    await saveManifest("Regenerating…");
+    await generatePendingDrafts();
+  }
+
+  /** Runs the local model for every step still marked `needsGeneration`,
+   * one at a time (one llama-cli process per slide — brief has no
+   * batching requirement, and sequential keeps CPU load and error
+   * attribution simple). Each result is applied and saved as it
+   * completes, and the list re-renders progressively rather than all at
+   * once at the end, so the user sees drafts arrive. */
+  async function generatePendingDrafts() {
+    let pending = stepsPendingGeneration(manifest);
+    if (pending.length === 0) return;
+    setNarrationStatus(`Drafting ${pending.length} slide${pending.length === 1 ? "" : "s"}…`);
+    for (const step of pending) {
+      const slide = slideForStep(step);
+      try {
+        const draft = await invoke("pptx_video_generate_narration_draft", {
+          dto: { slideTitle: slide?.title || step.title, slideText: (slide?.text || []).join("\n") },
+        });
+        manifest = applyGeneratedDraft(manifest, step.id, draft);
+      } catch (e) {
+        manifest = markGenerationFailed(manifest, step.id, describePptxFailure(e));
+      }
+      renderNarrationSteps();
+      await saveManifest("Narration saved.");
+    }
+    setNarrationStatus("");
+  }
+
+  async function openNarrationView() {
+    if (!manifest) return;
+    projectView.hidden = true;
+    narrationView.hidden = false;
+    if (!manifest.steps || manifest.steps.length === 0) {
+      manifest = setInitialSteps(manifest, buildInitialSteps(manifest));
+      await saveManifest("Narration steps created.");
+    }
+    renderNarrationSteps();
+    await generatePendingDrafts();
+  }
+
   // -- Wiring ---------------------------------------------------------------
 
   $("pptx-browse").addEventListener("click", () => {
@@ -590,6 +767,11 @@ export function mountPptxCreateVideo(deps = {}) {
   $("pptx-clear").addEventListener("click", onClear);
   $("pptx-rename").addEventListener("click", onRename);
   $("pptx-delete").addEventListener("click", onDelete);
+  $("pptx-review-narration").addEventListener("click", openNarrationView);
+  $("pptx-narration-back").addEventListener("click", async () => {
+    narrationView.hidden = true;
+    projectView.hidden = false;
+  });
 
   refreshList();
   return { root, refreshList, openProject, importFile };
