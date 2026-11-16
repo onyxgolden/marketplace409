@@ -3,6 +3,10 @@ import {
 } from "next/server";
 
 import {
+  headers,
+} from "next/headers";
+
+import {
   createForgeApplicationSuite,
 } from "@/infrastructure/composition";
 
@@ -18,6 +22,48 @@ import {
   resolveEffectiveOwnerId,
 } from "@/lib/supabase/resolveEffectiveOwnerId";
 
+// S1 (load-times slice 1): the proxy validates the session once per
+// request and carries the validated user in this header (see
+// src/proxy.js). The factory trusts it only because the proxy strips
+// any client-supplied value first and sets it only after getUser()
+// succeeds. Absent header (proxy did not run, validation failed, or a
+// non-request context such as a unit test) falls back to getUser()
+// exactly as before — the auth decision is unchanged, the same
+// server-side validation simply ran once, in the proxy.
+const FORGE_AUTH_USER_HEADER = "x-forge-auth-user";
+
+async function readValidatedUserFromHeaders() {
+  try {
+    const value = (await headers()).get(
+      FORGE_AUTH_USER_HEADER,
+    );
+
+    if (!value) {
+      return null;
+    }
+
+    const parsed = JSON.parse(value);
+
+    if (
+      !parsed ||
+      typeof parsed.id !== "string" ||
+      !parsed.id
+    ) {
+      return null;
+    }
+
+    return {
+      id: parsed.id,
+      email:
+        typeof parsed.email === "string"
+          ? parsed.email
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // SaaS Auth PR 1: when appKey is given (one of designer / scheduler /
 // planner / capture), the request is gated on the workspace being
 // active, the app entitlement being active, and the actor holding an
@@ -29,25 +75,33 @@ export async function createAuthenticatedForgeApplication({ requestedOwnerId = n
   const supabaseClient =
     await createClient();
 
-  const {
-    data: {
-      user,
-    },
-    error: authError,
-  } = await supabaseClient.auth.getUser();
+  // S1: prefer the user the proxy already validated for this request;
+  // fall back to getUser() when the header is absent.
+  let user = await readValidatedUserFromHeaders();
 
-  if (authError || !user?.id) {
-    return {
-      response: NextResponse.json(
-        {
-          error:
-            "Authenticated owner id is required.",
-        },
-        {
-          status: 401,
-        },
-      ),
-    };
+  if (!user) {
+    const {
+      data: {
+        user: authedUser,
+      },
+      error: authError,
+    } = await supabaseClient.auth.getUser();
+
+    if (authError || !authedUser?.id) {
+      return {
+        response: NextResponse.json(
+          {
+            error:
+              "Authenticated owner id is required.",
+          },
+          {
+            status: 401,
+          },
+        ),
+      };
+    }
+
+    user = authedUser;
   }
 
   // UI-density redesign: a validated ?workspace= selection overrides the

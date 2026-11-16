@@ -212,4 +212,86 @@ describe("proxy()", () => {
       expect(getUserMock).toHaveBeenCalledTimes(1);
     }
   });
+
+  // S1 (load-times slice 1): the proxy carries the validated user down
+  // in a request header so the factory does not repeat getUser(). The
+  // override is serialized onto the response by NextResponse.next() as
+  // x-middleware-request-<name> (see NextResponse.next /
+  // handleMiddlewareField) — assert on that exact header, and that no
+  // client-supplied value can survive.
+  function validatedUserHeader(response) {
+    return response.headers.get(
+      "x-middleware-request-x-forge-auth-user",
+    );
+  }
+
+  it("S1: carries the validated user in a request header after getUser succeeds", async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "user-1", email: "owner@example.com" } },
+      error: null,
+    });
+
+    const request = new NextRequest("https://test/forge/rental", {
+      headers: { cookie: "sb-proj-auth-token=valid-token" },
+    });
+    const response = await proxy(request);
+
+    expect(getUserMock).toHaveBeenCalledTimes(1);
+    expect(validatedUserHeader(response)).toBe(
+      JSON.stringify({ id: "user-1", email: "owner@example.com" }),
+    );
+  });
+
+  it("S1: strips a client-supplied validated-user header on anonymous requests", async () => {
+    const request = new NextRequest("https://test/forge/rental", {
+      headers: {
+        "x-forge-auth-user": JSON.stringify({
+          id: "attacker-id",
+          email: "attacker@example.com",
+        }),
+      },
+    });
+    const response = await proxy(request);
+
+    expect(createServerClientMock).not.toHaveBeenCalled();
+    expect(getUserMock).not.toHaveBeenCalled();
+    expect(validatedUserHeader(response)).toBeNull();
+  });
+
+  it("S1: replaces (never trusts) a client-supplied header when validation succeeds for another user", async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "user-1", email: "owner@example.com" } },
+      error: null,
+    });
+
+    const request = new NextRequest("https://test/forge/rental", {
+      headers: {
+        cookie: "sb-proj-auth-token=valid-token",
+        "x-forge-auth-user": JSON.stringify({
+          id: "attacker-id",
+          email: "attacker@example.com",
+        }),
+      },
+    });
+    const response = await proxy(request);
+
+    expect(validatedUserHeader(response)).toBe(
+      JSON.stringify({ id: "user-1", email: "owner@example.com" }),
+    );
+  });
+
+  it("S1: sets no validated-user header when validation finds no user", async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: null,
+    });
+
+    const request = new NextRequest("https://test/forge/rental", {
+      headers: { cookie: "sb-proj-auth-token=stale-token" },
+    });
+    const response = await proxy(request);
+
+    expect(getUserMock).toHaveBeenCalledTimes(1);
+    expect(validatedUserHeader(response)).toBeNull();
+  });
 });

@@ -499,6 +499,90 @@ describe("FinancialReadModelApplication", () => {
     expect(executive.health.label).toBe("Healthy");
   });
 
+  test("S1: concurrent dashboard builders share one workspace and position build", async () => {
+    // Mirrors src/app/forge/page.js: the four dashboard builders plus a
+    // direct buildWorkspace fire concurrently for the same owner+scope.
+    // Before this slice each one re-scanned the owner's full
+    // financial-event history; now all five share one scan and the
+    // returned DTOs are identical to the unmemoized results.
+    const {
+      application,
+      financialWorkspaceQueryService,
+      financialPositionQueryService,
+    } = buildComposedApplication();
+
+    const [
+      business,
+      investor,
+      kpi,
+      executive,
+      workspace,
+    ] = await Promise.all([
+      application.buildBusinessDashboard(),
+      application.buildInvestorDashboard(),
+      application.buildKPIModel(),
+      application.buildExecutiveSummary(),
+      application.buildWorkspace("owner-1"),
+    ]);
+
+    expect(
+      financialWorkspaceQueryService.buildWorkspace,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      financialWorkspaceQueryService.buildWorkspace,
+    ).toHaveBeenCalledWith("owner-1", { scope: "business" });
+    expect(
+      financialPositionQueryService.buildPosition,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      financialPositionQueryService.buildPosition,
+    ).toHaveBeenCalledWith("owner-1");
+
+    expect(business.type).toBe("business-dashboard");
+    expect(business.dashboard.kpis.assets).toBe(425000);
+    expect(investor.kpis.equity).toBe(225000);
+    expect(kpi.kpis.cash).toBe(125000);
+    expect(executive.health.label).toBe("Healthy");
+    expect(workspace.portfolio.income).toBe(1500);
+
+    // A second sequential round reuses the memoized results and makes
+    // no additional repository calls.
+    const second =
+      await application.buildBusinessDashboard();
+
+    expect(second).toEqual(business);
+    expect(
+      financialWorkspaceQueryService.buildWorkspace,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      financialPositionQueryService.buildPosition,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  test("S1: a failed workspace build is not cached — the next call retries", async () => {
+    const failure = new Error("Activity repository query failed");
+    const workspaceFixture = buildWorkspace();
+    const buildWorkspaceService = vi
+      .fn()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(workspaceFixture);
+
+    const { application } = buildApplication({
+      financialWorkspaceQueryService: {
+        buildWorkspace: buildWorkspaceService,
+      },
+    });
+
+    await expect(
+      application.buildKPIModel(),
+    ).rejects.toBe(failure);
+
+    const result = await application.buildKPIModel();
+
+    expect(result.kpis.revenue).toBe(1500);
+    expect(buildWorkspaceService).toHaveBeenCalledTimes(2);
+  });
+
   test("propagates activity and position query failures", async () => {
     const activityError =
       new Error("Activity repository query failed");
