@@ -13,6 +13,19 @@ rehearsal evaluation and is never spoken. Speaking LLM text directly
 would bypass the fixed-template guarantee and needs a separate review
 decision — flagged in the build report, not smuggled in here.
 
+Fix round 1 (P1 — Receptionist Cut 1 local-build review): the LLM call
+is now GENUINELY off the critical path, not just "timed and ignored."
+A background thread runs it; `_turn` starts that thread and moves
+straight to dialogue/disclosure/quote-guard/TTS without ever joining
+it. `result["llm_text"]`/`trace["llm_ms"]` therefore reflect the MOST
+RECENTLY COMPLETED advisory result — which may be from an earlier turn,
+or absent (`None`/empty) on the very first turn before any advisory
+call has finished — never this turn's own synchronous result, because
+there isn't one. `wait_for_pending_llm_advisory()` exists ONLY for
+tests that need to assert on the eventually-completed value
+deterministically; production code must never call it, since doing so
+would recreate the exact blocking bug this fixes.
+
 The opening disclosure is NOT LLM-generated: when the dialogue reaches
 the DISCLOSE_AI_AND_RECORDING state, the pipeline verifies the speak
 text is byte-identical to the pinned disclosure revision (see
@@ -32,6 +45,7 @@ the Twilio human-fallback TwiML.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from .cost import BudgetExceeded, blended_minute_usd
@@ -73,6 +87,14 @@ class CallPipeline:
         # gateway holds for the call's duration — a turn must never
         # release the session reservation.
         self._turn_reservation: dict | None = None
+        # Fix round 1 (P1): the advisory LLM's last-completed result,
+        # updated only by `_run_advisory_llm` running in its own
+        # background thread — never written from the main turn flow,
+        # which only READS it (lock-protected) to populate this turn's
+        # `llm_text`/`trace["llm_ms"]` with whatever is already known.
+        self._llm_lock = threading.Lock()
+        self.last_llm_result: dict = {"text": "", "ms": None}
+        self._llm_thread: threading.Thread | None = None
 
     # --- guards ---------------------------------------------------------------
 
@@ -192,18 +214,17 @@ class CallPipeline:
         trace["stt_ms"] = (time.perf_counter() - stt_started) * 1000.0
         transcript = (stt_result or {}).get("text", "")
 
-        # LLM is advisory in this slice: its text is timed and recorded
-        # for rehearsal evaluation, never spoken.
-        llm_started = time.perf_counter()
-        llm_text = ""
-        try:
-            llm_result = self.llm.respond(
-                state=self.dialogue.state, response_class="REPLY",
-                history=[{"role": "user", "content": transcript}])
-            llm_text = (llm_result or {}).get("text", "")
-        except Exception:  # noqa: BLE001 — LLM advisory only; dialogue continues
-            llm_text = ""
-        trace["llm_ms"] = (time.perf_counter() - llm_started) * 1000.0
+        # LLM is advisory in this slice, and (fix round 1, P1) genuinely
+        # off the critical path: start it in the background and read
+        # whatever the MOST RECENTLY COMPLETED advisory call produced —
+        # never wait for this turn's own call before proceeding to
+        # dialogue/TTS below.
+        self._llm_thread = threading.Thread(
+            target=self._run_advisory_llm, args=(transcript, self.dialogue.state), daemon=True)
+        self._llm_thread.start()
+        with self._llm_lock:
+            llm_text = self.last_llm_result.get("text", "")
+            trace["llm_ms"] = self.last_llm_result.get("ms")
 
         dialogue_out = self.dialogue.handle_turn(transcript)
         speak = dialogue_out.get("speak") or {}
@@ -247,11 +268,23 @@ class CallPipeline:
             # the call's reservations, the old behavior — it cannot
             # happen through handle_audio.)
             reservation, self._turn_reservation = self._turn_reservation, None
+            # Fix round 1 (P1): `trace["llm_ms"]` is now the LAST
+            # completed advisory call's duration, not necessarily this
+            # turn's own (which may still be running in the background)
+            # — an approximation, documented here rather than hidden,
+            # accepted in exchange for never blocking the spoken reply
+            # on the LLM. Local-inference LLM usage prices at $0/minute
+            # regardless (brief §5), so this approximation has zero
+            # dollar impact on the local provider path; it only affects
+            # the cloud OpenAI adapter's cost-ledger precision, by at
+            # most one turn's worth of LLM minutes, never accumulating
+            # (each turn's charge still reflects a real completed call,
+            # just possibly the previous turn's).
             self.cost_ledger.record_call(
                 call_sid=self.call_sid, source=self.source,
                 duration_s=0.0,
                 agent_chars=len(reply_text),
-                llm_minutes=trace["llm_ms"] / 60000.0,
+                llm_minutes=(trace["llm_ms"] or 0.0) / 60000.0,
                 settle_reservation_id=(reservation or {}).get("id"),
                 usage_extra={"turn": self.turns})
 
@@ -260,6 +293,32 @@ class CallPipeline:
                 "emergency": dialogue_out.get("emergency", False),
                 "trace": trace, "llm_text": llm_text,
                 "disclosure": disclosure_info}
+
+    def _run_advisory_llm(self, transcript: str, state: str) -> None:
+        """Runs in its own daemon thread (fix round 1, P1), started by
+        `_turn` and never joined by it. Failure here is swallowed, same
+        as the old synchronous version — advisory-only, the dialogue
+        continues regardless either way."""
+        started = time.perf_counter()
+        text = ""
+        try:
+            result = self.llm.respond(
+                state=state, response_class="REPLY", history=[{"role": "user", "content": transcript}])
+            text = (result or {}).get("text", "")
+        except Exception:  # noqa: BLE001 — LLM advisory only
+            text = ""
+        ms = (time.perf_counter() - started) * 1000.0
+        with self._llm_lock:
+            self.last_llm_result = {"text": text, "ms": ms}
+
+    def wait_for_pending_llm_advisory(self, timeout: float = 5.0) -> None:
+        """TEST-ONLY: blocks until the most recently started advisory
+        LLM thread finishes (or `timeout` elapses), so a test can assert
+        on `self.last_llm_result` deterministically instead of racing a
+        background thread. Production code must never call this — doing
+        so recreates the exact blocking bug fix round 1 removed."""
+        if self._llm_thread is not None:
+            self._llm_thread.join(timeout)
 
     def safe_clarify(self) -> dict:
         """Provider failure on a turn: run the dialogue's STT-failure path

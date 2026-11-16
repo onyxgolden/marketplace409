@@ -14,17 +14,43 @@ Prerequisites (this build, this machine):
 
 Measures, per turn: caller audio (pre-synthesized, see `_build_corpus`)
 -> STT -> deterministic dialogue (CallDialogue, the SAME policy code a
-live call would run — advisory LLM call included but off the measured
-path, per Cut 1 item 3) -> quote_guard-rendered reply -> TTS -> first
-agent audio byte. This is the brief's own measurement definition minus
-the RTP/SIP leg, which does not exist in Cut 1 (no SIP edge is in this
-cut's scope) — flagged, not hidden.
+live call would run) -> quote_guard-rendered reply -> TTS first-audio
+byte. This is the brief's own measurement definition minus the RTP/SIP
+leg, which does not exist in Cut 1 (no SIP edge is in this cut's scope)
+— flagged, not hidden.
+
+Fix round 1 (P1) corrected TWO real methodology problems the first
+version of this script had:
+  1. The advisory LLM call ran SYNCHRONOUSLY before TTS (its own
+     duration was excluded from `totalMs`, but the wall-clock gap
+     between STT and TTS still included however long it took to run —
+     so `totalMs` silently absorbed it anyway). It now runs on a
+     background thread, genuinely concurrently with dialogue+TTS,
+     matching the real `app/pipeline.py`'s fix round 1 change.
+  2. `tts.synthesize()`'s `first_audio_ms` used to be a SERVER-reported
+     header on a fully-buffered response — a value the client could
+     never actually observe any sooner than the complete response
+     arriving. `local_inference/server.py` now streams real audio
+     chunks over HTTP chunked transfer as they're generated, and the
+     adapter measures the REAL first-byte wall-clock time itself (see
+     `app/providers.py`'s `_local_post_streaming`). `totalMs` here is
+     now `(sttDoneAt - speechEndAt) + dialogueProcessingMs +
+     ttsFirstAudioMs` — every component a real, independently-verified
+     measurement, not a single wall-clock span that happened to absorb
+     an unmeasured synchronous call.
+
+Also adds a success-rate gate (fix round 1): a latency PASS no longer
+implies a reliability PASS — `successRate` and `verdict` are reported
+and gated separately; 5 pre-synthesis transient connection resets in
+the FIRST version of this receipt were a real, unexplained reliability
+signal, not normalized away as harmless.
 
 Writes `data/stage0-latency-receipt.json` (gitignored data/ dir) with
-n, p50/p90/p95/p99/max, per-stage breakdown, and the exact p95 verdict
-against the config's own target. Never asserts/exits non-zero on a
-miss — the brief's own rule is "report the actual miss," not fail the
-rehearsal script; a human or a later gate decides what a miss means.
+n, p50/p90/p95/p99/max, per-stage breakdown, success rate, and the
+exact p95/success-rate verdicts against the config's own targets. Never
+asserts/exits non-zero on a miss — the brief's own rule is "report the
+actual miss," not fail the rehearsal script; a human or a later gate
+decides what a miss means.
 """
 from __future__ import annotations
 
@@ -32,12 +58,13 @@ import json
 import os
 import statistics
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.config import ReceptionistConfig  # noqa: E402
+from app.config import ReceptionistConfig, ensure_local_inference_token  # noqa: E402
 from app.policy.dialogue import CallDialogue  # noqa: E402
 from app.providers import (  # noqa: E402
     LocalFasterWhisperSTTAdapter,
@@ -120,7 +147,12 @@ def main():
     # before timing starts — a generous timeout on the adapter itself
     # does not affect the MEASURED numbers, which come from later, warm
     # calls only.
-    stt = LocalFasterWhisperSTTAdapter(base_url=config.local_inference_base_url, timeout_s=45.0)
+    # Fix round 1 (P1): the local server now requires a per-install
+    # bearer token on every POST — the same token the production
+    # factories (app/providers.py's local_stt/local_llm/local_tts)
+    # resolve via this same helper.
+    auth_token = ensure_local_inference_token(config)
+    stt = LocalFasterWhisperSTTAdapter(base_url=config.local_inference_base_url, timeout_s=45.0, auth_token=auth_token)
     # A long multi-sentence caller-audio pre-synthesis utterance can take
     # longer than the live per-turn reply synthesis the main loop times
     # (Kokoro's default split_pattern only splits on literal newlines,
@@ -128,7 +160,7 @@ def main():
     # the timeout ceiling here does not get added to any measured
     # latency, so raising it is safe for both the untimed pre-synthesis
     # pass and the timed loop's own (always-short reply text) calls.
-    tts = LocalKokoroTTSAdapter(base_url=config.local_inference_base_url, timeout_s=45.0)
+    tts = LocalKokoroTTSAdapter(base_url=config.local_inference_base_url, timeout_s=45.0, auth_token=auth_token)
     llm = LocalOllamaLLMAdapter(base_url=config.ollama_base_url, model=config.ollama_model, timeout_s=60.0)
 
     corpus = _build_corpus(200)
@@ -178,33 +210,56 @@ def main():
     samples_tts_ms: list[float] = []
     llm_failures = 0
     stage_errors: list[str] = []
+    llm_results_lock = threading.Lock()
+
+    def _run_llm_in_background(state: str, response_class: str, text: str):
+        # Fix round 1 (P1): genuinely concurrent with dialogue/TTS below,
+        # matching app/pipeline.py's own fix — never joined before the
+        # turn's total_ms is computed. A slow or failing LLM call must
+        # not add one millisecond to total_ms.
+        t_llm = time.perf_counter()
+        try:
+            llm.respond(state=state, response_class=response_class, history=[{"role": "user", "content": text}])
+            ms = (time.perf_counter() - t_llm) * 1000.0
+            with llm_results_lock:
+                samples_llm_ms.append(ms)
+        except Exception:  # noqa: BLE001 — advisory failure must never affect the spoken reply or this benchmark
+            with llm_results_lock:
+                nonlocal_llm_failures[0] += 1
+
+    nonlocal_llm_failures = [0]  # mutable cell a nested function can increment
 
     print("[stage0] running the timed 200-turn benchmark...", file=sys.stderr)
+    llm_threads: list[threading.Thread] = []
     for i, turn in enumerate(corpus):
         try:
             t_speech_end = time.perf_counter()
             stt_result = stt.transcribe_chunk(turn["caller_audio"])
+            t_stt_done = time.perf_counter()
             dialogue = CallDialogue(f"CA-stage0-{i}")
             dialogue.start()  # opening disclosure turn, matches a real call's first state
             turn_out = dialogue.handle_turn(stt_result["text"])
             speak = turn_out.get("speak") or {"text": ""}
             reply = speak.get("text", "") or "Brandy will review your question and follow up."
+            t_dialogue_done = time.perf_counter()
 
-            # Advisory LLM call, OFF the measured critical path (Cut 1
-            # item 3): timed separately, never added into total_ms, and
-            # its own failure never blocks the turn.
-            t_llm = time.perf_counter()
-            try:
-                llm.respond(state=turn_out.get("state", "UNKNOWN"), response_class=speak.get("template_id", "ask_slot"),
-                            history=[{"role": "user", "content": turn["text"]}])
-                samples_llm_ms.append((time.perf_counter() - t_llm) * 1000.0)
-            except Exception:  # noqa: BLE001 — advisory failure must never affect the spoken reply or this benchmark
-                llm_failures += 1
+            llm_thread = threading.Thread(
+                target=_run_llm_in_background,
+                args=(turn_out.get("state", "UNKNOWN"), speak.get("template_id", "ask_slot"), turn["text"]),
+                daemon=True)
+            llm_thread.start()
+            llm_threads.append(llm_thread)
 
             tts_result = tts.synthesize(reply)
-            t_first_audio = time.perf_counter()
 
-            total_ms = (t_first_audio - t_speech_end) * 1000.0
+            # Fix round 1 (P1): total_ms is now the sum of three
+            # independently real measurements — STT's own latency,
+            # deterministic dialogue processing, and TTS's REAL
+            # first-byte time (see _local_post_streaming) — never a
+            # single wall-clock span that could silently absorb the now-
+            # concurrent LLM call's duration.
+            dialogue_ms = (t_dialogue_done - t_stt_done) * 1000.0
+            total_ms = stt_result["latency_ms"] + dialogue_ms + tts_result["first_audio_ms"]
             samples_total_ms.append(total_ms)
             samples_stt_ms.append(stt_result["latency_ms"])
             samples_tts_ms.append(tts_result["first_audio_ms"])
@@ -213,6 +268,13 @@ def main():
 
         if (i + 1) % 50 == 0:
             print(f"[stage0]   {i + 1}/{len(corpus)} turns measured", file=sys.stderr)
+
+    print("[stage0] waiting on any still-in-flight advisory LLM calls...", file=sys.stderr)
+    for t in llm_threads:
+        t.join(timeout=30.0)
+    llm_failures = nonlocal_llm_failures[0]
+
+    success_rate = (len(samples_total_ms) / len(corpus)) if corpus else 0.0
 
     receipt = {
         "ranAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -237,10 +299,29 @@ def main():
                            "note": "measured but NEVER included in totalMs — off the critical path by design"},
         "targetP95Ms": config.latency_p95_target_ms,
         "targetP99Ms": config.latency_p99_target_ms,
-        "verdict": "PASS" if percentile(samples_total_ms, 0.95) <= config.latency_p95_target_ms else "MISS",
+        "successRate": success_rate,
+        "targetSuccessRate": config.stage0_success_rate_target,
+        # Fix round 1 (P1): latency and reliability are gated
+        # SEPARATELY and both must pass — a receipt is no longer
+        # allowed to report a latency PASS while quietly dropping
+        # turns. "LATENCY_MISS_ONLY" / "RELIABILITY_MISS_ONLY" name
+        # which gate actually failed when only one does.
+        "latencyVerdict": "PASS" if percentile(samples_total_ms, 0.95) <= config.latency_p95_target_ms else "MISS",
+        "reliabilityVerdict": "PASS" if success_rate >= config.stage0_success_rate_target else "MISS",
+        "verdict": (
+            "PASS"
+            if (percentile(samples_total_ms, 0.95) <= config.latency_p95_target_ms
+                and success_rate >= config.stage0_success_rate_target)
+            else "MISS"
+        ),
         "scopeNote": "Cut 1 Stage 0: real local STT/LLM/TTS, no SIP edge exists yet in this cut, so this "
                      "measures caller-clip-to-first-agent-audio through the local models only, not "
-                     "actual PCMU/RTP transport (that is Stage 1, out of this cut's scope).",
+                     "actual PCMU/RTP transport (that is Stage 1, out of this cut's scope). totalMs = "
+                     "real sttMs + real dialogue-processing time + REAL streamed-first-byte ttsFirstAudioMs "
+                     "(fix round 1: previously a server-reported header on a fully-buffered response). "
+                     "The advisory LLM call runs concurrently on a background thread and is never on the "
+                     "measured path (fix round 1: previously synchronous, silently absorbed into totalMs "
+                     "even though its own duration wasn't separately added).",
         "warmOnly": True,
         "concurrency": 1,
     }
@@ -253,7 +334,9 @@ def main():
     print(f"\n[stage0] n={receipt['n']}/{receipt['nAttempted']} p50={receipt['totalMs']['p50']:.1f}ms "
           f"p90={receipt['totalMs']['p90']:.1f}ms p95={receipt['totalMs']['p95']:.1f}ms "
           f"p99={receipt['totalMs']['p99']:.1f}ms max={receipt['totalMs']['max']:.1f}ms "
-          f"(target p95<={receipt['targetP95Ms']}ms) -> {receipt['verdict']}")
+          f"(target p95<={receipt['targetP95Ms']}ms) -> {receipt['latencyVerdict']}")
+    print(f"[stage0] successRate={success_rate:.4f} (target>={receipt['targetSuccessRate']}) "
+          f"-> {receipt['reliabilityVerdict']} | overall -> {receipt['verdict']}")
     print(f"[stage0] wrote {out_path}")
 
 

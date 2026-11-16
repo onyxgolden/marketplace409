@@ -19,6 +19,7 @@ from a merge or an env flag alone.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 
@@ -64,12 +65,28 @@ class ReceptionistConfig:
     # even though constructing these carries no telephony/cost risk by
     # itself; Stage 0 rehearsal scripts set this explicitly.
     local_inference_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_LOCAL_INFERENCE_ENABLED", False))
+    # Fix round 1 (P1): both URLs are validated as literal loopback HTTP
+    # addresses before use (see `validate_loopback_url` below) — a
+    # misconfigured value can never send audio to a non-loopback host.
     local_inference_base_url: str = field(default_factory=lambda: os.environ.get(
         "RECEPTIONIST_LOCAL_INFERENCE_URL", "http://127.0.0.1:8809"))
     ollama_base_url: str = field(default_factory=lambda: os.environ.get(
         "RECEPTIONIST_OLLAMA_URL", "http://127.0.0.1:11434"))
     ollama_model: str = field(default_factory=lambda: os.environ.get(
         "RECEPTIONIST_OLLAMA_MODEL", "qwen3:8b"))
+    # Fix round 1 (P1): per-install bearer token the local_inference
+    # server requires on every POST and the Python adapters attach to
+    # every request — the loopback bind alone does not stop a hostile
+    # browser-origin request from reaching it (see
+    # local_inference/server.py's module docstring). Empty means the
+    # server runs with NO auth check, which main() below refuses to do
+    # by generating one automatically if unset; a caller must still read
+    # the same value this config reads (the generated token is persisted
+    # to `local_inference_auth_token_path` so both sides agree on it).
+    local_inference_auth_token: str = field(default_factory=lambda: os.environ.get("RECEPTIONIST_LOCAL_INFERENCE_TOKEN", ""))
+    local_inference_auth_token_path: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_LOCAL_INFERENCE_TOKEN_PATH",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "local-inference-token.txt")))
 
     # --- Recording + evidence contract (brief §6; app/recording.py) ----------
     # Root directory for encrypted recordings/transcripts/manifests.
@@ -77,11 +94,25 @@ class ReceptionistConfig:
     recording_storage_path: str = field(default_factory=lambda: os.environ.get(
         "RECEPTIONIST_RECORDING_STORAGE_PATH",
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "recordings")))
-    # Fernet key (urlsafe base64, 32 bytes) for audio/transcript/ANI
-    # encryption at rest. Env only; empty means recording.py refuses to
-    # write anything — there is no "write unencrypted" fallback.
-    recording_encryption_key: str = field(default_factory=lambda: os.environ.get(
-        "RECEPTIONIST_RECORDING_ENCRYPTION_KEY", ""))
+    # Fix round 1 (P1): versioned keyring, not one bare key. JSON object
+    # string, keyId -> Fernet key (urlsafe base64, 32 bytes), e.g.
+    # '{"k1":"<fernet key>"}'. Decryption tries every key in this ring
+    # (`cryptography.fernet.MultiFernet`), so a bundle encrypted under an
+    # OLD key still reads after rotation — rotation means ADDING a new
+    # keyId here and changing `recording_current_key_id`, never deleting
+    # an old entry until every bundle using it has been re-encrypted
+    # (see `recording.py`'s `rotate_bundle_key`). Env only; empty means
+    # recording.py refuses to write anything — there is no "write
+    # unencrypted" fallback. Losing every key's value in this ring means
+    # the bundles encrypted under it are permanently unrecoverable by
+    # design (real encryption, not obfuscation) — back up the ring
+    # itself (e.g. a printed/offline copy), not just this running config.
+    recording_encryption_keys_json: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_RECORDING_ENCRYPTION_KEYS_JSON", ""))
+    # Which keyId in the ring above new writes use. Must be a key present
+    # in `recording_encryption_keys_json`; recording.py raises otherwise.
+    recording_current_key_id: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_RECORDING_CURRENT_KEY_ID", ""))
     # HMAC secret for the ANI lookup-key hash (brief §6: "keyed hash for
     # directory/index lookup" — never the raw number, never reversible
     # without this secret). Env only.
@@ -194,6 +225,12 @@ class ReceptionistConfig:
     # --- Latency targets (§8; measured end-to-end, never vendor claims) -------
     latency_p95_target_ms: int = 800
     latency_p99_target_ms: int = 1200
+    # Fix round 1 (P1): a latency PASS says nothing about reliability —
+    # a receipt where every 10th turn errors out could still show a
+    # fine p95 over the turns that happened to succeed. 0.99 means at
+    # most 1 in 100 turns may fail a stage outright before the receipt
+    # calls itself a PASS.
+    stage0_success_rate_target: float = 0.99
     barge_in_stop_p95_target_ms: int = 250
     emergency_alert_request_p95_target_ms: int = 2000
 
@@ -228,6 +265,88 @@ class ReceptionistConfig:
         }.get(feature, False)
         if not enabled:
             raise DisabledError(f"{feature} is disabled by default; enable explicitly and only with a go-live word.")
+
+
+def recording_key_ring(config) -> dict:
+    """Parses `recording_encryption_keys_json` into {keyId: fernetKey}.
+    Empty dict (never raises) if unset/malformed — `recording.py`'s own
+    `save()`/`decrypt_*` calls then raise their own clear "no key
+    configured" error rather than this helper failing ambiguously."""
+    if not config.recording_encryption_keys_json:
+        return {}
+    try:
+        ring = json.loads(config.recording_encryption_keys_json)
+    except ValueError:
+        return {}
+    if not isinstance(ring, dict):
+        return {}
+    return {str(k): str(v) for k, v in ring.items()}
+
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+
+
+def validate_loopback_url(url: str, *, label: str) -> None:
+    """Fix round 1 (P1): fails closed unless `url` is a literal
+    `http://` loopback address — never `https` (no TLS cert exists for
+    127.0.0.1, so an `https` value here could only mean a misconfiguration
+    or an attempt to point this at something else), never a hostname that
+    merely RESOLVES to loopback at this instant (DNS can change under a
+    TOCTOU race; only the literal address strings above are accepted),
+    and never a value carrying userinfo/query/fragment components that
+    could smuggle a different real destination past a naive check.
+    Raises ValueError with the exact reason on any violation."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme != "http":
+        raise ValueError(f"{label} must be http:// (got scheme {parts.scheme!r}): {url!r}")
+    if parts.username or parts.password:
+        raise ValueError(f"{label} must not carry userinfo: {url!r}")
+    if parts.query or parts.fragment:
+        raise ValueError(f"{label} must not carry a query or fragment: {url!r}")
+    hostname = parts.hostname or ""
+    if hostname not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError(f"{label} must be a literal loopback address (127.0.0.1/localhost/::1), got {hostname!r}: {url!r}")
+    if parts.path not in ("", "/"):
+        raise ValueError(f"{label} must not carry a path (the client appends its own): {url!r}")
+
+
+def read_local_inference_token(config) -> str:
+    """Client-side read: the env value if set, else whatever the server
+    persisted to `local_inference_auth_token_path`. Never generates —
+    only the server (see `ensure_local_inference_token`) does that.
+    Returns "" if neither exists (the caller then sends no Authorization
+    header, which the server — if it generated its own token — rejects,
+    fail closed, never silently skipping the auth check)."""
+    if config.local_inference_auth_token:
+        return config.local_inference_auth_token
+    try:
+        with open(config.local_inference_auth_token_path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def ensure_local_inference_token(config) -> str:
+    """Server-side: the env value if set, else the persisted file's
+    content if it already exists, else a freshly generated random token
+    written to that file so the client (reading the same path) can agree
+    on it without the value ever living in a committed file or an env
+    var shared between processes."""
+    if config.local_inference_auth_token:
+        return config.local_inference_auth_token
+    existing = read_local_inference_token(config)
+    if existing:
+        return existing
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    path = config.local_inference_auth_token_path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(token)
+    return token
 
 
 class DisabledError(RuntimeError):

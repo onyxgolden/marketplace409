@@ -15,10 +15,12 @@ from app.recording import (
     TranscriptSegment,
     ani_lookup_key,
     decrypt_bytes,
+    decrypt_bytes_any_key,
     decrypt_transcript,
     delete_bundle,
     encrypt_bytes,
     load_manifest,
+    rotate_bundle_key,
     sha256_hex,
 )
 
@@ -30,13 +32,15 @@ except ImportError:
     HAVE_CRYPTO = False
 
 REAL_KEY = Fernet.generate_key().decode("ascii") if HAVE_CRYPTO else "unused"
+REAL_KEY_2 = Fernet.generate_key().decode("ascii") if HAVE_CRYPTO else "unused2"
 
 
 def _config(tmp, **overrides):
     kwargs = {
         "recording_enabled": True,
         "recording_storage_path": tmp,
-        "recording_encryption_key": REAL_KEY,
+        "recording_encryption_keys_json": json.dumps({"k1": REAL_KEY}),
+        "recording_current_key_id": "k1",
         "recording_index_secret": "test-index-secret",
     }
     kwargs.update(overrides)
@@ -105,9 +109,17 @@ class TestRecordingSessionSave(unittest.TestCase):
             # Fail closed means NOTHING was written, not a partial bundle.
             self.assertEqual(os.listdir(tmp), [])
 
-    def test_save_is_refused_with_no_encryption_key_and_writes_nothing(self):
+    def test_save_is_refused_with_no_encryption_key_ring_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config = _config(tmp, recording_encryption_key="")
+            config = _config(tmp, recording_encryption_keys_json="")
+            session = RecordingSession(call_sid="CA-1", ani="+15552345678")
+            with self.assertRaises(ValueError):
+                session.save(config)
+            self.assertEqual(os.listdir(tmp), [])
+
+    def test_save_is_refused_when_current_key_id_is_not_in_the_ring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp, recording_current_key_id="does-not-exist")
             session = RecordingSession(call_sid="CA-1", ani="+15552345678")
             with self.assertRaises(ValueError):
                 session.save(config)
@@ -195,8 +207,94 @@ class TestRecordingSessionSave(unittest.TestCase):
             manifest = session.save(config)
             bundle_dir = os.path.join(tmp, manifest["aniLookupKey"], "CA-9")
             with open(os.path.join(bundle_dir, "caller.wav.enc"), "rb") as fh:
-                caller_plain = decrypt_bytes(fh.read(), config.recording_encryption_key)
+                caller_plain = decrypt_bytes(fh.read(), REAL_KEY)
             self.assertEqual(sha256_hex(caller_plain), manifest["audioFileHashes"]["callerWav"])
+
+    def test_manifest_records_the_exact_key_id_used(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-key", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            self.assertEqual(manifest["encryptionKeyId"], "k1")
+
+    def test_a_bundle_saved_under_an_older_key_still_decrypts_after_rotation(self):
+        # Fix round 1, P1: rotating the CURRENT key must not break
+        # reading a bundle saved before the rotation.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)  # ring={k1}, current=k1
+            session = RecordingSession(call_sid="CA-old", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            session.append_transcript_segment(TranscriptSegment(speaker="agent", start_s=0, end_s=1, text="Hi."))
+            manifest = session.save(config)
+            self.assertEqual(manifest["encryptionKeyId"], "k1")
+
+            # Rotate: k2 becomes current, k1 stays in the ring (not yet
+            # re-encrypted) — exactly the state right after adding a new
+            # key and before running rotate_bundle_key on old bundles.
+            rotated_config = _config(
+                tmp,
+                recording_encryption_keys_json=json.dumps({"k1": REAL_KEY, "k2": REAL_KEY_2}),
+                recording_current_key_id="k2",
+            )
+            transcript = decrypt_transcript(rotated_config, manifest["aniLookupKey"], "CA-old")
+            self.assertEqual(transcript["segments"][0]["text"], "Hi.")
+
+            # A NEW save under the rotated config uses k2.
+            session2 = RecordingSession(call_sid="CA-new", ani="+15552345678")
+            session2.append_caller_audio(b"\x00" * 10)
+            session2.append_agent_audio(b"\x00" * 10)
+            manifest2 = session2.save(rotated_config)
+            self.assertEqual(manifest2["encryptionKeyId"], "k2")
+
+    def test_rotate_bundle_key_re_encrypts_an_existing_bundle_to_the_current_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-rotate", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            session.append_transcript_segment(TranscriptSegment(speaker="agent", start_s=0, end_s=1, text="Original."))
+            manifest = session.save(config)
+            lookup_key = manifest["aniLookupKey"]
+            self.assertEqual(manifest["encryptionKeyId"], "k1")
+
+            rotated_config = _config(
+                tmp,
+                recording_encryption_keys_json=json.dumps({"k1": REAL_KEY, "k2": REAL_KEY_2}),
+                recording_current_key_id="k2",
+            )
+            updated_manifest = rotate_bundle_key(rotated_config, lookup_key, "CA-rotate")
+            self.assertEqual(updated_manifest["encryptionKeyId"], "k2")
+
+            # The file on disk is now actually re-encrypted under k2 —
+            # decrypting with k1 alone must fail; k2 alone must succeed.
+            bundle_dir = os.path.join(tmp, lookup_key, "CA-rotate")
+            with open(os.path.join(bundle_dir, "transcript.json.enc"), "rb") as fh:
+                token = fh.read()
+            with self.assertRaises(Exception):
+                decrypt_bytes(token, REAL_KEY)
+            plain = json.loads(decrypt_bytes(token, REAL_KEY_2))
+            self.assertEqual(plain["segments"][0]["text"], "Original.")
+
+            # Content is unchanged by rotation — only the key changed.
+            transcript = decrypt_transcript(rotated_config, lookup_key, "CA-rotate")
+            self.assertEqual(transcript["segments"][0]["text"], "Original.")
+
+    def test_rotate_bundle_key_refuses_an_unknown_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            with self.assertRaises(ValueError):
+                rotate_bundle_key(config, "withheld", "CA-does-not-exist")
+
+    def test_decrypt_bytes_any_key_tries_every_key_in_the_ring(self):
+        token = encrypt_bytes(b"secret payload", REAL_KEY_2)
+        # k1 alone cannot decrypt a k2-encrypted token...
+        with self.assertRaises(Exception):
+            decrypt_bytes_any_key(token, [REAL_KEY])
+        # ...but the full ring (k1 and k2) succeeds.
+        self.assertEqual(decrypt_bytes_any_key(token, [REAL_KEY, REAL_KEY_2]), b"secret payload")
 
 
 @unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed")

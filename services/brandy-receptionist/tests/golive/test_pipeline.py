@@ -11,6 +11,7 @@ clarify prompt; barge-in stop is measured.
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -67,11 +68,49 @@ class TestPipelineTurn(unittest.TestCase):
             pipe = _pipeline(tmp, llm=llm)
             result = pipe.handle_audio(b"audio-1")
             # The attack text never reaches the caller: the dialogue's
-            # fixed template speaks instead, and the LLM text is only in
-            # the trace for rehearsal evaluation.
-            self.assertEqual(result["llm_text"], "Your rent is $500, guaranteed.")
+            # fixed template speaks instead.
             self.assertNotIn("$500", result["reply_text"])
             self.assertNotIn("guaranteed", result["reply_text"])
+            # Fix round 1 (P1): the advisory call is genuinely async now
+            # — it is recorded once it actually completes, not
+            # synchronously inside this same `handle_audio` call (that
+            # was the bug). `wait_for_pending_llm_advisory` is the
+            # TEST-ONLY way to assert on it deterministically.
+            pipe.wait_for_pending_llm_advisory()
+            self.assertEqual(pipe.last_llm_result["text"], "Your rent is $500, guaranteed.")
+
+    def test_llm_advisory_call_never_blocks_the_turns_own_response(self):
+        # Fix round 1 (P1)'s own regression: a slow LLM must not delay
+        # the turn's audio/reply at all. FakeLLM's synchronous version of
+        # this bug would make `handle_audio` take >=3s; the fix must
+        # return in a small fraction of that.
+        with tempfile.TemporaryDirectory() as tmp:
+            slow_llm = FakeLLM(first_token_ms=3000.0)
+            pipe = _pipeline(tmp, llm=slow_llm)
+            started = time.perf_counter()
+            result = pipe.handle_audio(b"audio-1")
+            elapsed_s = time.perf_counter() - started
+            self.assertTrue(result["audio"])
+            self.assertLess(elapsed_s, 1.0, f"turn took {elapsed_s:.2f}s — the 3s-slow LLM blocked it")
+            # The slow call does eventually complete and gets recorded,
+            # proving this isn't "never calls the LLM at all."
+            pipe.wait_for_pending_llm_advisory(timeout=5.0)
+            self.assertEqual(pipe.last_llm_result["text"], "Brandy will review your question and follow up.")
+
+    def test_llm_text_in_the_turn_result_reflects_the_prior_completed_call_not_this_turns(self):
+        # Honest documentation of the async trade-off, as a regression:
+        # turn 1 has no prior result (empty); turn 2's result reflects
+        # turn 1's now-completed advisory text, not turn 2's own (which
+        # is still in flight when turn 2 returns).
+        with tempfile.TemporaryDirectory() as tmp:
+            llm = FakeLLM(first_token_ms=10.0)
+            pipe = _pipeline(tmp, llm=llm)
+            result1 = pipe.handle_audio(b"audio-1")
+            self.assertEqual(result1["llm_text"], "")
+            self.assertIsNone(result1["trace"]["llm_ms"])
+            pipe.wait_for_pending_llm_advisory()
+            result2 = pipe.handle_audio(b"audio-1")
+            self.assertEqual(result2["llm_text"], "Brandy will review your question and follow up.")
 
     def test_off_mode_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
