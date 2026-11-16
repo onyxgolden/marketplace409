@@ -130,6 +130,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   const [decidingChangeId, setDecidingChangeId] = useState(null);
   const [approveMembership, setApproveMembership] = useState("");
   const [approveError, setApproveError] = useState("");
+  // Fail-closed baseline resolution (fix round 1): when a change row
+  // names an explicit baseline_version that is not in the loaded
+  // baselines, approval is blocked rather than silently pre-filling from
+  // the latest baseline. { changeId, version } or null.
+  const [approveBlocked, setApproveBlocked] = useState(null);
   const [decideMessage, setDecideMessage] = useState("");
   const [costRefreshKey, setCostRefreshKey] = useState(0);
   // D7 delete affordance: server-derived eligibility (display only — the
@@ -526,12 +531,32 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   // that list — e.g. adds the labor-hours allowance the change describes
   // — and confirms; the edited list becomes the next frozen version.
   function onStartApprove(change) {
-    const target = baselines.find((b) => b.version === change.baseline_version)
-      || (baselines.length ? baselines[baselines.length - 1] : null);
+    // Fail-closed baseline resolution (fix round 1 review finding): the
+    // latest-baseline fallback is only for a change row that carries no
+    // baseline version. When the row names an explicit version that is
+    // not in the loaded baselines, silently pre-filling from the latest
+    // baseline would let the user confirm a membership the proposal was
+    // never made against — so approval is blocked with a local error and
+    // no editor is offered.
     setApproveError("");
     setDecideMessage("");
+    setApproveBlocked(null);
+    const version = change.baseline_version;
+    if (version != null) {
+      const target = baselines.find((b) => b.version === version);
+      if (!target) {
+        setApproveBlocked({ changeId: change.id, version });
+        setDecidingChangeId(null);
+        setApproveMembership("");
+        return;
+      }
+      setDecidingChangeId(change.id);
+      setApproveMembership(JSON.stringify(target.membership, null, 2));
+      return;
+    }
+    const latest = baselines.length ? baselines[baselines.length - 1] : null;
     setDecidingChangeId(change.id);
-    setApproveMembership(target ? JSON.stringify(target.membership, null, 2) : "");
+    setApproveMembership(latest ? JSON.stringify(latest.membership, null, 2) : "");
   }
 
   function onCancelApprove() {
@@ -575,6 +600,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   // Reject never needed the membership; it still goes straight through
   // with no editor, exactly as before.
   async function onReject(changeId) {
+    setApproveBlocked(null);
     const { response } = await call(`/api/work-packages/${pkg.id}/scope/${changeId}`, "POST", { approve: false, newMembership: null });
     if (response.ok) refresh();
   }
@@ -940,6 +966,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                             </span>
                           )}
                         </div>
+                        {approveBlocked?.changeId === c.id && (
+                          <p role="alert" className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                            <span>Cannot approve this change: it was proposed against baseline version {approveBlocked.version}, which is not in the loaded baselines. Approval is blocked rather than using a newer baseline — reload the page, and if the version is still missing, ask an administrator to check the baseline records.</span>
+                            <button type="button" onClick={() => setApproveBlocked(null)} aria-label="Dismiss" className="shrink-0 font-bold">×</button>
+                          </p>
+                        )}
                         {decidingChangeId === c.id && (
                           <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
                             <p className="text-xs text-slate-600">Edit the full scope list below — approving freezes it as the next baseline version.</p>

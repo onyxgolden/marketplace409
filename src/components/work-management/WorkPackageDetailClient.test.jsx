@@ -1571,4 +1571,45 @@ describe("WorkPackageDetailClient post-freeze change approval (Approve button)",
     expect(decideRequests[0]).toEqual({ changeId: CHANGE.id, approve: false, newMembership: null });
     expect(container.textContent).toContain("rejected");
   });
+
+  // Fix round 1 (ChatGPT NEEDS CHANGES on PR #815): onStartApprove used
+  // to fall back to the latest baseline whenever the change's referenced
+  // version was not found — including when the row named an explicit
+  // version. That let a user confirm a membership the proposal was never
+  // made against. An explicit unmatched version must now fail closed.
+  it("fails closed when the change names a baseline version that is not loaded — no editor, no request", async () => {
+    const MISSING_VERSION_CHANGE = { ...CHANGE, baseline_version: 99 };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [MISSING_VERSION_CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE], scopeChanges: [MISSING_VERSION_CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).toBeNull();
+    expect(confirmButton(container)).toBeUndefined();
+    expect(decideRequests).toHaveLength(0);
+    expect(container.textContent).toContain("baseline version 99");
+    expect(container.textContent).toContain("Approval is blocked");
+  });
+
+  it("pre-fills from the referenced older baseline when a newer baseline also exists", async () => {
+    const V2_MEMBERSHIP = [{ key: "BUNDLE-01", description: "Pull bundle", quantity: 2, unit: "each" }];
+    const V2_BASELINE = { id: "forge_wsb_2", version: 2, package_id: BASE_PKG.id, membership: V2_MEMBERSHIP, membership_hash: "fnv1a:test-v2", frozen_at: "2026-11-15T20:00:00" };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE, V2_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE, V2_BASELINE], scopeChanges: [CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).not.toBeNull();
+    expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
+    expect(decideRequests).toHaveLength(0);
+  });
+
+  it("still falls back to the latest baseline when the change carries no baseline version", async () => {
+    const NO_VERSION_CHANGE = { ...CHANGE, baseline_version: null };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [NO_VERSION_CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE], scopeChanges: [NO_VERSION_CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).not.toBeNull();
+    expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
+    expect(decideRequests).toHaveLength(0);
+  });
 });
