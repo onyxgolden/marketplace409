@@ -961,3 +961,142 @@ describe.skipIf(!HAS_REAL_PG)("slice 6 migration: real-PostgreSQL subset", () =>
     expect(rev.rows[0].n).toBe(0);
   });
 });
+
+// Bridge integration (fix round 1): the bridge migration replaces
+// forge_work_manpower_curve_snapshot with a version that resolves
+// SCHEDULE rows only. This describe applies the bridge on top of
+// the slice 3–6 setup and proves the replaced RPC never resolves a
+// scope-paired row: with a scope v1 and a schedule v1 sharing the
+// version, the snapshot reads the schedule row; a package with only
+// a scope row has no resolvable baseline at all. The scope tables +
+// package columns the bridge needs are added here, plus the minimal
+// busts table the bridge's bust_create replacement needs for its
+// RETURNS type (its behavior is proven in the slice-9 battery).
+const BRIDGE = "20261116000000_forge_work_scope_plan_baseline_bridge.sql";
+
+const BRIDGE_SUPPORT_SQL = `
+  create table forge_work_scope_baselines (
+    owner_id text not null,
+    id text not null,
+    package_id text not null,
+    version integer not null,
+    frozen_at timestamptz not null default now(),
+    frozen_by text,
+    membership jsonb,
+    membership_hash text,
+    supersedes_id text,
+    primary key (owner_id, id)
+  );
+  create table forge_work_scope_changes (
+    owner_id text not null,
+    id text not null,
+    package_id text not null,
+    baseline_version integer not null,
+    change_type text,
+    description text,
+    requested_by text,
+    requested_at timestamptz,
+    status text not null default 'proposed',
+    decided_by text,
+    decided_at timestamptz,
+    resulting_baseline_version integer,
+    primary key (owner_id, id)
+  );
+  alter table forge_work_packages
+    add column if not exists planned_start date,
+    add column if not exists planned_finish date,
+    add column if not exists scope_baseline_id text,
+    add column if not exists designated_verifier text,
+    add column if not exists updated_by text,
+    add column if not exists updated_at timestamptz;
+  create table forge_work_package_busts (
+    owner_id text not null,
+    id text not null,
+    work_package_id text not null,
+    source_fingerprint text,
+    status text not null,
+    dimension text,
+    primary key (owner_id, id)
+  );
+`;
+
+async function setupBridgeDb() {
+  const db = await setupDb();
+  await db.exec(BRIDGE_SUPPORT_SQL);
+  await db.exec(loadMigrationSql(BRIDGE));
+  // pkg_a already carries a schedule v1 (400h, 2026-11-09→11-18)
+  // from the seed. Add a SCOPE v1 with different hours/dates at
+  // the same version, and a scope-only v1 for pkg_nobaseline.
+  await db.query(`
+    insert into forge_work_package_baselines
+      (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+       baseline_hours, baseline_cost, frozen_by)
+    values
+      ('${OWNER_A}', 'pkg_a', 1, 'scope', '2026-11-01', '2026-11-30', 999, 999000, '${OWNER_A}'),
+      ('${OWNER_A}', 'pkg_nobaseline', 1, 'scope', '2026-11-01', '2026-11-30', 999, 999000, '${OWNER_A}');
+  `);
+  return db;
+}
+
+describe("slice 6 + bridge integration: manpower snapshot resolves schedule rows only (fix round 1)", () => {
+  let db;
+  beforeEach(async () => {
+    db = await setupBridgeDb();
+  }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("the snapshot reads the schedule row when a scope row shares its version", async () => {
+    // The schedule v1 runs 2026-11-09→11-18; the scope v1 at the
+    // same version runs 2026-11-01→11-30. The snapshot's baseline
+    // carries dates only, so the dates are the discriminator.
+    const latest = await snapshot(db, OWNER_A, {});
+    expect(latest.baseline).not.toBeNull();
+    expect(latest.baseline.version_number).toBe(1);
+    expect(dateStr(latest.baseline.baseline_start)).toBe("2026-11-09");
+    expect(dateStr(latest.baseline.baseline_finish)).toBe("2026-11-18");
+    const named = await snapshot(db, OWNER_A, { baselineVersion: 1 });
+    expect(named.baseline).not.toBeNull();
+    expect(named.baseline.version_number).toBe(1);
+    expect(dateStr(named.baseline.baseline_start)).toBe("2026-11-09");
+    expect(dateStr(named.baseline.baseline_finish)).toBe("2026-11-18");
+    // The scope v1 (2026-11-01→11-30) must never win either select.
+    expect(dateStr(latest.baseline.baseline_start)).not.toBe("2026-11-01");
+    expect(dateStr(named.baseline.baseline_start)).not.toBe("2026-11-01");
+  });
+
+  it60("a package with only a scope baseline has no resolvable baseline", async () => {
+    await expect(snapshot(db, OWNER_A, { packageId: "pkg_nobaseline", baselineVersion: 1 }))
+      .rejects.toThrow(/WPP6_BASELINE_NOT_FOUND/);
+    const snap = await snapshot(db, OWNER_A, { packageId: "pkg_nobaseline" });
+    expect(snap.baseline).toBeNull();
+  });
+
+  it60("placements anchor to schedule rows: a newer scope version does not stale them", async () => {
+    // A scope v2 appears above the schedule v1. Placing a step
+    // against schedule v1 must still succeed: only a newer
+    // SCHEDULE version stales a placement.
+    await db.query(`
+      insert into forge_work_package_baselines
+        (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+         baseline_hours, baseline_cost, frozen_by)
+      values ('${OWNER_A}', 'pkg_a', 2, 'scope', '2026-11-01', '2026-11-30', 999, 999000, '${OWNER_A}');
+    `);
+    const step = await createStep(db, OWNER_A, {});
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    expect(placed.step_id).toBe(step.id);
+    expect(placed.baseline_version).toBe(1);
+    // The placement row carries the schedule kind for the moved FK.
+    const { rows } = await db.query(`
+      select baseline_kind from forge_work_step_curve_placements
+      where owner_id = '${OWNER_A}' and id = '${placed.id}';
+    `);
+    expect(rows[0].baseline_kind).toBe("schedule");
+  });
+
+  it60("placing against a scope-only version raises, never a raw FK error", async () => {
+    const step = await createStep(db, OWNER_A, { packageId: "pkg_nobaseline" });
+    await expect(setPlacement(db, OWNER_A, {
+      packageId: "pkg_nobaseline", stepId: step.id, baselineVersion: 1, startDay: 3,
+    })).rejects.toThrow(/WPP6_BASELINE_NOT_FOUND/);
+  });
+});

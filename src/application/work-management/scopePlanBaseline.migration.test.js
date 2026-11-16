@@ -16,12 +16,22 @@
 //     creates no plan baseline and needs no plan inputs. Approving
 //     with broken plan inputs leaves the change proposed.
 //   - Rollback: a failing plan insert (unique collision with a
-//     pre-existing plan row) rolls the scope baseline and the pointer
-//     advance back with it — no orphan scope row.
+//     pre-existing SCOPE plan row) rolls the scope baseline and the
+//     pointer advance back with it — no orphan scope row. A
+//     schedule-only row at the same version does NOT collide: the
+//     two writers version in separate series (fix round 1).
 //   - Non-vacuity: the pre-fix RPCs (verbatim rung-1 text, applied
 //     before the bridge) freeze scope-only with no plan row; applying
 //     the bridge to the same database makes the next freeze produce
 //     the pair. The bridge — not the old code — creates plan rows.
+//   - Writer reconciliation (fix round 1, ChatGPT NEEDS CHANGES):
+//     a schedule baseline v1 before the initial scope freeze, a
+//     schedule baseline after a paired scope/plan v1, and a
+//     scope-change approval after each sequence all succeed with
+//     no collision; backfill inserts a scope row alongside
+//     schedule-only rows; the preflight trips only on scope-kind
+//     orphans; the migration's column/constraint ALTERs are proven
+//     from the legacy (pre-kind) table shape.
 //   - Backfill: latest scope head only, idempotent on re-apply,
 //     migration-stamped frozen_by/time, skips incomplete packages
 //     (never a zero row), leaves already-present rows untouched, and
@@ -37,12 +47,14 @@
 //       can write" plan baselines, but the Rung 4 scheduling
 //       freezeBaseline (src/application/work-management/workScheduling.js)
 //       inserts directly as the authenticated user through the live
-//       POST /schedule/baseline route. This suite therefore asserts
-//       the protections that actually exist (anon/foreign cannot
-//       write; UPDATE/DELETE refused) and asserts the owner direct
-//       insert still succeeds, so a future hardening cannot silently
-//       break the scheduling flow. Making writes RPC-only is a
-//       separate slice.
+//       POST /schedule/baseline route — and after fix round 1 it
+//       stamps baseline_kind='schedule', versioning in its own
+//       series, so it can never collide with a scope-paired row.
+//       This suite therefore asserts the protections that actually
+//       exist (anon/foreign cannot write; UPDATE/DELETE refused) and
+//       asserts the owner direct insert still succeeds, so a future
+//       hardening cannot silently break the scheduling flow. Making
+//       writes RPC-only is a separate slice.
 //   (b) The ambiguous-estimate leg is exercised against a prereq stub
 //       that omits the production unique index on one active estimate
 //       per package (uq_forge_work_control_estimates_active_package):
@@ -57,11 +69,13 @@
 //
 // The bust-snapshot integration leg (a bridge-created plan baseline
 // appearing as the snapshot's `baseline` with the expected
-// baseline_hours, and a LABOR_HOURS bust recording against it) is
-// covered by the slice-9 battery for the snapshot/create side plus
-// the §8 live verification for the bridge side: this suite proves the
-// bridge produces exactly the row the snapshot's `baseline` CTE
-// selects (latest version for the package, and the exact named
+// baseline_hours, exact named-version progress resolution, and a
+// LABOR_HOURS bust recording against it) lives in the slice-9
+// battery (busts.migration.test.js, "bridge integration" describe):
+// it applies this bridge on top of the busts migration and calls
+// the replaced RPCs against bridge-created rows. This suite proves
+// the bridge produces exactly the row the snapshot's `baseline` CTE
+// selects (latest SCOPE version for the package, and the exact named
 // version), which is the bridge's whole contract.
 
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
@@ -239,13 +253,50 @@ const PREREQ_SQL = `
     resulting_baseline_version integer,
     primary key (owner_id, id)
   );
+  -- Minimal forge_work_package_busts: the bridge migration replaces
+  -- forge_work_package_bust_create, whose RETURNS type is this
+  -- table — so the table must exist for the migration to apply
+  -- (in production it exists from the busts migration
+  -- 20261115000000, applied Nov 15). Only the columns the replaced
+  -- snapshot reads are stubbed; bust behavior itself is proven in
+  -- the slice-9 battery, where the full table lives.
+  create table forge_work_package_busts (
+    owner_id text not null,
+    id text not null,
+    work_package_id text not null,
+    source_fingerprint text,
+    status text not null,
+    dimension text,
+    primary key (owner_id, id)
+  );
+  -- Minimal forge_work_step_curve_placements: the bridge migration
+  -- replaces the two slice-6 placement RPCs, whose RETURNS / %rowtype
+  -- reference this table, and moves its FK to the per-kind unique —
+  -- so the table must exist for the migration to apply (in
+  -- production it exists from slice 6). Only the FK-relevant
+  -- columns are stubbed; placement behavior is proven in the
+  -- slice-6 battery, where the full table lives.
+  create table forge_work_step_curve_placements (
+    owner_id text not null,
+    id text not null,
+    work_package_id text not null,
+    step_id text not null,
+    baseline_version integer not null,
+    baseline_kind text not null default 'schedule',
+    primary key (owner_id, id)
+  );
   -- Plan baselines: full rung-4 definition (checks, unique, immutable
-  -- + actor-stamp triggers, RLS owner policy).
+  -- + actor-stamp triggers, RLS owner policy), plus the fix-round-1
+  -- baseline_kind split: scope-paired rows version with the scope
+  -- chain, schedule-only rows in their own series.
   create table if not exists forge_work_package_baselines (
     owner_id text not null,
     id text not null default ('forge_wpb_' || gen_random_uuid()::text),
     package_id text not null,
     version_number integer not null,
+    baseline_kind text not null default 'schedule'
+      constraint forge_work_package_baselines_kind_check
+        check (baseline_kind in ('scope', 'schedule')),
     baseline_start date not null,
     baseline_finish date not null,
     baseline_hours numeric(14,2) not null,
@@ -258,7 +309,7 @@ const PREREQ_SQL = `
     constraint forge_work_package_baselines_dates_check check (baseline_finish >= baseline_start),
     constraint forge_work_package_baselines_hours_check check (baseline_hours >= 0),
     constraint forge_work_package_baselines_cost_check check (baseline_cost >= 0),
-    constraint forge_work_package_baselines_version_unique unique (owner_id, package_id, version_number)
+    constraint forge_work_package_baselines_kind_version_unique unique (owner_id, package_id, baseline_kind, version_number)
   );
   create or replace function forge_work_baselines_immutable()
   returns trigger language plpgsql as $$
@@ -451,8 +502,8 @@ const SEED_SQL = `
     ('${OWNER_A}', 'wsb_bf_b1', 'pkg_bf_b', 1, '${OWNER_A}', '2026-11-15T00:00:00Z', '[]'::jsonb, 'h', null),
     ('${OWNER_A}', 'wsb_bf_c1', 'pkg_bf_c', 1, '${OWNER_A}', '2026-11-15T00:00:00Z', '[]'::jsonb, 'h', null);
   alter table forge_work_package_baselines disable trigger forge_work_package_baselines_stamp_actor_trg;
-  insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by, frozen_at) values
-    ('${OWNER_A}', 'wpb_bf_c1', 'pkg_bf_c', 1, '2026-11-10', '2026-11-30', 7.00, 9000.00, 'scheduler', '2026-11-15T00:00:00Z');
+  insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_kind, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by, frozen_at) values
+    ('${OWNER_A}', 'wpb_bf_c1', 'pkg_bf_c', 1, 'schedule', '2026-11-10', '2026-11-30', 7.00, 9000.00, 'scheduler', '2026-11-15T00:00:00Z');
   alter table forge_work_package_baselines enable trigger forge_work_package_baselines_stamp_actor_trg;
   insert into workspace_members (owner_id, member_user_id, status, role)
     values ('${OWNER_A}', '${MEMBER_C}', 'active', 'co_owner');
@@ -527,13 +578,32 @@ async function scopeRows(db, packageId) {
 
 async function planRows(db, packageId) {
   const { rows } = await db.query(`
-    select id, version_number, baseline_start, baseline_finish,
+    select id, version_number, baseline_kind, baseline_start, baseline_finish,
       baseline_hours, baseline_cost, frozen_by, frozen_at
     from forge_work_package_baselines
     where owner_id = '${OWNER_A}' and package_id = '${packageId}'
-    order by version_number;
+    order by baseline_kind, version_number;
   `);
   return rows;
+}
+
+// A scheduling freeze, as the shipped app performs it: a direct
+// insert as the authenticated user, versioning max+1 over the
+// SCHEDULE series only (workScheduling.freezeBaseline). The
+// actor-stamp trigger overwrites frozen_by with the caller.
+async function scheduleFreeze(db, uid, packageId, hours = 10, cost = 10000) {
+  const { rows } = await asUser(db, uid, `
+    insert into forge_work_package_baselines
+      (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+       baseline_hours, baseline_cost, frozen_by)
+    select '${OWNER_A}', '${packageId}',
+      coalesce(max(version_number), 0) + 1, 'schedule',
+      '2026-11-16', '2026-11-20', ${hours}, ${cost}, '${uid}'
+    from forge_work_package_baselines
+    where owner_id = '${OWNER_A}' and package_id = '${packageId}' and baseline_kind = 'schedule'
+    returning *;
+  `);
+  return rows[0];
 }
 
 function asDate(value) {
@@ -560,6 +630,7 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(r.baseline.version).toBe(1);
     expect(r.plan_baseline).toBeDefined();
     expect(r.plan_baseline.version_number).toBe(1);
+    expect(r.plan_baseline.baseline_kind).toBe("scope");
     expect(Number(r.plan_baseline.baseline_hours)).toBe(10);
     expect(r.plan_baseline.baseline_start).toBe("2026-11-16");
     expect(r.plan_baseline.baseline_finish).toBe("2026-11-20");
@@ -592,6 +663,7 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     const plans = await planRows(db, "pkg_bf_a");
     expect(plans).toHaveLength(1);
     expect(plans[0].version_number).toBe(2);
+    expect(plans[0].baseline_kind).toBe("scope");
     expect(Number(plans[0].baseline_hours)).toBe(25.5);
     expect(asDate(plans[0].baseline_start)).toBe("2026-11-10");
     expect(asDate(plans[0].baseline_finish)).toBe("2026-11-30");
@@ -605,13 +677,24 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(v1).toHaveLength(0);
   });
 
-  it60("backfill skips incomplete packages and leaves present rows untouched", async () => {
+  it60("backfill skips incomplete packages and adds a scope row alongside a schedule-only row", async () => {
     expect(await planRows(db, "pkg_bf_b")).toHaveLength(0);
     const plans = await planRows(db, "pkg_bf_c");
-    expect(plans).toHaveLength(1);
-    expect(plans[0].id).toBe("wpb_bf_c1");
-    expect(plans[0].frozen_by).toBe("scheduler");
-    expect(Number(plans[0].baseline_hours)).toBe(7);
+    expect(plans).toHaveLength(2);
+    const seeded = plans.find((p) => p.id === "wpb_bf_c1");
+    expect(seeded).toBeDefined();
+    expect(seeded.baseline_kind).toBe("schedule");
+    expect(seeded.version_number).toBe(1);
+    expect(seeded.frozen_by).toBe("scheduler");
+    expect(Number(seeded.baseline_hours)).toBe(7);
+    // The backfill inserts the SCOPE row at the same version: the
+    // seeded schedule row does not count as present.
+    const scopeRow = plans.find((p) => p.baseline_kind === "scope");
+    expect(scopeRow).toBeDefined();
+    expect(scopeRow.version_number).toBe(1);
+    expect(Number(scopeRow.baseline_hours)).toBe(7);
+    expect(Number(scopeRow.baseline_cost)).toBe(9000);
+    expect(scopeRow.frozen_by).toBe("migration:20261116_planner_bust_baseline_hours");
   });
 
   it60("backfill is idempotent on re-apply of the whole migration", async () => {
@@ -619,8 +702,10 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(await planRows(db, "pkg_bf_a")).toHaveLength(1);
     expect(await planRows(db, "pkg_bf_b")).toHaveLength(0);
     const plans = await planRows(db, "pkg_bf_c");
-    expect(plans).toHaveLength(1);
-    expect(plans[0].frozen_by).toBe("scheduler");
+    expect(plans).toHaveLength(2);
+    expect(plans.filter((p) => p.baseline_kind === "schedule")).toHaveLength(1);
+    expect(plans.filter((p) => p.baseline_kind === "scope")).toHaveLength(1);
+    expect(plans.find((p) => p.id === "wpb_bf_c1").frozen_by).toBe("scheduler");
   });
 
   it60("approve inserts scope v2 + plan v2 atomically, values captured at approval time", async () => {
@@ -638,6 +723,7 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(r.change.resulting_baseline_version).toBe(2);
     expect(r.baseline.version).toBe(2);
     expect(r.plan_baseline.version_number).toBe(2);
+    expect(r.plan_baseline.baseline_kind).toBe("scope");
     expect(Number(r.plan_baseline.baseline_hours)).toBe(12);
     expect(r.plan_baseline.frozen_at).toBe(r.baseline.frozen_at);
     expect(await packagePointer(db, "pkg_approve")).toBe(r.baseline.id);
@@ -711,15 +797,35 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(await planRows(db, "pkg_bad")).toHaveLength(0);
   });
 
-  it60("a failing plan insert rolls the scope baseline and pointer back with it", async () => {
-    // A scheduling-created plan row already sits at v1: the paired
-    // plan insert collides, so the whole freeze transaction must roll
-    // back — no orphan scope row, no pointer advance.
+  it60("a schedule-only v1 no longer blocks the initial scope freeze (fix round 1)", async () => {
+    // A scheduling-created plan row already sits at v1 (kind
+    // 'schedule'): the paired scope insert is a different series,
+    // so the freeze succeeds and both v1 rows coexist.
+    const sched = await scheduleFreeze(db, OWNER_A, "pkg_rollback");
+    expect(sched.version_number).toBe(1);
+    expect(sched.baseline_kind).toBe("schedule");
+    const r = await freezeRpc(db, OWNER_A, "pkg_rollback");
+    expect(r.ok).toBe(true);
+    expect(r.baseline.version).toBe(1);
+    expect(r.plan_baseline.version_number).toBe(1);
+    expect(r.plan_baseline.baseline_kind).toBe("scope");
+    expect(await scopeRows(db, "pkg_rollback")).toHaveLength(1);
+    const plans = await planRows(db, "pkg_rollback");
+    expect(plans).toHaveLength(2);
+    expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort()).toEqual(["schedule:1", "scope:1"]);
+    expect(await packagePointer(db, "pkg_rollback")).toBe(r.baseline.id);
+  });
+
+  it60("a scope-kind v1 collision still rolls the scope baseline and pointer back", async () => {
+    // A scope-paired plan row already sits at v1: the paired plan
+    // insert collides on (owner, package, 'scope', 1), so the whole
+    // freeze transaction must roll back — no orphan scope row, no
+    // pointer advance.
     await asUser(db, OWNER_A, `
       insert into forge_work_package_baselines
-        (owner_id, package_id, version_number, baseline_start, baseline_finish,
+        (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
          baseline_hours, baseline_cost, frozen_by)
-      values ('${OWNER_A}', 'pkg_rollback', 1, '2026-11-16', '2026-11-20', 10.00, 10000.00, '${OWNER_A}');
+      values ('${OWNER_A}', 'pkg_rollback', 1, 'scope', '2026-11-16', '2026-11-20', 10.00, 10000.00, '${OWNER_A}');
     `);
     await expect(freezeRpc(db, OWNER_A, "pkg_rollback")).rejects.toThrow(/duplicate key|unique/i);
     expect(await scopeRows(db, "pkg_rollback")).toHaveLength(0);
@@ -735,7 +841,7 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
     expect(await planRows(db, "pkg_freeze")).toHaveLength(1);
   });
 
-  it60("backfill preflight fails closed on a version collision", async () => {
+  it60("backfill preflight fails closed on a scope-kind version collision", async () => {
     const collision = new PGlite();
     try {
       await collision.exec(PREREQ_SQL);
@@ -743,13 +849,36 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
       await collision.exec(`set app.test_uid = '${OWNER_A}';`);
       await collision.exec(`
         insert into forge_work_package_baselines
-          (owner_id, package_id, version_number, baseline_start, baseline_finish,
+          (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
            baseline_hours, baseline_cost, frozen_by)
-        values ('${OWNER_A}', 'pkg_bf_a', 9, '2026-11-10', '2026-11-30', 1.00, 1.00, '${OWNER_A}');
+        values ('${OWNER_A}', 'pkg_bf_a', 9, 'scope', '2026-11-10', '2026-11-30', 1.00, 1.00, '${OWNER_A}');
       `);
       await expect(collision.exec(loadMigrationSql(THIS_MIGRATION))).rejects.toThrow(/version collision/i);
     } finally {
       await collision.close();
+    }
+  });
+
+  it60("backfill preflight passes a schedule-only orphan at the same version (fix round 1)", async () => {
+    const db2 = new PGlite();
+    try {
+      await db2.exec(PREREQ_SQL);
+      await db2.exec(SEED_SQL);
+      await db2.exec(`set app.test_uid = '${OWNER_A}';`);
+      // A schedule-only row at v9 has no scope version 9 and is
+      // ahead of the scope head — legitimate by design, not a
+      // collision: the migration must apply and backfill normally.
+      await db2.exec(`
+        insert into forge_work_package_baselines
+          (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+           baseline_hours, baseline_cost, frozen_by)
+        values ('${OWNER_A}', 'pkg_bf_a', 9, 'schedule', '2026-11-10', '2026-11-30', 1.00, 1.00, '${OWNER_A}');
+      `);
+      await db2.exec(loadMigrationSql(THIS_MIGRATION));
+      const plans = await planRows(db2, "pkg_bf_a");
+      expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort()).toEqual(["schedule:9", "scope:2"]);
+    } finally {
+      await db2.close();
     }
   });
 
@@ -813,6 +942,113 @@ describe("scope/plan baseline bridge: PGlite battery", () => {
   });
 });
 
+describe("scope/plan baseline bridge: schedule/scope writer reconciliation (fix round 1)", () => {
+  let db;
+  beforeEach(async () => {
+    db = await setupDb();
+  }, 60000);
+
+  it60("schedule v1 before the initial scope freeze, then approval: no collision at any step", async () => {
+    // Sequence 1: scheduling freezes first.
+    const sched = await scheduleFreeze(db, OWNER_A, "pkg_approve", 10, 10000);
+    expect(sched.version_number).toBe(1);
+    expect(sched.baseline_kind).toBe("schedule");
+    // The initial scope freeze pairs scope v1 with a SCOPE plan v1
+    // alongside the schedule v1 — same version, different series.
+    const f = await freezeRpc(db, OWNER_A, "pkg_approve");
+    expect(f.ok).toBe(true);
+    expect(f.plan_baseline.baseline_kind).toBe("scope");
+    let plans = await planRows(db, "pkg_approve");
+    expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort()).toEqual(["schedule:1", "scope:1"]);
+    // Sequence 3 (after sequence 1): approving the scope change
+    // inserts scope v2 + scope plan v2; the schedule v1 is untouched.
+    await proposeChange(db, "chg_seq1", "pkg_approve", 1);
+    const r = await decideRpc(db, OWNER_A, "chg_seq1", true);
+    expect(r.ok).toBe(true);
+    expect(r.plan_baseline.version_number).toBe(2);
+    expect(r.plan_baseline.baseline_kind).toBe("scope");
+    plans = await planRows(db, "pkg_approve");
+    expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort()).toEqual(["schedule:1", "scope:1", "scope:2"]);
+    expect(await scopeRows(db, "pkg_approve")).toHaveLength(2);
+  });
+
+  it60("schedule baseline after a paired scope/plan v1, then approval: series stay independent", async () => {
+    // Sequence 2: the paired freeze first.
+    const f = await freezeRpc(db, OWNER_A, "pkg_freeze");
+    expect(f.ok).toBe(true);
+    // A scheduling freeze afterwards versions in the schedule
+    // series — it reads only kind='schedule' rows, so it mints
+    // schedule v1 even though a scope v1 already exists.
+    const sched = await scheduleFreeze(db, OWNER_A, "pkg_freeze", 12, 12000);
+    expect(sched.version_number).toBe(1);
+    expect(sched.baseline_kind).toBe("schedule");
+    // A second scheduling freeze advances the schedule series only.
+    const sched2 = await scheduleFreeze(db, OWNER_A, "pkg_freeze", 14, 14000);
+    expect(sched2.version_number).toBe(2);
+    // Sequence 3 (after sequence 2): the scope-change approval
+    // inserts scope v2 + scope plan v2 without colliding with the
+    // schedule v2 at the same version.
+    await proposeChange(db, "chg_seq2", "pkg_freeze", 1);
+    const r = await decideRpc(db, OWNER_A, "chg_seq2", true);
+    expect(r.ok).toBe(true);
+    expect(r.plan_baseline.version_number).toBe(2);
+    expect(r.plan_baseline.baseline_kind).toBe("scope");
+    const plans = await planRows(db, "pkg_freeze");
+    expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort())
+      .toEqual(["schedule:1", "schedule:2", "scope:1", "scope:2"]);
+  });
+
+  it60("the migration's kind column + constraint swap apply from the legacy table shape", async () => {
+    // A database whose baselines table predates the split: no kind
+    // column, old per-package unique. The bridge migration itself
+    // must perform the ALTERs — they are not pre-applied here.
+    const legacy = new PGlite();
+    try {
+      await legacy.exec(PREREQ_SQL);
+      await legacy.exec(SEED_SQL);
+      await legacy.exec(`
+        alter table forge_work_package_baselines
+          drop constraint forge_work_package_baselines_kind_version_unique;
+        alter table forge_work_package_baselines drop column baseline_kind;
+        alter table forge_work_package_baselines
+          add constraint forge_work_package_baselines_version_unique
+            unique (owner_id, package_id, version_number);
+      `);
+      await legacy.exec(loadMigrationSql(THIS_MIGRATION));
+      // The column exists with default 'schedule': the pre-existing
+      // seeded row was backfilled to the schedule kind.
+      const { rows: kindRows } = await legacy.query(`
+        select column_name, column_default, is_nullable
+        from information_schema.columns
+        where table_schema = 'public' and table_name = 'forge_work_package_baselines'
+          and column_name = 'baseline_kind';
+      `);
+      expect(kindRows).toHaveLength(1);
+      expect(kindRows[0].column_default).toContain("schedule");
+      const { rows: cons } = await legacy.query(`
+        select conname, pg_get_constraintdef(oid) as def from pg_constraint
+        where conrelid = 'public.forge_work_package_baselines'::regclass
+          and contype = 'u';
+      `);
+      expect(cons.map((c) => c.conname)).toEqual(["forge_work_package_baselines_kind_version_unique"]);
+      expect(cons[0].def).toContain("(owner_id, package_id, baseline_kind, version_number)");
+      const seeded = await planRows(legacy, "pkg_bf_c");
+      expect(seeded.find((p) => p.id === "wpb_bf_c1").baseline_kind).toBe("schedule");
+      // And the split works end to end on the migrated table: the
+      // scope freeze pairs a scope v1 beside the schedule v1.
+      const f = await freezeRpc(legacy, OWNER_A, "pkg_freeze");
+      expect(f.ok).toBe(true);
+      const sched = await scheduleFreeze(legacy, OWNER_A, "pkg_freeze");
+      expect(sched.version_number).toBe(1);
+      expect(sched.baseline_kind).toBe("schedule");
+      const plans = await planRows(legacy, "pkg_freeze");
+      expect(plans.map((p) => `${p.baseline_kind}:${p.version_number}`).sort()).toEqual(["schedule:1", "scope:1"]);
+    } finally {
+      await legacy.close();
+    }
+  });
+});
+
 describe("scope/plan baseline bridge: non-vacuity (pre-fix vs bridge)", () => {
   it60("pre-fix freeze is scope-only; the bridge makes the next freeze produce the pair", async () => {
     const pre = await setupPrefixedDb();
@@ -828,6 +1064,7 @@ describe("scope/plan baseline bridge: non-vacuity (pre-fix vs bridge)", () => {
       const backfilled = await planRows(pre, "pkg_bf_a");
       expect(backfilled).toHaveLength(1);
       expect(backfilled[0].version_number).toBe(2);
+      expect(backfilled[0].baseline_kind).toBe("scope");
       const r2 = await freezeRpc(pre, OWNER_A, "pkg_approve");
       expect(r2.ok).toBe(true);
       expect(r2.plan_baseline.version_number).toBe(1);

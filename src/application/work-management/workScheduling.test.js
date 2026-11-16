@@ -36,9 +36,10 @@ const BASELINE = {
 
 describe("freezeBaseline", () => {
   it("inserts version 1 when no baseline exists", async () => {
+    const readChain = chain({ data: null, error: null });
     const insertChain = chain({ data: { version_number: 1 }, error: null });
     const db = mockDb([
-      chain({ data: null, error: null }),
+      readChain,
       insertChain,
     ]);
     const result = await freezeBaseline(db, {
@@ -50,6 +51,11 @@ describe("freezeBaseline", () => {
     const inserted = insertChain.insert.mock.calls[0][0];
     expect(inserted.version_number).toBe(1);
     expect(inserted.frozen_by).toBe("user_1");
+    // Fix round 1: scheduling freezes stamp the schedule kind, and
+    // the max-version read is scoped to the schedule series — a
+    // scope-paired row at the same version can never collide.
+    expect(inserted.baseline_kind).toBe("schedule");
+    expect(readChain.eq.mock.calls).toContainEqual(["baseline_kind", "schedule"]);
   });
 
   it("increments version when a baseline exists", async () => {
@@ -65,6 +71,7 @@ describe("freezeBaseline", () => {
     });
     expect(result.version_number).toBe(3);
     expect(insertChain.insert.mock.calls[0][0].version_number).toBe(3);
+    expect(insertChain.insert.mock.calls[0][0].baseline_kind).toBe("schedule");
   });
 
   it("retries on a concurrent version collision", async () => {

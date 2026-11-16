@@ -131,9 +131,14 @@ export const FIELD_ALLOWLIST = Object.freeze({
   // (measurement configuration, not evidence), blocked/verified/
   // designated-verifier bookkeeping, version/created/updated.
   // forge_work_package_baselines: id, package_id, owner_id,
-  // version_number, baseline_start/finish, frozen_at admitted.
-  // EXCLUDED: baseline_hours, baseline_cost (financial — OUT of
-  // this lane entirely, brief §2/§8), created_at.
+  // version_number, baseline_kind, baseline_start/finish, frozen_at
+  // admitted. EXCLUDED: baseline_hours, baseline_cost (financial —
+  // OUT of this lane entirely, brief §2/§8), created_at.
+  // baseline_kind ('scope' | 'schedule') is admitted so the evaluator
+  // can tell the two version series apart (bridge 20261116000000):
+  // a scope row and a schedule row may share a version number without
+  // being duplicates, and progress snapshots resolve against the
+  // schedule series only.
   // forge_work_progress_snapshots: id, package_id, owner_id,
   // status_date, baseline_version, planned/actual/earned_pct
   // admitted. EXCLUDED: earned/actual hours and costs, etc/eac
@@ -145,7 +150,7 @@ export const FIELD_ALLOWLIST = Object.freeze({
   ]),
   forge_work_package_baselines: Object.freeze([
     "baseline_ref", "package_ref", "owner_ref", "version_number",
-    "baseline_start", "baseline_finish", "frozen_at",
+    "baseline_kind", "baseline_start", "baseline_finish", "frozen_at",
   ]),
   forge_work_progress_snapshots: Object.freeze([
     "snapshot_ref", "package_ref", "owner_ref", "status_date",
