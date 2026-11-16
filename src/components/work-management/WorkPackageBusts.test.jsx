@@ -291,6 +291,9 @@ describe("WorkPackageBusts", () => {
     setInputValue(container.querySelector(`#transition-reason-${BUST.id}`), "Closing the bust.");
     await settle();
     expect(container.textContent).toContain("Resolved by change is paused");
+    expect(container.textContent).toContain("must stay open or under review");
+    expect(container.textContent).toContain("only if it is actually true");
+    expect(container.textContent).not.toContain("Use Accepted overrun");
     expect(container.textContent).not.toContain("uses the current frozen baseline");
     const move = Array.from(container.querySelectorAll("button")).find((b) => b.textContent.trim() === "Move bust");
     expect(move.disabled).toBe(true);

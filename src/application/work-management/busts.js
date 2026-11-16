@@ -125,7 +125,7 @@ export function mapBustRpcError(error) {
     return { ok: false, httpStatus: 409, error: "Resolving by change needs a newer frozen baseline than the one this bust was measured against — the original baseline cannot prove its own fix." };
   }
   if (message.includes("WPP9_RESOLVED_PROVENANCE_UNAVAILABLE")) {
-    return { ok: false, httpStatus: 409, error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. Use Accepted overrun or Invalid data for now." };
+    return { ok: false, httpStatus: 409, error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. This bust must stay open or under review until that proof exists; pick another disposition only if it is actually true for this bust." };
   }
   if (message.includes("WPP9_APPROVED_ORDER_REQUIRED")) {
     return { ok: false, httpStatus: 409, error: "Resolving by change requires a linked approved change order." };

@@ -58,7 +58,7 @@ describe("POST /api/work-packages/[packageId]/busts/[bustId]/transition", () => 
   it("returns 409 with plain words when resolution by change is paused for provenance", async () => {
     transitionBust.mockResolvedValue({
       ok: false, httpStatus: 409,
-      error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. Use Accepted overrun or Invalid data for now.",
+      error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. This bust must stay open or under review until that proof exists; pick another disposition only if it is actually true for this bust.",
     });
     const response = await POST(
       new Request("https://test/x", {
@@ -76,6 +76,9 @@ describe("POST /api/work-packages/[packageId]/busts/[bustId]/transition", () => 
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.error).toContain("Resolved by change is paused");
+    expect(body.error).toContain("must stay open or under review");
+    expect(body.error).toContain("only if it is actually true");
+    expect(body.error).not.toContain("Use Accepted overrun");
     expect(body.error).not.toContain("WPP9");
   });
 

@@ -426,8 +426,9 @@ function BustDetail({ packageId, bust, isTerminal, onChanged }) {
               <p className="w-full text-xs text-slate-500">
                 Resolved by change is paused — the app cannot yet prove
                 the new plan includes the approved change, so this bust
-                cannot close that way. Use Accepted overrun or Invalid
-                data for now.
+                must stay open or under review until that proof exists.
+                Pick another disposition only if it is actually true
+                for this bust.
               </p>
             )}
             <div className="min-w-48 flex-1">

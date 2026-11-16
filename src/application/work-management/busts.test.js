@@ -489,4 +489,13 @@ describe("mapBustRpcError", () => {
     expect(missing.error).toBe(NOT_APPLIED_ERROR);
     expect(() => mapBustRpcError(new Error("something entirely new"))).toThrow();
   });
+
+  it("the paused-provenance message keeps the bust open and never directs a substitute disposition", () => {
+    const mapped = mapBustRpcError(new Error("WPP9_RESOLVED_PROVENANCE_UNAVAILABLE"));
+    expect(mapped.httpStatus).toBe(409);
+    expect(mapped.error).toContain("must stay open or under review");
+    expect(mapped.error).toContain("only if it is actually true");
+    expect(mapped.error).not.toContain("Use Accepted overrun");
+    expect(mapped.error).not.toContain("Invalid data for now");
+  });
 });
