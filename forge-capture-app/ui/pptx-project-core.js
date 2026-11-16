@@ -37,6 +37,35 @@ export function slideIdForIndex(index) {
   return `slide-${index + 1}`;
 }
 
+/** One warning, in the shape every warning in this slice uses. */
+export function isWarning(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.code === "string" &&
+    value.code.length > 0 &&
+    typeof value.message === "string" &&
+    value.message.length > 0
+  );
+}
+
+/**
+ * Drop repeated warnings (same code + message), keeping the first.
+ * The same font-substitution warning is reported for every slide, so
+ * the project warnings box would otherwise list it once per slide.
+ */
+export function dedupeWarnings(warnings) {
+  const seen = new Set();
+  const out = [];
+  for (const warning of warnings || []) {
+    const key = `${warning.code || ""}\n${warning.message || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(warning);
+  }
+  return out;
+}
+
 /**
  * Build the initial manifest for a freshly imported deck.
  * @param {object} args
@@ -46,8 +75,11 @@ export function slideIdForIndex(index) {
  *   slideHeightPt, slideCount, importedAt }.
  * @param {Array} args.slides — per-slide records { id, index, partPath,
  *   title, text, speakerNotes, selected, render, warnings }.
+ * @param {Array} [args.warnings] — project-level warnings: package
+ *   warnings no slide owns (orphan media, or no part). Shown with the
+ *   slide warnings and persisted the same way.
  */
-export function createProjectManifest({ id, title, source, slides }) {
+export function createProjectManifest({ id, title, source, slides, warnings }) {
   const now = new Date().toISOString();
   return {
     schemaVersion: PPTX_VIDEO_PROJECT_SCHEMA,
@@ -76,6 +108,7 @@ export function createProjectManifest({ id, title, source, slides }) {
       render: slide.render || null,
       warnings: slide.warnings || [],
     })),
+    warnings: warnings || [],
     // Later slices (2-5). Present but empty: Slice 1 builds no narration,
     // voice, audio, or video output.
     steps: [],
@@ -105,6 +138,13 @@ export function validateProjectManifest(manifest) {
     }
     if (!Number.isInteger(manifest.source.slideCount) || manifest.source.slideCount < 1) {
       errors.push("The source deck record has no slide count.");
+    }
+  }
+  // Project-level warnings are optional (older manifests predate them),
+  // but when present they must be well-formed warnings.
+  if (manifest.warnings !== undefined) {
+    if (!Array.isArray(manifest.warnings) || manifest.warnings.some((w) => !isWarning(w))) {
+      errors.push("The project has a warning record that is not valid.");
     }
   }
   if (!Array.isArray(manifest.slides) || manifest.slides.length === 0) {

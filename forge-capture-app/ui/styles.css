@@ -661,6 +661,8 @@ input[type="search"] {
 .pptx-intro { margin: 0; color: var(--text); }
 .pptx-hint { color: var(--muted); font-size: 12px; margin: 0; }
 
+.pptx-rights { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; cursor: pointer; }
+.pptx-rights input { margin-top: 2px; }
 .pptx-dropzone {
   border: 2px dashed var(--border);
   border-radius: 8px;

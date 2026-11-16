@@ -1,9 +1,10 @@
 # Capture PPTX-to-video — Slice 1: import, preview, project
 
-**Status:** implemented, in review (PR TBD). Slice 1 only: import a `.pptx`,
-preview its slides, pick which slides go in, save that as a project.
-No narration, no voice, no video assembly, no MP4 export — those are
-slices 2–5.
+**Status:** implemented, in review (PR #814). Fix round 1 (Nov 16, after a
+NEEDS CHANGES verdict at head `9376a325`) is in this branch. Slice 1 only:
+import a `.pptx`, preview its slides, pick which slides go in, save that
+as a project. No narration, no voice, no video assembly, no MP4 export —
+those are slices 2–5.
 
 ## What was built
 
@@ -51,12 +52,32 @@ slices 2–5.
   (clear keeps the first slide selected — a project with no slides
   selected cannot make a video). Selection saves on every change with a
   visible plain-words confirmation.
+- **Rights acknowledgement (brief §7, fix round 1)** — before any import
+  starts, the user ticks "I own this presentation or have permission to
+  process it." The box gates both the file picker and drag/drop (and
+  `importFile()` itself); it unticks as the import begins, so every file
+  needs a fresh, deliberate tick. It is never pre-ticked.
+- **Warnings reach their slide and survive reopen (fix round 1)** —
+  package warnings (e.g. the P6 deck's unsupported WMF picture) are
+  mapped to the slide whose relationships reference the media part
+  (`mapPackageWarnings` in `pptx-import-core.js`); warnings no slide
+  owns go to a project-level `warnings` array on the manifest. Renderer
+  warnings (font substitution) are merged into the slide records before
+  the manifest is saved. The warnings box shows project + slide
+  warnings, deduplicated, on fresh import and on reopen.
+  - **Font probe fix (found by fix round 1):** the webview probe was
+    `document.fonts.check()`, which returns true for any family name in
+    Chromium — so a missing font could never be reported in the real
+    app. The probe now measures a test string on a canvas in the
+    candidate font vs the bare fallback; identical widths mean the font
+    is not installed. Local-only, no network.
 - **PptxVideoProjectV1 persistence** — `ui/pptx-project-core.js` (pure
   logic) + `app/src/pptx_video.rs` (backend storage). Manifest:
   `schemaVersion`, `id`, `title`, `createdAt`/`updatedAt`, `revision`,
   `source` (file name, SHA-256, size, slide size, slide count),
   `slides` (id, index, part path, title, text, speaker notes, selected,
-  render fingerprints, warnings), later-slice fields (`steps`,
+  render fingerprints, warnings), project-level `warnings` for package
+  warnings no slide owns, later-slice fields (`steps`,
   `narration`, `voice`, `audio`, `output`) as `not_started`
   placeholders so Slice 2 needs no migration, and an `events` log.
   Layout: `<data-root>/PptxVideos/<project-id>/source.pptx`,
@@ -84,13 +105,21 @@ slices 2–5.
 
 ## What was verified, and where
 
-- **Vitest (focused battery, 54 tests, all passing)** —
-  `ui/__tests__/pptx-import-core.test.js` (19),
+- **Vitest (focused battery, 61 tests, all passing)** —
+  `ui/__tests__/pptx-import-core.test.js` (22),
   `pptx-extract-core.test.js` (9), `pptx-render-core.test.js` (12),
-  `pptx-project-core.test.js` (13), `pptx-golden.test.js` (1, compares
+  `pptx-project-core.test.js` (17), `pptx-golden.test.js` (1, compares
   9 goldens). Run: `vitest run forge-capture-app/ui/__tests__/pptx-`
   from the worktree root (node_modules symlinked from
-  `~/workspace/marketplace409-fix/node_modules`).
+  `~/workspace/marketplace409-fix/node_modules`). Fix round 1 added 7
+  tests: `mapPackageWarnings` (P6 WMF → slide 13, clean deck, orphan /
+  part-less warnings → project collection) and manifest warning
+  persistence (WMF and missing-font warnings survive a JSON round-trip
+  = reopen; project-level warnings field; dedupe). One run showed the
+  golden test timing out at 5000 ms under parallel load; it passes
+  standalone (1.6 s) and on re-run — a load flake, not a regression
+  (the golden test stubs its font probe, so the probe change cannot
+  affect it).
 - **Acceptance decks** — fixed synthetic 4-slide 16:9 deck + 3
   real-world-varied decks (4:3 with images, 16:9 with table/chart,
   mixed placeholders/fonts) + the real P6 training deck
@@ -121,7 +150,13 @@ slices 2–5.
   notes." → 4 slide cards with thumbnails → deselect slide 2 saves
   `[true, false, true, true]` → rename confirms → delete confirms and
   the delete command fires. Screenshots reviewed
-  (`/tmp/pptx-e2e-shots/02-project-view.png`).
+  (`/tmp/pptx-e2e-shots/02-project-view.png`). Fix round 1 added Leg 3
+  (`/tmp/pptx-e2e.mjs`): with the rights box unticked, both the file
+  picker and a drag/drop are refused with "Tick the box first…" and no
+  upload starts; ticked, the mixed deck imports and its
+  font-substitution warning shows in the warnings box, is in the saved
+  manifest, and is still shown after going back and reopening the
+  project (`/tmp/pptx-e2e-shots/03-warnings-reopen.png`).
 - **Rust backend** — `app/src/pptx_video.rs` unit tests (7: SHA-256
   known vector, ZIP vs OLE magic, PNG + SVG magic, project-id/title
   validation, manifest shape checks, atomic-write round-trip), all
@@ -157,8 +192,10 @@ slices 2–5.
   "LLC" is clipped in the render — that is the deck's authored master
   geometry (the image extends past the slide edge); PowerPoint clips it
   the same way. Faithful rendering, not a defect.
-- **WMF image:** the P6 deck contains 1 WMF picture. It is recorded as
-  an `unsupported-image-format` warning; the slide still renders (the
+- **WMF image:** the P6 deck contains 1 WMF picture (`ppt/media/image18.wmf`,
+  shown on slide 13). It is recorded as an `unsupported-image-format`
+  warning attached to slide 13 (and persisted on the manifest), so the
+  user sees it on import and on reopen; the slide still renders (the
   picture is skipped by the renderer).
 
 ## License inventory (Slice 1 additions)

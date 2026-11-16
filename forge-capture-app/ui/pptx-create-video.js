@@ -17,12 +17,13 @@
 // (Pagus bundle + fflate, vendored under ui/vendor/), and the deck bytes
 // travel to the backend only as invoke chunks.
 
-import { validateAndExtractPptx, PptxReject } from "./pptx-import-core.js";
+import { mapPackageWarnings, validateAndExtractPptx, PptxReject } from "./pptx-import-core.js";
 import { extractSlideNotes, extractSlideText } from "./pptx-extract-core.js";
 import { renderPresentation } from "./pptx-render-core.js";
 import {
   createProjectManifest,
   clearSlideSelection,
+  dedupeWarnings,
   projectDeletePlan,
   renameProject,
   selectAllSlides,
@@ -78,6 +79,10 @@ export function mountPptxCreateVideo(deps = {}) {
           <p class="pptx-hint">.pptx files up to 100 MB. Old .ppt files are turned away with a plain message — save them as .pptx in PowerPoint first.</p>
           <input type="file" id="pptx-file" accept=".pptx,.ppt" hidden />
         </div>
+        <label class="pptx-rights">
+          <input type="checkbox" id="pptx-rights" />
+          <span>I own this presentation or have permission to process it.</span>
+        </label>
         <div id="pptx-progress" hidden>
           <progress id="pptx-progress-bar" max="100" value="0"></progress>
           <span id="pptx-progress-text"></span>
@@ -120,6 +125,26 @@ export function mountPptxCreateVideo(deps = {}) {
   function setStatus(text, kind) {
     statusEl.textContent = text;
     statusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  const RIGHTS_MESSAGE =
+    "Tick the box first — confirm you own this presentation or have permission to process it.";
+
+  /**
+   * The rights acknowledgement is a deliberate per-import action (brief
+   * §7): no import — drop or browse — starts until the box is ticked,
+   * and the box unticks itself as the import begins, so every file
+   * needs a fresh tick. It is never pre-ticked and never explanatory
+   * copy alone.
+   */
+  function rightsAccepted() {
+    return $("pptx-rights").checked;
+  }
+
+  function requireRights() {
+    if (rightsAccepted()) return true;
+    setStatus(RIGHTS_MESSAGE, "error");
+    return false;
   }
 
   function setProgress(fraction, text) {
@@ -168,6 +193,8 @@ export function mountPptxCreateVideo(deps = {}) {
 
   async function importFile(file) {
     if (busy) return;
+    if (!requireRights()) return;
+    $("pptx-rights").checked = false; // one tick covers one import only
     busy = true;
     hideProgress();
     setStatus(`Reading ${file.name}…`);
@@ -178,9 +205,11 @@ export function mountPptxCreateVideo(deps = {}) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       setProgress(0.05, "Checking the file…");
       const pkg = await validateAndExtractPptx(bytes, { signal: abort.signal });
+      // Package warnings belong to slides (or to the project when no
+      // slide owns them) — they are persisted with the project, not
+      // just logged.
+      const { bySlide: mediaWarningsBySlide, project: projectWarnings } = mapPackageWarnings(pkg);
       if (pkg.warnings.length > 0) {
-        // Warnings travel with the project; the list is shown on the
-        // project page, not as a blocking error.
         console.info("pptx import warnings", pkg.warnings);
       }
       setProgress(0.2, "Reading slide text and speaker notes…");
@@ -196,11 +225,20 @@ export function mountPptxCreateVideo(deps = {}) {
           speakerNotes: notes.notes,
           selected: true,
           render: null,
-          warnings: [...text.warnings, ...notes.warnings],
+          warnings: [...text.warnings, ...notes.warnings, ...(mediaWarningsBySlide.get(i) || [])],
         };
       });
       setProgress(0.35, "Drawing slide pictures…");
       const rendered = await renderPresentation(pkg, { signal: abort.signal });
+      // Renderer warnings (e.g. font substitution) are per-slide: merge
+      // them into the slide records before the manifest is built, so
+      // they are saved and shown on import and on reopen.
+      for (let i = 0; i < rendered.slides.length; i += 1) {
+        slideRecords[i].warnings = dedupeWarnings([
+          ...slideRecords[i].warnings,
+          ...rendered.slides[i].warnings,
+        ]);
+      }
       setProgress(0.55, "Saving your file…");
       const upload = await uploadDeck(invoke, bytes, file.name, abort.signal, (done, total) => {
         setProgress(0.55 + 0.2 * (done / total), `Saving your file… ${done} of ${total} bytes`);
@@ -218,6 +256,7 @@ export function mountPptxCreateVideo(deps = {}) {
           slideCount: pkg.slideParts.length,
         },
         slides: slideRecords,
+        warnings: projectWarnings,
       });
       setProgress(0.8, "Saving slide pictures…");
       // Thumbnails are the rendered SVGs themselves, not PNG rasters:
@@ -390,7 +429,12 @@ export function mountPptxCreateVideo(deps = {}) {
 
   function renderWarnings(project) {
     const box = $("pptx-warnings");
-    const all = project.slides.flatMap((s) => s.warnings);
+    // Project-level warnings first, then per-slide warnings; the same
+    // font warning is reported for every slide, so dedupe by content.
+    const all = dedupeWarnings([
+      ...(project.warnings || []),
+      ...project.slides.flatMap((s) => s.warnings),
+    ]);
     if (all.length === 0) {
       box.hidden = true;
       box.innerHTML = "";
@@ -501,7 +545,10 @@ export function mountPptxCreateVideo(deps = {}) {
 
   // -- Wiring ---------------------------------------------------------------
 
-  $("pptx-browse").addEventListener("click", () => $("pptx-file").click());
+  $("pptx-browse").addEventListener("click", () => {
+    if (!requireRights()) return;
+    $("pptx-file").click();
+  });
   $("pptx-file").addEventListener("change", (event) => {
     const file = event.target.files && event.target.files[0];
     if (file) importFile(file);
@@ -509,11 +556,15 @@ export function mountPptxCreateVideo(deps = {}) {
   });
   const dropzone = $("pptx-dropzone");
   dropzone.addEventListener("click", (event) => {
-    if (event.target === dropzone) $("pptx-file").click();
+    if (event.target === dropzone) {
+      if (!requireRights()) return;
+      $("pptx-file").click();
+    }
   });
   dropzone.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
+      if (!requireRights()) return;
       $("pptx-file").click();
     }
   });

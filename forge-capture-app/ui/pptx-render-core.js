@@ -31,7 +31,8 @@ export async function sha256Hex(bytes) {
  * Map every used font to a locally available substitute.
  * @param {string[]} usedFonts
  * @param {(name: string) => boolean} fontAvailable — probe; in the
- *   webview this is `document.fonts.check(...)`, in tests an injected stub.
+ *   webview this is the canvas-measurement `webviewFontAvailable`, in
+ *   tests an injected stub.
  * @returns {{ substitutes: Record<string,string>, unresolved: string[] }}
  *   `unresolved` lists fonts that needed a substitute (fidelity warning).
  */
@@ -49,10 +50,25 @@ export function resolveFontSubstitutes(usedFonts, fontAvailable) {
   return { substitutes, unresolved };
 }
 
-/** Default `fontAvailable` probe for the webview (document.fonts). */
+/** Default `fontAvailable` probe for the webview (canvas measurement). */
 export function webviewFontAvailable(name) {
+  // document.fonts.check() cannot detect a missing system font in
+  // Chromium: it returns true for any family name, because text always
+  // renders with *some* fallback — so the font-substitution warning
+  // could never fire in the real app. Measure instead: a test string
+  // set in the candidate font is exactly as wide as the same string in
+  // the bare fallback only when the candidate is not installed and the
+  // text fell back.
   try {
-    return globalThis.document.fonts.check(`16px "${name}"`);
+    const canvas = globalThis.document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return false;
+    const probe = "mmmmmmmmmmlli";
+    ctx.font = `16px "${name}", monospace`;
+    const withCandidate = ctx.measureText(probe).width;
+    ctx.font = "16px monospace";
+    const fallbackOnly = ctx.measureText(probe).width;
+    return withCandidate !== fallbackOnly;
   } catch {
     return false;
   }

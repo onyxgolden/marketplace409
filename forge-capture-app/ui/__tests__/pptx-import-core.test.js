@@ -6,6 +6,7 @@ import {
   PptxReject,
   crc32,
   extractEntryBounded,
+  mapPackageWarnings,
   readCentralDirectory,
   validateAndExtractPptx,
   validateZipEntries,
@@ -133,6 +134,48 @@ describe("validateAndExtractPptx — rejections", () => {
     await expect(
       importFixture("p6-report-wizard-training.pptx", { signal: controller.signal }),
     ).rejects.toMatchObject({ code: "cancelled" });
+  });
+});
+
+describe("mapPackageWarnings — warnings reach their owning slide", () => {
+  it("maps the P6 WMF warning to slide 13 (index 12), the slide that shows the picture", async () => {
+    const pkg = await importFixture("p6-report-wizard-training.pptx");
+    const { bySlide, project } = mapPackageWarnings(pkg);
+    expect(project).toEqual([]);
+    const slide13 = bySlide.get(12);
+    expect(slide13).toHaveLength(1);
+    expect(slide13[0]).toMatchObject({
+      code: "unsupported-image-format",
+      part: "ppt/media/image18.wmf",
+    });
+    // No other slide owns a package warning.
+    expect([...bySlide.keys()]).toEqual([12]);
+  });
+
+  it("maps nothing for a clean deck", async () => {
+    const pkg = await importFixture("synthetic-4-slide-16x9.pptx");
+    const { bySlide, project } = mapPackageWarnings(pkg);
+    expect(bySlide.size).toBe(0);
+    expect(project).toEqual([]);
+  });
+
+  it("sends orphan-media and part-less warnings to the project collection, never drops them", async () => {
+    const pkg = await importFixture("synthetic-4-slide-16x9.pptx");
+    const orphaned = {
+      ...pkg,
+      warnings: [
+        {
+          code: "unsupported-image-format",
+          message: "Picture ppt/media/orphan.wmf is in a format Capture cannot render fully; the slide may look different.",
+          part: "ppt/media/orphan.wmf",
+        },
+        { code: "other", message: "A warning with no part at all." },
+      ],
+    };
+    const { bySlide, project } = mapPackageWarnings(orphaned);
+    expect(bySlide.size).toBe(0);
+    expect(project).toHaveLength(2);
+    expect(project.map((w) => w.code)).toEqual(["unsupported-image-format", "other"]);
   });
 });
 

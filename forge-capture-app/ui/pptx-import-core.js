@@ -658,6 +658,69 @@ function buildPptxPackage(sourceBytes, kept, mediaPrefixes, caps, stats) {
 }
 
 /**
+ * Map package-level warnings to the slides that own them.
+ * A warning carries the part it is about in `warning.part` (e.g. an
+ * unsupported media part, `ppt/media/image18.wmf`); the owning slide
+ * is the one whose relationships reference that part, or the slide
+ * itself when the part is a slide part. Returns
+ * `{ bySlide: Map<slideIndex, warning[]>, project: warning[] }` —
+ * warnings no slide references (orphan media, or no part at all) go
+ * to `project` so they are still shown and persisted, never dropped.
+ * Pure logic: the panel merges `bySlide` into the slide records and
+ * stores `project` on the manifest.
+ */
+export function mapPackageWarnings(pkg) {
+  const bySlide = new Map();
+  const project = [];
+  for (const warning of pkg.warnings || []) {
+    const owners = warning.part ? slideIndexesForPart(pkg, warning.part) : [];
+    if (owners.length === 0) {
+      project.push(warning);
+      continue;
+    }
+    for (const index of owners) {
+      if (!bySlide.has(index)) bySlide.set(index, []);
+      bySlide.get(index).push(warning);
+    }
+  }
+  return { bySlide, project };
+}
+
+/** Slide indexes whose relationships reference `partPath` (or that are the part itself). */
+function slideIndexesForPart(pkg, partPath) {
+  const owners = [];
+  for (const slide of pkg.slideParts) {
+    if (slide.partPath === partPath) {
+      owners.push(slide.index);
+      continue;
+    }
+    const relsPath = slide.partPath.replace(/\/([^/]+)\.xml$/, "/_rels/$1.xml.rels");
+    const relsBytes = pkg.parts.get(relsPath);
+    if (!relsBytes) continue;
+    let relMap;
+    try {
+      relMap = parseRelationships(parseXmlPart(relsBytes, relsPath), relsPath);
+    } catch {
+      continue;
+    }
+    for (const rel of relMap.values()) {
+      if (rel.targetMode === "External") continue;
+      let target;
+      try {
+        target = resolvePartPath("ppt/slides/", rel.target);
+      } catch {
+        continue;
+      }
+      if (target === partPath) {
+        owners.push(slide.index);
+        break;
+      }
+    }
+  }
+  return owners;
+}
+
+/**
  * Parse a .rels part into Map<rId, { type, target, targetMode }>.
  * Duplicate rIds or targets escaping the package are rejected.
  */
