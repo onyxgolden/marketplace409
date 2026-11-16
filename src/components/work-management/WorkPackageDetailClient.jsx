@@ -14,6 +14,7 @@ import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
+import WorkPackageBusts from "./WorkPackageBusts.jsx";
 import { withPageQuery } from "./workspaceQuery.js";
 import { PackagePageProvider } from "./packagePageContext.jsx";
 import WorkPackageProjectLink from "./WorkPackageProjectLink.jsx";
@@ -26,11 +27,12 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-// UI-density redesign: 9 tabs (the Milestones tab is a placeholder until
+// UI-density redesign: 10 tabs (the Milestones tab is a placeholder until
 // slice 9 builds it — see the tabset correction). Tab order: the schedule
 // spine (Work steps, then the Planning process build checklist, then
 // Milestones) follows the package overview; Budget & Change Orders sits
-// after the IFA→IFC redlines per the brief.
+// after the IFA→IFC redlines per the brief; Busts follows Budget, since a
+// bust is most often resolved by a change order.
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "steps", label: "Work steps" },
@@ -39,6 +41,7 @@ const TABS = [
   { id: "permits", label: "Permits" },
   { id: "redlines", label: "IFA→IFC redlines" },
   { id: "budget", label: "Budget & Change Orders" },
+  { id: "busts", label: "Busts" },
   { id: "documents", label: "Documents" },
   { id: "activity", label: "Activity / Audit" },
 ];
@@ -947,6 +950,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             refreshKey={costRefreshKey}
             onChanged={() => setCostRefreshKey((key) => key + 1)}
           />
+        </div>
+      )}
+
+      {activeTab === "busts" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageBusts packageId={pkg.id} />
         </div>
       )}
 

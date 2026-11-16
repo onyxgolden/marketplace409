@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
+import { BustBadge, useBustBadges } from "./WorkPackageBusts.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -255,6 +256,9 @@ export default function WorkPackageManpowerCurve({ packageId }) {
 
   const curve = data ?? null;
   const windowConfigured = curve?.windowConfigured === true;
+  // Read-only linked-bust badges (active manpower busts per craft-day).
+  // A badge is a flag, never a blocker — it never gates a recompute.
+  const bustBadges = useBustBadges(packageId);
   // When no baseline is frozen the panel body below already states the
   // frozen-baseline message, so the matching warning would print it a
   // second time. Other warnings still render normally.
@@ -431,7 +435,10 @@ export default function WorkPackageManpowerCurve({ packageId }) {
                           <tr key={`${row.dayIndex}-${row.craftKey}`} className="border-b border-slate-100">
                             <td className="py-1.5 pr-3">{row.dayIndex}</td>
                             <td className="py-1.5 pr-3">{formatDate(row.date)}</td>
-                            <td className="py-1.5 pr-3">{row.craftLabel}</td>
+                            <td className="py-1.5 pr-3">
+                              {row.craftLabel}
+                              <BustBadge badge={bustBadges.byCraftDay[`${row.craftKey}|${row.date}`]} />
+                            </td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(row.requiredHours)}</td>
                             <td className="py-1.5 pr-3 text-right">{formatHours(row.assignedHours)}</td>
                             <td className={`py-1.5 text-right ${row.gapHours < 0 ? "text-red-600" : ""}`}>{formatHours(row.gapHours)}</td>

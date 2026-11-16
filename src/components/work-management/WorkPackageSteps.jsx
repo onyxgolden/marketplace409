@@ -20,6 +20,7 @@ import { badgeClass } from "./WorkPackageDrawingReadiness.jsx";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
 import EditableGridCell from "./EditableGridCell.jsx";
+import { BustBadge, useBustBadges } from "./WorkPackageBusts.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
 
 // The work-steps worklist is a Maximo-style editable grid now (same
@@ -534,6 +535,9 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   const activeSteps = steps.filter((s) => !s.retiredAt);
   const retiredSteps = steps.filter((s) => s.retiredAt);
   const stepById = new Map(steps.map((s) => [s.id, s]));
+  // Read-only linked-bust badges (active busts per step). A badge is
+  // a flag, never a blocker — it never gates step execution.
+  const bustBadges = useBustBadges(packageId);
 
   const { data: drawingsData } = useStaleWhileRevalidate(
     scopedSWRKey(pageContext, "work-packages", packageId, "drawings"),
@@ -774,6 +778,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
             display={(
               <span>
                 {step.title}
+                <BustBadge badge={bustBadges.byWorkStep[step.id]} />
                 {step.supersedesStepId && (
                   <span className="ml-2 text-slate-400">
                     · Replaces #{stepById.get(step.supersedesStepId)?.sequenceNo ?? "?"} {stepById.get(step.supersedesStepId)?.title ?? "a retired step"}
