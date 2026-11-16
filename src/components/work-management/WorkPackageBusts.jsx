@@ -156,7 +156,7 @@ function revisionSummary(revision) {
 // (actor ids are never shown — the audit trail keeps them in the
 // database; the UI shows what changed, why, and when), its linked
 // change orders, and the disposition actions.
-function BustDetail({ packageId, bust, baseline, isTerminal, onChanged }) {
+function BustDetail({ packageId, bust, isTerminal, onChanged }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [notices, setNotices] = useState({});
@@ -189,7 +189,12 @@ function BustDetail({ packageId, bust, baseline, isTerminal, onChanged }) {
   const changeOrders = ordersData?.changeOrders ?? [];
   const allowedTargets = BUST_TRANSITIONS[bust.status] ?? [];
   const needsDisposition = transitionTo && TERMINAL_BUST_STATUSES.includes(transitionTo);
-  const needsBaseline = transitionTo === "RESOLVED_BY_CHANGE";
+  // Resolved by change is paused (fail closed) until a provenance
+  // design proves the new plan incorporates the linked approved
+  // change — see the migration's PROVENANCE GATE. The UI never
+  // offers a baseline as the fix, and the move is not submittable
+  // while that target is selected.
+  const resolutionPaused = transitionTo === "RESOLVED_BY_CHANGE";
 
   async function run(actionKey, path, body, successMessage) {
     setBusy(true);
@@ -217,11 +222,9 @@ function BustDetail({ packageId, bust, baseline, isTerminal, onChanged }) {
         expectedVersion: detail.version,
         toStatus: transitionTo,
         dispositionReason: needsDisposition ? dispositionReason : null,
-        // The updated baseline that fixes the plan is the current
-        // frozen baseline — a fix is re-baselined before the bust is
-        // resolved. The API accepts any valid baseline id; the UI
-        // offers the current one.
-        resolvedBaselineId: needsBaseline ? baseline?.id ?? null : null,
+        // No baseline is offered as the resolution proof while the
+        // provenance gate stands; the server refuses the move.
+        resolvedBaselineId: null,
         reason,
       },
       () => `Bust moved to ${STATUS_LABELS[transitionTo]}.`,
@@ -419,11 +422,12 @@ function BustDetail({ packageId, bust, baseline, isTerminal, onChanged }) {
                 />
               </div>
             )}
-            {needsBaseline && (
+            {resolutionPaused && (
               <p className="w-full text-xs text-slate-500">
-                Resolving by change uses the current frozen baseline
-                {baseline ? ` (version ${baseline.versionNumber})` : " — none frozen yet"} as the updated baseline,
-                and needs a linked approved change order.
+                Resolved by change is paused — the app cannot yet prove
+                the new plan includes the approved change, so this bust
+                cannot close that way. Use Accepted overrun or Invalid
+                data for now.
               </p>
             )}
             <div className="min-w-48 flex-1">
@@ -438,7 +442,7 @@ function BustDetail({ packageId, bust, baseline, isTerminal, onChanged }) {
             </div>
             <button
               className={btnPrimary}
-              disabled={busy || !transitionTo || !reason.trim() || (needsDisposition && !dispositionReason.trim()) || (needsBaseline && !baseline)}
+              disabled={busy || !transitionTo || !reason.trim() || (needsDisposition && !dispositionReason.trim()) || resolutionPaused}
               onClick={submitTransition}
             >
               Move bust
@@ -960,7 +964,6 @@ export default function WorkPackageBusts({ packageId }) {
                   <BustDetail
                     packageId={packageId}
                     bust={bust}
-                    baseline={baseline}
                     isTerminal={isTerminal}
                     onChanged={refreshAll}
                   />

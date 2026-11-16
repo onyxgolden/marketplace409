@@ -31,9 +31,11 @@
 //     from a terminal state and from RETIRED), every skip refused,
 //     RETIRED unreachable through transition, disposition reason
 //     required at terminal states, RESOLVED_BY_CHANGE requires a
-//     linked APPROVED order AND a verified updated baseline;
+//     linked APPROVED order AND a frozen, newer, same-package
+//     baseline — and FAILS CLOSED on provenance until a design proves
+//     the new plan incorporates the linked change;
 //   - Change-order non-closure: approving a linked order never closes
-//     the bust; only the explicit transition with both proofs does;
+//     the bust; the explicit transition refuses until provenance exists;
 //   - Retire: version-guarded with a reason, retired busts are
 //     immutable, the row and its history stay on file;
 //   - Link/unlink: link twice is a 409, a foreign-package order is
@@ -160,6 +162,7 @@ const PREREQ_SQL = `
     baseline_finish date not null,
     baseline_hours numeric(14,2) not null,
     baseline_cost numeric(14,2) not null,
+    frozen_by text not null,
     frozen_at timestamptz not null default now(),
     primary key (owner_id, id),
     unique (owner_id, package_id, version_number)
@@ -267,9 +270,9 @@ const SEED_SQL = `
     ('${OWNER_A}', 'entry_2', 'pkg_a', 'line_1', '2026-11-16', 3, '2026-11-16T10:00:00Z'),
     ('${OWNER_A}', 'entry_3', 'pkg_a', 'line_1', '2026-11-20', 1, null),
     ('${OWNER_A}', 'entry_4', 'pkg_a', 'line_2', '2026-11-14', 4, null);
-  insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_at) values
-    ('${OWNER_A}', 'base_1', 'pkg_a', 1, '2026-11-09', '2026-11-18', 400, 10000.00, '2026-11-01T00:00:00Z'),
-    ('${OWNER_A}', 'base_2', 'pkg_a', 2, '2026-11-09', '2026-11-18', 500, 12000.00, '2026-11-10T00:00:00Z');
+  insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by, frozen_at) values
+    ('${OWNER_A}', 'base_1', 'pkg_a', 1, '2026-11-09', '2026-11-18', 400, 10000.00, 'planner_1', '2026-11-01T00:00:00Z'),
+    ('${OWNER_A}', 'base_2', 'pkg_a', 2, '2026-11-09', '2026-11-18', 500, 12000.00, 'planner_1', '2026-11-10T00:00:00Z');
   insert into forge_work_steps (owner_id, id, work_package_id, title, sequence_no, craft_key, craft_label, planned_duration_days, planned_person_hours, version, retired_at) values
     ('${OWNER_A}', 'step_1', 'pkg_a', 'Fabricate spool', 1, 'pipefitters', 'Pipefitters', 4, 40, 1, null),
     ('${OWNER_A}', 'step_2', 'pkg_a', 'Weld spool', 2, 'welders', 'Welders', 2, 20, 1, '2026-11-12T00:00:00Z');
@@ -815,7 +818,7 @@ describe("slice 9 migration: PGlite battery (lifecycle)", () => {
     expect(row.version).toBe(3);
   });
 
-  it60("RESOLVED_BY_CHANGE needs a linked APPROVED order and a verified updated baseline", async () => {
+  it60("RESOLVED_BY_CHANGE refuses the original baseline and fails closed on provenance", async () => {
     const bust = await openBust();
     await transitionBust(OWNER_A, bust.id, 1, "UNDER_REVIEW");
     // Valid baseline, no link yet: the approved order is missing.
@@ -846,11 +849,59 @@ describe("slice 9 migration: PGlite battery (lifecycle)", () => {
       transitionBust(OWNER_A, bust.id, 4, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_missing" }),
       "WPP9_RESOLVED_BASELINE_REQUIRED",
     );
-    // Linked approved order + verified baseline: resolves.
-    row = await transitionBust(OWNER_A, bust.id, 4, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_2" });
-    expect(row.status).toBe("RESOLVED_BY_CHANGE");
-    expect(row.resolved_baseline_id).toBe("base_2");
-    expect(row.version).toBe(5);
+    // The original baseline can never prove its own fix, even with
+    // an approved order linked.
+    await expectRpcError(
+      transitionBust(OWNER_A, bust.id, 4, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_1" }),
+      "WPP9_RESOLVED_BASELINE_NOT_NEWER",
+    );
+    // A newer frozen baseline with an approved order linked is still
+    // refused: nothing in the schema proves the new plan
+    // incorporates the change (fail closed until a provenance design
+    // lands). The bust, its version, and its history are untouched —
+    // the failed transition writes nothing.
+    const revisionsBefore = await revisionRows(bust.id);
+    await expectRpcError(
+      transitionBust(OWNER_A, bust.id, 4, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_2" }),
+      "WPP9_RESOLVED_PROVENANCE_UNAVAILABLE",
+    );
+    row = await bustRow(bust.id);
+    expect(row.status).toBe("UNDER_REVIEW");
+    expect(row.version).toBe(4);
+    expect(row.resolved_baseline_id).toBe(null);
+    expect(await revisionRows(bust.id)).toEqual(revisionsBefore);
+  });
+
+  it60("RESOLVED_BY_CHANGE refuses an older baseline and a foreign-package baseline; an unfrozen baseline cannot exist", async () => {
+    // A bust measured against the newer baseline: the older plan is
+    // not a fix.
+    const bust = await createBust(db, OWNER_A, { baselineId: "base_2", baselineVersion: 2 });
+    await transitionBust(OWNER_A, bust.id, 1, "UNDER_REVIEW");
+    await linkOrder(OWNER_A, bust.id, "co_2");
+    await expectRpcError(
+      transitionBust(OWNER_A, bust.id, 3, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_1" }),
+      "WPP9_RESOLVED_BASELINE_NOT_NEWER",
+    );
+    // A baseline from another package is not on file for this one.
+    await db.query(`insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by, frozen_at) values ('${OWNER_A}', 'base_b', 'pkg_b', 1, '2026-11-09', '2026-11-18', 400, 10000.00, 'planner_1', '2026-11-01T00:00:00Z');`);
+    await expectRpcError(
+      transitionBust(OWNER_A, bust.id, 3, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by change.", resolvedBaselineId: "base_b" }),
+      "WPP9_RESOLVED_BASELINE_REQUIRED",
+    );
+    // An unfrozen baseline cannot exist: frozen_at is NOT NULL and
+    // there is no draft state, so the frozen predicate holds for
+    // every row the database can contain — the insert itself fails.
+    await expect(
+      db.query(`insert into forge_work_package_baselines (owner_id, id, package_id, version_number, baseline_start, baseline_finish, baseline_hours, baseline_cost, frozen_by, frozen_at) values ('${OWNER_A}', 'base_draft', 'pkg_a', 9, '2026-11-09', '2026-11-18', 400, 10000.00, 'planner_1', null);`),
+    ).rejects.toThrow(/null value/i);
+    const { rows: frozen } = await db.query(
+      `select id, frozen_at, frozen_by from forge_work_package_baselines where owner_id = '${OWNER_A}' and package_id = 'pkg_a';`,
+    );
+    expect(frozen.length).toBeGreaterThan(0);
+    for (const baseline of frozen) {
+      expect(baseline.frozen_at).not.toBe(null);
+      expect(baseline.frozen_by).not.toBe(null);
+    }
   });
 
   it60("approving a linked change order never closes the bust (change-order non-closure)", async () => {
@@ -863,10 +914,17 @@ describe("slice 9 migration: PGlite battery (lifecycle)", () => {
     let row = await bustRow(bust.id);
     expect(row.status).toBe("OPEN");
     expect(row.version).toBe(2);
-    // And the now-approved linked order resolves the bust.
+    // And the now-approved linked order still does not close it:
+    // resolution is fail closed on provenance until a design proves
+    // the new plan incorporates the change.
     await transitionBust(OWNER_A, bust.id, 2, "UNDER_REVIEW");
-    row = await transitionBust(OWNER_A, bust.id, 3, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by the now-approved order.", resolvedBaselineId: "base_2" });
-    expect(row.status).toBe("RESOLVED_BY_CHANGE");
+    await expectRpcError(
+      transitionBust(OWNER_A, bust.id, 3, "RESOLVED_BY_CHANGE", { dispositionReason: "Resolved by the now-approved order.", resolvedBaselineId: "base_2" }),
+      "WPP9_RESOLVED_PROVENANCE_UNAVAILABLE",
+    );
+    row = await bustRow(bust.id);
+    expect(row.status).toBe("UNDER_REVIEW");
+    expect(row.version).toBe(3);
   });
 
   it60("retires version-guarded, keeps the row and its history, and reopens to review", async () => {
@@ -1365,5 +1423,40 @@ describe.skipIf(!HAS_REAL_PG)("slice 9 migration: real-PostgreSQL subset", () =>
     } finally {
       await pgClient.query("reset role;");
     }
+  });
+
+  it60("RESOLVED_BY_CHANGE fails closed on provenance on real PG, and the failed move writes nothing", async () => {
+    // Distinct figures from the concurrent-creates bust, so the
+    // duplicate-active identity cannot collide in the shared cluster.
+    const bust = await pgCreateBust(OWNER_A, { plannedValue: 900000, observedValue: 1100000 });
+    await pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_package_bust_link_change_order(
+        '${OWNER_A}', '${bust.id}', 'co_2', null, 'Covers the overrun.');
+    `);
+    const { rows: before } = await pgClient.query(`
+      select status, version, resolved_baseline_id from forge_work_package_busts where id = '${bust.id}';
+    `);
+    expect(before[0].status).toBe("OPEN");
+    expect(before[0].version).toBe(2);
+    const { rows: revsBefore } = await pgClient.query(`
+      select count(*)::int as n from forge_work_package_bust_revisions where bust_id = '${bust.id}';
+    `);
+    // Newer frozen baseline (base_2, version 2) + linked approved
+    // order: still refused — no provenance linkage exists.
+    await expectRpcError(pgAsUser(pgClient, OWNER_A, `
+      select * from forge_work_package_bust_transition(
+        '${OWNER_A}', '${bust.id}', 2, 'RESOLVED_BY_CHANGE',
+        'Resolved by change.', 'base_2', 'Moving the bust forward.');
+    `), "WPP9_RESOLVED_PROVENANCE_UNAVAILABLE");
+    const { rows: after } = await pgClient.query(`
+      select status, version, resolved_baseline_id from forge_work_package_busts where id = '${bust.id}';
+    `);
+    expect(after[0].status).toBe("OPEN");
+    expect(after[0].version).toBe(2);
+    expect(after[0].resolved_baseline_id).toBe(null);
+    const { rows: revsAfter } = await pgClient.query(`
+      select count(*)::int as n from forge_work_package_bust_revisions where bust_id = '${bust.id}';
+    `);
+    expect(revsAfter[0].n).toBe(revsBefore[0].n);
   });
 });

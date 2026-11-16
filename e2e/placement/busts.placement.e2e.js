@@ -145,6 +145,22 @@ test.describe("slice-9 busts — candidates, confirm, detail, manual record", ()
     await assertNoOverflow(page);
   });
 
+  test("resolved by change is paused: the move cannot be submitted", async ({ page }) => {
+    await gotoBusts(page);
+    await page.getByRole("button", { name: "Detail" }).first().click();
+    await expect(page.getByText("Move bust to")).toBeVisible();
+    await page.locator("#transition-forge_wpbust_1").selectOption("RESOLVED_BY_CHANGE");
+    // Fill every other field, so only the pause can be blocking it.
+    await page.locator("#disposition-forge_wpbust_1").fill("Resolved by the approved change.");
+    await page.locator("#transition-reason-forge_wpbust_1").fill("Closing the bust.");
+    await expect(page.getByText("Resolved by change is paused")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Move bust" })).toBeDisabled();
+    // No transition call was recorded — the paused move never posts.
+    const calls = await page.evaluate(() => window.__placementCalls);
+    expect(calls.filter((c) => String(c.url).includes("/transition"))).toEqual([]);
+    await assertNoOverflow(page);
+  });
+
   test("manual record sends dollars as whole cents and confirms in plain words", async ({ page }) => {
     await gotoBusts(page);
     await page.getByRole("button", { name: "Record a bust" }).click();

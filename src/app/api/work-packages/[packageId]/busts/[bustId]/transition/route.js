@@ -6,9 +6,11 @@ import { transitionBust } from "@/application/work-management/busts";
 // ACCEPTED_OVERRUN / RESOLVED_BY_CHANGE / INVALID_DATA, and any
 // terminal state reopens to UNDER_REVIEW. Terminal dispositions need
 // a dispositionReason; RESOLVED_BY_CHANGE additionally needs a
-// linked approved change order and resolvedBaselineId (the updated
-// baseline that fixes the plan) — an approved order alone never
-// closes a bust. Version-guarded; a reason is required.
+// linked approved change order and a frozen, newer, same-package
+// baseline — and is FAIL CLOSED in the database until a provenance
+// design proves the new plan incorporates the linked change, so it
+// refuses with a 409 and plain words rather than closing on an
+// unproven plan. Version-guarded; a reason is required.
 export async function POST(request, { params }) {
   const auth = await workAuth(request);
   if (auth.error) return auth.error;

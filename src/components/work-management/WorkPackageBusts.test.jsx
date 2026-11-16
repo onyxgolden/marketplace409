@@ -278,6 +278,26 @@ describe("WorkPackageBusts", () => {
     expect(text).toContain("Move bust to");
   });
 
+  it("pauses Resolved by change: shows the reason and disables the move without posting", async () => {
+    const { calls } = stubFetch("pkg_6", { candidates: [] });
+    const { container } = renderPanel("pkg_6");
+    await settle();
+    await clickButton(container, "Detail");
+    await settle();
+    setSelectValue(container.querySelector(`#transition-${BUST.id}`), "RESOLVED_BY_CHANGE");
+    await settle();
+    // Fill every other field, so only the pause can be blocking it.
+    setInputValue(container.querySelector(`#disposition-${BUST.id}`), "Resolved by the approved change.");
+    setInputValue(container.querySelector(`#transition-reason-${BUST.id}`), "Closing the bust.");
+    await settle();
+    expect(container.textContent).toContain("Resolved by change is paused");
+    expect(container.textContent).not.toContain("uses the current frozen baseline");
+    const move = Array.from(container.querySelectorAll("button")).find((b) => b.textContent.trim() === "Move bust");
+    expect(move.disabled).toBe(true);
+    // No transition POST was made — the paused move is not submittable.
+    expect(calls.some((c) => c.method === "POST" && String(c.url).includes("/transition"))).toBe(false);
+  });
+
   it("is read-only on a closed package: notice, no confirm, no manual form", async () => {
     stubFetch("pkg_7", { packageStatus: "cancelled" });
     const { container } = renderPanel("pkg_7");

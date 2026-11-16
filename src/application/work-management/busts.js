@@ -118,6 +118,15 @@ export function mapBustRpcError(error) {
   if (message.includes("WPP9_RESOLVED_BASELINE_REQUIRED")) {
     return { ok: false, httpStatus: 400, error: "Resolving by change requires the updated baseline that fixes the plan." };
   }
+  if (message.includes("WPP9_RESOLVED_BASELINE_NOT_FROZEN")) {
+    return { ok: false, httpStatus: 409, error: "That baseline is not a frozen plan — only a frozen baseline can prove a fix." };
+  }
+  if (message.includes("WPP9_RESOLVED_BASELINE_NOT_NEWER")) {
+    return { ok: false, httpStatus: 409, error: "Resolving by change needs a newer frozen baseline than the one this bust was measured against — the original baseline cannot prove its own fix." };
+  }
+  if (message.includes("WPP9_RESOLVED_PROVENANCE_UNAVAILABLE")) {
+    return { ok: false, httpStatus: 409, error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. Use Accepted overrun or Invalid data for now." };
+  }
   if (message.includes("WPP9_APPROVED_ORDER_REQUIRED")) {
     return { ok: false, httpStatus: 409, error: "Resolving by change requires a linked approved change order." };
   }
@@ -774,8 +783,14 @@ export async function updateBust(db, { ownerId, packageId, bustId, expectedVersi
 /**
  * Move a bust through its status machine. Terminal dispositions need
  * a disposition reason; RESOLVED_BY_CHANGE additionally needs a
- * linked approved change order and the updated baseline id — an
- * approved order alone never closes a bust.
+ * linked approved change order and a frozen, newer, same-package
+ * baseline — an approved order alone never closes a bust. It is
+ * FAIL CLOSED in the database until a provenance design proves the
+ * new plan incorporates the linked change: no baseline or
+ * change-order row records that linkage today, so the transition
+ * refuses with WPP9_RESOLVED_PROVENANCE_UNAVAILABLE (mapped to
+ * plain words by mapBustRpcError) rather than closing on an unproven
+ * plan. Other dispositions are unaffected.
  */
 export async function transitionBust(db, { ownerId, packageId, bustId, expectedVersion, toStatus, dispositionReason, resolvedBaselineId, reason }) {
   const scoped = await requireBustInPackage(db, ownerId, packageId, bustId);

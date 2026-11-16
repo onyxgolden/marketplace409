@@ -40,7 +40,11 @@
 --     between a bust and slice-8 change orders. Linking never closes
 --     a bust; an approved order never auto-clears one; closure as
 --     RESOLVED_BY_CHANGE needs a linked approved order AND a verified
---     updated baseline, decided by a human.
+--     updated baseline (frozen, newer, same package), decided by a
+--     human — and is FAIL CLOSED until a provenance design proves
+--     the new plan incorporates the linked change: no baseline or
+--     change-order row records that linkage today, so the transition
+--     refuses rather than closing on an unproven plan.
 --   * forge_work_package_busts_snapshot — SECURITY INVOKER, STABLE
 --     read RPC. ONE statement returns the package status, the frozen
 --     baseline, per-line planned vs installed-as-of quantities, the
@@ -1157,8 +1161,12 @@ $$;
 -- RETIRED is reached only through the retire RPC, never this one.
 -- Terminal dispositions require a disposition reason.
 -- RESOLVED_BY_CHANGE additionally requires a linked APPROVED change
--- order and a verified updated baseline id — an approved order alone
--- never closes a bust. Version-guarded with a required reason.
+-- order and a verified updated baseline: frozen, newer than the
+-- bust's own baseline, same package. An approved order alone never
+-- closes a bust — and no baseline closes one either until a
+-- provenance design proves the new plan incorporates the linked
+-- change (see the PROVENANCE GATE in the body: fail closed).
+-- Version-guarded with a required reason.
 -- Terminal packages are read-only.
 -- ---------------------------------------------------------------------------
 
@@ -1184,6 +1192,7 @@ declare
   v_reason text;
   v_disposition text;
   v_resolved_baseline text;
+  v_baseline public.forge_work_package_baselines%rowtype;
   v_old_status text;
 begin
   if not public.has_workspace_access(p_owner_id) then
@@ -1239,12 +1248,34 @@ begin
     if p_resolved_baseline_id is null or btrim(p_resolved_baseline_id) = '' then
       raise exception 'WPP9_RESOLVED_BASELINE_REQUIRED';
     end if;
-    if not exists (
-      select 1 from public.forge_work_package_baselines
+    -- The resolution baseline must be a real frozen plan for this
+    -- package. Baselines are frozen by construction (frozen_at and
+    -- frozen_by NOT NULL, no draft state, immutable rows); the frozen
+    -- predicate below is a defensive check on the row itself, so a
+    -- future schema change that admits drafts cannot silently pass.
+    -- The bust row is locked FOR UPDATE above and baselines are
+    -- immutable, so the row cannot change under this transaction.
+    select * into v_baseline
+      from public.forge_work_package_baselines
       where owner_id = p_owner_id and package_id = v_bust.work_package_id
-        and id = btrim(p_resolved_baseline_id)
-    ) then
+        and id = btrim(p_resolved_baseline_id);
+    if not found then
       raise exception 'WPP9_RESOLVED_BASELINE_REQUIRED';
+    end if;
+    if v_baseline.frozen_at is null or v_baseline.frozen_by is null
+      or btrim(v_baseline.frozen_by) = '' then
+      raise exception 'WPP9_RESOLVED_BASELINE_NOT_FROZEN';
+    end if;
+    -- It must be a NEWER plan than the one the bust was measured
+    -- against: a different baseline with a higher version number.
+    -- The original baseline can never prove its own fix, and an
+    -- older plan is not a fix at all.
+    if v_bust.baseline_id is not null and v_baseline.id = v_bust.baseline_id then
+      raise exception 'WPP9_RESOLVED_BASELINE_NOT_NEWER';
+    end if;
+    if v_bust.baseline_version is not null
+      and v_baseline.version_number <= v_bust.baseline_version then
+      raise exception 'WPP9_RESOLVED_BASELINE_NOT_NEWER';
     end if;
     -- An approved change must actually be linked to this bust; an
     -- approved order elsewhere in the package does not close it.
@@ -1257,7 +1288,19 @@ begin
     ) then
       raise exception 'WPP9_APPROVED_ORDER_REQUIRED';
     end if;
-    v_resolved_baseline := btrim(p_resolved_baseline_id);
+    -- PROVENANCE GATE (fail closed): nothing in the schema proves
+    -- the resolution baseline incorporates the linked approved
+    -- change. Baselines carry no change-order reference, change
+    -- orders carry no baseline reference, and freezing is
+    -- timestamp-only — a baseline frozen after an approval may still
+    -- ignore it, so recency is not proof. Until an owner-approved
+    -- minimal linkage / provenance design lands, RESOLVED_BY_CHANGE
+    -- refuses rather than closing a bust on an unproven plan. Other
+    -- dispositions are unaffected, and linking stays independent of
+    -- closure. When the provenance design lands, only this gate is
+    -- replaced — the frozen / newer / linked-order checks above stay.
+    -- No resolved baseline is recorded while the gate stands.
+    raise exception 'WPP9_RESOLVED_PROVENANCE_UNAVAILABLE';
   else
     v_resolved_baseline := null;
   end if;

@@ -26,20 +26,20 @@ beforeEach(() => {
 });
 
 describe("POST /api/work-packages/[packageId]/busts/[bustId]/transition", () => {
-  it("moves the bust with the disposition and baseline proofs", async () => {
+  it("moves the bust with the disposition reason", async () => {
     transitionBust.mockResolvedValue({
       ok: true,
-      bust: { id: "forge_wpbust_1", status: "RESOLVED_BY_CHANGE", version: 5 },
+      bust: { id: "forge_wpbust_1", status: "ACCEPTED_OVERRUN", version: 5 },
     });
     const response = await POST(
       new Request("https://test/x", {
         method: "POST",
         body: JSON.stringify({
           expectedVersion: 4,
-          toStatus: "RESOLVED_BY_CHANGE",
-          dispositionReason: "Resolved by change.",
-          resolvedBaselineId: "base_2",
-          reason: "Closing the bust against the new baseline.",
+          toStatus: "ACCEPTED_OVERRUN",
+          dispositionReason: "Accepted: the overrun stands.",
+          resolvedBaselineId: null,
+          reason: "Closing the bust as an accepted overrun.",
         }),
       }),
       { params: params() },
@@ -47,12 +47,36 @@ describe("POST /api/work-packages/[packageId]/busts/[bustId]/transition", () => 
     expect(response.status).toBe(200);
     expect(transitionBust).toHaveBeenCalledWith(AUTH.db, {
       ownerId: "owner_1", packageId: "pkg_1", bustId: "forge_wpbust_1",
-      expectedVersion: 4, toStatus: "RESOLVED_BY_CHANGE",
-      dispositionReason: "Resolved by change.",
-      resolvedBaselineId: "base_2",
-      reason: "Closing the bust against the new baseline.",
+      expectedVersion: 4, toStatus: "ACCEPTED_OVERRUN",
+      dispositionReason: "Accepted: the overrun stands.",
+      resolvedBaselineId: null,
+      reason: "Closing the bust as an accepted overrun.",
     });
-    expect((await response.json()).bust.status).toBe("RESOLVED_BY_CHANGE");
+    expect((await response.json()).bust.status).toBe("ACCEPTED_OVERRUN");
+  });
+
+  it("returns 409 with plain words when resolution by change is paused for provenance", async () => {
+    transitionBust.mockResolvedValue({
+      ok: false, httpStatus: 409,
+      error: "Resolved by change is paused — the app cannot yet prove the new plan includes the approved change. Use Accepted overrun or Invalid data for now.",
+    });
+    const response = await POST(
+      new Request("https://test/x", {
+        method: "POST",
+        body: JSON.stringify({
+          expectedVersion: 2,
+          toStatus: "RESOLVED_BY_CHANGE",
+          dispositionReason: "Resolved by change.",
+          resolvedBaselineId: "base_2",
+          reason: "Closing it.",
+        }),
+      }),
+      { params: params() },
+    );
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toContain("Resolved by change is paused");
+    expect(body.error).not.toContain("WPP9");
   });
 
   it("returns 400 when the disposition proof is missing", async () => {
