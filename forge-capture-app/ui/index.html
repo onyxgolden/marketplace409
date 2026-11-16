@@ -20,6 +20,7 @@
     <button id="tab-training" class="tab" role="tab" aria-selected="false" type="button">Process Training</button>
     <button id="tab-review" class="tab" role="tab" aria-selected="false" type="button">Review</button>
     <button id="tab-narration" class="tab" role="tab" aria-selected="false" type="button">Narration</button>
+    <button id="tab-create-video" class="tab" role="tab" aria-selected="false" type="button">Create video</button>
   </div>
 
   <main>
@@ -143,6 +144,11 @@
     <section id="panel-narration" role="tabpanel" aria-labelledby="tab-narration" hidden>
       <div id="narration-mount"></div>
     </section>
+
+    <!-- ===================== CREATE VIDEO (Phase 3 Slice 1) ================ -->
+    <section id="panel-create-video" role="tabpanel" aria-labelledby="tab-create-video" hidden>
+      <div id="pptx-create-video-mount"></div>
+    </section>
   </main>
 
   <dialog id="help-dialog">
@@ -239,6 +245,7 @@
   <script type="module" src="meeting.js"></script>
   <script type="module" src="process-training.js"></script>
   <script type="module" src="review.js"></script>
+  <script type="module" src="pptx-create-video.js"></script>
   <script type="module" src="narration.js"></script>
 </body>
 </html>
