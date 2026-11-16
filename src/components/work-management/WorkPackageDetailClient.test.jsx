@@ -115,6 +115,21 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
         }),
       };
     }
+    // Slice 9: the Busts tab mounts the busts panel, which fetches
+    // its candidates and its recorded list.
+    if (bare === `/api/work-packages/${BASE_PKG.id}/busts/candidates`) {
+      return {
+        ok: true,
+        json: async () => ({
+          packageId: BASE_PKG.id, packageStatus: BASE_PKG.status, asOf: "2026-11-15",
+          baseline: null, controlEstimate: null, candidates: [], insufficiencies: [],
+          targets: { takeoffLines: [], steps: [] },
+        }),
+      };
+    }
+    if (bare === `/api/work-packages/${BASE_PKG.id}/busts`) {
+      return { ok: true, json: async () => ({ busts: [], total: 0, limit: 100, offset: 0 }) };
+    }
     // PR B: the project-link block fetches the hierarchy tree (and the
     // current assignment's name when the package is linked). An empty
     // tree keeps the block quiet — no error alert — in these tests.
@@ -807,16 +822,26 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     return [...container.querySelectorAll("h2")].map((h) => h.textContent);
   }
 
-  it("renders all nine tabs with Overview selected by default", () => {
+  it("renders all ten tabs with Overview selected by default", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((b) => b.textContent);
     expect(tabs).toEqual([
       "Overview", "Work steps", "Planning Checklist", "Milestones", "Permits",
-      "IFA→IFC redlines", "Budget & Change Orders", "Documents", "Activity / Audit",
+      "IFA→IFC redlines", "Budget & Change Orders", "Busts", "Documents", "Activity / Audit",
     ]);
     expect(tabButton(container, "Overview").getAttribute("aria-selected")).toBe("true");
     expect(headings(container)).toContain("Package");
+  });
+
+  it("switching to Busts mounts the busts panel", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await act(async () => { tabButton(container, "Busts").click(); });
+    expect(tabButton(container, "Busts").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Detected — needs review");
+    expect(container.textContent).toContain("No busts detected — nothing is over its frozen allowance.");
+    expect(container.textContent).toContain("No busts recorded yet.");
   });
 
   it("switching to Planning Checklist mounts the checklist with its computed progress", async () => {

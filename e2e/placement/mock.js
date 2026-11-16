@@ -267,6 +267,50 @@
     blocked_reason: null, version: 1,
   };
 
+  // Slice-9 busts fixture: one detected labor-cost candidate against
+  // the frozen baseline, one recorded bust, and a mutable recorded
+  // list that POST /busts appends to (state resets per page load).
+  var bustsCandidate = {
+    dimension: "LABOR_COST",
+    scopeType: "PACKAGE",
+    takeoffLineId: null,
+    workStepId: null,
+    craft: null,
+    workDate: null,
+    shiftKey: null,
+    baselineId: "base_1",
+    baselineVersion: 1,
+    plannedValue: 1000000,
+    observedValue: 1250000,
+    varianceValue: 250000,
+    variancePercent: 25,
+    unit: "USD_CENTS",
+    comparisonAsOf: "2026-11-15",
+    sourceFingerprint: "fp_cost_1",
+    targetLabel: "Whole package",
+    suggestedEvidenceSummary: "Actual cost $12,500.50 against a $10,000.00 frozen baseline.",
+    alreadyRecorded: false,
+    alreadyRecordedBustId: null,
+  };
+  var bustsRecorded = [{
+    id: "forge_wpbust_1",
+    status: "OPEN",
+    dimension: "LABOR_COST",
+    scopeType: "PACKAGE",
+    targetLabel: "Whole package",
+    plannedValue: 1000000,
+    observedValue: 1250000,
+    varianceValue: 250000,
+    variancePercent: 25,
+    unit: "USD_CENTS",
+    comparisonAsOf: "2026-11-15",
+    baselineVersion: 1,
+    evidenceSummary: "Actual cost is over the frozen baseline.",
+    evidenceRef: null,
+    version: 1,
+    createdAt: "2026-11-15T10:00:00Z",
+  }];
+
   function ok(body) {
     return { ok: true, status: 200, json: async function () { return body; } };
   }
@@ -516,6 +560,84 @@
     if (path.indexOf("/api/forge/hierarchy") === 0) {
       if (parsed.searchParams.has("projectId")) return ok({ selection: null });
       return ok({ selector: { ownerId: "owner_1", clients: [] } });
+    }
+
+    // -- Busts endpoints (slice 9) ------------------------------------
+    // Stateful: POST /busts records the bust (server-computed variance,
+    // as the real RPC does), so a refresh after a confirm shows it in
+    // the recorded list.
+    if (path === "/api/work-packages/pkg_1/busts/candidates" && method === "GET") {
+      return ok({
+        packageId: "pkg_1", packageStatus: "in_progress", asOf: "2026-11-15",
+        baseline: { id: "base_2", versionNumber: 2 },
+        controlEstimate: null,
+        candidates: [bustsCandidate],
+        insufficiencies: [{ dimension: "MANPOWER_SHORTFALL", reason: "No assignments on file for 2026-11-09." }],
+        targets: {
+          takeoffLines: [{ id: "line_1", drawingNumber: "W-0005-1", quantity: 10, unit: "EA" }],
+          steps: [{ id: "step_1", title: "Fabricate spool" }],
+        },
+      });
+    }
+    if (path === "/api/work-packages/pkg_1/busts" && method === "POST") {
+      var bustBody = JSON.parse(options.body);
+      window.__placementLastBustPost = bustBody;
+      var createdBust = {
+        id: "forge_wpbust_new",
+        status: "OPEN",
+        dimension: bustBody.dimension,
+        scopeType: bustBody.scopeType,
+        takeoffLineId: bustBody.takeoffLineId || null,
+        workStepId: bustBody.workStepId || null,
+        craft: bustBody.craft || null,
+        workDate: bustBody.workDate || null,
+        shiftKey: bustBody.shiftKey || null,
+        targetLabel: bustBody.scopeType === "PACKAGE" ? "Whole package" : "Takeoff line W-0005-1",
+        baselineId: bustBody.baselineId || null,
+        baselineVersion: bustBody.baselineVersion != null ? bustBody.baselineVersion : null,
+        plannedValue: bustBody.plannedValue,
+        observedValue: bustBody.observedValue,
+        varianceValue: bustBody.observedValue - bustBody.plannedValue,
+        variancePercent: bustBody.plannedValue ? Math.round(((bustBody.observedValue - bustBody.plannedValue) / bustBody.plannedValue) * 10000) / 100 : null,
+        unit: bustBody.unit,
+        comparisonAsOf: bustBody.comparisonAsOf,
+        evidenceSummary: bustBody.evidenceSummary,
+        evidenceRef: bustBody.evidenceRef || null,
+        sourceFingerprint: bustBody.sourceFingerprint || "fp_mock",
+        version: 1,
+        createdAt: "2026-11-15T10:00:00Z",
+      };
+      bustsRecorded.push(createdBust);
+      return ok({ bust: createdBust });
+    }
+    if (path === "/api/work-packages/pkg_1/busts" && method === "GET") {
+      return ok({ busts: bustsRecorded.slice(), total: bustsRecorded.length, limit: 100, offset: 0 });
+    }
+    var bustDetailMatch = path.match(/^\/api\/work-packages\/pkg_1\/busts\/(forge_wpbust_[a-z0-9_]+)$/);
+    if (bustDetailMatch && method === "GET") {
+      var detailBust = bustsRecorded.find(function (b) { return b.id === bustDetailMatch[1]; }) || bustsRecorded[0];
+      return ok({
+        bust: detailBust,
+        revisions: [{
+          id: "forge_wpbustr_1", version: 1, action: "create",
+          reason: "Bust recorded", recordedAt: "2026-11-15T10:00:00Z",
+          oldValues: {}, newValues: { status: "OPEN" },
+        }],
+        links: [{
+          id: "forge_wpbustco_1", changeOrderId: "co_2",
+          changeOrderNumber: 2, changeOrderStatus: "approved", unlinkedAt: null, version: 1,
+        }],
+        activeLinks: [{
+          id: "forge_wpbustco_1", changeOrderId: "co_2",
+          changeOrderNumber: 2, changeOrderStatus: "approved", unlinkedAt: null, version: 1,
+        }],
+      });
+    }
+    if (path === "/api/work-packages/pkg_1/change-orders" && method === "GET") {
+      return ok({
+        changeOrders: [{ id: "co_2", changeOrderNumber: 2, description: "Cover the overrun", status: "approved" }],
+        packageStatus: "in_progress",
+      });
     }
 
     // Anything else (static assets are real requests, not fetch) falls
