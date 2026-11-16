@@ -285,26 +285,139 @@ const PREREQ_SQL = `
     baseline_kind text not null default 'schedule',
     primary key (owner_id, id)
   );
-  -- Minimal forge_work_progress_snapshots: the bridge migration moves
-  -- its rung-4 baseline FK to the per-kind unique, so the table must
+  -- Full rung-4 forge_work_progress_snapshots: the bridge migration
+  -- moves its baseline FK to the per-kind unique, so the table must
   -- exist for the constraint swap to be proven (in production it
-  -- exists from rung 4). Only the FK-relevant columns are stubbed,
-  -- plus the columns the replaced bust snapshot reads
-  -- (status_date, actual_hours, actual_cost); snapshot behavior is
-  -- proven in the slice-9 battery, where the full table lives.
+  -- exists from rung 4) — and fix round 4 installs the real
+  -- calculation-integrity trigger on it, so the stub carries the
+  -- FULL rung-4 column set, not just the FK-relevant columns plus
+  -- the columns the replaced bust snapshot reads (status_date,
+  -- actual_hours, actual_cost). RLS / the actor-stamp trigger are
+  -- NOT stubbed: this suite inserts snapshots directly as the
+  -- database owner, and the stamp trigger would demand an
+  -- authenticated identity. Snapshot behavior is proven in the
+  -- slice-9 battery, where the full table lives.
   create table forge_work_progress_snapshots (
     owner_id text not null,
-    id text not null,
+    id text not null default ('forge_wps_' || gen_random_uuid()::text),
     package_id text not null,
     status_date date not null,
+    planned_pct numeric(7,4) not null,
+    actual_pct numeric(7,4) not null,
+    earned_pct numeric(7,4) not null,
+    earned_hours numeric(14,2) not null,
+    earned_cost numeric(14,2) not null,
     actual_hours numeric(14,2) not null,
     actual_cost numeric(14,2) not null,
+    etc_hours numeric(14,2),
+    etc_cost numeric(14,2),
+    eac_hours numeric(14,2),
+    eac_cost numeric(14,2),
     baseline_version integer not null,
     baseline_kind text not null default 'schedule',
     recorded_by text not null,
     created_at timestamptz not null default now(),
-    primary key (owner_id, id)
+    primary key (owner_id, id),
+    constraint forge_work_progress_snapshots_pct_check check (
+      planned_pct between 0 and 100 and
+      actual_pct between 0 and 100 and
+      earned_pct between 0 and 100),
+    constraint forge_work_progress_snapshots_status_unique unique (owner_id, package_id, status_date)
   );
+  create index if not exists forge_work_progress_snapshots_pkg_idx
+    on forge_work_progress_snapshots (owner_id, package_id, status_date desc);
+  -- VERBATIM rung-4 forge_work_snapshots_verify() (supabase/migrations/
+  -- 20261004010000_forge_work_management_rung4.sql lines 213-309):
+  -- the PRE-bridge function, resolving its baseline by version
+  -- number alone. The bridge migration (fix round 4) replaces it
+  -- with the kind-scoped version; this stub is what proves the
+  -- replacement actually lands and changes behavior.
+  create or replace function forge_work_snapshots_verify()
+  returns trigger language plpgsql as $$
+  declare
+    v_baseline_hours numeric(14,2);
+    v_baseline_cost numeric(14,2);
+    v_baseline_start date;
+    v_baseline_finish date;
+    v_planned_pct numeric(7,4);
+    v_tolerance constant numeric := 0.05;
+    v_remaining_cost numeric;
+    v_remaining_hours numeric;
+    v_etc_cost numeric;
+    v_etc_hours numeric;
+  begin
+    select baseline_hours, baseline_cost, baseline_start, baseline_finish
+      into v_baseline_hours, v_baseline_cost, v_baseline_start, v_baseline_finish
+      from forge_work_package_baselines
+     where owner_id = NEW.owner_id
+       and package_id = NEW.package_id
+       and version_number = NEW.baseline_version;
+    if not found then
+      raise exception 'forge_work: snapshot references unknown baseline version % for package %',
+        NEW.baseline_version, NEW.package_id;
+    end if;
+    if abs(NEW.earned_hours - (NEW.earned_pct / 100) * v_baseline_hours) > v_tolerance then
+      raise exception 'forge_work: snapshot earned_hours % inconsistent with earned_pct % and baseline hours %',
+        NEW.earned_hours, NEW.earned_pct, v_baseline_hours;
+    end if;
+    if abs(NEW.earned_cost - (NEW.earned_pct / 100) * v_baseline_cost) > v_tolerance then
+      raise exception 'forge_work: snapshot earned_cost % inconsistent with earned_pct % and baseline cost %',
+        NEW.earned_cost, NEW.earned_pct, v_baseline_cost;
+    end if;
+    if NEW.status_date <= v_baseline_start then
+      v_planned_pct := 0;
+    elsif NEW.status_date >= v_baseline_finish then
+      v_planned_pct := 100;
+    elsif v_baseline_finish = v_baseline_start then
+      v_planned_pct := 100;
+    else
+      v_planned_pct := ((NEW.status_date - v_baseline_start)::numeric
+        / (v_baseline_finish - v_baseline_start)::numeric) * 100;
+    end if;
+    if abs(NEW.planned_pct - v_planned_pct) > 0.01 then
+      raise exception 'forge_work: snapshot planned_pct % does not match frozen schedule % for status date %',
+        NEW.planned_pct, v_planned_pct, NEW.status_date;
+    end if;
+    if NEW.etc_hours is null or NEW.etc_cost is null
+       or NEW.eac_hours is null or NEW.eac_cost is null then
+      raise exception 'forge_work: snapshot forecast fields (etc/eac hours/cost) are required';
+    end if;
+    v_remaining_hours := v_baseline_hours - NEW.earned_hours;
+    v_remaining_cost := v_baseline_cost - NEW.earned_cost;
+    if v_remaining_hours <= 0 then
+      v_etc_hours := 0;
+    elsif NEW.actual_hours > 0 and NEW.earned_hours > 0 then
+      v_etc_hours := v_remaining_hours / (NEW.earned_hours / NEW.actual_hours);
+    else
+      v_etc_hours := v_remaining_hours;
+    end if;
+    if v_remaining_cost <= 0 then
+      v_etc_cost := 0;
+    elsif NEW.actual_cost > 0 and NEW.earned_cost > 0 then
+      v_etc_cost := v_remaining_cost / (NEW.earned_cost / NEW.actual_cost);
+    else
+      v_etc_cost := v_remaining_cost;
+    end if;
+    if abs(NEW.etc_hours - v_etc_hours) > v_tolerance then
+      raise exception 'forge_work: snapshot etc_hours % inconsistent with engine forecast %',
+        NEW.etc_hours, v_etc_hours;
+    end if;
+    if abs(NEW.etc_cost - v_etc_cost) > v_tolerance then
+      raise exception 'forge_work: snapshot etc_cost % inconsistent with engine forecast %',
+        NEW.etc_cost, v_etc_cost;
+    end if;
+    if abs(NEW.eac_hours - (NEW.actual_hours + v_etc_hours)) > v_tolerance then
+      raise exception 'forge_work: snapshot eac_hours inconsistent with actual_hours + forecast etc_hours';
+    end if;
+    if abs(NEW.eac_cost - (NEW.actual_cost + v_etc_cost)) > v_tolerance then
+      raise exception 'forge_work: snapshot eac_cost inconsistent with actual_cost + forecast etc_cost';
+    end if;
+    return NEW;
+  end $$;
+  drop trigger if exists forge_work_progress_snapshots_verify_trg on forge_work_progress_snapshots;
+  create trigger forge_work_progress_snapshots_verify_trg
+    before insert on forge_work_progress_snapshots
+    for each row execute function forge_work_snapshots_verify();
   -- Plan baselines: full rung-4 definition (checks, unique, immutable
   -- + actor-stamp triggers, RLS owner policy), plus the fix-round-1
   -- baseline_kind split: scope-paired rows version with the scope
@@ -1290,5 +1403,95 @@ describe.skipIf(!HAS_REAL_PG)("scope/plan baseline bridge: real-PostgreSQL subse
     const plans = await planRows({ query: (s) => pgClient.query(s) }, "pkg_approve");
     expect(plans).toHaveLength(2);
     expect(plans.map((p) => p.version_number)).toEqual([1, 2]);
+  });
+
+  // Fix round 4 (ChatGPT NEEDS CHANGES, PR #817 review 2026-11-16):
+  // the rung-4 snapshot calculation-integrity trigger resolved its
+  // baseline by version number alone. After the bridge, scope v1 and
+  // schedule v1 are different baselines at the same version, so the
+  // trigger must resolve the schedule series — the same series the
+  // FK and the bust snapshot's progress_baseline CTE resolve. This
+  // test runs against the ACTUAL rung-4 snapshot schema and
+  // forge_work_snapshots_verify_trg (installed verbatim in
+  // PREREQ_SQL, replaced by the bridge in beforeAll), with both
+  // series present at deliberately different hours/cost/dates.
+  it60("snapshot verify trigger resolves the schedule series, not scope, at the same version (fix round 4)", async () => {
+    // Self-check: the bridge must have replaced the trigger function
+    // with the kind-scoped version — otherwise this test would prove
+    // nothing about the fix.
+    const { rows: fnRows } = await pgClient.query(
+      "select prosrc from pg_proc where proname = 'forge_work_snapshots_verify'",
+    );
+    expect(fnRows).toHaveLength(1);
+    expect(fnRows[0].prosrc).toContain("baseline_kind = NEW.baseline_kind");
+
+    // Seed one package with BOTH series at v1 (deliberately
+    // different hours/cost/dates) plus a schedule v2 while the scope
+    // series stays at v1. The stamp trigger is disabled for the
+    // direct baseline inserts, as in SEED_SQL.
+    await pgClient.query(`
+      insert into forge_work_packages (owner_id, id, status, planned_start, planned_finish)
+        values ('${OWNER_A}', 'pkg_snap', 'draft', '2026-11-16', '2026-11-25');
+      alter table forge_work_package_baselines disable trigger forge_work_package_baselines_stamp_actor_trg;
+      insert into forge_work_package_baselines
+        (owner_id, id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+         baseline_hours, baseline_cost, frozen_by, frozen_at) values
+        ('${OWNER_A}', 'wpb_snap_scope1', 'pkg_snap', 1, 'scope', '2026-11-01', '2026-11-30', 100.00, 50000.00, '${OWNER_A}', '2026-11-15T00:00:00Z'),
+        ('${OWNER_A}', 'wpb_snap_sched1', 'pkg_snap', 1, 'schedule', '2026-11-16', '2026-11-20', 10.00, 10000.00, '${OWNER_A}', '2026-11-15T00:00:00Z'),
+        ('${OWNER_A}', 'wpb_snap_sched2', 'pkg_snap', 2, 'schedule', '2026-11-16', '2026-11-25', 20.00, 20000.00, '${OWNER_A}', '2026-11-15T00:00:00Z');
+      alter table forge_work_package_baselines enable trigger forge_work_package_baselines_stamp_actor_trg;
+    `);
+
+    async function insertSnapshot(values) {
+      return pgClient.query(`
+        insert into forge_work_progress_snapshots
+          (owner_id, package_id, status_date, planned_pct, actual_pct, earned_pct,
+           earned_hours, earned_cost, actual_hours, actual_cost,
+           etc_hours, etc_cost, eac_hours, eac_cost, baseline_version, recorded_by)
+        values ${values} returning id;
+      `);
+    }
+
+    // (a) A correctly computed schedule-v1 snapshot inserts: 50% of
+    // the 10-hour / $10,000 schedule baseline at status 2026-11-18
+    // (planned 50% of the 4-day schedule window).
+    const ok = await insertSnapshot(`('${OWNER_A}', 'pkg_snap', '2026-11-18',
+      50.0000, 50.0000, 50.0000, 5.00, 5000.00, 5.00, 5000.00,
+      5.00, 5000.00, 10.00, 10000.00, 1, 'test')`);
+    expect(ok.rows).toHaveLength(1);
+
+    // (b) A fabricated row computed against the SCOPE v1 baseline
+    // (100 hrs / $50,000, Nov 1–30: planned 62.0690% at 2026-11-19,
+    // earned 50 hrs / $25,000) is REJECTED: the trigger must validate
+    // against schedule v1 (10 hrs), not scope v1. Under the old
+    // version-only lookup this row could insert whenever the SELECT
+    // INTO happened to land on the scope row.
+    await expect(insertSnapshot(`('${OWNER_A}', 'pkg_snap', '2026-11-19',
+      62.0690, 50.0000, 50.0000, 50.00, 25000.00, 50.00, 25000.00,
+      50.00, 25000.00, 100.00, 50000.00, 1, 'test')`)).rejects.toThrow(
+      /earned_hours .* inconsistent/,
+    );
+
+    // (c) A later schedule-v2 snapshot still resolves schedule v2
+    // even though the scope series is at v1: 25% of the 20-hour /
+    // $20,000 schedule v2 at status 2026-11-21 (planned 55.5556% of
+    // the 9-day v2 window). If the trigger resolved scope v1, the
+    // planned_pct (68.9655%) and earned values would not match.
+    const v2 = await insertSnapshot(`('${OWNER_A}', 'pkg_snap', '2026-11-21',
+      55.5556, 25.0000, 25.0000, 5.00, 5000.00, 5.00, 5000.00,
+      15.00, 15000.00, 20.00, 20000.00, 2, 'test')`);
+    expect(v2.rows).toHaveLength(1);
+
+    // Exactly the two valid snapshots are on file; the fabricated
+    // row left nothing behind.
+    const { rows: snaps } = await pgClient.query(`
+      select status_date, baseline_version from forge_work_progress_snapshots
+      where owner_id = '${OWNER_A}' and package_id = 'pkg_snap'
+      order by status_date;
+    `);
+    expect(snaps.map((r) => [r.status_date.toISOString().slice(0, 10), r.baseline_version])).toEqual([
+      ["2026-11-18", 1],
+      ["2026-11-21", 2],
+    ]);
   });
 });
