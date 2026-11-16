@@ -922,6 +922,23 @@ describe("freezeScopeBaseline", () => {
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(409);
   });
+  it.each([
+    ["plan_no_active_steps", /at least one planned step/],
+    ["plan_step_hours_missing", /labor hours/],
+    ["plan_dates_missing", /planned start and finish dates/],
+    ["plan_dates_reversed", /on or after the planned start/],
+    ["plan_estimate_missing", /control estimate/],
+    ["plan_estimate_ambiguous", /More than one active control estimate/],
+    ["plan_estimate_negative", /cannot be negative/],
+  ])("maps %s to a plain-words 400", async (code, message) => {
+    const db = mockDb([chain({ data: PKG, error: null })],
+      async () => ({ data: { ok: false, error: code }, error: null }));
+    const result = await freezeScopeBaseline(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", membership: [{ key: "a" }] });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(message);
+  });
 });
 
 describe("proposeScopeChange + decideScopeChange", () => {
@@ -1000,6 +1017,19 @@ describe("proposeScopeChange + decideScopeChange", () => {
       changeId: "forge_wsc_1", approve: true, newMembership: [] });
     expect(result.httpStatus).toBe(400);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["plan_no_active_steps", /at least one planned step/],
+    ["plan_dates_missing", /planned start and finish dates/],
+    ["plan_estimate_missing", /control estimate/],
+  ])("maps %s to a plain-words 400 on approval", async (code, message) => {
+    const db = mockDb([], async () => ({ data: { ok: false, error: code }, error: null }));
+    const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
+      changeId: "forge_wsc_1", approve: true, newMembership: [{ key: "x" }] });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(message);
   });
 });
 

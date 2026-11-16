@@ -189,11 +189,18 @@ export function evaluateControlsSnapshot(snapshot) {
     const pkgSnapshots = snapshotsByPackage.get(p.package_ref) ?? [];
 
     // --- baselines: version groups, current, scope ---
-    // Version identities are positive integers (rung-4 migration).
+    // Version identity is (baseline_kind, version_number): the bridge
+    // (20261116000000) splits plan baselines into a 'scope' series
+    // (scope-paired rows) and a 'schedule' series (scheduling
+    // freezes). A scope row and a schedule row may share a version
+    // number without being duplicates. Rows from before the split
+    // carry no baseline_kind; they were all schedule-created and
+    // group under the empty kind, so old snapshots still work.
     // A corrupt version is named and excluded from ordering and
     // binding — it can never become current by matching another
     // corrupt value, and it never participates in duplicate
     // detection (each invalid row carries its own finding).
+    const versionGroupKey = (kind, version) => `${kind ?? ""}:${version}`;
     const versionGroups = new Map();
     for (const b of pkgBaselines) {
       if (!isVersionIdentity(b.version_number)) {
@@ -201,14 +208,21 @@ export function evaluateControlsSnapshot(snapshot) {
           `version_number ${String(b.version_number)} is not a positive integer; this baseline row cannot anchor any snapshot and is excluded from version ordering`);
         continue;
       }
-      const g = versionGroups.get(b.version_number) ?? [];
+      const key = versionGroupKey(b.baseline_kind, b.version_number);
+      const g = versionGroups.get(key) ?? [];
       g.push(b);
-      versionGroups.set(b.version_number, g);
+      versionGroups.set(key, g);
     }
-    for (const [version, rows] of [...versionGroups.entries()].sort((a, b) => a[0] - b[0])) {
+    const versionGroupEntries = [...versionGroups.entries()]
+      .map(([key, rows]) => {
+        const [kind, version] = key.split(":");
+        return { kind: kind === "" ? null : kind, version: Number(version), rows };
+      })
+      .sort((a, b) => (a.version - b.version) || ((a.kind ?? "") < (b.kind ?? "") ? -1 : 1));
+    for (const { kind, version, rows } of versionGroupEntries) {
       if (rows.length > 1) {
         pushFinding("BASELINE_VERSION_DUPLICATE", "forge_work_package_baselines", rows[0].baseline_ref,
-          `version ${version} is carried by ${rows.length} baseline rows (${rows.map((r) => r.baseline_ref).join(", ")}); no single row is authoritative for that version`);
+          `version ${version}${kind ? ` (${kind})` : ""} is carried by ${rows.length} baseline rows (${rows.map((r) => r.baseline_ref).join(", ")}); no single row is authoritative for that version`);
       }
     }
     if (pkgBaselines.length === 0) {
@@ -229,13 +243,18 @@ export function evaluateControlsSnapshot(snapshot) {
     }
     let currentBaseline = null;
     let currentState = "ABSENT";
-    const validBaselines = pkgBaselines.filter((b) => isVersionIdentity(b.version_number));
-    if (validBaselines.length > 0) {
-      const maxVersion = Math.max(...validBaselines.map((b) => b.version_number));
-      const group = versionGroups.get(maxVersion) ?? [];
+    // The current baseline is the latest SCHEDULE row: progress
+    // snapshots and variances anchor to the schedule series, never
+    // to a scope-paired row. Pre-split rows carry no kind and count
+    // as schedule rows (all were schedule-created).
+    const scheduleBaselines = pkgBaselines.filter((b) => isVersionIdentity(b.version_number) && b.baseline_kind !== "scope");
+    if (scheduleBaselines.length > 0) {
+      const maxVersion = Math.max(...scheduleBaselines.map((b) => b.version_number));
+      const group = versionGroups.get(versionGroupKey("schedule", maxVersion))
+        ?? versionGroups.get(versionGroupKey(undefined, maxVersion)) ?? [];
       if (group.length > 1) {
         currentState = "AMBIGUOUS";
-      } else {
+      } else if (group.length === 1) {
         currentState = "RESOLVED";
         const row = group[0];
         currentBaseline = { baseline_ref: row.baseline_ref, version_number: row.version_number, baseline_start: row.baseline_start ?? null, baseline_finish: row.baseline_finish ?? null };
@@ -321,7 +340,11 @@ export function evaluateControlsSnapshot(snapshot) {
         pushFinding("SNAPSHOT_BASELINE_VERSION_INVALID", "forge_work_progress_snapshots", s.snapshot_ref,
           `baseline_version ${String(s.baseline_version)} is not a positive integer; the snapshot cannot resolve against any baseline`);
       } else {
-        const group = versionGroups.get(s.baseline_version) ?? [];
+        // Progress snapshots anchor to the SCHEDULE series: a scope
+        // row at the named version does not resolve a snapshot.
+        // Pre-split rows carry no kind and resolve as schedule rows.
+        const group = versionGroups.get(versionGroupKey("schedule", s.baseline_version))
+          ?? versionGroups.get(versionGroupKey(undefined, s.baseline_version)) ?? [];
         if (group.length === 0) {
           unresolvedBaselineRefs += 1;
           pushFinding("SNAPSHOT_BASELINE_MISSING", "forge_work_progress_snapshots", s.snapshot_ref,

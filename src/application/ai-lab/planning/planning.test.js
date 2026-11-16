@@ -573,6 +573,34 @@ describe("controlsEvidenceAssessment (P2b-2)", () => {
     expect(pkg.conclusion).toBe("QUALIFIED");
   });
 
+  it("a scope row and a schedule row sharing a version are not duplicates; snapshots resolve to the schedule row (fix round 1)", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_package_baselines = [
+      { baseline_ref: "BL-SCOPE-1", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_kind: "scope", baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+      { baseline_ref: "BL-SCHED-1", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_kind: "schedule", baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+      { baseline_ref: "BL-SCHED-2", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 2, baseline_kind: "schedule", baseline_start: "2026-10-05", baseline_finish: "2026-12-05", frozen_at: "2026-10-03T12:00:00.000Z" },
+    ];
+    snap.records.forge_work_progress_snapshots[0].baseline_version = 1;
+    const report = evaluateControlsSnapshot(snap);
+    const pkg = pkgOf(report);
+    expect(kindsOf(report)).not.toContain("BASELINE_VERSION_DUPLICATE");
+    expect(pkg.named_baseline.baseline_ref).toBe("BL-SCHED-1");
+    expect(pkg.current_baseline.baseline_ref).toBe("BL-SCHED-2");
+    expect(pkg.baseline_changed).toBe(true);
+    expect(kindsOf(report)).toContain("BASELINE_CHANGED");
+  });
+
+  it("two schedule rows at the same version are still a duplicate", () => {
+    const snap = controlsSnapshot();
+    snap.records.forge_work_package_baselines = [
+      { baseline_ref: "BL-SCHED-1A", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_kind: "schedule", baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+      { baseline_ref: "BL-SCHED-1B", package_ref: "PKG-A", owner_ref: "owner-1", version_number: 1, baseline_kind: "schedule", baseline_start: "2026-10-01", baseline_finish: "2026-11-30", frozen_at: "2026-09-28T12:00:00.000Z" },
+    ];
+    const report = evaluateControlsSnapshot(snap);
+    expect(kindsOf(report)).toContain("BASELINE_VERSION_DUPLICATE");
+    expect(pkgOf(report).current_baseline).toBeNull();
+  });
+
   it("tied incompatible latest snapshots mark the package UNVERIFIABLE", () => {
     const snap = controlsSnapshot();
     snap.records.forge_work_progress_snapshots.push(

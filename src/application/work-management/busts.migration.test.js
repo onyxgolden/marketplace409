@@ -155,7 +155,7 @@ const PREREQ_SQL = `
   );
   create table forge_work_package_baselines (
     owner_id text not null,
-    id text not null,
+    id text not null default ('forge_wpb_' || gen_random_uuid()::text),
     package_id text not null,
     version_number integer not null,
     baseline_start date not null,
@@ -165,7 +165,7 @@ const PREREQ_SQL = `
     frozen_by text not null,
     frozen_at timestamptz not null default now(),
     primary key (owner_id, id),
-    unique (owner_id, package_id, version_number)
+    constraint forge_work_package_baselines_version_unique unique (owner_id, package_id, version_number)
   );
   create table forge_work_steps (
     owner_id text not null,
@@ -1458,5 +1458,301 @@ describe.skipIf(!HAS_REAL_PG)("slice 9 migration: real-PostgreSQL subset", () =>
       select count(*)::int as n from forge_work_package_bust_revisions where bust_id = '${bust.id}';
     `);
     expect(revsAfter[0].n).toBe(revsBefore[0].n);
+  });
+});
+
+// Bridge integration (fix round 1, ChatGPT NEEDS CHANGES blocker 2):
+// the bridge migration replaces the three busts RPCs with
+// kind-filtered versions. This describe applies the bridge on top
+// of the busts migration and proves the three integration cases
+// against bridge-created rows:
+//   (a) the snapshot selects the SCOPE row as `baseline` even when
+//       a schedule row sits at a higher version;
+//   (b) progress snapshots resolve against the SCHEDULE row at the
+//       exact named version, never the scope row sharing it;
+//   (c) a LABOR_HOURS bust records against the scope baseline, and
+//       a schedule-only baseline is refused with WPP9_INVALID_BASELINE.
+// The scope tables + package columns the bridge needs are added
+// here (the slice-9 prereq has neither); the bridge migration
+// itself must apply cleanly on top of the busts migration.
+const BRIDGE = "20261116000000_forge_work_scope_plan_baseline_bridge.sql";
+
+const BRIDGE_SCOPE_SQL = `
+  create table forge_work_scope_baselines (
+    owner_id text not null,
+    id text not null,
+    package_id text not null,
+    version integer not null,
+    frozen_at timestamptz not null default now(),
+    frozen_by text,
+    membership jsonb,
+    membership_hash text,
+    supersedes_id text,
+    primary key (owner_id, id)
+  );
+  create table forge_work_scope_changes (
+    owner_id text not null,
+    id text not null,
+    package_id text not null,
+    baseline_version integer not null,
+    change_type text,
+    description text,
+    requested_by text,
+    requested_at timestamptz,
+    status text not null default 'proposed',
+    decided_by text,
+    decided_at timestamptz,
+    resulting_baseline_version integer,
+    primary key (owner_id, id)
+  );
+  alter table forge_work_packages
+    add column if not exists planned_start date,
+    add column if not exists planned_finish date,
+    add column if not exists scope_baseline_id text,
+    add column if not exists designated_verifier text,
+    add column if not exists updated_by text,
+    add column if not exists updated_at timestamptz;
+`;
+
+async function setupBridgeDb() {
+  const db = new PGlite();
+  await db.exec(PREREQ_SQL);
+  await db.exec(SEED_SQL);
+  await db.exec(loadMigrationSql(SLICE9));
+  await db.exec(BRIDGE_SCOPE_SQL);
+  await db.exec(loadMigrationSql(BRIDGE));
+  // The slice-9 prereq grants only SELECT on the baselines table;
+  // production's default ACL grants ALL to the app roles, which is
+  // what the scheduling direct-insert path relies on. Grant the
+  // INSERT that path needs (the bridge migration itself preserves
+  // grants per brief §6.3 — it does not add them).
+  await db.exec(`grant insert on forge_work_package_baselines to authenticated;`);
+  await db.exec(`
+    insert into forge_work_packages
+      (owner_id, id, status, planned_start, planned_finish)
+    values ('${OWNER_A}', 'pkg_bridge', 'in_progress', '2026-11-16', '2026-11-20');
+    insert into forge_work_steps
+      (owner_id, id, work_package_id, title, sequence_no, craft_key, craft_label,
+       planned_duration_days, planned_person_hours, version, retired_at)
+    values ('${OWNER_A}', 'step_bridge_1', 'pkg_bridge', 'Fabricate pipe spool', 1,
+      'pipefitters', 'Pipefitters', 4, 10, 1, null);
+    insert into forge_work_control_estimates
+      (owner_id, id, work_package_id, original_control_estimate_cents, current_estimate_cents, retired_at)
+    values ('${OWNER_A}', 'est_bridge', 'pkg_bridge', 1000000, 1000000, null);
+  `);
+  return db;
+}
+
+async function bridgeFreeze(db, uid, packageId) {
+  const { rows } = await asUser(db, uid, `
+    select forge_work_freeze_scope('${OWNER_A}', '${packageId}',
+      '[{"key":"BUNDLE-01","quantity":1}]'::jsonb, 'fnv1a:x') as r;
+  `);
+  return rows[0].r;
+}
+
+// A scheduling freeze, as the shipped app performs it: direct insert
+// as the authenticated user, max+1 over the SCHEDULE series only.
+async function bridgeScheduleFreeze(db, uid, packageId, hours, cost) {
+  const { rows } = await asUser(db, uid, `
+    insert into forge_work_package_baselines
+      (owner_id, id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+       baseline_hours, baseline_cost, frozen_by)
+    select '${OWNER_A}', 'forge_wpb_' || gen_random_uuid()::text, '${packageId}',
+      coalesce(max(version_number), 0) + 1, 'schedule',
+      '2026-11-16', '2026-11-20', ${hours}, ${cost}, '${uid}'
+    from forge_work_package_baselines
+    where owner_id = '${OWNER_A}' and package_id = '${packageId}' and baseline_kind = 'schedule'
+    returning *;
+  `);
+  return rows[0];
+}
+
+describe("slice 9 + bridge integration: busts against bridge-created baselines (fix round 1)", () => {
+  let db;
+  let scopeBaseline;
+  let scheduleV1;
+  beforeEach(async () => {
+    db = await setupBridgeDb();
+    // Schedule v1 (20h) first, then the paired scope freeze (scope
+    // v1, 10h), then schedule v2 (99h): the package now carries two
+    // v1 rows and a higher-version schedule row, so every kind
+    // filter in the replaced RPCs is discriminating.
+    scheduleV1 = await bridgeScheduleFreeze(db, OWNER_A, "pkg_bridge", 20, 20000);
+    const f = await bridgeFreeze(db, OWNER_A, "pkg_bridge");
+    expect(f.ok).toBe(true);
+    scopeBaseline = f.plan_baseline;
+    await bridgeScheduleFreeze(db, OWNER_A, "pkg_bridge", 99, 99000);
+    // A progress snapshot measured against schedule v1.
+    await db.exec(`
+      insert into forge_work_progress_snapshots
+        (owner_id, id, package_id, status_date, actual_hours, actual_cost, baseline_version)
+      values ('${OWNER_A}', 'snap_bridge_1', 'pkg_bridge', '2026-11-15', 12, 12000.50, 1);
+    `);
+  }, 60000);
+
+  it60("(a) the bust snapshot selects the bridge-created SCOPE row as baseline", async () => {
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge");
+    expect(snap.baseline).not.toBeNull();
+    expect(snap.baseline.id).toBe(scopeBaseline.id);
+    expect(snap.baseline.version_number).toBe(1);
+    expect(Number(snap.baseline.baseline_hours)).toBe(10);
+    expect(Number(snap.baseline.baseline_cost)).toBe(10000);
+    // The higher-version schedule row (v2, 99h) must NOT win the
+    // latest-version select: without the kind filter it would.
+    expect(Number(snap.baseline.baseline_hours)).not.toBe(99);
+  });
+
+  it60("(b) progress snapshots resolve against the SCHEDULE row at the exact named version", async () => {
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge");
+    expect(snap.latestProgress).not.toBeNull();
+    expect(snap.latestProgress.baseline_version).toBe(1);
+    expect(snap.progressBaseline).not.toBeNull();
+    expect(snap.progressBaseline.version_number).toBe(1);
+    expect(snap.progressBaseline.id).toBe(scheduleV1.id);
+    // The scope v1 shares version 1 with different hours — the
+    // progress baseline must be the schedule row (20h), not the
+    // scope row (10h).
+    expect(Number(snap.progressBaseline.baseline_hours)).toBe(20);
+  });
+
+  it60("(c) a LABOR_HOURS bust records against the bridge-created scope baseline", async () => {
+    const bust = await createBust(db, OWNER_A, {
+      packageId: "pkg_bridge",
+      scopeType: "PACKAGE",
+      dimension: "LABOR_HOURS",
+      baselineId: scopeBaseline.id,
+      baselineVersion: 1,
+      plannedValue: 10,
+      observedValue: 12,
+      unit: "HOURS",
+      evidenceSummary: "Crew logged 12 hours against a 10-hour baseline.",
+      requestId: "req-bridge-labor-1",
+    });
+    expect(bust.dimension).toBe("LABOR_HOURS");
+    expect(bust.status).toBe("OPEN");
+    expect(bust.baseline_id).toBe(scopeBaseline.id);
+    expect(bust.baseline_version).toBe(1);
+    expect(Number(bust.planned_value)).toBe(10);
+    expect(Number(bust.observed_value)).toBe(12);
+    // The bust now appears in the snapshot's active busts.
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge");
+    expect(snap.activeBusts.map((b) => b.id)).toContain(bust.id);
+  });
+
+  it60("a schedule-only baseline is refused by bust creation", async () => {
+    await expectRpcError(createBust(db, OWNER_A, {
+      packageId: "pkg_bridge",
+      scopeType: "PACKAGE",
+      dimension: "LABOR_HOURS",
+      baselineId: scheduleV1.id,
+      baselineVersion: 1,
+      plannedValue: 10,
+      observedValue: 12,
+      unit: "HOURS",
+      evidenceSummary: "Crew logged 12 hours against a 10-hour baseline.",
+      requestId: "req-bridge-labor-2",
+    }), "WPP9_INVALID_BASELINE");
+  });
+});
+
+// Bridge integration (fix round 2, ChatGPT NEEDS CHANGES Finding 1):
+// the bust snapshot's placements CTE compared placement versions
+// against the SCOPE baseline. With independent per-kind series the
+// two version numbers are unrelated, so a divergent pair dropped
+// current placements or bound a stale same-number row. The replaced
+// snapshot now resolves placements against the latest SCHEDULE
+// baseline and filters placement kind. These cases prove both
+// divergent shapes — scope v2 + schedule v1, and scope v1 +
+// schedule v2 — including same-number scope/schedule rows, plus
+// the schedule-only placement CHECK.
+async function setupDivergentPackage(db, packageId) {
+  await db.exec(`
+    insert into forge_work_packages (owner_id, id, status, planned_start, planned_finish)
+    values ('${OWNER_A}', '${packageId}', 'in_progress', '2026-11-16', '2026-11-20');
+    insert into forge_work_steps
+      (owner_id, id, work_package_id, title, sequence_no, craft_key, craft_label,
+       planned_duration_days, planned_person_hours, version, retired_at)
+    values ('${OWNER_A}', 'step_place_1', '${packageId}', 'Fabricate pipe spool', 1,
+      'pipefitters', 'Pipefitters', 4, 10, 1, null),
+      ('${OWNER_A}', 'step_place_2', '${packageId}', 'Weld spool', 2,
+      'welders', 'Welders', 2, 20, 1, null);
+  `);
+}
+
+async function insertBaseline(db, packageId, version, kind, hours) {
+  await db.query(`
+    insert into forge_work_package_baselines
+      (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+       baseline_hours, baseline_cost, frozen_by)
+    values ('${OWNER_A}', '${packageId}', ${version}, '${kind}',
+      '2026-11-16', '2026-11-20', ${hours}, ${hours * 1000}, '${OWNER_A}');
+  `);
+}
+
+async function insertPlacement(db, packageId, placementId, stepId, kind, version, startDay) {
+  await db.query(`
+    insert into forge_work_step_curve_placements
+      (owner_id, id, work_package_id, step_id, baseline_kind, baseline_version,
+       start_day_index, version, retired_at)
+    values ('${OWNER_A}', '${placementId}', '${packageId}', '${stepId}', '${kind}', ${version},
+      ${startDay}, 1, null);
+  `);
+}
+
+describe("slice 9 + bridge integration: bust snapshot placements resolve the schedule series (fix round 2)", () => {
+  let db;
+  beforeEach(async () => {
+    db = await setupBridgeDb();
+  }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("(d) scope v2 + schedule v1: the bust snapshot still returns the schedule-v1 placement", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    await insertBaseline(db, "pkg_bridge_place", 2, "scope", 11);
+    await insertPlacement(db, "pkg_bridge_place", "place_d1", "step_place_1", "schedule", 1, 3);
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge_place");
+    // The scope series has run to v2; the placement is anchored to
+    // the current schedule v1. Under the old scope-version
+    // comparison it disappeared from the snapshot entirely.
+    expect(snap.baseline.version_number).toBe(2);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].step_id).toBe("step_place_1");
+    expect(snap.placements[0].baseline_version).toBe(1);
+    expect(snap.placements[0].start_day_index).toBe(3);
+  });
+
+  it60("(e) scope v1 + schedule v2: the bust snapshot returns the current schedule placement, not the stale same-number row", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 2, "schedule", 99);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    await insertPlacement(db, "pkg_bridge_place", "place_e1", "step_place_1", "schedule", 1, 3);
+    await insertPlacement(db, "pkg_bridge_place", "place_e2", "step_place_2", "schedule", 2, 5);
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge_place");
+    // Under the old scope-version comparison the snapshot returned
+    // the stale v1 placement and omitted the current v2 placement.
+    expect(snap.baseline.version_number).toBe(1);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].step_id).toBe("step_place_2");
+    expect(snap.placements[0].baseline_version).toBe(2);
+    expect(snap.placements[0].start_day_index).toBe(5);
+  });
+
+  it60("a scope-kind placement row is refused by the schedule-only CHECK", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    // The scope v1 row exists at the same version, so the FK alone
+    // would accept this row — only the CHECK refuses it.
+    await expect(insertPlacement(db, "pkg_bridge_place", "place_scope", "step_place_1", "scope", 1, 3))
+      .rejects.toThrow(/forge_work_step_curve_placements_kind_schedule_check/);
+    const { rows } = await db.query(`
+      select count(*)::int as n from forge_work_step_curve_placements
+      where owner_id = '${OWNER_A}' and work_package_id = 'pkg_bridge_place';
+    `);
+    expect(rows[0].n).toBe(0);
   });
 });

@@ -7,6 +7,13 @@
 // monotonic version_number. The current baseline is max(version_number) —
 // supersession is derived by ordering, never by editing old rows (the DB
 // trigger blocks UPDATE/DELETE).
+//
+// forge_work_package_baselines carries two version series, split by
+// baseline_kind (bridge migration 20261116000000, fix round 1): 'scope'
+// rows version with the scope chain (written by the scope RPCs) and
+// 'schedule' rows version in their own series (written here). This
+// module reads and writes the 'schedule' series only — a scheduling
+// freeze can never collide with a scope-paired row at the same version.
 
 import {
   percentComplete,
@@ -36,23 +43,26 @@ function newId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
-// Current baseline = highest version_number for the package.
+// Current SCHEDULE baseline = highest version_number among kind='schedule'
+// rows for the package.
 async function getCurrentBaseline(db, ownerId, packageId) {
   const { data, error } = await db.from(TABLES.baselines)
     .select("*").eq("owner_id", ownerId).eq("package_id", packageId)
+    .eq("baseline_kind", "schedule")
     .order("version_number", { ascending: false }).limit(1)
     .maybeSingle();
   if (error) throw error;
   return data || null;
 }
 
-// The baseline a snapshot was recorded against — by its NAMED version.
-// Variances for a snapshot must always resolve against this version, never
-// the current one: re-baselining must not rewrite recorded history
-// (reviewer finding, PR #549).
+// The SCHEDULE baseline a snapshot was recorded against — by its NAMED
+// version. Variances for a snapshot must always resolve against this
+// version, never the current one: re-baselining must not rewrite recorded
+// history (reviewer finding, PR #549).
 async function getBaselineVersion(db, ownerId, packageId, versionNumber) {
   const { data, error } = await db.from(TABLES.baselines)
     .select("*").eq("owner_id", ownerId).eq("package_id", packageId)
+    .eq("baseline_kind", "schedule")
     .eq("version_number", versionNumber).limit(1)
     .maybeSingle();
   if (error) throw error;
@@ -83,7 +93,7 @@ async function getPackageConfig(db, ownerId, packageId) {
 // Freeze a new baseline version. The version number is max+1; the previous
 // version is superseded by ordering, never by edit.
 // Concurrent freezes can race on max+1 — a unique-violation on
-// (owner_id, package_id, version_number) retries with a fresh max
+// (owner_id, package_id, baseline_kind, version_number) retries with a fresh max
 // (reviewer finding, PR #549).
 export async function freezeBaseline(db, { ownerId, packageId, baseline, frozenBy }) {
   const actor = requireAttribution(frozenBy, "frozenBy");
@@ -96,6 +106,7 @@ export async function freezeBaseline(db, { ownerId, packageId, baseline, frozenB
       owner_id: ownerId,
       package_id: packageId,
       version_number: versionNumber,
+      baseline_kind: "schedule",
       baseline_start: baseline.start,
       baseline_finish: baseline.finish,
       baseline_hours: baseline.hours,
