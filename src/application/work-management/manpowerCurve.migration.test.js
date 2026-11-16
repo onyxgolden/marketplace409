@@ -1099,4 +1099,86 @@ describe("slice 6 + bridge integration: manpower snapshot resolves schedule rows
       packageId: "pkg_nobaseline", stepId: step.id, baselineVersion: 1, startDay: 3,
     })).rejects.toThrow(/WPP6_BASELINE_NOT_FOUND/);
   });
+
+  // Fix round 2 (ChatGPT NEEDS CHANGES, Finding 1): placement
+  // readers resolved a version number across the new independent
+  // scope/schedule series. These cases prove the placement path
+  // binds the schedule series in both divergent shapes — scope v2
+  // + schedule v1, and scope v1 + schedule v2 — including
+  // same-number scope/schedule rows, and that the schema itself
+  // refuses a scope-kind placement row.
+  it60("scope v2 + schedule v1: the schedule-v1 placement still appears in the snapshot", async () => {
+    // The scope series has run ahead of the schedule series. A
+    // placement anchored to the current schedule v1 must neither
+    // disappear from the snapshot nor be staled by the newer scope
+    // version.
+    await db.query(`
+      insert into forge_work_package_baselines
+        (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+         baseline_hours, baseline_cost, frozen_by)
+      values ('${OWNER_A}', 'pkg_a', 2, 'scope', '2026-11-01', '2026-11-30', 999, 999000, '${OWNER_A}');
+    `);
+    const step = await createStep(db, OWNER_A, {});
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 1, startDay: 3 });
+    expect(placed.baseline_kind).toBe("schedule");
+    const snap = await snapshot(db, OWNER_A, {});
+    expect(snap.baseline.version_number).toBe(1);
+    expect(snap.placements.map((p) => p.step_id)).toContain(step.id);
+    expect(snap.placements.find((p) => p.step_id === step.id).start_day_index).toBe(3);
+    // The placement can still be moved and cleared with scope v2
+    // in place: only a newer SCHEDULE version stales it.
+    const moved = await setPlacement(db, OWNER_A, {
+      stepId: step.id, baselineVersion: 1, startDay: 4, expectedVersion: placed.version,
+      reason: "Moving the step later in the window.",
+    });
+    expect(moved.version).toBe(placed.version + 1);
+    expect(moved.start_day_index).toBe(4);
+    const cleared = await clearPlacement(db, OWNER_A, placed.id, { expectedVersion: moved.version, reason: "Resequencing." });
+    expect(cleared.retired_at).not.toBeNull();
+  });
+
+  it60("scope v1 + schedule v2: the snapshot shows the current schedule placement, not the stale same-number row", async () => {
+    // The schedule series has run ahead while the scope series sits
+    // at v1. The snapshot must show the schedule-v2 placement and
+    // omit the schedule-v1 placement — never bind the v1 row
+    // because the scope series happens to sit at v1.
+    await addBaseline(db, { packageId: "pkg_a", version: 2, start: "2026-11-09", finish: "2026-11-18" });
+    const oldStep = await createStep(db, OWNER_A, { title: "Old step" });
+    // A v1 placement placed before the v2 freeze: insert directly
+    // (the RPC now refuses v1 as stale, which is correct).
+    await db.query(`
+      insert into forge_work_step_curve_placements
+        (owner_id, id, work_package_id, step_id, baseline_kind, baseline_version,
+         start_day_index, version, created_by, updated_by)
+      values ('${OWNER_A}', 'place_old_v1', 'pkg_a', '${oldStep.id}', 'schedule', 1,
+        3, 1, '${OWNER_A}', '${OWNER_A}');
+    `);
+    // Placing against the superseded schedule v1 is refused.
+    const staleStep = await createStep(db, OWNER_A, { title: "Stale step" });
+    await expect(setPlacement(db, OWNER_A, { stepId: staleStep.id, baselineVersion: 1, startDay: 3 }))
+      .rejects.toThrow(/WPP6_BASELINE_STALE/);
+    const step = await createStep(db, OWNER_A, { title: "Current step" });
+    const placed = await setPlacement(db, OWNER_A, { stepId: step.id, baselineVersion: 2, startDay: 5 });
+    expect(placed.baseline_version).toBe(2);
+    const snap = await snapshot(db, OWNER_A, {});
+    expect(snap.baseline.version_number).toBe(2);
+    expect(snap.placements.map((p) => p.step_id)).toEqual([step.id]);
+    expect(snap.placements[0].start_day_index).toBe(5);
+  });
+
+  it60("a scope-kind placement row is refused by the schedule-only CHECK", async () => {
+    // The scope v1 row exists at the same version, so the FK alone
+    // would accept this row — only the CHECK refuses it.
+    const step = await createStep(db, OWNER_A, {});
+    await expect(db.query(`
+      insert into forge_work_step_curve_placements
+        (owner_id, id, work_package_id, step_id, baseline_kind, baseline_version,
+         start_day_index, version, created_by, updated_by)
+      values ('${OWNER_A}', 'place_scope_v1', 'pkg_a', '${step.id}', 'scope', 1,
+        3, 1, '${OWNER_A}', '${OWNER_A}');
+    `)).rejects.toThrow(/forge_work_step_curve_placements_kind_schedule_check/);
+    // ...and no such row survived the refusal.
+    const rows = await placementRows(db, step.id);
+    expect(rows).toHaveLength(0);
+  });
 });

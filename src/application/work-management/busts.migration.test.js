@@ -1655,3 +1655,104 @@ describe("slice 9 + bridge integration: busts against bridge-created baselines (
     }), "WPP9_INVALID_BASELINE");
   });
 });
+
+// Bridge integration (fix round 2, ChatGPT NEEDS CHANGES Finding 1):
+// the bust snapshot's placements CTE compared placement versions
+// against the SCOPE baseline. With independent per-kind series the
+// two version numbers are unrelated, so a divergent pair dropped
+// current placements or bound a stale same-number row. The replaced
+// snapshot now resolves placements against the latest SCHEDULE
+// baseline and filters placement kind. These cases prove both
+// divergent shapes — scope v2 + schedule v1, and scope v1 +
+// schedule v2 — including same-number scope/schedule rows, plus
+// the schedule-only placement CHECK.
+async function setupDivergentPackage(db, packageId) {
+  await db.exec(`
+    insert into forge_work_packages (owner_id, id, status, planned_start, planned_finish)
+    values ('${OWNER_A}', '${packageId}', 'in_progress', '2026-11-16', '2026-11-20');
+    insert into forge_work_steps
+      (owner_id, id, work_package_id, title, sequence_no, craft_key, craft_label,
+       planned_duration_days, planned_person_hours, version, retired_at)
+    values ('${OWNER_A}', 'step_place_1', '${packageId}', 'Fabricate pipe spool', 1,
+      'pipefitters', 'Pipefitters', 4, 10, 1, null),
+      ('${OWNER_A}', 'step_place_2', '${packageId}', 'Weld spool', 2,
+      'welders', 'Welders', 2, 20, 1, null);
+  `);
+}
+
+async function insertBaseline(db, packageId, version, kind, hours) {
+  await db.query(`
+    insert into forge_work_package_baselines
+      (owner_id, package_id, version_number, baseline_kind, baseline_start, baseline_finish,
+       baseline_hours, baseline_cost, frozen_by)
+    values ('${OWNER_A}', '${packageId}', ${version}, '${kind}',
+      '2026-11-16', '2026-11-20', ${hours}, ${hours * 1000}, '${OWNER_A}');
+  `);
+}
+
+async function insertPlacement(db, packageId, placementId, stepId, kind, version, startDay) {
+  await db.query(`
+    insert into forge_work_step_curve_placements
+      (owner_id, id, work_package_id, step_id, baseline_kind, baseline_version,
+       start_day_index, version, retired_at)
+    values ('${OWNER_A}', '${placementId}', '${packageId}', '${stepId}', '${kind}', ${version},
+      ${startDay}, 1, null);
+  `);
+}
+
+describe("slice 9 + bridge integration: bust snapshot placements resolve the schedule series (fix round 2)", () => {
+  let db;
+  beforeEach(async () => {
+    db = await setupBridgeDb();
+  }, 60000);
+  afterEach(async () => { await db?.close(); }, 60000);
+
+  it60("(d) scope v2 + schedule v1: the bust snapshot still returns the schedule-v1 placement", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    await insertBaseline(db, "pkg_bridge_place", 2, "scope", 11);
+    await insertPlacement(db, "pkg_bridge_place", "place_d1", "step_place_1", "schedule", 1, 3);
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge_place");
+    // The scope series has run to v2; the placement is anchored to
+    // the current schedule v1. Under the old scope-version
+    // comparison it disappeared from the snapshot entirely.
+    expect(snap.baseline.version_number).toBe(2);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].step_id).toBe("step_place_1");
+    expect(snap.placements[0].baseline_version).toBe(1);
+    expect(snap.placements[0].start_day_index).toBe(3);
+  });
+
+  it60("(e) scope v1 + schedule v2: the bust snapshot returns the current schedule placement, not the stale same-number row", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 2, "schedule", 99);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    await insertPlacement(db, "pkg_bridge_place", "place_e1", "step_place_1", "schedule", 1, 3);
+    await insertPlacement(db, "pkg_bridge_place", "place_e2", "step_place_2", "schedule", 2, 5);
+    const snap = await snapshot(db, OWNER_A, "pkg_bridge_place");
+    // Under the old scope-version comparison the snapshot returned
+    // the stale v1 placement and omitted the current v2 placement.
+    expect(snap.baseline.version_number).toBe(1);
+    expect(snap.placements).toHaveLength(1);
+    expect(snap.placements[0].step_id).toBe("step_place_2");
+    expect(snap.placements[0].baseline_version).toBe(2);
+    expect(snap.placements[0].start_day_index).toBe(5);
+  });
+
+  it60("a scope-kind placement row is refused by the schedule-only CHECK", async () => {
+    await setupDivergentPackage(db, "pkg_bridge_place");
+    await insertBaseline(db, "pkg_bridge_place", 1, "schedule", 20);
+    await insertBaseline(db, "pkg_bridge_place", 1, "scope", 10);
+    // The scope v1 row exists at the same version, so the FK alone
+    // would accept this row — only the CHECK refuses it.
+    await expect(insertPlacement(db, "pkg_bridge_place", "place_scope", "step_place_1", "scope", 1, 3))
+      .rejects.toThrow(/forge_work_step_curve_placements_kind_schedule_check/);
+    const { rows } = await db.query(`
+      select count(*)::int as n from forge_work_step_curve_placements
+      where owner_id = '${OWNER_A}' and work_package_id = 'pkg_bridge_place';
+    `);
+    expect(rows[0].n).toBe(0);
+  });
+});

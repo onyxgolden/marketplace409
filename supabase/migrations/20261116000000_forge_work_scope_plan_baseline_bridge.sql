@@ -108,6 +108,15 @@
 -- target table, not by name (slice 6 left it unnamed), and the
 -- whole block is skipped when the placements table does not exist
 -- (e.g. a fixture that never applied slice 6).
+--
+-- Fix round 2: the placement invariant is now enforced by the
+-- schema itself — a placement row can only carry baseline_kind =
+-- 'schedule'. No legitimate scope placement exists (the only
+-- placement writers are the slice-6 / bridge placement_set RPCs,
+-- which stamp 'schedule'), so the fix-round-1 permissive check
+-- (scope | schedule) is replaced by a schedule-only check, and
+-- the migration fails closed if any placement row already carries
+-- a non-schedule kind. The composite FK is retained.
 -- ---------------------------------------------------------------------------
 alter table forge_work_package_baselines
   add column if not exists baseline_kind text not null default 'schedule'
@@ -123,8 +132,8 @@ begin
     execute $q$
       alter table public.forge_work_step_curve_placements
         add column if not exists baseline_kind text not null default 'schedule'
-          constraint forge_work_step_curve_placements_kind_check
-            check (baseline_kind in ('scope', 'schedule'))
+          constraint forge_work_step_curve_placements_kind_schedule_check
+            check (baseline_kind = 'schedule')
     $q$;
     select conname into v_fk from pg_constraint
     where conrelid = 'public.forge_work_step_curve_placements'::regclass
@@ -165,6 +174,48 @@ begin
             references public.forge_work_package_baselines
               (owner_id, package_id, baseline_kind, version_number)
             on delete restrict
+      $q$;
+    end if;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Fix round 2: enforce the schedule-only placement invariant.
+-- The column add above stamps the schedule-only check on a fresh
+-- apply, but it is a no-op wherever the column already exists
+-- (re-apply, or a fixture that stubs the column — with or without
+-- the fix-round-1 permissive check). This block closes both gaps:
+-- it drops the permissive check wherever it exists, adds the
+-- schedule-only check wherever it is absent, and fails closed if
+-- any placement row already carries a non-schedule kind — the
+-- migration aborts rather than silently redefining that row's
+-- meaning. Idempotent on re-apply.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if to_regclass('public.forge_work_step_curve_placements') is not null then
+    if exists (
+      select 1 from public.forge_work_step_curve_placements
+      where baseline_kind <> 'schedule'
+    ) then
+      raise exception 'forge_work: scope-kind placement rows exist; refusing to enforce the schedule-only placement invariant';
+    end if;
+    if exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_step_curve_placements_kind_check'
+        and conrelid = 'public.forge_work_step_curve_placements'::regclass
+    ) then
+      execute 'alter table public.forge_work_step_curve_placements drop constraint forge_work_step_curve_placements_kind_check';
+    end if;
+    if not exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_step_curve_placements_kind_schedule_check'
+        and conrelid = 'public.forge_work_step_curve_placements'::regclass
+    ) then
+      execute $q$
+        alter table public.forge_work_step_curve_placements
+          add constraint forge_work_step_curve_placements_kind_schedule_check
+            check (baseline_kind = 'schedule')
       $q$;
     end if;
   end if;
@@ -578,6 +629,20 @@ end $$;
 -- schedule-only. Without the filters a placement could anchor to a
 -- scope row and fail on the moved FK with a raw error, or be falsely
 -- staled by a newer scope version.
+--
+-- Fix round 2: the placement version is now resolved against the
+-- SCHEDULE series everywhere, never the scope series, and every
+-- placement reader/RPC enforces schedule kind. The bust snapshot
+-- resolves placements against the latest schedule baseline (its
+-- `baseline` CTE is the scope row, so comparing placement versions
+-- to it drops current placements once the series diverge); the
+-- manpower snapshot joins placements to the schedule baseline by
+-- version AND kind; placement_set looks up and inserts schedule
+-- rows only; placement_clear rejects a non-schedule row outright.
+-- Together with the schedule-only CHECK above, a placement is
+-- identified by (baseline_kind, baseline_version) with kind always
+-- 'schedule' — the version integer is never again treated as
+-- globally meaningful.
 -- ---------------------------------------------------------------------------
 create or replace function public.forge_work_package_busts_snapshot(
   p_owner_id text,
@@ -639,13 +704,28 @@ begin
     where owner_id = p_owner_id and work_package_id = p_package_id
       and retired_at is null
   ),
+  -- Placements are schedule artifacts: resolve them against the
+  -- latest SCHEDULE baseline, never the scope `baseline` above.
+  -- With independent per-kind series the two version numbers are
+  -- unrelated — comparing a placement's version to the scope
+  -- version drops current placements (scope v2 + schedule v1) or
+  -- binds a stale same-number row (scope v1 + schedule v2).
+  schedule_baseline as (
+    select id, version_number
+    from public.forge_work_package_baselines
+    where owner_id = p_owner_id and package_id = p_package_id
+      and baseline_kind = 'schedule'
+    order by version_number desc
+    limit 1
+  ),
   placements as (
     select p.id, p.step_id, p.baseline_version, p.start_day_index, p.version
     from public.forge_work_step_curve_placements p
     where p.owner_id = p_owner_id and p.work_package_id = p_package_id
       and p.retired_at is null
+      and p.baseline_kind = 'schedule'
       and (p.baseline_version is null
-        or p.baseline_version = (select version_number from baseline))
+        or p.baseline_version = (select version_number from schedule_baseline))
   ),
   assignments as (
     select work_date, craft_key, craft_label, shift_key, crew_size, hours_per_person
@@ -787,6 +867,13 @@ begin
       on s.owner_id = p.owner_id and s.id = p.step_id and s.retired_at is null
     where p.owner_id = p_owner_id and p.work_package_id = p_package_id
       and p.retired_at is null
+      -- Fix round 2: the version number alone is not an identity
+      -- across the independent scope/schedule series — a placement
+      -- only joins its schedule baseline when it carries the
+      -- schedule kind (the schema CHECK now enforces this; the
+      -- filter keeps the reader correct for every row the schema
+      -- permits).
+      and p.baseline_kind = 'schedule'
   ),
   assignments as (
     select id, work_date, craft_key, craft_label, crew_size, hours_per_person, version
@@ -1214,10 +1301,16 @@ begin
     raise exception 'WPP6_PLACEMENT_OUTSIDE_WINDOW:%', p_step_id;
   end if;
 
+  -- Fix round 2: the lookup is kind-scoped. The version number
+  -- alone is not an identity across the independent scope/schedule
+  -- series — without the kind filter a scope-kind placement at the
+  -- same number could be selected and updated as though it were
+  -- the schedule placement.
   select * into v_placement
   from public.forge_work_step_curve_placements
   where owner_id = p_owner_id and work_package_id = p_package_id
     and step_id = p_step_id and baseline_version = p_baseline_version
+    and baseline_kind = 'schedule'
     and retired_at is null
   for update;
 
@@ -1256,11 +1349,14 @@ begin
     end if;
 
     v_placement_id := 'forge_wpsp_' || replace(gen_random_uuid()::text, '-', '');
+    -- Fix round 2: stamp the kind explicitly. The column default
+    -- is 'schedule' and the schema CHECK enforces it, but the RPC
+    -- must not rely on the default to keep the placement invariant.
     insert into public.forge_work_step_curve_placements (
-      owner_id, id, work_package_id, step_id, baseline_version, start_day_index,
+      owner_id, id, work_package_id, step_id, baseline_kind, baseline_version, start_day_index,
       version, created_by, updated_by
     ) values (
-      p_owner_id, v_placement_id, p_package_id, p_step_id, p_baseline_version, p_start_day_index,
+      p_owner_id, v_placement_id, p_package_id, p_step_id, 'schedule', p_baseline_version, p_start_day_index,
       1, v_actor_id, v_actor_id
     );
 
@@ -1320,6 +1416,14 @@ begin
   where owner_id = p_owner_id and id = p_placement_id
   for update;
   if not found then
+    raise exception 'WPP6_PLACEMENT_NOT_FOUND';
+  end if;
+  -- Fix round 2: placements are schedule artifacts. A row whose
+  -- kind is not 'schedule' is not a schedule placement — reject it
+  -- outright instead of clearing it against the schedule series.
+  -- (The schema CHECK now forbids such rows; this is the reader's
+  -- own enforcement for every row the schema permits.)
+  if v_placement.baseline_kind <> 'schedule' then
     raise exception 'WPP6_PLACEMENT_NOT_FOUND';
   end if;
   if v_placement.retired_at is not null then
