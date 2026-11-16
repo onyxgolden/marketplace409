@@ -150,6 +150,25 @@ export class FinancialReadModelApplication {
       );
     }
 
+    // S1 (load-times slice 1): per-request memoization. This instance is
+    // built fresh per request — createFinancialApplicationSuite constructs
+    // a new one per suite call and the suite is memoized per
+    // createAuthenticatedForgeApplication call — so a promise cached here
+    // can never leak across requests or owners. The /forge page fires the
+    // four dashboard builders plus a direct buildWorkspace concurrently
+    // (and the canonical-intelligence builder fires buildDashboard first);
+    // all of them share one workspace build, one position build, and one
+    // dashboard build per owner+scope instead of each re-scanning the
+    // owner's full financial-event history. Promises are cached, not
+    // resolved values, so concurrent callers share the in-flight scan.
+    // A rejected promise is evicted, never cached: a later call in the
+    // same request retries instead of replaying the failure.
+    this._requestMemo = {
+      workspaces: new Map(),
+      dashboards: new Map(),
+      positions: new Map(),
+    };
+
     this.financialWorkspaceQueryService =
       financialWorkspaceQueryService;
 
@@ -212,19 +231,66 @@ export class FinancialReadModelApplication {
     throw new Error(`Unsupported financial workspace scope: ${scope}`);
   }
 
+  // S1: share one in-flight promise per key across concurrent callers in
+  // this request; never cache a rejection.
+  _memoize(map, key, build) {
+    const cached = map.get(key);
+
+    if (cached) {
+      return cached;
+    }
+
+    const promise = build();
+
+    map.set(key, promise);
+    promise.catch(() => {
+      if (map.get(key) === promise) {
+        map.delete(key);
+      }
+    });
+
+    return promise;
+  }
+
   async buildWorkspace(ownerId = null, { scope } = {}) {
     const resolvedOwnerId =
       ownerId || await this.resolveOwnerId();
-
-    return this.financialWorkspaceQueryService.buildWorkspace(
+    const resolvedScope = this.resolveWorkspaceScope(scope);
+    const key = JSON.stringify([
       resolvedOwnerId,
-      { scope: this.resolveWorkspaceScope(scope) },
+      resolvedScope,
+    ]);
+
+    return this._memoize(
+      this._requestMemo.workspaces,
+      key,
+      () =>
+        this.financialWorkspaceQueryService.buildWorkspace(
+          resolvedOwnerId,
+          { scope: resolvedScope },
+        ),
     );
   }
 
   async buildDashboard({ scope } = {}) {
     const ownerId = await this.resolveOwnerId();
-    const workspace = await this.buildWorkspace(ownerId, { scope });
+    const resolvedScope = this.resolveWorkspaceScope(scope);
+    const key = JSON.stringify([
+      ownerId,
+      resolvedScope,
+    ]);
+
+    return this._memoize(
+      this._requestMemo.dashboards,
+      key,
+      () => this._buildDashboard(ownerId, resolvedScope),
+    );
+  }
+
+  async _buildDashboard(ownerId, resolvedScope) {
+    const workspace = await this.buildWorkspace(ownerId, {
+      scope: resolvedScope,
+    });
     const activityDashboard =
       this.readModelAdapter.buildDashboard(workspace);
 
@@ -235,10 +301,7 @@ export class FinancialReadModelApplication {
       });
     }
 
-    const position =
-      await this.financialPositionQueryService.buildPosition(
-        ownerId,
-      );
+    const position = await this._buildPosition(ownerId);
 
     const positionProjection =
       this.financialPositionReadModelAdapter.buildPosition(position);
@@ -250,6 +313,17 @@ export class FinancialReadModelApplication {
         positionProjection,
       }),
     });
+  }
+
+  async _buildPosition(ownerId) {
+    return this._memoize(
+      this._requestMemo.positions,
+      ownerId,
+      () =>
+        this.financialPositionQueryService.buildPosition(
+          ownerId,
+        ),
+    );
   }
 
   async buildFinancialDashboard({ scope } = {}) {

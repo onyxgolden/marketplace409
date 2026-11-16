@@ -9,6 +9,7 @@ import {
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   createForgeApplicationSuite: vi.fn(),
+  headers: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -20,6 +21,10 @@ vi.mock("@/infrastructure/composition", () => ({
     mocks.createForgeApplicationSuite,
 }));
 
+vi.mock("next/headers", () => ({
+  headers: mocks.headers,
+}));
+
 import {
   createAuthenticatedForgeApplication,
 } from "./createAuthenticatedForgeApplication";
@@ -27,6 +32,10 @@ import {
 describe("createAuthenticatedForgeApplication", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // S1: by default no validated-user header is present, so every
+    // pre-existing test exercises the getUser() fallback exactly as
+    // before this slice.
+    mocks.headers.mockResolvedValue(new Headers());
   });
 
   it("creates an authenticated forge application suite", async () => {
@@ -194,5 +203,117 @@ describe("createAuthenticatedForgeApplication", () => {
     expect(
       mocks.createForgeApplicationSuite,
     ).not.toHaveBeenCalled();
+  });
+
+  it("S1: trusts the proxy-validated user header and skips getUser()", async () => {
+    const getUser = vi.fn();
+
+    const supabaseClient = {
+      auth: { getUser },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          then: (resolve) => resolve({ data: [], error: null }),
+        })),
+      })),
+    };
+
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createForgeApplicationSuite.mockResolvedValue({});
+    mocks.headers.mockResolvedValue(
+      new Headers({
+        "x-forge-auth-user": JSON.stringify({
+          id: "owner-1",
+          email: "owner@example.com",
+        }),
+      }),
+    );
+
+    const result =
+      await createAuthenticatedForgeApplication();
+
+    expect(getUser).not.toHaveBeenCalled();
+    expect(result.user).toEqual({
+      id: "owner-1",
+      email: "owner@example.com",
+    });
+    expect(result.effectiveOwnerId).toBe("owner-1");
+    await expect(
+      result.currentOwnerId(),
+    ).resolves.toBe("owner-1");
+  });
+
+  it("S1: falls back to getUser() when the validated-user header is malformed", async () => {
+    const user = { id: "owner-1", email: "owner@example.com" };
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user },
+          error: null,
+        }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          then: (resolve) => resolve({ data: [], error: null }),
+        })),
+      })),
+    };
+
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createForgeApplicationSuite.mockResolvedValue({});
+    mocks.headers.mockResolvedValue(
+      new Headers({ "x-forge-auth-user": "not-json{" }),
+    );
+
+    const result =
+      await createAuthenticatedForgeApplication();
+
+    expect(supabaseClient.auth.getUser).toHaveBeenCalledTimes(1);
+    expect(result.user).toBe(user);
+    expect(result.effectiveOwnerId).toBe("owner-1");
+  });
+
+  it("S1: falls back to getUser() when the validated-user header is absent", async () => {
+    // Fix round 1 (ChatGPT NEEDS CHANGES, PR #818 review
+    // 2026-11-16): this is the context the proxy produces when
+    // getUser() reports an error — no header is forwarded, so the
+    // factory must take its own getUser() check instead of
+    // trusting any identity. Mirrors the malformed-header test,
+    // but with the header absent rather than unparseable.
+    const user = { id: "owner-1", email: "owner@example.com" };
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user },
+          error: null,
+        }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          then: (resolve) => resolve({ data: [], error: null }),
+        })),
+      })),
+    };
+
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createForgeApplicationSuite.mockResolvedValue({});
+    mocks.headers.mockResolvedValue(new Headers());
+
+    const result =
+      await createAuthenticatedForgeApplication();
+
+    expect(supabaseClient.auth.getUser).toHaveBeenCalledTimes(1);
+    expect(result.user).toBe(user);
+    expect(result.effectiveOwnerId).toBe("owner-1");
   });
 });
