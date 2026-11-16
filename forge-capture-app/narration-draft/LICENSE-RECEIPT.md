@@ -15,12 +15,18 @@ no Python — llama.cpp's own CLI binary does the forward pass.
 - Asset SHA-256: `d17f82517cf6b5ee501953cc41ca1cdea0c2fb2a0aedd62b5c61e7b4fa6437bd`
   (25,219,626 bytes)
 - Binary invoked at runtime: `llama-cli.exe`
-  (SHA-256 `514ddd4891ab40de63f7535634a4f140badb96bf7e20272af1774471e99e5ae4`),
-  which loads `llama-cli-impl.dll`
-  (SHA-256 `03e0ff01d9d8445a25832dfba80dd9403195fc3b5ff9b9b1ecb27e9f6aeacfe1`)
-  plus the bundled `ggml*.dll` CPU backends extracted from the same pinned zip.
-  The Rust wrapper (`narration_draft.rs`) checks the invoked exe + impl-dll
-  hashes before every run; a changed binary fails closed.
+  (SHA-256 `514ddd4891ab40de63f7535634a4f140badb96bf7e20272af1774471e99e5ae4`).
+  Fix round 1 (P2): the Rust wrapper (`narration_draft.rs`,
+  `LLAMA_CPP_PACK_FILES`) now pins and verifies EVERY file this binary can
+  dynamically load at runtime, not just the exe and its one impl DLL — llama.cpp
+  picks its CPU backend at runtime from several `ggml-cpu-*.dll` variants
+  depending on detected CPU features, so a substituted file in any of them was a
+  real gap. The full pinned set (21 files, all from the same pinned zip):
+  `llama-cli.exe`, `llama-cli-impl.dll`, `llama.dll`, `llama-common.dll`,
+  `ggml.dll`, `ggml-base.dll`, `libomp.dll`, and all 14 `ggml-cpu-*.dll` variants
+  (alderlake, cannonlake, cascadelake, cooperlake, haswell, icelake, ivybridge,
+  piledriver, sandybridge, sapphirerapids, skylakex, sse42, x64, zen4). Every
+  hash is checked before every generation request; a changed file fails closed.
 - Installed at: `C:\forge-bridge\pptx-narration\llama-cpp\b12444-win-cpu-x64\`
   (outside git — the receipt and hashes below are what make this reproducible,
   not a committed binary).
@@ -67,9 +73,12 @@ new PPE policy) with no invented numbers or claims — see
 ## Reproducibility
 
 `C:\forge-bridge\pptx-narration\receipt.json` records every hash above plus the
-asset URLs and install paths. The Rust wrapper reads this receipt at startup,
-re-verifies both the model file's SHA-256 and the invoked llama-cli.exe /
-llama-cli-impl.dll SHA-256 against the pinned constants in `narration_draft.rs`
+asset URLs and install paths, as a human-readable provenance record. **Fix round
+1 correction:** the Rust wrapper does NOT read this JSON file at startup or at
+any point — an earlier version of this document claimed it did; that was never
+true. The pinned `LLAMA_CPP_PACK_FILES` / `MODEL_GGUF_SHA256` constants compiled
+into `narration_draft.rs` are the only thing the running code ever checks,
+against the files actually present at `C:\forge-bridge\pptx-narration\` on disk
 (not just against the receipt — the receipt could itself be tampered with; the
 pinned constants are the real source of truth, same pattern as the OCR sidecar's
 `model_pack::verify_model_pack`), and refuses to generate if either mismatches.

@@ -174,6 +174,30 @@ describe("applyGeneratedDraft", () => {
     expect(step.generatedSuggestion).toBe("Original draft."); // unchanged by the edit
     expect(step.currentText).toBe("User's rewritten version.");
   });
+
+  it("fix round 1: archives the prior generated suggestion into revisionHistory on regeneration", () => {
+    let manifest = setInitialSteps(fourSlideManifest(), buildInitialSteps(fourSlideManifest()));
+    manifest = applyGeneratedDraft(manifest, "step-slide-2", "First generated draft.");
+    expect(findStep(manifest, "step-slide-2").revisionHistory).toEqual([]);
+    manifest = applyGeneratedDraft(manifest, "step-slide-2", "Second generated draft.");
+    const step = findStep(manifest, "step-slide-2");
+    expect(step.generatedSuggestion).toBe("Second generated draft.");
+    expect(step.revisionHistory).toHaveLength(1);
+    expect(step.revisionHistory[0].generatedSuggestion).toBe("First generated draft.");
+    // A third regeneration archives the second, keeping both prior ones.
+    manifest = applyGeneratedDraft(manifest, "step-slide-2", "Third generated draft.");
+    const step2 = findStep(manifest, "step-slide-2");
+    expect(step2.revisionHistory.map((r) => r.generatedSuggestion)).toEqual([
+      "First generated draft.",
+      "Second generated draft.",
+    ]);
+  });
+
+  it("the first draft for a step has nothing to archive yet", () => {
+    let manifest = setInitialSteps(fourSlideManifest(), buildInitialSteps(fourSlideManifest()));
+    manifest = applyGeneratedDraft(manifest, "step-slide-2", "Only draft so far.");
+    expect(findStep(manifest, "step-slide-2").revisionHistory).toEqual([]);
+  });
 });
 
 describe("markGenerationFailed — model absent/timeout/invalid output never falls back to a cloud call", () => {

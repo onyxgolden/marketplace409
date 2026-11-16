@@ -165,7 +165,14 @@ export function setInitialSteps(manifest, steps) {
  * pending generation. Sets BOTH the immutable suggestion and the current
  * editable text (brief §4 Slice 2: "Generated suggestions remain
  * separately recoverable" — recoverable via `generatedSuggestion`, never
- * silently merged away by a later edit). */
+ * silently merged away by a later edit).
+ *
+ * Fix round 1 (non-blocking observation): a REGENERATION (the step
+ * already had a `generatedSuggestion` from a prior draft) pushes that
+ * prior suggestion into `revisionHistory` before it's overwritten, so
+ * every past generation stays recoverable, not just the most recent
+ * one. The first draft for a step (no prior suggestion) has nothing to
+ * archive yet. */
 export function applyGeneratedDraft(manifest, stepId, draftText) {
   const trimmed = (draftText || "").trim();
   const next = updateStep(manifest, stepId, (step) => ({
@@ -174,6 +181,10 @@ export function applyGeneratedDraft(manifest, stepId, draftText) {
     currentText: trimmed,
     needsGeneration: false,
     previousText: step.currentText,
+    revisionHistory:
+      step.generatedSuggestion !== null
+        ? [...step.revisionHistory, { at: new Date().toISOString(), generatedSuggestion: step.generatedSuggestion }]
+        : step.revisionHistory,
   }));
   return touchManifest(next, "narration-drafted", `Generated a narration draft for “${findStep(next, stepId).title}.”`);
 }
