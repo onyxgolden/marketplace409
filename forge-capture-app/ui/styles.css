@@ -646,3 +646,75 @@ input[type="search"] {
     width: 100%;
   }
 }
+
+/* ---- Create video (Phase 3 Slice 1) ---- */
+
+#panel-create-video {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0 8px 8px 8px;
+  padding: 16px;
+  max-width: 980px;
+}
+
+.pptx-panel { display: flex; flex-direction: column; gap: 12px; }
+.pptx-intro { margin: 0; color: var(--text); }
+.pptx-hint { color: var(--muted); font-size: 12px; margin: 0; }
+
+.pptx-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.pptx-dropzone.dragging { border-color: var(--accent); background: #23211a; }
+.pptx-dropzone p { margin: 6px 0; }
+
+.pptx-project-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pptx-project-item { width: 100%; text-align: left; }
+
+.pptx-project-head, .pptx-rename-row, .pptx-select-row, .pptx-danger-row {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+}
+.pptx-project-count { color: var(--muted); font-size: 13px; margin-left: auto; }
+.pptx-rename-row .field { flex: 1 1 280px; }
+.pptx-rename-row .field input { width: 100%; }
+
+.pptx-warnings {
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.pptx-warnings ul { margin: 6px 0 0; padding-left: 18px; }
+
+.pptx-slide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.pptx-slide-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+}
+.pptx-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #000;
+  border-radius: 4px;
+}
+.pptx-slide-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; cursor: pointer; }
+.pptx-slide-check input { margin-top: 2px; }
+.pptx-notes { margin: 0; font-size: 13px; color: var(--text); }
+
+@media (max-width: 640px) {
+  #panel-create-video .row { flex-direction: column; align-items: stretch; }
+  .pptx-project-count { margin-left: 0; }
+}

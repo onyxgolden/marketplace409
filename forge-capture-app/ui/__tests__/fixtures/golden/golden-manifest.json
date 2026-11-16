@@ -1,0 +1,86 @@
+{
+  "generatedBy": "generate-goldens.mjs",
+  "goldens": [
+    {
+      "file": "synthetic-slide-1.svg",
+      "deck": "synthetic-4-slide-16x9.pptx",
+      "slideIndex": 0,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "1bd52aa5b62c81aa0ea771da7d85aa3eb01728973ece4d0b06da901df31f054e",
+      "warnings": []
+    },
+    {
+      "file": "synthetic-slide-2.svg",
+      "deck": "synthetic-4-slide-16x9.pptx",
+      "slideIndex": 1,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "7ac365dadde74c59947dec0b6accdb903d12a8edbd354af230c47b2705a21256",
+      "warnings": []
+    },
+    {
+      "file": "synthetic-slide-3.svg",
+      "deck": "synthetic-4-slide-16x9.pptx",
+      "slideIndex": 2,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "be7db05b6a7cd62c645443fdb33e84a4baf23393a33e59b3baebf4743d55c78a",
+      "warnings": []
+    },
+    {
+      "file": "synthetic-slide-4.svg",
+      "deck": "synthetic-4-slide-16x9.pptx",
+      "slideIndex": 3,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "66f5dff0ec9297fa66140555636fc5bc7dc3ac921dd669712d3c8dec831d5cd9",
+      "warnings": []
+    },
+    {
+      "file": "chart-slide-1.svg",
+      "deck": "deck-16x9-table-chart.pptx",
+      "slideIndex": 0,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "52ba89dc552a33879fcaeea6894a07f70e15ae4ed112812085156142f9d2db1b",
+      "warnings": []
+    },
+    {
+      "file": "chart-slide-2.svg",
+      "deck": "deck-16x9-table-chart.pptx",
+      "slideIndex": 1,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "910362f5a548fcd3dc2bbd4dfe17bc9c1b97b3146b51892597f9edd4ba9cde6c",
+      "warnings": []
+    },
+    {
+      "file": "chart-slide-3.svg",
+      "deck": "deck-16x9-table-chart.pptx",
+      "slideIndex": 2,
+      "widthPx": 1920,
+      "heightPx": 1080.0270183924383,
+      "sha256": "aed080119f65bdc56e872819672e460789cf8a412c720b05ebe822204d7cdb9d",
+      "warnings": []
+    },
+    {
+      "file": "p6-report-wizard-slide-1.svg",
+      "deck": "p6-report-wizard-training.pptx",
+      "slideIndex": 0,
+      "widthPx": 1920,
+      "heightPx": 1440,
+      "sha256": "530cb300dcff05fcd876ba6bb9fd2d8f26a2330d0fcb545010dca2d5025cbd0d",
+      "warnings": []
+    },
+    {
+      "file": "p6-report-wizard-slide-3.svg",
+      "deck": "p6-report-wizard-training.pptx",
+      "slideIndex": 2,
+      "widthPx": 1920,
+      "heightPx": 1440,
+      "sha256": "88767d695d4205f2a3e8e41b4a9442fd3e101d509bc026103b414373a69d60e8",
+      "warnings": []
+    }
+  ]
+}

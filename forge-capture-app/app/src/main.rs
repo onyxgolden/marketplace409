@@ -53,6 +53,9 @@ mod ai_sidecar_client;
 /// parent-side supervisor, wire protocol, phase ring log. See the module
 /// docs for the contract.
 mod capture_worker;
+/// PPTX-to-video Slice 1 backend: chunked deck upload + project storage.
+/// See the module docs for the layout and safety rules.
+mod pptx_video;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -169,6 +172,11 @@ struct AppState {
     /// `finish_media_upload` / `cancel_media_upload`; abandoned uploads die
     /// with the process (no persistence, no expiry thread in Rung 4).
     media_uploads: Mutex<HashMap<String, MediaUpload>>,
+    /// In-flight chunked PPTX deck uploads (Phase 3 Slice 1), keyed by the
+    /// upload id handed to `pptx_video_begin_upload`. Same lifecycle as
+    /// media_uploads: removed by finish/cancel; abandoned uploads die with
+    /// the process.
+    pptx_uploads: Mutex<HashMap<String, pptx_video::PptxUpload>>,
     /// In-flight meeting audio uploads, keyed by the upload id handed to
     /// `meeting_upload_begin`. Unlike Rung 4 media uploads, chunks are
     /// appended to a `.meeting.part` file on disk AS THEY ARRIVE, so a
@@ -7140,6 +7148,7 @@ fn main() {
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
             media_uploads: Mutex::new(HashMap::new()),
+            pptx_uploads: Mutex::new(HashMap::new()),
             meeting_uploads: Mutex::new(HashMap::new()),
             process_capture: Mutex::new(None),
             process_capture_events: Arc::new(Mutex::new(
@@ -7218,6 +7227,17 @@ fn main() {
             append_media_chunk,
             finish_media_upload,
             cancel_media_upload,
+            pptx_video::pptx_video_begin_upload,
+            pptx_video::pptx_video_append_chunk,
+            pptx_video::pptx_video_finish_upload,
+            pptx_video::pptx_video_cancel_upload,
+            pptx_video::pptx_video_list_projects,
+            pptx_video::pptx_video_get_project,
+            pptx_video::pptx_video_save_project,
+            pptx_video::pptx_video_save_thumb,
+            pptx_video::pptx_video_read_thumb,
+            pptx_video::pptx_video_rename_project,
+            pptx_video::pptx_video_delete_project,
             session_store::forge_session_get,
             session_store::forge_session_set,
             session_store::forge_session_clear,
