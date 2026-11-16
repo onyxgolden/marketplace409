@@ -21,7 +21,18 @@ function isMac() {
 // Visible trigger for the palette -- the touch/mouse path, since there is no
 // keyboard on a phone. Fires the same open event the Cmd/Ctrl+K binding uses,
 // so any number of triggers can coexist with a single host.
-export function CommandPaletteTrigger({ expanded = false, tone = "dark", className = "" }) {
+//
+// tooltipSide: which side the icon-only hover tooltip hangs off. The default
+// ("right") hangs it off the button's right edge -- correct for the left
+// rails, where it reaches into the content area. A trigger that sits at the
+// viewport's RIGHT edge (the workspace right rail, the mobile headers) must
+// pass "left": a right-hanging tooltip there sticks out past the viewport
+// and, invisible as it is (opacity-0), still widens the document's
+// scrollable area -- a page-level horizontal scrollbar with nothing but
+// empty background to the right (D13: ~166px at 1919px on every
+// WorkspaceShell page). The left-hanging tooltip mirrors into the viewport
+// instead, exactly like the account menu's dark tooltip in the same rail.
+export function CommandPaletteTrigger({ expanded = false, tone = "dark", className = "", tooltipSide = "right" }) {
   const dark = tone !== "light";
   const shortcut = isMac() ? "⌘K" : "Ctrl K";
   return (
@@ -57,7 +68,10 @@ export function CommandPaletteTrigger({ expanded = false, tone = "dark", classNa
       ) : (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-visible:opacity-100"
+          className={[
+            "pointer-events-none absolute top-1/2 z-50 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-visible:opacity-100",
+            tooltipSide === "left" ? "right-full mr-2" : "left-full ml-2",
+          ].join(" ")}
         >
           Command palette ({shortcut})
         </span>

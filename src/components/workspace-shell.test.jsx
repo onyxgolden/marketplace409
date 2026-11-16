@@ -61,6 +61,24 @@ afterEach(() => {
   }
 });
 
+describe("WorkspaceRightRail command-palette trigger (D13)", () => {
+  it("hangs the trigger tooltip left: the rail sits at the viewport's right edge", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkspaceRightRail showCommandPalette />);
+    });
+    mounted = { container, root };
+    const trigger = container.querySelector('button[aria-label^="Open command palette"]');
+    expect(trigger).not.toBeNull();
+    const tooltip = trigger.querySelector('span[aria-hidden="true"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip.className).toContain("right-full");
+    expect(tooltip.className).not.toContain("left-full");
+  });
+});
+
 describe("WorkspaceRightRail account menu", () => {
   it("clicking the avatar while signed in opens an account menu and does NOT sign out", async () => {
     const container = mountRail();

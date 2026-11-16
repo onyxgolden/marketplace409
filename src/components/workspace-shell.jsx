@@ -228,8 +228,12 @@ export function WorkspaceRightRail({ showCommandPalette = false }) {
 
       {/* Touch/mouse path to the FORGE command palette on desktop. Only
          rendered when the host shell opts in (promoted Forge subtrees) --
-         the Marketplace shell never sets this, so its rail stays clean. */}
-      {showCommandPalette ? <CommandPaletteTrigger /> : null}
+         the Marketplace shell never sets this, so its rail stays clean.
+         tooltipSide="left": this rail sits at the viewport's right edge, so
+         the trigger's hover tooltip must hang left into the viewport --
+         a right-hanging tooltip sticks out past the edge and widens the
+         page (D13). */}
+      {showCommandPalette ? <CommandPaletteTrigger tooltipSide="left" /> : null}
 
       {/* Notifications: no backend yet (no cross-workspace notification
          source exists in the app today) — present but inert, not wired to
@@ -358,8 +362,10 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false }
             />
 
             {/* Touch/mouse path to the FORGE command palette -- phone users
-               have no keyboard for Cmd/Ctrl+K. */}
-            {forgeCommandPalette ? <CommandPaletteTrigger tone="light" /> : null}
+               have no keyboard for Cmd/Ctrl+K. tooltipSide="left": the
+               trigger sits at the header's right edge, so its hover tooltip
+               must hang left into the viewport (D13). */}
+            {forgeCommandPalette ? <CommandPaletteTrigger tone="light" tooltipSide="left" /> : null}
             <button
               type="button"
               aria-label="Open workspace navigation"

@@ -217,6 +217,26 @@ describe("CommandPaletteHost", () => {
     expect(dialog()).not.toBeNull();
   });
 
+  it("D13: the icon-only tooltip hangs right by default (left rails)", () => {
+    const container = mountHost(<CommandPaletteTrigger />);
+    const trigger = container.querySelector('button[aria-label^="Open command palette"]');
+    const tooltip = trigger.querySelector('span[aria-hidden="true"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip.className).toContain("left-full");
+    expect(tooltip.className).toContain("ml-2");
+    expect(tooltip.className).not.toContain("right-full");
+  });
+
+  it("D13: tooltipSide=left hangs the tooltip left (right-edge triggers)", () => {
+    const container = mountHost(<CommandPaletteTrigger tooltipSide="left" />);
+    const trigger = container.querySelector('button[aria-label^="Open command palette"]');
+    const tooltip = trigger.querySelector('span[aria-hidden="true"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip.className).toContain("right-full");
+    expect(tooltip.className).toContain("mr-2");
+    expect(tooltip.className).not.toContain("left-full");
+  });
+
   it("runs a registered run() handler instead of navigating", () => {
     const ran = vi.fn();
     registerCommandPaletteAction({ id: "test-zebra-action", title: "Zebra custom action", group: "Actions", run: ran });
