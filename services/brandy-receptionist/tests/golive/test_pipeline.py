@@ -143,13 +143,16 @@ class TestPipelineTurn(unittest.TestCase):
                 qg.TEMPLATES["disclosure"] = original
 
     def test_disclosure_verification_passes_for_pinned_text(self):
+        # Cut 1 (2026-11-16): the current revision is Jason's own pinned
+        # wording and is APPROVED — not an attorney sign-off, but a real
+        # approval, so this is no longer UNAPPROVED.
         with tempfile.TemporaryDirectory() as tmp:
             pipe = _pipeline(tmp)
             dialogue = CallDialogue("CA-ok")
             out = dialogue.start()
             info = pipe.verify_disclosure(out)
             self.assertTrue(info["disclosure_spoken"])
-            self.assertEqual(info["revision_status"], "UNAPPROVED")
+            self.assertEqual(info["revision_status"], "APPROVED")
 
 
 class TestTurnReservationLifecycle(unittest.TestCase):

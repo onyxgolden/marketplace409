@@ -76,7 +76,7 @@ class TestDisabledByDefault(unittest.TestCase):
         opening = session.dialogue.start()
         text = opening["speak"]["text"]
         self.assertIn("AI assistant", text)
-        self.assertIn("transcribed", text)
+        self.assertIn("recorded", text)
 
 
 class TestNoPiiInLogs(unittest.TestCase):

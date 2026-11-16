@@ -36,7 +36,7 @@ import time
 
 from .cost import BudgetExceeded, blended_minute_usd
 from .policy import quote_guard
-from .policy.disclosure import current_revision, verify_disclosure_text
+from .policy.disclosure import current_revision, verify_disclosure_hash, verify_disclosure_text
 from .providers import ProviderError
 from .session import CALL_SOURCES
 
@@ -128,14 +128,19 @@ class CallPipeline:
 
     def verify_disclosure(self, dialogue_out: dict) -> dict:
         """If this turn speaks the disclosure, verify it is byte-identical
-        to the pinned revision before TTS. Returns revision info (the
-        caller must surface UNAPPROVED wherever the disclosure is shown).
-        Raises PipelineClosed on any mismatch."""
+        AND hash-identical to the pinned revision before TTS (local-build
+        Cut 1 §2: "a revision id/hash verified before first audio" — the
+        hash check is a second, independent comparison against the
+        registry's own pinned SHA-256, not just a repeat of the text
+        check). Returns revision info (the caller must surface UNAPPROVED
+        wherever the disclosure is shown). Raises PipelineClosed on any
+        mismatch."""
         speak = dialogue_out.get("speak") or {}
         if speak.get("template_id") != "disclosure":
             return {"disclosure_spoken": False}
         revision = current_revision()
-        if not verify_disclosure_text(revision["id"], speak.get("text", "")):
+        text = speak.get("text", "")
+        if not verify_disclosure_text(revision["id"], text) or not verify_disclosure_hash(revision["id"], text):
             raise PipelineClosed(
                 "disclosure text drifted from the pinned revision "
                 f"{revision['id']}; refusing to speak an unpinned disclosure")

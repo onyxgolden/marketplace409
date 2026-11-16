@@ -10,9 +10,12 @@ Go-live activation model (§2/§5): the EFFECTIVE mode comes ONLY from a
 signed server-side activation record (see app/activation.py). No env
 flag, provider key, deployment, or migration can transition modes on its
 own. The record is HMAC-signed with RECEPTIONIST_ACTIVATION_SECRET; a
-missing, tampered, or unsigned record means OFF. LIVE_APPROVED can never
-validate in this build: it requires an attorney-approved disclosure
-revision, and no such revision exists yet (see app/policy/disclosure.py).
+missing, tampered, or unsigned record means OFF. Local-build Cut 1
+(2026-11-16) pinned an APPROVED disclosure revision (Jason's own exact
+wording, not an attorney sign-off — see app/policy/disclosure.py), so
+LIVE_APPROVED can now validate when every OTHER requirement is also met
+(signed record, owner_word, non-empty rehearsal_receipts) — still never
+from a merge or an env flag alone.
 """
 from __future__ import annotations
 

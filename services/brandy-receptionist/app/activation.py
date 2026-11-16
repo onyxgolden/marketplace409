@@ -25,11 +25,18 @@ Verification rules (fail closed — any failure means OFF):
 - TEST_ONLY requires test_number_sid + test_number_e164 present AND
   matching the deployment env (RECEPTIONIST_TEST_NUMBER_SID/E164);
 - LIVE_APPROVED additionally requires owner_word true, a non-empty
-  rehearsal_receipts list, and an attorney_disclosure_revision that the
-  disclosure registry marks APPROVED. No revision is APPROVED in this
-  build, so LIVE_APPROVED can never validate today — that is deliberate:
-  it becomes reachable only when the attorney blesses wording AND the
-  rehearsal receipts exist AND the owner gives the word.
+  rehearsal_receipts list, and an attorney_disclosure_revision (field
+  name kept from go-live §2; it now just names "the approved disclosure
+  revision" — see local-build Cut 1 note below) that the disclosure
+  registry marks APPROVED.
+
+Local-build Cut 1 (2026-11-16): the disclosure registry now has an
+APPROVED revision (Jason's own pinned wording, not an attorney sign-off
+— see app/policy/disclosure.py), so this specific blocker is lifted.
+Every OTHER LIVE_APPROVED requirement here (signature, owner_word,
+non-empty rehearsal_receipts, mode matching) is UNCHANGED — reachability
+still requires all of them, plus Jason's separate LIVE_APPROVED word;
+no env flag or merge activates calls on its own.
 """
 from __future__ import annotations
 
@@ -95,9 +102,10 @@ def validate_record(record: dict, secret: str, test_number_sid: str, test_number
         return {"mode": "OFF", "valid": False, "reason": "TEST_ONLY record test number does not match deployment", "record": record}
     if mode == "TEST_ONLY":
         return {"mode": "TEST_ONLY", "valid": True, "reason": "signed TEST_ONLY record, test number matches", "record": record}
-    # LIVE_APPROVED: owner word + rehearsal receipts + attorney-approved
-    # disclosure revision. No revision is approved in this build, so this
-    # branch cannot return LIVE_APPROVED today.
+    # LIVE_APPROVED: owner word + rehearsal receipts + an APPROVED
+    # disclosure revision (Cut 1: approval no longer requires an
+    # attorney — see app/policy/disclosure.py — but every other gate
+    # here is unchanged).
     if record.get("owner_word") is not True:
         return {"mode": "OFF", "valid": False, "reason": "LIVE_APPROVED requires a recorded owner word", "record": record}
     receipts = record.get("rehearsal_receipts")
@@ -105,7 +113,7 @@ def validate_record(record: dict, secret: str, test_number_sid: str, test_number
         return {"mode": "OFF", "valid": False, "reason": "LIVE_APPROVED requires non-empty rehearsal receipts", "record": record}
     revision = record.get("attorney_disclosure_revision")
     if not revision or not is_revision_approved(revision):
-        return {"mode": "OFF", "valid": False, "reason": "LIVE_APPROVED requires an attorney-approved disclosure revision", "record": record}
+        return {"mode": "OFF", "valid": False, "reason": "LIVE_APPROVED requires an approved disclosure revision", "record": record}
     return {"mode": "LIVE_APPROVED", "valid": True, "reason": "signed LIVE_APPROVED record", "record": record}
 
 

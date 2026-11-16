@@ -30,9 +30,10 @@ ALLOWED_CLASSES = {
 
 TEMPLATES = {
     "greeting": "Hello, you've reached Brandy's rental office. I'm an AI assistant.",
-    "disclosure": ("Hello, you've reached Brandy's rental office. I'm an AI assistant. "
-                   "This call may be transcribed to help Brandy follow up. If you'd "
-                   "prefer a person, I can take a message for her."),
+    # Cut 1 (2026-11-16): Jason's own exact pinned wording — byte-for-byte,
+    # no paraphrase. Must stay identical to
+    # app.policy.disclosure.PINNED_DISCLOSURE_EN; a test asserts this.
+    "disclosure": "You're speaking with an AI assistant, and this call may be recorded.",
     "human_callback": "Brandy will review your question and follow up.",
     "close": "Thank you. Brandy will follow up on the number you confirmed.",
     "close_unverified": ("Thank you. I don't have a confirmed callback number, so "
