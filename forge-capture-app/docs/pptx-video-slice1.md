@@ -1,7 +1,9 @@
 # Capture PPTX-to-video — Slice 1: import, preview, project
 
 **Status:** implemented, in review (PR #814). Fix round 1 (Nov 16, after a
-NEEDS CHANGES verdict at head `9376a325`) is in this branch. Slice 1 only:
+NEEDS CHANGES verdict at head `9376a325`) and fix round 2 (Nov 16, after a
+NEEDS CHANGES re-review at head `7e9d8b9d` — the two original findings are
+closed) are in this branch. Slice 1 only:
 import a `.pptx`, preview its slides, pick which slides go in, save that
 as a project. No narration, no voice, no video assembly, no MP4 export —
 those are slices 2–5.
@@ -71,6 +73,13 @@ those are slices 2–5.
     app. The probe now measures a test string on a canvas in the
     candidate font vs the bare fallback; identical widths mean the font
     is not installed. Local-only, no network.
+- **Slide warnings are validated (fix round 2)** — `validateProjectManifest`
+  now checks each slide's `warnings` field too: when present it must be an
+  array and every member must satisfy `isWarning()` (project-level
+  `warnings` were already checked in fix round 1). A malformed record
+  such as `warnings: [null]` can no longer pass validation and throw in
+  `renderWarnings()` on reopen. Older manifests with no `warnings` field
+  on slides are still accepted.
 - **PptxVideoProjectV1 persistence** — `ui/pptx-project-core.js` (pure
   logic) + `app/src/pptx_video.rs` (backend storage). Manifest:
   `schemaVersion`, `id`, `title`, `createdAt`/`updatedAt`, `revision`,
@@ -105,21 +114,26 @@ those are slices 2–5.
 
 ## What was verified, and where
 
-- **Vitest (focused battery, 61 tests, all passing)** —
+- **Vitest (focused battery, 62 tests, all passing)** —
   `ui/__tests__/pptx-import-core.test.js` (22),
   `pptx-extract-core.test.js` (9), `pptx-render-core.test.js` (12),
-  `pptx-project-core.test.js` (17), `pptx-golden.test.js` (1, compares
+  `pptx-project-core.test.js` (18), `pptx-golden.test.js` (1, compares
   9 goldens). Run: `vitest run forge-capture-app/ui/__tests__/pptx-`
   from the worktree root (node_modules symlinked from
   `~/workspace/marketplace409-fix/node_modules`). Fix round 1 added 7
   tests: `mapPackageWarnings` (P6 WMF → slide 13, clean deck, orphan /
   part-less warnings → project collection) and manifest warning
   persistence (WMF and missing-font warnings survive a JSON round-trip
-  = reopen; project-level warnings field; dedupe). One run showed the
-  golden test timing out at 5000 ms under parallel load; it passes
-  standalone (1.6 s) and on re-run — a load flake, not a regression
-  (the golden test stubs its font probe, so the probe change cannot
-  affect it).
+  = reopen; project-level warnings field; dedupe). Fix round 2 added 1
+  test: slide-level warning validation (malformed record, non-array
+  field, legacy manifest with no slide warnings, well-formed warning
+  still passes). One run showed the golden test timing out at 5000 ms
+  under parallel load; it passes standalone (1.6 s) and on re-run — a
+  load flake, not a regression (the golden test stubs its font probe,
+  so the probe change cannot affect it). The same 5000 ms flake also
+  caught the 33-slide P6 render test once under parallel load; both
+  pass standalone, and the full battery is 62/62 with
+  `--testTimeout=15000`.
 - **Acceptance decks** — fixed synthetic 4-slide 16:9 deck + 3
   real-world-varied decks (4:3 with images, 16:9 with table/chart,
   mixed placeholders/fonts) + the real P6 training deck

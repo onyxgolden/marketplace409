@@ -215,6 +215,33 @@ describe("warnings — persisted on the slide that owns them, visible on reopen"
     expect(validateProjectManifest(bad).join(" ")).toContain("warning record");
   });
 
+  it("rejects malformed slide warnings but accepts slides that predate them", async () => {
+    const p = await pkg("synthetic-4-slide-16x9.pptx");
+    const manifest = buildManifest("Synthetic deck", p, "synthetic-4-slide-16x9.pptx");
+    expect(validateProjectManifest(manifest)).toEqual([]);
+    // A null record on a slide must not pass: renderWarnings() would
+    // throw on it while opening the project.
+    const nullWarning = JSON.parse(JSON.stringify(manifest));
+    nullWarning.slides[0].warnings = [null];
+    expect(validateProjectManifest(nullWarning).join(" ")).toContain("warning record");
+    // A malformed warning object on a slide must not pass either.
+    const badRecord = JSON.parse(JSON.stringify(manifest));
+    badRecord.slides[1].warnings = [{ code: 1, message: "nope" }];
+    expect(validateProjectManifest(badRecord).join(" ")).toContain("warning record");
+    // A non-array warnings field on a slide must not pass.
+    const notArray = JSON.parse(JSON.stringify(manifest));
+    notArray.slides[2].warnings = "unsupported-image-format";
+    expect(validateProjectManifest(notArray).join(" ")).toContain("warning record");
+    // Older manifests have no warnings field on slides at all.
+    const old = JSON.parse(JSON.stringify(manifest));
+    for (const slide of old.slides) delete slide.warnings;
+    expect(validateProjectManifest(old)).toEqual([]);
+    // A well-formed slide warning still passes.
+    const good = JSON.parse(JSON.stringify(manifest));
+    good.slides[3].warnings = [{ code: "font-substituted", message: "Font X was replaced." }];
+    expect(validateProjectManifest(good)).toEqual([]);
+  });
+
   it("dedupeWarnings drops repeats but keeps distinct warnings in order", () => {
     expect(
       dedupeWarnings([

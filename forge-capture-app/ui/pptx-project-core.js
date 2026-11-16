@@ -161,6 +161,16 @@ export function validateProjectManifest(manifest) {
         errors.push(`Slide ${slide.id} has no selection saved.`);
         break;
       }
+      // Slide-level warnings are optional (older manifests predate them),
+      // but when present they must be an array of well-formed warnings —
+      // a malformed record would otherwise throw in renderWarnings()
+      // while opening the project.
+      if (slide.warnings !== undefined) {
+        if (!Array.isArray(slide.warnings) || slide.warnings.some((w) => !isWarning(w))) {
+          errors.push(`Slide ${slide.id} has a warning record that is not valid.`);
+          break;
+        }
+      }
     }
   }
   return errors;
