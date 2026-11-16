@@ -117,6 +117,19 @@
 -- (scope | schedule) is replaced by a schedule-only check, and
 -- the migration fails closed if any placement row already carries
 -- a non-schedule kind. The composite FK is retained.
+--
+-- Fix round 3: the same treatment was missing for
+-- forge_work_progress_snapshots, whose rung-4 FK
+-- (forge_work_progress_snapshots_baseline_fk) also references the
+-- old 3-column unique — the PG16 apply-readiness rehearsal
+-- (Nov 16) proved the shipped migration fails at the old-unique
+-- drop while that FK stands. Progress snapshots are schedule
+-- artifacts too (the bust snapshot's progress_baseline CTE resolves
+-- them against baseline_kind = 'schedule' rows), so the snapshots
+-- table gains its own baseline_kind (default 'schedule'), the FK
+-- moves to the per-kind unique, and a non-schedule row fails the
+-- migration closed. The FK lookup is by target table, not name,
+-- mirroring placements.
 -- ---------------------------------------------------------------------------
 alter table forge_work_package_baselines
   add column if not exists baseline_kind text not null default 'schedule'
@@ -125,9 +138,11 @@ alter table forge_work_package_baselines
 do $$
 declare
   v_has_placements boolean;
+  v_has_snapshots boolean;
   v_fk text;
 begin
   v_has_placements := to_regclass('public.forge_work_step_curve_placements') is not null;
+  v_has_snapshots := to_regclass('public.forge_work_progress_snapshots') is not null;
   if v_has_placements then
     execute $q$
       alter table public.forge_work_step_curve_placements
@@ -141,6 +156,24 @@ begin
       and confrelid = 'public.forge_work_package_baselines'::regclass;
     if v_fk is not null then
       execute 'alter table public.forge_work_step_curve_placements drop constraint ' || quote_ident(v_fk);
+    end if;
+  end if;
+  -- Fix round 3: progress snapshots carry the second FK on the old
+  -- unique (rung 4, forge_work_progress_snapshots_baseline_fk). It
+  -- must go before the old unique can drop, exactly like placements.
+  if v_has_snapshots then
+    execute $q$
+      alter table public.forge_work_progress_snapshots
+        add column if not exists baseline_kind text not null default 'schedule'
+          constraint forge_work_progress_snapshots_kind_schedule_check
+            check (baseline_kind = 'schedule')
+    $q$;
+    select conname into v_fk from pg_constraint
+    where conrelid = 'public.forge_work_progress_snapshots'::regclass
+      and contype = 'f'
+      and confrelid = 'public.forge_work_package_baselines'::regclass;
+    if v_fk is not null then
+      execute 'alter table public.forge_work_progress_snapshots drop constraint ' || quote_ident(v_fk);
     end if;
   end if;
   if exists (
@@ -171,6 +204,23 @@ begin
         alter table public.forge_work_step_curve_placements
           add constraint forge_work_step_curve_placements_baseline_fk
             foreign key (owner_id, work_package_id, baseline_kind, baseline_version)
+            references public.forge_work_package_baselines
+              (owner_id, package_id, baseline_kind, version_number)
+            on delete restrict
+      $q$;
+    end if;
+  end if;
+  if v_has_snapshots then
+    if not exists (
+      select 1 from pg_constraint
+      where conrelid = 'public.forge_work_progress_snapshots'::regclass
+        and contype = 'f'
+        and confrelid = 'public.forge_work_package_baselines'::regclass
+    ) then
+      execute $q$
+        alter table public.forge_work_progress_snapshots
+          add constraint forge_work_progress_snapshots_baseline_fk
+            foreign key (owner_id, package_id, baseline_kind, baseline_version)
             references public.forge_work_package_baselines
               (owner_id, package_id, baseline_kind, version_number)
             on delete restrict
@@ -219,6 +269,181 @@ begin
       $q$;
     end if;
   end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Fix round 3: enforce the schedule-only snapshot invariant.
+-- (Same shape as the fix-round-2 placement block above.) The column
+-- add in the swap block stamps the schedule-only check on a fresh
+-- apply, but it is a no-op wherever the column already exists
+-- (re-apply, or a fixture that stubs the column). This block closes
+-- both gaps: it drops any permissive check wherever it exists, adds
+-- the schedule-only check wherever it is absent, and fails closed if
+-- any snapshot row already carries a non-schedule kind — the
+-- migration aborts rather than silently redefining that row's
+-- meaning. Idempotent on re-apply.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if to_regclass('public.forge_work_progress_snapshots') is not null then
+    if exists (
+      select 1 from public.forge_work_progress_snapshots
+      where baseline_kind <> 'schedule'
+    ) then
+      raise exception 'forge_work: scope-kind progress snapshot rows exist; refusing to enforce the schedule-only snapshot invariant';
+    end if;
+    if exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_progress_snapshots_kind_check'
+        and conrelid = 'public.forge_work_progress_snapshots'::regclass
+    ) then
+      execute 'alter table public.forge_work_progress_snapshots drop constraint forge_work_progress_snapshots_kind_check';
+    end if;
+    if not exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_progress_snapshots_kind_schedule_check'
+        and conrelid = 'public.forge_work_progress_snapshots'::regclass
+    ) then
+      execute $q$
+        alter table public.forge_work_progress_snapshots
+          add constraint forge_work_progress_snapshots_kind_schedule_check
+            check (baseline_kind = 'schedule')
+      $q$;
+    end if;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Fix round 4: the rung-4 snapshot calculation-integrity trigger
+-- (forge_work_snapshots_verify, supabase/migrations/
+-- 20261004010000_forge_work_management_rung4.sql) resolves its baseline
+-- by version number alone — and after the bridge, (owner_id,
+-- package_id, version_number) is NOT unique: a scope v1 and a
+-- schedule v1 can carry materially different hours, costs and dates.
+-- The new progress-snapshot FK rightly identifies the schedule
+-- series, but the trigger's standalone SELECT INTO (no STRICT, no
+-- ordering) picks a matching row without an identity guarantee, so
+-- it could validate a snapshot against the SCOPE plan — rejecting a
+-- valid schedule snapshot, or accepting one whose calculations
+-- disagree with its actual schedule baseline.
+--
+-- This block replaces the function (verbatim original logic, only
+-- the baseline lookup changes): the query is constrained to
+-- baseline_kind = NEW.baseline_kind — the DB CHECK guarantees
+-- NEW.baseline_kind = 'schedule', so the trigger now resolves the
+-- same series the FK and the bust snapshot's progress_baseline CTE
+-- resolve. The rung-4 trigger
+-- (forge_work_progress_snapshots_verify_trg) keeps pointing at the
+-- function by name, so no trigger drop/recreate is needed. Fully
+-- qualified relation + pinned search_path per the migration security
+-- convention. No derivation check is disabled or relaxed. The
+-- replacement is a plain CREATE OR REPLACE: plpgsql bodies are not
+-- validated at creation, so it is safe even in a fixture where the
+-- snapshots table (and its baseline_kind column) does not exist —
+-- the function simply never fires there.
+-- ---------------------------------------------------------------------------
+create or replace function public.forge_work_snapshots_verify()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_baseline_hours numeric(14,2);
+  v_baseline_cost numeric(14,2);
+  v_baseline_start date;
+  v_baseline_finish date;
+  v_planned_pct numeric(7,4);
+  v_tolerance constant numeric := 0.05;
+  v_remaining_cost numeric;
+  v_remaining_hours numeric;
+  v_etc_cost numeric;
+  v_etc_hours numeric;
+begin
+  -- Fix round 4: the baseline is identified by (kind, version), not
+  -- version alone — scope v1 and schedule v1 are different baselines.
+  select baseline_hours, baseline_cost, baseline_start, baseline_finish
+    into v_baseline_hours, v_baseline_cost, v_baseline_start, v_baseline_finish
+    from public.forge_work_package_baselines
+   where owner_id = NEW.owner_id
+     and package_id = NEW.package_id
+     and baseline_kind = NEW.baseline_kind
+     and version_number = NEW.baseline_version;
+  if not found then
+    raise exception 'forge_work: snapshot references unknown baseline version % for package %',
+      NEW.baseline_version, NEW.package_id;
+  end if;
+
+  -- Earned value must be consistent with the named baseline budget.
+  -- The application derives earned values from the CANONICAL earned_pct
+  -- (rounded to 4dp, the column precision) so this recomputation matches
+  -- to within 2dp column rounding — valid fractional progress is accepted.
+  if abs(NEW.earned_hours - (NEW.earned_pct / 100) * v_baseline_hours) > v_tolerance then
+    raise exception 'forge_work: snapshot earned_hours % inconsistent with earned_pct % and baseline hours %',
+      NEW.earned_hours, NEW.earned_pct, v_baseline_hours;
+  end if;
+  if abs(NEW.earned_cost - (NEW.earned_pct / 100) * v_baseline_cost) > v_tolerance then
+    raise exception 'forge_work: snapshot earned_cost % inconsistent with earned_pct % and baseline cost %',
+      NEW.earned_cost, NEW.earned_pct, v_baseline_cost;
+  end if;
+
+  -- Planned % is derived from the frozen schedule, never caller-supplied.
+  if NEW.status_date <= v_baseline_start then
+    v_planned_pct := 0;
+  elsif NEW.status_date >= v_baseline_finish then
+    v_planned_pct := 100;
+  elsif v_baseline_finish = v_baseline_start then
+    v_planned_pct := 100;
+  else
+    v_planned_pct := ((NEW.status_date - v_baseline_start)::numeric
+      / (v_baseline_finish - v_baseline_start)::numeric) * 100;
+  end if;
+  if abs(NEW.planned_pct - v_planned_pct) > 0.01 then
+    raise exception 'forge_work: snapshot planned_pct % does not match frozen schedule % for status date %',
+      NEW.planned_pct, v_planned_pct, NEW.status_date;
+  end if;
+
+  -- Forecasts are DERIVED fields, not human measurements: the trigger
+  -- recomputes ETC/EAC with the same semantics as the domain engine
+  -- (zero actuals forecast remaining work at plan; completed work needs
+  -- no forecast) and rejects nulls and mismatches.
+  if NEW.etc_hours is null or NEW.etc_cost is null
+     or NEW.eac_hours is null or NEW.eac_cost is null then
+    raise exception 'forge_work: snapshot forecast fields (etc/eac hours/cost) are required';
+  end if;
+
+  v_remaining_hours := v_baseline_hours - NEW.earned_hours;
+  v_remaining_cost := v_baseline_cost - NEW.earned_cost;
+  if v_remaining_hours <= 0 then
+    v_etc_hours := 0;
+  elsif NEW.actual_hours > 0 and NEW.earned_hours > 0 then
+    v_etc_hours := v_remaining_hours / (NEW.earned_hours / NEW.actual_hours);
+  else
+    v_etc_hours := v_remaining_hours;
+  end if;
+  if v_remaining_cost <= 0 then
+    v_etc_cost := 0;
+  elsif NEW.actual_cost > 0 and NEW.earned_cost > 0 then
+    v_etc_cost := v_remaining_cost / (NEW.earned_cost / NEW.actual_cost);
+  else
+    v_etc_cost := v_remaining_cost;
+  end if;
+
+  if abs(NEW.etc_hours - v_etc_hours) > v_tolerance then
+    raise exception 'forge_work: snapshot etc_hours % inconsistent with engine forecast %',
+      NEW.etc_hours, v_etc_hours;
+  end if;
+  if abs(NEW.etc_cost - v_etc_cost) > v_tolerance then
+    raise exception 'forge_work: snapshot etc_cost % inconsistent with engine forecast %',
+      NEW.etc_cost, v_etc_cost;
+  end if;
+  if abs(NEW.eac_hours - (NEW.actual_hours + v_etc_hours)) > v_tolerance then
+    raise exception 'forge_work: snapshot eac_hours inconsistent with actual_hours + forecast etc_hours';
+  end if;
+  if abs(NEW.eac_cost - (NEW.actual_cost + v_etc_cost)) > v_tolerance then
+    raise exception 'forge_work: snapshot eac_cost inconsistent with actual_cost + forecast etc_cost';
+  end if;
+
+  return NEW;
 end $$;
 
 -- ---------------------------------------------------------------------------
