@@ -40,10 +40,16 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null, seedBaselines = [], seedChanges = [], decideImpl = null } = {}) {
   const patches = [];
   const deletes = [];
   const freezeRequests = [];
+  const decideRequests = [];
+  // Approve-button fix: the decide stub mirrors the real backend's atomic
+  // decision — a decided change leaves "proposed", and an approval inserts
+  // the superseding baseline — so a test can prove the row moves to
+  // "approved" and version N+1 appears, not just that a request fired.
+  const committedChanges = seedChanges.map((c) => ({ ...c }));
   // D1: a real backend's GET reflects whatever the scope POST actually
   // committed. A GET stub that always returns [] regardless of prior
   // writes would make the awaited-refresh fix look broken for a reason
@@ -60,6 +66,21 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       const baseline = { id: "forge_wsb_1", version: committedBaselines.length + 1, package_id: BASE_PKG.id, membership: body.membership, membership_hash: "fnv1a:test" };
       committedBaselines.push(baseline);
       return { ok: true, json: async () => ({ success: true, baseline }) };
+    }
+    const decideMatch = typeof url === "string" && url.split("?")[0].match(new RegExp(`^/api/work-packages/${BASE_PKG.id}/scope/([^/]+)$`));
+    if (decideMatch && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      decideRequests.push({ changeId: decideMatch[1], ...body });
+      if (decideImpl) return decideImpl(body);
+      const change = committedChanges.find((c) => c.id === decideMatch[1]);
+      if (!change) return { ok: false, json: async () => ({ error: "Scope change not found." }) };
+      change.status = body.approve ? "approved" : "rejected";
+      let baseline = null;
+      if (body.approve) {
+        baseline = { id: "forge_wsb_decide", version: seedBaselines.length + committedBaselines.length + 1, package_id: BASE_PKG.id, membership: body.newMembership, membership_hash: "fnv1a:test-decide" };
+        committedBaselines.push(baseline);
+      }
+      return { ok: true, json: async () => ({ success: true, change: { ...change }, baseline }) };
     }
     if (bare === "/api/work-packages/property-options") {
       if (failOptions) return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
@@ -95,7 +116,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       return { ok: true, json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }) };
     }
     if (bare === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
-      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: committedBaselines, scopeChanges: [], observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
+      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: [...seedBaselines, ...committedBaselines], scopeChanges: committedChanges, observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
     }
     if (typeof url === "string" && url.startsWith("/api/work-links")) {
       return { ok: true, json: async () => ({ links: [], documents: [] }) };
@@ -141,7 +162,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     }
     throw new Error(`unexpected fetch ${url}`);
   }));
-  return { patches, deletes, freezeRequests };
+  return { patches, deletes, freezeRequests, decideRequests };
 }
 
 // D9: the unsaved-changes guard attaches a document-level click listener
@@ -151,7 +172,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
 // root is actually unmounted first.
 const activeRoots = [];
 
-function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, forgeProjectParam, transitions = [] } = {}) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, forgeProjectParam, transitions = [], baselines = [], scopeChanges = [] } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -166,9 +187,9 @@ function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspa
           package: pkg,
           transitions,
           attestations: [],
-          baselines: [],
+          baselines,
           currentBaseline: null,
-          scopeChanges: [],
+          scopeChanges,
           observations: [],
           ...(deletionEligibility !== undefined ? { deletionEligibility } : {}),
         }}
@@ -1424,5 +1445,171 @@ describe("WorkPackageDetailClient Freeze baseline on an untouched form (D1 follo
     await act(async () => { freezeButton(container).click(); });
     expect(container.textContent).toContain("Scope items must be valid JSON");
     expect(container.textContent).not.toContain("A baseline needs at least one scope item.");
+  });
+});
+
+// Approve-button fix — live-verified Nov 15 on WP-0008: approving a
+// post-freeze change did nothing. Root cause was in onDecide: Approve
+// asked for the NEW full scope membership through a native prompt(), and
+// the automated live browser auto-dismisses native dialogs, so prompt()
+// returned null and the handler silently returned without any request —
+// no error, no confirmation, status stayed "proposed" — while Reject (no
+// prompt) worked on the first attempt. Approval now opens an inline
+// editor pre-filled with the current baseline's membership, in the page,
+// like the Freeze baseline box. These tests prove the prompt is gone and
+// the approve path works end to end in the component.
+describe("WorkPackageDetailClient post-freeze change approval (Approve button)", () => {
+  const V1_MEMBERSHIP = [{ key: "BUNDLE-01", description: "Pull bundle", quantity: 1, unit: "each" }];
+  const V1_BASELINE = { id: "forge_wsb_1", version: 1, package_id: BASE_PKG.id, membership: V1_MEMBERSHIP, membership_hash: "fnv1a:1992bc300c83440e", frozen_at: "2026-11-15T19:05:30" };
+  const CHANGE = { id: "forge_wsc_1", package_id: BASE_PKG.id, baseline_version: 1, change_type: "addition", description: "Add labor-hours allowance of 10 hours to scope item BUNDLE-01 (Pull bundle).", status: "proposed" };
+
+  function renderWithProposal() {
+    return renderDetail(BASE_PKG, { baselines: [V1_BASELINE], scopeChanges: [CHANGE] });
+  }
+
+  function approveButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Approve");
+  }
+
+  function rejectButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Reject");
+  }
+
+  function approveEditor(container) {
+    return container.querySelector('textarea[aria-label="New scope list"]');
+  }
+
+  function setApproveEditor(container, value) {
+    const textarea = approveEditor(container);
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function confirmButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm approval");
+  }
+
+  it("opens an inline editor pre-filled with the current baseline membership — never a native prompt", async () => {
+    const promptSpy = vi.fn(() => { throw new Error("prompt() must not be called"); });
+    vi.stubGlobal("prompt", promptSpy);
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(approveEditor(container)).not.toBeNull();
+    expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
+    // Opening the editor fires no request on its own.
+    expect(decideRequests).toHaveLength(0);
+  });
+
+  it("confirming approval POSTs the edited membership, marks the change approved, and freezes version 2", async () => {
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    const laborItem = { key: "BUNDLE-01-LABOR", description: "Labor hours allowance", quantity: 10, unit: "hours" };
+    setApproveEditor(container, JSON.stringify([...V1_MEMBERSHIP, laborItem], null, 2));
+    await act(async () => { confirmButton(container).click(); });
+    await act(async () => {});
+    expect(decideRequests).toHaveLength(1);
+    expect(decideRequests[0]).toEqual({ changeId: CHANGE.id, approve: true, newMembership: [...V1_MEMBERSHIP, laborItem] });
+    expect(container.textContent).toContain("Approved — baseline version 2 is now frozen.");
+    expect(container.textContent).toContain("Version 2");
+    expect(container.textContent).toContain("approved");
+    expect(approveEditor(container)).toBeNull();
+  });
+
+  it("shows a local error and posts nothing for malformed JSON", async () => {
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    setApproveEditor(container, "not json");
+    await act(async () => { confirmButton(container).click(); });
+    await act(async () => {});
+    expect(decideRequests).toHaveLength(0);
+    expect(container.textContent).toContain("New scope list must be valid JSON");
+    expect(approveEditor(container)).not.toBeNull();
+  });
+
+  it("shows a local error and posts nothing for an empty list", async () => {
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    setApproveEditor(container, "[]");
+    await act(async () => { confirmButton(container).click(); });
+    await act(async () => {});
+    expect(decideRequests).toHaveLength(0);
+    expect(container.textContent).toContain("requires the new scope list");
+  });
+
+  it("cancel closes the editor with no request", async () => {
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).not.toBeNull();
+    const cancel = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    await act(async () => { cancel.click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).toBeNull();
+    expect(decideRequests).toHaveLength(0);
+  });
+
+  it("reject still posts straight through with no editor", async () => {
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderWithProposal();
+    await act(async () => { rejectButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).toBeNull();
+    expect(decideRequests).toHaveLength(1);
+    expect(decideRequests[0]).toEqual({ changeId: CHANGE.id, approve: false, newMembership: null });
+    expect(container.textContent).toContain("rejected");
+  });
+
+  // Fix round 1 (ChatGPT NEEDS CHANGES on PR #815): onStartApprove used
+  // to fall back to the latest baseline whenever the change's referenced
+  // version was not found — including when the row named an explicit
+  // version. That let a user confirm a membership the proposal was never
+  // made against. An explicit unmatched version must now fail closed.
+  it("fails closed when the change names a baseline version that is not loaded — no editor, no request", async () => {
+    const MISSING_VERSION_CHANGE = { ...CHANGE, baseline_version: 99 };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [MISSING_VERSION_CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE], scopeChanges: [MISSING_VERSION_CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).toBeNull();
+    expect(confirmButton(container)).toBeUndefined();
+    expect(decideRequests).toHaveLength(0);
+    expect(container.textContent).toContain("baseline version 99");
+    expect(container.textContent).toContain("Approval is blocked");
+  });
+
+  it("pre-fills from the referenced older baseline when a newer baseline also exists", async () => {
+    const V2_MEMBERSHIP = [{ key: "BUNDLE-01", description: "Pull bundle", quantity: 2, unit: "each" }];
+    const V2_BASELINE = { id: "forge_wsb_2", version: 2, package_id: BASE_PKG.id, membership: V2_MEMBERSHIP, membership_hash: "fnv1a:test-v2", frozen_at: "2026-11-15T20:00:00" };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE, V2_BASELINE], seedChanges: [CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE, V2_BASELINE], scopeChanges: [CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).not.toBeNull();
+    expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
+    expect(decideRequests).toHaveLength(0);
+  });
+
+  it("still falls back to the latest baseline when the change carries no baseline version", async () => {
+    const NO_VERSION_CHANGE = { ...CHANGE, baseline_version: null };
+    const { decideRequests } = stubFetch({ seedBaselines: [V1_BASELINE], seedChanges: [NO_VERSION_CHANGE] });
+    const { container } = renderDetail(BASE_PKG, { baselines: [V1_BASELINE], scopeChanges: [NO_VERSION_CHANGE] });
+    await act(async () => { approveButton(container).click(); });
+    await act(async () => {});
+    expect(approveEditor(container)).not.toBeNull();
+    expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
+    expect(decideRequests).toHaveLength(0);
   });
 });
