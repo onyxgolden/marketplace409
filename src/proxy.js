@@ -117,14 +117,25 @@ export async function proxy(request) {
   /*
    * Validate and refresh the session before the request
    * reaches authenticated server routes.
+   *
+   * Fail closed: the validated-user header is set only when
+   * getUser() reports success — a null error AND a non-empty
+   * user id. A user returned alongside a non-null error is
+   * not trusted: the header is omitted and the factory falls
+   * back to its own getUser() check.
    */
   const {
     data: {
       user,
     },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (user?.id) {
+  if (
+    authError === null &&
+    typeof user?.id === "string" &&
+    user.id !== ""
+  ) {
     request.headers.set(
       FORGE_AUTH_USER_HEADER,
       JSON.stringify({

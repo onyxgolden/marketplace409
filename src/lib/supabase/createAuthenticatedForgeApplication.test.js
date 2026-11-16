@@ -278,4 +278,42 @@ describe("createAuthenticatedForgeApplication", () => {
     expect(result.user).toBe(user);
     expect(result.effectiveOwnerId).toBe("owner-1");
   });
+
+  it("S1: falls back to getUser() when the validated-user header is absent", async () => {
+    // Fix round 1 (ChatGPT NEEDS CHANGES, PR #818 review
+    // 2026-11-16): this is the context the proxy produces when
+    // getUser() reports an error — no header is forwarded, so the
+    // factory must take its own getUser() check instead of
+    // trusting any identity. Mirrors the malformed-header test,
+    // but with the header absent rather than unparseable.
+    const user = { id: "owner-1", email: "owner@example.com" };
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user },
+          error: null,
+        }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          then: (resolve) => resolve({ data: [], error: null }),
+        })),
+      })),
+    };
+
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createForgeApplicationSuite.mockResolvedValue({});
+    mocks.headers.mockResolvedValue(new Headers());
+
+    const result =
+      await createAuthenticatedForgeApplication();
+
+    expect(supabaseClient.auth.getUser).toHaveBeenCalledTimes(1);
+    expect(result.user).toBe(user);
+    expect(result.effectiveOwnerId).toBe("owner-1");
+  });
 });

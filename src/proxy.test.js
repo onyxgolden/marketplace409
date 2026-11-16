@@ -294,4 +294,31 @@ describe("proxy()", () => {
     expect(getUserMock).toHaveBeenCalledTimes(1);
     expect(validatedUserHeader(response)).toBeNull();
   });
+
+  it("S1: sets no validated-user header when getUser returns a user together with an error", async () => {
+    // Fix round 1 (ChatGPT NEEDS CHANGES, PR #818 review
+    // 2026-11-16): a user returned alongside a non-null error must
+    // fail closed — no validated-user header is forwarded, so the
+    // factory takes its getUser() fallback instead of trusting the
+    // identity. A client-supplied spoofed value must not survive
+    // either.
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "user-1", email: "owner@example.com" } },
+      error: new Error("session validation failed"),
+    });
+
+    const request = new NextRequest("https://test/forge/rental", {
+      headers: {
+        cookie: "sb-proj-auth-token=valid-token",
+        "x-forge-auth-user": JSON.stringify({
+          id: "attacker-id",
+          email: "attacker@example.com",
+        }),
+      },
+    });
+    const response = await proxy(request);
+
+    expect(getUserMock).toHaveBeenCalledTimes(1);
+    expect(validatedUserHeader(response)).toBeNull();
+  });
 });
