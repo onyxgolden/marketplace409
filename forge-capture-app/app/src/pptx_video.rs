@@ -222,14 +222,14 @@ fn next_project_id(state: &State<AppState>) -> String {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BeginPptxUploadDto {
+pub struct BeginPptxUploadDto {
     file_name: String,
     total_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AppendPptxChunkDto {
+pub struct AppendPptxChunkDto {
     upload_id: String,
     offset: u64,
     bytes: Vec<u8>,
@@ -237,7 +237,7 @@ struct AppendPptxChunkDto {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PptxVideoProjectDto {
+pub struct PptxVideoProjectDto {
     project_id: String,
     file_name: String,
     sha256: String,
@@ -246,7 +246,7 @@ struct PptxVideoProjectDto {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PptxVideoProjectSummaryDto {
+pub struct PptxVideoProjectSummaryDto {
     project_id: String,
     title: String,
     slide_count: u64,
