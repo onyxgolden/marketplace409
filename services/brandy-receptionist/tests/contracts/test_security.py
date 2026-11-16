@@ -67,7 +67,7 @@ class TestDisabledByDefault(unittest.TestCase):
         self.assertFalse(config.recording_enabled)
         self.assertFalse(config.transcript_storage_enabled)
         self.assertFalse(config.live_tenant_sync_enabled)
-        for feature in ("telephony", "outbound_alerts", "recording", "transcript_storage", "live_tenant_sync"):
+        for feature in ("telephony", "outbound_alerts", "recording", "transcript_storage", "live_tenant_sync", "local_inference"):
             with self.assertRaises(DisabledError, msg=feature):
                 config.require_live(feature)
 

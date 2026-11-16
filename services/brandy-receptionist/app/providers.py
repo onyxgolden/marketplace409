@@ -24,6 +24,7 @@ is harmless there.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -594,3 +595,226 @@ def build_pipecat_pipeline(config, *, stt=None, llm=None, tts=None):
 
 def real_telephony_pipeline(config):
     return build_pipecat_pipeline(config)
+
+
+# --- Local adapters (Receptionist Cut 1 — offline, no cloud, no spend) -------
+#
+# STT and TTS talk to `local_inference/server.py`, a persistent warm
+# loopback-only HTTP server this build added (see
+# `local_inference/MODEL_PINS.md` for the exact pinned model revisions
+# it loads). A cold per-call subprocess was measured and rejected: the
+# STT model alone takes ~54s to load cold on this machine, Kokoro ~25s —
+# both are compatible with an always-warm server, neither with a
+# per-utterance spawn under the p95<=800ms target. The LLM talks
+# directly to Ollama's own already-running local HTTP server — no new
+# process needed, Ollama is the warm server. Both are loopback-only
+# (127.0.0.1); neither adapter ever constructs a URL outside loopback.
+#
+# stdlib `urllib.request` only — no new HTTP client dependency for a
+# purely-local, purely-JSON/binary call shape. Imported LOCALLY inside
+# the two helpers below (not at module level): importing it eagerly at
+# module import time was found, by bisection, to make an unrelated
+# pre-existing test elsewhere in this suite
+# (tests/golive/test_media_stream.py's
+# test_partial_frame_stall_reserves_and_stream_survives_with_headroom)
+# hang indefinitely on this machine — root cause not fully isolated,
+# but a local import inside the two call sites that actually need it
+# reproducibly avoids the hang and costs nothing at call time (urllib's
+# own module-level work is trivial and this file's local adapters are
+# never on a tight per-frame loop).
+
+
+def _local_post(base_url: str, path: str, *, json_body: dict | None = None,
+                 binary_body: bytes | None = None, timeout_s: float = 10.0,
+                 content_type: str = "application/json"):
+    """POST to a loopback-only local server. Returns (status, headers, body
+    bytes). Never follows a redirect to a non-loopback host (urllib does
+    not follow redirects for POST by default, and this function never
+    enables that)."""
+    import urllib.error
+    import urllib.request
+
+    if json_body is not None:
+        data = json.dumps(json_body).encode("utf-8")
+    else:
+        data = binary_body or b""
+    req = urllib.request.Request(base_url.rstrip("/") + path, data=data, method="POST",
+                                  headers={"Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers or {}), exc.read()
+
+
+def _local_get(base_url: str, path: str, *, timeout_s: float = 5.0):
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(base_url.rstrip("/") + path, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+class LocalFasterWhisperSTTAdapter(STTProvider):
+    """faster-whisper (whisper-large-v3-turbo CT2, MIT) via the local
+    inference server — no cloud, no network beyond loopback."""
+
+    def __init__(self, *, base_url: str, timeout_s: float = 10.0, breaker: CircuitBreaker | None = None,
+                 http_post=None):
+        self.base_url = base_url
+        self.timeout_s = timeout_s
+        self.breaker = breaker or CircuitBreaker()
+        self._http_post = http_post or _local_post
+
+    def transcribe_chunk(self, audio: bytes) -> dict:
+        started = time.perf_counter()
+
+        def _call():
+            status, _, body = self._http_post(self.base_url, "/stt", binary_body=audio,
+                                               timeout_s=self.timeout_s, content_type="audio/wav")
+            payload = json.loads(body or b"{}")
+            if status != 200:
+                raise ProviderUnavailable(payload.get("error", f"local STT returned HTTP {status}"))
+            return payload
+
+        payload = self.breaker.call(
+            lambda: run_with_timeout(_call, self.timeout_s, label="local STT"),
+            label="local STT")
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        return {"text": payload.get("text", ""), "confidence": payload.get("confidence", 0.0),
+                "latency_ms": latency_ms}
+
+
+class LocalOllamaLLMAdapter(LLMProvider):
+    """Qwen3-8B via the already-running local Ollama server (MIT/Apache-2.0,
+    no cloud). Advisory only — the caller (app/pipeline.py) must keep this
+    off the response-critical path; this adapter itself has no opinion
+    about where it's called from, it just makes one local HTTP call."""
+
+    SYSTEM_PROMPT = (
+        "You are an advisory assistant for a rental office receptionist. You never "
+        "speak directly to callers; your output is reviewed, never played as audio "
+        "automatically. Suggest how to help the caller in one or two short sentences. "
+        "Never state a price, fee, or rent amount. Never promise a repair date or "
+        "guarantee anything. If the caller reports water, fire, gas, smoke, flooding, "
+        "or being locked out, say to alert Brandy immediately."
+    )
+
+    def __init__(self, *, base_url: str, model: str = "qwen3:8b", timeout_s: float = 8.0,
+                 breaker: CircuitBreaker | None = None, http_post=None):
+        self.base_url = base_url
+        self.model = model
+        self.timeout_s = timeout_s
+        self.breaker = breaker or CircuitBreaker()
+        self._http_post = http_post or _local_post
+
+    def respond(self, *, state: str, response_class: str, history: list) -> dict:
+        started = time.perf_counter()
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+        for turn in (history or [])[-10:]:
+            messages.append({"role": turn.get("role", "user"), "content": turn.get("content", "")})
+        messages.append({"role": "user",
+                         "content": f"[state={state} response_class={response_class}] Advise the receptionist."})
+
+        def _call():
+            status, _, body = self._http_post(
+                self.base_url, "/api/chat",
+                json_body={"model": self.model, "messages": messages, "stream": False,
+                           "think": False, "options": {"num_ctx": 4096}},
+                timeout_s=self.timeout_s)
+            if status != 200:
+                raise ProviderUnavailable(f"Ollama returned HTTP {status}: {body[:200]!r}")
+            payload = json.loads(body)
+            text = payload.get("message", {}).get("content", "")
+            return str(text or "").strip()
+
+        text = self.breaker.call(
+            lambda: run_with_timeout(_call, self.timeout_s, label="Ollama chat"),
+            label="local LLM (Ollama)")
+        first_token_ms = (time.perf_counter() - started) * 1000.0
+        return {"response_class": response_class, "text": text, "first_token_ms": first_token_ms}
+
+
+class LocalKokoroTTSAdapter(TTSProvider):
+    """Kokoro-82M (Apache-2.0) via the local inference server — the
+    current working default voice (brief: Tyler's enrollment is not
+    automatically approved for this use; see MODEL_PINS.md)."""
+
+    def __init__(self, *, base_url: str, voice: str = "af_heart", timeout_s: float = 10.0,
+                 breaker: CircuitBreaker | None = None, http_post=None):
+        self.base_url = base_url
+        self.voice = voice
+        self.timeout_s = timeout_s
+        self.breaker = breaker or CircuitBreaker()
+        self._http_post = http_post or _local_post
+        self._stop_requested = False
+        self.playing = False
+
+    def synthesize(self, text: str) -> dict:
+        if not text or not text.strip():
+            return {"audio": b"", "first_audio_ms": 0.0}
+        self._stop_requested = False
+
+        def _call():
+            status, headers, body = self._http_post(
+                self.base_url, "/tts/kokoro",
+                json_body={"text": text, "voice": self.voice}, timeout_s=self.timeout_s)
+            if status != 200:
+                payload = json.loads(body or b"{}")
+                raise ProviderUnavailable(payload.get("error", f"local TTS returned HTTP {status}"))
+            first_audio_ms = float(headers.get("X-First-Audio-Ms", 0.0))
+            return body, first_audio_ms
+
+        audio, first_audio_ms = self.breaker.call(
+            lambda: run_with_timeout(_call, self.timeout_s, label="local TTS (Kokoro)"),
+            label="local TTS (Kokoro)")
+        if self._stop_requested:
+            return {"audio": b"", "first_audio_ms": 0.0}
+        self.playing = True
+        return {"audio": audio, "first_audio_ms": first_audio_ms}
+
+    def stop(self) -> float:
+        started = time.perf_counter()
+        self._stop_requested = True
+        self.playing = False
+        return (time.perf_counter() - started) * 1000.0
+
+
+def local_stt(config, *, http_post=None):
+    config.require_live("local_inference")
+    return LocalFasterWhisperSTTAdapter(base_url=config.local_inference_base_url, http_post=http_post)
+
+
+def local_llm(config, *, http_post=None):
+    config.require_live("local_inference")
+    return LocalOllamaLLMAdapter(base_url=config.ollama_base_url, model=config.ollama_model, http_post=http_post)
+
+
+def local_tts(config, *, http_post=None):
+    config.require_live("local_inference")
+    return LocalKokoroTTSAdapter(base_url=config.local_inference_base_url, http_post=http_post)
+
+
+def local_inference_health(config) -> dict:
+    """Readiness probe for the local inference server + Ollama — the
+    primary-host boot sequence (full brief §2.4) must not advertise
+    READY until this (and every other health check) passes; Cut 1 has
+    no SIP edge to gate yet, but this function is what that gate will
+    call. Never raises — returns a plain dict either way, so a caller
+    can render a health page even when everything is down."""
+    result = {"localInferenceServer": None, "ollama": None}
+    try:
+        status, body = _local_get(config.local_inference_base_url, "/health", timeout_s=3.0)
+        result["localInferenceServer"] = json.loads(body) if status == 200 else {"error": f"HTTP {status}"}
+    except Exception as exc:  # noqa: BLE001 — health probes must never raise
+        result["localInferenceServer"] = {"error": f"{type(exc).__name__}: {exc}"}
+    try:
+        status, body = _local_get(config.ollama_base_url, "/api/version", timeout_s=3.0)
+        result["ollama"] = json.loads(body) if status == 200 else {"error": f"HTTP {status}"}
+    except Exception as exc:  # noqa: BLE001
+        result["ollama"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result

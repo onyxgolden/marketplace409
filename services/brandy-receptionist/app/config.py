@@ -58,6 +58,40 @@ class ReceptionistConfig:
     voicemail_recording_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_VOICEMAIL_RECORDING_ENABLED", False))
     transcript_storage_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_TRANSCRIPT_STORAGE_ENABLED", False))
     live_tenant_sync_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_LIVE_TENANT_SYNC_ENABLED", False))
+    # Local-build Cut 1 (2026-11-16): local STT/LLM/TTS providers (no
+    # cloud, no spend, no PSTN — see app/providers.py's local_* factories).
+    # Gated the same way as every other feature here for consistency,
+    # even though constructing these carries no telephony/cost risk by
+    # itself; Stage 0 rehearsal scripts set this explicitly.
+    local_inference_enabled: bool = field(default_factory=lambda: _bool("RECEPTIONIST_LOCAL_INFERENCE_ENABLED", False))
+    local_inference_base_url: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_LOCAL_INFERENCE_URL", "http://127.0.0.1:8809"))
+    ollama_base_url: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_OLLAMA_URL", "http://127.0.0.1:11434"))
+    ollama_model: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_OLLAMA_MODEL", "qwen3:8b"))
+
+    # --- Recording + evidence contract (brief §6; app/recording.py) ----------
+    # Root directory for encrypted recordings/transcripts/manifests.
+    # Default under data/ (gitignored); never committed.
+    recording_storage_path: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_RECORDING_STORAGE_PATH",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "recordings")))
+    # Fernet key (urlsafe base64, 32 bytes) for audio/transcript/ANI
+    # encryption at rest. Env only; empty means recording.py refuses to
+    # write anything — there is no "write unencrypted" fallback.
+    recording_encryption_key: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_RECORDING_ENCRYPTION_KEY", ""))
+    # HMAC secret for the ANI lookup-key hash (brief §6: "keyed hash for
+    # directory/index lookup" — never the raw number, never reversible
+    # without this secret). Env only.
+    recording_index_secret: str = field(default_factory=lambda: os.environ.get(
+        "RECEPTIONIST_RECORDING_INDEX_SECRET", ""))
+    # Retention policy, in days. None/0 = "no policy set yet" — a Jason
+    # decision owed before LIVE_APPROVED (brief §6/§10); recording.py
+    # records whatever policy is configured but never invents one and
+    # never claims indefinite retention when none is set.
+    recording_retention_days: int = field(default_factory=lambda: _int("RECEPTIONIST_RECORDING_RETENTION_DAYS", 0))
 
     # --- Go-live activation record (§2) -------------------------------------
     # Path to the signed activation record (JSON, HMAC-signed). Default
@@ -176,6 +210,7 @@ class ReceptionistConfig:
             "voicemail_recording_enabled": self.voicemail_recording_enabled,
             "transcript_storage_enabled": self.transcript_storage_enabled,
             "live_tenant_sync_enabled": self.live_tenant_sync_enabled,
+            "local_inference_enabled": self.local_inference_enabled,
             "operation_id": self.operation_id,
             "policy_version": self.policy_version,
         }
@@ -189,6 +224,7 @@ class ReceptionistConfig:
             "voicemail_recording": self.voicemail_recording_enabled,
             "transcript_storage": self.transcript_storage_enabled,
             "live_tenant_sync": self.live_tenant_sync_enabled,
+            "local_inference": self.local_inference_enabled,
         }.get(feature, False)
         if not enabled:
             raise DisabledError(f"{feature} is disabled by default; enable explicitly and only with a go-live word.")

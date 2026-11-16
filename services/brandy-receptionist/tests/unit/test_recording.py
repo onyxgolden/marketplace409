@@ -1,0 +1,248 @@
+"""Receptionist Cut 1 item 4: recording + evidence bundle contract
+(app/recording.py). See brief §6.
+"""
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+from app.config import DisabledError, ReceptionistConfig
+from app.recording import (
+    RecordingSession,
+    TranscriptSegment,
+    ani_lookup_key,
+    decrypt_bytes,
+    decrypt_transcript,
+    delete_bundle,
+    encrypt_bytes,
+    load_manifest,
+    sha256_hex,
+)
+
+try:
+    from cryptography.fernet import Fernet
+
+    HAVE_CRYPTO = True
+except ImportError:
+    HAVE_CRYPTO = False
+
+REAL_KEY = Fernet.generate_key().decode("ascii") if HAVE_CRYPTO else "unused"
+
+
+def _config(tmp, **overrides):
+    kwargs = {
+        "recording_enabled": True,
+        "recording_storage_path": tmp,
+        "recording_encryption_key": REAL_KEY,
+        "recording_index_secret": "test-index-secret",
+    }
+    kwargs.update(overrides)
+    return ReceptionistConfig(**kwargs)
+
+
+class TestAniLookupKey(unittest.TestCase):
+    def test_same_number_hashes_the_same(self):
+        a = ani_lookup_key("+15552345678", "secret")
+        b = ani_lookup_key("+15552345678", "secret")
+        self.assertEqual(a, b)
+
+    def test_different_numbers_hash_differently(self):
+        a = ani_lookup_key("+15552345678", "secret")
+        b = ani_lookup_key("+15559998888", "secret")
+        self.assertNotEqual(a, b)
+
+    def test_withheld_ani_gets_its_own_fixed_bucket(self):
+        self.assertEqual(ani_lookup_key("", "secret"), "withheld")
+        self.assertEqual(ani_lookup_key(None, "secret"), "withheld")
+
+    def test_the_raw_number_never_appears_in_the_key(self):
+        key = ani_lookup_key("+15552345678", "secret")
+        self.assertNotIn("5552345678", key)
+        self.assertNotIn("2345678", key)
+
+    def test_refuses_to_hash_with_an_empty_secret(self):
+        with self.assertRaises(ValueError):
+            ani_lookup_key("+15552345678", "")
+
+    def test_different_secrets_produce_different_keys_for_the_same_number(self):
+        a = ani_lookup_key("+15552345678", "secret-one")
+        b = ani_lookup_key("+15552345678", "secret-two")
+        self.assertNotEqual(a, b)
+
+
+@unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed")
+class TestEncryptDecrypt(unittest.TestCase):
+    def test_round_trips_exactly(self):
+        token = encrypt_bytes(b"hello world", REAL_KEY)
+        self.assertEqual(decrypt_bytes(token, REAL_KEY), b"hello world")
+
+    def test_ciphertext_does_not_contain_the_plaintext(self):
+        token = encrypt_bytes(b"super secret caller content", REAL_KEY)
+        self.assertNotIn(b"super secret caller content", token)
+
+    def test_wrong_key_fails_to_decrypt(self):
+        other_key = Fernet.generate_key().decode("ascii")
+        token = encrypt_bytes(b"data", REAL_KEY)
+        with self.assertRaises(Exception):
+            decrypt_bytes(token, other_key)
+
+    def test_refuses_to_encrypt_with_no_key(self):
+        with self.assertRaises(ValueError):
+            encrypt_bytes(b"data", "")
+
+
+@unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed")
+class TestRecordingSessionSave(unittest.TestCase):
+    def test_save_is_refused_when_recording_is_not_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp, recording_enabled=False)
+            session = RecordingSession(call_sid="CA-1", ani="+15552345678")
+            with self.assertRaises(DisabledError):
+                session.save(config)
+            # Fail closed means NOTHING was written, not a partial bundle.
+            self.assertEqual(os.listdir(tmp), [])
+
+    def test_save_is_refused_with_no_encryption_key_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp, recording_encryption_key="")
+            session = RecordingSession(call_sid="CA-1", ani="+15552345678")
+            with self.assertRaises(ValueError):
+                session.save(config)
+            self.assertEqual(os.listdir(tmp), [])
+
+    def test_real_save_load_decrypt_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-42", ani="+15552345678",
+                                        disclosure_revision_id="pinned-2026-11-16",
+                                        stt_model_revision="0a363e9161cbc7ed", source="TEST")
+            session.append_caller_audio(b"\x00\x01" * 100)
+            session.append_agent_audio(b"\x02\x03" * 100)
+            session.append_transcript_segment(TranscriptSegment(
+                speaker="agent", start_s=0.0, end_s=1.5,
+                text="You're speaking with an AI assistant, and this call may be recorded.",
+                confidence=1.0))
+            session.append_transcript_segment(TranscriptSegment(
+                speaker="caller", start_s=1.5, end_s=3.0, text="My sink is leaking.",
+                confidence=0.91))
+            manifest = session.save(config)
+
+            self.assertEqual(manifest["schemaVersion"], "BrandyReceptionistEvidenceBundleV1")
+            self.assertEqual(manifest["callId"], "CA-42")
+            self.assertTrue(manifest["maskedDisplayNumber"].endswith("5678"))
+            self.assertNotIn("5552345678", manifest["maskedDisplayNumber"])
+            lookup_key = manifest["aniLookupKey"]
+
+            loaded = load_manifest(config, lookup_key, "CA-42")
+            self.assertEqual(loaded, manifest)
+
+            transcript = decrypt_transcript(config, lookup_key, "CA-42")
+            self.assertEqual(len(transcript["segments"]), 2)
+            self.assertEqual(transcript["segments"][0]["speaker"], "agent")
+            self.assertEqual(transcript["segments"][1]["text"], "My sink is leaking.")
+
+    def test_full_ani_is_never_written_in_plaintext_anywhere_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-7", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            session.save(config)
+            for root, _dirs, files in os.walk(tmp):
+                for name in files:
+                    with open(os.path.join(root, name), "rb") as fh:
+                        content = fh.read()
+                    self.assertNotIn(b"5552345678", content, f"raw ANI leaked into {name}")
+                    self.assertNotIn(b"+15552345678", content, f"raw ANI leaked into {name}")
+
+    def test_withheld_ani_is_not_guessed_or_stored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-withheld", ani=None)
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            self.assertIsNone(manifest["maskedDisplayNumber"])
+            self.assertEqual(manifest["aniLookupKey"], "withheld")
+
+    def test_retention_policy_is_recorded_exactly_as_configured_never_invented(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp, recording_retention_days=0)
+            session = RecordingSession(call_sid="CA-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            self.assertFalse(manifest["retentionPolicySet"])
+            self.assertIsNone(manifest["retentionDays"])
+
+            config2 = _config(tmp, recording_retention_days=90)
+            session2 = RecordingSession(call_sid="CA-2", ani="+15552345678")
+            session2.append_caller_audio(b"\x00" * 10)
+            session2.append_agent_audio(b"\x00" * 10)
+            manifest2 = session2.save(config2)
+            self.assertTrue(manifest2["retentionPolicySet"])
+            self.assertEqual(manifest2["retentionDays"], 90)
+
+    def test_audio_file_hashes_match_the_real_written_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-9", ani="+15552345678")
+            session.append_caller_audio(b"\x11\x22" * 50)
+            session.append_agent_audio(b"\x33\x44" * 50)
+            manifest = session.save(config)
+            bundle_dir = os.path.join(tmp, manifest["aniLookupKey"], "CA-9")
+            with open(os.path.join(bundle_dir, "caller.wav.enc"), "rb") as fh:
+                caller_plain = decrypt_bytes(fh.read(), config.recording_encryption_key)
+            self.assertEqual(sha256_hex(caller_plain), manifest["audioFileHashes"]["callerWav"])
+
+
+@unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed")
+class TestDeleteBundle(unittest.TestCase):
+    def test_refuses_without_explicit_confirm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-del-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            with self.assertRaises(ValueError):
+                delete_bundle(config, manifest["aniLookupKey"], "CA-del-1", confirm=False)
+            # Still there — refusal did not delete anything.
+            self.assertIsNotNone(load_manifest(config, manifest["aniLookupKey"], "CA-del-1"))
+
+    def test_real_delete_removes_every_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-del-2", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            ok = delete_bundle(config, manifest["aniLookupKey"], "CA-del-2", confirm=True)
+            self.assertTrue(ok)
+            self.assertIsNone(load_manifest(config, manifest["aniLookupKey"], "CA-del-2"))
+
+    def test_legal_hold_refuses_deletion_even_with_confirm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-del-3", ani="+15552345678")
+            session.append_caller_audio(b"\x00" * 10)
+            session.append_agent_audio(b"\x00" * 10)
+            manifest = session.save(config)
+            bundle_dir = os.path.join(tmp, manifest["aniLookupKey"], "CA-del-3")
+            manifest["legalHold"] = True
+            with open(os.path.join(bundle_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+                json.dump(manifest, fh)
+            with self.assertRaises(ValueError):
+                delete_bundle(config, manifest["aniLookupKey"], "CA-del-3", confirm=True)
+
+    def test_deleting_a_nonexistent_bundle_returns_false_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            self.assertFalse(delete_bundle(config, "withheld", "CA-does-not-exist", confirm=True))
+
+
+if __name__ == "__main__":
+    unittest.main()
