@@ -285,10 +285,37 @@ const PREREQ_SQL = `
     baseline_kind text not null default 'schedule',
     primary key (owner_id, id)
   );
+  -- Minimal forge_work_progress_snapshots: the bridge migration moves
+  -- its rung-4 baseline FK to the per-kind unique, so the table must
+  -- exist for the constraint swap to be proven (in production it
+  -- exists from rung 4). Only the FK-relevant columns are stubbed,
+  -- plus the columns the replaced bust snapshot reads
+  -- (status_date, actual_hours, actual_cost); snapshot behavior is
+  -- proven in the slice-9 battery, where the full table lives.
+  create table forge_work_progress_snapshots (
+    owner_id text not null,
+    id text not null,
+    package_id text not null,
+    status_date date not null,
+    actual_hours numeric(14,2) not null,
+    actual_cost numeric(14,2) not null,
+    baseline_version integer not null,
+    baseline_kind text not null default 'schedule',
+    recorded_by text not null,
+    created_at timestamptz not null default now(),
+    primary key (owner_id, id)
+  );
   -- Plan baselines: full rung-4 definition (checks, unique, immutable
   -- + actor-stamp triggers, RLS owner policy), plus the fix-round-1
   -- baseline_kind split: scope-paired rows version with the scope
-  -- chain, schedule-only rows in their own series.
+  -- chain, schedule-only rows in their own series. The OLD per-package
+  -- unique is ALSO present: in production it is the constraint the
+  -- bridge migration must drop, and the placements + progress-snapshot
+  -- FKs below reference it — without it (and them) the fixture would
+  -- let the constraint swap pass vacuously, which is how the missed
+  -- snapshots FK shipped (rehearsal, Nov 16). The migration drops the
+  -- old unique and both FKs, then re-adds the FKs against the per-kind
+  -- unique; the legacy-shape test below reverts the column as well.
   create table if not exists forge_work_package_baselines (
     owner_id text not null,
     id text not null default ('forge_wpb_' || gen_random_uuid()::text),
@@ -309,7 +336,8 @@ const PREREQ_SQL = `
     constraint forge_work_package_baselines_dates_check check (baseline_finish >= baseline_start),
     constraint forge_work_package_baselines_hours_check check (baseline_hours >= 0),
     constraint forge_work_package_baselines_cost_check check (baseline_cost >= 0),
-    constraint forge_work_package_baselines_kind_version_unique unique (owner_id, package_id, baseline_kind, version_number)
+    constraint forge_work_package_baselines_kind_version_unique unique (owner_id, package_id, baseline_kind, version_number),
+    constraint forge_work_package_baselines_version_unique unique (owner_id, package_id, version_number)
   );
   create or replace function forge_work_baselines_immutable()
   returns trigger language plpgsql as $$
@@ -352,6 +380,21 @@ const PREREQ_SQL = `
   drop policy if exists forge_work_package_baselines_owner on forge_work_package_baselines;
   create policy forge_work_package_baselines_owner on forge_work_package_baselines
     for all using (has_workspace_access(owner_id)) with check (has_workspace_access(owner_id));
+
+  -- Pre-bridge FKs on the OLD per-package unique: the two dependents
+  -- the bridge migration must drop before the old unique can go.
+  -- Placements (slice 6, unnamed in production — hence no name here)
+  -- and progress snapshots (rung 4, named). The migration drops both
+  -- by target table and re-adds them against the per-kind unique.
+  alter table forge_work_step_curve_placements
+    add foreign key (owner_id, work_package_id, baseline_version)
+      references forge_work_package_baselines (owner_id, package_id, version_number)
+      on delete restrict;
+  alter table forge_work_progress_snapshots
+    add constraint forge_work_progress_snapshots_baseline_fk
+      foreign key (owner_id, package_id, baseline_version)
+      references forge_work_package_baselines (owner_id, package_id, version_number)
+      on delete restrict;
 
   -- Pre-fix RPCs, verbatim rung 1 (scope-only freeze / decide).
   create or replace function forge_work_freeze_scope(
@@ -1000,8 +1043,9 @@ describe("scope/plan baseline bridge: schedule/scope writer reconciliation (fix 
 
   it60("the migration's kind column + constraint swap apply from the legacy table shape", async () => {
     // A database whose baselines table predates the split: no kind
-    // column, old per-package unique. The bridge migration itself
-    // must perform the ALTERs — they are not pre-applied here.
+    // column, old per-package unique (already in the fixture — see
+    // the baselines stub). The bridge migration itself must perform
+    // the ALTERs — they are not pre-applied here.
     const legacy = new PGlite();
     try {
       await legacy.exec(PREREQ_SQL);
@@ -1010,9 +1054,6 @@ describe("scope/plan baseline bridge: schedule/scope writer reconciliation (fix 
         alter table forge_work_package_baselines
           drop constraint forge_work_package_baselines_kind_version_unique;
         alter table forge_work_package_baselines drop column baseline_kind;
-        alter table forge_work_package_baselines
-          add constraint forge_work_package_baselines_version_unique
-            unique (owner_id, package_id, version_number);
       `);
       await legacy.exec(loadMigrationSql(THIS_MIGRATION));
       // The column exists with default 'schedule': the pre-existing
@@ -1046,6 +1087,54 @@ describe("scope/plan baseline bridge: schedule/scope writer reconciliation (fix 
     } finally {
       await legacy.close();
     }
+  });
+
+  it60("constraint swap moves BOTH baseline FKs to the per-kind unique (fix round 3)", async () => {
+    // Regression for the rehearsal miss (Nov 16): the shipped
+    // migration dropped the placements FK but not the progress-
+    // snapshots FK, so the old-unique drop failed. The fixture now
+    // carries both FKs on the old unique, so this test fails if
+    // either move is ever dropped from the migration.
+    const { rows: fks } = await db.query(`
+      select conrelid::regclass::text as tbl, conname,
+        pg_get_constraintdef(oid) as def
+      from pg_constraint
+      where confrelid = 'public.forge_work_package_baselines'::regclass
+        and contype = 'f'
+      order by tbl;
+    `);
+    expect(fks.map((r) => r.tbl)).toEqual([
+      "forge_work_progress_snapshots",
+      "forge_work_step_curve_placements",
+    ]);
+    for (const fk of fks) {
+      expect(fk.def).toContain("(owner_id, package_id, baseline_kind, version_number)");
+    }
+    expect(fks.find((r) => r.tbl === "forge_work_progress_snapshots").conname)
+      .toBe("forge_work_progress_snapshots_baseline_fk");
+    expect(fks.find((r) => r.tbl === "forge_work_step_curve_placements").conname)
+      .toBe("forge_work_step_curve_placements_baseline_fk");
+    expect(fks.find((r) => r.tbl === "forge_work_progress_snapshots").def)
+      .toContain("baseline_version");
+    // The old unique is gone; only the per-kind unique remains.
+    const { rows: cons } = await db.query(`
+      select conname from pg_constraint
+      where conrelid = 'public.forge_work_package_baselines'::regclass
+        and contype = 'u';
+    `);
+    expect(cons.map((c) => c.conname)).toEqual(["forge_work_package_baselines_kind_version_unique"]);
+    // Schedule-only checks are stamped on both dependent tables.
+    const { rows: checks } = await db.query(`
+      select conrelid::regclass::text as tbl, conname from pg_constraint
+      where conname in (
+        'forge_work_progress_snapshots_kind_schedule_check',
+        'forge_work_step_curve_placements_kind_schedule_check')
+      order by tbl;
+    `);
+    expect(checks.map((c) => `${c.tbl}:${c.conname}`)).toEqual([
+      "forge_work_progress_snapshots:forge_work_progress_snapshots_kind_schedule_check",
+      "forge_work_step_curve_placements:forge_work_step_curve_placements_kind_schedule_check",
+    ]);
   });
 });
 

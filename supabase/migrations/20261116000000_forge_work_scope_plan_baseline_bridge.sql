@@ -117,6 +117,19 @@
 -- (scope | schedule) is replaced by a schedule-only check, and
 -- the migration fails closed if any placement row already carries
 -- a non-schedule kind. The composite FK is retained.
+--
+-- Fix round 3: the same treatment was missing for
+-- forge_work_progress_snapshots, whose rung-4 FK
+-- (forge_work_progress_snapshots_baseline_fk) also references the
+-- old 3-column unique — the PG16 apply-readiness rehearsal
+-- (Nov 16) proved the shipped migration fails at the old-unique
+-- drop while that FK stands. Progress snapshots are schedule
+-- artifacts too (the bust snapshot's progress_baseline CTE resolves
+-- them against baseline_kind = 'schedule' rows), so the snapshots
+-- table gains its own baseline_kind (default 'schedule'), the FK
+-- moves to the per-kind unique, and a non-schedule row fails the
+-- migration closed. The FK lookup is by target table, not name,
+-- mirroring placements.
 -- ---------------------------------------------------------------------------
 alter table forge_work_package_baselines
   add column if not exists baseline_kind text not null default 'schedule'
@@ -125,9 +138,11 @@ alter table forge_work_package_baselines
 do $$
 declare
   v_has_placements boolean;
+  v_has_snapshots boolean;
   v_fk text;
 begin
   v_has_placements := to_regclass('public.forge_work_step_curve_placements') is not null;
+  v_has_snapshots := to_regclass('public.forge_work_progress_snapshots') is not null;
   if v_has_placements then
     execute $q$
       alter table public.forge_work_step_curve_placements
@@ -141,6 +156,24 @@ begin
       and confrelid = 'public.forge_work_package_baselines'::regclass;
     if v_fk is not null then
       execute 'alter table public.forge_work_step_curve_placements drop constraint ' || quote_ident(v_fk);
+    end if;
+  end if;
+  -- Fix round 3: progress snapshots carry the second FK on the old
+  -- unique (rung 4, forge_work_progress_snapshots_baseline_fk). It
+  -- must go before the old unique can drop, exactly like placements.
+  if v_has_snapshots then
+    execute $q$
+      alter table public.forge_work_progress_snapshots
+        add column if not exists baseline_kind text not null default 'schedule'
+          constraint forge_work_progress_snapshots_kind_schedule_check
+            check (baseline_kind = 'schedule')
+    $q$;
+    select conname into v_fk from pg_constraint
+    where conrelid = 'public.forge_work_progress_snapshots'::regclass
+      and contype = 'f'
+      and confrelid = 'public.forge_work_package_baselines'::regclass;
+    if v_fk is not null then
+      execute 'alter table public.forge_work_progress_snapshots drop constraint ' || quote_ident(v_fk);
     end if;
   end if;
   if exists (
@@ -171,6 +204,23 @@ begin
         alter table public.forge_work_step_curve_placements
           add constraint forge_work_step_curve_placements_baseline_fk
             foreign key (owner_id, work_package_id, baseline_kind, baseline_version)
+            references public.forge_work_package_baselines
+              (owner_id, package_id, baseline_kind, version_number)
+            on delete restrict
+      $q$;
+    end if;
+  end if;
+  if v_has_snapshots then
+    if not exists (
+      select 1 from pg_constraint
+      where conrelid = 'public.forge_work_progress_snapshots'::regclass
+        and contype = 'f'
+        and confrelid = 'public.forge_work_package_baselines'::regclass
+    ) then
+      execute $q$
+        alter table public.forge_work_progress_snapshots
+          add constraint forge_work_progress_snapshots_baseline_fk
+            foreign key (owner_id, package_id, baseline_kind, baseline_version)
             references public.forge_work_package_baselines
               (owner_id, package_id, baseline_kind, version_number)
             on delete restrict
@@ -215,6 +265,48 @@ begin
       execute $q$
         alter table public.forge_work_step_curve_placements
           add constraint forge_work_step_curve_placements_kind_schedule_check
+            check (baseline_kind = 'schedule')
+      $q$;
+    end if;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Fix round 3: enforce the schedule-only snapshot invariant.
+-- (Same shape as the fix-round-2 placement block above.) The column
+-- add in the swap block stamps the schedule-only check on a fresh
+-- apply, but it is a no-op wherever the column already exists
+-- (re-apply, or a fixture that stubs the column). This block closes
+-- both gaps: it drops any permissive check wherever it exists, adds
+-- the schedule-only check wherever it is absent, and fails closed if
+-- any snapshot row already carries a non-schedule kind — the
+-- migration aborts rather than silently redefining that row's
+-- meaning. Idempotent on re-apply.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if to_regclass('public.forge_work_progress_snapshots') is not null then
+    if exists (
+      select 1 from public.forge_work_progress_snapshots
+      where baseline_kind <> 'schedule'
+    ) then
+      raise exception 'forge_work: scope-kind progress snapshot rows exist; refusing to enforce the schedule-only snapshot invariant';
+    end if;
+    if exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_progress_snapshots_kind_check'
+        and conrelid = 'public.forge_work_progress_snapshots'::regclass
+    ) then
+      execute 'alter table public.forge_work_progress_snapshots drop constraint forge_work_progress_snapshots_kind_check';
+    end if;
+    if not exists (
+      select 1 from pg_constraint
+      where conname = 'forge_work_progress_snapshots_kind_schedule_check'
+        and conrelid = 'public.forge_work_progress_snapshots'::regclass
+    ) then
+      execute $q$
+        alter table public.forge_work_progress_snapshots
+          add constraint forge_work_progress_snapshots_kind_schedule_check
             check (baseline_kind = 'schedule')
       $q$;
     end if;
