@@ -988,6 +988,20 @@ export async function recordGateAttestation(db, { ownerId, actor, packageId, gat
   return { ok: true, attestation: data };
 }
 
+// Plan-baseline input failures (bridge slice): the freeze/approve RPCs
+// validate the package's planned dates, active step hours, and active
+// control estimate server-side and fail closed with one of these codes.
+// Each maps to a plain-words message the scope UI shows as-is.
+const PLAN_INPUT_ERRORS = Object.freeze({
+  plan_no_active_steps: "Add at least one planned step with labor hours before freezing the baseline.",
+  plan_step_hours_missing: "Every planned step needs labor hours before freezing the baseline.",
+  plan_dates_missing: "Set the package's planned start and finish dates before freezing the baseline.",
+  plan_dates_reversed: "The planned finish date must be on or after the planned start date.",
+  plan_estimate_missing: "Add a control estimate before freezing the baseline.",
+  plan_estimate_ambiguous: "More than one active control estimate exists; retire the extras before freezing the baseline.",
+  plan_estimate_negative: "The control estimate cannot be negative.",
+});
+
 export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membership, scope }) {
   const pkg = await getPackage(db, ownerId, packageId, scope);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
@@ -1013,6 +1027,9 @@ export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membe
     }
     if (err === "forbidden") {
       return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
+    }
+    if (PLAN_INPUT_ERRORS[err]) {
+      return { ok: false, httpStatus: 400, error: PLAN_INPUT_ERRORS[err] };
     }
     throw new Error(`forge_work_freeze_scope: ${err}`);
   }
@@ -1082,6 +1099,9 @@ export async function decideScopeChange(db, { ownerId, actor, changeId, approve,
     }
     if (err === "forbidden") {
       return { ok: false, httpStatus: 403, error: "No workspace access for this change." };
+    }
+    if (PLAN_INPUT_ERRORS[err]) {
+      return { ok: false, httpStatus: 400, error: PLAN_INPUT_ERRORS[err] };
     }
     throw new Error(`forge_work_decide_scope_change: ${err}`);
   }
