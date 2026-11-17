@@ -1,4 +1,5 @@
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 
 // Promoted out of Forge's own ForgeApplicationRail into its own sibling
 // workspace (see ForgeApplicationRail.jsx PROMOTED_PREFIXES) -- the Private
@@ -8,6 +9,6 @@ import WorkspaceShell from "@/components/workspace-shell";
 // portal, with owner-oriented workspace chrome. That mirrors the pre-existing
 // /forge/rental/portal treatment (see its layout's comment); a
 // borrower-specific layout carve-out would be a separate task.
-export default function PrivateFinancingWorkspaceLayout({ children }) {
-  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
+export default async function PrivateFinancingWorkspaceLayout({ children }) {
+  return <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>{children}</WorkspaceShell>;
 }

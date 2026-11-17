@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 import PlannerNavBar from "@/components/work-management/PlannerNavBar";
 import PlannerProjectScopeBar from "@/components/work-management/PlannerProjectScopeBar";
 
@@ -17,9 +18,9 @@ import PlannerProjectScopeBar from "@/components/work-management/PlannerProjectS
 // PlannerNavBar adds the within-Planner persistent nav (Work Packages,
 // Document library, Admin, New package) that WorkspaceShell doesn't know
 // about — it only handles cross-app chrome, not a single app's own views.
-export default function WorkPackagePlannerLayout({ children }) {
+export default async function WorkPackagePlannerLayout({ children }) {
   return (
-    <WorkspaceShell forgeCommandPalette>
+    <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>
       <Suspense fallback={null}>
         <PlannerProjectScopeBar />
       </Suspense>

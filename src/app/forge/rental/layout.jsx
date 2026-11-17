@@ -1,4 +1,5 @@
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 
 // Promoted out of Forge's own ForgeApplicationRail into its own sibling
 // workspace — see ForgeApplicationRail.jsx, which steps aside (renders
@@ -10,6 +11,6 @@ import WorkspaceShell from "@/components/workspace-shell";
 // had no layout of its own and simply inherited ForgeApplicationRail's
 // owner chrome the same way. Flagging it as pre-existing, not introduced
 // here; a tenant-specific layout carve-out would be a separate task.
-export default function RentalWorkspaceLayout({ children }) {
-  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
+export default async function RentalWorkspaceLayout({ children }) {
+  return <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>{children}</WorkspaceShell>;
 }

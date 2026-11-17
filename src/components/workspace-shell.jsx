@@ -36,15 +36,14 @@ const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass,
 // cross-workspace switcher above its own Forge-internal sub-nav, instead
 // of duplicating this markup.
 //
-// showDeveloper (default true): the Dev tile points at /forge/developer,
-// whose page 404s for anyone who is not an authorized programmer
-// (loadProgrammerAuthorization + notFound()). The Forge rail passes the
-// server-checked programmer boolean here so non-programmers — including
-// the platform owner, who is deliberately not a programmer — never see a
-// link to a page they cannot open. Other WorkspaceShell uses keep the
-// default: inside the developer subtree the viewer is authorized by the
-// page gate itself.
-export function WorkspaceLinks({ pathname, expanded, onNavigate, showDeveloper = true }) {
+// showDeveloper (default false — fail closed): the Dev tile points at
+// /forge/developer, whose page 404s for anyone who is not an authorized
+// programmer (loadProgrammerAuthorization + notFound()). Callers must pass
+// the server-checked programmer boolean explicitly; omitting it hides the
+// tile instead of advertising a page the viewer cannot open. The Forge
+// rail and WorkspaceShell both pass it — no caller may rely on the default
+// to show Dev.
+export function WorkspaceLinks({ pathname, expanded, onNavigate, showDeveloper = false }) {
   const visibleWorkspaces = showDeveloper
     ? WORKSPACES
     : WORKSPACES.filter((workspace) => workspace.href !== "/forge/developer");
@@ -288,7 +287,14 @@ export function WorkspaceRightRail({ showCommandPalette = false }) {
   );
 }
 
-export default function WorkspaceShell({ children, forgeCommandPalette = false }) {
+// isProgrammer (default false — fail closed): the server-checked programmer
+// boolean, supplied by the promoted-workspace layout that renders this
+// shell. It is passed as showDeveloper to both WorkspaceLinks instances
+// (desktop rail and mobile drawer), so non-programmers — including the
+// platform owner, who is deliberately not a programmer — never see a link
+// to a page they cannot open, while authorized programmers keep the Dev
+// tile everywhere, including inside the developer subtree itself.
+export default function WorkspaceShell({ children, forgeCommandPalette = false, isProgrammer = false }) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -353,7 +359,7 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false }
           )}
         </Link>
 
-        <WorkspaceLinks pathname={pathname} expanded={expanded} />
+        <WorkspaceLinks pathname={pathname} expanded={expanded} showDeveloper={isProgrammer} />
       </aside>
 
       <div className="min-w-0 flex-1">
@@ -427,7 +433,7 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false }
                 data-testid="mobile-nav-scroll"
                 className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
               >
-                <WorkspaceLinks pathname={pathname} expanded onNavigate={() => setMobileOpen(false)} />
+                <WorkspaceLinks pathname={pathname} expanded onNavigate={() => setMobileOpen(false)} showDeveloper={isProgrammer} />
               </div>
             </aside>
           </div>
