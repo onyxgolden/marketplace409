@@ -25,6 +25,12 @@ export default async function ForgePage() {
   // built FIRST and handed to the canonical-intelligence builder, so
   // neither it nor the intelligence build can silently trigger the
   // legacy full-history path. Every other page keeps the legacy path.
+  // The workspace below reuses dashboardSummary.workspace -- the
+  // summary built from the validated effective owner -- instead of a
+  // second buildDashboardSummaryWorkspace call: passing the actor's
+  // user id there issued a second RPC under a different owner for a
+  // co-owner viewing a shared workspace, so the page could render a
+  // 200 mixing owners' data (fix round 1, ChatGPT NEEDS CHANGES).
   const dashboardSummary =
     await readModelApplication.buildDashboardSummary();
 
@@ -41,12 +47,17 @@ export default async function ForgePage() {
         : canonicalIntelligenceContext,
     );
 
+  // The workspace IS the summary built above: same object, same
+  // effective owner, same single RPC. The actor id stays out of the
+  // read-model path entirely -- it is passed separately below only
+  // where an action is actor-specific (isOwnerOrActiveCoOwner).
+  const workspace = dashboardSummary.workspace;
+
   const [
     businessDashboard,
     investorDashboard,
     kpiModel,
     executiveSummary,
-    workspace,
     transactionReview,
     isOwnerOrCoOwner,
   ] = await Promise.all([
@@ -54,9 +65,6 @@ export default async function ForgePage() {
     readModelApplication.buildInvestorDashboardSummary(),
     readModelApplication.buildKPIModelSummary(),
     readModelApplication.buildExecutiveSummarySummary(),
-    readModelApplication.buildDashboardSummaryWorkspace(
-      forgeApplication.user.id,
-    ),
     forgeApplicationSuite.transactionReviewQueryService
       ? forgeApplicationSuite.transactionReviewReadModelAdapter.buildQueue(
           await forgeApplicationSuite.transactionReviewQueryService.buildReviewQueue(

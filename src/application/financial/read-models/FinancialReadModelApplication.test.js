@@ -504,7 +504,7 @@ describe("FinancialReadModelApplication", () => {
   });
 
   test("S1: concurrent dashboard builders share one workspace and position build", async () => {
-    // Mirrors src/app/forge/page.js: the four dashboard builders plus a
+    // Mirrors src/app/forge/page.jsx: the four dashboard builders plus a
     // direct buildWorkspace fire concurrently for the same owner+scope.
     // Before this slice each one re-scanned the owner's full
     // financial-event history; now all five share one scan and the
@@ -880,21 +880,23 @@ describe("FinancialReadModelApplication -- dashboard summary", () => {
     const { application, buildDashboardSummary, buildWorkspace } =
       buildSummaryApplication();
 
-    // The exact call graph src/app/forge/page.js performs: summary
+    // The exact call graph src/app/forge/page.jsx performs: summary
     // dashboard first (for the canonical-intelligence builder), then
-    // the four summary builders plus the direct summary workspace,
-    // concurrently.
+    // the four summary builders concurrently; the page reuses the
+    // summary's workspace instead of a second workspace call, so the
+    // RPC fires once per owner+scope per request (fix round 1).
     const dashboardSummary =
       await application.buildDashboardSummary();
 
-    const [business, investor, kpiModel, executiveSummary, workspace] =
+    const [business, investor, kpiModel, executiveSummary] =
       await Promise.all([
         application.buildBusinessDashboardSummary(),
         application.buildInvestorDashboardSummary(),
         application.buildKPIModelSummary(),
         application.buildExecutiveSummarySummary(),
-        application.buildDashboardSummaryWorkspace("owner-1"),
       ]);
+
+    const workspace = dashboardSummary.workspace;
 
     expect(buildDashboardSummary).toHaveBeenCalledTimes(1);
     expect(buildWorkspace).not.toHaveBeenCalled();

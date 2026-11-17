@@ -140,6 +140,57 @@ describe("loadAllDiagnosticTransactions", () => {
     );
   });
 
+  test("rejects a duplicate transaction id across pages at the same totalCount", async () => {
+    // Same-count delete+insert between pages: page 2 repeats page 1's
+    // id while the omitted row never appears. The count still matches,
+    // so only the duplicate betrays the swap -- retry from page 1.
+    const fetcher = vi.fn(async (url) => {
+      const page = Number(new URL(url, "http://localhost").searchParams.get("page"));
+
+      if (page === 1) {
+        return pageResponse({
+          rows: [{ id: "a" }],
+          page: 1,
+          totalCount: 2,
+          totalPages: 2,
+          complete: false,
+        });
+      }
+
+      return pageResponse({
+        rows: [{ id: "a" }],
+        page: 2,
+        totalCount: 2,
+        totalPages: 2,
+        complete: true,
+      });
+    });
+
+    await expect(
+      loadAllDiagnosticTransactions({ fetcher }),
+    ).rejects.toThrow(
+      "Transaction history changed while loading; reload to retry.",
+    );
+  });
+
+  test("rejects a duplicate transaction id inside a single page", async () => {
+    const fetcher = vi.fn(async () =>
+      pageResponse({
+        rows: [{ id: "a" }, { id: "a" }],
+        page: 1,
+        totalCount: 2,
+        totalPages: 1,
+        complete: true,
+      }),
+    );
+
+    await expect(
+      loadAllDiagnosticTransactions({ fetcher }),
+    ).rejects.toThrow(
+      "Transaction history changed while loading; reload to retry.",
+    );
+  });
+
   test("surfaces a server error instead of an empty history", async () => {
     const fetcher = vi.fn(async () => ({
       ok: false,
