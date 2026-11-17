@@ -21,6 +21,27 @@ function isTypingTarget(el) {
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 }
 
+// Phone viewing-and-navigation mode (Slice 1) is driven by a media query, never
+// user-agent sniffing. SSR-safe: the first render is the shared desktop structure;
+// the effect below switches to compact after mount, so there is no hydration
+// mismatch. renderToStaticMarkup (used by most board tests) never runs effects,
+// so those tests keep seeing the desktop layout.
+const COMPACT_VIEW_QUERY = "(max-width: 640px)";
+const COMPACT_LANE_LABEL_WIDTH_PX = 104;
+
+function useCompactView() {
+  const [isCompact, setIsCompact] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const query = window.matchMedia(COMPACT_VIEW_QUERY);
+    const update = () => setIsCompact(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return isCompact;
+}
+
 // The inspector-tab buttons in the toolbar's Data cluster keep the toolbar's historic
 // labels ("Cost Codes", "EVM & DCMA", "Level Resources"); visibleInspectorTabs supplies
 // the owner gating so non-owners never see the owner-only tabs.
@@ -66,6 +87,24 @@ function formatWeek(iso) {
 
 export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const { board, setBoard, isOwner, isLoading, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
+  // Phone viewing-and-navigation mode (Slice 1): at phone width the board is
+  // strictly read-only -- the timeline shows, nothing can be edited. Every
+  // content edit funnels through commitBoard / updateBlockProgress, so the
+  // commitBoard guard below is the single choke point; the pointer-entry
+  // handlers are gated too, so a drag never even starts on a phone.
+  const isCompactView = useCompactView();
+  // Phone-only view state: zoom/fit on a phone must never call setBoard --
+  // autosave would persist the view change as a board edit. While compact,
+  // weekWidth lives only in this local state; desktop keeps board.weekWidth.
+  const [compactWeekWidth, setCompactWeekWidth] = useState(null);
+  const [viewOptionsOpen, setViewOptionsOpen] = useState(false);
+  const viewOptionsTriggerRef = useRef(null);
+  // Stable identity so the drawer's focus-trap effect doesn't re-run (and steal
+  // focus back) on every parent re-render while the drawer is open.
+  const closeViewOptions = useCallback(() => setViewOptionsOpen(false), []);
+  const effectiveWeekWidth = isCompactView && compactWeekWidth != null ? compactWeekWidth : board.weekWidth;
+  const weekWidth = effectiveWeekWidth;
+  const laneLabelWidth = isCompactView ? COMPACT_LANE_LABEL_WIDTH_PX : LANE_LABEL_WIDTH_PX;
   const [clipboardStatus, setClipboardStatus] = useState("");
   const [importExcelStatus, setImportExcelStatus] = useState(null); // { type: "success" | "error", message } | null
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -151,6 +190,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // project" -- call setBoard directly instead, so undo stays about content, not every
   // pixel of a drag or keystroke.
   function commitBoard(updater) {
+    // Phone viewing mode is strictly read-only: no content edit may apply while
+    // compact, even if a mutation control somehow fires. Defense in depth -- the
+    // pointer-entry handlers are gated too, so a drag never starts on a phone.
+    if (isCompactView) return;
     setBoard((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       if (next !== current) setHistory((h) => recordHistory(h, current));
@@ -161,6 +204,8 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // the override is rolled back and a console error logged -- matching this API's established
   // best-effort-with-logging philosophy for everything that isn't the board save itself.
   async function updateBlockProgress(taskCode, patch) {
+    // Phone viewing mode is strictly read-only -- progress edits are writes too.
+    if (isCompactView) return;
     const previous = progressOverrides[taskCode];
     setProgressOverrides((current) => ({ ...current, [taskCode]: { ...current[taskCode], ...patch } }));
     const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}`, {
@@ -221,6 +266,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }, [saveStatus, refreshDriftBadge]);
 
   function handleUndo() {
+    if (isCompactView) return; // undo is a write; phone viewing mode is read-only
     setHistory((h) => {
       const result = undoHistory(h, board);
       if (result.board !== board) setBoard(result.board);
@@ -228,6 +274,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     });
   }
   function handleRedo() {
+    if (isCompactView) return; // redo is a write; phone viewing mode is read-only
     setHistory((h) => {
       const result = redoHistory(h, board);
       if (result.board !== board) setBoard(result.board);
@@ -268,20 +315,20 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const measureDays = measureBounds ? (measureBounds.maxRealIdx - measureBounds.minRealIdx + 1) * 7 : 0;
 
   const arrowSegments = useMemo(() => board.dependencies
-    .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
-    .filter((segment) => segment.points), [board, columnForWeekIdx]);
+    .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, weekWidth, resolveColumn) }))
+    .filter((segment) => segment.points), [board, columnForWeekIdx, weekWidth]);
 
   // Calendar off-days recur identically in every week column (see nonWorkingDayRuns' doc
   // comment -- every column runs Monday through Sunday for this purpose), so this is
   // computed once per lane rather than once per lane per column.
   const calendarShadingRects = useMemo(() => {
-    const dayWidth = board.weekWidth / 7;
+    const dayWidth = weekWidth / 7;
     const rects = [];
     board.lanes.forEach((lane, laneIdx) => {
       const runs = nonWorkingDayRuns(calendarForLane(board, lane.id));
       if (!runs.length) return;
       displayIndices.forEach((realIdx) => {
-        const colX = resolveColumn(realIdx) * board.weekWidth;
+        const colX = resolveColumn(realIdx) * weekWidth;
         runs.forEach(([start, end]) => {
           rects.push({
             key: `cal-${lane.id}-${realIdx}-${start}`, x: colX + start * dayWidth,
@@ -291,32 +338,32 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       });
     });
     return rects;
-  }, [board, displayIndices, columnForWeekIdx]);
+  }, [board, displayIndices, columnForWeekIdx, weekWidth]);
 
   // Blackout windows are one-off date ranges, not a recurring weekly pattern, so (unlike
   // calendar shading) this does need each column's own real date.
   const blackoutShadingRects = useMemo(() => {
     if (!board.blackoutWindows.length) return [];
-    const dayWidth = board.weekWidth / 7;
+    const dayWidth = weekWidth / 7;
     const rects = [];
     displayIndices.forEach((realIdx) => {
       const runs = blackoutDayRuns(board, weeks[realIdx]);
-      const colX = resolveColumn(realIdx) * board.weekWidth;
+      const colX = resolveColumn(realIdx) * weekWidth;
       runs.forEach(([start, end]) => {
         rects.push({ key: `blackout-${realIdx}-${start}`, x: colX + start * dayWidth, width: (end - start + 1) * dayWidth });
       });
     });
     return rects;
-  }, [board, displayIndices, weeks, columnForWeekIdx]);
+  }, [board, displayIndices, weeks, columnForWeekIdx, weekWidth]);
 
   // The data date line's x position -- null (nothing rendered) when today is outside the
   // project's date range, or its week has been compressed away by "hide empty weeks".
   const dataDateLineX = useMemo(() => {
     const offset = dataDateOffset(board.startDate, board.endDate);
     if (!offset || !columnForWeekIdx.has(offset.realIdx)) return null;
-    const dayWidth = board.weekWidth / 7;
-    return resolveColumn(offset.realIdx) * board.weekWidth + offset.dayOffset * dayWidth;
-  }, [board.startDate, board.endDate, board.weekWidth, columnForWeekIdx]);
+    const dayWidth = weekWidth / 7;
+    return resolveColumn(offset.realIdx) * weekWidth + offset.dayOffset * dayWidth;
+  }, [board.startDate, board.endDate, weekWidth, columnForWeekIdx]);
 
   // board.cpm comes from the server's real CPM engine (calendars, lag, relationship types,
   // constraints -- see src/domains/scheduling/schedulingCpmEngine.js), keyed by taskCode rather
@@ -328,6 +375,39 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     () => new Set(board.blocks.filter((block) => criticalTaskCodes.has(block.taskCode)).map((block) => block.id)),
     [board.blocks, criticalTaskCodes],
   );
+
+  // Phone entry point: open at the data date (or the first scheduled work) instead
+  // of the project's first week, so the chart is in view on load. "Today" re-runs
+  // the same scroll. Never rewrites schedule dates or the stored zoom.
+  const scrollToDataDate = useCallback(() => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+    let target = dataDateLineX;
+    if (target == null) {
+      const firstStart = board.blocks.reduce(
+        (min, block) => Math.min(min, columnForWeekIdx.get(block.startIdx) ?? block.startIdx), Infinity);
+      target = Number.isFinite(firstStart) ? firstStart * weekWidth : 0;
+    }
+    el.scrollLeft = Math.max(0, target - el.clientWidth / 3);
+  }, [dataDateLineX, board.blocks, columnForWeekIdx, weekWidth]);
+
+  // Runs once per project when the compact layout first has a loaded board; the
+  // ref guard (not a consumed flag) survives Strict Mode's double-effect run.
+  const initialCompactScrollDoneForRef = useRef(null);
+  useEffect(() => {
+    if (!isCompactView || isLoading || initialCompactScrollDoneForRef.current === projectId) return;
+    initialCompactScrollDoneForRef.current = projectId;
+    scrollToDataDate();
+  }, [isCompactView, isLoading, projectId, scrollToDataDate]);
+
+  // A phone that grows back to desktop width must not leave the view-options
+  // drawer open behind the desktop toolbar.
+  useEffect(() => {
+    if (!isCompactView) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setViewOptionsOpen(false);
+    }
+  }, [isCompactView]);
   const criticalDependencyIds = useMemo(() => {
     const blocksById = new Map(board.blocks.map((block) => [block.id, block]));
     return new Set(board.dependencies
@@ -340,17 +420,20 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }, [board.blocks, board.dependencies, criticalTaskCodes]);
 
   function pixelToRealWeekIdx(px) {
-    const compressed = clampIndex(pixelToIndex(px, board.weekWidth), 0, displayIndices.length - 1);
+    const compressed = clampIndex(pixelToIndex(px, weekWidth), 0, displayIndices.length - 1);
     return displayIndices[compressed];
   }
   // Same idea but snapping to the nearest column (rounding) rather than the containing one
   // (flooring) -- used when a drag ends mid-column and should settle on the closest week.
   function roundedPixelToRealWeekIdx(px) {
-    const compressed = clampIndex(Math.round(px / board.weekWidth), 0, displayIndices.length - 1);
+    const compressed = clampIndex(Math.round(px / weekWidth), 0, displayIndices.length - 1);
     return displayIndices[compressed];
   }
 
   function startMeasure(event, realIdx) {
+    // Drag-to-measure is a desktop mouse gesture; on a phone the same drag must
+    // scroll the timeline instead. Gated so it can never start while compact.
+    if (isCompactView) return;
     if (event.button !== 0) return;
     event.preventDefault();
     measureDraggedRef.current = false;
@@ -380,6 +463,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // computes the starting column from the click's own x position, then reuses startMeasure
   // exactly as the header cells do.
   function startMeasureOnCanvas(event) {
+    if (isCompactView) return;
     if (event.target !== event.currentTarget) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -387,11 +471,16 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
 
   function handleFitToProject() {
-    const availableWidth = (boardScrollRef.current?.clientWidth || 0) - LANE_LABEL_WIDTH_PX;
-    setBoard((current) => ({ ...current, weekWidth: fitWeekWidthPx(availableWidth, displayIndices.length, 1) }));
+    const availableWidth = (boardScrollRef.current?.clientWidth || 0) - laneLabelWidth;
+    const fitted = fitWeekWidthPx(availableWidth, displayIndices.length, 1);
+    // Phone fit is a view-only change: local state only, never setBoard (autosave
+    // would persist it as a board edit). Desktop keeps the existing behavior.
+    if (isCompactView) setCompactWeekWidth(fitted);
+    else setBoard((current) => ({ ...current, weekWidth: fitted }));
   }
 
   function dropChipOnCanvas(event) {
+    if (isCompactView) return; // dropping a palette chip places a block -- a write
     event.preventDefault();
     const raw = event.dataTransfer.getData("application/json");
     if (!raw) return;
@@ -407,6 +496,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
 
   function startMoveBlock(event, block) {
+    // No drag may start while compact: a tap selects (read-only detail) instead.
+    // Without this gate, the mouseup alone would commit a move and autosave it.
+    if (isCompactView) return;
     if (["resize-handle", "resize-handle-start", "delete"].includes(event.target.dataset.role)) return;
     // Ctrl/Cmd+click never drags -- it's purely a multi-select toggle, so the click order
     // (what "Link in order" chains through) stays exactly what the user clicked.
@@ -529,6 +621,8 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
   useEffect(() => {
     function onKeyDown(event) {
+      // Phone viewing mode is read-only: no undo/redo/copy/paste writes.
+      if (isCompactView) return;
       if (!(event.ctrlKey || event.metaKey) || isTypingTarget(document.activeElement)) return;
       if (event.key === "z" || event.key === "Z") {
         event.preventDefault();
@@ -546,22 +640,23 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [board, selectedBlockIds, history]);
+  }, [board, selectedBlockIds, history, isCompactView]);
 
   function startResizeBlock(event, block) {
+    if (isCompactView) return; // resizing a block is a write
     event.preventDefault();
     event.stopPropagation();
     const el = event.currentTarget.parentElement;
     const startX = event.clientX;
     const origDuration = block.duration;
     function onMove(ev) {
-      const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / board.weekWidth));
-      el.style.width = `${proposed * board.weekWidth - 4}px`;
+      const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / weekWidth));
+      el.style.width = `${proposed * weekWidth - 4}px`;
     }
     function onUp(ev) {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / board.weekWidth));
+      const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / weekWidth));
       commitBoard((current) => resizeBlock(current, block.id, proposed));
     }
     document.addEventListener("mousemove", onMove);
@@ -571,6 +666,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // Left-edge resize: the finish week stays put, the start moves -- mirrors
   // startResizeBlock but grows/shrinks from the other end (see resizeBlockFromStart).
   function startResizeBlockFromStart(event, block) {
+    if (isCompactView) return; // resizing a block is a write
     event.preventDefault();
     event.stopPropagation();
     const el = event.currentTarget.parentElement;
@@ -579,16 +675,16 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     const origWidth = parseFloat(el.style.width);
     const origDuration = block.duration;
     function onMove(ev) {
-      const deltaColumns = Math.round((ev.clientX - startX) / board.weekWidth);
+      const deltaColumns = Math.round((ev.clientX - startX) / weekWidth);
       const proposedDuration = Math.max(1, origDuration - deltaColumns);
-      const widthDelta = (origDuration - proposedDuration) * board.weekWidth;
+      const widthDelta = (origDuration - proposedDuration) * weekWidth;
       el.style.left = `${origLeft + widthDelta}px`;
       el.style.width = `${origWidth - widthDelta}px`;
     }
     function onUp(ev) {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      const deltaColumns = Math.round((ev.clientX - startX) / board.weekWidth);
+      const deltaColumns = Math.round((ev.clientX - startX) / weekWidth);
       commitBoard((current) => resizeBlockFromStart(current, block.id, block.startIdx + deltaColumns));
     }
     document.addEventListener("mousemove", onMove);
@@ -702,7 +798,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
   if (isLoading) {
     return (
-      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-loading>
+      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-loading
+        data-compact-view={isCompactView ? "true" : undefined}
+        style={isCompactView ? { height: "calc(100dvh - 4rem)" } : undefined}>
         <p className="text-sm font-bold text-slate-500">Loading project…</p>
       </section>
     );
@@ -710,7 +808,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
   if (loadError) {
     return (
-      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-load-error>
+      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-load-error
+        data-compact-view={isCompactView ? "true" : undefined}
+        style={isCompactView ? { height: "calc(100dvh - 4rem)" } : undefined}>
         <p className="text-sm font-bold text-slate-600">{loadError}</p>
         <Link href="/forge/scheduling" className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold hover:bg-slate-100">Back to Projects</Link>
       </section>
@@ -718,7 +818,23 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
 
   return (
-    <section className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board>
+    // Phone: 100dvh (with the 100vh class as the fallback for browsers without
+    // dvh) so mobile browser chrome doesn't swallow the timeline; the compact
+    // header is bounded so the chart starts in the initial viewport.
+    <section className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board
+      data-compact-view={isCompactView ? "true" : undefined}
+      style={isCompactView ? { height: "calc(100dvh - 4rem)" } : undefined}>
+      {isCompactView ? (
+        <CompactHeader
+          projectName={board.projectName}
+          startDate={board.startDate}
+          endDate={board.endDate}
+          onOpenViewOptions={() => setViewOptionsOpen(true)}
+          viewOptionsOpen={viewOptionsOpen}
+          triggerRef={viewOptionsTriggerRef}
+          onGoToDataDate={scrollToDataDate}
+        />
+      ) : (
       <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-slate-950 px-4 py-3 text-white">
         <div className="mr-2"><h1 className="text-base font-black">Gantt Chart</h1><span className="font-mono text-[11px] text-slate-400">drag-and-drop timeline</span></div>
         <Field label="Project"><input value={board.projectName} onChange={(e) => setBoard((c) => ({ ...c, projectName: e.target.value }))}
@@ -829,6 +945,21 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
       </ToolbarCluster>
       </div>
+      )}
+
+      {isCompactView && viewOptionsOpen && (
+        <CompactViewOptions
+          weekWidth={weekWidth}
+          onZoomChange={setCompactWeekWidth}
+          onFit={handleFitToProject}
+          hideEmptyWeeks={hideEmptyWeeks}
+          onHideEmptyWeeksChange={setHideEmptyWeeks}
+          showCriticalPath={showCriticalPath}
+          onShowCriticalPathChange={setShowCriticalPath}
+          onClose={closeViewOptions}
+          triggerRef={viewOptionsTriggerRef}
+        />
+      )}
 
       {conflict && (
         <SaveConflictBanner message={conflictMessage} onReload={reload} />
@@ -839,11 +970,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       )}
 
       {board.cpm?.cycleDiagnoses?.length > 0 && (
-        <CycleConflictBanner cycleDiagnoses={board.cpm.cycleDiagnoses} isOwner={isOwner}
+        <CycleConflictBanner cycleDiagnoses={board.cpm.cycleDiagnoses} isOwner={isOwner && !isCompactView}
           onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        {!isCompactView && (
         <div className="w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 px-1">
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Build</p>
@@ -905,18 +1037,25 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               className="rounded bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Add to palette</button>
           </div>
         </div>
+        )}
 
         {/* Frozen lane-label column: a real sibling outside the horizontally-scrolling grid,
             not a sticky item inside it. position:sticky on a grid item is confined to its own
             grid track's width (170px here) -- once scrollLeft passes that, there's no room
             left for it to "stick" within and it scrolls away with everything else. Living
             outside the scroller entirely sidesteps that limit rather than fighting it. */}
-        <div className="flex shrink-0 flex-col border-r border-slate-300" style={{ width: LANE_LABEL_WIDTH_PX }}>
+        <div className="flex shrink-0 flex-col border-r border-slate-300" style={{ width: laneLabelWidth }}>
           <div style={{ height: 40 }} className="shrink-0 border-b border-slate-800 bg-slate-950" />
           <div className="flex-1 overflow-hidden">
             <div ref={laneListRef}>
               {board.lanes.map((lane) => (
                 <div key={lane.id} style={{ height: ROW_HEIGHT_PX }} className="flex flex-col justify-center gap-0.5 border-b border-slate-300 bg-slate-200 px-2.5 text-xs font-bold">
+                  {isCompactView ? (
+                    // Phone: name only, truncated -- the insert/delete buttons and the
+                    // work-calendar select are mutations, so they are not rendered here.
+                    <span className="truncate" title={lane.name}>{lane.name}</span>
+                  ) : (
+                    <>
                   <div className="flex items-center justify-between">
                     <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
                     <span className="flex items-center gap-1">
@@ -930,14 +1069,16 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
                     <option value="">Default ({calendarById(board, board.defaultCalendarId)?.name})</option>
                     {board.calendars.map((calendar) => (<option key={calendar.id} value={calendar.id}>{calendar.name}</option>))}
                   </select>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100" onScroll={syncLaneListScroll}>
-          <div style={{ display: "grid", gridTemplateColumns: `${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
+        <div ref={boardScrollRef} className="min-w-0 flex-1 overflow-auto bg-slate-100" onScroll={syncLaneListScroll}>
+          <div style={{ display: "grid", gridTemplateColumns: `${displayIndices.map(() => `${weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
             {displayIndices.map((realIdx) => {
               const isMeasured = measureBounds && realIdx >= measureBounds.minRealIdx && realIdx <= measureBounds.maxRealIdx;
               return (
@@ -956,8 +1097,8 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             <div ref={canvasRef} data-scheduling-canvas
               style={{
                 gridRow: `2 / span ${board.lanes.length}`, gridColumn: `1 / span ${displayIndices.length}`,
-                width: displayIndices.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
-                backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${board.weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
+                width: displayIndices.length * weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
+                backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
               }}
               className="relative cursor-crosshair"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
@@ -985,11 +1126,11 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               {measureBounds && (
                 <div className="pointer-events-none absolute top-0 bottom-0 bg-amber-400/25" data-scheduling-measure-band
                   style={{
-                    left: resolveColumn(measureBounds.minRealIdx) * board.weekWidth,
-                    width: (resolveColumn(measureBounds.maxRealIdx) - resolveColumn(measureBounds.minRealIdx) + 1) * board.weekWidth,
+                    left: resolveColumn(measureBounds.minRealIdx) * weekWidth,
+                    width: (resolveColumn(measureBounds.maxRealIdx) - resolveColumn(measureBounds.minRealIdx) + 1) * weekWidth,
                   }} />
               )}
-              <svg className="pointer-events-none absolute inset-0" width={displayIndices.length * board.weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
+              <svg className="pointer-events-none absolute inset-0" width={displayIndices.length * weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
                 <defs>
                   <marker id="scheduling-dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M0,0 L10,5 L0,10 z" fill="#64748b" />
@@ -1010,9 +1151,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               {board.blocks.map((block) => {
                 const selectionIndex = selectedBlockIds.indexOf(block.id);
                 return (
-                  <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
+                  <BlockElement key={block.id} block={block} weekWidth={weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
                     startColumn={resolveColumn(block.startIdx)} onCriticalPath={criticalBlockIds.has(block.id)}
                     selected={selectionIndex !== -1} selectionOrder={selectedBlockIds.length > 1 && selectionIndex !== -1 ? selectionIndex + 1 : null}
+                    readOnly={isCompactView} onSelect={() => setSelectedBlockIds([block.id])}
                     onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
                     onMouseDownResizeStart={(e) => startResizeBlockFromStart(e, block)}
                     onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
@@ -1027,8 +1169,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           </div>
         </div>
         {/* The inspector rail docks inside the main flex row so the timeline keeps
-            the remaining width beside it; collapsing it gives the timeline full width. */}
-        {inspectorTab && (
+            the remaining width beside it; collapsing it gives the timeline full width.
+            Phone viewing mode never renders it -- every inspector tab is an editor. */}
+        {inspectorTab && !isCompactView && (
           <SchedulingInspector activeTab={inspectorTab} onSelectTab={setInspectorTab} onCollapse={() => setInspectorTab(null)}
             isOwner={isOwner} board={board} projectId={projectId} driftBadge={driftBadge}
             onBaselineCaptured={refreshDriftBadge}
@@ -1041,11 +1184,16 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         )}
       </div>
 
-      {selectedBlockIds.length > 1 && (
+      {selectedBlockIds.length > 1 && !isCompactView && (
         <MultiSelectLinkBar board={board} selectedBlockIds={selectedBlockIds}
           onLink={handleLinkSelectedInOrder} onClear={() => setSelectedBlockIds([])} />
       )}
       {selectedBlock && (
+        isCompactView ? (
+          <BlockDetailSheet board={board} block={selectedBlock} weeks={weeks}
+            progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
+            onClose={() => setSelectedBlockIds([])} />
+        ) : (
         <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockIds([])}
           onAddDependency={(predecessorId, successorId, relationshipType, lagDays) =>
             commitBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
@@ -1055,6 +1203,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
           onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)}
           projectId={projectId} isOwner={isOwner} resources={resources} costAccounts={costAccounts} />
+        )
       )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
@@ -1074,6 +1223,155 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
 function Field({ label, children }) {
   return <div className="flex flex-col gap-0.5"><label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</label>{children}</div>;
+}
+
+// Phone header (Slice 1): project identity + date range + data date in two short
+// rows, a Today action, and the View options trigger. The name is text, not an
+// input, and the date form stays on desktop -- nothing here writes.
+function CompactHeader({ projectName, startDate, endDate, onOpenViewOptions, viewOptionsOpen, triggerRef, onGoToDataDate }) {
+  return (
+    <div className="shrink-0 border-b border-slate-200 bg-slate-950 px-3 py-2 text-white" data-scheduling-compact-header>
+      <div className="flex items-center gap-2">
+        <h1 className="min-w-0 flex-1 truncate text-sm font-black" title={projectName}>{projectName}</h1>
+        <span className="shrink-0 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-300">View-only</span>
+        <button type="button" onClick={onGoToDataDate} title="Scroll the timeline to today"
+          className="shrink-0 rounded border border-slate-700 px-2.5 py-1 text-xs font-bold">Today</button>
+        <button ref={triggerRef} type="button" onClick={onOpenViewOptions} aria-expanded={viewOptionsOpen} aria-controls="scheduling-view-options"
+          className="shrink-0 rounded border border-slate-700 px-2.5 py-1 text-xs font-bold">View options</button>
+      </div>
+      <p className="mt-0.5 truncate text-[11px] text-slate-400">
+        {formatWeek(startDate)} – {formatWeek(endDate)} · Data date {formatWeek(todayISO())}
+      </p>
+    </div>
+  );
+}
+
+// Phone view-options drawer (Slice 1): the only phone controls are view-only --
+// zoom, Fit to project, hide empty weeks, critical path, back to Projects. A
+// bottom sheet over the board; Escape or Close dismisses it and returns focus to
+// the trigger. Zoom/fit write local state only (see handleFitToProject) -- never
+// a board save.
+function CompactViewOptions({ weekWidth, onZoomChange, onFit, hideEmptyWeeks, onHideEmptyWeeksChange, showCriticalPath, onShowCriticalPathChange, onClose, triggerRef }) {
+  const panelRef = useRef(null);
+  useEffect(() => {
+    const panel = panelRef.current;
+    // Capture the trigger node now: triggerRef.current may point elsewhere by
+    // the time the cleanup runs, and reading a ref in cleanup is a lint error.
+    const trigger = triggerRef?.current;
+    panel?.querySelector("button, input, select, a[href]")?.focus();
+    function onKeyDown(event) {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key !== "Tab" || !panel) return;
+      const focusables = [...panel.querySelectorAll("button, input, select, a[href]")].filter((el) => !el.disabled);
+      if (!focusables.length) return;
+      const firstEl = focusables[0];
+      const lastEl = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === firstEl) { event.preventDefault(); lastEl.focus(); }
+      else if (!event.shiftKey && document.activeElement === lastEl) { event.preventDefault(); firstEl.focus(); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
+    };
+  }, [onClose, triggerRef]);
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-slate-950/40" onClick={onClose} aria-hidden="true" />
+      <div ref={panelRef} id="scheduling-view-options" role="dialog" aria-modal="true" aria-label="View options"
+        data-scheduling-view-options
+        className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl border border-slate-200 bg-white p-4 shadow-xl">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-black">View options</h2>
+          <button type="button" onClick={onClose} className="rounded border border-slate-300 px-2.5 py-1 text-xs font-bold">Close ✕</button>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">View-only on this phone — editing is available on desktop.</p>
+        <div className="mt-3 flex flex-col gap-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+            Zoom
+            <input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={weekWidth}
+              onChange={(e) => onZoomChange(Number(e.target.value))} className="min-w-0 flex-1" />
+            <span className="font-mono text-slate-500">{weekWidth}px</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onFit} className="rounded border border-slate-300 px-3 py-1.5 text-xs font-bold">Fit to project</button>
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => onHideEmptyWeeksChange(e.target.checked)} />
+              Hide empty weeks
+            </label>
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <input type="checkbox" checked={showCriticalPath} onChange={(e) => onShowCriticalPathChange(e.target.checked)} />
+              Critical path
+            </label>
+          </div>
+          <Link href="/forge/scheduling" className="rounded-lg bg-slate-950 px-3 py-2 text-center text-sm font-bold text-white">← Back to Projects</Link>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Plain-text dependency list for the phone detail sheet (module level, not
+// nested in BlockDetailSheet: a component defined inside a render is a new
+// component type on every render and remounts its subtree).
+function LinkList({ title, dependencies, idField, blockById }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      {dependencies.length === 0 ? <p className="mt-1 text-xs text-slate-400">None yet.</p> : (
+        <ul className="mt-1 flex flex-col gap-1">
+          {dependencies.map((dependency) => {
+            const linked = blockById(dependency[idField]);
+            if (!linked) return null;
+            return (
+              <li key={dependency.id} className="rounded border border-slate-200 px-2 py-1 text-xs">
+                <span className="font-mono text-slate-500">{linked.taskCode}</span> {linked.label} · {dependency.relationshipType}{dependency.lagDays ? ` +${dependency.lagDays}d` : ""}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Phone read-only block detail (Slice 1): what a tap on a bar shows instead of
+// the desktop DependencyDrawer. No inputs, no add/remove actions, no resource
+// panel -- dates, duration, progress, and links as plain text only.
+function BlockDetailSheet({ board, block, weeks, progress, onClose }) {
+  const { predecessors, successors } = dependenciesForBlock(board, block.id);
+  const blockById = (id) => board.blocks.find((candidate) => candidate.id === id);
+  const startIso = weeks[block.startIdx];
+  const endWeekIdx = Math.min(block.startIdx + Math.max(0, block.duration - 1), weeks.length - 1);
+  const endIso = weeks[endWeekIdx];
+  const endDateIso = endIso ? new Date(Date.parse(endIso) + 6 * 86400000).toISOString().slice(0, 10) : null;
+  return (
+    <div className="max-h-64 shrink-0 overflow-y-auto border-t border-slate-200 bg-white p-4" data-scheduling-block-detail>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="min-w-0 truncate text-sm font-black"><span className="mr-2 font-mono text-slate-500">{block.taskCode}</span>{block.label}</h3>
+        <button type="button" onClick={onClose} className="shrink-0 text-xs font-bold text-slate-400 hover:text-slate-700">Close ✕</button>
+      </div>
+      <p className="mt-1 text-xs text-slate-600">
+        {block.milestone ? "Milestone · 0 duration" : `Duration ${block.duration} wk`}
+        {startIso && endDateIso && <> · {formatWeek(startIso)} – {formatWeek(endDateIso)}</>}
+      </p>
+      {progress?.earlyStart && progress?.earlyFinish && (
+        <p className="mt-0.5 text-xs text-slate-500">
+          CPM: {progress.earlyStart} &rarr; {progress.earlyFinish}
+          {progress.totalFloatDays != null && ` · ${progress.totalFloatDays}d float`}
+          {progress.isCritical && " · critical"}
+        </p>
+      )}
+      {progress?.percentComplete != null && (
+        <p className="mt-0.5 text-xs text-slate-500">{progress.percentComplete}% complete</p>
+      )}
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <LinkList title="Predecessors" dependencies={predecessors} idField="predecessorId" blockById={blockById} />
+        <LinkList title="Successors" dependencies={successors} idField="successorId" blockById={blockById} />
+      </div>
+      <p className="mt-3 text-[11px] text-slate-400">View-only on this phone — editing is available on desktop.</p>
+    </div>
+  );
 }
 
 // SCHED-11: schedulingCycleDiagnosis.js already traced the loop and ranked which link to remove --
@@ -1195,26 +1493,30 @@ function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   );
 }
 
-function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onCriticalPath, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onContextMenu }) {
+function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onCriticalPath, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onContextMenu, readOnly, onSelect }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
   const criticalBorder = onCriticalPath ? "border-red-600" : "border-slate-900";
   function handleContextMenu(event) {
     event.preventDefault();
-    onContextMenu(event);
+    // Phone viewing mode has no context menu -- a long-press must never copy or
+    // open the link-activities menu (both are writes or write-adjacent).
+    if (!readOnly) onContextMenu(event);
   }
   if (block.milestone) {
     return (
-      <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
-        className="group absolute flex cursor-grab items-center justify-center"
+      <div data-block-id={block.id} onMouseDown={readOnly ? undefined : onMouseDownMove} onClick={readOnly ? onSelect : undefined} onContextMenu={handleContextMenu}
+        className={`group absolute flex items-center justify-center ${readOnly ? "cursor-pointer" : "cursor-grab"}`}
         style={{ left: startColumn * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
         <div className={`h-5 w-5 rotate-45 rounded-[1px] border-2 ${criticalBorder} shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
-        <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
+        <div onDoubleClick={readOnly ? undefined : onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
           style={{ fontSize: `${block.fontSize || 11}px`, fontWeight: block.bold ? 700 : 400, color: block.textColor || "#1e293b" }}>
           <span className="mr-1 font-mono opacity-70">{block.taskCode}</span>{block.label}
         </div>
         {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
+        {!readOnly && (
         <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
+        )}
       </div>
     );
   }
@@ -1222,20 +1524,26 @@ function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, select
   const barHeight = ROW_HEIGHT_PX - 10;
   const fontSize = fitBlockFontSizePx(block.label, barWidth, barHeight, block.fontSize);
   return (
-    <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
-      className={`group absolute flex cursor-grab items-center rounded-md px-2 text-slate-950 shadow ${onCriticalPath ? "border-2 border-red-600" : "border border-black/15"} ${selectedRing}`}
+    <div data-block-id={block.id} onMouseDown={readOnly ? undefined : onMouseDownMove} onClick={readOnly ? onSelect : undefined} onContextMenu={handleContextMenu}
+      className={`group absolute flex items-center rounded-md px-2 text-slate-950 shadow ${readOnly ? "cursor-pointer" : "cursor-grab"} ${onCriticalPath ? "border-2 border-red-600" : "border border-black/15"} ${selectedRing}`}
       style={{ left: startColumn * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
       {/* min-w-0 lets this flex child actually shrink below its unwrapped text width -- without it,
           flexbox's default min-width:auto keeps it at max-content size and text never wraps. */}
-      <span onDoubleClick={onRename} className="min-w-0 break-words"
+      <span onDoubleClick={readOnly ? undefined : onRename} className="min-w-0 break-words"
         style={{ fontSize: `${fontSize}px`, lineHeight: 1.15, fontWeight: block.bold ? 700 : 400, color: block.textColor || undefined }}>
         <span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}
       </span>
+      {!readOnly && (
+      <>
       <div data-role="resize-handle-start" onMouseDown={onMouseDownResizeStart} className="absolute top-0 bottom-0 left-0 w-2.5 cursor-ew-resize" />
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />
+      </>
+      )}
       {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
+      {!readOnly && (
       <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
         className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
+      )}
     </div>
   );
 }

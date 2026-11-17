@@ -554,3 +554,239 @@ describe("SchedulingBoard — custom activity-chip validation", () => {
     unmount(mounted);
   });
 });
+
+// Phone compact view (Slice 1, 2026-11-16): at a <=640px viewport the board is a
+// strictly read-only viewing mode -- compact header + view-options drawer, no
+// palette, narrow lane labels, tap-to-view block detail, and no persistence
+// writes of any kind (zoom/fit live in local state only). The media query is
+// stubbed here because jsdom has no matchMedia; the real gate is Jason's S26+
+// phone check on production, which no jsdom test can stand in for.
+describe("SchedulingBoard — phone compact view", () => {
+  function stubMatchMedia(matches) {
+    window.matchMedia = vi.fn((query) => ({
+      matches: query === "(max-width: 640px)" ? matches : false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => false),
+    }));
+  }
+
+  function loadedExampleBoard() {
+    return projectBoardFixture({
+      projectName: "Example project",
+      startDate: "2026-08-18",
+      endDate: "2027-08-17",
+      blocks: [
+        { id: "b1", taskCode: "A1010", label: "Kickoff", category: "gov", milestone: true, duration: 0, startIdx: 2, laneId: "lane_ms", fontSize: null, textColor: null, bold: true },
+        { id: "b2", taskCode: "A1070", label: "Conceptual Design", category: "eng", milestone: false, duration: 4, startIdx: 5, laneId: "lane_eng", fontSize: null, textColor: null, bold: true },
+      ],
+    });
+  }
+
+  // Records every fetch so a test can prove a phone interaction caused NO write
+  // (no PUT/POST/DELETE/PATCH). The autosave debounce is 500ms, so the
+  // no-write assertions wait past it instead of asserting too early.
+  function mockBoardFetch(putCalls) {
+    const loaded = loadedExampleBoard();
+    global.fetch = vi.fn((url, init) => {
+      if (url === "/api/forge/scheduling/resources") return jsonResponse({ success: true, resources: [] });
+      if (url === "/api/forge/scheduling/cost-accounts") return jsonResponse({ success: true, costAccounts: [] });
+      if (init?.method === "PUT") { putCalls.push(url); return jsonResponse({ success: true, boardRevision: 2 }); }
+      if (typeof url === "string" && url.startsWith("/api/forge/scheduling/")) return jsonResponse({ success: true, board: loaded, isOwner: true });
+      return new Promise(() => {});
+    });
+  }
+
+  async function mountCompact(putCalls = []) {
+    stubMatchMedia(true);
+    mockBoardFetch(putCalls);
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+    return mounted;
+  }
+
+  function viewOptionsButton(container) {
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === "View options");
+  }
+
+  async function waitPastAutosave() {
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+  }
+
+  afterEach(() => {
+    delete window.matchMedia;
+    vi.restoreAllMocks();
+  });
+
+  it("renders the compact header with project identity, dates, Today, and View options -- and no desktop toolbar", async () => {
+    const mounted = await mountCompact();
+    const html = mounted.container.innerHTML;
+    expect(html).toContain("data-scheduling-compact-header");
+    expect(html).toContain("Example project");
+    expect(html).toContain("8/18/26");
+    expect(html).toContain("8/17/27");
+    expect(html).toContain("Data date");
+    expect(html).toContain(">Today<");
+    expect(html).toContain(">View options<");
+    expect(html).toContain("View-only");
+    expect(html).toContain('data-compact-view="true"');
+    expect(mounted.container.querySelector("[data-toolbar-cluster]")).toBeNull();
+    expect(html).not.toContain("Apply dates");
+    expect(html).not.toContain("+ Add lane");
+    unmount(mounted);
+  });
+
+  it("omits the 240px palette entirely and narrows the frozen lane labels to 104px", async () => {
+    const mounted = await mountCompact();
+    const html = mounted.container.innerHTML;
+    expect(html).not.toContain("Starter objects");
+    expect(html).not.toContain("w-60");
+    // Assert on the actual style widths, not a raw substring -- "170px" also
+    // matches the data-date line's left: 1170px, which is unrelated.
+    const widths = [...mounted.container.querySelectorAll("div")].map((d) => d.style.width);
+    expect(widths).toContain("104px");
+    expect(widths).not.toContain("170px");
+    // The lane insert/delete buttons and the work-calendar select are mutations.
+    expect(html).not.toContain("Insert lane above");
+    expect(mounted.container.querySelector("[data-scheduling-lane-calendar]")).toBeNull();
+    unmount(mounted);
+  });
+
+  it("renders the chart in the initial viewport: week headers, lanes, bars, and the data-date line", async () => {
+    const mounted = await mountCompact();
+    expect(mounted.container.querySelectorAll(".sticky.top-0.z-30").length).toBe(53);
+    expect(mounted.container.querySelectorAll("[data-block-id]").length).toBe(2);
+    expect(mounted.container.querySelector("[data-scheduling-data-date-line]")).toBeTruthy();
+    // The grid columns use the board's own week width (90px) -- the chart is the
+    // same renderer as desktop, only the chrome around it changed.
+    const grid = mounted.container.querySelector("[data-scheduling-canvas]").parentElement;
+    expect(grid.style.gridTemplateColumns).toContain("90px");
+    unmount(mounted);
+  });
+
+  it("a tap on a bar opens the read-only detail sheet, never the editing drawer, and writes nothing", async () => {
+    const putCalls = [];
+    const mounted = await mountCompact(putCalls);
+    const block = mounted.container.querySelector('[data-block-id="b2"]');
+    act(() => { block.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+
+    const sheet = mounted.container.querySelector("[data-scheduling-block-detail]");
+    expect(sheet).toBeTruthy();
+    expect(sheet.textContent).toContain("A1070");
+    expect(sheet.textContent).toContain("Conceptual Design");
+    expect(sheet.textContent).toContain("View-only on this phone");
+    expect(mounted.container.querySelector("[data-scheduling-drawer]")).toBeNull();
+    expect(mounted.container.querySelector("[data-scheduling-duration-input]")).toBeNull();
+    expect(sheet.textContent).not.toContain("Add link");
+    await waitPastAutosave();
+    expect(putCalls).toHaveLength(0);
+    unmount(mounted);
+  });
+
+  it("dragging a block does nothing on phone: no move, no save", async () => {
+    const putCalls = [];
+    const mounted = await mountCompact(putCalls);
+    const block = mounted.container.querySelector('[data-block-id="b2"]');
+    const leftBefore = block.style.left;
+    act(() => { block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 500, clientY: 100 })); });
+    act(() => { document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 700, clientY: 100 })); });
+    act(() => { document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 700, clientY: 100 })); });
+    await flush();
+    expect(block.style.left).toBe(leftBefore);
+    await waitPastAutosave();
+    expect(putCalls).toHaveLength(0);
+    unmount(mounted);
+  });
+
+  it("dropping a palette chip on the canvas adds nothing on phone", async () => {
+    const putCalls = [];
+    const mounted = await mountCompact(putCalls);
+    const canvas = mounted.container.querySelector("[data-scheduling-canvas]");
+    const chip = { label: "Phone Drop", category: "gov", durationWeeks: 2, milestone: false };
+    const dropEvent = new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: 100, clientY: 20 });
+    Object.defineProperty(dropEvent, "dataTransfer", { value: { getData: () => JSON.stringify(chip) } });
+    act(() => { canvas.dispatchEvent(dropEvent); });
+    await flush();
+    expect(mounted.container.querySelectorAll("[data-block-id]").length).toBe(2);
+    await waitPastAutosave();
+    expect(putCalls).toHaveLength(0);
+    unmount(mounted);
+  });
+
+  it("View options opens a view-only drawer: zoom and fit change local state only and never persist", async () => {
+    const putCalls = [];
+    const mounted = await mountCompact(putCalls);
+    act(() => { viewOptionsButton(mounted.container).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const drawer = mounted.container.querySelector("[data-scheduling-view-options]");
+    expect(drawer).toBeTruthy();
+    expect(drawer.textContent).toContain("Fit to project");
+    expect(drawer.textContent).toContain("Hide empty weeks");
+    expect(drawer.textContent).toContain("Critical path");
+    expect(drawer.textContent).toContain("Back to Projects");
+
+    const grid = mounted.container.querySelector("[data-scheduling-canvas]").parentElement;
+    const zoom = drawer.querySelector('input[type="range"]');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    act(() => {
+      setter.call(zoom, "120");
+      zoom.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(grid.style.gridTemplateColumns).toContain("120px");
+    await waitPastAutosave();
+    expect(putCalls).toHaveLength(0);
+
+    const fit = [...drawer.querySelectorAll("button")].find((b) => b.textContent === "Fit to project");
+    act(() => { fit.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    // jsdom reports clientWidth 0, so fit collapses to the 1px floor -- the point
+    // is that it ran locally (columns changed) without a save, not the value.
+    expect(grid.style.gridTemplateColumns).toContain("1px");
+    await waitPastAutosave();
+    expect(putCalls).toHaveLength(0);
+    unmount(mounted);
+  });
+
+  it("Escape closes the view-options drawer and returns focus to the trigger", async () => {
+    const mounted = await mountCompact();
+    const trigger = viewOptionsButton(mounted.container);
+    act(() => { trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(mounted.container.querySelector("[data-scheduling-view-options]")).toBeTruthy();
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(mounted.container.querySelector("[data-scheduling-view-options]")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    unmount(mounted);
+  });
+
+  it("Today scrolls the timeline to the data date", async () => {
+    const mounted = await mountCompact();
+    const scroller = mounted.container.querySelector("[data-scheduling-canvas]").closest(".overflow-auto");
+    // Read the target from the rendered data-date line instead of recomputing
+    // date math here: the line's left is the exact x scrollToDataDate uses
+    // (and "today" differs between the VM clock and the user's timezone).
+    const expected = parseFloat(mounted.container.querySelector("[data-scheduling-data-date-line]").style.left);
+    expect(expected).toBeGreaterThan(0);
+    expect(scroller.scrollLeft).toBeCloseTo(expected, 0);
+    scroller.scrollLeft = 0;
+    const today = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "Today");
+    act(() => { today.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(scroller.scrollLeft).toBeCloseTo(expected, 0);
+    unmount(mounted);
+  });
+
+  it("keeps the desktop layout intact when the media query does not match", async () => {
+    stubMatchMedia(false);
+    mockBoardFetch([]);
+    const mounted = mount(<SchedulingBoard projectId="schedule_project_1" />);
+    await flush();
+    const html = mounted.container.innerHTML;
+    expect(html).not.toContain("data-scheduling-compact-header");
+    expect(mounted.container.querySelector("[data-toolbar-cluster]")).toBeTruthy();
+    expect(html).toContain("170px");
+    expect(html).toContain("+ Add lane");
+    expect(html).toContain("Apply dates");
+    unmount(mounted);
+  });
+});
