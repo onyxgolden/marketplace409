@@ -1,4 +1,5 @@
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 
 // Promoted out of Forge's own ForgeApplicationRail into its own sibling
 // workspace, the same way /forge/scheduling, /forge/rental, and
@@ -9,6 +10,6 @@ import WorkspaceShell from "@/components/workspace-shell";
 // still gated independently by each page. The room designer keeps its own
 // domain layer, with summarizeDesignForEstimating() as the clean seam for
 // future schedule/cost links.
-export default function DesignerWorkspaceLayout({ children }) {
-  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
+export default async function DesignerWorkspaceLayout({ children }) {
+  return <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>{children}</WorkspaceShell>;
 }

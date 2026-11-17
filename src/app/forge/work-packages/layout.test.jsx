@@ -22,6 +22,13 @@ vi.mock("@/components/workspace-shell", () => ({
   },
 }));
 
+// The layout is async (it awaits the server-checked programmer boolean
+// for the shell) — stub the check so this test never touches the real
+// Supabase server client in jsdom.
+vi.mock("@/lib/supabase/loadProgrammerAuthorization", () => ({
+  isProgrammerAuthorized: () => Promise.resolve(false),
+}));
+
 import WorkPackagesPlannerLayout from "./layout.jsx";
 
 describe("WorkPackagesPlannerLayout", () => {
@@ -36,16 +43,15 @@ describe("WorkPackagesPlannerLayout", () => {
     }
   });
 
-  it("wraps a takeoff page in the standard workspace shell plus the planner's own nav bar", () => {
+  it("wraps a takeoff page in the standard workspace shell plus the planner's own nav bar", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
+    // The layout is async — resolve it before rendering, the same way a
+    // server render would.
+    const element = await WorkPackagesPlannerLayout({ children: <div data-takeoff-page>takeoff content</div> });
     act(() => {
-      root.render(
-        <WorkPackagesPlannerLayout>
-          <div data-takeoff-page>takeoff content</div>
-        </WorkPackagesPlannerLayout>,
-      );
+      root.render(element);
     });
     mounted = { container, root };
 

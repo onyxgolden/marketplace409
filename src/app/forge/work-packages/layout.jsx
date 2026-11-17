@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 import PlannerNavBar from "@/components/work-management/PlannerNavBar";
 
 // /forge/work-packages is the takeoff-page sibling of /forge/work (see
@@ -11,9 +12,9 @@ import PlannerNavBar from "@/components/work-management/PlannerNavBar";
 // takeoff page rendered with no cross-workspace chrome and no way out,
 // same gap src/app/forge/work/layout.jsx just closed for the list/detail
 // pages. This closes it the same way, for the same reason.
-export default function WorkPackagesPlannerLayout({ children }) {
+export default async function WorkPackagesPlannerLayout({ children }) {
   return (
-    <WorkspaceShell forgeCommandPalette>
+    <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>
       <Suspense fallback={null}>
         <PlannerNavBar />
       </Suspense>

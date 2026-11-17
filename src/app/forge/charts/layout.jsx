@@ -1,4 +1,5 @@
 import WorkspaceShell from "@/components/workspace-shell";
+import { isProgrammerAuthorized } from "@/lib/supabase/loadProgrammerAuthorization";
 
 // Promoted out of Forge's own ForgeApplicationRail into its own sibling
 // workspace, the same way /forge/rental, /forge/developer, /forge/scheduling,
@@ -8,6 +9,6 @@ import WorkspaceShell from "@/components/workspace-shell";
 // workspace chrome, no back/home link, and browser-back was the only way out.
 // This layout supplies the shared top-level workspace chrome; auth is still
 // gated independently by the page.
-export default function ChartsWorkspaceLayout({ children }) {
-  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
+export default async function ChartsWorkspaceLayout({ children }) {
+  return <WorkspaceShell forgeCommandPalette isProgrammer={await isProgrammerAuthorized()}>{children}</WorkspaceShell>;
 }

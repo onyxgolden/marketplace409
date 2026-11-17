@@ -28,7 +28,7 @@ vi.mock("@/lib/auth/signOutSafely.js", () => ({
   friendlySignOutError: (error) => error?.message ?? "Sign-out didn't complete. Please try again.",
 }));
 
-import WorkspaceShell, { WorkspaceRightRail } from "./workspace-shell.jsx";
+import WorkspaceShell, { WorkspaceLinks, WorkspaceRightRail } from "./workspace-shell.jsx";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -233,6 +233,111 @@ describe("WorkspaceShell mobile drawer", () => {
       drawer.parentElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(container.querySelector('aside[aria-label="Workspace navigation"]')).toBeNull();
+  });
+});
+
+describe("WorkspaceLinks developer tile gating", () => {
+  function mountLinks(props) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkspaceLinks pathname="/forge" expanded {...props} />);
+    });
+    mounted = { container, root };
+    return container;
+  }
+
+  it("hides the Dev link by default — fail closed, no caller may rely on the default to show Dev", () => {
+    const container = mountLinks({});
+    // The P1 fix round changed the default: omitting showDeveloper used to
+    // show Dev, which silently advertised the 404 to every WorkspaceShell
+    // caller that forgot to pass the server-checked boolean.
+    expect(container.querySelector('a[href="/forge/developer"]')).toBeNull();
+    expect(container.querySelector('a[href="/forge/rental"]')).not.toBeNull();
+  });
+
+  it("shows the Dev link when showDeveloper is true", () => {
+    const container = mountLinks({ showDeveloper: true });
+    expect(container.querySelector('a[href="/forge/developer"]')).not.toBeNull();
+  });
+
+  it("hides the Dev link when showDeveloper is false, and keeps every other workspace", () => {
+    const container = mountLinks({ showDeveloper: false });
+    // The developer page 404s for non-programmers, so the switcher must not
+    // advertise it to them — but nothing else may disappear with it.
+    expect(container.querySelector('a[href="/forge/developer"]')).toBeNull();
+    expect(container.querySelector('a[href="/forge/rental"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge/scheduling"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge/designer"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge"]')).not.toBeNull();
+  });
+});
+
+describe("WorkspaceShell programmer gating (P1 fix round)", () => {
+  function mountShell(props) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkspaceShell {...props}><main>workspace content</main></WorkspaceShell>);
+    });
+    mounted = { container, root };
+    return container;
+  }
+
+  function openDrawer(container) {
+    const openButton = container.querySelector('button[aria-label="Open workspace navigation"]');
+    expect(openButton).not.toBeNull();
+    act(() => {
+      openButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    return container.querySelector('aside[aria-label="Workspace navigation"]');
+  }
+
+  function desktopSwitcher(container) {
+    return container.querySelector("aside[data-workspace-app-switcher]");
+  }
+
+  it("desktop: hides the Dev link by default and keeps every other workspace", async () => {
+    const container = mountShell({});
+    await act(async () => {});
+    const switcher = desktopSwitcher(container);
+    expect(switcher).not.toBeNull();
+    expect(switcher.querySelector('a[href="/forge/developer"]')).toBeNull();
+    expect(switcher.querySelector('a[href="/forge/rental"]')).not.toBeNull();
+    expect(switcher.querySelector('a[href="/forge/scheduling"]')).not.toBeNull();
+    expect(switcher.querySelector('a[href="/forge/designer"]')).not.toBeNull();
+    expect(switcher.querySelector('a[href="/forge"]')).not.toBeNull();
+  });
+
+  it("desktop: shows the Dev link for an authorized programmer", async () => {
+    const container = mountShell({ isProgrammer: true });
+    await act(async () => {});
+    expect(desktopSwitcher(container).querySelector('a[href="/forge/developer"]')).not.toBeNull();
+  });
+
+  it("desktop: hides the Dev link when isProgrammer is explicitly false", async () => {
+    const container = mountShell({ isProgrammer: false });
+    await act(async () => {});
+    expect(desktopSwitcher(container).querySelector('a[href="/forge/developer"]')).toBeNull();
+  });
+
+  it("mobile drawer: hides the Dev link by default (interactive open)", async () => {
+    const container = mountShell({});
+    await act(async () => {});
+    const drawer = openDrawer(container);
+    expect(drawer).not.toBeNull();
+    expect(drawer.querySelector('a[href="/forge/developer"]')).toBeNull();
+    expect(drawer.querySelector('a[href="/forge/rental"]')).not.toBeNull();
+  });
+
+  it("mobile drawer: shows the Dev link for an authorized programmer (interactive open)", async () => {
+    const container = mountShell({ isProgrammer: true });
+    await act(async () => {});
+    const drawer = openDrawer(container);
+    expect(drawer).not.toBeNull();
+    expect(drawer.querySelector('a[href="/forge/developer"]')).not.toBeNull();
   });
 });
 

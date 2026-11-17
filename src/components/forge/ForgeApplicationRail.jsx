@@ -208,6 +208,14 @@ function ForgeApplicationLinks({
 
 export default function ForgeApplicationRail({
   children,
+  // Server-checked programmer boolean, supplied by src/app/forge/layout.js
+  // via loadProgrammerAuthorization(). Fail closed: without it, the Dev
+  // tile is hidden. Only a boolean crosses into this client component —
+  // the programmer registry itself is never exposed to the client. The
+  // developer page keeps its own independent gate (it 404s for
+  // non-programmers); this prop only controls whether the rail advertises
+  // the link at all.
+  isProgrammer = false,
 }) {
   const pathname =
     usePathname();
@@ -345,7 +353,11 @@ export default function ForgeApplicationRail({
            so switching to Rentals/Marketplace/Dev from inside Forge looks
            and behaves the same as it does everywhere else. */}
         <div className="mb-5">
-          <WorkspaceLinks pathname={pathname} expanded={expanded} />
+          <WorkspaceLinks
+            pathname={pathname}
+            expanded={expanded}
+            showDeveloper={isProgrammer}
+          />
         </div>
 
         <div
@@ -461,6 +473,7 @@ export default function ForgeApplicationRail({
                     pathname={pathname}
                     expanded
                     onNavigate={() => setMobileOpen(false)}
+                    showDeveloper={isProgrammer}
                   />
                 </div>
 

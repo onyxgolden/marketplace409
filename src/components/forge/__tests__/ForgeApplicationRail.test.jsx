@@ -240,6 +240,51 @@ describe(
     );
 
     it(
+      "hides the Dev link by default: the developer page 404s for non-programmers",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        // Fail closed: no isProgrammer prop means the Dev tile is not
+        // advertised at all — a non-programmer (including the owner) must
+        // never see a link to /forge/developer, which 404s for them.
+        expect(markup).not.toContain('href="/forge/developer"');
+        // Every other promoted workspace is untouched.
+        expect(markup).toContain('href="/forge/rental"');
+        expect(markup).toContain('href="/forge/scheduling"');
+        expect(markup).toContain('href="/forge/designer"');
+        expect(markup).toContain('href="/forge"');
+      },
+    );
+
+    it(
+      "shows the Dev link to an authorized programmer",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail isProgrammer>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        expect(markup).toContain('href="/forge/developer"');
+        expect(markup).toContain('aria-label="Dev"');
+      },
+    );
+
+    it(
       "renders a compact, accessible theme menu button in the persistent nav",
       () => {
         const markup =
