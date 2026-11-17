@@ -56,6 +56,10 @@ mod capture_worker;
 /// PPTX-to-video Slice 1 backend: chunked deck upload + project storage.
 /// See the module docs for the layout and safety rules.
 mod pptx_video;
+/// PPTX-to-video Slice 2 backend: local grounded narration drafts via a
+/// pinned llama.cpp + Qwen2.5-1.5B-Instruct model pack. See the module
+/// docs and `narration-draft/LICENSE-RECEIPT.md` for the provenance chain.
+mod narration_draft;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -7238,6 +7242,7 @@ fn main() {
             pptx_video::pptx_video_read_thumb,
             pptx_video::pptx_video_rename_project,
             pptx_video::pptx_video_delete_project,
+            narration_draft::pptx_video_generate_narration_draft,
             session_store::forge_session_get,
             session_store::forge_session_set,
             session_store::forge_session_clear,
