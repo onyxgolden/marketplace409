@@ -381,4 +381,29 @@ describe("WorkspaceShell mobile header", () => {
     expect(header).not.toBeNull();
     expect(header.querySelector('button[aria-label^="Theme:"]')).not.toBeNull();
   });
+
+  it("Phone Slice 5: below 400px the secondary actions drop to a second row and Apps stays in the first", async () => {
+    const container = mountShell();
+    await act(async () => {});
+    const header = mobileHeader(container);
+    expect(header).not.toBeNull();
+    // Row 1 (order 1 brand + order 2 Apps) — Apps never leaves the
+    // first row; the account/theme/palette group (order 3, full width)
+    // wraps below it. At 400px and up the group returns to the middle
+    // of the single row (ml-auto keeps it clustered against Apps).
+    const apps = header.querySelector('button[aria-label="Open workspace navigation"]');
+    expect(apps).not.toBeNull();
+    expect(apps.className).toContain("order-2");
+    expect(apps.className).toContain("min-[400px]:order-3");
+    const accountButton = header.querySelector('button[aria-label^="Account"]');
+    expect(accountButton).not.toBeNull();
+    // The secondary row is a direct child of the header (the account
+    // button's nearest div is AccountMenu's own wrapper, not the row).
+    const secondaryRow = [...header.children].find((el) => el.className.includes("order-3"));
+    expect(secondaryRow).toBeDefined();
+    expect(secondaryRow.className).toContain("w-full");
+    expect(secondaryRow.className).toContain("min-[400px]:order-2");
+    expect(secondaryRow.className).toContain("min-[400px]:ml-auto");
+    expect(secondaryRow.className).toContain("min-[400px]:w-auto");
+  });
 });
