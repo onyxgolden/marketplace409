@@ -41,16 +41,26 @@ export function parseDiagnosticPageParams(searchParams) {
   return { page, pageSize };
 }
 
-export function buildDiagnosticPage({ transactions, page, pageSize }) {
-  if (!Array.isArray(transactions)) {
-    throw new Error("Diagnostic transactions must be an array.");
+export function buildDiagnosticPage({ pageResult, page, pageSize }) {
+  // Fix round (diagnostic endpoint): the page result now comes from the
+  // server-side paginated RPC, not from a full in-memory list -- the
+  // route used to rebuild the owner's entire history per page request.
+  // The response shape and the paging semantics are unchanged: the same
+  // totalCount/totalPages/complete contract the client loads every page
+  // against, and a page past the end is still a 400, never a silent
+  // empty page.
+  if (
+    !pageResult ||
+    typeof pageResult !== "object" ||
+    !Array.isArray(pageResult.transactions) ||
+    !Number.isInteger(pageResult.totalCount) ||
+    !Number.isInteger(pageResult.totalPages) ||
+    typeof pageResult.complete !== "boolean"
+  ) {
+    throw new Error("Diagnostic transactions must be a page result.");
   }
 
-  const totalCount = transactions.length;
-  const totalPages = Math.max(
-    1,
-    Math.ceil(totalCount / pageSize),
-  );
+  const { totalCount, totalPages, complete } = pageResult;
 
   if (page > totalPages) {
     throw badRequest(
@@ -58,18 +68,14 @@ export function buildDiagnosticPage({ transactions, page, pageSize }) {
     );
   }
 
-  const start = (page - 1) * pageSize;
-
   return Object.freeze({
     success: true,
-    transactions: Object.freeze(
-      transactions.slice(start, start + pageSize),
-    ),
+    transactions: Object.freeze(pageResult.transactions),
     page,
     pageSize,
     totalCount,
     totalPages,
-    complete: page >= totalPages,
+    complete: page >= totalPages ? true : complete,
     transactionsStatus: "loaded",
   });
 }
