@@ -42,6 +42,13 @@ async function listGet(...args) {
 // (select/eq, awaited directly, no update/delete) resolves the filtered
 // rows. PUT/DELETE flags are cleared on resolve, so a later probe chain
 // on the shared node can never misresolve as a mutation.
+//
+// PostgREST fidelity (fix round 3): the probe and the ordered list
+// enforce the same per-response row cap production does (commonly 1,000),
+// and the probe returns the exact total count, as count:"exact" does in
+// production. Fixtures here are small, so the cap never binds.
+const POSTGREST_MAX_ROWS = 1000;
+
 function freshnessDb(rows) {
   const counters = { listSelectCalls: 0, probeCalls: 0 };
   let ownerFilter;
@@ -64,7 +71,7 @@ function freshnessDb(rows) {
           String(b.updated_at).localeCompare(String(a.updated_at)),
         );
         counters.listSelectCalls += 1;
-        return { data: sorted, error: null };
+        return { data: sorted.slice(0, POSTGREST_MAX_ROWS), error: null };
       };
       return {
         limit: vi.fn(async () => resolve()),
@@ -98,13 +105,19 @@ function freshnessDb(rows) {
         if (wasUpdate) return { data: [{ id: "design_1" }], error: null };
         if (wasDelete) return { data: null, error: null };
         // Digest-probe chain: resolve the filtered rows unsorted — the
-        // digest sorts by id, so probe order is irrelevant.
+        // digest sorts by id, so probe order is irrelevant. Truncated to
+        // the PostgREST cap with the exact total count, as count:"exact"
+        // reports in production.
         counters.probeCalls += 1;
         const filtered =
           capturedOwner === undefined
             ? rows
             : rows.filter((row) => row.owner_id === capturedOwner);
-        return { data: filtered, error: null };
+        return {
+          data: filtered.slice(0, POSTGREST_MAX_ROWS),
+          error: null,
+          count: filtered.length,
+        };
       };
       return Promise.resolve(resolve()).then(onFulfilled, onRejected);
     },

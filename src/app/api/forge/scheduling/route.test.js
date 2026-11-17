@@ -38,6 +38,17 @@ async function get(...args) {
 // query object. `insert` models the DB write: it appends the inserted
 // record (is_public defaulting to false, as the column does) so a POST
 // genuinely changes the digest the next GET probes.
+//
+// PostgREST fidelity (fix round 3): both the probe and the ordered list
+// enforce the same per-response row cap production does (commonly 1,000;
+// this repo's SupabaseFinancialEventRepository pages at 1,000 for exactly
+// that reason), and the probe returns the exact total count, as
+// count:"exact" does in production. Fixtures here are small, so the cap
+// never binds — but a probe that assumed a complete single response
+// would be caught by the module tests' capped fixtures, not by this mock
+// silently returning unlimited rows.
+const POSTGREST_MAX_ROWS = 1000;
+
 function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let isPublicFilter;
   const query = {
@@ -62,7 +73,7 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
           counters.failedOnce = true;
           return { data: null, error: { message: "list failed" } };
         }
-        return { data: sorted, error: null };
+        return { data: sorted.slice(0, POSTGREST_MAX_ROWS), error: null };
       };
       return {
         limit: vi.fn(async () => resolve()),
@@ -72,7 +83,8 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
     }),
     // Digest-probe path: the probe awaits the query directly (no order,
     // no limit) and resolves the filtered rows unsorted — the digest sorts
-    // by id, so probe order is irrelevant.
+    // by id, so probe order is irrelevant. Truncated to the PostgREST cap
+    // with the exact total count, as count:"exact" reports in production.
     then: (onFulfilled, onRejected) => {
       const capturedIsPublic = isPublicFilter;
       const resolve = () => {
@@ -81,7 +93,11 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
           capturedIsPublic === undefined
             ? rows
             : rows.filter((row) => row.is_public === capturedIsPublic);
-        return { data: filtered, error: null };
+        return {
+          data: filtered.slice(0, POSTGREST_MAX_ROWS),
+          error: null,
+          count: filtered.length,
+        };
       };
       return Promise.resolve(resolve()).then(onFulfilled, onRejected);
     },

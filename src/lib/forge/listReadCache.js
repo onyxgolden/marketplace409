@@ -66,6 +66,44 @@
 //   under. No visibility is narrowed: the private list still returns
 //   every row RLS shows the actor, exactly as before.
 //
+// Post-write freshness — completeness (fix round 3 for PR #822, ChatGPT
+// NEEDS CHANGES P1: the digest probe does not prove it saw every row):
+// - Fix round 2's probe was a single PostgREST .select() with no
+//   pagination, ordering, or completeness check. PostgREST caps rows per
+//   response (commonly 1,000 — this repo's SupabaseFinancialEventRepository
+//   pages at 1,000 for exactly that reason). Once the visible set exceeds
+//   the cap, the unordered probe can hash a different subset from the
+//   latest-updated-first list query: a rename to a row in the list but
+//   outside the probe's first page leaves the digest unchanged and the
+//   next GET serves the pre-write entry. The digest was exact for bounded
+//   sets and unproven for oversized ones — and the code claimed it
+//   unconditionally.
+// - The fix is verdict option 3 (detect the boundary, bypass the cache
+//   for unprovably complete results): the probe now asks for
+//   { count: "exact" } and is complete ONLY when the exact total equals
+//   the rows received. The count is computed by PostgREST over the same
+//   filtered set in the same statement as the rows, so the check needs no
+//   assumption about what the cap value is — and if the count is missing
+//   (a client that did not return one) the probe is treated as
+//   incomplete, fail closed. When the probe is incomplete, the GET skips
+//   the cache entirely and serves the uncached list read — exactly the
+//   pre-S2A single query, byte-identical semantics (including its
+//   truncation for oversized sets). Oversized lists are therefore NO
+//   WORSE than the uncached baseline; they just get no cache benefit.
+//   The probe and the list read the same row set (same filters, same RLS,
+//   same client), so a complete probe proves the list fill is complete
+//   too — the list query selects more columns but the cap is on rows.
+// - TOCTOU: a write can still land between the probe and the cache-miss
+//   fill. The cached callback recomputes the digest from the rows it
+//   actually fetched and throws ForgeListDigestMismatchError instead of
+//   publishing newer data under the old generation (or vice versa —
+//   publishing under a stale generation is wrong in the revert case too).
+//   The getter catches that one error type and retries ONCE with a fresh
+//   probe, so a single concurrent write resolves transparently with fresh
+//   data; a second mismatch propagates visibly (500, never cached) and
+//   the next read retries. Mutations still perform NO cache operation, so
+//   there is still no invalidation step that can fail silently.
+//
 // Why NOT revalidateTag again (rejected alternatives, verified against
 // the installed Next.js 16.4.1 source — the deployed runtime):
 // - Plain revalidateTag(tag) with no profile DOES expire immediately
@@ -91,16 +129,18 @@
 // Honest performance trade-off (read this before claiming a win):
 // - Correctness now requires the probe to read every visible row on
 //   every GET — the same row set as the list query, fewer columns, no
-//   ORDER BY. The cache saves the wide-column fetch + ORDER BY + DTO
-//   mapping/sort/merge, NOT a round trip: a repeat GET still costs one
-//   PostgREST round trip (the probe) plus, for Scheduling, the always-
-//   fresh public fetch. The net latency gain is therefore expected to be
-//   SMALL, and a cache miss now costs probe + list (one round trip MORE
-//   than the uncached baseline). The live before/after timing receipt
-//   (post-deploy, per the scope) is the judge: if it shows no
-//   improvement, record NO IMPROVEMENT and take slice #8
-//   (server-prefetch) next — do not claim improvement from hit counters,
-//   which count list selects, not round trips.
+//   ORDER BY — plus an exact count over that set. The cache saves the
+//   wide-column fetch + ORDER BY + DTO mapping/sort/merge, NOT a round
+//   trip: a repeat GET still costs one PostgREST round trip (the probe)
+//   plus, for Scheduling, the always-fresh public fetch. The net latency
+//   gain is therefore expected to be SMALL, and a cache miss now costs
+//   probe + list (one round trip MORE than the uncached baseline). For
+//   oversized lists (over the PostgREST response cap) the cache is
+//   bypassed entirely, so those GETs cost exactly the uncached baseline.
+//   The live before/after timing receipt (post-deploy, per the scope) is
+//   the judge: if it shows no improvement, record NO IMPROVEMENT and take
+//   slice #8 (server-prefetch) next — do not claim improvement from hit
+//   counters, which count list selects, not round trips.
 //
 // Why the cached callback closes over the request's Supabase client
 // (mechanism proof, Next.js 16.4.1 — the deployed runtime):
@@ -203,22 +243,161 @@ export function digestListRows(rows, fields) {
   return createHash("sha256").update(lines.join("\n"), "utf8").digest("hex");
 }
 
+// Thrown inside the cached callback when the rows actually fetched hash
+// to a different generation than the probe that keyed the entry — a write
+// landed between the probe and the fill. The getter catches exactly this
+// error for one bounded retry; anything else propagates visibly.
+export class ForgeListDigestMismatchError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ForgeListDigestMismatchError";
+  }
+}
+
 // One round trip over exactly the RLS-visible set the list query reads,
-// returning the digest of that set (not a summary of it): every row's
-// digest columns, no ORDER BY, no LIMIT. `filters` are the same equality
-// filters the list query applies (is_public=false for the Scheduling
-// private set, owner_id for Designer) — the probe and the list read the
-// same set, so a write visible to the list always moves the digest. The
-// probe is NOT cached: it runs on every GET, and a probe failure throws,
-// so the GET fails visibly instead of serving a possibly-stale entry.
+// returning the digest of that set plus a PROOF of completeness (not a
+// summary of it): every row's digest columns, no ORDER BY, no LIMIT.
+// `filters` are the same equality filters the list query applies
+// (is_public=false for the Scheduling private set, owner_id for
+// Designer) — the probe and the list read the same set, so a write
+// visible to the list always moves the digest. The probe is NOT cached:
+// it runs on every GET, and a probe failure throws, so the GET fails
+// visibly instead of serving a possibly-stale entry.
+//
+// Completeness (fix round 3): the select asks for { count: "exact" }.
+// PostgREST reports the true total over the same filtered set in the
+// same statement as the rows, while capping the rows per response — so
+// `count === data.length` proves the probe saw every visible row, and
+// `count > data.length` proves it did not, with no assumption about the
+// cap value. A missing count is treated as incomplete (fail closed).
+// The digest of a truncated probe is meaningless and is never used as a
+// cache key — the caller bypasses the cache instead.
 async function probeListDigest({ supabaseClient, table, columns, filters }) {
-  let query = supabaseClient.from(table).select(columns.join(","));
+  let query = supabaseClient
+    .from(table)
+    .select(columns.join(","), { count: "exact" });
   for (const [column, value] of filters) {
     query = query.eq(column, value);
   }
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   assertNoQueryError(error);
-  return digestListRows(data || [], columns);
+  const rows = data || [];
+  const complete = typeof count === "number" && count === rows.length;
+  return {
+    digest: digestListRows(rows, columns),
+    complete,
+    totalCount: typeof count === "number" ? count : null,
+    rowCount: rows.length,
+  };
+}
+
+// The raw list reads, exactly the pre-S2A single queries: used both
+// inside the cached callback and on the bypass path, so the bypass serves
+// byte-identical semantics to the uncached baseline (including its
+// truncation for oversized sets — no new behavior for large lists beyond
+// "no cache").
+async function fetchSchedulingPrivateListRows({ supabaseClient }) {
+  const { data, error } = await supabaseClient
+    .from("forge_scheduling_projects")
+    .select(SCHEDULING_LIST_COLUMNS)
+    .eq("is_public", false)
+    .order("updated_at", { ascending: false });
+  assertNoQueryError(error);
+  return data || [];
+}
+
+async function fetchDesignerListRows({ supabaseClient, ownerIdentity }) {
+  const { data, error } = await supabaseClient
+    .from("designer_projects")
+    .select(DESIGNER_LIST_COLUMNS)
+    .eq("owner_id", ownerIdentity)
+    .order("updated_at", { ascending: false });
+  assertNoQueryError(error);
+  return data || [];
+}
+
+// Shared cached-list read: probe → (complete ? cached : bypass).
+// `fetchRawRows` is the single-query list read above; `toDto` maps raw
+// rows to the list DTO. The cached callback re-checks the generation
+// against the rows it actually fetched (TOCTOU, fix round 3) and the
+// getter retries a mismatch exactly once with a fresh probe.
+async function getCachedProjectList({
+  supabaseClient,
+  app,
+  ownerIdentity,
+  actorId,
+  table,
+  columns,
+  filters,
+  fetchRawRows,
+  toDto,
+}) {
+  const attempt = async (digest) => {
+    const cachedFetch = unstable_cache(
+      async () => {
+        const rows = await fetchRawRows();
+        // TOCTOU re-check: the fetched rows must hash to the generation
+        // this entry is filed under. If a write landed between the probe
+        // and this fill, throw instead of publishing newer data under the
+        // old generation (or vice versa — see the header).
+        if (digestListRows(rows, columns) !== digest) {
+          throw new ForgeListDigestMismatchError(
+            `Forge list cache generation mismatch for ${app}/${ownerIdentity}: the rows fetched under generation ${digest} hash differently — a write landed between the probe and the fill; refusing to publish under a stale generation.`,
+          );
+        }
+        return rows.map(toDto);
+      },
+      [
+        "forge-list",
+        app,
+        FORGE_LIST_CACHE_VERSION,
+        ownerIdentity,
+        actorId,
+        digest,
+      ],
+      {
+        revalidate: FORGE_LIST_CACHE_TTL_SECONDS,
+      },
+    );
+    return cachedFetch();
+  };
+  const probe = await probeListDigest({
+    supabaseClient,
+    table,
+    columns,
+    filters,
+  });
+  if (!probe.complete) {
+    // Unprovably complete: bypass the cache entirely. The digest of a
+    // truncated probe must never key a cached entry.
+    const rows = await fetchRawRows();
+    return rows.map(toDto);
+  }
+  try {
+    return await attempt(probe.digest);
+  } catch (error) {
+    if (
+      error instanceof ForgeListDigestMismatchError ||
+      error?.name === "ForgeListDigestMismatchError"
+    ) {
+      // One bounded retry with a fresh probe: a single concurrent write
+      // resolves transparently with fresh data. A second mismatch
+      // propagates visibly (500, never cached) and the next read retries.
+      // The write is never retried.
+      const freshProbe = await probeListDigest({
+        supabaseClient,
+        table,
+        columns,
+        filters,
+      });
+      if (!freshProbe.complete) {
+        const rows = await fetchRawRows();
+        return rows.map(toDto);
+      }
+      return await attempt(freshProbe.digest);
+    }
+    throw error;
+  }
 }
 
 // Scheduling, owner-scoped portion only (is_public = false). The query is
@@ -232,37 +411,17 @@ export async function getCachedSchedulingPrivateProjects({
   actorId,
 }) {
   const ownerIdentity = effectiveOwnerId || actorId;
-  const digest = await probeListDigest({
+  return getCachedProjectList({
     supabaseClient,
+    app: "scheduling",
+    ownerIdentity,
+    actorId,
     table: "forge_scheduling_projects",
     columns: SCHEDULING_DIGEST_COLUMNS,
     filters: [["is_public", false]],
+    fetchRawRows: () => fetchSchedulingPrivateListRows({ supabaseClient }),
+    toDto: (row) => toSchedulingProjectDto(row, effectiveOwnerId),
   });
-  const cachedFetch = unstable_cache(
-    async () => {
-      const { data, error } = await supabaseClient
-        .from("forge_scheduling_projects")
-        .select(SCHEDULING_LIST_COLUMNS)
-        .eq("is_public", false)
-        .order("updated_at", { ascending: false });
-      assertNoQueryError(error);
-      return (data || []).map((row) =>
-        toSchedulingProjectDto(row, effectiveOwnerId),
-      );
-    },
-    [
-      "forge-list",
-      "scheduling",
-      FORGE_LIST_CACHE_VERSION,
-      ownerIdentity,
-      actorId,
-      digest,
-    ],
-    {
-      revalidate: FORGE_LIST_CACHE_TTL_SECONDS,
-    },
-  );
-  return cachedFetch();
 }
 
 // Scheduling, shared/public portion — ALWAYS fresh, never cached (see the
@@ -308,33 +467,16 @@ export async function getCachedDesignerProjects({
   actorId,
 }) {
   const ownerIdentity = ownerId || actorId;
-  const digest = await probeListDigest({
+  return getCachedProjectList({
     supabaseClient,
+    app: "designer",
+    ownerIdentity,
+    actorId,
     table: "designer_projects",
     columns: DESIGNER_DIGEST_COLUMNS,
     filters: [["owner_id", ownerIdentity]],
+    fetchRawRows: () =>
+      fetchDesignerListRows({ supabaseClient, ownerIdentity }),
+    toDto: toDesignerProjectDto,
   });
-  const cachedFetch = unstable_cache(
-    async () => {
-      const { data, error } = await supabaseClient
-        .from("designer_projects")
-        .select(DESIGNER_LIST_COLUMNS)
-        .eq("owner_id", ownerIdentity)
-        .order("updated_at", { ascending: false });
-      assertNoQueryError(error);
-      return (data || []).map(toDesignerProjectDto);
-    },
-    [
-      "forge-list",
-      "designer",
-      FORGE_LIST_CACHE_VERSION,
-      ownerIdentity,
-      actorId,
-      digest,
-    ],
-    {
-      revalidate: FORGE_LIST_CACHE_TTL_SECONDS,
-    },
-  );
-  return cachedFetch();
 }

@@ -33,6 +33,13 @@ async function listGet() {
 // relational-mirror delete. `rows` is the mutable visible set — the test
 // states the post-write DB truth explicitly after the PUT/DELETE (the RPC
 // mock does not write rows).
+//
+// PostgREST fidelity (fix round 3): the probe and the ordered list
+// enforce the same per-response row cap production does (commonly 1,000),
+// and the probe returns the exact total count, as count:"exact" does in
+// production. Fixtures here are small, so the cap never binds.
+const POSTGREST_MAX_ROWS = 1000;
+
 function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-02-01T00:00:00.000Z" }], rpcError = null, deleteRow = { id: "p1" } } = {}) {
   const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0 };
   let isPublicFilter;
@@ -54,7 +61,7 @@ function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-0
         );
         if (capturedIsPublic === false) counters.privateSelectCalls += 1;
         else if (capturedIsPublic === true) counters.publicSelectCalls += 1;
-        return { data: sorted, error: null };
+        return { data: sorted.slice(0, POSTGREST_MAX_ROWS), error: null };
       };
       return {
         limit: vi.fn(async () => resolve()),
@@ -64,7 +71,9 @@ function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-0
     }),
     // Digest-probe path: the probe awaits the node directly (no order,
     // no limit) and resolves the filtered rows unsorted — the digest
-    // sorts by id, so probe order is irrelevant.
+    // sorts by id, so probe order is irrelevant. Truncated to the
+    // PostgREST cap with the exact total count, as count:"exact" reports
+    // in production.
     then: (onFulfilled, onRejected) => {
       const capturedIsPublic = isPublicFilter;
       const resolve = () => {
@@ -73,7 +82,11 @@ function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-0
           capturedIsPublic === undefined
             ? rows
             : rows.filter((row) => row.is_public === capturedIsPublic);
-        return { data: filtered, error: null };
+        return {
+          data: filtered.slice(0, POSTGREST_MAX_ROWS),
+          error: null,
+          count: filtered.length,
+        };
       };
       return Promise.resolve(resolve()).then(onFulfilled, onRejected);
     },
