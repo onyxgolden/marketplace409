@@ -202,6 +202,76 @@ class TestRecordingSessionSave(unittest.TestCase):
                 with self.assertRaises(RecordingAclError):
                     session.save(config)
 
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_rejects_an_impostor_principal_that_merely_contains_the_username(self):
+        """Fix round 3 (P1 — ChatGPT re-review 2026-11-17): the reviewer
+        proved fix round 2's `username.upper() in p` was a SUBSTRING
+        match — an ACE for a completely different account whose name
+        merely CONTAINS the real username as a substring (e.g.
+        `OTHER\\JASON-GUEST` when the real user is `JASON`) was wrongly
+        treated as "the current user is present." Here BOTH the real
+        current user's ACE and an impostor's ACE are present; the
+        impostor alone must make this an unexpected/rejected ACL, even
+        though the real user's own ACE is ALSO there."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-impostor-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            real_whoami_identity = "CURRENT\\JASON"
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=0, stdout='"User Name","SID"\r\n"current\\jason","S-1-5-21-0"\r\n', stderr="")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} {real_whoami_identity}:(OI)(CI)(F)\n"
+                               f"            OTHER\\JASON-GUEST:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_rejects_when_only_an_impostor_principal_is_present(self):
+        """Fix round 3 (P1): the more severe half of the same bug — the
+        REAL current user's ACE is entirely ABSENT, and only an
+        impostor whose name contains the username as a substring is
+        present. Fix round 2's substring check would have accepted
+        this as "user_present=True"; it must now be rejected."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-impostor-2", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=0, stdout='"User Name","SID"\r\n"current\\jason","S-1-5-21-0"\r\n', stderr="")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    # ONLY the impostor — the real CURRENT\JASON ACE is missing.
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} OTHER\\JASON-GUEST:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+
     def test_real_save_load_decrypt_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _config(tmp)

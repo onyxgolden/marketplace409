@@ -178,7 +178,7 @@ def _restrict_directory_to_current_user(path: str) -> None:
                 raise RecordingAclError(
                     f"{' '.join(args)} exited {result.returncode}: "
                     f"{(result.stderr or result.stdout).strip()}")
-        _verify_restricted_to_current_user_win32(path, username)
+        _verify_restricted_to_current_user_win32(path)
     else:
         try:
             for root, dirs, files in os.walk(path):
@@ -192,10 +192,51 @@ def _restrict_directory_to_current_user(path: str) -> None:
             raise RecordingAclError(f"verified mode {oct(mode)} for {path!r}, expected 0o700")
 
 
-def _verify_restricted_to_current_user_win32(path: str, username: str) -> None:
+def _current_user_identities_win32() -> set[str]:
+    """Fix round 3 (P1 — ChatGPT re-review 2026-11-17): exact,
+    resolvable identifiers for the CURRENT Windows user, never a
+    substring to match against. Fix round 2's verification used
+    `username.upper() in p` — a substring test. The reviewer proved
+    this lets an ACE for a DIFFERENT account that merely CONTAINS the
+    username as a substring (e.g. `OTHERDOMAIN\\JASON-GUEST` when the
+    real user is `JASON`) pass as if it were the current user — in the
+    worst case, satisfying "the current user is present" even when the
+    REAL current user's own ACE is entirely absent.
+
+    `whoami /user /fo csv` is the authoritative, always-available
+    source (ships with Windows, needs no extra dependency): its one
+    data row's first field is the exact `DOMAIN\\username` string this
+    session is running as. Falls back to USERDOMAIN/COMPUTERNAME +
+    USERNAME env-var combinations only if `whoami` itself cannot run —
+    an empty result from both means `_verify_restricted_to_current_user_win32`
+    cannot verify anything and must fail closed rather than silently
+    accept any principal."""
+    identities: set[str] = set()
+    try:
+        result = subprocess.run(
+            ["whoami", "/user", "/fo", "csv"], capture_output=True, timeout=10, check=False, text=True)
+        if result.returncode == 0:
+            import csv
+            import io
+
+            rows = list(csv.reader(io.StringIO(result.stdout)))
+            if len(rows) >= 2 and rows[1]:
+                identities.add(rows[1][0].strip().upper())
+    except Exception:  # noqa: BLE001 — fall through to the env-var fallback below
+        pass
+    username = os.environ.get("USERNAME", "")
+    if username:
+        for domain in (os.environ.get("USERDOMAIN", ""), os.environ.get("COMPUTERNAME", "")):
+            if domain:
+                identities.add(f"{domain}\\{username}".upper())
+    return identities
+
+
+def _verify_restricted_to_current_user_win32(path: str) -> None:
     """Queries `icacls path` back and confirms no principal beyond the
-    current user and a small, fixed set of OS-trusted pseudo-accounts
-    has an ACE.
+    EXACT current user (by identity, never by substring — see
+    `_current_user_identities_win32`) and a small, fixed set of
+    OS-trusted pseudo-accounts has an ACE.
 
     Verified empirically (fix round 2): even a freshly restricted
     directory under `%TEMP%` still shows `NT AUTHORITY\\SYSTEM`,
@@ -208,9 +249,17 @@ def _verify_restricted_to_current_user_win32(path: str, username: str) -> None:
     first attempt at this check did) made every real save fail closed —
     the wrong failure mode for a check whose purpose is to catch an
     actual leak (Everyone, Users, Authenticated Users, or some other
-    named account). Raises RecordingAclError only when a principal
-    OUTSIDE that always-allowed set is present, or the current user is
-    missing entirely."""
+    named or impostor account). Raises RecordingAclError when any
+    principal outside (always-allowed ∪ {exact current-user identity})
+    is present, when the real current-user identity is missing
+    entirely, OR when the current user's identity could not be
+    determined at all (fails closed rather than skipping the check)."""
+    current_user_identities = _current_user_identities_win32()
+    if not current_user_identities:
+        raise RecordingAclError(
+            f"could not determine the current Windows user's exact identity to verify {path!r} against "
+            f"(whoami failed and no USERDOMAIN/COMPUTERNAME env var was set) — refusing to save")
+
     try:
         result = subprocess.run(["icacls", path], capture_output=True, timeout=30, check=False, text=True)
     except Exception as exc:  # noqa: BLE001
@@ -236,13 +285,17 @@ def _verify_restricted_to_current_user_win32(path: str, username: str) -> None:
             principals.add(principal.upper())
 
     always_allowed = {"NT AUTHORITY\\SYSTEM", "BUILTIN\\ADMINISTRATORS", "OWNER RIGHTS", "CREATOR OWNER"}
-    user_present = any(username.upper() in p for p in principals)
-    unexpected = {p for p in principals if p not in always_allowed and username.upper() not in p}
+    # Fix round 3: EXACT set membership against the real current-user
+    # identities, never `username in principal` — an impostor account
+    # that merely contains the username as a substring no longer
+    # satisfies either "present" or "allowed".
+    user_present = bool(principals & current_user_identities)
+    unexpected = principals - always_allowed - current_user_identities
     if unexpected or not user_present:
         raise RecordingAclError(
             f"recording bundle {path!r} shows unexpected ACL principal(s) {unexpected!r} and/or is "
-            f"missing the current user ({username!r}) after restriction — found {principals!r}; "
-            f"refusing to save")
+            f"missing the current user's exact identity {current_user_identities!r} after restriction — "
+            f"found {principals!r}; refusing to save")
 
 
 @dataclass
