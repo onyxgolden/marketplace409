@@ -59,11 +59,19 @@ describe("parseDiagnosticPageParams", () => {
 });
 
 describe("buildDiagnosticPage", () => {
+  // Fix round (diagnostic endpoint): the page result now comes from the
+  // server-side paginated RPC, not from a full in-memory list. The
+  // response shape and paging semantics are unchanged.
   test("pages the full list with complete/total semantics", () => {
     const rows = transactions(2501);
 
     const first = buildDiagnosticPage({
-      transactions: rows,
+      pageResult: {
+        transactions: rows.slice(0, 1000),
+        totalCount: 2501,
+        totalPages: 3,
+        complete: false,
+      },
       page: 1,
       pageSize: 1000,
     });
@@ -75,7 +83,12 @@ describe("buildDiagnosticPage", () => {
     expect(first.transactionsStatus).toBe("loaded");
 
     const last = buildDiagnosticPage({
-      transactions: rows,
+      pageResult: {
+        transactions: rows.slice(2000),
+        totalCount: 2501,
+        totalPages: 3,
+        complete: true,
+      },
       page: 3,
       pageSize: 1000,
     });
@@ -86,7 +99,12 @@ describe("buildDiagnosticPage", () => {
 
   test("an empty history is one complete empty page, not an error", () => {
     const page = buildDiagnosticPage({
-      transactions: [],
+      pageResult: {
+        transactions: [],
+        totalCount: 0,
+        totalPages: 1,
+        complete: true,
+      },
       page: 1,
       pageSize: 1000,
     });
@@ -101,7 +119,12 @@ describe("buildDiagnosticPage", () => {
     const error = (() => {
       try {
         buildDiagnosticPage({
-          transactions: transactions(10),
+          pageResult: {
+            transactions: transactions(10),
+            totalCount: 10,
+            totalPages: 1,
+            complete: false,
+          },
           page: 2,
           pageSize: 1000,
         });
@@ -113,5 +136,15 @@ describe("buildDiagnosticPage", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error.status).toBe(400);
+  });
+
+  test("a malformed page result is an error, never a fabricated page", () => {
+    expect(() =>
+      buildDiagnosticPage({
+        pageResult: { transactions: [], totalCount: 10 },
+        page: 1,
+        pageSize: 1000,
+      }),
+    ).toThrow("Diagnostic transactions must be a page result.");
   });
 });

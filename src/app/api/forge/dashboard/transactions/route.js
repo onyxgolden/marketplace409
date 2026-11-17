@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import {
+  SupabaseDashboardFinancialTransactionsRepository,
+} from "@/domains/financial-event/SupabaseDashboardFinancialTransactionsRepository.js";
+import {
   buildDiagnosticPage,
   parseDiagnosticPageParams,
 } from "./transactionDiagnostics.js";
@@ -10,9 +13,21 @@ import {
 // (transactionsStatus: "not-loaded"); expanding the diagnostic layer
 // loads the ENTIRE original transaction list through this endpoint --
 // all dates, stable event_date,id order, the aggregation service's
-// record shape -- in pages, until every page is loaded. The route uses
-// the legacy full-history workspace build (unchanged), so the list it
-// serves is byte-for-byte the list the pre-Slice-3 dashboard embedded.
+// record shape -- in pages, until every page is loaded.
+//
+// Fix round (diagnostic endpoint): the route used to rebuild the
+// owner's ENTIRE history on EVERY page request -- the legacy repository
+// fetched all 11,776 events in twelve sequential 1,000-row pages, then
+// the JS aggregation service re-aggregated the whole set, just to serve
+// one 1,000-row page. That full rebuild per page exceeded the Vercel
+// Hobby function time budget in production (the endpoint failed
+// deterministically, on the initial load and on retry). The route now
+// serves one page per request from the
+// forge_dashboard_financial_transactions_v1 RPC: one DB-side query over
+// the same eligible set, same rows, same order, same record shape --
+// only fetched one page at a time. The legacy full-history repository
+// is untouched and still serves the Financial Transactions page and
+// every other caller.
 // HTTP responses stay private/non-cacheable, and a failure is a 500 --
 // never a fabricated empty history.
 const NO_STORE = { "Cache-Control": "private, no-store" };
@@ -27,20 +42,23 @@ export async function GET(request) {
       new URL(request.url).searchParams,
     );
 
-    const forgeApplicationSuite =
-      await authenticated.getForgeApplicationSuite();
+    const transactionsRepository =
+      new SupabaseDashboardFinancialTransactionsRepository({
+        supabaseClient: authenticated.supabaseClient,
+      });
 
     // Business scope, matching the dashboard's original list: the
     // read-model layer defaults the /forge workspace to business.
-    const workspace =
-      await forgeApplicationSuite.financialWorkspaceQueryService.buildWorkspace(
-        authenticated.effectiveOwnerId,
-        { scope: "business" },
-      );
+    const pageResult = await transactionsRepository.getPage({
+      ownerId: authenticated.effectiveOwnerId,
+      scope: "business",
+      page,
+      pageSize,
+    });
 
     return NextResponse.json(
       buildDiagnosticPage({
-        transactions: workspace.transactions,
+        pageResult,
         page,
         pageSize,
       }),
