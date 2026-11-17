@@ -1,92 +1,140 @@
-// S2A (load-times slice 2): the Designer list GET is served from the
-// hot-read server cache (src/lib/forge/listReadCache.js). next/cache is
-// mocked with the synthetic tag-aware cache
-// (incremental-cache-test-fake.js), so "repeat hit = one DB list select"
-// is proven by the counters below. The Designer list is strictly
-// owner-filtered (no public rows), so the whole DTO is cached.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// S2A (load-times slice 2) — fix round 1: the Designer list GET is served
+// from the hot-read server cache (src/lib/forge/listReadCache.js), and
+// every GET below runs through the REAL installed Next.js 16.4.1 cache
+// (real-incremental-cache-test-harness.js) inside a simulated Route
+// Handler request — no fake cache. Counters prove what ran: the generation
+// probe on every GET, the list select only on a cache miss. The Designer
+// list is strictly owner-filtered (no public rows), so the whole DTO is
+// cached.
+import "@/lib/forge/real-incremental-cache-test-harness";
 
-vi.mock("next/cache", async () => {
-  const actual = await vi.importActual("next/cache");
-  const fake = await import("@/lib/forge/incremental-cache-test-fake");
-  return {
-    ...actual,
-    unstable_cache: (...args) => fake.unstable_cache(...args),
-    revalidateTag: (...args) => fake.revalidateTag(...args),
-  };
-});
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetRealIncrementalCache,
+  runInRealRequest,
+} from "@/lib/forge/real-incremental-cache-test-harness";
+
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({
   createAuthenticatedForgeApplication: vi.fn(),
 }));
 
-import * as testCache from "@/lib/forge/incremental-cache-test-fake";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { GET, POST } from "./route";
 
-const OWNER_TAG = "forge-list:designer:owner:user_1";
+// Every list GET runs inside a simulated Route Handler request, the way
+// production runs it (see the harness). POST never touches the cache —
+// freshness after a write comes from the generation probe, so POSTs run
+// directly.
+async function get(...args) {
+  const { result } = await runInRealRequest(() => GET(...args), {
+    pathname: "/api/forge/designer",
+  });
+  return result;
+}
 
-// List mock that honors the owner_id filter the query uses and counts list
-// selects — the cache proof.
-function listQuery(rows, { failFirstListSelect = false } = {}) {
-  let listSelectCalls = 0;
+// List mock that honors the owner_id filter the query uses and counts the
+// generation probe vs list selects separately — the cache proof. Each
+// chain builds synchronously (.select().eq().order()), so order() captures
+// the chain's filter/probe flags at call time; that keeps concurrent GETs
+// from mixing each other's filters even though the mock shares one query
+// object. `insert` models the DB write: it appends the inserted record
+// (created_at/updated_at defaulting to now, as the column defaults do) so
+// a POST genuinely changes the generation the next GET probes.
+function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let ownerFilter;
-  let failedOnce = false;
+  let isProbe = false;
   const query = {
-    select: vi.fn(() => query),
+    select: vi.fn((_columns, selectOptions) => {
+      isProbe = selectOptions?.count === "exact";
+      return query;
+    }),
     eq: vi.fn((col, val) => {
       if (col === "owner_id") ownerFilter = val;
       return query;
     }),
-    order: vi.fn(async () => {
-      listSelectCalls += 1;
-      if (failFirstListSelect && !failedOnce) {
-        failedOnce = true;
-        return { data: null, error: new Error("db down") };
-      }
-      const filtered =
-        ownerFilter === undefined
-          ? rows
-          : rows.filter((row) => row.owner_id === ownerFilter);
-      return { data: filtered, error: null };
+    order: vi.fn(() => {
+      const capturedOwner = ownerFilter;
+      const capturedIsProbe = isProbe;
+      const resolve = (limit) => {
+        const filtered =
+          capturedOwner === undefined
+            ? rows
+            : rows.filter((row) => row.owner_id === capturedOwner);
+        const sorted = [...filtered].sort((a, b) =>
+          String(b.updated_at).localeCompare(String(a.updated_at)),
+        );
+        if (capturedIsProbe) {
+          counters.probeCalls += 1;
+          const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
+          return { data: limited, error: null, count: filtered.length };
+        }
+        counters.listSelectCalls += 1;
+        if (failFirstListSelect && !counters.failedOnce) {
+          counters.failedOnce = true;
+          return { data: null, error: new Error("db down") };
+        }
+        const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
+        return { data: limited, error: null };
+      };
+      return {
+        limit: vi.fn(async (n) => resolve(n)),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve(resolve()).then(onFulfilled, onRejected),
+      };
+    }),
+    insert: vi.fn((record) => {
+      if (onInsert) onInsert(record);
+      return query;
     }),
   };
+  return query;
+}
+
+function listQuery(rows, { failFirstListSelect = false } = {}) {
+  const counters = { listSelectCalls: 0, probeCalls: 0, failedOnce: false };
+  const query = makeListNode(rows, counters, { failFirstListSelect });
   return {
     client: { from: vi.fn(() => query) },
     query,
     get listSelectCalls() {
-      return listSelectCalls;
+      return counters.listSelectCalls;
+    },
+    get probeCalls() {
+      return counters.probeCalls;
     },
   };
 }
 
-// Combined mock for the invalidation tests: the same client serves the
-// list GET (select/eq/order) and the create POST (insert), so a POST's
-// invalidation can be observed by the next GET.
+// Combined mock for the freshness tests: the same client serves the list
+// GET (probe + list selects) and the create POST (insert), so a POST's
+// write can be observed by the next GET through the real cache. An
+// insertError models the insert itself failing (nothing appended).
 function listAndInsertQuery(rows, { insertError = null } = {}) {
-  let listSelectCalls = 0;
-  let ownerFilter;
-  const query = {
-    select: vi.fn(() => query),
-    eq: vi.fn((col, val) => {
-      if (col === "owner_id") ownerFilter = val;
-      return query;
-    }),
-    order: vi.fn(async () => {
-      listSelectCalls += 1;
-      const filtered =
-        ownerFilter === undefined
-          ? rows
-          : rows.filter((row) => row.owner_id === ownerFilter);
-      return { data: filtered, error: null };
-    }),
-    insert: vi.fn(async () => ({ error: insertError })),
+  const counters = { listSelectCalls: 0, probeCalls: 0, failedOnce: false };
+  const onInsert = (record) => {
+    rows.push({
+      ...record,
+      created_at: record.created_at ?? "c",
+      updated_at: record.updated_at ?? "d",
+    });
   };
+  const query = makeListNode(rows, counters, { onInsert });
+  // The Designer POST awaits the insert directly (no .select().single()
+  // chain), so insert resolves {error} itself — and appends the row only
+  // when the insert succeeded, modelling the DB write.
+  query.insert = vi.fn(async (record) => {
+    if (!insertError) onInsert(record);
+    return { data: null, error: insertError };
+  });
   return {
     client: { from: vi.fn(() => query) },
     query,
     rows,
     get listSelectCalls() {
-      return listSelectCalls;
+      return counters.listSelectCalls;
+    },
+    get probeCalls() {
+      return counters.probeCalls;
     },
   };
 }
@@ -106,8 +154,7 @@ function postRequest(name = "Master bath") {
 describe("GET /api/forge/designer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    testCache.resetTestIncrementalCache();
+    resetRealIncrementalCache();
   });
 
   it("lists the caller's designs newest-first", async () => {
@@ -116,7 +163,7 @@ describe("GET /api/forge/designer", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const response = await GET();
+    const response = await get();
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toEqual({
@@ -130,29 +177,37 @@ describe("GET /api/forge/designer", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({
       response: new Response(null, { status: 401 }),
     });
-    expect((await GET()).status).toBe(401);
+    expect((await get()).status).toBe(401);
   });
 
   it("returns 500 when the database fails", async () => {
-    const order = vi.fn(async () => ({ data: null, error: new Error("db down") }));
-    const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order };
+    const order = () => {
+      const node = {
+        limit: async () => ({ data: null, error: new Error("db down") }),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve({ data: null, error: new Error("db down") }).then(onFulfilled, onRejected),
+      };
+      return node;
+    };
+    const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn(order) };
     const client = { from: vi.fn(() => query) };
     createAuthenticatedForgeApplication.mockResolvedValue(authed(client));
-    const response = await GET();
+    const response = await get();
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({ error: "Unable to load room designs." });
   });
 
-  it("S2A: repeat GET hits the cache — one DB list select", async () => {
+  it("S2A: repeat GET hits the cache — one DB list select, but the probe runs on every GET", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const first = await (await GET()).json();
-    const second = await (await GET()).json();
+    const first = await (await get()).json();
+    const second = await (await get()).json();
     expect(second).toEqual(first);
     expect(db.listSelectCalls).toBe(1);
+    expect(db.probeCalls).toBe(2);
   });
 
   it("S2A: a different actor re-queries instead of reading the first actor's cached entry", async () => {
@@ -163,8 +218,8 @@ describe("GET /api/forge/designer", () => {
     createAuthenticatedForgeApplication
       .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client })
       .mockResolvedValueOnce({ user: { id: "user_2" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
-    await GET();
-    await GET();
+    await get();
+    await get();
     expect(db.listSelectCalls).toBe(2);
   });
 
@@ -177,8 +232,8 @@ describe("GET /api/forge/designer", () => {
     createAuthenticatedForgeApplication
       .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client })
       .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "owner_2", supabaseClient: db.client });
-    const mine = await (await GET()).json();
-    const theirs = await (await GET()).json();
+    const mine = await (await get()).json();
+    const theirs = await (await get()).json();
     expect(mine.projects.map((p) => p.id)).toEqual(["d1"]);
     expect(theirs.projects.map((p) => p.id)).toEqual(["d2"]);
     expect(db.listSelectCalls).toBe(2);
@@ -190,12 +245,12 @@ describe("GET /api/forge/designer", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    expect((await GET()).status).toBe(200);
+    expect((await get()).status).toBe(200);
     expect(db.listSelectCalls).toBe(1);
     createAuthenticatedForgeApplication.mockResolvedValue({
       response: new Response(null, { status: 403 }),
     });
-    expect((await GET()).status).toBe(403);
+    expect((await get()).status).toBe(403);
     expect(db.listSelectCalls).toBe(1);
   });
 
@@ -204,7 +259,7 @@ describe("GET /api/forge/designer", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({
       response: new Response(null, { status: 403 }),
     });
-    const response = await GET(
+    const response = await get(
       new Request("https://test/api/forge/designer?workspace=not-my-workspace"),
     );
     expect(response.status).toBe(403);
@@ -217,26 +272,10 @@ describe("GET /api/forge/designer", () => {
     ];
     const db = listQuery(rows, { failFirstListSelect: true });
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    expect((await GET()).status).toBe(500);
-    const response = await GET();
+    expect((await get()).status).toBe(500);
+    const response = await get();
     expect(response.status).toBe(200);
     expect((await response.json()).projects).toHaveLength(1);
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("S2A: after the 15s TTL the next GET re-queries", async () => {
-    vi.useFakeTimers();
-    const rows = [
-      { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
-    ];
-    const db = listQuery(rows);
-    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    await GET();
-    await vi.advanceTimersByTimeAsync(14000);
-    await GET();
-    expect(db.listSelectCalls).toBe(1);
-    await vi.advanceTimersByTimeAsync(2000);
-    await GET();
     expect(db.listSelectCalls).toBe(2);
   });
 
@@ -246,7 +285,7 @@ describe("GET /api/forge/designer", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const [first, second] = await Promise.all([GET(), GET()]);
+    const [first, second] = await Promise.all([get(), get()]);
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual(await first.json());
@@ -256,7 +295,7 @@ describe("GET /api/forge/designer", () => {
   it("S2A: the response stays private and non-cacheable at the HTTP layer", async () => {
     const db = listQuery([]);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const response = await GET();
+    const response = await get();
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
@@ -264,8 +303,7 @@ describe("GET /api/forge/designer", () => {
 describe("POST /api/forge/designer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    testCache.resetTestIncrementalCache();
+    resetRealIncrementalCache();
   });
 
   function insertClient() {
@@ -318,95 +356,101 @@ describe("POST /api/forge/designer", () => {
     expect((await POST(request)).status).toBe(401);
   });
 
-  it("S2A: a successful POST invalidates the owner's list — the next GET returns fresh data", async () => {
+  it("S2A: a successful POST makes the next GET fresh — the insert moves the generation, so the FIRST GET after the save re-queries", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
     const db = listAndInsertQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(1);
     const created = await POST(postRequest("Master bath"));
     expect(created.status).toBe(200);
-    expect(testCache.revalidateTagCalls).toContain(OWNER_TAG);
-    db.rows.push({ id: "d-new", owner_id: "user_1", project_name: "Master bath", created_at: "c", updated_at: "d" });
-    const body = await (await GET()).json();
+    const createdId = (await created.json()).id;
+    // The insert already appended the row (the mock models the DB write);
+    // the next GET must see it, on the first try — no stale serve.
+    const body = await (await get()).json();
     expect(db.listSelectCalls).toBe(2);
-    expect(body.projects.map((p) => p.id)).toContain("d-new");
+    expect(body.projects.map((p) => p.id)).toContain(createdId);
   });
 
-  it("S2A: a failed POST (insert error) neither succeeds nor invalidates the cached list", async () => {
+  it("S2A: a failed POST (insert error) neither succeeds nor changes the cached list", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
     const db = listAndInsertQuery(rows, { insertError: { message: "insert failed" } });
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(1);
     const failed = await POST(postRequest("Master bath"));
     expect(failed.status).toBe(500);
-    expect(testCache.revalidateTagCalls).toEqual([]);
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(1);
   });
 
-  it("S2A: back-to-back saves each invalidate — every GET after a save is fresh", async () => {
+  it("S2A: back-to-back saves each move the generation — every GET after a save is fresh", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
     const db = listAndInsertQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    await GET();
+    await get();
     await POST(postRequest("One"));
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(2);
     await POST(postRequest("Two"));
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(3);
   });
 
-  it("S2A: a POST invalidates only its own owner's list — another owner's cached entry survives", async () => {
-    const rows = [
+  it("S2A: a POST moves only its own owner's generation — another owner's cached entry survives", async () => {
+    // Each owner's client models that owner's visible set: owner_2 cannot
+    // see owner_1's rows, so owner_1's insert does not move owner_2's
+    // probe generation.
+    const rows1 = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows);
+    const rows2 = [
+      { id: "d2", owner_id: "user_2", project_name: "Theirs", created_at: "a", updated_at: "b" },
+    ];
+    const db1 = listAndInsertQuery(rows1);
+    const db2 = listAndInsertQuery(rows2);
     createAuthenticatedForgeApplication
-      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client })
-      .mockResolvedValueOnce({ user: { id: "user_2" }, effectiveOwnerId: "user_2", supabaseClient: db.client })
-      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client })
-      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client })
-      .mockResolvedValueOnce({ user: { id: "user_2" }, effectiveOwnerId: "user_2", supabaseClient: db.client });
-    await GET(); // owner_1: select 1
-    await GET(); // owner_2: select 2 (own entry)
+      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db1.client })
+      .mockResolvedValueOnce({ user: { id: "user_2" }, effectiveOwnerId: "user_2", supabaseClient: db2.client })
+      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db1.client })
+      .mockResolvedValueOnce({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db1.client })
+      .mockResolvedValueOnce({ user: { id: "user_2" }, effectiveOwnerId: "user_2", supabaseClient: db2.client });
+    await get(); // owner_1: select 1
+    await get(); // owner_2: select 1 (own entry)
     await POST(postRequest("Master bath")); // owner_1's POST
-    expect(testCache.revalidateTagCalls).toEqual([OWNER_TAG]);
-    await GET(); // owner_1: re-queries (3)
-    await GET(); // owner_2: still cached (stays 3)
-    expect(db.listSelectCalls).toBe(3);
+    await get(); // owner_1: re-queries (2)
+    await get(); // owner_2: still cached (stays 1)
+    expect(db1.listSelectCalls).toBe(2);
+    expect(db2.listSelectCalls).toBe(1);
   });
 
-  it("S2A: a GET in flight while a POST invalidates still resolves, and the GET after the race is fresh", async () => {
+  it("S2A: a GET in flight while a POST writes still resolves, and the GET after the race is fresh", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
     const db = listAndInsertQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    await GET();
+    await get();
     expect(db.listSelectCalls).toBe(1);
-    const [racingGet, created] = await Promise.all([GET(), POST(postRequest("Master bath"))]);
+    const [racingGet, created] = await Promise.all([get(), POST(postRequest("Master bath"))]);
     expect(racingGet.status).toBe(200);
     expect(created.status).toBe(200);
-    db.rows.push({ id: "d-new", owner_id: "user_1", project_name: "Master bath", created_at: "c", updated_at: "d" });
-    const body = await (await GET()).json();
-    expect(body.projects.map((p) => p.id)).toContain("d-new");
+    const createdId = (await created.json()).id;
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toContain(createdId);
   });
 });
 
 describe("workspace authorization (primary owner vs co-owner vs unrelated user)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    testCache.resetTestIncrementalCache();
+    resetRealIncrementalCache();
   });
 
   function authedAs(userId, effectiveOwnerId, client) {
@@ -418,7 +462,7 @@ describe("workspace authorization (primary owner vs co-owner vs unrelated user)"
     createAuthenticatedForgeApplication.mockResolvedValue(
       authedAs("coowner9", "owner1", db.client),
     );
-    const response = await GET();
+    const response = await get();
     expect(response.status).toBe(200);
     // Queries scope to the effective owner, matching resolve_effective_owner_id()
     // on the DB side; has_workspace_access() permits the co-owner's read.
@@ -448,7 +492,7 @@ describe("workspace authorization (primary owner vs co-owner vs unrelated user)"
     createAuthenticatedForgeApplication.mockResolvedValue(
       authedAs("stranger7", "stranger7", db.client),
     );
-    await GET();
+    await get();
     expect(db.query.eq).toHaveBeenCalledWith("owner_id", "stranger7");
   });
 });

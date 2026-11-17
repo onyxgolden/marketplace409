@@ -4,7 +4,6 @@ import { defaultBoardState } from "@/components/forge/scheduling/schedulingBoard
 import {
   fetchFreshPublicSchedulingProjects,
   getCachedSchedulingPrivateProjects,
-  invalidateForgeProjectList,
   mergeSchedulingProjectLists,
 } from "@/lib/forge/listReadCache";
 
@@ -73,16 +72,10 @@ export async function POST(request) {
     });
     if (syncError) throw syncError;
 
-    // S2A: invalidate only after BOTH the insert and the relational sync
-    // durably succeeded, and before reporting the create successful — the
-    // writer's next list read must include the new project. The owner key
-    // is resolved exactly as the GET resolves it (effective owner, actor
-    // fallback) so the invalidation hits the same tag the GET cached under.
-    invalidateForgeProjectList(
-      "scheduling",
-      authenticated.effectiveOwnerId || authenticated.user.id,
-    );
-
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The list
+    // GET re-probes the generation on every request, and the insert above
+    // changes the count, so the next list read cannot serve the pre-write
+    // entry — freshness needs no invalidation call that could fail silently.
     return NextResponse.json({ success: true, id: data.id });
   } catch (error) {
     console.error("Scheduling project create error", error);

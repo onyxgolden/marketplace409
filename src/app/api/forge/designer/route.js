@@ -3,10 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 // HOME DESIGNER slice 2: new projects are born as a HomeProject envelope so
 // multi-level works from creation. Legacy rows keep loading untouched.
 import { createHomeProject } from "@/domains/roomDesigner/homeProject";
-import {
-  getCachedDesignerProjects,
-  invalidateForgeProjectList,
-} from "@/lib/forge/listReadCache";
+import { getCachedDesignerProjects } from "@/lib/forge/listReadCache";
 
 // S2A (load-times slice 2): the list is served from the hot-read server
 // data cache (see src/lib/forge/listReadCache.js). Auth still runs first,
@@ -68,10 +65,10 @@ export async function POST(request) {
       });
     if (error) throw error;
 
-    // S2A: invalidate only after the insert durably succeeded, and before
-    // reporting the create successful — same owner key the GET caches under.
-    invalidateForgeProjectList("designer", ownerIdOf(authenticated));
-
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The list
+    // GET re-probes the generation on every request, and the insert above
+    // changes the count, so the next list read cannot serve the pre-write
+    // entry — freshness needs no invalidation call that could fail silently.
     return NextResponse.json({ success: true, id });
   } catch (error) {
     console.error("Designer project create error", error);

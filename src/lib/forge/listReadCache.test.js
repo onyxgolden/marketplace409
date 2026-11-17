@@ -1,296 +1,385 @@
-// S2A (load-times slice 2): server cache proof for the two list DTOs.
-// The next/cache mock below swaps in the synthetic cache
-// (incremental-cache-test-fake.js), which models the deployed Next.js
-// 16.4.1 contract: tag revalidation = immediate miss (no stale serve),
-// TTL expiry = miss, errors never stored. The DB is a counting in-memory
-// fake, so "repeat hit = one DB list select" is proven by the counter.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// S2A (load-times slice 2) — fix round 1: every freshness assertion here
+// runs through the REAL installed Next.js 16.4.1 cache
+// (real-incremental-cache-test-harness.js), never a fake that assumes the
+// answer. The P1-1 control below proves the harness can observe a
+// stale-while-revalidate serve, so the P1-1 regression passing proves the
+// generation-keyed design, not the test setup.
+import "@/lib/forge/real-incremental-cache-test-harness";
 
-vi.mock("next/cache", async () => {
-  const actual = await vi.importActual("next/cache");
-  const fake = await import("@/lib/forge/incremental-cache-test-fake");
-  return {
-    ...actual,
-    // Delegating wrappers (not direct references) so a test can spyOn the
-    // fake module and intercept what listReadCache.js calls.
-    unstable_cache: (...args) => fake.unstable_cache(...args),
-    revalidateTag: (...args) => fake.revalidateTag(...args),
-  };
-});
-
-import * as testCache from "@/lib/forge/incremental-cache-test-fake";
+import { beforeEach, describe, expect, it } from "vitest";
+import { revalidateTag, unstable_cache, updateTag } from "next/cache";
+import {
+  resetRealIncrementalCache,
+  runInRealRequest,
+} from "@/lib/forge/real-incremental-cache-test-harness";
 import {
   FORGE_LIST_CACHE_TTL_SECONDS,
   fetchFreshPublicSchedulingProjects,
-  forgeListCacheTag,
   getCachedDesignerProjects,
   getCachedSchedulingPrivateProjects,
-  invalidateForgeProjectList,
   mergeSchedulingProjectLists,
 } from "./listReadCache";
 
-const OWNER = "owner_1";
-const ACTOR_A = "actor_a";
-const ACTOR_B = "actor_b";
+// Fake Supabase client modelling ONE actor's RLS-visible set: `rows` is
+// the mutable visible set — tests push / mutate entries to simulate a
+// committed write, exactly as the route tests do. The chain supports both
+// shapes the module uses: the generation probe
+// (.select("updated_at", {count:"exact"}).eq().order().limit(1), resolving
+// {data:[newest], count}) and the list read (.select().eq().order(),
+// awaited directly). Counters prove what ran: the probe on every GET, the
+// list query only on a cache miss.
+function fakeListClient(initialRows) {
+  const rows = initialRows;
+  let probeCalls = 0;
+  let listCalls = 0;
+  let nextProbeError = null;
+  let nextListError = null;
 
-const SCHED_PRIVATE = {
-  id: "s1", owner_id: OWNER, project_name: "Mine", start_date: "2026-01-01",
-  end_date: "2026-12-31", is_public: false,
-  created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-02-01T00:00:00.000Z",
-};
-const SCHED_PUBLIC = {
-  id: "s2", owner_id: "example", project_name: "Example project", start_date: "2026-01-01",
-  end_date: "2026-12-31", is_public: true,
-  created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-02-01T00:00:00.000Z",
-};
-const DESIGNER_ROW = {
-  id: "d1", owner_id: OWNER, project_name: "House",
-  created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-02-01T00:00:00.000Z",
-};
-
-// In-memory Supabase stand-in: .from().select().eq().order() is thenable
-// and resolves the filtered rows; every terminal await counts one list
-// select, which is the cache proof's counter.
-//
-// RLS model: the Scheduling list query carries NO owner filter —
-// visibility comes from RLS (has_workspace_access). The fake models that
-// with setVisibleOwnerIds: when set, forge_scheduling_projects rows are
-// restricted to the visible owners (public rows stay visible to all);
-// when unset, every row is visible. Designer rows are already
-// owner-filtered by the query itself.
-function makeDb({ schedulingRows = [], designerRows = [], error = null } = {}) {
-  let listSelectCalls = 0;
-  let currentError = error;
-  let visibleOwnerIds = null;
-  const client = {
-    from(table) {
-      let rows =
-        table === "forge_scheduling_projects" ? [...schedulingRows] : [...designerRows];
-      if (visibleOwnerIds !== null) {
-        rows = rows.filter(
-          (row) =>
-            visibleOwnerIds.includes(row.owner_id) ||
-            (table === "forge_scheduling_projects" && row.is_public),
-        );
-      }
-      const node = {
-        select: vi.fn(() => node),
-        eq: vi.fn((col, val) => {
-          rows = rows.filter((row) => row[col] === val);
-          return node;
-        }),
-        order: vi.fn((col, { ascending }) => {
-          rows = [...rows].sort((a, b) =>
-            a[col] === b[col] ? 0 : a[col] < b[col] ? (ascending ? -1 : 1) : ascending ? 1 : -1,
+  function makeQuery() {
+    const state = { isProbe: false, filters: [], order: null };
+    const query = {
+      select(_columns, selectOptions) {
+        state.isProbe = selectOptions?.count === "exact";
+        return query;
+      },
+      eq(column, value) {
+        state.filters.push([column, value]);
+        return query;
+      },
+      order(column, { ascending } = {}) {
+        state.order = { column, ascending: !!ascending };
+        const resolve = (limit) => {
+          let filtered = rows.filter((row) =>
+            state.filters.every(([col, val]) => row[col] === val),
           );
-          return node;
-        }),
-        then: (resolve, reject) => {
-          listSelectCalls += 1;
-          return Promise.resolve(
-            currentError ? { data: null, error: currentError } : { data: rows, error: null },
-          ).then(resolve, reject);
-        },
-      };
-      return node;
+          filtered = [...filtered].sort((a, b) =>
+            state.order?.ascending
+              ? String(a.updated_at).localeCompare(String(b.updated_at))
+              : String(b.updated_at).localeCompare(String(a.updated_at)),
+          );
+          if (state.isProbe) {
+            probeCalls += 1;
+            if (nextProbeError) {
+              const error = nextProbeError;
+              nextProbeError = null;
+              return { data: null, error, count: null };
+            }
+            const limited =
+              typeof limit === "number" ? filtered.slice(0, limit) : filtered;
+            return { data: limited, error: null, count: filtered.length };
+          }
+          listCalls += 1;
+          if (nextListError) {
+            const error = nextListError;
+            nextListError = null;
+            return { data: null, error };
+          }
+          const limited =
+            typeof limit === "number" ? filtered.slice(0, limit) : filtered;
+          return { data: limited, error: null };
+        };
+        return {
+          limit: async (n) => resolve(n),
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve(resolve()).then(onFulfilled, onRejected),
+        };
+      },
+    };
+    return query;
+  }
+
+  return {
+    client: { from: () => makeQuery() },
+    rows,
+    get probeCalls() {
+      return probeCalls;
     },
-    get listSelectCalls() {
-      return listSelectCalls;
+    get listCalls() {
+      return listCalls;
     },
-    setError(nextError) {
-      currentError = nextError;
+    failNextProbe(error) {
+      nextProbeError = error;
     },
-    setVisibleOwnerIds(ownerIds) {
-      visibleOwnerIds = ownerIds;
+    failNextList(error) {
+      nextListError = error;
     },
   };
-  return client;
 }
 
-const schedulingArgs = (db, actorId = ACTOR_A, effectiveOwnerId = OWNER) => ({
-  supabaseClient: db,
-  effectiveOwnerId,
-  actorId,
-});
-const designerArgs = (db, actorId = ACTOR_A, ownerId = OWNER) => ({
-  supabaseClient: db,
-  ownerId,
-  actorId,
-});
+const SCHEDULING_ACTOR = { effectiveOwnerId: "user_1", actorId: "user_1" };
 
-describe("S2A list read cache", () => {
-  beforeEach(() => {
-    testCache.resetTestIncrementalCache();
-    vi.clearAllMocks();
-    vi.useRealTimers();
+async function schedulingPrivate(db) {
+  const { result } = await runInRealRequest(() =>
+    getCachedSchedulingPrivateProjects({
+      supabaseClient: db.client,
+      ...SCHEDULING_ACTOR,
+    }),
+  );
+  return result;
+}
+
+async function designerList(db, ownerId = "user_1", actorId = "user_1") {
+  const { result } = await runInRealRequest(
+    () =>
+      getCachedDesignerProjects({
+        supabaseClient: db.client,
+        ownerId,
+        actorId,
+      }),
+    { pathname: "/api/forge/designer" },
+  );
+  return result;
+}
+
+describe("listReadCache (real Next 16.4.1 cache)", () => {
+  beforeEach(() => resetRealIncrementalCache());
+
+  it("TTL is 15s (defense-in-depth; freshness comes from the generation key, never the TTL)", () => {
+    expect(FORGE_LIST_CACHE_TTL_SECONDS).toBe(15);
   });
 
-  it("cold miss returns the exact Scheduling private DTO (mapping, isOwner, isPublic)", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE, SCHED_PUBLIC] });
-    const projects = await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(projects).toEqual([
-      {
-        id: "s1", name: "Mine", startDate: "2026-01-01", endDate: "2026-12-31",
-        createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z",
-        isOwner: true, isPublic: false,
+  it("repeat GET hits the cache — one DB list select, but the probe runs on every GET", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    const first = await schedulingPrivate(db);
+    const second = await schedulingPrivate(db);
+    expect(second).toEqual(first);
+    expect(db.listCalls).toBe(1);
+    expect(db.probeCalls).toBe(2);
+  });
+
+  it("P1-1 REGRESSION: warm GET, insert, FIRST subsequent GET returns the new row (no stale serve)", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    const warm = await schedulingPrivate(db);
+    expect(warm.map((p) => p.id)).toEqual(["s1"]);
+    expect(db.listCalls).toBe(1);
+    // The committed insert: a new row with a newer updated_at.
+    db.rows.push({ id: "s2", owner_id: "user_1", project_name: "New", start_date: "2026-02-01", end_date: "2026-12-31", is_public: false, created_at: "c", updated_at: "d" });
+    const firstAfterWrite = await schedulingPrivate(db);
+    expect(firstAfterWrite.map((p) => p.id)).toEqual(["s2", "s1"]);
+    expect(db.listCalls).toBe(2);
+    expect(db.probeCalls).toBe(2);
+  });
+
+  it("P1-1 CONTROL (old design): revalidateTag('max') serves STALE on the first post-write GET — the harness can observe it", async () => {
+    // The pre-fix-round design, run through the same real cache: fixed key
+    // + tag, invalidated with revalidateTag(tag, "max") after the write.
+    // If this control ever stops returning stale data on the first GET,
+    // the harness has gone blind and the regression above proves nothing.
+    let version = 1;
+    let calls = 0;
+    const TAG = "smoke-old:owner:user_1";
+    const cachedOld = unstable_cache(
+      async () => {
+        calls += 1;
+        return { version };
       },
-    ]);
-    // The public row is NOT in the cached portion — it is fetched fresh.
-    expect(db.listSelectCalls).toBe(1);
-  });
-
-  it("repeat Scheduling hit = one DB list select; the callback is not re-invoked", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE] });
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(db.listSelectCalls).toBe(1);
-  });
-
-  it("owner/actor A/B isolation: a different actor re-queries instead of reading the first actor's entry", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE] });
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_A));
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_B));
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("owner A/B isolation: a different owner gets its own entry and its own rows", async () => {
-    const db = makeDb({
-      schedulingRows: [
-        SCHED_PRIVATE,
-        { ...SCHED_PRIVATE, id: "s9", owner_id: "owner_2", project_name: "Theirs" },
-      ],
-    });
-    // RLS: the actor's selected workspace determines which rows the query
-    // can see (the query itself carries no owner filter).
-    db.setVisibleOwnerIds([OWNER]);
-    const mine = await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_A, OWNER));
-    db.setVisibleOwnerIds(["owner_2"]);
-    const theirs = await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_A, "owner_2"));
-    expect(mine.map((p) => p.id)).toEqual(["s1"]);
-    expect(theirs.map((p) => p.id)).toEqual(["s9"]);
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("public Scheduling rows are fetched fresh on every GET (never cached)", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PUBLIC] });
-    await fetchFreshPublicSchedulingProjects(schedulingArgs(db));
-    await fetchFreshPublicSchedulingProjects(schedulingArgs(db));
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("mergeSchedulingProjectLists reproduces the single-query DTO: updated_at desc, private first on ties", () => {
-    const privateProjects = [
-      { id: "p-old", updatedAt: "2026-01-01T00:00:00.000Z" },
-      { id: "p-new", updatedAt: "2026-03-01T00:00:00.000Z" },
-    ];
-    const publicProjects = [{ id: "pub", updatedAt: "2026-02-01T00:00:00.000Z" }];
-    expect(mergeSchedulingProjectLists(privateProjects, publicProjects).map((p) => p.id)).toEqual([
-      "p-new", "pub", "p-old",
-    ]);
-    // Tie: the pre-S2A single query returned both seeded rows at the same
-    // updated_at; private-first is the deterministic tie-break.
-    expect(
-      mergeSchedulingProjectLists(
-        [{ id: "priv", updatedAt: "2026-02-01T00:00:00.000Z" }],
-        [{ id: "pub", updatedAt: "2026-02-01T00:00:00.000Z" }],
-      ).map((p) => p.id),
-    ).toEqual(["priv", "pub"]);
-  });
-
-  it("errors are not cached: a failed query is retried on the next request", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE], error: { message: "boom" } });
-    await expect(getCachedSchedulingPrivateProjects(schedulingArgs(db))).rejects.toEqual({
-      message: "boom",
-    });
-    db.setError(null);
-    const projects = await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(projects).toHaveLength(1);
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("TTL expiry: after the 15s TTL the next request re-queries", async () => {
-    vi.useFakeTimers();
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE] });
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    await vi.advanceTimersByTimeAsync((FORGE_LIST_CACHE_TTL_SECONDS - 1) * 1000);
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(db.listSelectCalls).toBe(1);
-    await vi.advanceTimersByTimeAsync(2000);
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(db.listSelectCalls).toBe(2);
-  });
-
-  it("invalidation drops the Scheduling entry by owner+app tag and the next GET returns fresh data", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE] });
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db));
-    expect(db.listSelectCalls).toBe(1);
-    invalidateForgeProjectList("scheduling", OWNER);
-    expect(testCache.revalidateTagCalls).toContain(
-      forgeListCacheTag("scheduling", OWNER),
+      ["p1-1-control", "user_1"],
+      { revalidate: 15, tags: [TAG] },
     );
-    const renamed = { ...SCHED_PRIVATE, project_name: "Renamed" };
-    db.setError(null);
-    // Swap the rows the DB would return, via a fresh client on the same store.
-    const db2 = makeDb({ schedulingRows: [renamed] });
-    // The second client must share the call counter story: re-query happens.
-    const projects = await getCachedSchedulingPrivateProjects({
-      supabaseClient: db2, effectiveOwnerId: OWNER, actorId: ACTOR_A,
+    const warm = await runInRealRequest(() => cachedOld());
+    expect(warm.result).toEqual({ version: 1 });
+    expect(calls).toBe(1);
+    // The stale mark (Date.now, 1ms resolution) must land strictly after
+    // the warm entry's lastModified, or areTagsStale is false and the
+    // next GET is a plain fresh hit of v1 with no background revalidation
+    // — the control would then assert calls=2 against a run that never
+    // revalidated. Sleep past the ms boundary first.
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await runInRealRequest(() => {
+      version = 2;
+      revalidateTag(TAG, "max");
+      return null;
     });
-    expect(projects[0].name).toBe("Renamed");
-    expect(db2.listSelectCalls).toBe(1);
+    const firstAfterWrite = await runInRealRequest(() => cachedOld());
+    expect(firstAfterWrite.result).toEqual({ version: 1 });
+    expect(calls).toBe(2); // background revalidation re-ran the callback
+    const secondAfterWrite = await runInRealRequest(() => cachedOld());
+    expect(secondAfterWrite.result).toEqual({ version: 2 });
   });
 
-  it("invalidation is owner-scoped: invalidating owner_2 does not drop owner_1's entry", async () => {
-    const db = makeDb({ schedulingRows: [SCHED_PRIVATE] });
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_A, OWNER));
-    invalidateForgeProjectList("scheduling", "owner_2");
-    await getCachedSchedulingPrivateProjects(schedulingArgs(db, ACTOR_A, OWNER));
-    expect(db.listSelectCalls).toBe(1);
-  });
-
-  it("a failing invalidation does not throw (the write already landed; the TTL bounds staleness)", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    testCache.failNextRevalidateTagOnce(new Error("cache down"));
-    expect(() => invalidateForgeProjectList("scheduling", OWNER)).not.toThrow();
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Forge list cache invalidation failed"),
-      expect.any(Error),
-    );
-    errorSpy.mockRestore();
-  });
-
-  it("cold miss returns the exact Designer DTO; repeat hit = one DB list select", async () => {
-    const db = makeDb({ designerRows: [DESIGNER_ROW] });
-    const projects = await getCachedDesignerProjects(designerArgs(db));
-    expect(projects).toEqual([
-      {
-        id: "d1", name: "House",
-        createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z",
-      },
+  it("P1-1 REGRESSION (Designer): warm GET, update bumps updated_at, FIRST subsequent GET is fresh", async () => {
+    const db = fakeListClient([
+      { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ]);
-    await getCachedDesignerProjects(designerArgs(db));
-    expect(db.listSelectCalls).toBe(1);
+    const warm = await designerList(db);
+    expect(warm.map((p) => p.id)).toEqual(["d1"]);
+    // The committed update: same row, newer updated_at and a new name.
+    db.rows[0] = { ...db.rows[0], project_name: "Kitchen remodelled", updated_at: "z" };
+    const firstAfterWrite = await designerList(db);
+    expect(firstAfterWrite).toEqual([
+      { id: "d1", name: "Kitchen remodelled", createdAt: "a", updatedAt: "z" },
+    ]);
+    expect(db.listCalls).toBe(2);
   });
 
-  it("Designer owner/actor A/B isolation: different actor or owner re-queries", async () => {
-    const db = makeDb({ designerRows: [DESIGNER_ROW] });
-    await getCachedDesignerProjects(designerArgs(db, ACTOR_A));
-    await getCachedDesignerProjects(designerArgs(db, ACTOR_B));
-    await getCachedDesignerProjects(designerArgs(db, ACTOR_A, "owner_2"));
-    expect(db.listSelectCalls).toBe(3);
+  it("P1-2 REGRESSION: a probe failure after a committed write fails visibly — no stale list — and the next read is fresh", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    await schedulingPrivate(db);
+    expect(db.listCalls).toBe(1);
+    // The write already committed (new row present in the visible set).
+    db.rows.push({ id: "s2", owner_id: "user_1", project_name: "New", start_date: "2026-02-01", end_date: "2026-12-31", is_public: false, created_at: "c", updated_at: "d" });
+    // The freshness probe now fails: the GET must throw instead of serving
+    // the pre-write entry as if it were fresh.
+    db.failNextProbe(new Error("probe db down"));
+    await expect(schedulingPrivate(db)).rejects.toThrow("probe db down");
+    // No list select ran for the failed GET, and nothing was cached.
+    expect(db.listCalls).toBe(1);
+    // The next read retries and returns the fresh list.
+    const fresh = await schedulingPrivate(db);
+    expect(fresh.map((p) => p.id)).toEqual(["s2", "s1"]);
+    expect(db.listCalls).toBe(2);
   });
 
-  it("invalidation drops the Designer entry and the next GET returns fresh data", async () => {
-    const db = makeDb({ designerRows: [DESIGNER_ROW] });
-    await getCachedDesignerProjects(designerArgs(db));
-    invalidateForgeProjectList("designer", OWNER);
-    expect(testCache.revalidateTagCalls).toContain(forgeListCacheTag("designer", OWNER));
-    const db2 = makeDb({ designerRows: [{ ...DESIGNER_ROW, project_name: "Renamed" }] });
-    const projects = await getCachedDesignerProjects({
-      supabaseClient: db2, ownerId: OWNER, actorId: ACTOR_A,
-    });
-    expect(projects[0].name).toBe("Renamed");
-    expect(db2.listSelectCalls).toBe(1);
+  it("a failed list query is not cached — the next GET retries and succeeds", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    db.failNextList(new Error("db down"));
+    await expect(schedulingPrivate(db)).rejects.toThrow("db down");
+    const fresh = await schedulingPrivate(db);
+    expect(fresh).toHaveLength(1);
+    expect(db.listCalls).toBe(2);
+  });
+
+  it("P1-3 REGRESSION: one actor sees A+B private rows; a write to B moves the A-keyed list immediately, with no rows dropped", async () => {
+    const db = fakeListClient([
+      { id: "a1", owner_id: "owner_a", project_name: "A project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+      { id: "b1", owner_id: "owner_b", project_name: "B project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+      { id: "pub", owner_id: "example", project_name: "Example project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: true, created_at: "a", updated_at: "b" },
+    ]);
+    // The actor acts within workspace A but RLS shows them B's rows too
+    // (has_workspace_access on both); the private list is the whole
+    // RLS-visible private set, and the probe counts that same set.
+    const warm = await runInRealRequest(() =>
+      getCachedSchedulingPrivateProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "owner_a",
+        actorId: "user_1",
+      }),
+    );
+    expect(warm.result.map((p) => p.id).sort()).toEqual(["a1", "b1"]);
+    expect(db.listCalls).toBe(1);
+    // A co-owner saves B's project: B's updated_at bumps. The actor's
+    // A-keyed entry must reflect it on the FIRST next GET.
+    db.rows[1] = { ...db.rows[1], updated_at: "z" };
+    const afterBWrite = await runInRealRequest(() =>
+      getCachedSchedulingPrivateProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "owner_a",
+        actorId: "user_1",
+      }),
+    );
+    expect(afterBWrite.result).toHaveLength(2);
+    expect(afterBWrite.result.find((p) => p.id === "b1").updatedAt).toBe("z");
+    expect(db.listCalls).toBe(2);
+  });
+
+  it("P1-3: the public example row is never in the cached private list — it is fetched fresh on every GET", async () => {
+    const db = fakeListClient([
+      { id: "a1", owner_id: "owner_a", project_name: "A project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+      { id: "pub", owner_id: "example", project_name: "Example project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: true, created_at: "a", updated_at: "b" },
+    ]);
+    const privateProjects = await schedulingPrivate(db);
+    expect(privateProjects.map((p) => p.id)).toEqual(["a1"]);
+    const publicFirst = await runInRealRequest(() =>
+      fetchFreshPublicSchedulingProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "user_1",
+      }),
+    );
+    const publicSecond = await runInRealRequest(() =>
+      fetchFreshPublicSchedulingProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "user_1",
+      }),
+    );
+    expect(publicFirst.result.map((p) => p.id)).toEqual(["pub"]);
+    expect(publicSecond.result.map((p) => p.id)).toEqual(["pub"]);
+    // Two fresh public selects (never cached) + one private list select.
+    expect(db.listCalls).toBe(3);
+  });
+
+  it("a different actor re-queries instead of reading the first actor's cached entry", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    await schedulingPrivate(db);
+    await runInRealRequest(() =>
+      getCachedSchedulingPrivateProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "user_1",
+        actorId: "user_2",
+      }),
+    );
+    expect(db.listCalls).toBe(2);
+  });
+
+  it("a different owner gets its own entry and its own rows (Designer)", async () => {
+    const db = fakeListClient([
+      { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
+      { id: "d2", owner_id: "owner_2", project_name: "Theirs", created_at: "a", updated_at: "b" },
+    ]);
+    const mine = await designerList(db, "user_1", "user_1");
+    const theirs = await designerList(db, "owner_2", "user_1");
+    expect(mine.map((p) => p.id)).toEqual(["d1"]);
+    expect(theirs.map((p) => p.id)).toEqual(["d2"]);
+    expect(db.listCalls).toBe(2);
+    expect(db.probeCalls).toBe(2);
+  });
+
+  it("a co-owner's list is keyed by the canonical workspace owner, and a different actor under the same owner re-queries", async () => {
+    const db = fakeListClient([
+      { id: "d1", owner_id: "owner1", project_name: "Shared", created_at: "a", updated_at: "b" },
+    ]);
+    // Co-owner lists under the workspace owner id (auth already ran in the
+    // route; here the keying is what is under test).
+    const coOwner = await designerList(db, "owner1", "coowner9");
+    expect(coOwner.map((p) => p.id)).toEqual(["d1"]);
+    expect(db.listCalls).toBe(1);
+    // A different actor under the same owner re-queries (actor is in the key).
+    await designerList(db, "owner1", "owner1");
+    expect(db.listCalls).toBe(2);
+  });
+
+  it("concurrent GETs on a cold cache both succeed with the same DTO and at most one extra list select", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ]);
+    const [first, second] = await Promise.all([
+      schedulingPrivate(db),
+      schedulingPrivate(db),
+    ]);
+    expect(first).toEqual(second);
+    expect(db.listCalls).toBeLessThanOrEqual(2);
+  });
+
+  it("updateTag throws in a Route Handler request context — there is no supported immediate-invalidation path here", async () => {
+    await expect(
+      runInRealRequest(() => {
+        updateTag("forge-list:scheduling:owner:user_1");
+        return null;
+      }),
+    ).rejects.toThrow("updateTag can only be called from within a Server Action");
+  });
+});
+
+describe("mergeSchedulingProjectLists", () => {
+  it("sorts updated_at desc, and equal timestamps keep private-first order (stable) — no byte-equivalence claim for arbitrary ties", () => {
+    const merged = mergeSchedulingProjectLists(
+      [{ id: "priv", updatedAt: "t" }],
+      [{ id: "pub", updatedAt: "t" }],
+    );
+    expect(merged.map((p) => p.id)).toEqual(["priv", "pub"]);
+    const ordered = mergeSchedulingProjectLists(
+      [{ id: "old", updatedAt: "a" }],
+      [{ id: "new", updatedAt: "z" }],
+    );
+    expect(ordered.map((p) => p.id)).toEqual(["new", "old"]);
   });
 });

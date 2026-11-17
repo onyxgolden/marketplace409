@@ -3,7 +3,6 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { hydrateBoardState } from "@/components/forge/scheduling/schedulingBoardState";
 import { relationalTablesToBoard, stripNamespace } from "@/domains/scheduling/schedulingRelationalToBoard";
 import { loadProjectRelational, computeAndPersistCpm } from "../scheduleProjectAssembly";
-import { invalidateForgeProjectList } from "@/lib/forge/listReadCache";
 
 async function authenticatedContext() {
   return createAuthenticatedForgeApplication({ appKey: "scheduler" });
@@ -79,15 +78,10 @@ export async function PUT(request, { params }) {
 
     const result = Array.isArray(data) ? data[0] : data;
 
-    // S2A: invalidate only after the RPC's single transaction durably
-    // succeeded (a save conflict / not-found / error above returns first),
-    // and before reporting the save successful — the writer's next list read
-    // must see the updated name/dates.
-    invalidateForgeProjectList(
-      "scheduling",
-      authenticated.effectiveOwnerId || authenticated.user.id,
-    );
-
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The RPC
+    // bumps updated_at, so the next list GET's generation probe moves and
+    // the pre-save entry cannot be served — freshness needs no
+    // invalidation call that could fail silently.
     return NextResponse.json({ success: true, updatedAt: result?.updated_at ?? updatedAt, boardRevision: result?.board_revision ?? expectedRevision + 1 });
   } catch (error) {
     console.error("Scheduling project save error", error);
@@ -113,14 +107,9 @@ export async function DELETE(request, { params }) {
       .delete().eq("id", projectId).eq("owner_id", authenticated.effectiveOwnerId);
     if (relationalDeleteError) console.error("Scheduling relational delete error", relationalDeleteError);
 
-    // S2A: the list row is gone by this point (the 404 above returns
-    // first), so invalidate before reporting the delete successful — even
-    // though the relational-mirror delete is only logged, not fatal.
-    invalidateForgeProjectList(
-      "scheduling",
-      authenticated.effectiveOwnerId || authenticated.user.id,
-    );
-
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The
+    // delete changes the row count, so the next list GET's generation probe
+    // moves and the pre-delete entry cannot be served.
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Scheduling project delete error", error);

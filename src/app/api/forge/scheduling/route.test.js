@@ -1,63 +1,108 @@
-// S2A (load-times slice 2): the Scheduling list GET is served from the
-// hot-read server cache (src/lib/forge/listReadCache.js). next/cache is
-// mocked with the synthetic tag-aware cache
-// (incremental-cache-test-fake.js), so "repeat hit = one DB list select"
-// is proven by the counters below. The public example rows are fetched
-// fresh on every GET and merged with the cached owner-scoped rows.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// S2A (load-times slice 2) — fix round 1: the Scheduling list GET is
+// served from the hot-read server cache (src/lib/forge/listReadCache.js),
+// and every GET below runs through the REAL installed Next.js 16.4.1 cache
+// (real-incremental-cache-test-harness.js) inside a simulated Route
+// Handler request — no fake cache. Counters prove what ran: the generation
+// probe on every GET, the private list select only on a cache miss, the
+// public example rows fresh on every GET. The public example rows are
+// fetched fresh on every GET and merged with the cached owner-scoped rows.
+import "@/lib/forge/real-incremental-cache-test-harness";
 
-vi.mock("next/cache", async () => {
-  const actual = await vi.importActual("next/cache");
-  const fake = await import("@/lib/forge/incremental-cache-test-fake");
-  return {
-    ...actual,
-    unstable_cache: (...args) => fake.unstable_cache(...args),
-    revalidateTag: (...args) => fake.revalidateTag(...args),
-  };
-});
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetRealIncrementalCache,
+  runInRealRequest,
+} from "@/lib/forge/real-incremental-cache-test-harness";
+
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: vi.fn() }));
 
-import * as testCache from "@/lib/forge/incremental-cache-test-fake";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { GET, POST } from "./route";
 
-const OWNER_TAG = "forge-list:scheduling:owner:user_1";
+// Every list GET runs inside a simulated Route Handler request, the way
+// production runs it (see the harness). POST never touches the cache —
+// freshness after a write comes from the generation probe, so POSTs run
+// directly.
+async function get(...args) {
+  const { result } = await runInRealRequest(() => GET(...args));
+  return result;
+}
 
 // List mock that honors the is_public filter the S2A split queries use,
-// and counts private vs public selects separately — the cache proof.
-function listQuery(rows, { failFirstListSelect = false } = {}) {
-  let privateSelectCalls = 0;
-  let publicSelectCalls = 0;
+// and counts the generation probe vs private vs public selects separately
+// — the cache proof. Each chain builds synchronously (.select().eq()
+// .order()), so order() captures the chain's filter/probe flags at call
+// time; that keeps concurrent GETs from mixing each other's filters even
+// though the mock shares one query object. `insert` models the DB write:
+// it appends the inserted record (is_public defaulting to false, as the
+// column does) so a POST genuinely changes the generation the next GET
+// probes.
+function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let isPublicFilter;
-  let failedOnce = false;
+  let isProbe = false;
   const query = {
-    select: vi.fn(() => query),
+    select: vi.fn((_columns, selectOptions) => {
+      isProbe = selectOptions?.count === "exact";
+      return query;
+    }),
     eq: vi.fn((col, val) => {
       if (col === "is_public") isPublicFilter = val;
       return query;
     }),
-    order: vi.fn(async () => {
-      if (isPublicFilter === false) privateSelectCalls += 1;
-      else if (isPublicFilter === true) publicSelectCalls += 1;
-      if (failFirstListSelect && !failedOnce) {
-        failedOnce = true;
-        return { data: null, error: { message: "list failed" } };
-      }
-      const filtered =
-        isPublicFilter === undefined
-          ? rows
-          : rows.filter((row) => row.is_public === isPublicFilter);
-      return { data: filtered, error: null };
+    order: vi.fn(() => {
+      const capturedIsPublic = isPublicFilter;
+      const capturedIsProbe = isProbe;
+      const resolve = (limit) => {
+        const filtered =
+          capturedIsPublic === undefined
+            ? rows
+            : rows.filter((row) => row.is_public === capturedIsPublic);
+        const sorted = [...filtered].sort((a, b) =>
+          String(b.updated_at).localeCompare(String(a.updated_at)),
+        );
+        if (capturedIsProbe) {
+          counters.probeCalls += 1;
+          const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
+          return { data: limited, error: null, count: filtered.length };
+        }
+        if (capturedIsPublic === false) counters.privateSelectCalls += 1;
+        else if (capturedIsPublic === true) counters.publicSelectCalls += 1;
+        if (failFirstListSelect && !counters.failedOnce) {
+          counters.failedOnce = true;
+          return { data: null, error: { message: "list failed" } };
+        }
+        const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
+        return { data: limited, error: null };
+      };
+      return {
+        limit: vi.fn(async (n) => resolve(n)),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve(resolve()).then(onFulfilled, onRejected),
+      };
     }),
+    insert: vi.fn((record) => {
+      if (onInsert) onInsert(record);
+      return query;
+    }),
+    single: vi.fn(async () => ({ data: counters.lastInsertRow || null, error: null })),
   };
+  return query;
+}
+
+function listQuery(rows, { failFirstListSelect = false } = {}) {
+  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, failedOnce: false };
+  const query = makeListNode(rows, counters, { failFirstListSelect });
   return {
     client: { from: vi.fn(() => query) },
     query,
     get privateSelectCalls() {
-      return privateSelectCalls;
+      return counters.privateSelectCalls;
     },
     get publicSelectCalls() {
-      return publicSelectCalls;
+      return counters.publicSelectCalls;
+    },
+    get probeCalls() {
+      return counters.probeCalls;
     },
   };
 }
@@ -69,31 +114,26 @@ function insertQuery(row, { rpcError = null } = {}) {
   return { client: { from: vi.fn(() => query), rpc }, query, rpc };
 }
 
-// Combined mock for the invalidation tests: the same client serves the
-// list GET (select/eq/order) and the create POST (insert/select/single +
-// sync RPC), so a POST's invalidation can be observed by the next GET.
-function listAndInsertQuery(rows, insertRow, { rpcError = null } = {}) {
-  let privateSelectCalls = 0;
-  let publicSelectCalls = 0;
-  let isPublicFilter;
-  const query = {
-    select: vi.fn(() => query),
-    eq: vi.fn((col, val) => {
-      if (col === "is_public") isPublicFilter = val;
-      return query;
-    }),
-    order: vi.fn(async () => {
-      if (isPublicFilter === false) privateSelectCalls += 1;
-      else if (isPublicFilter === true) publicSelectCalls += 1;
-      const filtered =
-        isPublicFilter === undefined
-          ? rows
-          : rows.filter((row) => row.is_public === isPublicFilter);
-      return { data: filtered, error: null };
-    }),
-    insert: vi.fn(() => query),
-    single: vi.fn(async () => ({ data: insertRow, error: null })),
+// Combined mock for the freshness tests: the same client serves the list
+// GET (probe + private/public selects) and the create POST
+// (insert/select/single + sync RPC), so a POST's write can be observed by
+// the next GET through the real cache. single() returns the id of the row
+// the insert just appended, as production does; an insertError models the
+// insert itself failing (nothing appended, single() resolves the error),
+// while an rpcError models only the relational sync failing after the
+// insert already landed.
+function listAndInsertQuery(rows, { rpcError = null, insertError = null } = {}) {
+  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, failedOnce: false, lastInsertRow: null };
+  const onInsert = (record) => {
+    if (insertError) return;
+    const appended = { ...record, is_public: record.is_public ?? false };
+    rows.push(appended);
+    counters.lastInsertRow = { id: appended.id };
   };
+  const query = makeListNode(rows, counters, { onInsert });
+  query.single = vi.fn(async () =>
+    insertError ? { data: null, error: insertError } : { data: counters.lastInsertRow, error: null },
+  );
   const rpc = vi.fn(async () => ({ error: rpcError }));
   return {
     client: { from: vi.fn(() => query), rpc },
@@ -101,10 +141,13 @@ function listAndInsertQuery(rows, insertRow, { rpcError = null } = {}) {
     rpc,
     rows,
     get privateSelectCalls() {
-      return privateSelectCalls;
+      return counters.privateSelectCalls;
     },
     get publicSelectCalls() {
-      return publicSelectCalls;
+      return counters.publicSelectCalls;
+    },
+    get probeCalls() {
+      return counters.probeCalls;
     },
   };
 }
@@ -123,8 +166,7 @@ const AUTH = (userId = "user_1", effectiveOwnerId = "user_1") => ({
 describe("GET /api/forge/scheduling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    testCache.resetTestIncrementalCache();
+    resetRealIncrementalCache();
   });
 
   it("marks rows the caller owns, vs. the shared public example, correctly", async () => {
@@ -134,7 +176,7 @@ describe("GET /api/forge/scheduling", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    const response = await GET();
+    const response = await get();
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.projects).toEqual([
@@ -146,21 +188,22 @@ describe("GET /api/forge/scheduling", () => {
   it("returns 401 when unauthenticated", async () => {
     const unauthorized = new Response(null, { status: 401 });
     createAuthenticatedForgeApplication.mockResolvedValue({ response: unauthorized });
-    expect((await GET()).status).toBe(401);
+    expect((await get()).status).toBe(401);
   });
 
-  it("S2A: repeat GET hits the cache — one private DB list select; the public portion is still fetched fresh every time", async () => {
+  it("S2A: repeat GET hits the cache — one private DB list select; the probe runs every time and the public portion is still fetched fresh every time", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
       { id: "schedule_project_example", owner_id: "example", project_name: "Example project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: true, created_at: "a", updated_at: "b" },
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    const first = await (await GET()).json();
-    const second = await (await GET()).json();
+    const first = await (await get()).json();
+    const second = await (await get()).json();
     expect(second).toEqual(first);
     expect(db.privateSelectCalls).toBe(1);
     expect(db.publicSelectCalls).toBe(2);
+    expect(db.probeCalls).toBe(2);
   });
 
   it("S2A: a different actor re-queries instead of reading the first actor's cached entry", async () => {
@@ -171,8 +214,8 @@ describe("GET /api/forge/scheduling", () => {
     createAuthenticatedForgeApplication
       .mockResolvedValueOnce({ ...AUTH("user_1"), supabaseClient: db.client })
       .mockResolvedValueOnce({ ...AUTH("user_2"), supabaseClient: db.client });
-    await GET();
-    const second = await (await GET()).json();
+    await get();
+    const second = await (await get()).json();
     expect(second.projects).toHaveLength(1);
     expect(db.privateSelectCalls).toBe(2);
   });
@@ -183,13 +226,13 @@ describe("GET /api/forge/scheduling", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    expect((await GET()).status).toBe(200);
+    expect((await get()).status).toBe(200);
     expect(db.privateSelectCalls).toBe(1);
     // Membership revoked between requests: the factory now denies.
     createAuthenticatedForgeApplication.mockResolvedValue({
       response: new Response(null, { status: 403 }),
     });
-    const denied = await GET();
+    const denied = await get();
     expect(denied.status).toBe(403);
     // No second private select happened (auth denied first) and no cached
     // rows leaked to the denied caller.
@@ -202,26 +245,10 @@ describe("GET /api/forge/scheduling", () => {
     ];
     const db = listQuery(rows, { failFirstListSelect: true });
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    expect((await GET()).status).toBe(500);
-    const response = await GET();
+    expect((await get()).status).toBe(500);
+    const response = await get();
     expect(response.status).toBe(200);
     expect((await response.json()).projects).toHaveLength(1);
-    expect(db.privateSelectCalls).toBe(2);
-  });
-
-  it("S2A: after the 15s TTL the next GET re-queries", async () => {
-    vi.useFakeTimers();
-    const rows = [
-      { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
-    ];
-    const db = listQuery(rows);
-    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    await GET();
-    await vi.advanceTimersByTimeAsync(14000);
-    await GET();
-    expect(db.privateSelectCalls).toBe(1);
-    await vi.advanceTimersByTimeAsync(2000);
-    await GET();
     expect(db.privateSelectCalls).toBe(2);
   });
 
@@ -231,7 +258,7 @@ describe("GET /api/forge/scheduling", () => {
     ];
     const db = listQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    const [first, second] = await Promise.all([GET(), GET()]);
+    const [first, second] = await Promise.all([get(), get()]);
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual(await first.json());
@@ -241,7 +268,7 @@ describe("GET /api/forge/scheduling", () => {
   it("S2A: the response stays private and non-cacheable at the HTTP layer", async () => {
     const db = listQuery([]);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    const response = await GET();
+    const response = await get();
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
@@ -249,8 +276,7 @@ describe("GET /api/forge/scheduling", () => {
 describe("POST /api/forge/scheduling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    testCache.resetTestIncrementalCache();
+    resetRealIncrementalCache();
   });
 
   it("creates a new project owned by the caller and returns its id, defaulting to the capital template with no body", async () => {
@@ -288,87 +314,111 @@ describe("POST /api/forge/scheduling", () => {
     expect(response.status).toBe(500);
   });
 
-  it("S2A: a successful POST invalidates the owner's list — the next GET returns fresh data, not the cached list", async () => {
+  it("S2A: a successful POST makes the next GET fresh — the insert moves the generation, so the FIRST GET after the save re-queries", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows, { id: "schedule_project_new" });
+    const db = listAndInsertQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(1);
     const created = await POST(postRequest(undefined));
     expect(created.status).toBe(200);
-    expect(testCache.revalidateTagCalls).toContain(OWNER_TAG);
-    // The DB now holds the new project; the next GET must see it.
-    db.rows.push({ id: "schedule_project_new", owner_id: "user_1", project_name: "New Project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "c", updated_at: "d" });
-    const body = await (await GET()).json();
+    const createdId = (await created.json()).id;
+    // The insert already appended the row (the mock models the DB write);
+    // the next GET must see it, on the first try — no stale serve.
+    const body = await (await get()).json();
     expect(db.privateSelectCalls).toBe(2);
-    expect(body.projects.map((p) => p.id)).toContain("schedule_project_new");
+    expect(body.projects.map((p) => p.id)).toContain(createdId);
   });
 
-  it("S2A: a failed POST (sync error) neither succeeds nor invalidates the cached list", async () => {
+  it("S2A: a failed POST (insert error) neither succeeds nor changes the cached list", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows, { id: "schedule_project_new" }, { rpcError: { message: "sync failed" } });
+    const db = listAndInsertQuery(rows, { insertError: { message: "insert failed" } });
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(1);
     const failed = await POST(postRequest(undefined));
     expect(failed.status).toBe(500);
-    expect(testCache.revalidateTagCalls).toEqual([]);
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(1);
   });
 
-  it("S2A: back-to-back saves each invalidate — every GET after a save is fresh", async () => {
+  it("S2A: a failed POST (sync error) returns 500, but the next GET still re-queries — the insert itself landed, so the generation moved", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows, { id: "schedule_project_new" });
+    const db = listAndInsertQuery(rows, { rpcError: { message: "sync failed" } });
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    await GET();
+    await get();
+    expect(db.privateSelectCalls).toBe(1);
+    const failed = await POST(postRequest(undefined));
+    expect(failed.status).toBe(500);
+    // The insert committed before the sync failed (separate statements, no
+    // rollback), so the next GET's probe sees the new row and re-queries —
+    // the list reflects the DB truth instead of serving the pre-write entry.
+    const body = await (await get()).json();
+    expect(db.privateSelectCalls).toBe(2);
+    expect(body.projects).toHaveLength(2);
+  });
+
+  it("S2A: back-to-back saves each move the generation — every GET after a save is fresh", async () => {
+    const rows = [
+      { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ];
+    const db = listAndInsertQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    await get();
     await POST(postRequest(undefined));
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(2);
     await POST(postRequest(undefined));
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(3);
   });
 
-  it("S2A: a POST invalidates only its own owner's list — another owner's cached entry survives", async () => {
-    const rows = [
+  it("S2A: a POST moves only its own owner's generation — another owner's cached entry survives", async () => {
+    // Each actor's client models that actor's RLS-visible set: owner_2
+    // cannot see owner_1's rows, so owner_1's insert does not move
+    // owner_2's probe generation.
+    const rows1 = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows, { id: "schedule_project_new" });
+    const rows2 = [
+      { id: "p2", owner_id: "user_2", project_name: "Theirs", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+    ];
+    const db1 = listAndInsertQuery(rows1);
+    const db2 = listAndInsertQuery(rows2);
     createAuthenticatedForgeApplication
-      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db.client })
-      .mockResolvedValueOnce({ ...AUTH("user_2", "user_2"), supabaseClient: db.client })
-      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db.client })
-      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db.client })
-      .mockResolvedValueOnce({ ...AUTH("user_2", "user_2"), supabaseClient: db.client });
-    await GET(); // owner_1: private select 1
-    await GET(); // owner_2: private select 2 (own entry)
+      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db1.client })
+      .mockResolvedValueOnce({ ...AUTH("user_2", "user_2"), supabaseClient: db2.client })
+      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db1.client })
+      .mockResolvedValueOnce({ ...AUTH("user_1", "user_1"), supabaseClient: db1.client })
+      .mockResolvedValueOnce({ ...AUTH("user_2", "user_2"), supabaseClient: db2.client });
+    await get(); // owner_1: private select 1
+    await get(); // owner_2: private select 1 (own entry)
     await POST(postRequest(undefined)); // owner_1's POST
-    expect(testCache.revalidateTagCalls).toEqual([OWNER_TAG]);
-    await GET(); // owner_1: re-queries (3)
-    await GET(); // owner_2: still cached (stays 3)
-    expect(db.privateSelectCalls).toBe(3);
+    await get(); // owner_1: re-queries (2)
+    await get(); // owner_2: still cached (stays 1)
+    expect(db1.privateSelectCalls).toBe(2);
+    expect(db2.privateSelectCalls).toBe(1);
   });
 
-  it("S2A: a GET in flight while a POST invalidates still resolves, and the GET after the race is fresh", async () => {
+  it("S2A: a GET in flight while a POST writes still resolves, and the GET after the race is fresh", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
-    const db = listAndInsertQuery(rows, { id: "schedule_project_new" });
+    const db = listAndInsertQuery(rows);
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
-    await GET();
+    await get();
     expect(db.privateSelectCalls).toBe(1);
-    const [racingGet, created] = await Promise.all([GET(), POST(postRequest(undefined))]);
+    const [racingGet, created] = await Promise.all([get(), POST(postRequest(undefined))]);
     expect(racingGet.status).toBe(200);
     expect(created.status).toBe(200);
-    db.rows.push({ id: "schedule_project_new", owner_id: "user_1", project_name: "New Project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "c", updated_at: "d" });
-    const body = await (await GET()).json();
-    expect(body.projects.map((p) => p.id)).toContain("schedule_project_new");
+    const createdId = (await created.json()).id;
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toContain(createdId);
   });
 });
