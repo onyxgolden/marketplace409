@@ -217,32 +217,37 @@ def _current_user_identities_win32() -> set[str]:
     a different LOCAL account `HOST\\JASON` also exists; the old code
     admitted both as "the current user," so an ACE for `HOST\\JASON`
     alone (the real `CORP\\JASON` entry entirely absent) could pass.
-    Now: if whoami yields a usable identity, return ONLY that — the
-    env-var-derived aliases are used only when whoami itself could not
-    be run or produced nothing, never layered on top of a successful
-    whoami result."""
+    Fixed: if whoami yields a usable identity, return ONLY that.
+
+    Fix round 5 (P1 — ChatGPT re-review 2026-11-17): the env-var-derived
+    fallback for when whoami FAILS was itself the same class of bug —
+    an environment-variable-assembled name is not a verified identity
+    or SID-equivalence proof, and a failed/malformed `whoami` is
+    explicitly an error condition this authorization boundary must
+    handle, not paper over. There is no longer any fallback: if the
+    authoritative whoami identity cannot be obtained or parsed
+    unambiguously, this function raises `RecordingAclError` directly
+    and `save()` aborts before any recording file is written. A
+    zero-length or malformed whoami response is never treated as an
+    authorization success."""
     try:
         result = subprocess.run(
             ["whoami", "/user", "/fo", "csv"], capture_output=True, timeout=10, check=False, text=True)
-        if result.returncode == 0:
-            import csv
-            import io
+    except Exception as exc:  # noqa: BLE001 — fail closed, not a silent fallback
+        raise RecordingAclError(
+            f"could not run whoami to resolve the current user's authoritative identity: {exc}") from exc
+    if result.returncode != 0:
+        raise RecordingAclError(
+            f"whoami /user exited {result.returncode}; cannot verify the current user's identity "
+            f"without it — refusing to save: {(result.stderr or result.stdout).strip()}")
+    import csv
+    import io
 
-            rows = list(csv.reader(io.StringIO(result.stdout)))
-            if len(rows) >= 2 and rows[1] and rows[1][0].strip():
-                return {rows[1][0].strip().upper()}
-    except Exception:  # noqa: BLE001 — fall through to the env-var fallback below
-        pass
-    # whoami was unavailable or produced nothing usable — fall back to
-    # env-var-derived aliases ONLY in this case, never unioned with an
-    # already-successful whoami result above.
-    identities: set[str] = set()
-    username = os.environ.get("USERNAME", "")
-    if username:
-        for domain in (os.environ.get("USERDOMAIN", ""), os.environ.get("COMPUTERNAME", "")):
-            if domain:
-                identities.add(f"{domain}\\{username}".upper())
-    return identities
+    rows = list(csv.reader(io.StringIO(result.stdout)))
+    if len(rows) < 2 or not rows[1] or not rows[1][0].strip():
+        raise RecordingAclError(
+            f"whoami /user produced no usable identity — refusing to save (output: {result.stdout!r})")
+    return {rows[1][0].strip().upper()}
 
 
 def _verify_restricted_to_current_user_win32(path: str) -> None:
@@ -266,12 +271,11 @@ def _verify_restricted_to_current_user_win32(path: str) -> None:
     principal outside (always-allowed ∪ {exact current-user identity})
     is present, when the real current-user identity is missing
     entirely, OR when the current user's identity could not be
-    determined at all (fails closed rather than skipping the check)."""
+    determined at all (fails closed rather than skipping the check).
+    Fix round 5: `_current_user_identities_win32()` itself now raises
+    directly on any whoami failure — it can no longer return an empty
+    set, so there is nothing further to check here for that case."""
     current_user_identities = _current_user_identities_win32()
-    if not current_user_identities:
-        raise RecordingAclError(
-            f"could not determine the current Windows user's exact identity to verify {path!r} against "
-            f"(whoami failed and no USERDOMAIN/COMPUTERNAME env var was set) — refusing to save")
 
     try:
         result = subprocess.run(["icacls", path], capture_output=True, timeout=30, check=False, text=True)

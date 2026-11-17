@@ -184,12 +184,15 @@ class TestRecordingSessionSave(unittest.TestCase):
             session = RecordingSession(call_sid="CA-acl-3", ani="+15552345678")
             session.append_caller_audio(b"\x00\x01" * 100)
 
+            username = os.environ.get("USERNAME", "user")
+
             def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=0, stdout=f'"User Name","SID"\r\n"{username}","S-1-5-21-0"\r\n', stderr="")
                 if args[0] == "icacls" and len(args) == 2:
                     # The verification query (just `icacls <path>`, no
                     # further args) — report a leaked extra principal.
                     path = args[1]
-                    username = os.environ.get("USERNAME", "user")
                     return mock.Mock(
                         returncode=0,
                         stdout=f"{path} BUILTIN\\Users:(OI)(CI)(F)\n            {username}:(OI)(CI)(F)\n\n"
@@ -369,6 +372,84 @@ class TestRecordingSessionSave(unittest.TestCase):
             identities = _current_user_identities_win32()
         self.assertEqual(identities, {"CORP\\JASON"})
         self.assertNotIn("HOST\\JASON", identities)
+
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_fails_closed_when_whoami_fails_even_if_the_acl_contains_only_an_env_derived_alias(self):
+        """Fix round 5 (P1 — ChatGPT re-review 2026-11-17): fix round 4
+        closed the successful-whoami case, but the FAILURE fallback
+        (env-var-assembled `USERDOMAIN\\USERNAME` / `COMPUTERNAME\\USERNAME`
+        names) was the same class of bug — not a verified identity, just
+        a name assembled from environment variables. Here `whoami`
+        fails (nonzero exit) with `USERNAME=JASON`, `USERDOMAIN=CORP`,
+        `COMPUTERNAME=HOST`, and the ACL shows ONLY `HOST\\JASON` — the
+        old fallback would have accepted this as "the current user
+        present." Must now raise BEFORE any file is written, with no
+        fallback identity at all."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-whoami-fail-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            env_patch = {"USERNAME": "JASON", "USERDOMAIN": "CORP", "COMPUTERNAME": "HOST"}
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=1, stdout="", stderr="whoami: simulated failure")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} HOST\\JASON:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch.dict(os.environ, env_patch), mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+            # Fail closed means nothing was left behind for this call.
+            lookup_key = ani_lookup_key("+15552345678", config.recording_index_secret)
+            bundle_dir = os.path.join(tmp, lookup_key, "CA-acl-whoami-fail-1")
+            if os.path.isdir(bundle_dir):
+                self.assertEqual(os.listdir(bundle_dir), [])
+
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_fails_closed_when_whoami_fails_even_with_both_principals_present(self):
+        """Fix round 5 (P1): same scenario, but the ACL shows BOTH the
+        real domain principal `CORP\\JASON` AND the env-derived
+        `HOST\\JASON` — with whoami unavailable there is no way to
+        confirm `CORP\\JASON` is genuinely the running process's
+        identity (as opposed to some other account that happens to
+        share a domain/username pattern), so this must also raise."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-whoami-fail-2", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            env_patch = {"USERNAME": "JASON", "USERDOMAIN": "CORP", "COMPUTERNAME": "HOST"}
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=1, stdout="", stderr="whoami: simulated failure")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} CORP\\JASON:(OI)(CI)(F)\n"
+                               f"            HOST\\JASON:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch.dict(os.environ, env_patch), mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
 
     def test_real_save_load_decrypt_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
