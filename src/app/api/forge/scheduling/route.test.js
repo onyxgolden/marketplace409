@@ -17,6 +17,11 @@ import {
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: vi.fn() }));
 
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import {
+  fetchFreshPublicSchedulingProjects,
+  getCachedSchedulingPrivateProjects,
+  mergeSchedulingProjectLists,
+} from "@/lib/forge/listReadCache";
 import { GET, POST } from "./route";
 
 // Every list GET runs inside a simulated Route Handler request, the way
@@ -52,7 +57,16 @@ const POSTGREST_MAX_ROWS = 1000;
 function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let isPublicFilter;
   const query = {
-    select: vi.fn(() => query),
+    // A fresh .select() chain starts unfiltered — the mock shares one
+    // query object per client, so select() must reset the filter the
+    // previous chain set, exactly as a fresh PostgREST builder would.
+    // (Fix round 4: the combined boundary probe/query carry NO
+    // is_public filter; without this reset a stale `true` from a
+    // previous GET's public fetch would silently narrow them.)
+    select: vi.fn(() => {
+      isPublicFilter = undefined;
+      return query;
+    }),
     eq: vi.fn((col, val) => {
       if (col === "is_public") isPublicFilter = val;
       return query;
@@ -69,6 +83,7 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
         );
         if (capturedIsPublic === false) counters.privateSelectCalls += 1;
         else if (capturedIsPublic === true) counters.publicSelectCalls += 1;
+        else counters.combinedListCalls += 1;
         if (failFirstListSelect && !counters.failedOnce) {
           counters.failedOnce = true;
           return { data: null, error: { message: "list failed" } };
@@ -85,10 +100,13 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
     // no limit) and resolves the filtered rows unsorted — the digest sorts
     // by id, so probe order is irrelevant. Truncated to the PostgREST cap
     // with the exact total count, as count:"exact" reports in production.
+    // A direct-awaited query with NO filter is the fix-round-4 combined
+    // boundary probe (whole visible set, id only).
     then: (onFulfilled, onRejected) => {
       const capturedIsPublic = isPublicFilter;
       const resolve = () => {
         counters.probeCalls += 1;
+        if (capturedIsPublic === undefined) counters.combinedProbeCalls += 1;
         const filtered =
           capturedIsPublic === undefined
             ? rows
@@ -111,7 +129,7 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
 }
 
 function listQuery(rows, { failFirstListSelect = false } = {}) {
-  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, failedOnce: false };
+  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, combinedProbeCalls: 0, combinedListCalls: 0, failedOnce: false };
   const query = makeListNode(rows, counters, { failFirstListSelect });
   return {
     client: { from: vi.fn(() => query) },
@@ -124,6 +142,12 @@ function listQuery(rows, { failFirstListSelect = false } = {}) {
     },
     get probeCalls() {
       return counters.probeCalls;
+    },
+    get combinedProbeCalls() {
+      return counters.combinedProbeCalls;
+    },
+    get combinedListCalls() {
+      return counters.combinedListCalls;
     },
   };
 }
@@ -144,7 +168,7 @@ function insertQuery(row, { rpcError = null } = {}) {
 // while an rpcError models only the relational sync failing after the
 // insert already landed.
 function listAndInsertQuery(rows, { rpcError = null, insertError = null } = {}) {
-  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, failedOnce: false, lastInsertRow: null };
+  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0, combinedProbeCalls: 0, combinedListCalls: 0, failedOnce: false, lastInsertRow: null };
   const onInsert = (record) => {
     if (insertError) return;
     const appended = { ...record, is_public: record.is_public ?? false };
@@ -169,6 +193,12 @@ function listAndInsertQuery(rows, { rpcError = null, insertError = null } = {}) 
     },
     get probeCalls() {
       return counters.probeCalls;
+    },
+    get combinedProbeCalls() {
+      return counters.combinedProbeCalls;
+    },
+    get combinedListCalls() {
+      return counters.combinedListCalls;
     },
   };
 }
@@ -224,7 +254,13 @@ describe("GET /api/forge/scheduling", () => {
     expect(second).toEqual(first);
     expect(db.privateSelectCalls).toBe(1);
     expect(db.publicSelectCalls).toBe(2);
-    expect(db.probeCalls).toBe(2);
+    // Fix round 4: every GET runs TWO probes — the combined boundary
+    // probe plus the private digest probe — so two GETs are 4 probes.
+    expect(db.probeCalls).toBe(4);
+    expect(db.combinedProbeCalls).toBe(2);
+    // Small fixture fits under the cap: the bounded split path runs, the
+    // combined original query never does.
+    expect(db.combinedListCalls).toBe(0);
   });
 
   it("S2A (fix round 2): renaming the OLDER project — updated_at still below the newest row's — is visible on the FIRST subsequent GET", async () => {
@@ -244,7 +280,7 @@ describe("GET /api/forge/scheduling", () => {
     const firstAfterWrite = await (await get()).json();
     expect(firstAfterWrite.projects.map((p) => p.name)).toEqual(["Newest", "Older renamed"]);
     expect(db.privateSelectCalls).toBe(2);
-    expect(db.probeCalls).toBe(2);
+    expect(db.probeCalls).toBe(4);
   });
 
   it("S2A (fix round 2): delete + create preserving count and max is visible on the FIRST subsequent GET", async () => {
@@ -327,6 +363,137 @@ describe("GET /api/forge/scheduling", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
     const response = await get();
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  // Fix round 4 — the verdict's mandatory full-route regression: 1,000
+  // private + 1 public, through the real GET. The expected value is a
+  // capped implementation of the ORIGINAL single query (whole visible
+  // set, updated_at desc, server cap) computed test-side from the same
+  // fixture — exact ordered IDs and count, not just a length. The
+  // pre-fix split+merge returns 1,001 rows on these fixtures (see the
+  // CONTROL below), so passing proves the combined query, not the
+  // harness. The public row is appended LAST in the fixture array, so it
+  // sits outside the combined probe's un-ordered first page as well.
+  function cappedCombinedRows({ privateCount, publicUpdatedAt }) {
+    const rows = [];
+    for (let i = 1; i <= privateCount; i += 1) {
+      rows.push({
+        id: `p${String(i).padStart(4, "0")}`,
+        owner_id: "user_1",
+        project_name: `Project ${i}`,
+        start_date: "2026-01-01",
+        end_date: "2026-12-31",
+        is_public: false,
+        created_at: "a",
+        updated_at: String(i).padStart(4, "0"),
+      });
+    }
+    rows.push({
+      id: "pub",
+      owner_id: "example",
+      project_name: "Example project",
+      start_date: "2026-01-01",
+      end_date: "2026-12-31",
+      is_public: true,
+      created_at: "a",
+      updated_at: publicUpdatedAt,
+    });
+    return rows;
+  }
+
+  function originalSchedulingListIds(rows) {
+    return [...rows]
+      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+      .slice(0, POSTGREST_MAX_ROWS)
+      .map((row) => row.id);
+  }
+
+  it("P1 (fix round 4) REGRESSION: 1,000 private + 1 public, public NEWEST — the GET returns exactly the capped original single query (public first, oldest private displaced), count 1,000", async () => {
+    const rows = cappedCombinedRows({ privateCount: 1000, publicUpdatedAt: "9999" });
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toEqual(originalSchedulingListIds(rows));
+    expect(body.projects).toHaveLength(1000);
+    // Newest public row displaces the oldest private row from the
+    // original top 1,000 — it must NOT be served alongside it.
+    expect(body.projects[0].id).toBe("pub");
+    expect(body.projects.map((p) => p.id)).not.toContain("p0001");
+    // Mechanism proof: the boundary path ran the combined original
+    // query once (one combined probe, one combined list select).
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: 1,000 private + 1 public, public OLDEST — the GET returns exactly the capped original single query (all 1,000 private, public excluded), count 1,000", async () => {
+    const rows = cappedCombinedRows({ privateCount: 1000, publicUpdatedAt: "0000" });
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toEqual(originalSchedulingListIds(rows));
+    expect(body.projects).toHaveLength(1000);
+    // The oldest public row is outside the original top 1,000 — it must
+    // NOT be appended after the private rows.
+    expect(body.projects.map((p) => p.id)).not.toContain("pub");
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: private alone already exceeds the cap (1,001 private + 1 public, public oldest) — the GET returns the newest 1,000 private rows, count 1,000", async () => {
+    const rows = cappedCombinedRows({ privateCount: 1001, publicUpdatedAt: "0000" });
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toEqual(originalSchedulingListIds(rows));
+    expect(body.projects).toHaveLength(1000);
+    expect(body.projects.map((p) => p.id)).not.toContain("pub");
+    expect(body.projects.map((p) => p.id)).not.toContain("p0001");
+    expect(body.projects[0].id).toBe("p1001");
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: private alone already exceeds the cap (1,001 private + 1 public, public newest) — the GET returns the public row plus the newest 999 private rows, count 1,000", async () => {
+    const rows = cappedCombinedRows({ privateCount: 1001, publicUpdatedAt: "9999" });
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    const body = await (await get()).json();
+    expect(body.projects.map((p) => p.id)).toEqual(originalSchedulingListIds(rows));
+    expect(body.projects).toHaveLength(1000);
+    expect(body.projects[0].id).toBe("pub");
+    expect(body.projects.map((p) => p.id)).not.toContain("p0001");
+    expect(body.projects.map((p) => p.id)).not.toContain("p0002");
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  // Fix round 4 CONTROL: the pre-fix split+merge (cached private list +
+  // fresh public fetch, merged with no combined cap) returns 1,001 rows
+  // on the same 1,000-private + 1-newest-public fixture — it disagrees
+  // with the original single query, so the regressions above would have
+  // failed before the fix. If this control ever stops returning 1,001,
+  // the fixture has gone blind.
+  it("P1 (fix round 4) CONTROL: the pre-fix split+merge returns 1,001 rows on the capped fixture — the old path disagrees with the original single query", async () => {
+    const rows = cappedCombinedRows({ privateCount: 1000, publicUpdatedAt: "9999" });
+    const db = listQuery(rows);
+    const privateProjects = await runInRealRequest(() =>
+      getCachedSchedulingPrivateProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "user_1",
+        actorId: "user_1",
+      }),
+    );
+    const publicProjects = await runInRealRequest(() =>
+      fetchFreshPublicSchedulingProjects({
+        supabaseClient: db.client,
+        effectiveOwnerId: "user_1",
+      }),
+    );
+    const merged = mergeSchedulingProjectLists(privateProjects.result, publicProjects.result);
+    expect(merged).toHaveLength(1001);
+    expect(merged.map((p) => p.id)).toContain("pub");
+    expect(merged.map((p) => p.id)).toContain("p0001");
+    expect(merged.map((p) => p.id)).not.toEqual(originalSchedulingListIds(rows));
   });
 });
 

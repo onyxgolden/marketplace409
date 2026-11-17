@@ -86,13 +86,21 @@
 //   assumption about what the cap value is — and if the count is missing
 //   (a client that did not return one) the probe is treated as
 //   incomplete, fail closed. When the probe is incomplete, the GET skips
-//   the cache entirely and serves the uncached list read — exactly the
-//   pre-S2A single query, byte-identical semantics (including its
-//   truncation for oversized sets). Oversized lists are therefore NO
-//   WORSE than the uncached baseline; they just get no cache benefit.
+//   the cache entirely and serves the uncached list read. For Designer
+//   that read IS the pre-S2A single query. For Scheduling it is NOT —
+//   see the fix-round-4 section below: the private-only bypass plus a
+//   fresh public append is a different list from the original single
+//   query at the combined cap, and the route orchestrator governs it.
 //   The probe and the list read the same row set (same filters, same RLS,
 //   same client), so a complete probe proves the list fill is complete
 //   too — the list query selects more columns but the cap is on rows.
+//   CORRECTION (fix round 4, ChatGPT NEEDS CHANGES P1): the round-3
+//   text claimed an incomplete probe costs "exactly the uncached
+//   baseline" and oversized lists are "no worse than the baseline".
+//   Both are wrong on cost: the bypass path runs the probe AND the list
+//   read — two DB requests, plus the probe's row transfer and SHA-256 —
+//   against the baseline's one. Semantics are preserved; cost is not
+//   identical. See "Honest performance trade-off" below.
 // - TOCTOU: a write can still land between the probe and the cache-miss
 //   fill. The cached callback recomputes the digest from the rows it
 //   actually fetched and throws ForgeListDigestMismatchError instead of
@@ -103,6 +111,54 @@
 //   data; a second mismatch propagates visibly (500, never cached) and
 //   the next read retries. Mutations still perform NO cache operation, so
 //   there is still no invalidation step that can fail silently.
+//
+// Combined-list semantics — Scheduling split vs the original single
+// query (fix round 4 for PR #822, ChatGPT NEEDS CHANGES P1: the split
+// violates the baseline list contract at the global response cap):
+// - Pre-S2A, Scheduling GET ran ONE RLS-visible select, order
+//   updated_at desc, and the configured PostgREST response cap applied
+//   to the COMBINED private + public list. S2A split it into a private
+//   select and a separate public select and merged without the combined
+//   cap: 1,000 private + 1 public returned 1,001 rows where the original
+//   returned at most 1,000, and membership differed (an old public row
+//   the original excluded was always included; a newest public row the
+//   original let displace an older private row was included alongside
+//   it). The round-3 private-probe bypass did not fix this: its fallback
+//   was still the private-only query, with public rows appended after.
+// - The fix, per the verdict, is a full COMBINED original Scheduling
+//   query on the boundary/bypass path, with no cap value assumed:
+//   getSchedulingProjects() first runs a combined boundary probe —
+//   select id with { count: "exact" }, NO filters, no ORDER BY — over
+//   the whole RLS-visible set. PostgREST reports the true total in the
+//   same statement while capping the returned ids, so total > ids
+//   received proves the combined set is at/over the server-configured
+//   cap (and ids received IS the cap in that case, though the code never
+//   needs its value), total === ids received proves the whole combined
+//   set fits under it, and a missing count fails closed to the boundary
+//   path. On the boundary path the GET runs fetchOriginalSchedulingListRows
+//   — the exact pre-S2A single query (all list columns, no filters,
+//   order updated_at desc) — which PostgREST caps exactly as the
+//   original did: same membership, same ordering, same truncation.
+//   No public row is dropped and no merged list is truncated: the
+//   ordering semantics are the original query's own, demonstrated by
+//   the full-route regressions (1,000 private + 1 public, public newest
+//   and oldest; private alone over the cap), which compare exact
+//   ordered IDs and count against a capped implementation of the
+//   original single query.
+// - On the bounded path (combined probe complete) the split path runs
+//   as before — cached private rows + fresh public rows, merged — and
+//   the merged count equals the probed combined total, which is at or
+//   under the cap, so the bounded path cannot return a combined result
+//   exceeding the original response limit. A write landing BETWEEN the
+//   boundary probe and the split reads could still push the total over
+//   the cap (the private probe's own bypass would then serve a
+//   private-only list with public rows appended); the orchestrator
+//   therefore re-checks the merged length against the probed combined
+//   total and, if it grew, re-runs the full combined original query
+//   for this GET. Deletes and is_public flips cannot grow the merged
+//   length past the probed total, so only growth triggers the re-run.
+// - Designer is untouched by this: no public rows, no split, its single
+//   query already is the original query.
 //
 // Why NOT revalidateTag again (rejected alternatives, verified against
 // the installed Next.js 16.4.1 source — the deployed runtime):
@@ -127,18 +183,30 @@
 //   separately scoped approval the verdict explicitly withholds.
 //
 // Honest performance trade-off (read this before claiming a win):
-// - Correctness now requires the probe to read every visible row on
-//   every GET — the same row set as the list query, fewer columns, no
-//   ORDER BY — plus an exact count over that set. The cache saves the
-//   wide-column fetch + ORDER BY + DTO mapping/sort/merge, NOT a round
-//   trip: a repeat GET still costs one PostgREST round trip (the probe)
-//   plus, for Scheduling, the always-fresh public fetch. The net latency
-//   gain is therefore expected to be SMALL, and a cache miss now costs
-//   probe + list (one round trip MORE than the uncached baseline). For
-//   oversized lists (over the PostgREST response cap) the cache is
-//   bypassed entirely, so those GETs cost exactly the uncached baseline.
-//   The live before/after timing receipt (post-deploy, per the scope) is
-//   the judge: if it shows no improvement, record NO IMPROVEMENT and take
+// - Correctness now requires probes to read visible rows on every GET.
+//   A bounded Scheduling GET costs THREE PostgREST round trips minimum
+//   — the combined boundary probe (up to the cap's worth of ids + an
+//   exact count), the private digest probe (up to the cap's worth of
+//   digest columns + an exact count, plus SHA-256 over them), and the
+//   always-fresh public fetch — against the uncached baseline's ONE.
+//   The cache saves the wide-column fetch + ORDER BY + DTO mapping/
+//   sort/merge on a hit, NOT a round trip. A cache miss adds the
+//   private list select on top. The net latency gain is therefore
+//   expected to be SMALL, and may be negative on a miss.
+// - A boundary/bypass GET costs the combined boundary probe PLUS the
+//   full combined list query — TWO round trips and up to a cap's worth
+//   of id transfer before the list payload — strictly MORE than the
+//   baseline's single query. The round-3 claim that "oversized lists
+//   are no worse than the baseline" is incorrect and is retracted here:
+//   they pay one extra round trip and the probe transfer, and get no
+//   cache benefit. Likewise the incomplete-private-probe path (a write
+//   landing between the boundary probe and the split reads) costs the
+//   combined probe + the private probe + the private list read + the
+//   public fetch, and possibly the combined query on top if the merged
+//   length grew past the probed total.
+// - Do NOT claim a speed improvement from this cache. The live
+//   before/after timing receipt (post-deploy, per the scope) is the
+//   judge: if it shows no improvement, record NO IMPROVEMENT and take
 //   slice #8 (server-prefetch) next — do not claim improvement from hit
 //   counters, which count list selects, not round trips.
 //
@@ -291,11 +359,14 @@ async function probeListDigest({ supabaseClient, table, columns, filters }) {
   };
 }
 
-// The raw list reads, exactly the pre-S2A single queries: used both
-// inside the cached callback and on the bypass path, so the bypass serves
-// byte-identical semantics to the uncached baseline (including its
-// truncation for oversized sets — no new behavior for large lists beyond
-// "no cache").
+// The raw list reads, exactly the pre-S2A single queries (per subset):
+// used inside the cached callback and on the private-probe-incomplete
+// fallback inside getCachedProjectList. For Designer that fallback IS
+// the original single query. For Scheduling it is NOT the served list
+// on its own — the route orchestrator (getSchedulingProjects) re-checks
+// the merged length against the combined boundary probe and falls back
+// to the full combined original query, so a private-only fallback
+// result is never served past the original response limit.
 async function fetchSchedulingPrivateListRows({ supabaseClient }) {
   const { data, error } = await supabaseClient
     .from("forge_scheduling_projects")
@@ -443,6 +514,49 @@ export async function fetchFreshPublicSchedulingProjects({
   );
 }
 
+// Scheduling combined boundary probe (fix round 4): one round trip
+// over the WHOLE RLS-visible set — no is_public filter, no ORDER BY,
+// id only — asking for { count: "exact" }. PostgREST reports the true
+// total in the same statement while capping the returned ids at the
+// server-configured response cap, so `totalCount > rowCount` proves the
+// combined set is at/over that cap (and rowCount IS the cap then,
+// though the code never needs its value), while
+// `totalCount === rowCount` proves the whole combined set fits under
+// it. A missing count fails closed to the boundary path. No cap value
+// is assumed anywhere: the 1,000-row figure in the tests is the fake's
+// model of a server-configured cap, not a number the implementation
+// knows. This probe is id-only so its transfer is minimal; it is NOT a
+// generation — it only decides boundary vs bounded, never freshness.
+async function probeSchedulingCombinedBoundary({ supabaseClient }) {
+  const { data, error, count } = await supabaseClient
+    .from("forge_scheduling_projects")
+    .select("id", { count: "exact" });
+  assertNoQueryError(error);
+  const rows = data || [];
+  const complete = typeof count === "number" && count === rows.length;
+  return {
+    complete,
+    totalCount: typeof count === "number" ? count : null,
+    rowCount: rows.length,
+  };
+}
+
+// The exact pre-S2A Scheduling list query: one select over the whole
+// RLS-visible set, no is_public filter, order updated_at desc.
+// PostgREST caps it at the server-configured response cap exactly as
+// the original did — same membership, same ordering, same truncation.
+// This is the boundary/bypass path's list read: no public row is
+// dropped and no merged list is truncated, because the ordering
+// semantics are the original query's own.
+export async function fetchOriginalSchedulingListRows({ supabaseClient }) {
+  const { data, error } = await supabaseClient
+    .from("forge_scheduling_projects")
+    .select(SCHEDULING_LIST_COLUMNS)
+    .order("updated_at", { ascending: false });
+  assertNoQueryError(error);
+  return data || [];
+}
+
 // Merge the cached private rows with the fresh public rows into the DTO
 // the pre-S2A single query returned: one list, updated_at desc. Equal
 // timestamps keep insertion order (private before public) via the stable
@@ -457,6 +571,46 @@ export function mergeSchedulingProjectLists(privateProjects, publicProjects) {
       return a.updatedAt < b.updatedAt ? 1 : -1;
     },
   );
+}
+
+// Scheduling list GET — the route-level read (fix round 4). The
+// combined boundary probe decides the path; the split path is only ever
+// taken when the whole combined set provably fits under the
+// server-configured response cap, so the bounded path cannot return a
+// combined result exceeding the original response limit. A write landing
+// between the boundary probe and the split reads is caught by the
+// merged-length re-check: if the merged list grew past the probed
+// combined total, this GET re-runs the full combined original query,
+// which is the exact original semantics at read time.
+export async function getSchedulingProjects({
+  supabaseClient,
+  effectiveOwnerId,
+  actorId,
+}) {
+  const boundary = await probeSchedulingCombinedBoundary({ supabaseClient });
+  if (!boundary.complete) {
+    const rows = await fetchOriginalSchedulingListRows({ supabaseClient });
+    return rows.map((row) => toSchedulingProjectDto(row, effectiveOwnerId));
+  }
+  const privateProjects = await getCachedSchedulingPrivateProjects({
+    supabaseClient,
+    effectiveOwnerId,
+    actorId,
+  });
+  const publicProjects = await fetchFreshPublicSchedulingProjects({
+    supabaseClient,
+    effectiveOwnerId,
+  });
+  const merged = mergeSchedulingProjectLists(privateProjects, publicProjects);
+  if (merged.length > boundary.totalCount) {
+    // A write landed between the boundary probe and the split reads and
+    // pushed the combined set past the probed total — possibly past the
+    // response cap. Serve the exact original query instead of a merged
+    // list that could exceed it.
+    const rows = await fetchOriginalSchedulingListRows({ supabaseClient });
+    return rows.map((row) => toSchedulingProjectDto(row, effectiveOwnerId));
+  }
+  return merged;
 }
 
 // Designer: the whole list DTO, strictly owner-filtered (no public rows),

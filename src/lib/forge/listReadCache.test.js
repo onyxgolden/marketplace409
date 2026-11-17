@@ -21,6 +21,7 @@ import {
   fetchFreshPublicSchedulingProjects,
   getCachedDesignerProjects,
   getCachedSchedulingPrivateProjects,
+  getSchedulingProjects,
   mergeSchedulingProjectLists,
 } from "./listReadCache";
 
@@ -54,6 +55,8 @@ function fakeListClient(initialRows, { omitProbeCount = false } = {}) {
   const rows = initialRows;
   let probeCalls = 0;
   let listCalls = 0;
+  let combinedProbeCalls = 0;
+  let combinedListCalls = 0;
   let nextProbeError = null;
   let nextListError = null;
   // Fires inside the list read's resolve (i.e. AFTER the probe already
@@ -88,6 +91,9 @@ function fakeListClient(initialRows, { omitProbeCount = false } = {}) {
               : String(b.updated_at).localeCompare(String(a.updated_at)),
           );
           listCalls += 1;
+          // No filters = the fix-round-4 combined original query (whole
+          // visible set, no is_public split).
+          if (capturedFilters.length === 0) combinedListCalls += 1;
           if (nextListError) {
             const error = nextListError;
             nextListError = null;
@@ -112,6 +118,8 @@ function fakeListClient(initialRows, { omitProbeCount = false } = {}) {
         const capturedFilters = [...state.filters];
         const resolve = () => {
           probeCalls += 1;
+          // No filters = the fix-round-4 combined boundary probe.
+          if (capturedFilters.length === 0) combinedProbeCalls += 1;
           if (nextProbeError) {
             const error = nextProbeError;
             nextProbeError = null;
@@ -141,6 +149,12 @@ function fakeListClient(initialRows, { omitProbeCount = false } = {}) {
     get listCalls() {
       return listCalls;
     },
+    get combinedProbeCalls() {
+      return combinedProbeCalls;
+    },
+    get combinedListCalls() {
+      return combinedListCalls;
+    },
     failNextProbe(error) {
       nextProbeError = error;
     },
@@ -161,6 +175,18 @@ const SCHEDULING_ACTOR = { effectiveOwnerId: "user_1", actorId: "user_1" };
 async function schedulingPrivate(db) {
   const { result } = await runInRealRequest(() =>
     getCachedSchedulingPrivateProjects({
+      supabaseClient: db.client,
+      ...SCHEDULING_ACTOR,
+    }),
+  );
+  return result;
+}
+
+// Fix round 4: the route-level Scheduling list read — combined boundary
+// probe, then the split path or the full combined original query.
+async function schedulingList(db) {
+  const { result } = await runInRealRequest(() =>
+    getSchedulingProjects({
       supabaseClient: db.client,
       ...SCHEDULING_ACTOR,
     }),
@@ -880,6 +906,194 @@ describe("listReadCache (real Next 16.4.1 cache)", () => {
         return null;
       }),
     ).rejects.toThrow("updateTag can only be called from within a Server Action");
+  });
+
+  // Fix round 4 — the verdict's mandatory regression at module level
+  // (the route tests assert the same through the real GET): 1,000
+  // private + 1 public, compared against a capped implementation of
+  // the ORIGINAL single query computed test-side from the same fixture
+  // — exact ordered IDs and count. The fake enforces the same 1,000-row
+  // cap as production; the 1,000 figure is the test's model of a
+  // server-configured cap, not a number the implementation assumes.
+  function cappedCombinedSchedulingRows({ privateCount, publicUpdatedAt }) {
+    const rows = [];
+    for (let i = 1; i <= privateCount; i += 1) {
+      rows.push({
+        id: `p${String(i).padStart(4, "0")}`,
+        owner_id: "user_1",
+        project_name: `Project ${i}`,
+        start_date: "2026-01-01",
+        end_date: "2026-12-31",
+        is_public: false,
+        created_at: "a",
+        updated_at: String(i).padStart(4, "0"),
+      });
+    }
+    rows.push({
+      id: "pub",
+      owner_id: "example",
+      project_name: "Example project",
+      start_date: "2026-01-01",
+      end_date: "2026-12-31",
+      is_public: true,
+      created_at: "a",
+      updated_at: publicUpdatedAt,
+    });
+    return rows;
+  }
+
+  function originalSchedulingListIds(rows) {
+    return [...rows]
+      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+      .slice(0, POSTGREST_MAX_ROWS)
+      .map((row) => row.id);
+  }
+
+  it("P1 (fix round 4) REGRESSION: 1,000 private + 1 public, public NEWEST — the list equals the capped original single query, count 1,000", async () => {
+    const db = fakeListClient(
+      cappedCombinedSchedulingRows({ privateCount: 1000, publicUpdatedAt: "9999" }),
+    );
+    const result = await schedulingList(db);
+    expect(result.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(result).toHaveLength(1000);
+    expect(result[0].id).toBe("pub");
+    expect(result.map((p) => p.id)).not.toContain("p0001");
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: 1,000 private + 1 public, public OLDEST — the list equals the capped original single query, public excluded, count 1,000", async () => {
+    const db = fakeListClient(
+      cappedCombinedSchedulingRows({ privateCount: 1000, publicUpdatedAt: "0000" }),
+    );
+    const result = await schedulingList(db);
+    expect(result.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(result).toHaveLength(1000);
+    expect(result.map((p) => p.id)).not.toContain("pub");
+    expect(db.combinedProbeCalls).toBe(1);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: private alone already exceeds the cap (1,001 private + 1 public, public oldest) — the list is the newest 1,000 private rows", async () => {
+    const db = fakeListClient(
+      cappedCombinedSchedulingRows({ privateCount: 1001, publicUpdatedAt: "0000" }),
+    );
+    const result = await schedulingList(db);
+    expect(result.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(result).toHaveLength(1000);
+    expect(result[0].id).toBe("p1001");
+    expect(result.map((p) => p.id)).not.toContain("pub");
+    expect(result.map((p) => p.id)).not.toContain("p0001");
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4) REGRESSION: private alone already exceeds the cap (1,001 private + 1 public, public newest) — the list is the public row plus the newest 999 private rows", async () => {
+    const db = fakeListClient(
+      cappedCombinedSchedulingRows({ privateCount: 1001, publicUpdatedAt: "9999" }),
+    );
+    const result = await schedulingList(db);
+    expect(result.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(result).toHaveLength(1000);
+    expect(result[0].id).toBe("pub");
+    expect(result.map((p) => p.id)).not.toContain("p0001");
+    expect(result.map((p) => p.id)).not.toContain("p0002");
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  it("P1 (fix round 4): a bounded list still uses the cache — repeat GET re-probes but does not re-run the private list select or the combined query", async () => {
+    const db = fakeListClient([
+      { id: "s1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
+      { id: "pub", owner_id: "example", project_name: "Example project", start_date: "2026-01-01", end_date: "2026-12-31", is_public: true, created_at: "a", updated_at: "c" },
+    ]);
+    const first = await schedulingList(db);
+    expect(first.map((p) => p.id)).toEqual(["pub", "s1"]);
+    const second = await schedulingList(db);
+    expect(second).toEqual(first);
+    // One private list select (first GET only — the second is a cache
+    // hit) plus one fresh public fetch per GET.
+    expect(db.listCalls).toBe(3);
+    expect(db.combinedProbeCalls).toBe(2);
+    expect(db.combinedListCalls).toBe(0);
+  });
+
+  it("P1 (fix round 4): a combined probe with no exact count fails closed to the combined original query", async () => {
+    const db = fakeListClient(
+      cappedCombinedSchedulingRows({ privateCount: 1000, publicUpdatedAt: "9999" }),
+      { omitProbeCount: true },
+    );
+    const result = await schedulingList(db);
+    expect(result.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(result).toHaveLength(1000);
+    expect(db.combinedListCalls).toBe(1);
+  });
+
+  // Fix round 4 — the merged-length re-check: a write lands AFTER the
+  // combined boundary probe ran (total 1,000, complete) but BEFORE the
+  // split reads finish, pushing the combined set to 1,001. The merged
+  // split result would be 1,001 rows — past the cap — so the GET must
+  // re-run the full combined original query and serve its top 1,000.
+  // The write is injected inside the private list fill (the TOCTOU
+  // hook); the private digest retry absorbs it first, then the re-check
+  // catches the grown merged length.
+  it("P1 (fix round 4) REGRESSION: a write between the boundary probe and the split reads serves the exact capped original query, not a 1,001-row merged list", async () => {
+    const rows = [];
+    for (let i = 1; i <= 999; i += 1) {
+      rows.push({
+        id: `p${String(i).padStart(4, "0")}`,
+        owner_id: "user_1",
+        project_name: `Project ${i}`,
+        start_date: "2026-01-01",
+        end_date: "2026-12-31",
+        is_public: false,
+        created_at: "a",
+        updated_at: String(i).padStart(4, "0"),
+      });
+    }
+    rows.push({
+      id: "pub",
+      owner_id: "example",
+      project_name: "Example project",
+      start_date: "2026-01-01",
+      end_date: "2026-12-31",
+      is_public: true,
+      created_at: "a",
+      updated_at: "0000",
+    });
+    const db = fakeListClient(rows);
+    const warm = await schedulingList(db);
+    expect(warm).toHaveLength(1000);
+    expect(db.combinedListCalls).toBe(0);
+    // A rename before the GET forces the next private probe to miss, so
+    // a fill runs at all; the total stays 1,000, so the boundary probe
+    // still reports complete.
+    db.rows[0] = { ...db.rows[0], project_name: "Project 1 renamed" };
+    // The insert lands inside the private list fill — after the
+    // boundary probe, before the merge.
+    let hookFired = false;
+    db.setListReadHook(() => {
+      if (hookFired) return;
+      hookFired = true;
+      db.rows.push({
+        id: "p1000",
+        owner_id: "user_1",
+        project_name: "Project 1000",
+        start_date: "2026-01-01",
+        end_date: "2026-12-31",
+        is_public: false,
+        created_at: "a",
+        updated_at: "0000",
+      });
+    });
+    const raced = await schedulingList(db);
+    expect(hookFired).toBe(true);
+    expect(raced.map((p) => p.id)).toEqual(originalSchedulingListIds(db.rows));
+    expect(raced).toHaveLength(1000);
+    // The newest private row and the public row both survive; the
+    // just-inserted oldest row is the one the original query drops.
+    expect(raced.map((p) => p.id)).toContain("pub");
+    expect(raced.map((p) => p.id)).not.toContain("p1000");
+    // Mechanism proof: the re-check ran the combined original query.
+    expect(db.combinedListCalls).toBe(1);
   });
 });
 

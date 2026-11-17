@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { defaultBoardState } from "@/components/forge/scheduling/schedulingBoardState";
 import {
-  fetchFreshPublicSchedulingProjects,
-  getCachedSchedulingPrivateProjects,
-  mergeSchedulingProjectLists,
+  getSchedulingProjects,
 } from "@/lib/forge/listReadCache";
 
 // S2A (load-times slice 2): the list is served from the hot-read server
@@ -12,7 +10,12 @@ import {
 // on every request, before any cache lookup — including hits. The cached
 // portion is the owner-scoped rows only; the shared public example rows
 // are fetched fresh on every GET and merged, so a public row can never
-// linger stale in another actor's cache entry. HTTP responses stay
+// linger stale in another actor's cache entry. Fix round 4: the route
+// reads through getSchedulingProjects(), which first probes whether the
+// COMBINED private + public set fits under the server-configured
+// PostgREST response cap — at/over the cap it runs the exact pre-S2A
+// single combined query instead of the split, so the served list can
+// never exceed the original response limit. HTTP responses stay
 // private/non-cacheable.
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
@@ -27,16 +30,11 @@ export async function GET() {
   try {
     const authenticated = await authenticatedContext();
     if (authenticated.response) return authenticated.response;
-    const privateProjects = await getCachedSchedulingPrivateProjects({
+    const projects = await getSchedulingProjects({
       supabaseClient: authenticated.supabaseClient,
       effectiveOwnerId: authenticated.effectiveOwnerId,
       actorId: authenticated.user.id,
     });
-    const publicProjects = await fetchFreshPublicSchedulingProjects({
-      supabaseClient: authenticated.supabaseClient,
-      effectiveOwnerId: authenticated.effectiveOwnerId,
-    });
-    const projects = mergeSchedulingProjectLists(privateProjects, publicProjects);
     return NextResponse.json({ success: true, projects }, { headers: NO_STORE });
   } catch (error) {
     console.error("Scheduling projects list error", error);

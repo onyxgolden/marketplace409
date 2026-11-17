@@ -44,7 +44,17 @@ function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-0
   const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0 };
   let isPublicFilter;
   const listNode = {
-    select: vi.fn(() => listNode),
+    // A fresh .select() chain starts unfiltered — the mock shares one
+    // node per table, so select() must reset the filter the previous
+    // chain set, exactly as a fresh PostgREST builder would. (Fix round
+    // 4: the combined boundary probe/query carry NO is_public filter;
+    // without this reset a stale `true` from a previous chain would
+    // silently narrow them — the PUT leaves the filter set, and the
+    // next list GET's combined probe would then see only public rows.)
+    select: vi.fn(() => {
+      isPublicFilter = undefined;
+      return listNode;
+    }),
     eq: vi.fn((col, val) => {
       if (col === "is_public") isPublicFilter = val;
       return listNode;
