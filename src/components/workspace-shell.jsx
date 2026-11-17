@@ -363,11 +363,17 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false, 
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
-          <Link href="/" className="font-black tracking-[0.16em] text-slate-950">
+        <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
+          <Link href="/" className="order-1 font-black tracking-[0.16em] text-slate-950">
             409 MARKETPLACE
           </Link>
-          <div className="flex items-center gap-2">
+          {/* Secondary actions (account, theme, command palette) sit on
+             their own row below 400px — the single row needs 400px, so at
+             360/390px it pushed the Apps button past the viewport edge.
+             At 400px and up they return to the middle of the single row
+             (ml-auto keeps them clustered against Apps, exactly as
+             before). Apps stays in the first row at every width. */}
+          <div className="order-3 flex w-full items-center gap-2 min-[400px]:order-2 min-[400px]:ml-auto min-[400px]:w-auto">
             {/* Phone users previously had no way to reach the account menu at all on
                workspace pages (Rental, Charts, Designer, Scheduling, Dev, …) — sign-out
                required desktop width. The same shared account menu the desktop right
@@ -385,17 +391,17 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false, 
                trigger sits at the header's right edge, so its hover tooltip
                must hang left into the viewport (D13). */}
             {forgeCommandPalette ? <CommandPaletteTrigger tone="light" tooltipSide="left" /> : null}
-            <button
-              type="button"
-              aria-label="Open workspace navigation"
-              aria-expanded={mobileOpen}
-              onClick={() => setMobileOpen((current) => !current)}
-              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black"
-            >
-              <Menu aria-hidden="true" className="h-4 w-4" />
-              Apps
-            </button>
           </div>
+          <button
+            type="button"
+            aria-label="Open workspace navigation"
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((current) => !current)}
+            className="order-2 flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black min-[400px]:order-3"
+          >
+            <Menu aria-hidden="true" className="h-4 w-4" />
+            Apps
+          </button>
         </header>
 
         {mobileOpen && (

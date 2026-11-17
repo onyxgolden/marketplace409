@@ -73,3 +73,6 @@ mobile/android/captures/
 __pycache__/
 *.pyc
 e2e/placement/dist/
+
+# Phone Slice 5 geometry-check evidence (local-only run receipts + screenshots)
+/.phone-layout-evidence/

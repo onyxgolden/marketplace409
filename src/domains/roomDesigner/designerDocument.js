@@ -2440,6 +2440,36 @@ export function zoomExtentsRect(design, minSpanIn = ZOOM_EXTENTS_MIN_SPAN_IN) {
 }
 
 /**
+ * Structural fit bounds: designContentBounds plus every deck/platform
+ * outline. designContentBounds omits decks (it feeds sheet placement,
+ * where decks are placed relative to walls), so a phone-width fit against
+ * it alone can center on the walls and leave a deck hanging outside the
+ * visible pane. Only the phone-width auto-fit call uses this — desktop
+ * keeps designContentBounds (its fit must stay byte-identical) and sheet
+ * placement keeps using designContentBounds unchanged.
+ */
+export function designStructuralBounds(design) {
+  const walls = designContentBounds(design);
+  let minX = walls ? walls.x : Infinity;
+  let minY = walls ? walls.y : Infinity;
+  let maxX = walls ? walls.x + walls.widthIn : -Infinity;
+  let maxY = walls ? walls.y + walls.heightIn : -Infinity;
+  for (const deck of decksOf(design)) {
+    for (const p of [deck.a, deck.b]) {
+      if (!p || !isFiniteNumber(p.x) || !isFiniteNumber(p.y)) continue;
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+    return null;
+  }
+  return { x: minX, y: minY, widthIn: maxX - minX, heightIn: maxY - minY };
+}
+
+/**
  * Uniform fit scale: paper inches of PRINTED line per plan inch, against the
  * printable area (paper minus the print margin on every side). Uniform —
  * min() of the two axes — so geometry never distorts. Degenerate content
