@@ -23,7 +23,10 @@ import {
   snapPoint,
   snapScalar,
   PHONE_AUTO_FIT_BREAKPOINT_PX,
+  estimateTextWidthPx,
   fitViewToBounds,
+  phoneLabelScreenRectForAnchor,
+  selectPhoneLabels,
   showPlanDetailLabels,
   underlayContainsPoint,
   underlayDisplaySizeIn,
@@ -52,6 +55,7 @@ import {
   FURNITURE_MIN_SIZE_IN,
   OPENING_DEFAULTS,
   designContentBounds,
+  designStructuralBounds,
   fitScaleLabel,
   getRoomTemplate,
   pieceSize,
@@ -394,10 +398,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     canvasSize.h > 0 &&
     !userNav
   ) {
-    const fitted = fitViewToBounds(designContentBounds(design), canvasSize, {
-      paddingPx: canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX ? 24 : 48,
-      maxScale: MAX_SCALE,
-    });
+    const fitted = fitViewToBounds(
+      // Phone only: on a phone-width pane the fit must include deck/platform
+      // outlines, or a deck past the walls on the limiting axis hangs
+      // outside the visible pane. Desktop keeps designContentBounds so the
+      // desktop fit is byte-identical — the structural bounds shrink it
+      // (the bottom deck extends the height) and that introduced a desktop
+      // deck-label x 720" collision.
+      canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX ? designStructuralBounds(design) : designContentBounds(design),
+      canvasSize,
+      {
+        paddingPx: canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX ? 24 : 48,
+        maxScale: MAX_SCALE,
+      },
+    );
     if (fitted) {
       setFitSettledIdentity(autoFitIdentity);
       setView(fitted);
@@ -1705,6 +1719,61 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // symbol routines (see symbolDrawRoutines.jsx), which receive `scale`.
   const showDetailLabels = showPlanDetailLabels(view.scale);
 
+  // Phone label deconfliction (Phone Slice 5): on a phone-width pane the
+  // fit scale (~0.35-0.7) stays ABOVE the 0.25 hide gate, so the fixed-size
+  // labels of adjacent walls still pile up (144/216/168/24/60/84/72 and the
+  // Wood platform labels in Jason's S26+ walkthrough). The pure selector
+  // admits only labels whose whole screen rect sits inside the pane and
+  // collides with nothing already accepted — selected first, then longest
+  // span first, deterministic id tie-break. A withheld label is never
+  // lost: tapping its wall/deck selects it (selected-first) and the
+  // selection panel shows its length/material. Null on non-phone panes
+  // and when detail labels are hidden — desktop behavior is untouched.
+  const phoneLabelAccepted = useMemo(() => {
+    if (!showDetailLabels) return null;
+    if (!(canvasSize.w > 0 && canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX)) return null;
+    const candidates = [];
+    for (const wall of design.walls || []) {
+      const dim = dimensionGeometry(wall, design.settings.wallThicknessIn / 2 + 10);
+      if (!dim) continue;
+      const text = feetInchesLabel(dim.length);
+      const lp = toScreen(dim.labelPos);
+      candidates.push({
+        id: `wall:${wall.id}`,
+        // The label rotates about its anchor (lp), not its box center —
+        // use the anchor-aware rect or a vertical label's AABB center
+        // lands ~4px off and a label poking past the pane edge slips
+        // through the containment check.
+        rect: phoneLabelScreenRectForAnchor({
+          anchorX: lp.x,
+          anchorY: lp.y,
+          widthPx: estimateTextWidthPx(text, 12),
+          heightPx: 14.4,
+          angleDeg: dim.labelAngle,
+          baselineOffsetPx: 4.2,
+        }),
+        priority: dim.length,
+        selected: selection?.kind === "wall" && selection.id === wall.id,
+      });
+    }
+    for (const deck of decksOf(design)) {
+      const a = toScreen(deck.a);
+      const b = toScreen(deck.b);
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const text = `${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`;
+      candidates.push({
+        id: `deck:${deck.id}`,
+        // Deck text is left-anchored at (x + 6, baseline y + 16), same
+        // corners renderDeck uses; box ~12px above the baseline, ~3 below.
+        rect: { left: x + 6, top: y + 16 - 12, right: x + 6 + estimateTextWidthPx(text, 13), bottom: y + 16 + 3 },
+        priority: 0,
+        selected: selection?.kind === "deck" && selection.id === deck.id,
+      });
+    }
+    return selectPhoneLabels(candidates, { left: 0, top: 0, right: canvasSize.w, bottom: canvasSize.h });
+  }, [showDetailLabels, canvasSize, design, toScreen, selection]);
+
   // Visio-style grid: light minor lines every gridIn, emphasized major
   // lines every MAJOR_GRID_EVERY minor lines (every 30″ on the 6″ default).
   const minorPx = gridIn * view.scale;
@@ -1762,8 +1831,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       <g key={deck.id} pointerEvents="none">
         <rect x={x} y={y} width={Math.abs(b.x - a.x)} height={Math.abs(b.y - a.y)}
           fill="rgba(160,116,74,0.12)" stroke={color} strokeWidth={thicknessPx} strokeDasharray="10 6" />
-        {/* Deck label — a detail label, hidden at fit-to-view scales. */}
-        {showDetailLabels && (
+        {/* Deck label — a detail label, hidden at fit-to-view scales; on a
+            phone pane the selector may withhold it when it would collide or
+            clip (tapping the deck selects it, selected-first). */}
+        {showDetailLabels && (!phoneLabelAccepted || phoneLabelAccepted.has(`deck:${deck.id}`)) && (
           <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
             {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
           </text>
@@ -1819,6 +1890,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
               <line x1={t1a.x} y1={t1a.y} x2={t1b.x} y2={t1b.y} strokeWidth={1.5} />
               <line x1={t2a.x} y1={t2a.y} x2={t2b.x} y2={t2b.y} strokeWidth={1.5} />
+              {/* Dimension text — on a phone pane the selector may withhold
+                  it when it would collide or clip; the line stays, and
+                  tapping the wall selects it (selected-first). */}
+              {(!phoneLabelAccepted || phoneLabelAccepted.has(`wall:${wall.id}`)) && (
               <text
                 x={lp.x} y={lp.y}
                 textAnchor="middle"
@@ -1829,6 +1904,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               >
                 {feetInchesLabel(dim.length)}
               </text>
+              )}
             </g>
           );
         })()}

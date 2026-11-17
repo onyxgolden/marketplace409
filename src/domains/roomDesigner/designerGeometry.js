@@ -293,6 +293,164 @@ export function showPlanTagLabels(scale) {
   return Number.isFinite(scale) && scale >= PLAN_TAG_LABEL_MIN_SCALE;
 }
 
+// ---- Phone label deconfliction (Phone Slice 5) ----
+//
+// At a phone fit-to-view scale the fixed-size (12-13px) dimension/deck
+// labels of adjacent walls sit a few screen pixels apart and pile into an
+// unreadable mass — the #807 scale gate (hide below 0.25) does not help,
+// because a house plan fits a phone pane at ~0.35-0.7, above the gate.
+// These pure helpers decide, per render, which optional labels may show
+// on a phone-width pane: a label renders only when its whole screen rect
+// sits inside the pane and does not collide with an already-accepted
+// label. Withheld labels stay available through the selection panel
+// (a selected wall/deck always wins its label, and the panel shows its
+// length/material), so no dimension is ever silently inaccessible.
+// Desktop panes never consult this: their labels render exactly as before.
+
+/** Screen padding (px) kept between two accepted phone labels. */
+export const PHONE_LABEL_COLLISION_PAD_PX = 4;
+
+/** Screen inset (px) a phone label's rect must respect inside the pane. */
+export const PHONE_LABEL_VIEWPORT_INSET_PX = 2;
+
+/**
+ * Deterministic width estimate (px) for a canvas label string at a font
+ * size. Deliberately conservative: measured Chromium widths run ~0.45-0.5
+ * em per character for the 12-13px semibold sans used here, and the
+ * estimate uses 0.62 em — an over-estimate can only withhold a label
+ * that would have fit, never admit one that actually collides. The real
+ * Chromium geometry check measures getBBox rects and asserts zero
+ * intersections, so a too-optimistic factor would fail there, not here.
+ */
+export function estimateTextWidthPx(text, fontSizePx) {
+  if (typeof text !== "string" || text.length === 0) return 0;
+  if (!Number.isFinite(fontSizePx) || fontSizePx <= 0) return 0;
+  return Math.ceil(text.length * fontSizePx * 0.62);
+}
+
+/**
+ * Screen-space axis-aligned bounding box of a label rect (widthPx x
+ * heightPx, centered at centerX/centerY) rotated by angleDeg about its
+ * center. Pure — the rotation is what makes a vertical wall's label
+ * (90 degrees) occupy heightPx of horizontal room, not widthPx.
+ */
+export function phoneLabelScreenRect({ centerX, centerY, widthPx, heightPx, angleDeg = 0 }) {
+  const theta = ((Number.isFinite(angleDeg) ? angleDeg : 0) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(theta));
+  const sin = Math.abs(Math.sin(theta));
+  const halfW = (widthPx * cos + heightPx * sin) / 2;
+  const halfH = (widthPx * sin + heightPx * cos) / 2;
+  return {
+    left: centerX - halfW,
+    top: centerY - halfH,
+    right: centerX + halfW,
+    bottom: centerY + halfH,
+  };
+}
+
+function phoneRectsIntersect(a, b, padPx) {
+  return (
+    a.left - padPx < b.right + padPx &&
+    b.left - padPx < a.right + padPx &&
+    a.top - padPx < b.bottom + padPx &&
+    b.top - padPx < a.bottom + padPx
+  );
+}
+
+/**
+ * Screen-space AABB of a canvas text label rotated about its ANCHOR
+ * point (the point the renderer passes to <text x y transform=rotate>).
+ * The glyph box is centered horizontally on the anchor and sits
+ * baselineOffsetPx above the baseline vertically (a 12px font's glyphs
+ * span ~1.2em with the box center ~0.35em above the baseline), so the
+ * box's center does NOT coincide with the anchor — and rotating about
+ * the anchor moves the box center: a 90-degree (vertical wall) label's
+ * AABB center sits ~baselineOffsetPx to the side of its anchor, not on
+ * it. A center-based rect (phoneLabelScreenRect) gets that wrong by the
+ * full offset, which is exactly how a label poking 2px past the pane
+ * edge at 768px slipped past the selector. Rotate the four box corners
+ * about the anchor and take the min/max — the same transform the SVG
+ * renderer applies.
+ */
+export function phoneLabelScreenRectForAnchor({
+  anchorX,
+  anchorY,
+  widthPx,
+  heightPx,
+  angleDeg = 0,
+  baselineOffsetPx = 0,
+}) {
+  const theta = ((Number.isFinite(angleDeg) ? angleDeg : 0) * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const top = anchorY - baselineOffsetPx - heightPx / 2;
+  const bottom = anchorY - baselineOffsetPx + heightPx / 2;
+  const corners = [
+    [anchorX - widthPx / 2, top],
+    [anchorX + widthPx / 2, top],
+    [anchorX - widthPx / 2, bottom],
+    [anchorX + widthPx / 2, bottom],
+  ].map(([x, y]) => {
+    const dx = x - anchorX;
+    const dy = y - anchorY;
+    return [anchorX + dx * cos - dy * sin, anchorY + dx * sin + dy * cos];
+  });
+  const xs = corners.map(([x]) => x);
+  const ys = corners.map(([, y]) => y);
+  return {
+    left: Math.min(...xs),
+    top: Math.min(...ys),
+    right: Math.max(...xs),
+    bottom: Math.max(...ys),
+  };
+}
+
+/**
+ * Choose which phone labels may render. Candidates carry a precomputed
+ * screen rect plus a priority and a selected flag:
+ *   { id, rect: { left, top, right, bottom }, priority, selected }
+ * The viewport is the visible pane rect in the same coordinate space.
+ *
+ * Order is deterministic: selected first, then higher priority, then id
+ * ascending — the same input always yields the same accepted set, so
+ * labels never flicker or reorder across renders. A candidate is
+ * accepted only when its whole rect sits inside the viewport (minus the
+ * inset) and it does not intersect any already-accepted rect (plus the
+ * collision pad). Returns the Set of accepted candidate ids.
+ */
+export function selectPhoneLabels(candidates, viewport) {
+  const accepted = new Set();
+  const acceptedRects = [];
+  if (!Array.isArray(candidates) || !viewport) return accepted;
+  const inset = PHONE_LABEL_VIEWPORT_INSET_PX;
+  const ordered = [...candidates]
+    .filter((c) => c && c.rect && typeof c.id === "string")
+    .sort((a, b) => {
+      if (Boolean(a.selected) !== Boolean(b.selected)) return a.selected ? -1 : 1;
+      const pa = Number.isFinite(a.priority) ? a.priority : 0;
+      const pb = Number.isFinite(b.priority) ? b.priority : 0;
+      if (pa !== pb) return pb - pa;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+  for (const c of ordered) {
+    const r = c.rect;
+    if (
+      r.left < viewport.left + inset ||
+      r.right > viewport.right - inset ||
+      r.top < viewport.top + inset ||
+      r.bottom > viewport.bottom - inset
+    ) {
+      continue;
+    }
+    if (acceptedRects.some((other) => phoneRectsIntersect(r, other, PHONE_LABEL_COLLISION_PAD_PX))) {
+      continue;
+    }
+    accepted.add(c.id);
+    acceptedRects.push(r);
+  }
+  return accepted;
+}
+
 /** Size (plan inches) a zero-size bounds dimension is padded to, centered,
  * before fitting — a single straight wall has no extent on one axis but
  * still needs a finite rect to fit. */
