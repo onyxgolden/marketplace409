@@ -93,8 +93,20 @@ class CallPipeline:
         # which only READS it (lock-protected) to populate this turn's
         # `llm_text`/`trace["llm_ms"]` with whatever is already known.
         self._llm_lock = threading.Lock()
-        self.last_llm_result: dict = {"text": "", "ms": None}
+        self.last_llm_result: dict = {"text": "", "ms": None, "turn": 0}
         self._llm_thread: threading.Thread | None = None
+        # Fix round 2 (P1 follow-up): monotonic id for each advisory
+        # call actually STARTED (not every turn — a turn that finds the
+        # previous advisory call still running skips starting a new one,
+        # see _turn). `_run_advisory_llm` only overwrites
+        # `last_llm_result` if its own id is >= the id already stored,
+        # so a late/out-of-order completion can never clobber a newer
+        # one. `_llm_charged_turn_id` tracks which advisory id's cost
+        # has already been billed, so each completed call is charged
+        # exactly once across the session, never double- or un-charged
+        # (fix round 2's cost-attribution fix, below).
+        self._llm_call_seq = 0
+        self._llm_charged_turn_id = 0
 
     # --- guards ---------------------------------------------------------------
 
@@ -219,12 +231,26 @@ class CallPipeline:
         # whatever the MOST RECENTLY COMPLETED advisory call produced —
         # never wait for this turn's own call before proceeding to
         # dialogue/TTS below.
-        self._llm_thread = threading.Thread(
-            target=self._run_advisory_llm, args=(transcript, self.dialogue.state), daemon=True)
-        self._llm_thread.start()
+        #
+        # Fix round 2 (P1 follow-up): bounded to at most ONE in-flight
+        # advisory call per session. If the previous call is still
+        # running, this turn SKIPS starting a new one rather than
+        # piling up an unbounded number of daemon threads — unbounded
+        # concurrent calls were the actual defect (not just "one call
+        # might complete out of order," though the turn-id check below
+        # also guards that independently).
         with self._llm_lock:
+            still_running = self._llm_thread is not None and self._llm_thread.is_alive()
+            if not still_running:
+                self._llm_call_seq += 1
+                call_id = self._llm_call_seq
             llm_text = self.last_llm_result.get("text", "")
             trace["llm_ms"] = self.last_llm_result.get("ms")
+        if not still_running:
+            llm_thread = threading.Thread(
+                target=self._run_advisory_llm, args=(transcript, self.dialogue.state, call_id), daemon=True)
+            self._llm_thread = llm_thread
+            llm_thread.start()
 
         dialogue_out = self.dialogue.handle_turn(transcript)
         speak = dialogue_out.get("speak") or {}
@@ -268,23 +294,33 @@ class CallPipeline:
             # the call's reservations, the old behavior — it cannot
             # happen through handle_audio.)
             reservation, self._turn_reservation = self._turn_reservation, None
-            # Fix round 1 (P1): `trace["llm_ms"]` is now the LAST
-            # completed advisory call's duration, not necessarily this
-            # turn's own (which may still be running in the background)
-            # — an approximation, documented here rather than hidden,
-            # accepted in exchange for never blocking the spoken reply
-            # on the LLM. Local-inference LLM usage prices at $0/minute
-            # regardless (brief §5), so this approximation has zero
-            # dollar impact on the local provider path; it only affects
-            # the cloud OpenAI adapter's cost-ledger precision, by at
-            # most one turn's worth of LLM minutes, never accumulating
-            # (each turn's charge still reflects a real completed call,
-            # just possibly the previous turn's).
+            # Fix round 2 (P1 follow-up): fix round 1 charged
+            # `trace["llm_ms"]` on EVERY turn that observed it, which
+            # double-charges the same completed advisory call on every
+            # turn until a newer one replaces it (or undercounts, if a
+            # call completes between turns and the turn that first
+            # observes it isn't the only one that bills it — the same
+            # bug, opposite symptom). Each completed advisory call is
+            # now billed EXACTLY ONCE across the session, keyed by its
+            # `_llm_call_seq` id: `_llm_charged_turn_id` remembers the
+            # highest id already billed, and this turn bills the
+            # current `last_llm_result` only if its id is newer. A call
+            # that completes after the session's last turn is never
+            # billed — acceptable, since local-inference LLM usage
+            # prices at $0/minute regardless (brief §5); this exactness
+            # matters only for the cloud OpenAI adapter path, where no
+            # nonzero spend is authorized in Cut 1 anyway.
+            with self._llm_lock:
+                pending = self.last_llm_result
+                billable_ms = 0.0
+                if pending.get("turn", 0) > self._llm_charged_turn_id:
+                    billable_ms = pending.get("ms") or 0.0
+                    self._llm_charged_turn_id = pending["turn"]
             self.cost_ledger.record_call(
                 call_sid=self.call_sid, source=self.source,
                 duration_s=0.0,
                 agent_chars=len(reply_text),
-                llm_minutes=(trace["llm_ms"] or 0.0) / 60000.0,
+                llm_minutes=billable_ms / 60000.0,
                 settle_reservation_id=(reservation or {}).get("id"),
                 usage_extra={"turn": self.turns})
 
@@ -294,11 +330,19 @@ class CallPipeline:
                 "trace": trace, "llm_text": llm_text,
                 "disclosure": disclosure_info}
 
-    def _run_advisory_llm(self, transcript: str, state: str) -> None:
+    def _run_advisory_llm(self, transcript: str, state: str, call_id: int) -> None:
         """Runs in its own daemon thread (fix round 1, P1), started by
         `_turn` and never joined by it. Failure here is swallowed, same
         as the old synchronous version — advisory-only, the dialogue
-        continues regardless either way."""
+        continues regardless either way.
+
+        Fix round 2 (P1 follow-up): `call_id` is this call's monotonic
+        id (assigned by `_turn` only when it actually starts a new
+        thread — see the one-in-flight bound there). Only overwrites
+        `last_llm_result` if `call_id` is not older than whatever is
+        already stored, so even if some future change reintroduces
+        overlapping calls, a late completion from an OLDER call can
+        never clobber a newer result."""
         started = time.perf_counter()
         text = ""
         try:
@@ -309,7 +353,8 @@ class CallPipeline:
             text = ""
         ms = (time.perf_counter() - started) * 1000.0
         with self._llm_lock:
-            self.last_llm_result = {"text": text, "ms": ms}
+            if call_id >= self.last_llm_result.get("turn", 0):
+                self.last_llm_result = {"text": text, "ms": ms, "turn": call_id}
 
     def wait_for_pending_llm_advisory(self, timeout: float = 5.0) -> None:
         """TEST-ONLY: blocks until the most recently started advisory

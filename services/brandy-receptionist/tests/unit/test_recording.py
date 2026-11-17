@@ -125,6 +125,83 @@ class TestRecordingSessionSave(unittest.TestCase):
                 session.save(config)
             self.assertEqual(os.listdir(tmp), [])
 
+    @unittest.skipUnless(sys.platform == "win32", "icacls is Windows-only")
+    def test_real_save_restricts_the_bundle_directory_to_the_current_user(self):
+        """Fix round 2 (P1): real `icacls`, no mocks — the bundle_dir
+        the save actually wrote into must show no principal beyond the
+        current user and the fixed OS-trusted set (SYSTEM,
+        Administrators, OWNER RIGHTS, CREATOR OWNER)."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+            session.save(config)
+            lookup_key = ani_lookup_key("+15552345678", config.recording_index_secret)
+            bundle_dir = os.path.join(tmp, lookup_key, "CA-acl-1")
+            result = subprocess.run(["icacls", bundle_dir], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0)
+            username = os.environ.get("USERNAME", "")
+            self.assertIn(username.lower(), result.stdout.lower())
+            for forbidden in ("everyone", "authenticated users", "builtin\\users"):
+                self.assertNotIn(forbidden, result.stdout.lower())
+
+    def test_acl_restriction_tool_failure_fails_the_save_closed(self):
+        """Fix round 2 (P1): fix round 1's version swallowed every
+        exception from the icacls call with `check=False` and no
+        re-raise — a save proceeded even if the ACL tool silently did
+        nothing. Now a failing restriction tool must abort save()
+        entirely, before any bundle file is written."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-2", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+            with mock.patch("app.recording.subprocess.run") as mock_run:
+                mock_run.return_value = mock.Mock(returncode=1, stdout="", stderr="simulated icacls failure")
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+            # Fail closed means nothing was left behind for this call.
+            lookup_key = ani_lookup_key("+15552345678", config.recording_index_secret)
+            bundle_dir = os.path.join(tmp, lookup_key, "CA-acl-2")
+            if os.path.isdir(bundle_dir):
+                self.assertEqual(os.listdir(bundle_dir), [])
+
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_catches_an_unexpected_principal(self):
+        """Fix round 2 (P1): if the restriction commands "succeed" (exit
+        0) but the ACL, when queried back, still shows a principal
+        outside the always-allowed set (simulating a real leak, e.g. a
+        stale "BUILTIN\\Users" grant that /grant:r somehow didn't
+        remove), the save must still fail closed."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-3", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            def fake_run(args, **kwargs):
+                if args[0] == "icacls" and len(args) == 2:
+                    # The verification query (just `icacls <path>`, no
+                    # further args) — report a leaked extra principal.
+                    path = args[1]
+                    username = os.environ.get("USERNAME", "user")
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} BUILTIN\\Users:(OI)(CI)(F)\n            {username}:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+
     def test_real_save_load_decrypt_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _config(tmp)

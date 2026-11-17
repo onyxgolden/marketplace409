@@ -691,15 +691,25 @@ def _pcm16_to_wav_bytes(pcm_int16_le: bytes, sample_rate: int) -> bytes:
 
 def _local_post_streaming(base_url: str, path: str, *, json_body: dict, timeout_s: float = 10.0,
                            auth_token: str | None = None):
-    """Fix round 1 (P1): reads the response INCREMENTALLY so the caller
-    can time the real first-byte arrival, instead of one `.read()` that
-    only returns once the whole body has arrived (which is what made
-    the earlier `X-First-Audio-Ms` header meaningless — it described a
-    server-side event the client could never observe any sooner than
-    the fully-buffered read anyway). `http.client.HTTPResponse` already
-    de-chunks `Transfer-Encoding: chunked` transparently on each
-    `.read(n)` call — no manual chunk parsing needed here. Returns
-    (status, headers, full_body_bytes, first_byte_wall_clock_or_None)."""
+    """Fix round 2 (P1 — ChatGPT re-review, 2026-11-16 ~18:05 CST): fix
+    round 1's `resp.read(65536)` was NOT a first-streamed-byte read.
+    `http.client.HTTPResponse.read(amt)` on a chunked response loops
+    internally, de-chunking and accumulating across MULTIPLE
+    underlying socket reads, until it has `amt` bytes or hits EOF — for
+    a response under 65536 bytes total (the common case here) that is
+    "wait for the entire response," exactly as before fix round 1, just
+    with an extra unused buffer size. The reviewer proved this
+    deterministically: first chunk on the wire at ~12ms, `read(65536)`
+    still didn't return until ~713ms (full-EOF time).
+
+    Fixed: `HTTPResponse.read1(n)` instead of `read(n)` — `read1` is
+    documented to perform AT MOST ONE underlying read/de-chunk
+    operation and return whatever that produced, never blocking to
+    accumulate more. Verified against a real local chunked server (see
+    `test_local_post_streaming_real_http.py`): a delayed second chunk
+    does NOT delay the first `read1()` call's return.
+
+    Returns (status, headers, full_body_bytes, first_byte_wall_clock_or_None)."""
     import urllib.error
     import urllib.request
 
@@ -717,7 +727,7 @@ def _local_post_streaming(base_url: str, path: str, *, json_body: dict, timeout_
     chunks = []
     try:
         while True:
-            chunk = resp.read(65536)
+            chunk = resp.read1(65536)
             if not chunk:
                 break
             if first_byte_at is None:

@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from local_inference.server import (  # noqa: E402
     EXPECTED_HOST_HEADER,
+    REQUIRED_OPENVOICE_MODEL_REVISION,
     REQUIRED_OPENVOICE_PURPOSE,
     REQUIRED_OPENVOICE_SPEAKER,
     reject_hostile_origin,
@@ -178,6 +179,7 @@ class TestOpenVoiceApprovalIsASignedRecordNotAForgeableFile(unittest.TestCase):
             path = os.path.join(tmp, "approval.json")
             record = self._sign({
                 "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "modelRevision": REQUIRED_OPENVOICE_MODEL_REVISION,
                 "approvedBy": "jason", "decisionAt": "2026-11-16T00:00:00Z",
             }, "test-secret")
             with open(path, "w", encoding="utf-8") as fh:
@@ -198,6 +200,7 @@ class TestOpenVoiceApprovalIsASignedRecordNotAForgeableFile(unittest.TestCase):
             path = os.path.join(tmp, "approval.json")
             record = self._sign({
                 "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "modelRevision": REQUIRED_OPENVOICE_MODEL_REVISION,
                 "approvedBy": "jason", "decisionAt": "2026-11-16T00:00:00Z",
             }, "test-secret")
             record["speaker"] = "someone-else"  # tamper after signing
@@ -219,6 +222,7 @@ class TestOpenVoiceApprovalIsASignedRecordNotAForgeableFile(unittest.TestCase):
             path = os.path.join(tmp, "approval.json")
             record = self._sign({
                 "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "modelRevision": REQUIRED_OPENVOICE_MODEL_REVISION,
                 "approvedBy": "jason", "decisionAt": "2020-01-01T00:00:00Z", "expiresAt": "2020-02-01T00:00:00Z",
             }, "test-secret")
             with open(path, "w", encoding="utf-8") as fh:
@@ -230,6 +234,82 @@ class TestOpenVoiceApprovalIsASignedRecordNotAForgeableFile(unittest.TestCase):
                 ok, reason = server_mod.verify_openvoice_approval()
                 self.assertFalse(ok)
                 self.assertIn("expired", reason)
+            finally:
+                server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET = old_path, old_secret
+
+    def test_a_record_with_no_modelrevision_field_is_rejected(self):
+        # Fix round 2 (P1): fix round 1's version tolerated a MISSING
+        # modelRevision field entirely. A record otherwise identical to
+        # the happy-path one, but with no modelRevision at all, must
+        # now be rejected.
+        import local_inference.server as server_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "approval.json")
+            record = self._sign({
+                "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "approvedBy": "jason", "decisionAt": "2026-11-16T00:00:00Z",
+            }, "test-secret")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(record, fh)
+            old_path, old_secret = server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET
+            server_mod.OPENVOICE_APPROVAL_RECORD_PATH = path
+            server_mod.OPENVOICE_APPROVAL_SECRET = "test-secret"
+            try:
+                ok, reason = server_mod.verify_openvoice_approval()
+                self.assertFalse(ok)
+                self.assertIn("modelRevision", reason)
+            finally:
+                server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET = old_path, old_secret
+
+    def test_a_record_with_the_wrong_modelrevision_is_rejected(self):
+        # Fix round 2 (P1): a present-but-WRONG modelRevision ran `pass`
+        # in fix round 1's version — effectively approved anyway. Must
+        # now be rejected just like a missing one.
+        import local_inference.server as server_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "approval.json")
+            record = self._sign({
+                "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "modelRevision": "some-other-revision-hash",
+                "approvedBy": "jason", "decisionAt": "2026-11-16T00:00:00Z",
+            }, "test-secret")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(record, fh)
+            old_path, old_secret = server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET
+            server_mod.OPENVOICE_APPROVAL_RECORD_PATH = path
+            server_mod.OPENVOICE_APPROVAL_SECRET = "test-secret"
+            try:
+                ok, reason = server_mod.verify_openvoice_approval()
+                self.assertFalse(ok)
+                self.assertIn("modelRevision", reason)
+            finally:
+                server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET = old_path, old_secret
+
+    def test_a_revoked_record_is_rejected_even_if_otherwise_valid_and_unexpired(self):
+        # Fix round 2 (P1): explicit revocation, independent of
+        # expiresAt — an otherwise perfectly valid, signed, unexpired,
+        # correctly scoped record must still be rejected once revoked.
+        import local_inference.server as server_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "approval.json")
+            record = self._sign({
+                "purpose": REQUIRED_OPENVOICE_PURPOSE, "speaker": REQUIRED_OPENVOICE_SPEAKER,
+                "modelRevision": REQUIRED_OPENVOICE_MODEL_REVISION,
+                "approvedBy": "jason", "decisionAt": "2026-11-16T00:00:00Z",
+                "revoked": True, "revokedAt": "2026-11-17T00:00:00Z",
+            }, "test-secret")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(record, fh)
+            old_path, old_secret = server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET
+            server_mod.OPENVOICE_APPROVAL_RECORD_PATH = path
+            server_mod.OPENVOICE_APPROVAL_SECRET = "test-secret"
+            try:
+                ok, reason = server_mod.verify_openvoice_approval()
+                self.assertFalse(ok)
+                self.assertIn("revoked", reason)
             finally:
                 server_mod.OPENVOICE_APPROVAL_RECORD_PATH, server_mod.OPENVOICE_APPROVAL_SECRET = old_path, old_secret
 

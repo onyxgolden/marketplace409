@@ -154,6 +154,18 @@ OPENVOICE_APPROVAL_RECORD_PATH = os.environ.get(
 )
 REQUIRED_OPENVOICE_PURPOSE = "receptionist_tts"
 REQUIRED_OPENVOICE_SPEAKER = "tyler-welch"
+# Fix round 2 (P1 — ChatGPT re-review 2026-11-16): OpenVoice has no real
+# synthesis wiring yet (`/tts/openvoice` is 501 regardless — see
+# _handle_openvoice below), so there is no real checkpoint revision to
+# pin yet. This sentinel can never match any real approval record's
+# `modelRevision` field, so the gate stays closed by construction until
+# BOTH of these happen: Jason pins the actual OpenVoice V2 checkpoint
+# revision here, AND a newly signed approval record carries that exact
+# same value. Fix round 1's version tolerated a MISSING modelRevision
+# field entirely and ran `pass` on a mismatch either way — effectively
+# no binding at all. See MODEL_PINS.md: this stays "Jason's decision
+# via a signed approval record, not an env flag."
+REQUIRED_OPENVOICE_MODEL_REVISION = "UNPINNED-OPENVOICE-NOT-YET-APPROVED-FOR-WIRING"
 
 
 def _canonical_json(payload: dict) -> bytes:
@@ -186,12 +198,19 @@ def verify_openvoice_approval() -> tuple[bool, str]:
         return False, "approval record purpose does not match receptionist_tts"
     if record.get("speaker") != REQUIRED_OPENVOICE_SPEAKER:
         return False, "approval record speaker does not match tyler-welch"
-    if record.get("modelRevision") != KOKORO_REVISION and "modelRevision" in record:
-        # OpenVoice doesn't use KOKORO_REVISION — this check is a
-        # placeholder for the real model-revision binding the eventual
-        # OpenVoice wiring will add; absence of the field is tolerated
-        # for now since the synthesis path is still 501 regardless.
-        pass
+    # Fix round 2 (P1): exact model-revision binding, required and
+    # enforced — a missing field, or any value other than the exact
+    # pinned revision, fails closed. See REQUIRED_OPENVOICE_MODEL_REVISION's
+    # own comment for why that pinned value is itself an unmatchable
+    # sentinel today (no real OpenVoice wiring exists yet to pin to).
+    if record.get("modelRevision") != REQUIRED_OPENVOICE_MODEL_REVISION:
+        return False, "approval record modelRevision is missing or does not match the pinned OpenVoice revision"
+    # Fix round 2 (P1): explicit revocation, independent of expiresAt —
+    # lets an approval be killed immediately (with its own audit trail
+    # in the signed record) without needing to delete or corrupt the
+    # file to achieve the same effect.
+    if record.get("revoked") is True or record.get("revokedAt"):
+        return False, "approval record has been revoked"
     expires_at = record.get("expiresAt")
     if expires_at:
         try:

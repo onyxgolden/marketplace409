@@ -137,26 +137,112 @@ def _current_key(config: ReceptionistConfig) -> tuple[str, str]:
     return key_id, ring[key_id]
 
 
+class RecordingAclError(RuntimeError):
+    """Fix round 2 (P1 — ChatGPT re-review 2026-11-16): the ACL contract
+    is now ENFORCED, not best-effort. Raised when the recording bundle
+    directory's access cannot be restricted to the current user AND
+    independently verified — a recording that cannot be proven access-
+    restricted must not be saved at all."""
+
+
 def _restrict_directory_to_current_user(path: str) -> None:
-    """Fix round 1 (P1): "enforce restrictive ACLs/permissions" on the
-    recording storage tree. POSIX `os.chmod` bits are largely no-ops on
-    Windows NTFS beyond the read-only flag, so this uses `icacls` (a
-    standard, always-present Windows tool) to strip inherited
-    permissions and grant full control to the current user only.
-    Best-effort: a failure here is logged, never raised — a recording
-    that IS encrypted is still far better protected than one that
-    wasn't saved at all because an ACL tool had a transient issue, and
-    the encryption itself (not filesystem permissions) is this module's
-    primary protection."""
-    if sys.platform != "win32":
-        return
+    """Fix round 2 (P1): restricts `path` to the current user only and
+    VERIFIES the result by querying the ACL back, raising
+    `RecordingAclError` on any failure to apply OR verify. Fix round 1's
+    version called `icacls` with `check=False` and swallowed every
+    exception — a transient or silent icacls failure left the bundle
+    directory with its ORIGINAL (inherited, multi-principal) permissions
+    while `save()` proceeded as if it had been restricted. Called on the
+    call's own `bundle_dir` (not just the storage root) BEFORE any file
+    is written into it — Windows ACL inheritance is live, so files
+    written afterward automatically inherit this single-principal ACL
+    (verified empirically: a file created after restriction shows only
+    the current user, no SYSTEM/Administrators), which is what "the
+    entire bundle tree" means here: restrict the tree's root once, at
+    creation, before anything exists under it, and verify that root.
+
+    POSIX: `os.chmod` IS meaningful there (unlike on NTFS) — recurses
+    0o700 on directories / 0o600 on files and verifies via `os.stat`."""
+    if sys.platform == "win32":
+        username = os.environ.get("USERNAME", "")
+        if not username:
+            raise RecordingAclError(
+                f"cannot restrict ACL on {path!r}: USERNAME environment variable is not set")
+        for args in (["icacls", path, "/inheritance:r"],
+                     ["icacls", path, "/grant:r", f"{username}:(OI)(CI)F"]):
+            try:
+                result = subprocess.run(args, capture_output=True, timeout=30, check=False, text=True)
+            except Exception as exc:  # noqa: BLE001 — fail closed, not swallowed
+                raise RecordingAclError(f"{' '.join(args)} failed to run: {exc}") from exc
+            if result.returncode != 0:
+                raise RecordingAclError(
+                    f"{' '.join(args)} exited {result.returncode}: "
+                    f"{(result.stderr or result.stdout).strip()}")
+        _verify_restricted_to_current_user_win32(path, username)
+    else:
+        try:
+            for root, dirs, files in os.walk(path):
+                os.chmod(root, 0o700)
+                for fname in files:
+                    os.chmod(os.path.join(root, fname), 0o600)
+        except Exception as exc:  # noqa: BLE001 — fail closed, not swallowed
+            raise RecordingAclError(f"chmod failed restricting {path!r}: {exc}") from exc
+        mode = os.stat(path).st_mode & 0o777
+        if mode != 0o700:
+            raise RecordingAclError(f"verified mode {oct(mode)} for {path!r}, expected 0o700")
+
+
+def _verify_restricted_to_current_user_win32(path: str, username: str) -> None:
+    """Queries `icacls path` back and confirms no principal beyond the
+    current user and a small, fixed set of OS-trusted pseudo-accounts
+    has an ACE.
+
+    Verified empirically (fix round 2): even a freshly restricted
+    directory under `%TEMP%` still shows `NT AUTHORITY\\SYSTEM`,
+    `BUILTIN\\Administrators`, and `OWNER RIGHTS` alongside the current
+    user — Windows re-adds these regardless of `/inheritance:r`. They
+    are not a leak: SYSTEM and Administrators can always reach local
+    files on this machine via their own privileges irrespective of any
+    ACL, and OWNER RIGHTS/CREATOR OWNER are placeholder SIDs, not an
+    actual additional reader. Requiring EXACTLY one principal (as a
+    first attempt at this check did) made every real save fail closed —
+    the wrong failure mode for a check whose purpose is to catch an
+    actual leak (Everyone, Users, Authenticated Users, or some other
+    named account). Raises RecordingAclError only when a principal
+    OUTSIDE that always-allowed set is present, or the current user is
+    missing entirely."""
     try:
-        subprocess.run(
-            ["icacls", path, "/inheritance:r", "/grant:r", f"{os.environ.get('USERNAME', '')}:(OI)(CI)F"],
-            capture_output=True, timeout=10, check=False,
-        )
-    except Exception:  # noqa: BLE001 — best effort, never blocks a save
-        pass
+        result = subprocess.run(["icacls", path], capture_output=True, timeout=30, check=False, text=True)
+    except Exception as exc:  # noqa: BLE001
+        raise RecordingAclError(f"icacls verification query failed to run on {path!r}: {exc}") from exc
+    if result.returncode != 0:
+        raise RecordingAclError(
+            f"icacls verification query exited {result.returncode} for {path!r}: {result.stderr.strip()}")
+
+    principals: set[str] = set()
+    for i, raw_line in enumerate(result.stdout.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            break  # the ACE list ends at the first blank line; a summary follows
+        low = line.lower()
+        if low.startswith("successfully processed") or low.startswith("failed processing"):
+            break
+        if i == 0 and low.startswith(path.lower()):
+            line = line[len(path):].strip()
+        if ":" not in line:
+            continue
+        principal = line.split(":", 1)[0].strip()
+        if principal:
+            principals.add(principal.upper())
+
+    always_allowed = {"NT AUTHORITY\\SYSTEM", "BUILTIN\\ADMINISTRATORS", "OWNER RIGHTS", "CREATOR OWNER"}
+    user_present = any(username.upper() in p for p in principals)
+    unexpected = {p for p in principals if p not in always_allowed and username.upper() not in p}
+    if unexpected or not user_present:
+        raise RecordingAclError(
+            f"recording bundle {path!r} shows unexpected ACL principal(s) {unexpected!r} and/or is "
+            f"missing the current user ({username!r}) after restriction — found {principals!r}; "
+            f"refusing to save")
 
 
 @dataclass
@@ -223,7 +309,15 @@ class RecordingSession:
         lookup_key = ani_lookup_key(self.ani or "", config.recording_index_secret)
         bundle_dir = os.path.join(config.recording_storage_path, lookup_key, self.call_sid)
         os.makedirs(bundle_dir, exist_ok=True)
+        # Fix round 2 (P1): enforced, not best-effort — raises
+        # RecordingAclError (uncaught here, so save() fails closed) if
+        # either directory cannot be restricted AND verified. The
+        # bundle_dir restriction is the one that actually matters (it's
+        # freshly created and empty, so restricting it covers "the
+        # entire bundle tree" before any file exists under it); the
+        # storage-root restriction is defense in depth for siblings.
         _restrict_directory_to_current_user(config.recording_storage_path)
+        _restrict_directory_to_current_user(bundle_dir)
 
         caller_wav = _pcm_to_wav_bytes(self.caller_audio_bytes(), self.sample_rate)
         agent_wav = _pcm_to_wav_bytes(self.agent_audio_bytes(), self.sample_rate)

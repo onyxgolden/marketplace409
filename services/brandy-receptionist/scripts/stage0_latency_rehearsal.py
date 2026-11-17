@@ -314,14 +314,27 @@ def main():
                 and success_rate >= config.stage0_success_rate_target)
             else "MISS"
         ),
-        "scopeNote": "Cut 1 Stage 0: real local STT/LLM/TTS, no SIP edge exists yet in this cut, so this "
-                     "measures caller-clip-to-first-agent-audio through the local models only, not "
-                     "actual PCMU/RTP transport (that is Stage 1, out of this cut's scope). totalMs = "
-                     "real sttMs + real dialogue-processing time + REAL streamed-first-byte ttsFirstAudioMs "
-                     "(fix round 1: previously a server-reported header on a fully-buffered response). "
-                     "The advisory LLM call runs concurrently on a background thread and is never on the "
-                     "measured path (fix round 1: previously synchronous, silently absorbed into totalMs "
-                     "even though its own duration wasn't separately added).",
+        # Fix round 2 (P1): named honestly, per the re-review's explicit
+        # instruction. Fix round 1's own "first-agent-audio" framing
+        # implied telephony playback; it never was that. This is first
+        # byte AT THE LOCAL TTS ADAPTER — Stage 0's own local-transport
+        # measurement, not first audio actually played to a caller over
+        # PSTN. That stays a later SIP/telephony-stage gate, out of
+        # Cut 1's scope (no SIP edge exists in this cut at all).
+        "metricLabel": "first byte at the local TTS adapter (Stage 0 local transport) — "
+                        "NOT first audio played over telephony/PSTN",
+        "scopeNote": "Cut 1 Stage 0: real local STT/LLM/TTS, no SIP edge exists yet in this cut. totalMs = "
+                     "real sttMs + real dialogue-processing time + ttsFirstAudioMs, where ttsFirstAudioMs is "
+                     "now (fix round 2) the real first-byte-at-the-adapter time measured via "
+                     "HTTPResponse.read1() on the real socket — fix round 1's read(65536) call was proven "
+                     "to NOT be a first-streamed-byte read (it can accumulate across multiple underlying "
+                     "reads up to 65536 bytes or EOF), so fix round 1's own 541.6ms p95 number must not be "
+                     "reused as evidence of real first-byte latency; this receipt supersedes it. The "
+                     "advisory LLM call runs concurrently on a background thread, bounded to one in flight "
+                     "per session (fix round 2), and is never on the measured path. "
+                     "preSynthesisTransientRetries for any one run is one data point, not a universal "
+                     "no-reset guarantee — the HTTP/1.0-churn root-cause explanation stays plausible, not "
+                     "proven absent in general; a soak/repeat run would be needed to claim that.",
         "warmOnly": True,
         "concurrency": 1,
     }
