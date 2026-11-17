@@ -272,6 +272,104 @@ class TestRecordingSessionSave(unittest.TestCase):
                 with self.assertRaises(RecordingAclError):
                     session.save(config)
 
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_rejects_a_different_local_account_sharing_the_same_bare_username(self):
+        """Fix round 4 (P1 — ChatGPT re-review 2026-11-17): fix round 3
+        correctly stopped substring-matching, but still UNIONED in
+        env-var-derived aliases (USERDOMAIN\\USERNAME, COMPUTERNAME\\USERNAME)
+        even when `whoami` had already resolved the real identity. On a
+        domain-joined machine the real principal might be `CORP\\JASON`
+        while a totally different LOCAL account `HOST\\JASON` also
+        exists; the old code treated both as "the current user." Here
+        whoami resolves `CORP\\JASON`, env vars say USERDOMAIN=CORP /
+        COMPUTERNAME=HOST / USERNAME=JASON, and the ACL shows BOTH
+        `CORP\\JASON` (real) AND `HOST\\JASON` (a different, unverified
+        account) — the second principal alone must make this rejected,
+        even though the real user's own ACE is also present."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-alias-1", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            env_patch = {"USERNAME": "JASON", "USERDOMAIN": "CORP", "COMPUTERNAME": "HOST"}
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=0, stdout='"User Name","SID"\r\n"corp\\jason","S-1-5-21-0"\r\n', stderr="")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} CORP\\JASON:(OI)(CI)(F)\n"
+                               f"            HOST\\JASON:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch.dict(os.environ, env_patch), mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+
+    @unittest.skipUnless(sys.platform == "win32", "icacls verification parsing is Windows-specific")
+    def test_acl_verification_rejects_when_only_a_different_local_account_is_present(self):
+        """Fix round 4 (P1): the more severe half — the REAL whoami-
+        resolved identity (`CORP\\JASON`) is entirely ABSENT from the
+        ACL, and only the different local account (`HOST\\JASON`,
+        sharing the bare username but not actually verified as the
+        same principal) is present. The old code's unconditional union
+        would have let the env-var-derived `HOST\\JASON` alias satisfy
+        `user_present` even though the real current user's own ACE
+        never appeared."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(tmp)
+            session = RecordingSession(call_sid="CA-acl-alias-2", ani="+15552345678")
+            session.append_caller_audio(b"\x00\x01" * 100)
+
+            env_patch = {"USERNAME": "JASON", "USERDOMAIN": "CORP", "COMPUTERNAME": "HOST"}
+
+            def fake_run(args, **kwargs):
+                if args[0] == "whoami":
+                    return mock.Mock(returncode=0, stdout='"User Name","SID"\r\n"corp\\jason","S-1-5-21-0"\r\n', stderr="")
+                if args[0] == "icacls" and len(args) == 2:
+                    path = args[1]
+                    # ONLY HOST\JASON — the real CORP\JASON ACE is missing entirely.
+                    return mock.Mock(
+                        returncode=0,
+                        stdout=f"{path} HOST\\JASON:(OI)(CI)(F)\n\n"
+                               f"Successfully processed 1 files; Failed processing 0 files\n",
+                        stderr="")
+                return mock.Mock(returncode=0, stdout="processed file\n", stderr="")
+
+            with mock.patch.dict(os.environ, env_patch), mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+                from app.recording import RecordingAclError
+                with self.assertRaises(RecordingAclError):
+                    session.save(config)
+
+    @unittest.skipUnless(sys.platform == "win32", "_current_user_identities_win32 is Windows-specific")
+    def test_current_user_identities_returns_only_whoami_result_never_unioned_with_env_aliases(self):
+        """Fix round 4 (P1), unit-level: directly proves
+        `_current_user_identities_win32()` returns ONLY the whoami-
+        resolved identity when whoami succeeds — not that identity
+        PLUS the env-var-derived aliases."""
+        from unittest import mock
+
+        from app.recording import _current_user_identities_win32
+
+        env_patch = {"USERNAME": "JASON", "USERDOMAIN": "CORP", "COMPUTERNAME": "HOST"}
+
+        def fake_run(args, **kwargs):
+            return mock.Mock(returncode=0, stdout='"User Name","SID"\r\n"corp\\jason","S-1-5-21-0"\r\n', stderr="")
+
+        with mock.patch.dict(os.environ, env_patch), mock.patch("app.recording.subprocess.run", side_effect=fake_run):
+            identities = _current_user_identities_win32()
+        self.assertEqual(identities, {"CORP\\JASON"})
+        self.assertNotIn("HOST\\JASON", identities)
+
     def test_real_save_load_decrypt_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _config(tmp)

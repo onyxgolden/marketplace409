@@ -206,12 +206,21 @@ def _current_user_identities_win32() -> set[str]:
     `whoami /user /fo csv` is the authoritative, always-available
     source (ships with Windows, needs no extra dependency): its one
     data row's first field is the exact `DOMAIN\\username` string this
-    session is running as. Falls back to USERDOMAIN/COMPUTERNAME +
-    USERNAME env-var combinations only if `whoami` itself cannot run —
-    an empty result from both means `_verify_restricted_to_current_user_win32`
-    cannot verify anything and must fail closed rather than silently
-    accept any principal."""
-    identities: set[str] = set()
+    session is running as.
+
+    Fix round 4 (P1 — ChatGPT re-review 2026-11-17): fix round 3's
+    version parsed whoami correctly but then UNCONDITIONALLY unioned in
+    `USERDOMAIN\\USERNAME` and `COMPUTERNAME\\USERNAME` as well, even
+    when whoami had already succeeded — the comment said "fallback
+    only if whoami fails" but the code never enforced that. On a
+    domain-joined machine the real principal may be `CORP\\JASON` while
+    a different LOCAL account `HOST\\JASON` also exists; the old code
+    admitted both as "the current user," so an ACE for `HOST\\JASON`
+    alone (the real `CORP\\JASON` entry entirely absent) could pass.
+    Now: if whoami yields a usable identity, return ONLY that — the
+    env-var-derived aliases are used only when whoami itself could not
+    be run or produced nothing, never layered on top of a successful
+    whoami result."""
     try:
         result = subprocess.run(
             ["whoami", "/user", "/fo", "csv"], capture_output=True, timeout=10, check=False, text=True)
@@ -220,10 +229,14 @@ def _current_user_identities_win32() -> set[str]:
             import io
 
             rows = list(csv.reader(io.StringIO(result.stdout)))
-            if len(rows) >= 2 and rows[1]:
-                identities.add(rows[1][0].strip().upper())
+            if len(rows) >= 2 and rows[1] and rows[1][0].strip():
+                return {rows[1][0].strip().upper()}
     except Exception:  # noqa: BLE001 — fall through to the env-var fallback below
         pass
+    # whoami was unavailable or produced nothing usable — fall back to
+    # env-var-derived aliases ONLY in this case, never unioned with an
+    # already-successful whoami result above.
+    identities: set[str] = set()
     username = os.environ.get("USERNAME", "")
     if username:
         for domain in (os.environ.get("USERDOMAIN", ""), os.environ.get("COMPUTERNAME", "")):
