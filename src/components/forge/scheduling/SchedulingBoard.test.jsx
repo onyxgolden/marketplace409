@@ -639,7 +639,7 @@ describe("SchedulingBoard — phone compact view", () => {
     unmount(mounted);
   });
 
-  it("omits the 240px palette entirely and narrows the frozen lane labels to 104px", async () => {
+  it("omits the 240px palette entirely and narrows the frozen lane labels to 120px", async () => {
     const mounted = await mountCompact();
     const html = mounted.container.innerHTML;
     expect(html).not.toContain("Starter objects");
@@ -647,11 +647,25 @@ describe("SchedulingBoard — phone compact view", () => {
     // Assert on the actual style widths, not a raw substring -- "170px" also
     // matches the data-date line's left: 1170px, which is unrelated.
     const widths = [...mounted.container.querySelectorAll("div")].map((d) => d.style.width);
-    expect(widths).toContain("104px");
+    expect(widths).toContain("120px");
     expect(widths).not.toContain("170px");
     // The lane insert/delete buttons and the work-calendar select are mutations.
     expect(html).not.toContain("Insert lane above");
     expect(mounted.container.querySelector("[data-scheduling-lane-calendar]")).toBeNull();
+    unmount(mounted);
+  });
+
+  it("keeps the full Governance and Engineering lane names in the compact lane column (Slice 1 wart: 104px truncated them to Gov/Eng)", async () => {
+    const mounted = await mountCompact();
+    // The names are full text in the DOM (truncate is CSS-only); the real
+    // legibility proof is the Chromium geometry check, which asserts
+    // scrollWidth <= clientWidth per label at 360/390/412. This pins the
+    // names and the column width the geometry depends on.
+    const labels = [...mounted.container.querySelectorAll("span.truncate[title]")].map((s) => s.textContent);
+    expect(labels).toContain("Governance");
+    expect(labels).toContain("Engineering");
+    const widths = [...mounted.container.querySelectorAll("div")].map((d) => d.style.width);
+    expect(widths).toContain("120px");
     unmount(mounted);
   });
 

@@ -27,7 +27,15 @@ function isTypingTarget(el) {
 // mismatch. renderToStaticMarkup (used by most board tests) never runs effects,
 // so those tests keep seeing the desktop layout.
 const COMPACT_VIEW_QUERY = "(max-width: 640px)";
-const COMPACT_LANE_LABEL_WIDTH_PX = 104;
+// Phone Slice 2 (Slice 1 wart): 104px left "Governance"/"Engineering" exactly
+// at the fit boundary -- 83px of text in 83px of label space -- so any wider
+// font rendering truncated them to "Gov"/"Eng" on Jason's phone. 120px is the
+// top of the brief's "~96-120px where practical" range: Governance/Engineering
+// (and Field Execution) fit with room to spare, the timeline keeps a genuine
+// nonzero viewport at 360px (~240px), and the desktop 170px column is untouched.
+// The two longest names ("Field Execution (cont.)", "Shutdown & Startup")
+// still truncate with a title fallback -- a wider column would eat the timeline.
+const COMPACT_LANE_LABEL_WIDTH_PX = 120;
 
 function useCompactView() {
   const [isCompact, setIsCompact] = useState(false);
