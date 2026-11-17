@@ -16,9 +16,22 @@ export default async function ForgePage() {
   const forgeApplicationSuite =
     await forgeApplication.getForgeApplicationSuite();
 
+  const readModelApplication =
+    forgeApplicationSuite.financialReadModelApplication;
+
+  // Slice 3 (load-times): the dashboard reads its headline totals from
+  // the SQL summary RPC (one call per request) instead of transferring
+  // the owner's full financial-event history. The summary dashboard is
+  // built FIRST and handed to the canonical-intelligence builder, so
+  // neither it nor the intelligence build can silently trigger the
+  // legacy full-history path. Every other page keeps the legacy path.
+  const dashboardSummary =
+    await readModelApplication.buildDashboardSummary();
+
   const canonicalIntelligenceContext =
     await forgeApplicationSuite.canonicalIntelligenceContextBuilder.build({
       ownerId: forgeApplication.user.id,
+      dashboard: dashboardSummary,
     });
 
   const initialDashboardIntelligence =
@@ -27,9 +40,6 @@ export default async function ForgePage() {
         ? canonicalIntelligenceContext.toJSON()
         : canonicalIntelligenceContext,
     );
-
-  const readModelApplication =
-    forgeApplicationSuite.financialReadModelApplication;
 
   const [
     businessDashboard,
@@ -40,11 +50,11 @@ export default async function ForgePage() {
     transactionReview,
     isOwnerOrCoOwner,
   ] = await Promise.all([
-    readModelApplication.buildBusinessDashboard(),
-    readModelApplication.buildInvestorDashboard(),
-    readModelApplication.buildKPIModel(),
-    readModelApplication.buildExecutiveSummary(),
-    readModelApplication.buildWorkspace(
+    readModelApplication.buildBusinessDashboardSummary(),
+    readModelApplication.buildInvestorDashboardSummary(),
+    readModelApplication.buildKPIModelSummary(),
+    readModelApplication.buildExecutiveSummarySummary(),
+    readModelApplication.buildDashboardSummaryWorkspace(
       forgeApplication.user.id,
     ),
     forgeApplicationSuite.transactionReviewQueryService

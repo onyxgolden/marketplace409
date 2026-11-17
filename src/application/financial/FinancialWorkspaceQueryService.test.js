@@ -389,3 +389,100 @@ describe("FinancialWorkspaceQueryService -- transaction cutover", () => {
     expect(passedEvents.map((e) => e.id).sort()).toEqual(["manual-before", "stripe-after"].sort());
   });
 });
+
+// --- Dashboard summary mode (load-times Slice 3) -------------------------------------------
+describe("FinancialWorkspaceQueryService -- buildDashboardSummary", () => {
+  function buildSummary() {
+    return Object.freeze({
+      version: "forge_dashboard_financial_summary_v1",
+      ownerId: "owner-1",
+      scope: "business",
+      portfolio: Object.freeze({
+        income: 1500,
+        expenses: 250,
+        noi: 1250,
+        cashFlow: 1250,
+        transactionCount: 2,
+      }),
+      properties: Object.freeze([]),
+      categories: Object.freeze([]),
+      transactionsStatus: "not-loaded",
+    });
+  }
+
+  function buildService({ summaryRepository, eventRepository } = {}) {
+    return new FinancialWorkspaceQueryService({
+      financialEventRepository: eventRepository || {
+        findByOwnerId: vi.fn(),
+      },
+      aggregationService: {
+        aggregate: vi.fn(),
+      },
+      dashboardFinancialSummaryRepository:
+        summaryRepository === undefined
+          ? { getSummary: vi.fn().mockResolvedValue(buildSummary()) }
+          : summaryRepository,
+    });
+  }
+
+  test("returns the SQL summary totals with a not-loaded marker and no transactions key", async () => {
+    const service = buildService();
+    const result = await service.buildDashboardSummary("owner-1", {
+      scope: "business",
+    });
+
+    expect(result.portfolio).toEqual({
+      income: 1500,
+      expenses: 250,
+      noi: 1250,
+      cashFlow: 1250,
+      transactionCount: 2,
+    });
+    expect(result.transactionsStatus).toBe("not-loaded");
+    expect(result).not.toHaveProperty("transactions");
+    expect(result.summaryVersion).toBe(
+      "forge_dashboard_financial_summary_v1",
+    );
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  test("never calls the legacy full-history repository", async () => {
+    const findByOwnerId = vi.fn();
+    const service = buildService({
+      eventRepository: { findByOwnerId },
+    });
+
+    await service.buildDashboardSummary("owner-1");
+
+    expect(findByOwnerId).not.toHaveBeenCalled();
+  });
+
+  test("throws explicitly when no summary repository is wired, instead of falling back to the scan", async () => {
+    const service = buildService({ summaryRepository: null });
+
+    await expect(
+      service.buildDashboardSummary("owner-1"),
+    ).rejects.toThrow("Dashboard financial summary is unavailable.");
+  });
+
+  test("requires an owner id", async () => {
+    const service = buildService();
+
+    await expect(service.buildDashboardSummary(null)).rejects.toThrow(
+      "Owner id is required",
+    );
+  });
+
+  test("propagates summary repository errors instead of fabricating zero totals", async () => {
+    const repositoryError = new Error("Not authorized for this workspace.");
+    const service = buildService({
+      summaryRepository: {
+        getSummary: vi.fn().mockRejectedValue(repositoryError),
+      },
+    });
+
+    await expect(
+      service.buildDashboardSummary("owner-1"),
+    ).rejects.toBe(repositoryError);
+  });
+});
