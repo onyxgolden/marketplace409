@@ -1,7 +1,129 @@
+// S2A (load-times slice 2) — fix round 1: the [projectId] routes perform
+// no cache operation (freshness after a write comes from the list GET's
+// digest probe — see listReadCache.js), so the freshness proof lives in
+// the "S2A list freshness" section below, which warms the sibling list GET
+// through the REAL installed Next.js 16.4.1 cache
+// (real-incremental-cache-test-harness.js) and verifies the FIRST list GET
+// after a PUT/DELETE is fresh.
+import "@/lib/forge/real-incremental-cache-test-harness";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetRealIncrementalCache,
+  runInRealRequest,
+} from "@/lib/forge/real-incremental-cache-test-harness";
+
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: vi.fn() }));
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { GET, PUT, DELETE } from "./route";
+import { GET as GET_LIST } from "../route";
+
+beforeEach(() => resetRealIncrementalCache());
+
+// The sibling list GET, run inside a simulated Route Handler request.
+async function listGet() {
+  const { result } = await runInRealRequest(() => GET_LIST());
+  return result;
+}
+
+// List-capable client for the freshness tests: forge_scheduling_projects
+// serves the list digest probe + list selects (select/eq/order, counting
+// private vs public vs probe) and the DELETE chain
+// (delete/eq/select/maybeSingle); schedule_projects serves only the
+// relational-mirror delete. `rows` is the mutable visible set — the test
+// states the post-write DB truth explicitly after the PUT/DELETE (the RPC
+// mock does not write rows).
+//
+// PostgREST fidelity (fix round 3): the probe and the ordered list
+// enforce the same per-response row cap production does (commonly 1,000),
+// and the probe returns the exact total count, as count:"exact" does in
+// production. Fixtures here are small, so the cap never binds.
+const POSTGREST_MAX_ROWS = 1000;
+
+function freshnessDb(rows, { rpcData = [{ board_revision: 3, updated_at: "2026-02-01T00:00:00.000Z" }], rpcError = null, deleteRow = { id: "p1" } } = {}) {
+  const counters = { privateSelectCalls: 0, publicSelectCalls: 0, probeCalls: 0 };
+  let isPublicFilter;
+  const listNode = {
+    // A fresh .select() chain starts unfiltered — the mock shares one
+    // node per table, so select() must reset the filter the previous
+    // chain set, exactly as a fresh PostgREST builder would. (Fix round
+    // 4: the combined boundary probe/query carry NO is_public filter;
+    // without this reset a stale `true` from a previous chain would
+    // silently narrow them — the PUT leaves the filter set, and the
+    // next list GET's combined probe would then see only public rows.)
+    select: vi.fn(() => {
+      isPublicFilter = undefined;
+      return listNode;
+    }),
+    eq: vi.fn((col, val) => {
+      if (col === "is_public") isPublicFilter = val;
+      return listNode;
+    }),
+    order: vi.fn(() => {
+      const capturedIsPublic = isPublicFilter;
+      const resolve = () => {
+        const filtered =
+          capturedIsPublic === undefined
+            ? rows
+            : rows.filter((row) => row.is_public === capturedIsPublic);
+        const sorted = [...filtered].sort((a, b) =>
+          String(b.updated_at).localeCompare(String(a.updated_at)),
+        );
+        if (capturedIsPublic === false) counters.privateSelectCalls += 1;
+        else if (capturedIsPublic === true) counters.publicSelectCalls += 1;
+        return { data: sorted.slice(0, POSTGREST_MAX_ROWS), error: null };
+      };
+      return {
+        limit: vi.fn(async () => resolve()),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve(resolve()).then(onFulfilled, onRejected),
+      };
+    }),
+    // Digest-probe path: the probe awaits the node directly (no order,
+    // no limit) and resolves the filtered rows unsorted — the digest
+    // sorts by id, so probe order is irrelevant. Truncated to the
+    // PostgREST cap with the exact total count, as count:"exact" reports
+    // in production.
+    then: (onFulfilled, onRejected) => {
+      const capturedIsPublic = isPublicFilter;
+      const resolve = () => {
+        counters.probeCalls += 1;
+        const filtered =
+          capturedIsPublic === undefined
+            ? rows
+            : rows.filter((row) => row.is_public === capturedIsPublic);
+        return {
+          data: filtered.slice(0, POSTGREST_MAX_ROWS),
+          error: null,
+          count: filtered.length,
+        };
+      };
+      return Promise.resolve(resolve()).then(onFulfilled, onRejected);
+    },
+    delete: vi.fn(() => listNode),
+    maybeSingle: vi.fn(async () => ({ data: deleteRow, error: null })),
+  };
+  const deleteOnlyNode = () => {
+    const node = {
+      delete: vi.fn(() => node),
+      eq: vi.fn(() => node),
+      then: (onFulfilled, onRejected) =>
+        Promise.resolve({ data: null, error: null }).then(onFulfilled, onRejected),
+    };
+    return node;
+  };
+  const rpc = vi.fn(async () => (rpcError ? { data: null, error: rpcError } : { data: rpcData, error: null }));
+  return {
+    client: { from: vi.fn((table) => (table === "forge_scheduling_projects" ? listNode : deleteOnlyNode())), rpc },
+    rows,
+    get privateSelectCalls() {
+      return counters.privateSelectCalls;
+    },
+    get probeCalls() {
+      return counters.probeCalls;
+    },
+  };
+}
 
 const BOARD = { id: "p1", projectName: "Mine", startDate: "2026-01-01", endDate: "2026-12-31", lanes: [], blocks: [], dependencies: [] };
 
@@ -179,6 +301,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     // The old route's separate forge_scheduling_projects.update() call is gone entirely --
     // the RPC does that write itself, inside the same transaction as the relational sync.
     expect(db.nodes.forge_scheduling_projects.update).not.toHaveBeenCalled();
+    // S2A: the save performs no cache operation — the RPC's updated_at
+    // bump moves the list digest, proven in "S2A list freshness" below.
   });
 
   it("sends the client's last-known boardRevision as p_expected_revision, not always 0", async () => {
@@ -196,6 +320,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     const body = await response.json();
     expect(body.code).toBe("SCHEDULE_SAVE_CONFLICT");
     expect(body.error.toLowerCase()).toContain("reload");
+    // S2A: a conflicted save writes nothing, so the list digest does
+    // not move — the next list GET stays cached.
   });
 
   it("404s instead of silently succeeding when the caller doesn't own the row (e.g. the shared example)", async () => {
@@ -203,6 +329,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(404);
+    // S2A: a not-found save writes nothing, so the list digest does
+    // not move.
   });
 
   it("500s (rather than reporting a false success) on any other RPC error, since a relational-sync failure must now roll back the whole save", async () => {
@@ -210,6 +338,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(500);
+    // S2A: a failed save writes nothing, so the list digest does not
+    // move.
   });
 });
 
@@ -222,11 +352,82 @@ describe("DELETE /api/forge/scheduling/[projectId]", () => {
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(200);
     expect(db.nodes.forge_scheduling_projects.delete).toHaveBeenCalled();
     expect(db.nodes.schedule_projects.delete).toHaveBeenCalled();
+    // S2A: the delete performs no cache operation — the removed row moves
+    // the list digest, proven in "S2A list freshness" below.
   });
 
   it("404s when the caller doesn't own the row", async () => {
     const db = mockDb({ deleteRow: null });
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(404);
+    // S2A: a not-found delete removes nothing, so the list digest does
+    // not move.
+  });
+});
+
+describe("S2A list freshness (digest probe, real cache)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const LIST_ROW = {
+    id: "p1", owner_id: "user_1", project_name: "Mine",
+    start_date: "2026-01-01", end_date: "2026-12-31", is_public: false,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+  };
+
+  function authed(db) {
+    return { user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client };
+  }
+
+  it("a successful PUT makes the FIRST next list GET fresh — the RPC's updated_at bump moves the digest", async () => {
+    const db = freshnessDb([{ ...LIST_ROW }]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db));
+    const warm = await (await listGet()).json();
+    expect(warm.projects).toHaveLength(1);
+    expect(db.privateSelectCalls).toBe(1);
+    const saved = await PUT(request(BOARD), { params });
+    expect(saved.status).toBe(200);
+    // The RPC's single transaction bumped updated_at on the row (the mock
+    // RPC does not write rows — the test states the post-write DB truth).
+    db.rows[0] = { ...db.rows[0], updated_at: "2026-02-01T00:00:00.000Z" };
+    const fresh = await (await listGet()).json();
+    expect(db.privateSelectCalls).toBe(2);
+    expect(fresh.projects[0].updatedAt).toBe("2026-02-01T00:00:00.000Z");
+  });
+
+  it("a successful DELETE makes the FIRST next list GET fresh — the removed row moves the digest", async () => {
+    const db = freshnessDb([{ ...LIST_ROW }]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db));
+    const warm = await (await listGet()).json();
+    expect(warm.projects).toHaveLength(1);
+    expect(db.privateSelectCalls).toBe(1);
+    const deleted = await DELETE(new Request("https://test"), { params });
+    expect(deleted.status).toBe(200);
+    // The committed delete removed the row.
+    db.rows.splice(0, 1);
+    const fresh = await (await listGet()).json();
+    expect(db.privateSelectCalls).toBe(2);
+    expect(fresh.projects).toHaveLength(0);
+  });
+
+  it("a successful PUT renaming the OLDER row makes the FIRST next list GET fresh — its updated_at stays below the newest row's (fix round 2)", async () => {
+    // The round-2 counterexample through a real PUT: p1 is the older row
+    // (09:00), p2 the newest (18:00); the save renames p1 at 10:00. Count
+    // and max do not move — only the digest sees it.
+    const older = { ...LIST_ROW, id: "p1", project_name: "Older", updated_at: "2026-01-01T09:00:00.000Z" };
+    const newest = { ...LIST_ROW, id: "p2", project_name: "Newest", updated_at: "2026-01-01T18:00:00.000Z" };
+    const db = freshnessDb([older, newest]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db));
+    const warm = await (await listGet()).json();
+    expect(warm.projects.map((p) => p.name)).toEqual(["Newest", "Older"]);
+    expect(db.privateSelectCalls).toBe(1);
+    const saved = await PUT(request({ ...BOARD, projectName: "Older renamed" }), { params });
+    expect(saved.status).toBe(200);
+    // The RPC's single transaction renamed the row and bumped its
+    // updated_at to 10:00 — still earlier than the 18:00 max (the test
+    // states the post-write DB truth; the RPC mock does not write rows).
+    db.rows[0] = { ...db.rows[0], project_name: "Older renamed", updated_at: "2026-01-01T10:00:00.000Z" };
+    const fresh = await (await listGet()).json();
+    expect(db.privateSelectCalls).toBe(2);
+    expect(fresh.projects.map((p) => p.name)).toEqual(["Newest", "Older renamed"]);
   });
 });

@@ -1,6 +1,23 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { defaultBoardState } from "@/components/forge/scheduling/schedulingBoardState";
+import {
+  getSchedulingProjects,
+} from "@/lib/forge/listReadCache";
+
+// S2A (load-times slice 2): the list is served from the hot-read server
+// data cache (see src/lib/forge/listReadCache.js). Auth still runs first,
+// on every request, before any cache lookup — including hits. The cached
+// portion is the owner-scoped rows only; the shared public example rows
+// are fetched fresh on every GET and merged, so a public row can never
+// linger stale in another actor's cache entry. Fix round 4: the route
+// reads through getSchedulingProjects(), which first probes whether the
+// COMBINED private + public set fits under the server-configured
+// PostgREST response cap — at/over the cap it runs the exact pre-S2A
+// single combined query instead of the split, so the served list can
+// never exceed the original response limit. HTTP responses stay
+// private/non-cacheable.
+const NO_STORE = { "Cache-Control": "private, no-store" };
 
 async function authenticatedContext() {
   return createAuthenticatedForgeApplication({ appKey: "scheduler" });
@@ -13,16 +30,12 @@ export async function GET() {
   try {
     const authenticated = await authenticatedContext();
     if (authenticated.response) return authenticated.response;
-    const { data, error } = await authenticated.supabaseClient.from("forge_scheduling_projects")
-      .select("id,owner_id,project_name,start_date,end_date,is_public,created_at,updated_at")
-      .order("updated_at", { ascending: false });
-    if (error) throw error;
-    const projects = (data || []).map((row) => ({
-      id: row.id, name: row.project_name, startDate: row.start_date, endDate: row.end_date,
-      createdAt: row.created_at, updatedAt: row.updated_at,
-      isOwner: row.owner_id === authenticated.effectiveOwnerId, isPublic: row.is_public,
-    }));
-    return NextResponse.json({ success: true, projects });
+    const projects = await getSchedulingProjects({
+      supabaseClient: authenticated.supabaseClient,
+      effectiveOwnerId: authenticated.effectiveOwnerId,
+      actorId: authenticated.user.id,
+    });
+    return NextResponse.json({ success: true, projects }, { headers: NO_STORE });
   } catch (error) {
     console.error("Scheduling projects list error", error);
     return NextResponse.json({ error: "Unable to load scheduling projects." }, { status: 500 });
@@ -57,6 +70,10 @@ export async function POST(request) {
     });
     if (syncError) throw syncError;
 
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The list
+    // GET re-probes the digest on every request, and the insert above
+    // changes the digest, so the next list read cannot serve the pre-write
+    // entry — freshness needs no invalidation call that could fail silently.
     return NextResponse.json({ success: true, id: data.id });
   } catch (error) {
     console.error("Scheduling project create error", error);

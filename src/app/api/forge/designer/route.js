@@ -3,6 +3,14 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 // HOME DESIGNER slice 2: new projects are born as a HomeProject envelope so
 // multi-level works from creation. Legacy rows keep loading untouched.
 import { createHomeProject } from "@/domains/roomDesigner/homeProject";
+import { getCachedDesignerProjects } from "@/lib/forge/listReadCache";
+
+// S2A (load-times slice 2): the list is served from the hot-read server
+// data cache (see src/lib/forge/listReadCache.js). Auth still runs first,
+// on every request, before any cache lookup — including hits. The Designer
+// list is strictly owner-filtered (no public rows), so the whole DTO is
+// cached. HTTP responses stay private/non-cacheable.
+const NO_STORE = { "Cache-Control": "private, no-store" };
 
 function ownerIdOf(authenticated) {
   return authenticated.effectiveOwnerId || authenticated.user.id;
@@ -22,21 +30,13 @@ export async function GET(request) {
     }
     const authenticated = await createAuthenticatedForgeApplication({ requestedOwnerId, appKey: "designer" });
     if (authenticated.response) return authenticated.response;
-    const { data, error } = await authenticated.supabaseClient
-      .from("designer_projects")
-      .select("id,owner_id,project_name,created_at,updated_at")
-      .eq("owner_id", ownerIdOf(authenticated))
-      .order("updated_at", { ascending: false });
-    if (error) throw error;
-    return NextResponse.json({
-      success: true,
-      projects: (data || []).map((row) => ({
-        id: row.id,
-        name: row.project_name,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
+    const ownerId = ownerIdOf(authenticated);
+    const projects = await getCachedDesignerProjects({
+      supabaseClient: authenticated.supabaseClient,
+      ownerId,
+      actorId: authenticated.user.id,
     });
+    return NextResponse.json({ success: true, projects }, { headers: NO_STORE });
   } catch (error) {
     console.error("Designer projects list error", error);
     return NextResponse.json({ error: "Unable to load room designs." }, { status: 500 });
@@ -64,6 +64,11 @@ export async function POST(request) {
         design,
       });
     if (error) throw error;
+
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The list
+    // GET re-probes the digest on every request, and the insert above
+    // changes the digest, so the next list read cannot serve the pre-write
+    // entry — freshness needs no invalidation call that could fail silently.
     return NextResponse.json({ success: true, id });
   } catch (error) {
     console.error("Designer project create error", error);

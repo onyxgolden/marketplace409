@@ -122,6 +122,10 @@ export async function PUT(request, { params }) {
     if (!data || data.length === 0) {
       return NextResponse.json({ error: "Room design not found." }, { status: 404 });
     }
+
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The
+    // update bumps updated_at, so the next list GET's digest probe
+    // moves and the pre-save entry cannot be served.
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {
     console.error("Designer project save error", error);
@@ -141,6 +145,10 @@ export async function DELETE(_request, { params }) {
       .eq("owner_id", ownerIdOf(authenticated))
       .eq("id", projectId);
     if (error) throw error;
+
+    // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The
+    // delete changes the row set, so the next list GET's digest probe
+    // moves and the pre-delete entry cannot be served.
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {
     console.error("Designer project delete error", error);
