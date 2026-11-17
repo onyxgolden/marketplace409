@@ -2,7 +2,7 @@
 // from the hot-read server cache (src/lib/forge/listReadCache.js), and
 // every GET below runs through the REAL installed Next.js 16.4.1 cache
 // (real-incremental-cache-test-harness.js) inside a simulated Route
-// Handler request — no fake cache. Counters prove what ran: the generation
+// Handler request — no fake cache. Counters prove what ran: the digest
 // probe on every GET, the list select only on a cache miss. The Designer
 // list is strictly owner-filtered (no public rows), so the whole DTO is
 // cached.
@@ -23,7 +23,7 @@ import { GET, POST } from "./route";
 
 // Every list GET runs inside a simulated Route Handler request, the way
 // production runs it (see the harness). POST never touches the cache —
-// freshness after a write comes from the generation probe, so POSTs run
+// freshness after a write comes from the digest probe, so POSTs run
 // directly.
 async function get(...args) {
   const { result } = await runInRealRequest(() => GET(...args), {
@@ -33,29 +33,26 @@ async function get(...args) {
 }
 
 // List mock that honors the owner_id filter the query uses and counts the
-// generation probe vs list selects separately — the cache proof. Each
-// chain builds synchronously (.select().eq().order()), so order() captures
-// the chain's filter/probe flags at call time; that keeps concurrent GETs
-// from mixing each other's filters even though the mock shares one query
-// object. `insert` models the DB write: it appends the inserted record
-// (created_at/updated_at defaulting to now, as the column defaults do) so
-// a POST genuinely changes the generation the next GET probes.
+// digest probe vs list selects separately — the cache proof. Each chain
+// builds synchronously (.select().eq().order()), so order() captures the
+// chain's filter flags at call time; the digest probe awaits the query
+// directly (no order()), so the query's own `then` captures its filter
+// the same way — that keeps concurrent GETs from mixing each other's
+// filters even though the mock shares one query object. `insert` models
+// the DB write: it appends the inserted record (created_at/updated_at
+// defaulting to now, as the column defaults do) so a POST genuinely
+// changes the digest the next GET probes.
 function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let ownerFilter;
-  let isProbe = false;
   const query = {
-    select: vi.fn((_columns, selectOptions) => {
-      isProbe = selectOptions?.count === "exact";
-      return query;
-    }),
+    select: vi.fn(() => query),
     eq: vi.fn((col, val) => {
       if (col === "owner_id") ownerFilter = val;
       return query;
     }),
     order: vi.fn(() => {
       const capturedOwner = ownerFilter;
-      const capturedIsProbe = isProbe;
-      const resolve = (limit) => {
+      const resolve = () => {
         const filtered =
           capturedOwner === undefined
             ? rows
@@ -63,25 +60,34 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
         const sorted = [...filtered].sort((a, b) =>
           String(b.updated_at).localeCompare(String(a.updated_at)),
         );
-        if (capturedIsProbe) {
-          counters.probeCalls += 1;
-          const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-          return { data: limited, error: null, count: filtered.length };
-        }
         counters.listSelectCalls += 1;
         if (failFirstListSelect && !counters.failedOnce) {
           counters.failedOnce = true;
           return { data: null, error: new Error("db down") };
         }
-        const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-        return { data: limited, error: null };
+        return { data: sorted, error: null };
       };
       return {
-        limit: vi.fn(async (n) => resolve(n)),
+        limit: vi.fn(async () => resolve()),
         then: (onFulfilled, onRejected) =>
           Promise.resolve(resolve()).then(onFulfilled, onRejected),
       };
     }),
+    // Digest-probe path: the probe awaits the query directly (no order,
+    // no limit) and resolves the filtered rows unsorted — the digest sorts
+    // by id, so probe order is irrelevant.
+    then: (onFulfilled, onRejected) => {
+      const capturedOwner = ownerFilter;
+      const resolve = () => {
+        counters.probeCalls += 1;
+        const filtered =
+          capturedOwner === undefined
+            ? rows
+            : rows.filter((row) => row.owner_id === capturedOwner);
+        return { data: filtered, error: null };
+      };
+      return Promise.resolve(resolve()).then(onFulfilled, onRejected);
+    },
     insert: vi.fn((record) => {
       if (onInsert) onInsert(record);
       return query;
@@ -181,6 +187,8 @@ describe("GET /api/forge/designer", () => {
   });
 
   it("returns 500 when the database fails", async () => {
+    // The digest probe awaits the query directly (no order()), so the
+    // failing query must fail the probe itself — not only the list read.
     const order = () => {
       const node = {
         limit: async () => ({ data: null, error: new Error("db down") }),
@@ -189,7 +197,13 @@ describe("GET /api/forge/designer", () => {
       };
       return node;
     };
-    const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn(order) };
+    const query = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn(order),
+      then: (onFulfilled, onRejected) =>
+        Promise.resolve({ data: null, error: new Error("db down") }).then(onFulfilled, onRejected),
+    };
     const client = { from: vi.fn(() => query) };
     createAuthenticatedForgeApplication.mockResolvedValue(authed(client));
     const response = await get();
@@ -208,6 +222,42 @@ describe("GET /api/forge/designer", () => {
     expect(second).toEqual(first);
     expect(db.listSelectCalls).toBe(1);
     expect(db.probeCalls).toBe(2);
+  });
+
+  it("S2A (fix round 2): renaming the OLDER design — updated_at still below the newest row's — is visible on the FIRST subsequent GET", async () => {
+    // The round-2 counterexample at the route level: the older row's rename
+    // leaves both the count and the max(updated_at) unchanged, so only a
+    // digest over the row contents can see it.
+    const rows = [
+      { id: "d-old", owner_id: "user_1", project_name: "Older", created_at: "a", updated_at: "09:00" },
+      { id: "d-new", owner_id: "user_1", project_name: "Newest", created_at: "a", updated_at: "18:00" },
+    ];
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
+    const warm = await (await get()).json();
+    expect(warm.projects.map((p) => p.name)).toEqual(["Newest", "Older"]);
+    expect(db.listSelectCalls).toBe(1);
+    rows[0] = { ...rows[0], project_name: "Older renamed", updated_at: "10:00" };
+    const firstAfterWrite = await (await get()).json();
+    expect(firstAfterWrite.projects.map((p) => p.name)).toEqual(["Newest", "Older renamed"]);
+    expect(db.listSelectCalls).toBe(2);
+    expect(db.probeCalls).toBe(2);
+  });
+
+  it("S2A (fix round 2): delete + create preserving count and max is visible on the FIRST subsequent GET", async () => {
+    const rows = [
+      { id: "d-doomed", owner_id: "user_1", project_name: "Doomed", created_at: "a", updated_at: "m" },
+      { id: "d-keeper", owner_id: "user_1", project_name: "Keeper", created_at: "a", updated_at: "z" },
+    ];
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
+    await get();
+    expect(db.listSelectCalls).toBe(1);
+    rows.splice(0, 1);
+    rows.push({ id: "d-replacement", owner_id: "user_1", project_name: "Replacement", created_at: "a", updated_at: "z" });
+    const firstAfterWrite = await (await get()).json();
+    expect(firstAfterWrite.projects.map((p) => p.id).sort()).toEqual(["d-keeper", "d-replacement"]);
+    expect(db.listSelectCalls).toBe(2);
   });
 
   it("S2A: a different actor re-queries instead of reading the first actor's cached entry", async () => {
@@ -356,7 +406,7 @@ describe("POST /api/forge/designer", () => {
     expect((await POST(request)).status).toBe(401);
   });
 
-  it("S2A: a successful POST makes the next GET fresh — the insert moves the generation, so the FIRST GET after the save re-queries", async () => {
+  it("S2A: a successful POST makes the next GET fresh — the insert moves the digest, so the FIRST GET after the save re-queries", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
@@ -388,7 +438,7 @@ describe("POST /api/forge/designer", () => {
     expect(db.listSelectCalls).toBe(1);
   });
 
-  it("S2A: back-to-back saves each move the generation — every GET after a save is fresh", async () => {
+  it("S2A: back-to-back saves each move the digest — every GET after a save is fresh", async () => {
     const rows = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];
@@ -403,10 +453,10 @@ describe("POST /api/forge/designer", () => {
     expect(db.listSelectCalls).toBe(3);
   });
 
-  it("S2A: a POST moves only its own owner's generation — another owner's cached entry survives", async () => {
+  it("S2A: a POST moves only its own owner's digest — another owner's cached entry survives", async () => {
     // Each owner's client models that owner's visible set: owner_2 cannot
     // see owner_1's rows, so owner_1's insert does not move owner_2's
-    // probe generation.
+    // probe digest.
     const rows1 = [
       { id: "d1", owner_id: "user_1", project_name: "Kitchen", created_at: "a", updated_at: "b" },
     ];

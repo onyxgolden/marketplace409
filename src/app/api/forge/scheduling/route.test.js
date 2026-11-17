@@ -2,7 +2,7 @@
 // served from the hot-read server cache (src/lib/forge/listReadCache.js),
 // and every GET below runs through the REAL installed Next.js 16.4.1 cache
 // (real-incremental-cache-test-harness.js) inside a simulated Route
-// Handler request — no fake cache. Counters prove what ran: the generation
+// Handler request — no fake cache. Counters prove what ran: the digest
 // probe on every GET, the private list select only on a cache miss, the
 // public example rows fresh on every GET. The public example rows are
 // fetched fresh on every GET and merged with the cached owner-scoped rows.
@@ -21,7 +21,7 @@ import { GET, POST } from "./route";
 
 // Every list GET runs inside a simulated Route Handler request, the way
 // production runs it (see the harness). POST never touches the cache —
-// freshness after a write comes from the generation probe, so POSTs run
+// freshness after a write comes from the digest probe, so POSTs run
 // directly.
 async function get(...args) {
   const { result } = await runInRealRequest(() => GET(...args));
@@ -29,30 +29,26 @@ async function get(...args) {
 }
 
 // List mock that honors the is_public filter the S2A split queries use,
-// and counts the generation probe vs private vs public selects separately
-// — the cache proof. Each chain builds synchronously (.select().eq()
-// .order()), so order() captures the chain's filter/probe flags at call
-// time; that keeps concurrent GETs from mixing each other's filters even
-// though the mock shares one query object. `insert` models the DB write:
-// it appends the inserted record (is_public defaulting to false, as the
-// column does) so a POST genuinely changes the generation the next GET
-// probes.
+// and counts the digest probe vs private vs public selects separately —
+// the cache proof. Each chain builds synchronously (.select().eq()
+// .order()), so order() captures the chain's filter flags at call time;
+// the digest probe awaits the query directly (no order()), so the query's
+// own `then` captures its filter the same way — that keeps concurrent
+// GETs from mixing each other's filters even though the mock shares one
+// query object. `insert` models the DB write: it appends the inserted
+// record (is_public defaulting to false, as the column does) so a POST
+// genuinely changes the digest the next GET probes.
 function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = null } = {}) {
   let isPublicFilter;
-  let isProbe = false;
   const query = {
-    select: vi.fn((_columns, selectOptions) => {
-      isProbe = selectOptions?.count === "exact";
-      return query;
-    }),
+    select: vi.fn(() => query),
     eq: vi.fn((col, val) => {
       if (col === "is_public") isPublicFilter = val;
       return query;
     }),
     order: vi.fn(() => {
       const capturedIsPublic = isPublicFilter;
-      const capturedIsProbe = isProbe;
-      const resolve = (limit) => {
+      const resolve = () => {
         const filtered =
           capturedIsPublic === undefined
             ? rows
@@ -60,26 +56,35 @@ function makeListNode(rows, counters, { failFirstListSelect = false, onInsert = 
         const sorted = [...filtered].sort((a, b) =>
           String(b.updated_at).localeCompare(String(a.updated_at)),
         );
-        if (capturedIsProbe) {
-          counters.probeCalls += 1;
-          const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-          return { data: limited, error: null, count: filtered.length };
-        }
         if (capturedIsPublic === false) counters.privateSelectCalls += 1;
         else if (capturedIsPublic === true) counters.publicSelectCalls += 1;
         if (failFirstListSelect && !counters.failedOnce) {
           counters.failedOnce = true;
           return { data: null, error: { message: "list failed" } };
         }
-        const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-        return { data: limited, error: null };
+        return { data: sorted, error: null };
       };
       return {
-        limit: vi.fn(async (n) => resolve(n)),
+        limit: vi.fn(async () => resolve()),
         then: (onFulfilled, onRejected) =>
           Promise.resolve(resolve()).then(onFulfilled, onRejected),
       };
     }),
+    // Digest-probe path: the probe awaits the query directly (no order,
+    // no limit) and resolves the filtered rows unsorted — the digest sorts
+    // by id, so probe order is irrelevant.
+    then: (onFulfilled, onRejected) => {
+      const capturedIsPublic = isPublicFilter;
+      const resolve = () => {
+        counters.probeCalls += 1;
+        const filtered =
+          capturedIsPublic === undefined
+            ? rows
+            : rows.filter((row) => row.is_public === capturedIsPublic);
+        return { data: filtered, error: null };
+      };
+      return Promise.resolve(resolve()).then(onFulfilled, onRejected);
+    },
     insert: vi.fn((record) => {
       if (onInsert) onInsert(record);
       return query;
@@ -206,6 +211,42 @@ describe("GET /api/forge/scheduling", () => {
     expect(db.probeCalls).toBe(2);
   });
 
+  it("S2A (fix round 2): renaming the OLDER project — updated_at still below the newest row's — is visible on the FIRST subsequent GET", async () => {
+    // The round-2 counterexample at the route level: the older row's rename
+    // leaves both the count and the max(updated_at) unchanged, so only a
+    // digest over the row contents can see it.
+    const rows = [
+      { id: "p-old", owner_id: "user_1", project_name: "Older", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "09:00" },
+      { id: "p-new", owner_id: "user_1", project_name: "Newest", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "18:00" },
+    ];
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    const warm = await (await get()).json();
+    expect(warm.projects.map((p) => p.name)).toEqual(["Newest", "Older"]);
+    expect(db.privateSelectCalls).toBe(1);
+    rows[0] = { ...rows[0], project_name: "Older renamed", updated_at: "10:00" };
+    const firstAfterWrite = await (await get()).json();
+    expect(firstAfterWrite.projects.map((p) => p.name)).toEqual(["Newest", "Older renamed"]);
+    expect(db.privateSelectCalls).toBe(2);
+    expect(db.probeCalls).toBe(2);
+  });
+
+  it("S2A (fix round 2): delete + create preserving count and max is visible on the FIRST subsequent GET", async () => {
+    const rows = [
+      { id: "p-doomed", owner_id: "user_1", project_name: "Doomed", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "m" },
+      { id: "p-keeper", owner_id: "user_1", project_name: "Keeper", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "z" },
+    ];
+    const db = listQuery(rows);
+    createAuthenticatedForgeApplication.mockResolvedValue({ ...AUTH(), supabaseClient: db.client });
+    await get();
+    expect(db.privateSelectCalls).toBe(1);
+    rows.splice(0, 1);
+    rows.push({ id: "p-replacement", owner_id: "user_1", project_name: "Replacement", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "z" });
+    const firstAfterWrite = await (await get()).json();
+    expect(firstAfterWrite.projects.map((p) => p.id).sort()).toEqual(["p-keeper", "p-replacement"]);
+    expect(db.privateSelectCalls).toBe(2);
+  });
+
   it("S2A: a different actor re-queries instead of reading the first actor's cached entry", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
@@ -314,7 +355,7 @@ describe("POST /api/forge/scheduling", () => {
     expect(response.status).toBe(500);
   });
 
-  it("S2A: a successful POST makes the next GET fresh — the insert moves the generation, so the FIRST GET after the save re-queries", async () => {
+  it("S2A: a successful POST makes the next GET fresh — the insert moves the digest, so the FIRST GET after the save re-queries", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
@@ -346,7 +387,7 @@ describe("POST /api/forge/scheduling", () => {
     expect(db.privateSelectCalls).toBe(1);
   });
 
-  it("S2A: a failed POST (sync error) returns 500, but the next GET still re-queries — the insert itself landed, so the generation moved", async () => {
+  it("S2A: a failed POST (sync error) returns 500, but the next GET still re-queries — the insert itself landed, so the digest moved", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
@@ -364,7 +405,7 @@ describe("POST /api/forge/scheduling", () => {
     expect(body.projects).toHaveLength(2);
   });
 
-  it("S2A: back-to-back saves each move the generation — every GET after a save is fresh", async () => {
+  it("S2A: back-to-back saves each move the digest — every GET after a save is fresh", async () => {
     const rows = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];
@@ -379,10 +420,10 @@ describe("POST /api/forge/scheduling", () => {
     expect(db.privateSelectCalls).toBe(3);
   });
 
-  it("S2A: a POST moves only its own owner's generation — another owner's cached entry survives", async () => {
+  it("S2A: a POST moves only its own owner's digest — another owner's cached entry survives", async () => {
     // Each actor's client models that actor's RLS-visible set: owner_2
     // cannot see owner_1's rows, so owner_1's insert does not move
-    // owner_2's probe generation.
+    // owner_2's probe digest.
     const rows1 = [
       { id: "p1", owner_id: "user_1", project_name: "Mine", start_date: "2026-01-01", end_date: "2026-12-31", is_public: false, created_at: "a", updated_at: "b" },
     ];

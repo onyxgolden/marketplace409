@@ -124,7 +124,7 @@ export async function PUT(request, { params }) {
     }
 
     // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The
-    // update bumps updated_at, so the next list GET's generation probe
+    // update bumps updated_at, so the next list GET's digest probe
     // moves and the pre-save entry cannot be served.
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {
@@ -147,7 +147,7 @@ export async function DELETE(_request, { params }) {
     if (error) throw error;
 
     // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The
-    // delete changes the row count, so the next list GET's generation probe
+    // delete changes the row set, so the next list GET's digest probe
     // moves and the pre-delete entry cannot be served.
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {

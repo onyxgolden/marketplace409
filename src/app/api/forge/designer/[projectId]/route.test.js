@@ -1,6 +1,6 @@
 // S2A (load-times slice 2) — fix round 1: the [projectId] routes perform
 // no cache operation (freshness after a write comes from the list GET's
-// generation probe — see listReadCache.js), so the freshness proof lives in
+// digest probe — see listReadCache.js), so the freshness proof lives in
 // the "S2A list freshness" section below, which warms the sibling list GET
 // through the REAL installed Next.js 16.4.1 cache
 // (real-incremental-cache-test-harness.js) and verifies the FIRST list GET
@@ -33,30 +33,29 @@ async function listGet(...args) {
 }
 
 // List-capable client for the freshness tests: designer_projects serves
-// the list probe + list selects (select/eq/order/limit, counting probe vs
+// the list digest probe + list selects (select/eq/order, counting probe vs
 // list), the PUT chain (update/eq/select, awaited directly — the update
 // applies the record to the shared rows, modelling the DB write), and the
 // DELETE chain (delete/eq, awaited directly). `rows` is the mutable
-// visible set.
+// visible set. The node's `then` resolves by chain: a PUT chain resolves
+// the updated ids, a DELETE chain resolves no error, and a probe chain
+// (select/eq, awaited directly, no update/delete) resolves the filtered
+// rows. PUT/DELETE flags are cleared on resolve, so a later probe chain
+// on the shared node can never misresolve as a mutation.
 function freshnessDb(rows) {
   const counters = { listSelectCalls: 0, probeCalls: 0 };
   let ownerFilter;
-  let isProbe = false;
   let lastUpdate = null;
   let deleted = false;
   const node = {
-    select: vi.fn((_columns, selectOptions) => {
-      isProbe = selectOptions?.count === "exact";
-      return node;
-    }),
+    select: vi.fn(() => node),
     eq: vi.fn((col, val) => {
       if (col === "owner_id") ownerFilter = val;
       return node;
     }),
     order: vi.fn(() => {
       const capturedOwner = ownerFilter;
-      const capturedIsProbe = isProbe;
-      const resolve = (limit) => {
+      const resolve = () => {
         const filtered =
           capturedOwner === undefined
             ? rows
@@ -64,17 +63,11 @@ function freshnessDb(rows) {
         const sorted = [...filtered].sort((a, b) =>
           String(b.updated_at).localeCompare(String(a.updated_at)),
         );
-        if (capturedIsProbe) {
-          counters.probeCalls += 1;
-          const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-          return { data: limited, error: null, count: filtered.length };
-        }
         counters.listSelectCalls += 1;
-        const limited = typeof limit === "number" ? sorted.slice(0, limit) : sorted;
-        return { data: limited, error: null };
+        return { data: sorted, error: null };
       };
       return {
-        limit: vi.fn(async (n) => resolve(n)),
+        limit: vi.fn(async () => resolve()),
         then: (onFulfilled, onRejected) =>
           Promise.resolve(resolve()).then(onFulfilled, onRejected),
       };
@@ -94,13 +87,26 @@ function freshnessDb(rows) {
       return node;
     }),
     then: (onFulfilled, onRejected) => {
-      // PUT awaits the update chain (resolves the updated ids); DELETE
-      // awaits the delete chain (resolves no error). The list chains never
-      // await this node directly — they go through order().
-      const resolution = lastUpdate
-        ? { data: [{ id: "design_1" }], error: null }
-        : { data: null, error: null };
-      return Promise.resolve(resolution).then(onFulfilled, onRejected);
+      // Capture the chain flags synchronously at await time, then clear
+      // the mutation flags so the next chain starts clean.
+      const wasUpdate = lastUpdate !== null;
+      const wasDelete = deleted;
+      lastUpdate = null;
+      deleted = false;
+      const capturedOwner = ownerFilter;
+      const resolve = () => {
+        if (wasUpdate) return { data: [{ id: "design_1" }], error: null };
+        if (wasDelete) return { data: null, error: null };
+        // Digest-probe chain: resolve the filtered rows unsorted — the
+        // digest sorts by id, so probe order is irrelevant.
+        counters.probeCalls += 1;
+        const filtered =
+          capturedOwner === undefined
+            ? rows
+            : rows.filter((row) => row.owner_id === capturedOwner);
+        return { data: filtered, error: null };
+      };
+      return Promise.resolve(resolve()).then(onFulfilled, onRejected);
     },
   };
   return {
@@ -182,7 +188,7 @@ describe("PUT /api/forge/designer/[projectId]", () => {
     expect(record.design.walls).toHaveLength(1);
     expect(record.project_name).toBe("Kitchen");
     // S2A: the save performs no cache operation — the updated_at bump
-    // moves the list generation, proven in "S2A list freshness" below.
+    // moves the list digest, proven in "S2A list freshness" below.
   });
 
   // HOME DESIGNER slice 2: the persisted `design` column holds the full
@@ -234,7 +240,7 @@ describe("PUT /api/forge/designer/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
     const response = await PUT(putRequest({ design }), { params });
     expect(response.status).toBe(404);
-    // S2A: a not-found save writes nothing, so the list generation does
+    // S2A: a not-found save writes nothing, so the list digest does
     // not move.
   });
 });
@@ -252,7 +258,7 @@ describe("DELETE /api/forge/designer/[projectId]", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true, id: "design_1" });
     // S2A: the delete performs no cache operation — the removed row moves
-    // the list generation, proven in "S2A list freshness" below.
+    // the list digest, proven in "S2A list freshness" below.
   });
 });
 
@@ -284,7 +290,7 @@ describe("workspace authorization on single-project routes", () => {
     expect(eq).toHaveBeenCalledWith("owner_id", "owner1");
     expect(eq).toHaveBeenCalledWith("id", "design_1");
     // S2A: the save is scoped to the canonical workspace owner, so its
-    // updated_at bump moves that owner's list generation — the co-owner's
+    // updated_at bump moves that owner's list digest — the co-owner's
     // save is visible to the owner on the next list GET (proven in "S2A
     // list freshness" below).
   });
@@ -303,7 +309,7 @@ describe("workspace authorization on single-project routes", () => {
   });
 });
 
-describe("S2A list freshness (generation probe, real cache)", () => {
+describe("S2A list freshness (digest probe, real cache)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   const LIST_ROW = {
@@ -319,7 +325,7 @@ describe("S2A list freshness (generation probe, real cache)", () => {
     });
   }
 
-  it("a successful PUT makes the FIRST next list GET fresh — the updated_at bump moves the generation", async () => {
+  it("a successful PUT makes the FIRST next list GET fresh — the updated_at bump moves the digest", async () => {
     const design = addWall(createEmptyDesign("Kitchen"), { x: 0, y: 0 }, { x: 144, y: 0 });
     const db = freshnessDb([{ ...LIST_ROW }]);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
@@ -338,7 +344,7 @@ describe("S2A list freshness (generation probe, real cache)", () => {
     expect(fresh.projects[0].updatedAt).not.toBe("b");
   });
 
-  it("a successful DELETE makes the FIRST next list GET fresh — the removed row moves the generation", async () => {
+  it("a successful DELETE makes the FIRST next list GET fresh — the removed row moves the digest", async () => {
     const db = freshnessDb([{ ...LIST_ROW }]);
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
     const warm = await (await listGet()).json();
@@ -351,5 +357,30 @@ describe("S2A list freshness (generation probe, real cache)", () => {
     const fresh = await (await listGet()).json();
     expect(db.listSelectCalls).toBe(2);
     expect(fresh.projects).toHaveLength(0);
+  });
+
+  it("a successful PUT renaming the OLDER design makes the FIRST next list GET fresh — its updated_at stays below the newest row's (fix round 2)", async () => {
+    // The round-2 counterexample through a real PUT: design_1 is the older
+    // row, design_2 the newest. The route stamps updated_at with real
+    // now, so the newest row carries a far-future timestamp — the rename
+    // still lands below it, and count and max do not move. Only the digest
+    // sees it.
+    const design = addWall(createEmptyDesign("Kitchen"), { x: 0, y: 0 }, { x: 144, y: 0 });
+    const db = freshnessDb([
+      { ...LIST_ROW, id: "design_1", project_name: "Kitchen", updated_at: "2026-01-01" },
+      { ...LIST_ROW, id: "design_2", project_name: "Newest", updated_at: "2999-01-01" },
+    ]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
+    const warm = await (await listGet()).json();
+    expect(warm.projects.map((p) => p.name)).toEqual(["Newest", "Kitchen"]);
+    expect(db.listSelectCalls).toBe(1);
+    const saved = await PUT(putRequest({ name: "Kitchen renamed", design }), { params });
+    expect(saved.status).toBe(200);
+    // The update already applied the record to the shared rows (the mock
+    // models the DB write), so the next list GET's digest sees the new
+    // name and re-queries.
+    const fresh = await (await listGet()).json();
+    expect(db.listSelectCalls).toBe(2);
+    expect(fresh.projects.map((p) => p.name)).toEqual(["Newest", "Kitchen renamed"]);
   });
 });

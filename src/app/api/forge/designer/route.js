@@ -66,8 +66,8 @@ export async function POST(request) {
     if (error) throw error;
 
     // S2A: no cache step here by design (fix round 1, P1-1/P1-2). The list
-    // GET re-probes the generation on every request, and the insert above
-    // changes the count, so the next list read cannot serve the pre-write
+    // GET re-probes the digest on every request, and the insert above
+    // changes the digest, so the next list read cannot serve the pre-write
     // entry — freshness needs no invalidation call that could fail silently.
     return NextResponse.json({ success: true, id });
   } catch (error) {
