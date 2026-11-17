@@ -35,10 +35,23 @@ const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass,
 // Named export so ForgeApplicationRail can render the identical
 // cross-workspace switcher above its own Forge-internal sub-nav, instead
 // of duplicating this markup.
-export function WorkspaceLinks({ pathname, expanded, onNavigate }) {
+//
+// showDeveloper (default true): the Dev tile points at /forge/developer,
+// whose page 404s for anyone who is not an authorized programmer
+// (loadProgrammerAuthorization + notFound()). The Forge rail passes the
+// server-checked programmer boolean here so non-programmers — including
+// the platform owner, who is deliberately not a programmer — never see a
+// link to a page they cannot open. Other WorkspaceShell uses keep the
+// default: inside the developer subtree the viewer is authorized by the
+// page gate itself.
+export function WorkspaceLinks({ pathname, expanded, onNavigate, showDeveloper = true }) {
+  const visibleWorkspaces = showDeveloper
+    ? WORKSPACES
+    : WORKSPACES.filter((workspace) => workspace.href !== "/forge/developer");
+
   return (
     <nav aria-label="Workspaces" className="space-y-2">
-      {WORKSPACES.map((workspace) => {
+      {visibleWorkspaces.map((workspace) => {
         const Icon = WORKSPACE_ICONS[workspace.iconName];
         const active = isWorkspaceActive(pathname, workspace);
 

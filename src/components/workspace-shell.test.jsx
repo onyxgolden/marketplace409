@@ -28,7 +28,7 @@ vi.mock("@/lib/auth/signOutSafely.js", () => ({
   friendlySignOutError: (error) => error?.message ?? "Sign-out didn't complete. Please try again.",
 }));
 
-import WorkspaceShell, { WorkspaceRightRail } from "./workspace-shell.jsx";
+import WorkspaceShell, { WorkspaceLinks, WorkspaceRightRail } from "./workspace-shell.jsx";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -233,6 +233,40 @@ describe("WorkspaceShell mobile drawer", () => {
       drawer.parentElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(container.querySelector('aside[aria-label="Workspace navigation"]')).toBeNull();
+  });
+});
+
+describe("WorkspaceLinks developer tile gating", () => {
+  function mountLinks(props) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkspaceLinks pathname="/forge" expanded {...props} />);
+    });
+    mounted = { container, root };
+    return container;
+  }
+
+  it("shows the Dev link by default", () => {
+    const container = mountLinks({});
+    expect(container.querySelector('a[href="/forge/developer"]')).not.toBeNull();
+  });
+
+  it("shows the Dev link when showDeveloper is true", () => {
+    const container = mountLinks({ showDeveloper: true });
+    expect(container.querySelector('a[href="/forge/developer"]')).not.toBeNull();
+  });
+
+  it("hides the Dev link when showDeveloper is false, and keeps every other workspace", () => {
+    const container = mountLinks({ showDeveloper: false });
+    // The developer page 404s for non-programmers, so the switcher must not
+    // advertise it to them — but nothing else may disappear with it.
+    expect(container.querySelector('a[href="/forge/developer"]')).toBeNull();
+    expect(container.querySelector('a[href="/forge/rental"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge/scheduling"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge/designer"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/forge"]')).not.toBeNull();
   });
 });
 
