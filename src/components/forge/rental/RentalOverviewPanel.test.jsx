@@ -180,6 +180,75 @@ describe("RentalOverviewPanel five-card dashboard", () => {
   });
 });
 
+describe("RentalOverviewPanel portfolio strip (Phone Slice 2)", () => {
+  let mounted;
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
+
+  const report = { summary: { openBalanceCents: 87550, overdueBalanceCents: 12000 } };
+
+  // Two-unit base (same shape as the five-card dashboard's richFixture, which
+  // lives in another describe's scope): payments/maintenance/work orders only
+  // feed the cards below the header, the strip tests only need units + leases.
+  function smallFixture() {
+    return {
+      units: [{ id: "u1" }, { id: "u2" }],
+      leases: [
+        { id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(20) },
+        { id: "l2", unit_id: "u2", status: "active", end_date: daysFromNow(200) },
+      ],
+      payments: [
+        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 150000, refunded_amount_cents: 0, deposit_state: "deposited" },
+      ],
+      maintenanceRequests: [{ status: "open" }],
+      workOrders: [],
+    };
+  }
+
+  function bigFixture(totalUnits, occupiedUnits) {
+    const units = Array.from({ length: totalUnits }, (_, i) => ({ id: `u${i + 1}`, label: `Unit ${i + 1}` }));
+    const leases = Array.from({ length: occupiedUnits }, (_, i) => ({
+      id: `l${i + 1}`, unit_id: `u${i + 1}`, status: "active", end_date: daysFromNow(200),
+    }));
+    return { ...smallFixture(), units, leases };
+  }
+
+  function strip(container) {
+    return container.querySelector("[data-portfolio-strip]");
+  }
+
+  it("caps the decorative avatar strip at 7 icons plus a +N overflow marker for the observed 23-unit portfolio", () => {
+    mounted = mount(<RentalOverviewPanel initialData={bigFixture(23, 21)} initialReport={report} onNavigate={() => {}} />);
+    const circles = strip(mounted.container).querySelectorAll(":scope > span");
+    expect(circles).toHaveLength(8);
+    expect(circles[7].textContent).toBe("+16");
+    expect(mounted.container.textContent).toContain("23 units · 91% occupied");
+  });
+
+  it("caps the strip the same way for a synthetic 60-unit portfolio — the bound is not tied to 23 units", () => {
+    mounted = mount(<RentalOverviewPanel initialData={bigFixture(60, 55)} initialReport={report} onNavigate={() => {}} />);
+    const circles = strip(mounted.container).querySelectorAll(":scope > span");
+    expect(circles).toHaveLength(8);
+    expect(circles[7].textContent).toBe("+53");
+    expect(mounted.container.textContent).toContain("60 units · 92% occupied");
+  });
+
+  it("shows every unit icon and no overflow marker for a small portfolio", () => {
+    mounted = mount(<RentalOverviewPanel initialData={smallFixture()} initialReport={report} onNavigate={() => {}} />);
+    const circles = strip(mounted.container).querySelectorAll(":scope > span");
+    expect(circles).toHaveLength(2);
+    expect(strip(mounted.container).textContent).not.toContain("+");
+    expect(mounted.container.textContent).toContain("2 units · 100% occupied");
+  });
+
+  it("keeps the full occupancy metric as plain text next to the strip (no ellipsis, no hidden metric)", () => {
+    mounted = mount(<RentalOverviewPanel initialData={bigFixture(23, 21)} initialReport={report} onNavigate={() => {}} />);
+    const metrics = [...mounted.container.querySelectorAll("span")].find((el) => /units · \d+% occupied/.test(el.textContent || ""));
+    expect(metrics).toBeTruthy();
+    expect(metrics.textContent).toContain("23 units · 91% occupied");
+    expect(metrics.className).not.toContain("truncate");
+  });
+});
+
 describe("RentalOverviewPanel billing status visibility", () => {
   let mounted;
   afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });

@@ -36,11 +36,24 @@ function BillingStatusChip({ billingEnabled, onNavigate }) {
   );
 }
 
-function PortfolioStrip({ units }) {
+// Phone Slice 2: the strip is decorative (the metrics line beside it carries the
+// numbers for sighted users and screen readers), so it stays bounded no matter
+// how big the portfolio gets -- at most 7 unit icons plus a "+N" circle for the
+// rest. Without the bound, the shrink-0 circles plus the metrics text push the
+// header row past the card's width on a ~360px phone and the card's
+// overflow-hidden clips the metrics off the edge.
+const PORTFOLIO_STRIP_MAX_ICONS = 7;
+
+function PortfolioStrip({ units, totalUnits }) {
   if (units.length === 0) return null;
+  const shownUnits = units.slice(0, PORTFOLIO_STRIP_MAX_ICONS);
+  // The "+N" counts the portfolio units NOT shown as icons, from the
+  // summary's already-computed total -- not from the capped icon list, which
+  // would undercount it (e.g. "+1" for a 23-unit portfolio).
+  const overflowCount = Math.max(0, (totalUnits ?? units.length) - shownUnits.length);
   return (
-    <div className="flex items-center -space-x-2" aria-hidden="true">
-      {units.map((unit) => (
+    <div className="flex min-w-0 max-w-full items-center -space-x-2" aria-hidden="true" data-portfolio-strip>
+      {shownUnits.map((unit) => (
         <span key={unit.id} title={unit.label}
           className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-white text-[10px] font-black text-white shadow-sm dark:border-slate-900 ${unit.occupied ? "bg-sky-700" : "bg-slate-400"}`}>
           {unit.photoUrl ? (
@@ -51,6 +64,13 @@ function PortfolioStrip({ units }) {
           )}
         </span>
       ))}
+      {overflowCount > 0 && (
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-white bg-slate-700 text-[10px] font-black text-white shadow-sm dark:border-slate-900"
+        >
+          +{overflowCount}
+        </span>
+      )}
     </div>
   );
 }
@@ -182,9 +202,11 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
             <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
             <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
             <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Exceptions first, then the numbers that describe the portfolio — every figure comes from your rental records.</p>
-            <div className="mt-4 flex items-center gap-3">
-              <PortfolioStrip units={summary.portfolioUnits} />
-              <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
+            {/* Phone Slice 2: wrap so the metrics line drops to its own line
+                instead of being pushed off the card edge when the strip is wide. */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <PortfolioStrip units={summary.portfolioUnits} totalUnits={summary.totalUnits} />
+              <span className="min-w-0 text-sm font-bold text-slate-600 dark:text-slate-400">
                 {summary.totalUnits} unit{summary.totalUnits === 1 ? "" : "s"} · {occupancyPercent}% occupied
               </span>
             </div>
