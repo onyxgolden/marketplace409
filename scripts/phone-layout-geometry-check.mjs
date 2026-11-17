@@ -3,9 +3,9 @@
 // Usage:
 //   node scripts/phone-layout-geometry-check.mjs --tag before|after [--port 3100]
 //     [--widths 360,390,412,430,768,1919] [--cases designer,work-header,app-header,forge-header,rental-23]
-//     [--keep-server]
+//     [--out <evidence-dir>] [--keep-server]
 //
-// Spawns the Next dev server for this worktree (unless --keep-server, which
+// Spawns the Next dev server for THIS checkout (unless --keep-server, which
 // assumes one is already running on --port), renders the real components in
 // /phone-fixture at each viewport width, and measures:
 //   - documentElement.scrollWidth <= innerWidth + 1 (page-level overflow)
@@ -20,32 +20,100 @@
 //   - rental-23: Slice 2 regression guard (7 icons + +16, metrics line,
 //     billing Active)
 //
-// Writes screenshots + results JSON to ~/workspace/phone-slice5-evidence/.
+// Portability (fix round 1): the repository root is resolved from this
+// file's own location (import.meta.url) and validated against the
+// marketplace409 package.json — Playwright is imported from the
+// project-declared dependency and the dev server is launched with cwd set
+// to this exact checkout, so the script tests the checkout it lives in
+// from any clone, worktree, or CI machine. No absolute builder paths.
+//
+// Writes screenshots + results JSON to --out (default
+// <repo>/.phone-layout-evidence/, git-ignored). Receipts embed the exact
+// tested HEAD SHA, the widths/cases run, and the Chromium version.
+//
+// Desktop (1919px) is a NO-REGRESSION comparison against the TRACKED
+// baseline in scripts/phone-layout-geometry-baseline.json — not an
+// external before-run file. The baseline records the intersections and
+// outside-pane labels measured on the slice-5 fixture plan at base
+// 438a02e0 AND at the slice head; both measured zero, so the allowlist
+// is deliberately empty and ANY 1919px intersection is a new defect
+// that fails the guard. A missing or unreadable baseline is a hard
+// error (exit 2), never a silent pass or a spurious geometry failure;
+// an allowlist entry that no longer occurs only warns.
+//
 // Exits non-zero when any check fails, so it can gate a PR. Screenshots
 // alone never replace the numerical geometry below.
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
 
-const WORKTREE = "/home/hatch/workspace/build-wt/phone-slice5";
-const require = createRequire(`${WORKTREE}/node_modules/playwright/index.js`);
-const { chromium } = require("playwright");
-
-const OUT = "/home/hatch/workspace/phone-slice5-evidence";
-
-// The before-run designer measurement at a width, for the 1919
-// no-regression comparison (desktop defects that pre-exist the slice do
-// not count as new failures). Returns null when no before file exists.
-function loadBeforeDesigner(width) {
+// --- Checkout resolution: this file's own location, never a hardcoded path.
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
+function resolveRepoRoot() {
+  const pkgPath = path.join(REPO_ROOT, "package.json");
+  let pkg;
   try {
-    const before = JSON.parse(fs.readFileSync(path.join(OUT, "results-before.json"), "utf8"));
-    const check = before.checks.find((x) => x.case === "designer" && x.width === width);
-    return check?.designer || null;
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
   } catch {
-    return null;
+    throw new Error(
+      `phone-layout-geometry-check: no package.json at ${pkgPath} — run from a marketplace409 checkout`
+    );
+  }
+  if (pkg.name !== "marketplace409") {
+    throw new Error(
+      `phone-layout-geometry-check: ${pkgPath} is not the marketplace409 app (name=${pkg.name}) — refusing to test the wrong checkout`
+    );
+  }
+  return REPO_ROOT;
+}
+const ROOT = resolveRepoRoot();
+
+function testedHeadSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+  } catch {
+    return "unknown (not a git checkout)";
   }
 }
+
+// --- Tracked 1919px desktop baseline (see the JSON file for the measured
+// provenance). Loaded once at startup: a missing/stale baseline must never
+// make a routine correct PR check fail spuriously or be silently accepted,
+// so a missing or malformed baseline is a hard error here, not a geometry
+// verdict.
+const BASELINE_PATH = path.join(SCRIPT_DIR, "phone-layout-geometry-baseline.json");
+function loadDesktopBaseline() {
+  let raw;
+  try {
+    raw = fs.readFileSync(BASELINE_PATH, "utf8");
+  } catch {
+    throw new Error(
+      `phone-layout-geometry-check: tracked desktop baseline missing at ${BASELINE_PATH} — ` +
+        `refusing to evaluate 1919px without it (a missing baseline must not silently pass ` +
+        `or spuriously fail the desktop comparison)`
+    );
+  }
+  let baseline;
+  try {
+    baseline = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`phone-layout-geometry-check: baseline ${BASELINE_PATH} is not valid JSON: ${err.message}`);
+  }
+  if (baseline.version !== 1 || baseline.case !== "designer" || baseline.width !== 1919) {
+    throw new Error(
+      `phone-layout-geometry-check: baseline ${BASELINE_PATH} has unexpected shape ` +
+        `(want version 1, case "designer", width 1919)`
+    );
+  }
+  if (!Array.isArray(baseline.expectedIntersections) || !Array.isArray(baseline.expectedOutsidePane)) {
+    throw new Error(`phone-layout-geometry-check: baseline ${BASELINE_PATH} lacks expectedIntersections/expectedOutsidePane arrays`);
+  }
+  return baseline;
+}
+
 const args = process.argv.slice(2);
 const argVal = (flag, fallback) => {
   const i = args.indexOf(flag);
@@ -55,11 +123,18 @@ const tag = argVal("--tag", "check");
 const port = argVal("--port", "3100");
 const widthsArg = argVal("--widths", undefined);
 const casesArg = argVal("--cases", undefined);
+const outArg = argVal("--out", undefined);
 const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
 
 const WIDTHS = widthsArg ? widthsArg.split(",").map(Number) : [360, 390, 412, 430, 768, 1919];
 const CASES = casesArg ? casesArg.split(",") : ["designer", "work-header", "app-header", "forge-header", "rental-23"];
+
+// Evidence goes under the repo by default (git-ignored), or wherever
+// --out points. Never a hardcoded builder path.
+const OUT = outArg ? path.resolve(outArg) : path.join(ROOT, ".phone-layout-evidence");
+
+const BASELINE = loadDesktopBaseline();
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -316,13 +391,26 @@ async function waitForServer(port, timeoutMs = 120000) {
 async function main() {
   let server = null;
   if (!keepServer) {
-    server = spawn("npm", ["run", "dev", "--", "-p", String(port)], { cwd: WORKTREE, stdio: ["ignore", "pipe", "pipe"] });
+    server = spawn("npm", ["run", "dev", "--", "-p", String(port)], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
     server.stdout.on("data", () => {});
     server.stderr.on("data", () => {});
     await waitForServer(port);
   }
   const browser = await chromium.launch();
-  const results = { tag, base: BASE, at: new Date().toISOString(), checks: [], failures: [] };
+  const results = {
+    tag,
+    base: BASE,
+    at: new Date().toISOString(),
+    repoRoot: ROOT,
+    headSha: testedHeadSha(),
+    widths: WIDTHS,
+    cases: CASES,
+    browser: { name: "chromium", version: browser.version() },
+    baseline: { file: "scripts/phone-layout-geometry-baseline.json", measuredAtBase: BASELINE.measuredAtBase ?? null },
+    checks: [],
+    failures: [],
+    warnings: [],
+  };
   try {
     for (const c of CASES) {
       for (const width of WIDTHS) {
@@ -360,20 +448,36 @@ async function main() {
         if (check.page.outOfViewportCount > 0) fail(`${check.page.outOfViewportCount} controls outside viewport: ${JSON.stringify(check.page.outOfViewportControls)}`);
         if (c === "designer" && check.designer) {
           const d = check.designer;
-          // Desktop (1919) is a NO-REGRESSION comparison, not a zero-defect
-          // one: the slice is phone-only, and the desktop deck-label x
-          // 720" intersection pre-exists there (the selector never runs on
-          // a desktop pane, by design). Only failures NEW vs the before
-          // run count at 1919.
+          // Desktop (1919) is a NO-REGRESSION comparison against the
+          // TRACKED baseline, not a zero-defect rule and not an external
+          // before-run file: only intersections / outside-pane labels
+          // NOT in the baseline count. The baseline's allowlist is
+          // deliberately empty (measured zero at base and at head), so
+          // any 1919px intersection is a new defect and fails here.
+          // At every other width the rule is zero intersections.
           let newIntersections = d.intersections;
           let newOutside = d.outsidePane;
-          if (width === 1919 && tag === "after") {
-            const before = loadBeforeDesigner(1919);
-            if (before) {
-              const beforePairs = new Set(before.intersections.map((p) => JSON.stringify([...p].sort())));
-              newIntersections = d.intersections.filter((p) => !beforePairs.has(JSON.stringify([...p].sort())));
-              const beforeOutside = new Set(before.outsidePane);
-              newOutside = d.outsidePane.filter((t) => !beforeOutside.has(t));
+          if (width === 1919) {
+            const pairKey = (p) => JSON.stringify([...p].sort());
+            const expectedPairs = new Set(BASELINE.expectedIntersections.map(pairKey));
+            newIntersections = d.intersections.filter((p) => !expectedPairs.has(pairKey(p)));
+            const expectedOutside = new Set(BASELINE.expectedOutsidePane);
+            newOutside = d.outsidePane.filter((t) => !expectedOutside.has(t));
+            // Stale-baseline watch: an allowlist entry that no longer
+            // occurs, or a label inventory that drifted from the
+            // recorded one, only warns — it never fails a correct PR
+            // and never silently passes a new defect.
+            for (const p of BASELINE.expectedIntersections) {
+              if (!d.intersections.some((q) => pairKey(q) === pairKey(p))) {
+                results.warnings.push(`designer@1919: baseline pair no longer occurs (stale allowlist entry): ${JSON.stringify(p)}`);
+              }
+            }
+            if (Array.isArray(BASELINE.expectedLabels)) {
+              const got = d.labels.map((l) => l.text).sort();
+              const want = [...BASELINE.expectedLabels].sort();
+              if (JSON.stringify(got) !== JSON.stringify(want)) {
+                results.warnings.push(`designer@1919: label inventory drifted from baseline (fixture plan changed? re-measure the baseline): got ${JSON.stringify(got)}`);
+              }
             }
           }
           if (newIntersections.length) fail(`label intersections: ${JSON.stringify(newIntersections)}`);
@@ -411,8 +515,9 @@ async function main() {
   }
   const outFile = path.join(OUT, `results-${tag}.json`);
   fs.writeFileSync(outFile, JSON.stringify(results, null, 2));
-  console.log(`wrote ${outFile}: ${results.checks.length} checks, ${results.failures.length} failures`);
+  console.log(`wrote ${outFile}: ${results.checks.length} checks, ${results.failures.length} failures, ${results.warnings.length} warnings`);
   for (const f of results.failures) console.log(`FAIL ${f}`);
+  for (const w of results.warnings) console.log(`WARN ${w}`);
   process.exit(results.failures.length ? 1 : 0);
 }
 
