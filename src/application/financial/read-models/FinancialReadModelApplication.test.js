@@ -4,6 +4,10 @@ import {
   FinancialReadModelApplication,
 } from "./FinancialReadModelApplication.js";
 
+import {
+  financialWorkspaceReadModelAdapter,
+} from "./FinancialWorkspaceReadModelAdapter.js";
+
 function buildWorkspace() {
   return Object.freeze({
     portfolio: Object.freeze({
@@ -500,7 +504,7 @@ describe("FinancialReadModelApplication", () => {
   });
 
   test("S1: concurrent dashboard builders share one workspace and position build", async () => {
-    // Mirrors src/app/forge/page.js: the four dashboard builders plus a
+    // Mirrors src/app/forge/page.jsx: the four dashboard builders plus a
     // direct buildWorkspace fire concurrently for the same owner+scope.
     // Before this slice each one re-scanned the owner's full
     // financial-event history; now all five share one scan and the
@@ -789,5 +793,173 @@ describe("FinancialReadModelApplication", () => {
     const { application } = buildApplication();
 
     expect(Object.isFrozen(application)).toBe(true);
+  });
+});
+
+// --- Dashboard summary mode (load-times Slice 3) -------------------------------------------
+describe("FinancialReadModelApplication -- dashboard summary", () => {
+  function buildSummaryWorkspace(overrides = {}) {
+    return Object.freeze({
+      portfolio: Object.freeze({
+        income: 1500,
+        expenses: 250,
+        noi: 1250,
+        cashFlow: 1250,
+        transactionCount: 2,
+      }),
+      properties: Object.freeze([]),
+      categories: Object.freeze([]),
+      transactionsStatus: "not-loaded",
+      summaryVersion: "forge_dashboard_financial_summary_v1",
+      scope: "business",
+      ...overrides,
+    });
+  }
+
+  function buildSummaryApplication(overrides = {}) {
+    const summaryWorkspace = buildSummaryWorkspace(
+      overrides.summaryWorkspace || {},
+    );
+    const buildDashboardSummary = vi.fn(async () => summaryWorkspace);
+    const legacyBuildWorkspace = vi.fn(async () => buildWorkspace());
+    const position = buildPosition();
+    const positionProjection = buildPositionProjection();
+
+    const application = new FinancialReadModelApplication({
+      financialWorkspaceQueryService: {
+        buildWorkspace: legacyBuildWorkspace,
+        buildDashboardSummary,
+      },
+      readModelAdapter: financialWorkspaceReadModelAdapter,
+      financialPositionQueryService: {
+        buildPosition: vi.fn(async () => position),
+      },
+      financialPositionReadModelAdapter: {
+        buildPosition: vi.fn(() => positionProjection),
+      },
+      currentOwnerId: vi.fn(async () => "owner-1"),
+    });
+
+    return {
+      application,
+      buildDashboardSummary,
+      buildWorkspace: legacyBuildWorkspace,
+      summaryWorkspace,
+    };
+  }
+
+  test("summary builders derive the same KPIs from the SQL totals", async () => {
+    const { application } = buildSummaryApplication();
+
+    const kpiModel = await application.buildKPIModelSummary();
+    const executiveSummary =
+      await application.buildExecutiveSummarySummary();
+
+    expect(kpiModel.kpis.revenue).toBe(1500);
+    expect(kpiModel.kpis.profit).toBe(1250);
+    expect(kpiModel.kpis.transactionCount).toBe(2);
+    expect(executiveSummary.health.label).toBe("Healthy");
+  });
+
+  test("business summary reports carry the not-loaded marker and no transaction rows", async () => {
+    const { application } = buildSummaryApplication();
+
+    const business = await application.buildBusinessDashboardSummary();
+
+    expect(business.reports.transactionsStatus).toBe("not-loaded");
+    // No transaction rows in memory (undefined) and none on the wire:
+    // the diagnostic layer renders JSON, where undefined keys drop.
+    expect(business.reports.transactions).toBeUndefined();
+    expect(JSON.stringify(business.reports)).not.toContain(
+      '"transactions"',
+    );
+    expect(business.reports.portfolio.income).toBe(1500);
+  });
+
+  test("the full /forge call graph invokes the SQL summary once and never the legacy workspace build", async () => {
+    const { application, buildDashboardSummary, buildWorkspace } =
+      buildSummaryApplication();
+
+    // The exact call graph src/app/forge/page.jsx performs: summary
+    // dashboard first (for the canonical-intelligence builder), then
+    // the four summary builders concurrently; the page reuses the
+    // summary's workspace instead of a second workspace call, so the
+    // RPC fires once per owner+scope per request (fix round 1).
+    const dashboardSummary =
+      await application.buildDashboardSummary();
+
+    const [business, investor, kpiModel, executiveSummary] =
+      await Promise.all([
+        application.buildBusinessDashboardSummary(),
+        application.buildInvestorDashboardSummary(),
+        application.buildKPIModelSummary(),
+        application.buildExecutiveSummarySummary(),
+      ]);
+
+    const workspace = dashboardSummary.workspace;
+
+    expect(buildDashboardSummary).toHaveBeenCalledTimes(1);
+    expect(buildWorkspace).not.toHaveBeenCalled();
+    expect(dashboardSummary.workspace).toBe(workspace);
+    expect(business.dashboard).toBe(dashboardSummary.dashboard);
+    expect(investor.kpis).toBe(dashboardSummary.dashboard.kpis);
+    expect(kpiModel.kpis).toBe(dashboardSummary.dashboard.kpis);
+    expect(executiveSummary.health).toBe(
+      dashboardSummary.dashboard.health,
+    );
+    expect(workspace.transactionsStatus).toBe("not-loaded");
+  });
+
+  test("a new request after a write sees the new totals -- no cross-request summary cache", async () => {
+    let income = 1500;
+
+    const buildDashboardSummary = vi.fn(async () =>
+      buildSummaryWorkspace({
+        portfolio: Object.freeze({
+          income,
+          expenses: 250,
+          noi: 1250,
+          cashFlow: 1250,
+          transactionCount: 2,
+        }),
+      }),
+    );
+
+    function buildRequestApplication() {
+      return new FinancialReadModelApplication({
+        financialWorkspaceQueryService: {
+          buildWorkspace: vi.fn(async () => buildWorkspace()),
+          buildDashboardSummary,
+        },
+        readModelAdapter: financialWorkspaceReadModelAdapter,
+        currentOwnerId: vi.fn(async () => "owner-1"),
+      });
+    }
+
+    const first = await (
+      await buildRequestApplication().buildKPIModelSummary()
+    ).kpis;
+
+    expect(first.revenue).toBe(1500);
+
+    // A committed write lands between requests.
+    income = 2000;
+
+    const second = await (
+      await buildRequestApplication().buildKPIModelSummary()
+    ).kpis;
+
+    expect(second.revenue).toBe(2000);
+    expect(buildDashboardSummary).toHaveBeenCalledTimes(2);
+  });
+
+  test("legacy builders still use the full-history workspace (unchanged)", async () => {
+    const { application, buildDashboardSummary, buildWorkspace } =
+      buildSummaryApplication();
+
+    await application.buildKPIModel();
+
+    expect(buildWorkspace).toHaveBeenCalledTimes(1);
+    expect(buildDashboardSummary).not.toHaveBeenCalled();
   });
 });

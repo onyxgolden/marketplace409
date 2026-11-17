@@ -200,6 +200,23 @@ export async function createFinancialApplicationSuite(deps = {}) {
     });
   }
 
+  // Slice 3 (load-times): the dashboard SQL-aggregation repository.
+  // Same dynamic-import rationale as financialAccountGroupRepository
+  // above (the module must not eagerly import @/lib/supabase). No real
+  // supabaseClient -> null -> buildDashboardSummary throws explicitly
+  // instead of silently running the legacy full scan.
+  let dashboardFinancialSummaryRepository =
+    deps.dashboardFinancialSummaryRepository || null;
+  if (!dashboardFinancialSummaryRepository && deps.supabaseClient) {
+    const { SupabaseDashboardFinancialSummaryRepository } = await import(
+      "../../domains/financial-event/SupabaseDashboardFinancialSummaryRepository.js"
+    );
+    dashboardFinancialSummaryRepository =
+      new SupabaseDashboardFinancialSummaryRepository({
+        supabaseClient: deps.supabaseClient,
+      });
+  }
+
   const financialWorkspaceQueryService =
     deps.financialWorkspaceQueryService ||
     new FinancialWorkspaceQueryService({
@@ -208,6 +225,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
         deps.aggregationService ||
         financialEventAggregationService,
       financialAccountGroupRepository,
+      dashboardFinancialSummaryRepository,
     });
 
   const readModelAdapter =
@@ -423,6 +441,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialAccountRepository,
     accountBalanceRepository,
     financialAccountGroupRepository,
+    dashboardFinancialSummaryRepository,
     connectionRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,

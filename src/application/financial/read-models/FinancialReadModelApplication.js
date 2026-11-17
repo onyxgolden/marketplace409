@@ -167,6 +167,14 @@ export class FinancialReadModelApplication {
       workspaces: new Map(),
       dashboards: new Map(),
       positions: new Map(),
+      // S3 (load-times slice 3): the dashboard-summary workspace and
+      // dashboard share these maps. buildDashboardSummaryWorkspace is
+      // the ONE memoized call into the SQL summary RPC per owner+scope
+      // per request; buildDashboardSummary and every summary variant
+      // derive from it, so the RPC fires once per request, never once
+      // per tile.
+      dashboardSummaryWorkspaces: new Map(),
+      dashboardSummaries: new Map(),
     };
 
     this.financialWorkspaceQueryService =
@@ -332,6 +340,128 @@ export class FinancialReadModelApplication {
     return Object.freeze({
       type: "financial-dashboard",
       dashboard,
+    });
+  }
+
+  // Slice 3 (load-times): dashboard-summary mode. The workspace behind
+  // these builders carries portfolio/property/category totals aggregated
+  // in SQL and NO transaction rows (transactionsStatus: "not-loaded").
+  // Every other builder in this class keeps the legacy full-history
+  // path -- only the /forge caller chooses the summary variants.
+  async buildDashboardSummaryWorkspace(ownerId = null, { scope } = {}) {
+    const resolvedOwnerId =
+      ownerId || await this.resolveOwnerId();
+    const resolvedScope = this.resolveWorkspaceScope(scope);
+    const key = JSON.stringify([
+      resolvedOwnerId,
+      resolvedScope,
+    ]);
+
+    return this._memoize(
+      this._requestMemo.dashboardSummaryWorkspaces,
+      key,
+      () =>
+        this.financialWorkspaceQueryService.buildDashboardSummary(
+          resolvedOwnerId,
+          { scope: resolvedScope },
+        ),
+    );
+  }
+
+  async buildDashboardSummary({ scope } = {}) {
+    const ownerId = await this.resolveOwnerId();
+    const resolvedScope = this.resolveWorkspaceScope(scope);
+    const key = JSON.stringify([
+      ownerId,
+      resolvedScope,
+    ]);
+
+    return this._memoize(
+      this._requestMemo.dashboardSummaries,
+      key,
+      () => this._buildDashboardSummary(ownerId, resolvedScope),
+    );
+  }
+
+  async _buildDashboardSummary(ownerId, resolvedScope) {
+    const workspace = await this.buildDashboardSummaryWorkspace(ownerId, {
+      scope: resolvedScope,
+    });
+    const activityDashboard =
+      this.readModelAdapter.buildDashboard(workspace);
+
+    if (!this.financialPositionQueryService) {
+      return Object.freeze({
+        workspace,
+        dashboard: activityDashboard,
+      });
+    }
+
+    const position = await this._buildPosition(ownerId);
+
+    const positionProjection =
+      this.financialPositionReadModelAdapter.buildPosition(position);
+
+    return Object.freeze({
+      workspace,
+      dashboard: mergeDashboardProjections({
+        activityDashboard,
+        positionProjection,
+      }),
+    });
+  }
+
+  async buildBusinessDashboardSummary({ scope } = {}) {
+    const { workspace, dashboard } =
+      await this.buildDashboardSummary({ scope });
+
+    const reports =
+      this.readModelAdapter.buildReports(workspace);
+
+    return Object.freeze({
+      type: "business-dashboard",
+      // The adapter's reports shape is preserved; the marker is overlaid
+      // here so the diagnostic layer can tell "history not loaded yet"
+      // from "history is empty" without a second formula set.
+      reports: Object.freeze({
+        ...reports,
+        transactionsStatus:
+          workspace.transactionsStatus ?? "not-loaded",
+      }),
+      dashboard,
+    });
+  }
+
+  async buildInvestorDashboardSummary({ scope } = {}) {
+    const { dashboard } =
+      await this.buildDashboardSummary({ scope });
+
+    return Object.freeze({
+      type: "investor-dashboard",
+      kpis: dashboard.kpis,
+      health: dashboard.health,
+      metadata: dashboard.metadata,
+    });
+  }
+
+  async buildKPIModelSummary({ scope } = {}) {
+    const { dashboard } =
+      await this.buildDashboardSummary({ scope });
+
+    return Object.freeze({
+      type: "kpi-model",
+      kpis: dashboard.kpis,
+    });
+  }
+
+  async buildExecutiveSummarySummary({ scope } = {}) {
+    const { dashboard } =
+      await this.buildDashboardSummary({ scope });
+
+    return Object.freeze({
+      type: "executive-summary",
+      health: dashboard.health,
+      kpis: dashboard.kpis,
     });
   }
 

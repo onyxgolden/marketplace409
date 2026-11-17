@@ -66,6 +66,11 @@ export class FinancialWorkspaceQueryService {
     // Optional, deliberately -- see FinancialPositionQueryService's own constructor comment.
     // Absent entirely, this service's behavior is byte-for-byte unchanged.
     financialAccountGroupRepository = null,
+    // Slice 3 (load-times): the dashboard SQL-aggregation repository.
+    // Absent entirely, buildDashboardSummary throws explicitly -- it must
+    // never silently fall back to the legacy full-history scan, or the
+    // dashboard would pay the old cost while reporting summary mode.
+    dashboardFinancialSummaryRepository = null,
   } = {}) {
     if (!financialEventRepository) {
       throw new Error(
@@ -93,9 +98,21 @@ export class FinancialWorkspaceQueryService {
       );
     }
 
+    if (
+      dashboardFinancialSummaryRepository !== null &&
+      typeof dashboardFinancialSummaryRepository.getSummary !==
+        "function"
+    ) {
+      throw new Error(
+        "FinancialWorkspaceQueryService requires a dashboard financial summary repository with getSummary.",
+      );
+    }
+
     this.financialEventRepository = financialEventRepository;
     this.aggregationService = aggregationService;
     this.financialAccountGroupRepository = financialAccountGroupRepository;
+    this.dashboardFinancialSummaryRepository =
+      dashboardFinancialSummaryRepository;
 
     Object.freeze(this);
   }
@@ -118,6 +135,42 @@ export class FinancialWorkspaceQueryService {
       : events.filter((event) => !isExcludedByCutover(event, cutoverByAccountId));
 
     return this.aggregationService.aggregate(eventsAfterCutover, { scope });
+  }
+
+  // Slice 3 (load-times): dashboard-summary mode. Returns the SAME
+  // portfolio/property/category totals as buildWorkspace, aggregated
+  // inside PostgreSQL by forge_dashboard_financial_summary_v1 -- but NO
+  // transaction rows. The returned workspace deliberately has NO
+  // `transactions` key at all: a `transactions: []` here would read as
+  // an empty COMPLETE history, which is false. Consumers that need the
+  // list use the on-demand diagnostic endpoint instead, and the
+  // transactionsStatus marker says so in plain terms. Scope semantics
+  // match buildWorkspace (null = every business_scope).
+  async buildDashboardSummary(ownerId, { scope = null } = {}) {
+    if (!ownerId) {
+      throw new Error("Owner id is required");
+    }
+
+    if (!this.dashboardFinancialSummaryRepository) {
+      throw new Error(
+        "Dashboard financial summary is unavailable.",
+      );
+    }
+
+    const summary =
+      await this.dashboardFinancialSummaryRepository.getSummary({
+        ownerId,
+        scope,
+      });
+
+    return Object.freeze({
+      portfolio: summary.portfolio,
+      properties: summary.properties,
+      categories: summary.categories,
+      transactionsStatus: "not-loaded",
+      summaryVersion: summary.version,
+      scope: summary.scope,
+    });
   }
 }
 

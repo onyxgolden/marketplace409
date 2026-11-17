@@ -16,9 +16,28 @@ export default async function ForgePage() {
   const forgeApplicationSuite =
     await forgeApplication.getForgeApplicationSuite();
 
+  const readModelApplication =
+    forgeApplicationSuite.financialReadModelApplication;
+
+  // Slice 3 (load-times): the dashboard reads its headline totals from
+  // the SQL summary RPC (one call per request) instead of transferring
+  // the owner's full financial-event history. The summary dashboard is
+  // built FIRST and handed to the canonical-intelligence builder, so
+  // neither it nor the intelligence build can silently trigger the
+  // legacy full-history path. Every other page keeps the legacy path.
+  // The workspace below reuses dashboardSummary.workspace -- the
+  // summary built from the validated effective owner -- instead of a
+  // second buildDashboardSummaryWorkspace call: passing the actor's
+  // user id there issued a second RPC under a different owner for a
+  // co-owner viewing a shared workspace, so the page could render a
+  // 200 mixing owners' data (fix round 1, ChatGPT NEEDS CHANGES).
+  const dashboardSummary =
+    await readModelApplication.buildDashboardSummary();
+
   const canonicalIntelligenceContext =
     await forgeApplicationSuite.canonicalIntelligenceContextBuilder.build({
       ownerId: forgeApplication.user.id,
+      dashboard: dashboardSummary,
     });
 
   const initialDashboardIntelligence =
@@ -28,25 +47,24 @@ export default async function ForgePage() {
         : canonicalIntelligenceContext,
     );
 
-  const readModelApplication =
-    forgeApplicationSuite.financialReadModelApplication;
+  // The workspace IS the summary built above: same object, same
+  // effective owner, same single RPC. The actor id stays out of the
+  // read-model path entirely -- it is passed separately below only
+  // where an action is actor-specific (isOwnerOrActiveCoOwner).
+  const workspace = dashboardSummary.workspace;
 
   const [
     businessDashboard,
     investorDashboard,
     kpiModel,
     executiveSummary,
-    workspace,
     transactionReview,
     isOwnerOrCoOwner,
   ] = await Promise.all([
-    readModelApplication.buildBusinessDashboard(),
-    readModelApplication.buildInvestorDashboard(),
-    readModelApplication.buildKPIModel(),
-    readModelApplication.buildExecutiveSummary(),
-    readModelApplication.buildWorkspace(
-      forgeApplication.user.id,
-    ),
+    readModelApplication.buildBusinessDashboardSummary(),
+    readModelApplication.buildInvestorDashboardSummary(),
+    readModelApplication.buildKPIModelSummary(),
+    readModelApplication.buildExecutiveSummarySummary(),
     forgeApplicationSuite.transactionReviewQueryService
       ? forgeApplicationSuite.transactionReviewReadModelAdapter.buildQueue(
           await forgeApplicationSuite.transactionReviewQueryService.buildReviewQueue(

@@ -51,11 +51,23 @@ export class FinancialIntelligenceApplication {
     this.planningService = planningService;
   }
 
-  async buildFinancialIntelligence() {
-    const [executiveSummary, kpiModel] = await Promise.all([
-      this.readModelApplication.buildExecutiveSummary(),
-      this.readModelApplication.buildKPIModel(),
-    ]);
+  // Slice 3 (load-times): the /forge dashboard passes its already-built
+  // summary dashboard in, so this method reuses its KPIs/health instead
+  // of calling buildExecutiveSummary/buildKPIModel -- which would run
+  // the legacy full-history dashboard build and reintroduce the scan
+  // the summary path exists to remove. Callers without a dashboard get
+  // today's behavior, unchanged.
+  async buildFinancialIntelligence({ dashboard } = {}) {
+    const [executiveSummary, kpiModel] =
+      dashboard?.dashboard
+        ? [
+            { health: dashboard.dashboard.health || {} },
+            { kpis: dashboard.dashboard.kpis || {} },
+          ]
+        : await Promise.all([
+            this.readModelApplication.buildExecutiveSummary(),
+            this.readModelApplication.buildKPIModel(),
+          ]);
 
     const kpis = kpiModel.kpis || {};
     const health = executiveSummary.health || {};

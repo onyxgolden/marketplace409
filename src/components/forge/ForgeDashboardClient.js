@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 
 import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
 import { ForgeDashboardApplication } from "@/application";
+import {
+  loadAllDiagnosticTransactions,
+} from "@/components/forge/dashboardTransactionDiagnostics";
 
 function formatCurrency(value) {
   if (value == null) return "$0";
@@ -19,6 +22,85 @@ export default function ForgeDashboardClient({
   const [dashboardIntelligence] = useState(initialDashboardIntelligence);
 
   const [readModels] = useState(initialReadModels);
+
+  // Slice 3 (load-times): the initial dashboard ships summary totals
+  // only -- readModels.businessDashboard.reports carries
+  // transactionsStatus: "not-loaded" and NO transaction rows. Opening
+  // the diagnostic layer loads the ENTIRE history on demand (every
+  // page, oldest first); until that load completes, the layer says so
+  // in plain words instead of showing an empty list as if it were the
+  // whole history. A failed load is an error with a retry, never a
+  // silent partial list.
+  const [diagnosticHistory, setDiagnosticHistory] = useState({
+    status: "not-loaded",
+    transactions: [],
+    totalCount: null,
+    error: null,
+  });
+
+  async function loadDiagnosticHistory() {
+    setDiagnosticHistory((current) => ({
+      ...current,
+      status: "loading",
+      error: null,
+    }));
+
+    try {
+      const loaded = await loadAllDiagnosticTransactions();
+
+      setDiagnosticHistory({
+        status: "loaded",
+        transactions: loaded.transactions,
+        totalCount: loaded.totalCount,
+        error: null,
+      });
+    } catch (error) {
+      setDiagnosticHistory((current) => ({
+        ...current,
+        status: "error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load transaction history.",
+      }));
+    }
+  }
+
+  function handleDiagnosticToggle(event) {
+    if (
+      event.currentTarget.open &&
+      (diagnosticHistory.status === "not-loaded" ||
+        diagnosticHistory.status === "error")
+    ) {
+      loadDiagnosticHistory();
+    }
+  }
+
+  const businessDashboardForDiagnostics = useMemo(() => {
+    if (!readModels.businessDashboard) return null;
+
+    if (diagnosticHistory.status !== "loaded") {
+      return readModels.businessDashboard;
+    }
+
+    return {
+      ...readModels.businessDashboard,
+      reports: {
+        ...readModels.businessDashboard.reports,
+        transactions: diagnosticHistory.transactions,
+        transactionsStatus: "loaded",
+      },
+    };
+  }, [readModels.businessDashboard, diagnosticHistory]);
+
+  const diagnosticStatusLine =
+    diagnosticHistory.status === "loaded"
+      ? `Transaction history loaded: ${diagnosticHistory.totalCount} transactions, all dates.`
+      : diagnosticHistory.status === "loading"
+        ? "Loading full transaction history (all dates)…"
+        : diagnosticHistory.status === "error"
+          ? `Transaction history failed to load: ${diagnosticHistory.error}`
+          : "Transaction history not loaded yet — open this layer to load the full history (all dates).";
 
   const dashboardViewModel = useMemo(
     () => ForgeDashboardApplication.buildViewModel(dashboardIntelligence),
@@ -54,14 +136,30 @@ export default function ForgeDashboardClient({
 
       {readModels && (
         <section className="mx-auto mt-8 max-w-[1600px] px-4 pb-8 lg:px-8">
-          <details className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6">
+          <details
+            className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
+            onToggle={handleDiagnosticToggle}
+          >
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
               Read Model Diagnostic Layer
             </summary>
 
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              {diagnosticStatusLine}
+              {diagnosticHistory.status === "error" && (
+                <button
+                  type="button"
+                  onClick={loadDiagnosticHistory}
+                  className="ml-2 font-black uppercase tracking-wide text-slate-700 dark:text-slate-200 underline"
+                >
+                  Retry
+                </button>
+              )}
+            </p>
+
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <pre className="overflow-auto rounded-2xl bg-slate-100 dark:bg-slate-800 dark:text-slate-300 p-4 text-xs">
-                {JSON.stringify(readModels.businessDashboard, null, 2)}
+                {JSON.stringify(businessDashboardForDiagnostics, null, 2)}
               </pre>
               <pre className="overflow-auto rounded-2xl bg-slate-100 dark:bg-slate-800 dark:text-slate-300 p-4 text-xs">
                 {JSON.stringify(readModels.investorDashboard, null, 2)}

@@ -123,3 +123,104 @@ describe("CanonicalIntelligenceContextBuilder", () => {
     ).toBe(true);
   });
 });
+
+describe("CanonicalIntelligenceContextBuilder -- dashboard summary override (load-times Slice 3)", () => {
+  function buildBuilder() {
+    const financialReadModelApplication = {
+      buildDashboard: vi.fn().mockResolvedValue({
+        workspace: { id: "legacy-workspace" },
+        dashboard: { kpis: { revenue: 1 }, health: { label: "Healthy" } },
+      }),
+    };
+
+    const financialIntelligenceApplication = {
+      buildFinancialIntelligence: vi.fn().mockResolvedValue({
+        type: "financial-intelligence",
+      }),
+    };
+
+    const connectionOperationsApplication = {
+      buildExecutionIntelligence: vi.fn().mockReturnValue({
+        status: "successful",
+      }),
+      getExecutionHistoryIntelligence: vi.fn().mockResolvedValue({
+        totalExecutions: 1,
+      }),
+    };
+
+    const builder = new CanonicalIntelligenceContextBuilder({
+      financialReadModelApplication,
+      financialIntelligenceApplication,
+      connectionOperationsApplication,
+    });
+
+    return {
+      builder,
+      financialReadModelApplication,
+      financialIntelligenceApplication,
+    };
+  }
+
+  it("uses a supplied summary dashboard and never calls the legacy buildDashboard", async () => {
+    const {
+      builder,
+      financialReadModelApplication,
+      financialIntelligenceApplication,
+    } = buildBuilder();
+
+    const summaryDashboard = Object.freeze({
+      workspace: Object.freeze({
+        portfolio: Object.freeze({ income: 1500 }),
+        transactionsStatus: "not-loaded",
+      }),
+      dashboard: Object.freeze({
+        assets: [],
+        liabilities: [],
+        balanceSheetLines: [],
+        kpis: Object.freeze({ revenue: 1500 }),
+        health: Object.freeze({ label: "Healthy" }),
+        metadata: Object.freeze({}),
+      }),
+    });
+
+    const context = await builder.build({
+      ownerId: "owner-1",
+      dashboard: summaryDashboard,
+    });
+
+    expect(
+      financialReadModelApplication.buildDashboard,
+    ).not.toHaveBeenCalled();
+    expect(
+      financialIntelligenceApplication.buildFinancialIntelligence,
+    ).toHaveBeenCalledWith({ dashboard: summaryDashboard });
+    expect(context.financial.workspace).toEqual(summaryDashboard.workspace);
+    expect(context.financial.dashboard).toEqual(summaryDashboard.dashboard);
+    expect(context.financial.position.kpis).toEqual({ revenue: 1500 });
+  });
+
+  it("without an override, keeps the legacy buildDashboard behavior", async () => {
+    const {
+      builder,
+      financialReadModelApplication,
+      financialIntelligenceApplication,
+    } = buildBuilder();
+
+    const context = await builder.build({ ownerId: "owner-1" });
+
+    expect(
+      financialReadModelApplication.buildDashboard,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      financialIntelligenceApplication.buildFinancialIntelligence,
+    ).toHaveBeenCalledWith({
+      dashboard: {
+        workspace: { id: "legacy-workspace" },
+        dashboard: { kpis: { revenue: 1 }, health: { label: "Healthy" } },
+      },
+    });
+    expect(context.financial.workspace).toEqual({
+      id: "legacy-workspace",
+    });
+  });
+});

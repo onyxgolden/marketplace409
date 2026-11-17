@@ -36,38 +36,47 @@ export class CanonicalIntelligenceContextBuilder {
     Object.freeze(this);
   }
 
+  // Slice 3 (load-times): the /forge dashboard passes its already-built
+  // summary dashboard in ({ workspace, dashboard }), so this builder
+  // never calls financialReadModelApplication.buildDashboard() -- the
+  // legacy full-history path -- on the dashboard route. The same summary
+  // dashboard is handed to buildFinancialIntelligence so its KPI/health
+  // inputs come from it too. Callers without a dashboard get today's
+  // behavior, unchanged.
   async build({
     ownerId,
     connectionId,
     executionResult = {},
+    dashboard = null,
   } = {}) {
-    const dashboard =
-      await this.financialReadModelApplication.buildDashboard();
+    const dashboardResult =
+      dashboard ??
+      (await this.financialReadModelApplication.buildDashboard());
 
     const intelligence =
       await this.financialIntelligenceApplication
-        .buildFinancialIntelligence();
+        .buildFinancialIntelligence({ dashboard: dashboardResult });
 
     const financial =
       Object.freeze({
-        workspace: dashboard.workspace || null,
-        dashboard: dashboard.dashboard || null,
+        workspace: dashboardResult.workspace || null,
+        dashboard: dashboardResult.dashboard || null,
         intelligence,
         position: Object.freeze({
           assets:
-            dashboard.dashboard?.assets || [],
+            dashboardResult.dashboard?.assets || [],
 
           liabilities:
-            dashboard.dashboard?.liabilities || [],
+            dashboardResult.dashboard?.liabilities || [],
 
           balanceSheetLines:
-            dashboard.dashboard?.balanceSheetLines || [],
+            dashboardResult.dashboard?.balanceSheetLines || [],
 
           kpis:
-            dashboard.dashboard?.kpis || {},
+            dashboardResult.dashboard?.kpis || {},
 
           metadata:
-            dashboard.dashboard?.metadata || {},
+            dashboardResult.dashboard?.metadata || {},
         }),
         reports: null,
       });
