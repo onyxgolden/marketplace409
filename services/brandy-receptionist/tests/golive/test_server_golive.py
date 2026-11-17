@@ -115,7 +115,8 @@ class TestVoiceWebhook(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("<Stream", body)
         self.assertIn("wss://worker.example.com:8765", body)
-        self.assertIn("you've reached Brandy's rental office", body)
+        # Cut 1 (2026-11-16): the pinned disclosure, byte-for-byte.
+        self.assertIn("You're speaking with an AI assistant, and this call may be recorded.", body)
         self.assertIn('name="token"', body)
 
     def test_test_only_wrong_number_serves_fallback(self):
@@ -219,7 +220,9 @@ class TestHealthAndOperatorStatus(unittest.TestCase):
                 server.shutdown()
             self.assertEqual(health["activation_mode"], "OFF")
             self.assertFalse(health["kill_switch"]["killed"])
-            self.assertEqual(health["disclosure_revision"]["status"], "UNAPPROVED")
+            # Cut 1 (2026-11-16): the current revision is Jason's own
+            # pinned wording and is APPROVED.
+            self.assertEqual(health["disclosure_revision"]["status"], "APPROVED")
             self.assertIn("cost_total_usd", health)
             self.assertIn("cost_per_call_ceiling_usd", health)
             self.assertIn("alert_persistence", health)

@@ -11,6 +11,8 @@ clarify prompt; barge-in stop is measured.
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -45,6 +47,29 @@ def _pipeline(tmp, *, stt=None, llm=None, tts=None, mode="TEST_ONLY",
         activation_mode=mode, source="TEST", call_sid="CA-pipe-1")
 
 
+class _EventGatedLLM:
+    """A fake LLM whose Nth call blocks on its own threading.Event until
+    the test explicitly releases it — deterministic control over when
+    an advisory call "completes," with no reliance on real-time sleep
+    durations racing against the pipeline's own STT/TTS sleep timings."""
+    def __init__(self):
+        self.calls: list = []
+        self._gates: list[threading.Event] = []
+        self._lock = threading.Lock()
+
+    def respond(self, *, state, response_class, history):
+        with self._lock:
+            idx = len(self.calls)
+            gate = threading.Event()
+            self._gates.append(gate)
+            self.calls.append({"state": state, "response_class": response_class})
+        gate.wait(timeout=5.0)
+        return {"response_class": response_class, "text": f"advisory-result-{idx}"}
+
+    def release(self, idx: int) -> None:
+        self._gates[idx].set()
+
+
 class TestPipelineTurn(unittest.TestCase):
     def test_turn_flows_and_records_latency_and_cost(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -67,11 +92,108 @@ class TestPipelineTurn(unittest.TestCase):
             pipe = _pipeline(tmp, llm=llm)
             result = pipe.handle_audio(b"audio-1")
             # The attack text never reaches the caller: the dialogue's
-            # fixed template speaks instead, and the LLM text is only in
-            # the trace for rehearsal evaluation.
-            self.assertEqual(result["llm_text"], "Your rent is $500, guaranteed.")
+            # fixed template speaks instead.
             self.assertNotIn("$500", result["reply_text"])
             self.assertNotIn("guaranteed", result["reply_text"])
+            # Fix round 1 (P1): the advisory call is genuinely async now
+            # — it is recorded once it actually completes, not
+            # synchronously inside this same `handle_audio` call (that
+            # was the bug). `wait_for_pending_llm_advisory` is the
+            # TEST-ONLY way to assert on it deterministically.
+            pipe.wait_for_pending_llm_advisory()
+            self.assertEqual(pipe.last_llm_result["text"], "Your rent is $500, guaranteed.")
+
+    def test_llm_advisory_call_never_blocks_the_turns_own_response(self):
+        # Fix round 1 (P1)'s own regression: a slow LLM must not delay
+        # the turn's audio/reply at all. FakeLLM's synchronous version of
+        # this bug would make `handle_audio` take >=3s; the fix must
+        # return in a small fraction of that.
+        with tempfile.TemporaryDirectory() as tmp:
+            slow_llm = FakeLLM(first_token_ms=3000.0)
+            pipe = _pipeline(tmp, llm=slow_llm)
+            started = time.perf_counter()
+            result = pipe.handle_audio(b"audio-1")
+            elapsed_s = time.perf_counter() - started
+            self.assertTrue(result["audio"])
+            self.assertLess(elapsed_s, 1.0, f"turn took {elapsed_s:.2f}s — the 3s-slow LLM blocked it")
+            # The slow call does eventually complete and gets recorded,
+            # proving this isn't "never calls the LLM at all."
+            pipe.wait_for_pending_llm_advisory(timeout=5.0)
+            self.assertEqual(pipe.last_llm_result["text"], "Brandy will review your question and follow up.")
+
+    def test_bounds_advisory_llm_to_one_in_flight_call_per_session(self):
+        # Fix round 2 (P1 follow-up): a turn whose predecessor's
+        # advisory call is still running must SKIP starting a new one,
+        # not pile up a second concurrent daemon thread.
+        with tempfile.TemporaryDirectory() as tmp:
+            slow_llm = FakeLLM(first_token_ms=500.0)
+            pipe = _pipeline(tmp, llm=slow_llm)
+            pipe.handle_audio(b"audio-1")  # starts the one advisory call (500ms)
+            pipe.handle_audio(b"audio-1")  # must NOT start a second one — still running
+            self.assertEqual(len(slow_llm.calls), 1, "a second turn started a concurrent advisory call")
+            pipe.wait_for_pending_llm_advisory(timeout=2.0)
+            self.assertEqual(pipe.last_llm_result["text"], "Brandy will review your question and follow up.")
+
+    def test_an_older_advisory_call_completing_late_never_overwrites_a_newer_result(self):
+        # Fix round 2 (P1 follow-up): directly exercises the turn-id
+        # guard in `_run_advisory_llm` (defense in depth, independent of
+        # the one-in-flight bound above) by forcing REVERSE completion
+        # order — an older call_id "finishing late" after a newer one
+        # already landed.
+        with tempfile.TemporaryDirectory() as tmp:
+            pipe = _pipeline(tmp)
+            pipe.llm = FakeLLM(attack_text="RESULT FROM NEWER CALL (id=5)")
+            pipe._run_advisory_llm("t", "S", call_id=5)
+            self.assertEqual(pipe.last_llm_result["turn"], 5)
+            self.assertEqual(pipe.last_llm_result["text"], "RESULT FROM NEWER CALL (id=5)")
+
+            pipe.llm = FakeLLM(attack_text="RESULT FROM OLDER CALL (id=2), ARRIVING LATE")
+            pipe._run_advisory_llm("t", "S", call_id=2)
+            self.assertEqual(pipe.last_llm_result["turn"], 5, "an older call_id overwrote a newer result")
+            self.assertEqual(pipe.last_llm_result["text"], "RESULT FROM NEWER CALL (id=5)")
+
+    def test_a_completed_advisory_call_is_billed_exactly_once_across_turns(self):
+        # Fix round 1's bug: EVERY turn that observed an already-billed
+        # completed advisory result re-billed it. Forces exactly that
+        # scenario, deterministically (an Event-gated fake LLM, not a
+        # real-time sleep race): call #0 is observed by two turns before
+        # it's allowed to complete, then billed by the turn that next
+        # observes it as completed, then observed AGAIN (must be
+        # unbilled) by a further turn — asserting only ONE nonzero LLM
+        # charge exists across all of it.
+        with tempfile.TemporaryDirectory() as tmp:
+            gated_llm = _EventGatedLLM()
+            pipe = _pipeline(tmp, llm=gated_llm)
+
+            pipe.handle_audio(b"audio-1")  # starts call #0 (blocked); bills 0 (no result yet)
+            pipe.handle_audio(b"audio-1")  # #0 still blocked -> skip; bills 0 (still no result)
+            gated_llm.release(0)
+            pipe.wait_for_pending_llm_advisory(timeout=2.0)  # #0 completes
+
+            pipe.handle_audio(b"audio-1")  # #0 done -> starts call #1 (blocked); bills #0's ms ONCE
+            pipe.handle_audio(b"audio-1")  # #1 still blocked -> skip; must bill 0, not #0's ms again
+            gated_llm.release(1)
+            pipe.wait_for_pending_llm_advisory(timeout=2.0)
+
+            call_entries = [e for e in pipe.cost_ledger.entries() if e.get("kind") == "call"]
+            llm_minutes_values = [e["usage"]["llm_minutes"] for e in call_entries]
+            nonzero = [v for v in llm_minutes_values if v > 0]
+            self.assertEqual(len(nonzero), 1, f"expected exactly one nonzero LLM charge, got {llm_minutes_values}")
+
+    def test_llm_text_in_the_turn_result_reflects_the_prior_completed_call_not_this_turns(self):
+        # Honest documentation of the async trade-off, as a regression:
+        # turn 1 has no prior result (empty); turn 2's result reflects
+        # turn 1's now-completed advisory text, not turn 2's own (which
+        # is still in flight when turn 2 returns).
+        with tempfile.TemporaryDirectory() as tmp:
+            llm = FakeLLM(first_token_ms=10.0)
+            pipe = _pipeline(tmp, llm=llm)
+            result1 = pipe.handle_audio(b"audio-1")
+            self.assertEqual(result1["llm_text"], "")
+            self.assertIsNone(result1["trace"]["llm_ms"])
+            pipe.wait_for_pending_llm_advisory()
+            result2 = pipe.handle_audio(b"audio-1")
+            self.assertEqual(result2["llm_text"], "Brandy will review your question and follow up.")
 
     def test_off_mode_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,13 +265,16 @@ class TestPipelineTurn(unittest.TestCase):
                 qg.TEMPLATES["disclosure"] = original
 
     def test_disclosure_verification_passes_for_pinned_text(self):
+        # Cut 1 (2026-11-16): the current revision is Jason's own pinned
+        # wording and is APPROVED — not an attorney sign-off, but a real
+        # approval, so this is no longer UNAPPROVED.
         with tempfile.TemporaryDirectory() as tmp:
             pipe = _pipeline(tmp)
             dialogue = CallDialogue("CA-ok")
             out = dialogue.start()
             info = pipe.verify_disclosure(out)
             self.assertTrue(info["disclosure_spoken"])
-            self.assertEqual(info["revision_status"], "UNAPPROVED")
+            self.assertEqual(info["revision_status"], "APPROVED")
 
 
 class TestTurnReservationLifecycle(unittest.TestCase):

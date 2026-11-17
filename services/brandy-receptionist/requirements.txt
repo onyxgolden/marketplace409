@@ -8,3 +8,10 @@ openai==3.46.0
 # standard library alone; no vendor SDK is imported unless telephony is
 # explicitly enabled. Check licenses and security updates before
 # installation. No signup or spend is authorized by this file.
+
+# Receptionist Cut 1 (2026-11-16): app/recording.py's local encrypted
+# evidence bundle. NOT telephony-gated — a general local crypto library
+# (dual-licensed Apache-2.0 OR BSD-3-Clause, verified on PyPI), not a
+# vendor SDK, lazily imported only when save()/decrypt are actually
+# called, same pattern as the vendor SDKs above.
+cryptography==50.0.2

@@ -83,9 +83,11 @@ class TestActivationRecord(unittest.TestCase):
         result = validate_record(record, "test-secret", "PN-test", "+15551234567")
         self.assertEqual(result["mode"], "OFF")
 
-    def test_live_approved_unreachable_without_attorney_revision(self):
+    def test_live_approved_unreachable_while_named_revision_is_unapproved(self):
         # Even with owner word + rehearsal receipts, LIVE_APPROVED cannot
-        # validate while no disclosure revision is APPROVED.
+        # validate while the NAMED disclosure revision is not APPROVED —
+        # draft-2026-11-08 was superseded by pinned-2026-11-16 (Cut 1) and
+        # stays UNAPPROVED by design (history, not a current option).
         record = sign_record({
             "mode": "LIVE_APPROVED", "test_number_sid": "PN-test",
             "test_number_e164": "+15551234567", "owner_word": True,
@@ -94,7 +96,42 @@ class TestActivationRecord(unittest.TestCase):
         }, "test-secret")
         result = validate_record(record, "test-secret", "PN-test", "+15551234567")
         self.assertEqual(result["mode"], "OFF")
-        self.assertIn("attorney-approved", result["reason"])
+        self.assertIn("approved disclosure revision", result["reason"])
+
+    def test_live_approved_reachable_with_the_pinned_revision(self):
+        # Cut 1: naming the actually-approved pinned revision, plus every
+        # other LIVE_APPROVED requirement, now validates.
+        record = sign_record({
+            "mode": "LIVE_APPROVED", "test_number_sid": "PN-test",
+            "test_number_e164": "+15551234567", "owner_word": True,
+            "rehearsal_receipts": ["receipt-1"],
+            "attorney_disclosure_revision": "pinned-2026-11-16",
+        }, "test-secret")
+        result = validate_record(record, "test-secret", "PN-test", "+15551234567")
+        self.assertEqual(result["mode"], "LIVE_APPROVED")
+        self.assertTrue(result["valid"])
+
+    def test_live_approved_still_requires_owner_word_even_with_the_pinned_revision(self):
+        # The pinned revision alone must never be sufficient — every
+        # other gate (owner word here) still applies unchanged.
+        record = sign_record({
+            "mode": "LIVE_APPROVED", "test_number_sid": "PN-test",
+            "test_number_e164": "+15551234567",
+            "rehearsal_receipts": ["receipt-1"],
+            "attorney_disclosure_revision": "pinned-2026-11-16",
+        }, "test-secret")
+        result = validate_record(record, "test-secret", "PN-test", "+15551234567")
+        self.assertEqual(result["mode"], "OFF")
+
+    def test_live_approved_still_requires_rehearsal_receipts_even_with_the_pinned_revision(self):
+        record = sign_record({
+            "mode": "LIVE_APPROVED", "test_number_sid": "PN-test",
+            "test_number_e164": "+15551234567", "owner_word": True,
+            "rehearsal_receipts": [],
+            "attorney_disclosure_revision": "pinned-2026-11-16",
+        }, "test-secret")
+        result = validate_record(record, "test-secret", "PN-test", "+15551234567")
+        self.assertEqual(result["mode"], "OFF")
 
     def test_live_approved_without_owner_word_is_off(self):
         record = sign_record({

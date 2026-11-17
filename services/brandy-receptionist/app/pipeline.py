@@ -13,6 +13,19 @@ rehearsal evaluation and is never spoken. Speaking LLM text directly
 would bypass the fixed-template guarantee and needs a separate review
 decision — flagged in the build report, not smuggled in here.
 
+Fix round 1 (P1 — Receptionist Cut 1 local-build review): the LLM call
+is now GENUINELY off the critical path, not just "timed and ignored."
+A background thread runs it; `_turn` starts that thread and moves
+straight to dialogue/disclosure/quote-guard/TTS without ever joining
+it. `result["llm_text"]`/`trace["llm_ms"]` therefore reflect the MOST
+RECENTLY COMPLETED advisory result — which may be from an earlier turn,
+or absent (`None`/empty) on the very first turn before any advisory
+call has finished — never this turn's own synchronous result, because
+there isn't one. `wait_for_pending_llm_advisory()` exists ONLY for
+tests that need to assert on the eventually-completed value
+deterministically; production code must never call it, since doing so
+would recreate the exact blocking bug this fixes.
+
 The opening disclosure is NOT LLM-generated: when the dialogue reaches
 the DISCLOSE_AI_AND_RECORDING state, the pipeline verifies the speak
 text is byte-identical to the pinned disclosure revision (see
@@ -32,11 +45,12 @@ the Twilio human-fallback TwiML.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from .cost import BudgetExceeded, blended_minute_usd
 from .policy import quote_guard
-from .policy.disclosure import current_revision, verify_disclosure_text
+from .policy.disclosure import current_revision, verify_disclosure_hash, verify_disclosure_text
 from .providers import ProviderError
 from .session import CALL_SOURCES
 
@@ -73,6 +87,26 @@ class CallPipeline:
         # gateway holds for the call's duration — a turn must never
         # release the session reservation.
         self._turn_reservation: dict | None = None
+        # Fix round 1 (P1): the advisory LLM's last-completed result,
+        # updated only by `_run_advisory_llm` running in its own
+        # background thread — never written from the main turn flow,
+        # which only READS it (lock-protected) to populate this turn's
+        # `llm_text`/`trace["llm_ms"]` with whatever is already known.
+        self._llm_lock = threading.Lock()
+        self.last_llm_result: dict = {"text": "", "ms": None, "turn": 0}
+        self._llm_thread: threading.Thread | None = None
+        # Fix round 2 (P1 follow-up): monotonic id for each advisory
+        # call actually STARTED (not every turn — a turn that finds the
+        # previous advisory call still running skips starting a new one,
+        # see _turn). `_run_advisory_llm` only overwrites
+        # `last_llm_result` if its own id is >= the id already stored,
+        # so a late/out-of-order completion can never clobber a newer
+        # one. `_llm_charged_turn_id` tracks which advisory id's cost
+        # has already been billed, so each completed call is charged
+        # exactly once across the session, never double- or un-charged
+        # (fix round 2's cost-attribution fix, below).
+        self._llm_call_seq = 0
+        self._llm_charged_turn_id = 0
 
     # --- guards ---------------------------------------------------------------
 
@@ -128,14 +162,19 @@ class CallPipeline:
 
     def verify_disclosure(self, dialogue_out: dict) -> dict:
         """If this turn speaks the disclosure, verify it is byte-identical
-        to the pinned revision before TTS. Returns revision info (the
-        caller must surface UNAPPROVED wherever the disclosure is shown).
-        Raises PipelineClosed on any mismatch."""
+        AND hash-identical to the pinned revision before TTS (local-build
+        Cut 1 §2: "a revision id/hash verified before first audio" — the
+        hash check is a second, independent comparison against the
+        registry's own pinned SHA-256, not just a repeat of the text
+        check). Returns revision info (the caller must surface UNAPPROVED
+        wherever the disclosure is shown). Raises PipelineClosed on any
+        mismatch."""
         speak = dialogue_out.get("speak") or {}
         if speak.get("template_id") != "disclosure":
             return {"disclosure_spoken": False}
         revision = current_revision()
-        if not verify_disclosure_text(revision["id"], speak.get("text", "")):
+        text = speak.get("text", "")
+        if not verify_disclosure_text(revision["id"], text) or not verify_disclosure_hash(revision["id"], text):
             raise PipelineClosed(
                 "disclosure text drifted from the pinned revision "
                 f"{revision['id']}; refusing to speak an unpinned disclosure")
@@ -187,18 +226,31 @@ class CallPipeline:
         trace["stt_ms"] = (time.perf_counter() - stt_started) * 1000.0
         transcript = (stt_result or {}).get("text", "")
 
-        # LLM is advisory in this slice: its text is timed and recorded
-        # for rehearsal evaluation, never spoken.
-        llm_started = time.perf_counter()
-        llm_text = ""
-        try:
-            llm_result = self.llm.respond(
-                state=self.dialogue.state, response_class="REPLY",
-                history=[{"role": "user", "content": transcript}])
-            llm_text = (llm_result or {}).get("text", "")
-        except Exception:  # noqa: BLE001 — LLM advisory only; dialogue continues
-            llm_text = ""
-        trace["llm_ms"] = (time.perf_counter() - llm_started) * 1000.0
+        # LLM is advisory in this slice, and (fix round 1, P1) genuinely
+        # off the critical path: start it in the background and read
+        # whatever the MOST RECENTLY COMPLETED advisory call produced —
+        # never wait for this turn's own call before proceeding to
+        # dialogue/TTS below.
+        #
+        # Fix round 2 (P1 follow-up): bounded to at most ONE in-flight
+        # advisory call per session. If the previous call is still
+        # running, this turn SKIPS starting a new one rather than
+        # piling up an unbounded number of daemon threads — unbounded
+        # concurrent calls were the actual defect (not just "one call
+        # might complete out of order," though the turn-id check below
+        # also guards that independently).
+        with self._llm_lock:
+            still_running = self._llm_thread is not None and self._llm_thread.is_alive()
+            if not still_running:
+                self._llm_call_seq += 1
+                call_id = self._llm_call_seq
+            llm_text = self.last_llm_result.get("text", "")
+            trace["llm_ms"] = self.last_llm_result.get("ms")
+        if not still_running:
+            llm_thread = threading.Thread(
+                target=self._run_advisory_llm, args=(transcript, self.dialogue.state, call_id), daemon=True)
+            self._llm_thread = llm_thread
+            llm_thread.start()
 
         dialogue_out = self.dialogue.handle_turn(transcript)
         speak = dialogue_out.get("speak") or {}
@@ -242,11 +294,33 @@ class CallPipeline:
             # the call's reservations, the old behavior — it cannot
             # happen through handle_audio.)
             reservation, self._turn_reservation = self._turn_reservation, None
+            # Fix round 2 (P1 follow-up): fix round 1 charged
+            # `trace["llm_ms"]` on EVERY turn that observed it, which
+            # double-charges the same completed advisory call on every
+            # turn until a newer one replaces it (or undercounts, if a
+            # call completes between turns and the turn that first
+            # observes it isn't the only one that bills it — the same
+            # bug, opposite symptom). Each completed advisory call is
+            # now billed EXACTLY ONCE across the session, keyed by its
+            # `_llm_call_seq` id: `_llm_charged_turn_id` remembers the
+            # highest id already billed, and this turn bills the
+            # current `last_llm_result` only if its id is newer. A call
+            # that completes after the session's last turn is never
+            # billed — acceptable, since local-inference LLM usage
+            # prices at $0/minute regardless (brief §5); this exactness
+            # matters only for the cloud OpenAI adapter path, where no
+            # nonzero spend is authorized in Cut 1 anyway.
+            with self._llm_lock:
+                pending = self.last_llm_result
+                billable_ms = 0.0
+                if pending.get("turn", 0) > self._llm_charged_turn_id:
+                    billable_ms = pending.get("ms") or 0.0
+                    self._llm_charged_turn_id = pending["turn"]
             self.cost_ledger.record_call(
                 call_sid=self.call_sid, source=self.source,
                 duration_s=0.0,
                 agent_chars=len(reply_text),
-                llm_minutes=trace["llm_ms"] / 60000.0,
+                llm_minutes=billable_ms / 60000.0,
                 settle_reservation_id=(reservation or {}).get("id"),
                 usage_extra={"turn": self.turns})
 
@@ -255,6 +329,41 @@ class CallPipeline:
                 "emergency": dialogue_out.get("emergency", False),
                 "trace": trace, "llm_text": llm_text,
                 "disclosure": disclosure_info}
+
+    def _run_advisory_llm(self, transcript: str, state: str, call_id: int) -> None:
+        """Runs in its own daemon thread (fix round 1, P1), started by
+        `_turn` and never joined by it. Failure here is swallowed, same
+        as the old synchronous version — advisory-only, the dialogue
+        continues regardless either way.
+
+        Fix round 2 (P1 follow-up): `call_id` is this call's monotonic
+        id (assigned by `_turn` only when it actually starts a new
+        thread — see the one-in-flight bound there). Only overwrites
+        `last_llm_result` if `call_id` is not older than whatever is
+        already stored, so even if some future change reintroduces
+        overlapping calls, a late completion from an OLDER call can
+        never clobber a newer result."""
+        started = time.perf_counter()
+        text = ""
+        try:
+            result = self.llm.respond(
+                state=state, response_class="REPLY", history=[{"role": "user", "content": transcript}])
+            text = (result or {}).get("text", "")
+        except Exception:  # noqa: BLE001 — LLM advisory only
+            text = ""
+        ms = (time.perf_counter() - started) * 1000.0
+        with self._llm_lock:
+            if call_id >= self.last_llm_result.get("turn", 0):
+                self.last_llm_result = {"text": text, "ms": ms, "turn": call_id}
+
+    def wait_for_pending_llm_advisory(self, timeout: float = 5.0) -> None:
+        """TEST-ONLY: blocks until the most recently started advisory
+        LLM thread finishes (or `timeout` elapses), so a test can assert
+        on `self.last_llm_result` deterministically instead of racing a
+        background thread. Production code must never call this — doing
+        so recreates the exact blocking bug fix round 1 removed."""
+        if self._llm_thread is not None:
+            self._llm_thread.join(timeout)
 
     def safe_clarify(self) -> dict:
         """Provider failure on a turn: run the dialogue's STT-failure path
