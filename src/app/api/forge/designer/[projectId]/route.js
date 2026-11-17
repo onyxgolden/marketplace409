@@ -10,6 +10,7 @@ import {
   parseHomeProject,
   validateHomeProject,
 } from "@/domains/roomDesigner/homeProject";
+import { invalidateForgeProjectList } from "@/lib/forge/listReadCache";
 
 function ownerIdOf(authenticated) {
   return authenticated.effectiveOwnerId || authenticated.user.id;
@@ -122,6 +123,11 @@ export async function PUT(request, { params }) {
     if (!data || data.length === 0) {
       return NextResponse.json({ error: "Room design not found." }, { status: 404 });
     }
+
+    // S2A: invalidate only after the update durably succeeded (the 404
+    // above returns first), and before reporting the save successful.
+    invalidateForgeProjectList("designer", ownerIdOf(authenticated));
+
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {
     console.error("Designer project save error", error);
@@ -141,6 +147,11 @@ export async function DELETE(_request, { params }) {
       .eq("owner_id", ownerIdOf(authenticated))
       .eq("id", projectId);
     if (error) throw error;
+
+    // S2A: invalidate only after the delete durably succeeded, and before
+    // reporting the delete successful.
+    invalidateForgeProjectList("designer", ownerIdOf(authenticated));
+
     return NextResponse.json({ success: true, id: projectId });
   } catch (error) {
     console.error("Designer project delete error", error);

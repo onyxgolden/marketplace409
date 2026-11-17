@@ -2,10 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({
   createAuthenticatedForgeApplication: vi.fn(),
 }));
+vi.mock("next/cache", async () => {
+  const actual = await vi.importActual("next/cache");
+  const fake = await import("@/lib/forge/incremental-cache-test-fake");
+  return {
+    ...actual,
+    unstable_cache: (...args) => fake.unstable_cache(...args),
+    revalidateTag: (...args) => fake.revalidateTag(...args),
+  };
+});
+import * as testCache from "@/lib/forge/incremental-cache-test-fake";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createEmptyDesign, addWall } from "@/domains/roomDesigner/designerDocument";
 import { addLevel, createHomeProject } from "@/domains/roomDesigner/homeProject";
 import { DELETE, GET, PUT } from "./route";
+
+// S2A: the list cache is process-global in the fake, so every test starts
+// with an empty cache (the invalidation assertions below would otherwise
+// see a previous test's revalidateTag calls).
+beforeEach(() => testCache.resetTestIncrementalCache());
 
 function authed(client) {
   return { user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: client };
@@ -73,6 +88,8 @@ describe("PUT /api/forge/designer/[projectId]", () => {
     const record = db.query.update.mock.calls[0][0];
     expect(record.design.walls).toHaveLength(1);
     expect(record.project_name).toBe("Kitchen");
+    // S2A: a successful save invalidates the owner's Designer list.
+    expect(testCache.revalidateTagCalls).toContain("forge-list:designer:owner:user_1");
   });
 
   // HOME DESIGNER slice 2: the persisted `design` column holds the full
@@ -124,6 +141,8 @@ describe("PUT /api/forge/designer/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
     const response = await PUT(putRequest({ design }), { params });
     expect(response.status).toBe(404);
+    // S2A: a not-found save writes nothing, so it invalidates nothing.
+    expect(testCache.revalidateTagCalls).toEqual([]);
   });
 });
 
@@ -139,6 +158,8 @@ describe("DELETE /api/forge/designer/[projectId]", () => {
     const response = await DELETE(new Request("https://test/", { method: "DELETE" }), { params });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true, id: "design_1" });
+    // S2A: a successful delete invalidates the owner's Designer list.
+    expect(testCache.revalidateTagCalls).toContain("forge-list:designer:owner:user_1");
   });
 });
 
@@ -169,6 +190,9 @@ describe("workspace authorization on single-project routes", () => {
     // authorizes for the co-owner on the DB side.
     expect(eq).toHaveBeenCalledWith("owner_id", "owner1");
     expect(eq).toHaveBeenCalledWith("id", "design_1");
+    // S2A: the invalidation tag uses the canonical workspace owner too, so
+    // the co-owner's save drops the owner's cached list.
+    expect(testCache.revalidateTagCalls).toContain("forge-list:designer:owner:owner1");
   });
 
   it("an unrelated user cannot reach another workspace's design", async () => {

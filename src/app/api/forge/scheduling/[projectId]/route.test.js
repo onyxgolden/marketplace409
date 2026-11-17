@@ -1,7 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: vi.fn() }));
+vi.mock("next/cache", async () => {
+  const actual = await vi.importActual("next/cache");
+  const fake = await import("@/lib/forge/incremental-cache-test-fake");
+  return {
+    ...actual,
+    unstable_cache: (...args) => fake.unstable_cache(...args),
+    revalidateTag: (...args) => fake.revalidateTag(...args),
+  };
+});
+import * as testCache from "@/lib/forge/incremental-cache-test-fake";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { GET, PUT, DELETE } from "./route";
+
+// S2A: the list cache is process-global in the fake, so every test starts
+// with an empty cache (the invalidation assertions below would otherwise
+// see a previous test's revalidateTag calls).
+beforeEach(() => testCache.resetTestIncrementalCache());
 
 const BOARD = { id: "p1", projectName: "Mine", startDate: "2026-01-01", endDate: "2026-12-31", lanes: [], blocks: [], dependencies: [] };
 
@@ -179,6 +194,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     // The old route's separate forge_scheduling_projects.update() call is gone entirely --
     // the RPC does that write itself, inside the same transaction as the relational sync.
     expect(db.nodes.forge_scheduling_projects.update).not.toHaveBeenCalled();
+    // S2A: a successful save invalidates the owner's Scheduling list.
+    expect(testCache.revalidateTagCalls).toContain("forge-list:scheduling:owner:user_1");
   });
 
   it("sends the client's last-known boardRevision as p_expected_revision, not always 0", async () => {
@@ -196,6 +213,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     const body = await response.json();
     expect(body.code).toBe("SCHEDULE_SAVE_CONFLICT");
     expect(body.error.toLowerCase()).toContain("reload");
+    // S2A: a conflicted save writes nothing, so it invalidates nothing.
+    expect(testCache.revalidateTagCalls).toEqual([]);
   });
 
   it("404s instead of silently succeeding when the caller doesn't own the row (e.g. the shared example)", async () => {
@@ -203,6 +222,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(404);
+    // S2A: a not-found save writes nothing, so it invalidates nothing.
+    expect(testCache.revalidateTagCalls).toEqual([]);
   });
 
   it("500s (rather than reporting a false success) on any other RPC error, since a relational-sync failure must now roll back the whole save", async () => {
@@ -210,6 +231,8 @@ describe("PUT /api/forge/scheduling/[projectId]", () => {
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(500);
+    // S2A: a failed save writes nothing, so it invalidates nothing.
+    expect(testCache.revalidateTagCalls).toEqual([]);
   });
 });
 
@@ -222,11 +245,15 @@ describe("DELETE /api/forge/scheduling/[projectId]", () => {
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(200);
     expect(db.nodes.forge_scheduling_projects.delete).toHaveBeenCalled();
     expect(db.nodes.schedule_projects.delete).toHaveBeenCalled();
+    // S2A: a successful delete invalidates the owner's Scheduling list.
+    expect(testCache.revalidateTagCalls).toContain("forge-list:scheduling:owner:user_1");
   });
 
   it("404s when the caller doesn't own the row", async () => {
     const db = mockDb({ deleteRow: null });
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, effectiveOwnerId: "user_1", supabaseClient: db.client });
     expect((await DELETE(new Request("https://test"), { params })).status).toBe(404);
+    // S2A: a not-found delete removes nothing, so it invalidates nothing.
+    expect(testCache.revalidateTagCalls).toEqual([]);
   });
 });

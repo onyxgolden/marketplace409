@@ -1,6 +1,21 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { defaultBoardState } from "@/components/forge/scheduling/schedulingBoardState";
+import {
+  fetchFreshPublicSchedulingProjects,
+  getCachedSchedulingPrivateProjects,
+  invalidateForgeProjectList,
+  mergeSchedulingProjectLists,
+} from "@/lib/forge/listReadCache";
+
+// S2A (load-times slice 2): the list is served from the hot-read server
+// data cache (see src/lib/forge/listReadCache.js). Auth still runs first,
+// on every request, before any cache lookup — including hits. The cached
+// portion is the owner-scoped rows only; the shared public example rows
+// are fetched fresh on every GET and merged, so a public row can never
+// linger stale in another actor's cache entry. HTTP responses stay
+// private/non-cacheable.
+const NO_STORE = { "Cache-Control": "private, no-store" };
 
 async function authenticatedContext() {
   return createAuthenticatedForgeApplication({ appKey: "scheduler" });
@@ -13,16 +28,17 @@ export async function GET() {
   try {
     const authenticated = await authenticatedContext();
     if (authenticated.response) return authenticated.response;
-    const { data, error } = await authenticated.supabaseClient.from("forge_scheduling_projects")
-      .select("id,owner_id,project_name,start_date,end_date,is_public,created_at,updated_at")
-      .order("updated_at", { ascending: false });
-    if (error) throw error;
-    const projects = (data || []).map((row) => ({
-      id: row.id, name: row.project_name, startDate: row.start_date, endDate: row.end_date,
-      createdAt: row.created_at, updatedAt: row.updated_at,
-      isOwner: row.owner_id === authenticated.effectiveOwnerId, isPublic: row.is_public,
-    }));
-    return NextResponse.json({ success: true, projects });
+    const privateProjects = await getCachedSchedulingPrivateProjects({
+      supabaseClient: authenticated.supabaseClient,
+      effectiveOwnerId: authenticated.effectiveOwnerId,
+      actorId: authenticated.user.id,
+    });
+    const publicProjects = await fetchFreshPublicSchedulingProjects({
+      supabaseClient: authenticated.supabaseClient,
+      effectiveOwnerId: authenticated.effectiveOwnerId,
+    });
+    const projects = mergeSchedulingProjectLists(privateProjects, publicProjects);
+    return NextResponse.json({ success: true, projects }, { headers: NO_STORE });
   } catch (error) {
     console.error("Scheduling projects list error", error);
     return NextResponse.json({ error: "Unable to load scheduling projects." }, { status: 500 });
@@ -56,6 +72,16 @@ export async function POST(request) {
       p_owner_id: authenticated.effectiveOwnerId, p_project_id: data.id,
     });
     if (syncError) throw syncError;
+
+    // S2A: invalidate only after BOTH the insert and the relational sync
+    // durably succeeded, and before reporting the create successful — the
+    // writer's next list read must include the new project. The owner key
+    // is resolved exactly as the GET resolves it (effective owner, actor
+    // fallback) so the invalidation hits the same tag the GET cached under.
+    invalidateForgeProjectList(
+      "scheduling",
+      authenticated.effectiveOwnerId || authenticated.user.id,
+    );
 
     return NextResponse.json({ success: true, id: data.id });
   } catch (error) {
