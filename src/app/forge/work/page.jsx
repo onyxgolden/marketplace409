@@ -11,6 +11,7 @@ import {
 import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
+import WorkPackagePageHeader from "./page-header";
 import WorkPackageListGrid, { BLANK_ROWS } from "@/components/work-management/WorkPackageListGrid.jsx";
 
 export const dynamic = "force-dynamic";
@@ -141,37 +142,7 @@ export default async function WorkPackagesPage({ searchParams }) {
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{heading}</h1>
-          <p className="mt-1 text-sm text-slate-500">{subheading}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* D11: these two links had no dark: overrides at all -- a
-             dark-gray border and dark-gray text on the page's dark
-             background rendered as near-invisible "grey-on-dark", unlike
-             New package's solid dark-pill/white-text style below, which
-             stays readable in either theme without an override. */}
-          <Link
-            href="/forge/work/documents"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            Document library
-          </Link>
-          <Link
-            href="/forge/work/admin"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            Admin
-          </Link>
-          <Link
-            href={newPackageHref}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-          >
-            New package
-          </Link>
-        </div>
-      </div>
+      <WorkPackagePageHeader heading={heading} subheading={subheading} newPackageHref={newPackageHref} />
 
       <WorkPackageWorkspaceSwitcher
         workspaces={workspaces}
