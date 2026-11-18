@@ -2634,6 +2634,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const box = crosshairHudBox({ cx, cy, w, h, boxW, boxH });
     return (
       <g pointerEvents="none" data-hud="crosshair">
+        <line x1={cx} y1={0} x2={cx} y2={h} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
         <line x1={0} y1={cy} x2={w} y2={cy} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
         <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="none" stroke="#7dd3fc" strokeWidth={1.5} />
         {box && (
