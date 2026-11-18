@@ -119,7 +119,7 @@ begin
     -- is test-scoped. Everything else still raises, exactly as before.
     v_purge_request := current_setting('app.forge_planner_test_purge', true);
     if v_purge_request is not null and btrim(v_purge_request) <> ''
-       and public.forge_test_work_link_confirmation_is_test(OLD.owner_id, OLD.link_id) then
+       and forge_planner_internal.forge_test_work_link_confirmation_is_test(OLD.owner_id, OLD.link_id) then
       return OLD;
     end if;
   end if;
@@ -562,7 +562,7 @@ as $$
   union all
   select 'forge_work_links', l.id from public.forge_work_links l
   where l.owner_id = p_owner_id
-    and public.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
+    and forge_planner_internal.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
     and not (
       (l.source_domain = 'workmgmt' and l.source_type = 'work_package' and exists (
         select 1 from public.forge_work_packages w where w.owner_id = l.owner_id and w.id = l.source_id
@@ -578,7 +578,7 @@ as $$
   where c.owner_id = p_owner_id and c.link_id in (
     select l.id from public.forge_work_links l
     where l.owner_id = p_owner_id
-      and public.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
+      and forge_planner_internal.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
       and not (
         (l.source_domain = 'workmgmt' and l.source_type = 'work_package' and exists (
           select 1 from public.forge_work_packages w where w.owner_id = l.owner_id and w.id = l.source_id
@@ -779,7 +779,7 @@ begin
   with bad as (
     select l.id from public.forge_work_links l
     where l.owner_id = p_owner_id
-      and public.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
+      and forge_planner_internal.forge_test_work_link_is_test(l.owner_id, l.source_domain, l.source_type, l.source_id, l.target_domain, l.target_type, l.target_id)
       and (
         (l.source_domain = 'workmgmt' and l.source_type = 'work_package' and exists (
           select 1 from public.forge_work_packages w where w.owner_id = l.owner_id and w.id = l.source_id

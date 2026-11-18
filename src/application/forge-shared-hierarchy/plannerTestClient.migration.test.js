@@ -24,6 +24,16 @@
 //     digest mismatches, non-sample-package and real-link blockers,
 //     transactional delete in FK order, receipt outside the subtree,
 //     harmless replay, request-id conflict across clients.
+//   - Fix round 1 (PR #829 NEEDS CHANGES P1): the test-classification
+//     resolvers live in the private schema forge_planner_internal and
+//     no USAGE is granted on it — a direct call as Brandy, member,
+//     unrelated owner, or anon fails with "does not exist" (public
+//     name, 42883) or "permission denied for schema" (private name,
+//     42501), on both legs, while RLS still hides test rows and the
+//     owner still sees them. Schema/ACL inventory is asserted too
+//     (0 resolvers in public, 18 in the private schema, EXECUTE only
+//     to authenticated + service_role — authenticated needs EXECUTE
+//     for RLS policy evaluation).
 //   - The set_project boundary: test package -> real project rejected
 //     for everyone; real package -> test project owner-only; cross
 //     test-client links rejected; link history is a permanent blocker.
@@ -243,6 +253,70 @@ async function createFixtures(db, asUserFn) {
   return { testClientA, testSiteA, testProjectA, realClient, realSite, realProject, testClientB, testSiteB, testProjectB };
 }
 
+// Fix round 1 (PR #829 NEEDS CHANGES P1): the test-classification
+// resolvers live in the private schema forge_planner_internal, not in
+// public, and no USAGE is granted on that schema. A direct call must
+// fail for every non-postgres identity — twice over:
+//   * the public name does not exist (42883 / "does not exist"), so no
+//     Supabase RPC can reach a resolver;
+//   * the private-schema name is unreachable without schema USAGE
+//     (42501 / "permission denied for schema"), even for a role that
+//     holds EXECUTE on the function (authenticated needs EXECUTE for
+//     RLS policy evaluation — proven on real PG16: without it a policy
+//     SELECT fails with "permission denied for function").
+// The matrix runs on both legs (PGlite + real PG16) and re-asserts the
+// isolation outcome on the same fixture, so a fix that broke the
+// policies would fail here instead of silently passing the call checks.
+async function directCallMatrix(db, fx) {
+  const publicCall = `select public.forge_test_client_is_test('${OWNER_A}', '${fx.testClientA.id}') as v;`;
+  const privateCall = `select forge_planner_internal.forge_test_client_is_test('${OWNER_A}', '${fx.testClientA.id}') as v;`;
+  const privateCallReal = `select forge_planner_internal.forge_test_client_is_test('${OWNER_A}', '${fx.realClient.id}') as v;`;
+  for (const uid of [BRANDY, MEMBER_C, OWNER_X]) {
+    await expectRpcError(db, uid, publicCall, "does not exist");
+    await expectRpcError(db, uid, privateCall, "permission denied for schema");
+    await expectRpcError(db, uid, privateCallReal, "permission denied for schema");
+  }
+  // Anonymous: the same two denials (no EXECUTE at all, no USAGE).
+  await expectRpcError(db, null, publicCall, "does not exist");
+  await expectRpcError(db, null, privateCall, "permission denied for schema");
+  await expectRpcError(db, null, privateCallReal, "permission denied for schema");
+
+  // Schema / ACL inventory: no resolver in public, all 18 in the
+  // private schema, EXECUTE only to authenticated + service_role.
+  const inPublic = (await db.query(`
+    select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname like 'forge_test_%_is_test';
+  `)).rows[0].n;
+  expect(inPublic).toBe(0);
+  const inPrivate = (await db.query(`
+    select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'forge_planner_internal' and p.proname like 'forge_test_%_is_test';
+  `)).rows[0].n;
+  expect(inPrivate).toBe(18);
+  const clientAcl = (await db.query(`
+    select proacl::text as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'forge_planner_internal' and p.proname = 'forge_test_client_is_test';
+  `)).rows[0].a;
+  expect(clientAcl).toContain("authenticated=X");
+  expect(clientAcl).toContain("service_role=X");
+  expect(clientAcl).not.toContain("anon=X");
+  const usage = (await db.query(`
+    select count(*)::int as n from pg_namespace n
+    where n.nspname = 'forge_planner_internal'
+      and has_schema_privilege('authenticated', n.oid, 'USAGE');
+  `)).rows[0].n;
+  expect(usage).toBe(0);
+
+  // Isolation still holds on the same fixture: RLS rejects test rows
+  // for non-owners, the owner still sees them.
+  const brandy = await isolationCounts(db, BRANDY, fx);
+  expect(brandy.testClients).toBe(0);
+  expect(brandy.samplePackages).toBe(0);
+  const owner = await isolationCounts(db, OWNER_A, fx);
+  expect(owner.testClients).toBe(2);
+  expect(owner.samplePackages).toBe(6);
+}
+
 async function setupPGlite() {
   const db = new PGlite();
   await execSql(db, PREREQ_SQL);
@@ -339,6 +413,10 @@ describe("planner test client: PGlite leg (full subset + both migrations)", () =
     await expectRpcError(db, null,
       `select count(*)::int as n from forge_clients where owner_id = '${OWNER_A}';`,
       "permission denied");
+  });
+
+  it60("fix round 1: direct resolver calls disclose nothing (PGlite)", async () => {
+    await directCallMatrix(db, fx);
   });
 
   it60("hierarchy RPCs: selector/validate/inventory hide test rows from non-owners and flag them for the owner", async () => {
@@ -634,6 +712,10 @@ describe.skipIf(!HAS_REAL_PG)("planner test client: real-PostgreSQL 16 leg", () 
     await expectRpcError(pgClient, null,
       `select count(*)::int as n from forge_clients where owner_id = '${OWNER_A}';`,
       "permission denied");
+  });
+
+  it60("fix round 1: direct resolver calls disclose nothing (real PG16)", async () => {
+    await directCallMatrix(pgClient, fx);
   });
 
   it60("real PG16: concurrent loads with the same request id yield exactly six packages, not twelve", async () => {

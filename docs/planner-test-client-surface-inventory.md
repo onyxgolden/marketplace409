@@ -8,6 +8,27 @@ Base: main `7f6509e1`. Migration application to production is on explicit
 HOLD (brief gate) — this matrix covers the code + migration state, not a
 production apply.
 
+## Fix round 1 — resolver exposure (PR #829 NEEDS CHANGES, P1)
+
+Round 1 placed the 18 `forge_test_*_is_test` resolvers in `public` with
+EXECUTE granted to `authenticated, anon, service_role`, so any
+authenticated co-owner could call one directly via Supabase RPC and
+learn a test classification for a known id. Fix round 1 moves all 18
+resolvers into the private schema `forge_planner_internal` (migration 1
+§2; migration 2 call sites re-qualified) and grants EXECUTE to
+`authenticated, service_role` only — anon holds nothing. No USAGE is
+granted on the schema to any application role, so a direct call fails
+twice over: the public name does not exist (42883) and the
+private-schema name is unreachable without schema USAGE (42501), even
+for a role holding EXECUTE. EXECUTE stays on `authenticated` because
+RLS policy evaluation requires it — proven on real PG16, a policy
+SELECT fails with "permission denied for function" when the querying
+role lacks EXECUTE (revoking it is not a fix). PostgREST only exposes
+the `public` schema, so no RPC can reach the resolvers. Proof: the
+migration test's direct-call negative matrix (both legs, real PG16),
+asserting 42883 / 42501 for Brandy, member, unrelated owner, and anon,
+plus RLS still hiding test rows and the owner still seeing them.
+
 ## How to read this matrix
 
 Every row names the **surface** (where a test row could leak), the
@@ -24,7 +45,7 @@ The appended RLS predicate (migration 1, on every replaced policy) is:
 ```sql
 has_workspace_access(owner_id)
   AND forge_has_app_entitlement(owner_id, 'planner')
-  AND (NOT forge_test_<x>_is_test(owner_id, <linking id>)
+  AND (NOT forge_planner_internal.forge_test_<x>_is_test(owner_id, <linking id>)
        OR auth.uid()::text = owner_id)
 ```
 
@@ -101,9 +122,12 @@ actor/visibility checks before returning a cached receipt.
 | `forge_planner_test_purge_scope` | Purge scope helper (migration 2) | Same authority as purge; the scope is computed from the FK graph, not from a caller-supplied list | Migration test |
 
 Supporting functions (not directly callable surfaces): 18
-`forge_test_*_is_test` resolvers (one per link type), the
+`forge_planner_internal.forge_test_*_is_test` resolvers (one per link
+type — private schema, see the fix-round-1 note above; no public RPC
+can reach them), the
 `forge_clients_is_test_immutable` trigger function, and
-`forge_test_guard_mutation`.
+`forge_test_guard_mutation` (public trigger function; returns
+`trigger`, callable only in trigger context — not a classifier).
 
 ## C. DB layer — guard triggers and immutability
 

@@ -96,18 +96,44 @@ create trigger forge_clients_is_test_immutable
 -- the row it is asked about is test-rooted (its client ancestor carries
 -- is_test = true). Rules shared by all of them:
 --   * No workspace access for the caller -> false. The RLS predicate
---     already ANDs has_workspace_access, so this only matters for direct
---     helper calls: a stranger holding a guessed id learns nothing
---     (false = "not test" for everything they cannot already see).
+--     already ANDs has_workspace_access; the check inside the helper is
+--     defense in depth for the policy-evaluation path.
 --   * A missing parent (deleted, or an id that never existed) -> true:
 --     fail closed, hide the row rather than leak it.
 --   * A NULL project link (an Unassigned package) -> false: Unassigned
 --     packages are never test data (the loader births samples linked).
 -- The helpers read through RLS (row_security = off) because the caller's
 -- own RLS would hide exactly the test rows they must resolve.
+--
+-- EXPOSURE (fix round 1, PR #829 NEEDS CHANGES P1): the resolvers live
+-- in the private schema forge_planner_internal, NOT in public, and NO
+-- USAGE is granted on that schema to any application role. PostgREST
+-- (Supabase RPC) only exposes the public schema, so there is no public
+-- RPC that returns a test classification for any id. A direct call to
+-- a helper fails twice over: the public name does not exist (42883),
+-- and the private-schema name is unreachable without schema USAGE
+-- (42501), even for a role that holds EXECUTE on the function.
+-- EXECUTE is still granted to authenticated (and service_role) because
+-- RLS policy evaluation REQUIRES it: proven on real PG16, a policy
+-- SELECT fails with "permission denied for function" when the querying
+-- role lacks EXECUTE on the helper, even though the policy runs with
+-- the table owner's privileges for table access. Revoking EXECUTE from
+-- authenticated is therefore NOT a fix — it breaks the policies.
+-- anon holds no EXECUTE (anon has no SELECT on any test-gated table
+-- and never evaluates these policies) and no USAGE. The owner needs no
+-- direct helper call: the app reads test rows through tables/RPCs, and
+-- the policies answer for the owner exactly as for any caller.
 -- ---------------------------------------------------------------------------
 
-create or replace function public.forge_test_client_is_test(p_owner_id text, p_client_id text)
+-- The private schema for the resolvers. No USAGE is granted on it to
+-- any role (see the exposure note above): the helpers are reachable
+-- only from RLS policy expressions and SECURITY DEFINER RPCs/triggers
+-- running as postgres, never as an external RPC.
+create schema if not exists forge_planner_internal;
+comment on schema forge_planner_internal is
+'Private helpers for the planner test-client slice (is_test resolvers). Not API-exposed: PostgREST only serves the public schema, and no USAGE is granted on this schema, so no application role can invoke these functions directly.';
+
+create or replace function forge_planner_internal.forge_test_client_is_test(p_owner_id text, p_client_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
@@ -117,177 +143,177 @@ returns boolean language sql stable security definer set search_path = public se
   end;
 $$;
 
-create or replace function public.forge_test_site_is_test(p_owner_id text, p_site_id text)
+create or replace function forge_planner_internal.forge_test_site_is_test(p_owner_id text, p_site_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_site_id is null then true
     when not exists (select 1 from public.forge_sites s where s.owner_id = p_owner_id and s.id = p_site_id) then true
-    else public.forge_test_client_is_test(p_owner_id, (select s.client_id from public.forge_sites s where s.owner_id = p_owner_id and s.id = p_site_id))
+    else forge_planner_internal.forge_test_client_is_test(p_owner_id, (select s.client_id from public.forge_sites s where s.owner_id = p_owner_id and s.id = p_site_id))
   end;
 $$;
 
-create or replace function public.forge_test_project_is_test(p_owner_id text, p_project_id text)
+create or replace function forge_planner_internal.forge_test_project_is_test(p_owner_id text, p_project_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_project_id is null then false
     when not exists (select 1 from public.forge_projects p where p.owner_id = p_owner_id and p.id = p_project_id) then true
-    else public.forge_test_site_is_test(p_owner_id, (select p.site_id from public.forge_projects p where p.owner_id = p_owner_id and p.id = p_project_id))
+    else forge_planner_internal.forge_test_site_is_test(p_owner_id, (select p.site_id from public.forge_projects p where p.owner_id = p_owner_id and p.id = p_project_id))
   end;
 $$;
 
-create or replace function public.forge_test_package_is_test(p_owner_id text, p_package_id text)
+create or replace function forge_planner_internal.forge_test_package_is_test(p_owner_id text, p_package_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_package_id is null then true
     when not exists (select 1 from public.forge_work_packages w where w.owner_id = p_owner_id and w.id = p_package_id) then true
-    else public.forge_test_project_is_test(p_owner_id, (select w.forge_project_id from public.forge_work_packages w where w.owner_id = p_owner_id and w.id = p_package_id))
+    else forge_planner_internal.forge_test_project_is_test(p_owner_id, (select w.forge_project_id from public.forge_work_packages w where w.owner_id = p_owner_id and w.id = p_package_id))
   end;
 $$;
 
-create or replace function public.forge_test_drawing_is_test(p_owner_id text, p_drawing_id text)
+create or replace function forge_planner_internal.forge_test_drawing_is_test(p_owner_id text, p_drawing_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_drawing_id is null then true
     when not exists (select 1 from public.forge_work_drawings d where d.owner_id = p_owner_id and d.id = p_drawing_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select d.package_id from public.forge_work_drawings d where d.owner_id = p_owner_id and d.id = p_drawing_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select d.package_id from public.forge_work_drawings d where d.owner_id = p_owner_id and d.id = p_drawing_id))
   end;
 $$;
 
-create or replace function public.forge_test_takeoff_line_is_test(p_owner_id text, p_takeoff_line_id text)
+create or replace function forge_planner_internal.forge_test_takeoff_line_is_test(p_owner_id text, p_takeoff_line_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_takeoff_line_id is null then true
     when not exists (select 1 from public.forge_work_takeoff_lines t where t.owner_id = p_owner_id and t.id = p_takeoff_line_id) then true
-    else public.forge_test_drawing_is_test(p_owner_id, (select t.drawing_id from public.forge_work_takeoff_lines t where t.owner_id = p_owner_id and t.id = p_takeoff_line_id))
+    else forge_planner_internal.forge_test_drawing_is_test(p_owner_id, (select t.drawing_id from public.forge_work_takeoff_lines t where t.owner_id = p_owner_id and t.id = p_takeoff_line_id))
   end;
 $$;
 
-create or replace function public.forge_test_step_is_test(p_owner_id text, p_step_id text)
+create or replace function forge_planner_internal.forge_test_step_is_test(p_owner_id text, p_step_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_step_id is null then true
     when not exists (select 1 from public.forge_work_steps s where s.owner_id = p_owner_id and s.id = p_step_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select s.work_package_id from public.forge_work_steps s where s.owner_id = p_owner_id and s.id = p_step_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select s.work_package_id from public.forge_work_steps s where s.owner_id = p_owner_id and s.id = p_step_id))
   end;
 $$;
 
-create or replace function public.forge_test_change_order_is_test(p_owner_id text, p_change_order_id text)
+create or replace function forge_planner_internal.forge_test_change_order_is_test(p_owner_id text, p_change_order_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_change_order_id is null then true
     when not exists (select 1 from public.forge_work_change_orders o where o.owner_id = p_owner_id and o.id = p_change_order_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select o.work_package_id from public.forge_work_change_orders o where o.owner_id = p_owner_id and o.id = p_change_order_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select o.work_package_id from public.forge_work_change_orders o where o.owner_id = p_owner_id and o.id = p_change_order_id))
   end;
 $$;
 
-create or replace function public.forge_test_control_estimate_is_test(p_owner_id text, p_control_estimate_id text)
+create or replace function forge_planner_internal.forge_test_control_estimate_is_test(p_owner_id text, p_control_estimate_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_control_estimate_id is null then true
     when not exists (select 1 from public.forge_work_control_estimates e where e.owner_id = p_owner_id and e.id = p_control_estimate_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select e.work_package_id from public.forge_work_control_estimates e where e.owner_id = p_owner_id and e.id = p_control_estimate_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select e.work_package_id from public.forge_work_control_estimates e where e.owner_id = p_owner_id and e.id = p_control_estimate_id))
   end;
 $$;
 
-create or replace function public.forge_test_craft_assignment_is_test(p_owner_id text, p_craft_assignment_id text)
+create or replace function forge_planner_internal.forge_test_craft_assignment_is_test(p_owner_id text, p_craft_assignment_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_craft_assignment_id is null then true
     when not exists (select 1 from public.forge_work_craft_assignments a where a.owner_id = p_owner_id and a.id = p_craft_assignment_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select a.work_package_id from public.forge_work_craft_assignments a where a.owner_id = p_owner_id and a.id = p_craft_assignment_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select a.work_package_id from public.forge_work_craft_assignments a where a.owner_id = p_owner_id and a.id = p_craft_assignment_id))
   end;
 $$;
 
-create or replace function public.forge_test_craft_rate_is_test(p_owner_id text, p_craft_rate_id text)
+create or replace function forge_planner_internal.forge_test_craft_rate_is_test(p_owner_id text, p_craft_rate_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_craft_rate_id is null then true
     when not exists (select 1 from public.forge_work_craft_rates r where r.owner_id = p_owner_id and r.id = p_craft_rate_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select r.work_package_id from public.forge_work_craft_rates r where r.owner_id = p_owner_id and r.id = p_craft_rate_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select r.work_package_id from public.forge_work_craft_rates r where r.owner_id = p_owner_id and r.id = p_craft_rate_id))
   end;
 $$;
 
-create or replace function public.forge_test_progress_entry_is_test(p_owner_id text, p_progress_entry_id text)
+create or replace function forge_planner_internal.forge_test_progress_entry_is_test(p_owner_id text, p_progress_entry_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_progress_entry_id is null then true
     when not exists (select 1 from public.forge_work_progress_entries e where e.owner_id = p_owner_id and e.id = p_progress_entry_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select e.work_package_id from public.forge_work_progress_entries e where e.owner_id = p_owner_id and e.id = p_progress_entry_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select e.work_package_id from public.forge_work_progress_entries e where e.owner_id = p_owner_id and e.id = p_progress_entry_id))
   end;
 $$;
 
-create or replace function public.forge_test_permit_annotation_is_test(p_owner_id text, p_permit_annotation_id text)
+create or replace function forge_planner_internal.forge_test_permit_annotation_is_test(p_owner_id text, p_permit_annotation_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_permit_annotation_id is null then true
     when not exists (select 1 from public.forge_work_permit_annotations a where a.owner_id = p_owner_id and a.id = p_permit_annotation_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select a.work_package_id from public.forge_work_permit_annotations a where a.owner_id = p_owner_id and a.id = p_permit_annotation_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select a.work_package_id from public.forge_work_permit_annotations a where a.owner_id = p_owner_id and a.id = p_permit_annotation_id))
   end;
 $$;
 
-create or replace function public.forge_test_placement_is_test(p_owner_id text, p_placement_id text)
+create or replace function forge_planner_internal.forge_test_placement_is_test(p_owner_id text, p_placement_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_placement_id is null then true
     when not exists (select 1 from public.forge_work_step_curve_placements p where p.owner_id = p_owner_id and p.id = p_placement_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select p.work_package_id from public.forge_work_step_curve_placements p where p.owner_id = p_owner_id and p.id = p_placement_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select p.work_package_id from public.forge_work_step_curve_placements p where p.owner_id = p_owner_id and p.id = p_placement_id))
   end;
 $$;
 
-create or replace function public.forge_test_step_link_is_test(p_owner_id text, p_step_link_id text)
+create or replace function forge_planner_internal.forge_test_step_link_is_test(p_owner_id text, p_step_link_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_step_link_id is null then true
     when not exists (select 1 from public.forge_work_step_drawing_links l where l.owner_id = p_owner_id and l.id = p_step_link_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select l.work_package_id from public.forge_work_step_drawing_links l where l.owner_id = p_owner_id and l.id = p_step_link_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select l.work_package_id from public.forge_work_step_drawing_links l where l.owner_id = p_owner_id and l.id = p_step_link_id))
   end;
 $$;
 
-create or replace function public.forge_test_bust_is_test(p_owner_id text, p_bust_id text)
+create or replace function forge_planner_internal.forge_test_bust_is_test(p_owner_id text, p_bust_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_bust_id is null then true
     when not exists (select 1 from public.forge_work_package_busts b where b.owner_id = p_owner_id and b.id = p_bust_id) then true
-    else public.forge_test_package_is_test(p_owner_id, (select b.work_package_id from public.forge_work_package_busts b where b.owner_id = p_owner_id and b.id = p_bust_id))
+    else forge_planner_internal.forge_test_package_is_test(p_owner_id, (select b.work_package_id from public.forge_work_package_busts b where b.owner_id = p_owner_id and b.id = p_bust_id))
   end;
 $$;
 
-create or replace function public.forge_test_work_link_is_test(
+create or replace function forge_planner_internal.forge_test_work_link_is_test(
   p_owner_id text, p_source_domain text, p_source_type text, p_source_id text,
   p_target_domain text, p_target_type text, p_target_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_source_domain = 'workmgmt' and p_source_type = 'work_package'
-      and public.forge_test_package_is_test(p_owner_id, p_source_id) then true
+      and forge_planner_internal.forge_test_package_is_test(p_owner_id, p_source_id) then true
     when p_target_domain = 'workmgmt' and p_target_type = 'work_package'
-      and public.forge_test_package_is_test(p_owner_id, p_target_id) then true
+      and forge_planner_internal.forge_test_package_is_test(p_owner_id, p_target_id) then true
     else false
   end;
 $$;
 
-create or replace function public.forge_test_work_link_confirmation_is_test(p_owner_id text, p_link_id text)
+create or replace function forge_planner_internal.forge_test_work_link_confirmation_is_test(p_owner_id text, p_link_id text)
 returns boolean language sql stable security definer set search_path = public set row_security = off as $$
   select case
     when not public.has_workspace_access(p_owner_id) then false
     when p_link_id is null then true
     when not exists (select 1 from public.forge_work_links l where l.owner_id = p_owner_id and l.id = p_link_id) then true
-    else public.forge_test_work_link_is_test(
+    else forge_planner_internal.forge_test_work_link_is_test(
       p_owner_id,
       (select l.source_domain from public.forge_work_links l where l.owner_id = p_owner_id and l.id = p_link_id),
       (select l.source_type from public.forge_work_links l where l.owner_id = p_owner_id and l.id = p_link_id),
@@ -298,42 +324,42 @@ returns boolean language sql stable security definer set search_path = public se
   end;
 $$;
 
-revoke all on function public.forge_test_client_is_test(text, text) from public;
-revoke all on function public.forge_test_site_is_test(text, text) from public;
-revoke all on function public.forge_test_project_is_test(text, text) from public;
-revoke all on function public.forge_test_package_is_test(text, text) from public;
-revoke all on function public.forge_test_drawing_is_test(text, text) from public;
-revoke all on function public.forge_test_takeoff_line_is_test(text, text) from public;
-revoke all on function public.forge_test_step_is_test(text, text) from public;
-revoke all on function public.forge_test_change_order_is_test(text, text) from public;
-revoke all on function public.forge_test_control_estimate_is_test(text, text) from public;
-revoke all on function public.forge_test_craft_assignment_is_test(text, text) from public;
-revoke all on function public.forge_test_craft_rate_is_test(text, text) from public;
-revoke all on function public.forge_test_progress_entry_is_test(text, text) from public;
-revoke all on function public.forge_test_permit_annotation_is_test(text, text) from public;
-revoke all on function public.forge_test_placement_is_test(text, text) from public;
-revoke all on function public.forge_test_step_link_is_test(text, text) from public;
-revoke all on function public.forge_test_bust_is_test(text, text) from public;
-revoke all on function public.forge_test_work_link_is_test(text, text, text, text, text, text, text) from public;
-revoke all on function public.forge_test_work_link_confirmation_is_test(text, text) from public;
-grant execute on function public.forge_test_client_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_site_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_project_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_package_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_drawing_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_takeoff_line_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_step_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_change_order_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_control_estimate_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_craft_assignment_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_craft_rate_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_progress_entry_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_permit_annotation_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_placement_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_step_link_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_bust_is_test(text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_work_link_is_test(text, text, text, text, text, text, text) to authenticated, anon, service_role;
-grant execute on function public.forge_test_work_link_confirmation_is_test(text, text) to authenticated, anon, service_role;
+revoke all on function forge_planner_internal.forge_test_client_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_site_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_project_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_package_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_drawing_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_takeoff_line_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_step_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_change_order_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_control_estimate_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_craft_assignment_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_craft_rate_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_progress_entry_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_permit_annotation_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_placement_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_step_link_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_bust_is_test(text, text) from public;
+revoke all on function forge_planner_internal.forge_test_work_link_is_test(text, text, text, text, text, text, text) from public;
+revoke all on function forge_planner_internal.forge_test_work_link_confirmation_is_test(text, text) from public;
+grant execute on function forge_planner_internal.forge_test_client_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_site_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_project_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_package_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_drawing_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_takeoff_line_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_step_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_change_order_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_control_estimate_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_craft_assignment_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_craft_rate_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_progress_entry_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_permit_annotation_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_placement_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_step_link_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_bust_is_test(text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_work_link_is_test(text, text, text, text, text, text, text) to authenticated, service_role;
+grant execute on function forge_planner_internal.forge_test_work_link_confirmation_is_test(text, text) to authenticated, service_role;
 
 
 -- ---------------------------------------------------------------------------
@@ -359,128 +385,128 @@ create policy forge_hierarchy_audit_owner_select on public.forge_hierarchy_audit
 
 drop policy if exists forge_projects_owner_select on public.forge_projects;
 create policy forge_projects_owner_select on public.forge_projects for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND (not public.forge_test_project_is_test(owner_id, id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND (not forge_planner_internal.forge_test_project_is_test(owner_id, id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_sites_owner_select on public.forge_sites;
 create policy forge_sites_owner_select on public.forge_sites for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND (not public.forge_test_client_is_test(owner_id, client_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND (not forge_planner_internal.forge_test_client_is_test(owner_id, client_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_change_order_revisions_select on public.forge_work_change_order_revisions;
 create policy forge_work_change_order_revisions_select on public.forge_work_change_order_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_change_order_is_test(owner_id, change_order_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_change_order_is_test(owner_id, change_order_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_change_orders_select on public.forge_work_change_orders;
 create policy forge_work_change_orders_select on public.forge_work_change_orders for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_control_estimate_revisions_select on public.forge_work_control_estimate_revisions;
 create policy forge_work_control_estimate_revisions_select on public.forge_work_control_estimate_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_control_estimate_is_test(owner_id, estimate_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_control_estimate_is_test(owner_id, estimate_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_control_estimates_select on public.forge_work_control_estimates;
 create policy forge_work_control_estimates_select on public.forge_work_control_estimates for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_craft_assignment_revisions_workspace_select on public.forge_work_craft_assignment_revisions;
 create policy forge_work_craft_assignment_revisions_workspace_select on public.forge_work_craft_assignment_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_craft_assignment_is_test(owner_id, assignment_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_craft_assignment_is_test(owner_id, assignment_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_craft_assignments_workspace_select on public.forge_work_craft_assignments;
 create policy forge_work_craft_assignments_workspace_select on public.forge_work_craft_assignments for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_craft_rate_revisions_select on public.forge_work_craft_rate_revisions;
 create policy forge_work_craft_rate_revisions_select on public.forge_work_craft_rate_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_craft_rate_is_test(owner_id, craft_rate_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_craft_rate_is_test(owner_id, craft_rate_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_craft_rates_select on public.forge_work_craft_rates;
 create policy forge_work_craft_rates_select on public.forge_work_craft_rates for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_drawings_workspace_delete on public.forge_work_drawings;
 create policy forge_work_drawings_workspace_delete on public.forge_work_drawings for delete to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_drawings_workspace_insert on public.forge_work_drawings;
 create policy forge_work_drawings_workspace_insert on public.forge_work_drawings for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_drawings_workspace_select on public.forge_work_drawings;
 create policy forge_work_drawings_workspace_select on public.forge_work_drawings for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_attestations_workspace_insert on public.forge_work_gate_attestations;
 create policy forge_work_gate_attestations_workspace_insert on public.forge_work_gate_attestations for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_attestations_workspace_select on public.forge_work_gate_attestations;
 create policy forge_work_gate_attestations_workspace_select on public.forge_work_gate_attestations for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_evaluations_workspace_insert on public.forge_work_gate_evaluations;
 create policy forge_work_gate_evaluations_workspace_insert on public.forge_work_gate_evaluations for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_evaluations_workspace_select on public.forge_work_gate_evaluations;
 create policy forge_work_gate_evaluations_workspace_select on public.forge_work_gate_evaluations for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_overrides_workspace_insert on public.forge_work_gate_overrides;
 create policy forge_work_gate_overrides_workspace_insert on public.forge_work_gate_overrides for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_gate_overrides_workspace_select on public.forge_work_gate_overrides;
 create policy forge_work_gate_overrides_workspace_select on public.forge_work_gate_overrides for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_inspection_observations_workspace_select on public.forge_work_inspection_observations;
 create policy forge_work_inspection_observations_workspace_select on public.forge_work_inspection_observations for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_inspection_observations_workspace_write on public.forge_work_inspection_observations;
 create policy forge_work_inspection_observations_workspace_write on public.forge_work_inspection_observations for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_link_confirmations_workspace_all on public.forge_work_link_confirmations;
 create policy forge_work_link_confirmations_workspace_all on public.forge_work_link_confirmations for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_work_link_confirmation_is_test(owner_id, link_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_work_link_confirmation_is_test(owner_id, link_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_work_link_confirmation_is_test(owner_id, link_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_work_link_confirmation_is_test(owner_id, link_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_links_workspace_all on public.forge_work_links;
 create policy forge_work_links_workspace_all on public.forge_work_links for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_work_link_is_test(owner_id, source_domain, source_type, source_id, target_domain, target_type, target_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_work_link_is_test(owner_id, source_domain, source_type, source_id, target_domain, target_type, target_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_work_link_is_test(owner_id, source_domain, source_type, source_id, target_domain, target_type, target_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_work_link_is_test(owner_id, source_domain, source_type, source_id, target_domain, target_type, target_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_manpower_days_owner on public.forge_work_manpower_days;
 create policy forge_work_manpower_days_owner on public.forge_work_manpower_days for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_baselines_owner on public.forge_work_package_baselines;
 create policy forge_work_package_baselines_owner on public.forge_work_package_baselines for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_budget_revisions_workspace_select on public.forge_work_package_budget_revisions;
 create policy forge_work_package_budget_revisions_workspace_select on public.forge_work_package_budget_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_bust_change_orders_select on public.forge_work_package_bust_change_orders;
 create policy forge_work_package_bust_change_orders_select on public.forge_work_package_bust_change_orders for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND (not public.forge_test_bust_is_test(owner_id, bust_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND (not forge_planner_internal.forge_test_bust_is_test(owner_id, bust_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_bust_revisions_select on public.forge_work_package_bust_revisions;
 create policy forge_work_package_bust_revisions_select on public.forge_work_package_bust_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND (not public.forge_test_bust_is_test(owner_id, bust_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND (not forge_planner_internal.forge_test_bust_is_test(owner_id, bust_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_busts_select on public.forge_work_package_busts;
 create policy forge_work_package_busts_select on public.forge_work_package_busts for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_deletions_workspace_select on public.forge_work_package_deletions;
 create policy forge_work_package_deletions_workspace_select on public.forge_work_package_deletions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_package_links_owner_select on public.forge_work_package_links;
 create policy forge_work_package_links_owner_select on public.forge_work_package_links for select to authenticated
@@ -488,148 +514,148 @@ create policy forge_work_package_links_owner_select on public.forge_work_package
 
 drop policy if exists forge_work_package_transitions_workspace_select on public.forge_work_package_transitions;
 create policy forge_work_package_transitions_workspace_select on public.forge_work_package_transitions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_packages_workspace_insert on public.forge_work_packages;
 create policy forge_work_packages_workspace_insert on public.forge_work_packages for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_packages_workspace_select on public.forge_work_packages;
 create policy forge_work_packages_workspace_select on public.forge_work_packages for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_packages_workspace_update on public.forge_work_packages;
 create policy forge_work_packages_workspace_update on public.forge_work_packages for update to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_project_is_test(owner_id, forge_project_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_permit_annotation_revisions_workspace_select on public.forge_work_permit_annotation_revisions;
 create policy forge_work_permit_annotation_revisions_workspace_select on public.forge_work_permit_annotation_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_permit_annotation_is_test(owner_id, annotation_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_permit_annotation_is_test(owner_id, annotation_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_permit_annotations_workspace_select on public.forge_work_permit_annotations;
 create policy forge_work_permit_annotations_workspace_select on public.forge_work_permit_annotations for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_planning_process_instances_select on public.forge_work_planning_process_instances;
 create policy forge_work_planning_process_instances_select on public.forge_work_planning_process_instances for select to authenticated
-  using (((public.has_workspace_access(owner_id) OR public.has_planner_permission(owner_id, 'planner.planning_steps.read'::text)) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using (((public.has_workspace_access(owner_id) OR public.has_planner_permission(owner_id, 'planner.planning_steps.read'::text)) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_planning_process_revisions_select on public.forge_work_planning_process_revisions;
 create policy forge_work_planning_process_revisions_select on public.forge_work_planning_process_revisions for select to authenticated
-  using (((public.has_workspace_access(owner_id) OR public.has_planner_permission(owner_id, 'planner.planning_steps.read'::text)) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using (((public.has_workspace_access(owner_id) OR public.has_planner_permission(owner_id, 'planner.planning_steps.read'::text)) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_progress_entries_workspace_insert on public.forge_work_progress_entries;
 create policy forge_work_progress_entries_workspace_insert on public.forge_work_progress_entries for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_progress_entries_workspace_select on public.forge_work_progress_entries;
 create policy forge_work_progress_entries_workspace_select on public.forge_work_progress_entries for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_progress_entries_workspace_update on public.forge_work_progress_entries;
 create policy forge_work_progress_entries_workspace_update on public.forge_work_progress_entries for update to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_progress_revisions_workspace_select on public.forge_work_progress_revisions;
 create policy forge_work_progress_revisions_workspace_select on public.forge_work_progress_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_progress_entry_is_test(owner_id, entry_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_progress_entry_is_test(owner_id, entry_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_progress_snapshots_owner on public.forge_work_progress_snapshots;
 create policy forge_work_progress_snapshots_owner on public.forge_work_progress_snapshots for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_scope_baselines_workspace_select on public.forge_work_scope_baselines;
 create policy forge_work_scope_baselines_workspace_select on public.forge_work_scope_baselines for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_scope_changes_workspace_insert on public.forge_work_scope_changes;
 create policy forge_work_scope_changes_workspace_insert on public.forge_work_scope_changes for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND (status = 'proposed'::text) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND (status = 'proposed'::text) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_scope_changes_workspace_select on public.forge_work_scope_changes;
 create policy forge_work_scope_changes_workspace_select on public.forge_work_scope_changes for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_curve_placement_revisions_select on public.forge_work_step_curve_placement_revisions;
 create policy forge_work_step_curve_placement_revisions_select on public.forge_work_step_curve_placement_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_placement_is_test(owner_id, placement_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_placement_is_test(owner_id, placement_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_curve_placements_select on public.forge_work_step_curve_placements;
 create policy forge_work_step_curve_placements_select on public.forge_work_step_curve_placements for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_drawing_link_revisions_workspace_select on public.forge_work_step_drawing_link_revisions;
 create policy forge_work_step_drawing_link_revisions_workspace_select on public.forge_work_step_drawing_link_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_step_link_is_test(owner_id, link_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_step_link_is_test(owner_id, link_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_drawing_links_workspace_select on public.forge_work_step_drawing_links;
 create policy forge_work_step_drawing_links_workspace_select on public.forge_work_step_drawing_links for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_order_workspace_select on public.forge_work_step_order;
 create policy forge_work_step_order_workspace_select on public.forge_work_step_order for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_step_revisions_workspace_select on public.forge_work_step_revisions;
 create policy forge_work_step_revisions_workspace_select on public.forge_work_step_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_step_is_test(owner_id, step_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_step_is_test(owner_id, step_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_steps_workspace_select on public.forge_work_steps;
 create policy forge_work_steps_workspace_select on public.forge_work_steps for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, work_package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_takeoff_lines_workspace_delete on public.forge_work_takeoff_lines;
 create policy forge_work_takeoff_lines_workspace_delete on public.forge_work_takeoff_lines for delete to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_takeoff_lines_workspace_insert on public.forge_work_takeoff_lines;
 create policy forge_work_takeoff_lines_workspace_insert on public.forge_work_takeoff_lines for insert to authenticated
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_takeoff_lines_workspace_select on public.forge_work_takeoff_lines;
 create policy forge_work_takeoff_lines_workspace_select on public.forge_work_takeoff_lines for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_takeoff_lines_workspace_update on public.forge_work_takeoff_lines;
 create policy forge_work_takeoff_lines_workspace_update on public.forge_work_takeoff_lines for update to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_drawing_is_test(owner_id, drawing_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_work_weekly_commitments_owner on public.forge_work_weekly_commitments;
 create policy forge_work_weekly_commitments_owner on public.forge_work_weekly_commitments for all to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
-  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)))
+  with check ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_artifacts_select on public.forge_wp_drawing_artifacts;
 create policy forge_wp_drawing_artifacts_select on public.forge_wp_drawing_artifacts for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_field_redlines_select on public.forge_wp_drawing_field_redlines;
 create policy forge_wp_drawing_field_redlines_select on public.forge_wp_drawing_field_redlines for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_ifc_releases_select on public.forge_wp_drawing_ifc_releases;
 create policy forge_wp_drawing_ifc_releases_select on public.forge_wp_drawing_ifc_releases for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_redlines_select on public.forge_wp_drawing_redlines;
 create policy forge_wp_drawing_redlines_select on public.forge_wp_drawing_redlines for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_review_events_select on public.forge_wp_drawing_review_events;
 create policy forge_wp_drawing_review_events_select on public.forge_wp_drawing_review_events for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_reviews_select on public.forge_wp_drawing_reviews;
 create policy forge_wp_drawing_reviews_select on public.forge_wp_drawing_reviews for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 drop policy if exists forge_wp_drawing_revisions_select on public.forge_wp_drawing_revisions;
 create policy forge_wp_drawing_revisions_select on public.forge_wp_drawing_revisions for select to authenticated
-  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not public.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
+  using ((public.has_workspace_access(owner_id) AND public.forge_has_app_entitlement(owner_id, 'planner'::text) AND (not forge_planner_internal.forge_test_package_is_test(owner_id, package_id) or auth.uid()::text = owner_id)));
 
 
 -- ---------------------------------------------------------------------------
@@ -686,38 +712,38 @@ begin
     -- package's own test-ness and both the old and the new project
     -- link (a reparent across the boundary must fail either way).
     if TG_OP = 'INSERT' then
-      v_is_test := public.forge_test_project_is_test(NEW.owner_id, NEW.forge_project_id);
+      v_is_test := forge_planner_internal.forge_test_project_is_test(NEW.owner_id, NEW.forge_project_id);
     else
-      v_is_test := public.forge_test_package_is_test(OLD.owner_id, OLD.id)
-        or public.forge_test_project_is_test(OLD.owner_id, OLD.forge_project_id)
-        or (TG_OP = 'UPDATE' and public.forge_test_project_is_test(NEW.owner_id, NEW.forge_project_id));
+      v_is_test := forge_planner_internal.forge_test_package_is_test(OLD.owner_id, OLD.id)
+        or forge_planner_internal.forge_test_project_is_test(OLD.owner_id, OLD.forge_project_id)
+        or (TG_OP = 'UPDATE' and forge_planner_internal.forge_test_project_is_test(NEW.owner_id, NEW.forge_project_id));
     end if;
   elsif v_key = 'work_package_id' then
-    v_is_test := public.forge_test_package_is_test(v_row.owner_id, v_row.work_package_id);
+    v_is_test := forge_planner_internal.forge_test_package_is_test(v_row.owner_id, v_row.work_package_id);
   elsif v_key = 'package_id' then
-    v_is_test := public.forge_test_package_is_test(v_row.owner_id, v_row.package_id);
+    v_is_test := forge_planner_internal.forge_test_package_is_test(v_row.owner_id, v_row.package_id);
   elsif v_key = 'drawing_id' then
-    v_is_test := public.forge_test_drawing_is_test(v_row.owner_id, v_row.drawing_id);
+    v_is_test := forge_planner_internal.forge_test_drawing_is_test(v_row.owner_id, v_row.drawing_id);
   elsif v_key = 'step_id' then
-    v_is_test := public.forge_test_step_is_test(v_row.owner_id, v_row.step_id);
+    v_is_test := forge_planner_internal.forge_test_step_is_test(v_row.owner_id, v_row.step_id);
   elsif v_key = 'change_order_id' then
-    v_is_test := public.forge_test_change_order_is_test(v_row.owner_id, v_row.change_order_id);
+    v_is_test := forge_planner_internal.forge_test_change_order_is_test(v_row.owner_id, v_row.change_order_id);
   elsif v_key = 'control_estimate_id' then
-    v_is_test := public.forge_test_control_estimate_is_test(v_row.owner_id, v_row.estimate_id);
+    v_is_test := forge_planner_internal.forge_test_control_estimate_is_test(v_row.owner_id, v_row.estimate_id);
   elsif v_key = 'craft_assignment_id' then
-    v_is_test := public.forge_test_craft_assignment_is_test(v_row.owner_id, v_row.assignment_id);
+    v_is_test := forge_planner_internal.forge_test_craft_assignment_is_test(v_row.owner_id, v_row.assignment_id);
   elsif v_key = 'craft_rate_id' then
-    v_is_test := public.forge_test_craft_rate_is_test(v_row.owner_id, v_row.craft_rate_id);
+    v_is_test := forge_planner_internal.forge_test_craft_rate_is_test(v_row.owner_id, v_row.craft_rate_id);
   elsif v_key = 'progress_entry_id' then
-    v_is_test := public.forge_test_progress_entry_is_test(v_row.owner_id, v_row.entry_id);
+    v_is_test := forge_planner_internal.forge_test_progress_entry_is_test(v_row.owner_id, v_row.entry_id);
   elsif v_key = 'permit_annotation_id' then
-    v_is_test := public.forge_test_permit_annotation_is_test(v_row.owner_id, v_row.annotation_id);
+    v_is_test := forge_planner_internal.forge_test_permit_annotation_is_test(v_row.owner_id, v_row.annotation_id);
   elsif v_key = 'placement_id' then
-    v_is_test := public.forge_test_placement_is_test(v_row.owner_id, v_row.placement_id);
+    v_is_test := forge_planner_internal.forge_test_placement_is_test(v_row.owner_id, v_row.placement_id);
   elsif v_key = 'step_link_id' then
-    v_is_test := public.forge_test_step_link_is_test(v_row.owner_id, v_row.link_id);
+    v_is_test := forge_planner_internal.forge_test_step_link_is_test(v_row.owner_id, v_row.link_id);
   elsif v_key = 'bust_id' then
-    v_is_test := public.forge_test_bust_is_test(v_row.owner_id, v_row.bust_id);
+    v_is_test := forge_planner_internal.forge_test_bust_is_test(v_row.owner_id, v_row.bust_id);
   else
     raise exception 'FORGE_PLANNER_TEST_GUARD_KEY_UNKNOWN: %', v_key;
   end if;
@@ -2809,7 +2835,7 @@ begin
       raise exception 'FORGE_PRB_PACKAGE_NOT_FOUND';
     end if;
     -- Replay re-checks visibility before returning the cached receipt.
-    if public.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) and v_actor <> p_owner_id then
+    if forge_planner_internal.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) and v_actor <> p_owner_id then
       raise exception 'FORGE_PRB_PACKAGE_NOT_FOUND';
     end if;
     return row_to_json(v_pkg)::jsonb;
@@ -2826,7 +2852,7 @@ begin
     raise exception 'FORGE_PRB_PACKAGE_NOT_FOUND';
   end if;
   -- A test package is invisible to non-owners.
-  if public.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) and v_actor <> p_owner_id then
+  if forge_planner_internal.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) and v_actor <> p_owner_id then
     raise exception 'FORGE_PRB_PACKAGE_NOT_FOUND';
   end if;
   if v_pkg.version <> p_expected_version then
@@ -2864,7 +2890,7 @@ begin
     -- between test clients. (A real package moving to a test project
     -- is allowed for the owner only — it becomes a purge blocker —
     -- and is already gated above: a non-owner never sees the target.)
-    if public.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) then
+    if forge_planner_internal.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id) then
       if not v_client.is_test then
         raise exception 'FORGE_PRB_TEST_BOUNDARY';
       end if;
@@ -2882,8 +2908,8 @@ begin
   -- The link row is test-rooted when the package, the old target,
   -- or the new target is test: once a link touches a test project it
   -- stays test forever, even after an unlink back to real.
-  v_link_is_test := public.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id)
-    or (v_pkg.forge_project_id is not null and public.forge_test_project_is_test(p_owner_id, v_pkg.forge_project_id))
+  v_link_is_test := forge_planner_internal.forge_test_package_is_test(v_pkg.owner_id, v_pkg.id)
+    or (v_pkg.forge_project_id is not null and forge_planner_internal.forge_test_project_is_test(p_owner_id, v_pkg.forge_project_id))
     or (v_target is not null and v_client.is_test);
 
   v_is_noop := (v_pkg.forge_project_id is not distinct from v_target);
@@ -2972,7 +2998,7 @@ begin
   -- A test package's checklist is invisible to non-owners: the
   -- package row, its 22 instance rows, and its template binding all
   -- name test data.
-  if public.forge_test_package_is_test(p_owner_id, p_package_id) and v_actor <> p_owner_id then
+  if forge_planner_internal.forge_test_package_is_test(p_owner_id, p_package_id) and v_actor <> p_owner_id then
     raise exception 'WPP10_PACKAGE_NOT_FOUND';
   end if;
 
