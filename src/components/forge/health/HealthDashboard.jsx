@@ -150,6 +150,19 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, defaul
 
 function emptyLabResultRow() { return { markerName: "", value: "", unit: "", referenceLow: "", referenceHigh: "", flag: "unknown" }; }
 
+// Fix round 1 (P1 -- ChatGPT review 2026-11-18): a blank bound normalizes to null; a non-blank,
+// non-finite bound (whitespace -- Number(" ") is 0, not NaN -- or non-numeric text) is explicitly
+// rejected rather than silently becoming 0 or null. Shared by validation (before the review step)
+// and the actual insert, so the two can never drift onto different rules.
+export function normalizeLabReferenceBound(raw) {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: null };
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return { ok: false, value: null };
+  const numeric = Number(trimmed);
+  if (!Number.isFinite(numeric)) return { ok: false, value: null };
+  return { ok: true, value: numeric };
+}
+
 // Always-available manual entry path for lab results -- the document importer above only shows
 // its review form once AI extraction actually produces a proposal (proposal?.proposal_type ===
 // "lab_results" && reviewed). When extraction fails entirely, or nobody ever uploads a document
@@ -181,10 +194,29 @@ export function HealthLabManualEntryForm({ workspaceId, profiles, defaultProfile
   const selectedProfile = profiles.find((profile) => profile.id === profileId);
   const selectedDocument = documents.find((document) => document.id === sourceDocumentId);
 
+  // Fix round 1 (P1): every filled row's reference bounds are validated BEFORE the review step is
+  // ever shown, not just at insert time -- an invalid bound must never silently reach "review"
+  // looking like a valid one. Returns the first actionable problem found, or null.
+  function validateReferenceBounds() {
+    for (const row of filledRows) {
+      const marker = row.markerName.trim();
+      const low = normalizeLabReferenceBound(row.referenceLow);
+      const high = normalizeLabReferenceBound(row.referenceHigh);
+      if (!low.ok) return `"${marker}": reference low must be a number, or left blank.`;
+      if (!high.ok) return `"${marker}": reference high must be a number, or left blank.`;
+      if (low.value !== null && high.value !== null && !(low.value < high.value)) {
+        return `"${marker}": reference low (${low.value}) must be less than reference high (${high.value}).`;
+      }
+    }
+    return null;
+  }
+
   function startReview(event) {
     event.preventDefault();
     setMessage("");
     if (!filledRows.length) { setMessage("Enter at least one marker with a value."); return; }
+    const boundsProblem = validateReferenceBounds();
+    if (boundsProblem) { setMessage(boundsProblem); return; }
     setReviewing(true);
   }
 
@@ -201,8 +233,8 @@ export function HealthLabManualEntryForm({ workspaceId, profiles, defaultProfile
         value_numeric: isNumeric ? numeric : null,
         value_text: isNumeric ? null : trimmedValue,
         unit: row.unit.trim() || null,
-        reference_low: row.referenceLow === "" ? null : Number(row.referenceLow),
-        reference_high: row.referenceHigh === "" ? null : Number(row.referenceHigh),
+        reference_low: normalizeLabReferenceBound(row.referenceLow).value,
+        reference_high: normalizeLabReferenceBound(row.referenceHigh).value,
         flag: row.flag,
         source_name: selectedDocument ? selectedDocument.title : null,
         created_by: user.id,
@@ -251,8 +283,8 @@ export function HealthLabManualEntryForm({ workspaceId, profiles, defaultProfile
           <input aria-label={`Marker ${index + 1}`} placeholder="Marker" value={row.markerName} onChange={(event) => updateRow(index, "markerName", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-3"/>
           <input aria-label={`Value ${index + 1}`} placeholder="Value" value={row.value} onChange={(event) => updateRow(index, "value", event.target.value)} className="col-span-2 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
           <input aria-label={`Unit ${index + 1}`} placeholder="Unit" value={row.unit} onChange={(event) => updateRow(index, "unit", event.target.value)} className="col-span-2 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
-          <input aria-label={`Reference low ${index + 1}`} placeholder="Ref low" value={row.referenceLow} onChange={(event) => updateRow(index, "referenceLow", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
-          <input aria-label={`Reference high ${index + 1}`} placeholder="Ref high" value={row.referenceHigh} onChange={(event) => updateRow(index, "referenceHigh", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <input type="number" step="any" aria-label={`Reference low ${index + 1}`} placeholder="Ref low" value={row.referenceLow} onChange={(event) => updateRow(index, "referenceLow", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <input type="number" step="any" aria-label={`Reference high ${index + 1}`} placeholder="Ref high" value={row.referenceHigh} onChange={(event) => updateRow(index, "referenceHigh", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
           <select aria-label={`Flag ${index + 1}`} value={row.flag} onChange={(event) => updateRow(index, "flag", event.target.value)} className="col-span-6 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"><option className="text-slate-950" value="unknown">Unknown</option><option className="text-slate-950" value="normal">Normal</option><option className="text-slate-950" value="low">Low</option><option className="text-slate-950" value="high">High</option><option className="text-slate-950" value="critical">Critical</option></select>
           <button type="button" onClick={() => removeRow(index)} aria-label={`Remove result ${index + 1}`} className="col-span-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
         </div>)}

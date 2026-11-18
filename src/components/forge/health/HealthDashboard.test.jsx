@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import HealthDashboard from "./HealthDashboard";
+import HealthDashboard, { normalizeLabReferenceBound } from "./HealthDashboard";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -95,6 +95,29 @@ async function goToTab(container, label) {
     await flush();
   });
 }
+
+describe("normalizeLabReferenceBound -- fix round 1 (P1) unit coverage", () => {
+  // A number input already blocks these in a real browser (and in jsdom via the native value
+  // setter -- verified separately), but the function itself must still refuse them directly:
+  // defense in depth, and the only way to meaningfully assert the whitespace/non-numeric cases
+  // the DOM-level number input makes unreachable through simulated typing.
+  it("normalizes whitespace-only to null (a trimmed blank bound), never to zero (Number(' ') === 0 is the exact bug this guards against)", () => {
+    expect(normalizeLabReferenceBound("   ")).toEqual({ ok: true, value: null });
+  });
+  it("rejects non-numeric text as invalid, not as null via NaN", () => {
+    expect(normalizeLabReferenceBound("abc")).toEqual({ ok: false, value: null });
+  });
+  it("rejects scientific notation (not a plain decimal a lab report would ever show)", () => {
+    expect(normalizeLabReferenceBound("1e5")).toEqual({ ok: false, value: null });
+  });
+  it("normalizes a blank string to null, not zero or an error", () => {
+    expect(normalizeLabReferenceBound("")).toEqual({ ok: true, value: null });
+  });
+  it("accepts a plain decimal, including negative (e.g. base excess)", () => {
+    expect(normalizeLabReferenceBound("98.6")).toEqual({ ok: true, value: 98.6 });
+    expect(normalizeLabReferenceBound("-2.5")).toEqual({ ok: true, value: -2.5 });
+  });
+});
 
 describe("HealthDashboard", () => {
   let mounted;
@@ -300,6 +323,66 @@ describe("HealthDashboard", () => {
 
     expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
     expect(mounted.container.querySelector('[aria-label="Marker 1"]').value).toBe("Ferritin");
+  });
+
+  it("refuses to advance to review when reference low equals reference high", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "70");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "70");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    // "Review before saving" is also the always-present button's own label in edit mode, so it
+    // cannot distinguish edit vs. review state -- the review card's distinctive lead paragraph can.
+    expect(mounted.container.textContent).not.toContain("Nothing has been added to the health record yet");
+    expect(mounted.container.textContent).toContain("reference low (70) must be less than reference high (70)");
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+  });
+
+  it("refuses to advance to review when reference low is greater than reference high (reversed bounds)", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "100");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "70");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(mounted.container.textContent).not.toContain("Nothing has been added to the health record yet");
+    expect(mounted.container.textContent).toContain("reference low (100) must be less than reference high (70)");
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+  });
+
+  it("advances to review and saves correctly when reference low is strictly less than reference high", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "70");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "100");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(mounted.container.textContent).toContain("Nothing has been added to the health record yet");
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm and save");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_lab_results", [
+      expect.objectContaining({ marker_name: "Glucose", value_numeric: 95, reference_low: 70, reference_high: 100 }),
+    ]);
   });
 
   // Regression guard for Jason's report: a duplicate saved source (page 2 re-uploaded) had no
