@@ -411,6 +411,26 @@ describe("HealthDashboard", () => {
 
     expect(deleteMock).toHaveBeenCalledWith("health_documents", "doc-2");
     expect(storageRemoveMock).toHaveBeenCalledWith("health-documents", ["ws-1/doc-2.pdf"]);
+    // Fix round 2 (P1): storage MUST be deleted before the metadata row, never after --
+    // health_document_object_select's own policy only grants visibility while a matching
+    // health_documents row still exists, so deleting metadata first makes the storage object
+    // permanently undeletable by anyone afterward.
+    expect(storageRemoveMock.mock.invocationCallOrder[0]).toBeLessThan(deleteMock.mock.invocationCallOrder[0]);
+  });
+
+  it("never deletes the health_documents metadata row if the storage deletion fails first", async () => {
+    storageRemoveMock.mockImplementationOnce(() => Promise.resolve({ error: { message: "storage error" } }));
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete November 6 labs"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(storageRemoveMock).toHaveBeenCalledWith("health-documents", ["ws-1/doc-2.pdf"]);
+    expect(deleteMock).not.toHaveBeenCalledWith("health_documents", expect.anything());
   });
 
   it("logs a vital and attributes it to the signed-in user (recorded_by)", async () => {

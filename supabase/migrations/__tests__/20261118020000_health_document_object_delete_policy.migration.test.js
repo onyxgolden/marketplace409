@@ -200,3 +200,76 @@ describe("health_document_object_delete_policy -- real RLS, not a mock", () => {
     expect(rows[0].has_priv).toBe(false);
   });
 });
+
+// Fix round 2 (P1 -- ChatGPT re-review 2026-11-18): "The new PGlite proof does not exercise the
+// real sequence... Add a non-vacuous test that runs the exact production ordering and proves the
+// storage row is gone after the full operation." Fix round 1's proof above inserted and RETAINED
+// a matching health_documents row for every successful-delete case -- correct for proving the
+// policy itself, but it never exercised HealthSourceDocumentCard.remove()'s own two-step
+// sequence, where fix round 1 still deleted health_documents FIRST and storage SECOND.
+// health_document_object_select's policy only makes a storage row visible while a MATCHING
+// health_documents row exists; deleting that row first makes the object permanently invisible
+// (hence undeletable) to every subsequent attempt, by anyone -- this describe block proves BOTH
+// halves: the corrected storage-first order actually deletes the object, and the OLD
+// metadata-first order would not have (silently, under RLS, not an error).
+describe("production ordering -- storage object deleted BEFORE its health_documents metadata row", () => {
+  // health_documents needs its own real RLS policy too for this full end-to-end proof --
+  // mirrors the base migration's generic `for all to authenticated using
+  // (health_has_workspace_access(workspace_id)) with check (...)` loop (applied identically to
+  // 17 tables there, health_documents among them) exactly; that loop is dynamically generated
+  // inside a `do $$ ... $$` block in the real file, so it cannot be extracted verbatim the way
+  // the two storage policies above were -- this is the same generic pattern, not a one-off guess.
+  const healthDocumentsPolicySql = `
+    create policy health_documents_member_all on public.health_documents for all to authenticated
+      using (public.health_has_workspace_access(workspace_id)) with check (public.health_has_workspace_access(workspace_id));
+  `;
+
+  async function freshDbWithOneDocument() {
+    const fdb = new PGlite();
+    await fdb.exec(SETUP_SQL);
+    await fdb.exec(insertPolicySql);
+    await fdb.exec(selectPolicySql);
+    await fdb.exec(deletePolicySql);
+    await fdb.exec(`grant delete on public.health_documents to authenticated`);
+    await fdb.exec(healthDocumentsPolicySql);
+    await fdb.exec(`insert into public.health_workspace_members (workspace_id, user_id) values (test_actor_uuid('ws_1'), test_actor_uuid('owner_1'))`);
+    await fdb.exec(`insert into storage.objects (bucket_id, name) values ('health-documents', test_actor_uuid('ws_1')::text || '/doc-1.pdf')`);
+    await fdb.exec(`insert into public.health_documents (workspace_id, bucket, object_path) values (test_actor_uuid('ws_1'), 'health-documents', test_actor_uuid('ws_1')::text || '/doc-1.pdf')`);
+    return fdb;
+  }
+
+  it("the CORRECTED order (storage deleted first, while metadata still exists) actually deletes the storage object", async () => {
+    const fdb = await freshDbWithOneDocument();
+    const name = (await fdb.query(`select test_actor_uuid('ws_1')::text || '/doc-1.pdf' as n`)).rows[0].n;
+
+    await fdb.exec("set role authenticated");
+    await fdb.exec(`select set_config('test.actor', 'owner_1', false)`);
+    const storageDelete = await fdb.query(`delete from storage.objects where bucket_id='health-documents' and name = '${name}'`);
+    expect(storageDelete.affectedRows).toBe(1); // the metadata row still existed at this point -- visibility held.
+    const metadataDelete = await fdb.query(`delete from public.health_documents where object_path = '${name}'`);
+    expect(metadataDelete.affectedRows).toBe(1);
+    await fdb.exec("reset role");
+
+    const storageRows = await fdb.query(`select 1 from storage.objects where name = '${name}'`);
+    const metadataRows = await fdb.query(`select 1 from public.health_documents where object_path = '${name}'`);
+    expect(storageRows.rows).toHaveLength(0);
+    expect(metadataRows.rows).toHaveLength(0);
+  });
+
+  it("the OLD, WRONG order (metadata deleted first) leaves the storage object permanently undeletable -- the exact bug the reviewer found", async () => {
+    const fdb = await freshDbWithOneDocument();
+    const name = (await fdb.query(`select test_actor_uuid('ws_1')::text || '/doc-1.pdf' as n`)).rows[0].n;
+
+    await fdb.exec("set role authenticated");
+    await fdb.exec(`select set_config('test.actor', 'owner_1', false)`);
+    const metadataDelete = await fdb.query(`delete from public.health_documents where object_path = '${name}'`);
+    expect(metadataDelete.affectedRows).toBe(1); // metadata delete itself succeeds fine.
+    // NOW attempt the storage delete, exactly as fix round 1's component still did, second.
+    const storageDelete = await fdb.query(`delete from storage.objects where bucket_id='health-documents' and name = '${name}'`);
+    expect(storageDelete.affectedRows).toBe(0); // silently matched zero rows under RLS -- no error, no visible failure.
+    await fdb.exec("reset role");
+
+    const storageRows = await fdb.query(`select 1 from storage.objects where name = '${name}'`);
+    expect(storageRows.rows).toHaveLength(1); // still there, forever -- no caller, including the owner, can ever delete it now.
+  });
+});

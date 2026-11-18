@@ -307,13 +307,23 @@ export function HealthSourceDocumentCard({ document, onChanged }) {
   const statusLabel = { pending_review: "Awaiting review", confirmed: "Confirmed", extraction_failed: "Extraction failed", rejected: "Rejected" }[document.review_status] || document.review_status;
 
   async function remove() {
+    // Fix round 2 (P1 -- ChatGPT re-review 2026-11-18): storage must be deleted BEFORE the
+    // health_documents metadata row, never after. health_document_object_select's own policy
+    // only makes the storage row visible while a MATCHING health_documents row still exists
+    // (joined on object_path/bucket) -- and DELETE-under-RLS needs that same visibility to
+    // affect anything at all (confirmed empirically in fix round 1's own test harness: a DELETE
+    // policy alone, with no applicable SELECT policy pass, silently deletes zero rows). Deleting
+    // the metadata first, as fix round 1 still did, makes the storage object permanently
+    // invisible to every future delete attempt by anyone -- an unrecoverable orphan, forever.
+    //
+    // This order's worst failure case is recoverable instead: if the metadata delete below fails
+    // after the storage object is already gone, the document stays visible in the list (metadata
+    // is the source of truth for display) and a retry's own storage.remove() call is a safe
+    // no-op on an already-missing object, then proceeds to retry the metadata delete.
+    const { error: storageError } = await supabase.storage.from(document.bucket).remove([document.object_path]);
+    if (storageError) return; // do not touch metadata until storage is confirmed handled.
     const { error } = await supabase.from("health_documents").delete().eq("id", document.id);
     if (error) return;
-    // Best-effort storage cleanup, never blocking on it: the DB row above is already gone, which
-    // already revokes read access to the underlying object (health_document_object_select
-    // requires a matching health_documents row) -- this just avoids an orphaned file in the
-    // bucket on top of that.
-    await supabase.storage.from(document.bucket).remove([document.object_path]);
     await onChanged();
   }
 
