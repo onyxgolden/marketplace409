@@ -97,7 +97,7 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, defaul
     const result = await response.json(); setBusy(false);
     if (!response.ok) { setMessage(result.error || "Unable to read this document."); return; }
     setSource(result.sourceUrl ? { url: result.sourceUrl, mimeType: result.mimeType } : null);
-    if (!result.proposal) { setMessage(result.warning || "The source was saved. Enter its fields manually."); return; }
+    if (!result.proposal) { setMessage(result.warning || "The source was saved. Enter its fields manually using the form below."); return; }
     setProposal(result.proposal); setReviewed(structuredClone(result.proposal.proposed_data));
     setMessage("Review every field below. Nothing has been added to the health record yet.");
   }
@@ -146,6 +146,152 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, defaul
     {proposal && <div className="mt-4 flex gap-2"><button onClick={confirm} disabled={busy || proposal.proposal_type === "unclassified"} className="rounded-xl bg-emerald-500 px-4 py-2 font-black text-slate-950 disabled:opacity-50">{busy ? "Saving…" : "Confirm and add fields"}</button><button onClick={() => { setProposal(null); setReviewed(null); setSource(null); setMessage(""); }} className="rounded-xl bg-slate-200 px-4 py-2 font-black text-slate-950">Cancel review</button></div>}
     {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
   </Card>;
+}
+
+function emptyLabResultRow() { return { markerName: "", value: "", unit: "", referenceLow: "", referenceHigh: "", flag: "unknown" }; }
+
+// Always-available manual entry path for lab results -- the document importer above only shows
+// its review form once AI extraction actually produces a proposal (proposal?.proposal_type ===
+// "lab_results" && reviewed). When extraction fails entirely, or nobody ever uploads a document
+// at all, there was previously no way in: the app said "Enter its fields manually" with nothing
+// to enter them into. This form never depends on an upload or a health_extraction_proposals row
+// -- it inserts directly into health_lab_results, the same convention every other manual-entry
+// form in this file already uses (HealthWorkoutForm, HealthMeasurementForm,
+// HealthRegimenBulkForm). A review step shows exactly what will be saved before the insert
+// happens, mirroring the importer's own "nothing has been added to the health record yet"
+// pattern -- lab data gets that extra confirm step the simpler vitals/workout forms don't,
+// since a manually typed lab value can carry a reference range that drives a trend chart's
+// target band, worth a second look before it's saved.
+export function HealthLabManualEntryForm({ workspaceId, profiles, defaultProfileId, documents, onSaved }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
+  const [collectedOn, setCollectedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [panelName, setPanelName] = useState("");
+  const [sourceDocumentId, setSourceDocumentId] = useState("");
+  const [rows, setRows] = useState([emptyLabResultRow()]);
+  const [reviewing, setReviewing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateRow(index, key, value) { setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row)); }
+  function addRow() { setRows((current) => [...current, emptyLabResultRow()]); }
+  function removeRow(index) { setRows((current) => current.length > 1 ? current.filter((_, rowIndex) => rowIndex !== index) : current); }
+
+  const filledRows = rows.filter((row) => row.markerName.trim() && row.value.trim() !== "");
+  const selectedProfile = profiles.find((profile) => profile.id === profileId);
+  const selectedDocument = documents.find((document) => document.id === sourceDocumentId);
+
+  function startReview(event) {
+    event.preventDefault();
+    setMessage("");
+    if (!filledRows.length) { setMessage("Enter at least one marker with a value."); return; }
+    setReviewing(true);
+  }
+
+  async function confirmSave() {
+    setBusy(true); setMessage("");
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("health_lab_results").insert(filledRows.map((row) => {
+      const trimmedValue = row.value.trim();
+      const numeric = Number(trimmedValue);
+      const isNumeric = trimmedValue !== "" && Number.isFinite(numeric);
+      return {
+        workspace_id: workspaceId, profile_id: profileId, collected_on: collectedOn,
+        panel_name: panelName.trim() || null, marker_name: row.markerName.trim(),
+        value_numeric: isNumeric ? numeric : null,
+        value_text: isNumeric ? null : trimmedValue,
+        unit: row.unit.trim() || null,
+        reference_low: row.referenceLow === "" ? null : Number(row.referenceLow),
+        reference_high: row.referenceHigh === "" ? null : Number(row.referenceHigh),
+        flag: row.flag,
+        source_name: selectedDocument ? selectedDocument.title : null,
+        created_by: user.id,
+      };
+    }));
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    const count = filledRows.length;
+    setRows([emptyLabResultRow()]); setPanelName(""); setSourceDocumentId(""); setReviewing(false);
+    setMessage(`${count} lab result${count > 1 ? "s" : ""} saved.`);
+    await onSaved();
+  }
+
+  if (reviewing) return <Card title="Review before saving">
+    <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">Nothing has been added to the health record yet. Check every row, then confirm.</p>
+    <div className="space-y-1 text-sm">
+      <p><span className="font-black">Person:</span> {selectedProfile?.display_name}</p>
+      <p><span className="font-black">Collection date:</span> {collectedOn}</p>
+      {panelName.trim() && <p><span className="font-black">Panel:</span> {panelName.trim()}</p>}
+      {selectedDocument && <p><span className="font-black">Source document:</span> {selectedDocument.title}</p>}
+    </div>
+    <div className="mt-4 space-y-2">{filledRows.map((row, index) => <div key={index} className="rounded-xl bg-slate-100 p-3 text-sm dark:bg-slate-800">
+      <span className="font-black">{row.markerName.trim()}</span>: {row.value.trim()} {row.unit.trim()}
+      {(row.referenceLow !== "" || row.referenceHigh !== "") && <span className="text-slate-500 dark:text-slate-400"> (range {row.referenceLow || "?"}–{row.referenceHigh || "?"})</span>}
+      {row.flag !== "unknown" && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-black dark:bg-slate-700">{row.flag}</span>}
+    </div>)}</div>
+    <div className="mt-4 flex flex-wrap gap-2">
+      <button type="button" onClick={confirmSave} disabled={busy} className="rounded-xl bg-emerald-500 px-4 py-2 font-black text-slate-950 disabled:opacity-50">{busy ? "Saving…" : "Confirm and save"}</button>
+      <button type="button" onClick={() => setReviewing(false)} className="rounded-xl bg-slate-200 px-4 py-2 font-black text-slate-950 dark:bg-slate-700">Back to edit</button>
+    </div>
+    {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
+  </Card>;
+
+  return <Card title="Enter lab results manually">
+    <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Always available, whether or not a document was uploaded or AI extraction worked. Type in results directly, review what will be saved, then confirm.</p>
+    <form onSubmit={startReview} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-sm font-bold">Person<select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{profiles.map((profile) => <option className="text-slate-950" key={profile.id} value={profile.id}>{profile.display_name}</option>)}</select></label>
+        <label className="text-sm font-bold">Collection date<input type="date" value={collectedOn} onChange={(event) => setCollectedOn(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+        <label className="text-sm font-bold">Panel (optional)<input value={panelName} onChange={(event) => setPanelName(event.target.value)} placeholder="e.g. Comprehensive metabolic panel" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+        {documents.length > 0 && <label className="text-sm font-bold">Source document (optional)<select value={sourceDocumentId} onChange={(event) => setSourceDocumentId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"><option className="text-slate-950" value="">No source document</option>{documents.map((document) => <option className="text-slate-950" key={document.id} value={document.id}>{document.title}</option>)}</select></label>}
+      </div>
+      <p className="text-xs text-slate-500 dark:text-slate-400">Reference range fields are never guessed -- type in the low/high shown on the report to enable the target band on the trend chart.</p>
+      <div className="space-y-2">
+        {rows.map((row, index) => <div key={index} className="grid grid-cols-7 gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800 sm:grid-cols-13">
+          <input aria-label={`Marker ${index + 1}`} placeholder="Marker" value={row.markerName} onChange={(event) => updateRow(index, "markerName", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-3"/>
+          <input aria-label={`Value ${index + 1}`} placeholder="Value" value={row.value} onChange={(event) => updateRow(index, "value", event.target.value)} className="col-span-2 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <input aria-label={`Unit ${index + 1}`} placeholder="Unit" value={row.unit} onChange={(event) => updateRow(index, "unit", event.target.value)} className="col-span-2 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <input aria-label={`Reference low ${index + 1}`} placeholder="Ref low" value={row.referenceLow} onChange={(event) => updateRow(index, "referenceLow", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <input aria-label={`Reference high ${index + 1}`} placeholder="Ref high" value={row.referenceHigh} onChange={(event) => updateRow(index, "referenceHigh", event.target.value)} className="col-span-3 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"/>
+          <select aria-label={`Flag ${index + 1}`} value={row.flag} onChange={(event) => updateRow(index, "flag", event.target.value)} className="col-span-6 rounded-lg border bg-transparent px-2 py-1 sm:col-span-2"><option className="text-slate-950" value="unknown">Unknown</option><option className="text-slate-950" value="normal">Normal</option><option className="text-slate-950" value="low">Low</option><option className="text-slate-950" value="high">High</option><option className="text-slate-950" value="critical">Critical</option></select>
+          <button type="button" onClick={() => removeRow(index)} aria-label={`Remove result ${index + 1}`} className="col-span-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
+        </div>)}
+        <button type="button" onClick={addRow} className="rounded-xl bg-slate-200 px-3 py-1.5 text-sm font-black dark:bg-slate-700">+ Add result</button>
+      </div>
+      <button disabled={busy} className="rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50">Review before saving</button>
+    </form>
+    {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
+  </Card>;
+}
+
+// Saved source documents had no visible list anywhere in the app -- uploaded via the importer
+// above but never shown again, so a duplicate re-upload (same report, uploaded twice) had no way
+// to be found or removed. Deleting a document here cascades to its own
+// health_extraction_proposals row only (the FK is "on delete cascade"); health_lab_results has no
+// foreign key back to health_documents at all -- only a free-text source_name label -- so results
+// already entered from a document always survive deleting that document, never silently.
+export function HealthSourceDocumentCard({ document, onChanged }) {
+  const supabase = useMemo(() => createClient(), []);
+  const statusLabel = { pending_review: "Awaiting review", confirmed: "Confirmed", extraction_failed: "Extraction failed", rejected: "Rejected" }[document.review_status] || document.review_status;
+
+  async function remove() {
+    const { error } = await supabase.from("health_documents").delete().eq("id", document.id);
+    if (error) return;
+    // Best-effort storage cleanup, never blocking on it: the DB row above is already gone, which
+    // already revokes read access to the underlying object (health_document_object_select
+    // requires a matching health_documents row) -- this just avoids an orphaned file in the
+    // bucket on top of that.
+    await supabase.storage.from(document.bucket).remove([document.object_path]);
+    await onChanged();
+  }
+
+  return <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
+    <div className="min-w-0">
+      <p className="truncate font-black">{document.title}</p>
+      <p className="text-xs text-slate-500 dark:text-slate-400">{document.document_date || "No document date"} · {statusLabel}</p>
+    </div>
+    <DeleteButton label={`Delete ${document.title}`} onDelete={remove}/>
+  </div>;
 }
 
 function emptyExerciseRow() { return { exercise: "", sets: "", reps: "", weight: "" }; }
@@ -788,7 +934,7 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
 
 // Empty snapshot shape -- what every tab renders against before the first
 // load completes, so no tab blanks on a refresh.
-const EMPTY_SNAPSHOT = { profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [], programs: [], programDays: [] };
+const EMPTY_SNAPSHOT = { profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [], programs: [], programDays: [], documents: [] };
 
 export default function HealthDashboard({ initialMembership }) {
   const supabase = useMemo(() => createClient(), []);
@@ -813,6 +959,7 @@ export default function HealthDashboard({ initialMembership }) {
       ["regimen", "health_regimen_items", "name"], ["measurements", "health_measurements", "measured_at"],
       ["workouts", "health_workouts", "performed_at"], ["timeline", "health_clinical_timeline", "occurred_on"],
       ["programs", "health_programs", "name"], ["programDays", "health_program_days", "day_number"],
+      ["documents", "health_documents", "created_at"],
     ];
     const results = await Promise.all(tables.map(([, table, order]) => supabase.from(table).select("*").eq("workspace_id", id).order(order, { ascending: false })));
     const failed = results.find((result) => result.error);
@@ -876,6 +1023,10 @@ export default function HealthDashboard({ initialMembership }) {
   if (!workspaceId) return <main className="mx-auto max-w-3xl p-6"><Card title="Private FORGE Health"><p className="text-slate-600 dark:text-slate-300">Create one shared health workspace for you and your active co-owner. Only the two explicitly added accounts will have access.</p><button onClick={initialize} disabled={creating} className="mt-5 rounded-xl bg-amber-400 px-5 py-3 font-black text-slate-950 disabled:opacity-50">{creating ? "Creating…" : "Create our private health workspace"}</button>{error && <p role="alert" className="mt-4 text-sm font-bold text-red-600">{error}</p>}</Card></main>;
 
   const viewLabs = data.labs.filter((lab) => lab.profile_id === viewProfileId);
+  // Scoped to lab_report only (not every saved document) -- the manual-entry/delete build is
+  // specifically for the Labs tab's importer; a document saved from the Regimen tab's own
+  // importer instance is out of this build's scope and stays invisible here.
+  const viewLabDocuments = data.documents.filter((document) => document.profile_id === viewProfileId && document.category === "lab_report");
   const viewRegimen = data.regimen.filter((item) => item.profile_id === viewProfileId);
   const viewWorkouts = data.workouts.filter((workout) => workout.profile_id === viewProfileId);
   const viewMeasurements = data.measurements.filter((measurement) => measurement.profile_id === viewProfileId);
@@ -945,6 +1096,10 @@ export default function HealthDashboard({ initialMembership }) {
               <p className="mt-3 text-sm">Unclassified: {latestSummary.unclassified}</p>
             </Card></div>}
             <HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => refresh()}/>
+            <HealthLabManualEntryForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} documents={viewLabDocuments} onSaved={() => refresh()}/>
+            {viewLabDocuments.length > 0 && <Card title={`Saved source documents — ${viewingProfile?.display_name || ""}`}>
+              <div className="space-y-2">{viewLabDocuments.map((document) => <HealthSourceDocumentCard key={document.id} document={document} onChanged={() => refresh()}/>)}</div>
+            </Card>}
             {viewLabs.length > 0 && <Card title={`Combined trends — ${viewingProfile?.display_name || ""}`}>
               {hasCombinableTrend ? <div className="space-y-4">
                 <HealthLabCombinedTrendChart title="Narrow-range markers" groupedLabs={narrowTier}/>
