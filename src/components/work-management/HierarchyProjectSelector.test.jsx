@@ -197,4 +197,43 @@ describe("HierarchyProjectSelector", () => {
     expect(link).toBeDefined();
     expect(link.getAttribute("href")).toBe("/forge/work/admin");
   });
+
+  it("prefixes test entries with TEST and shows the TEST badge once a test chain is picked", async () => {
+    const testTree = structuredClone(TREE);
+    testTree.clients.push({
+      id: "forge_cli_test1", name: "Fictional Test Client", status: "active", isTest: true,
+      sites: [
+        {
+          id: "forge_site_test1", name: "Fictional Test Site", status: "active", isTest: true,
+          projects: [{ id: "forge_prj_test1", name: "Fictional Test Project", projectCode: null, status: "active", isTest: true }],
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ selector: testTree }) })));
+    const { container, onSelect } = renderSelector();
+    await flush();
+    const { client, site, project } = selects(container);
+    expect([...client.querySelectorAll("option")].map((o) => o.textContent)).toContain("TEST — Fictional Test Client");
+    expect([...client.querySelectorAll("option")].map((o) => o.textContent)).toContain("Acme");
+    pick(client, "forge_cli_test1");
+    expect([...site.querySelectorAll("option")].map((o) => o.textContent)).toContain("TEST — Fictional Test Site");
+    pick(site, "forge_site_test1");
+    expect([...project.querySelectorAll("option")].map((o) => o.textContent)).toContain("TEST — Fictional Test Project");
+    expect(container.querySelector("[data-testid='hierarchy-selector-test-badge']")).not.toBeNull();
+    expect(container.textContent).toContain("Test project — fictional test data, visible only to the owner.");
+    pick(project, "forge_prj_test1");
+    expect(onSelect).toHaveBeenCalledWith("forge_prj_test1", expect.objectContaining({
+      client: expect.objectContaining({ id: "forge_cli_test1", isTest: true }),
+    }));
+  });
+
+  it("shows no TEST badge for a real chain", async () => {
+    mockFetchSuccess();
+    const { container } = renderSelector();
+    await flush();
+    const { client, site } = selects(container);
+    pick(client, "forge_cli_1");
+    pick(site, "forge_site_1");
+    expect(container.querySelector("[data-testid='hierarchy-selector-test-badge']")).toBeNull();
+  });
 });

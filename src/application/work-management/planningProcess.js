@@ -139,6 +139,12 @@ export function mapPlanningProcessRpcError(error) {
   if (message.includes("WPP10_PACKAGE_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Work package not found." };
   }
+  // Row-level test guard (migration 20261117120000): a non-owner write
+  // to a test-rooted row raises this from the trigger. It is a
+  // non-disclosing 404, never a 403.
+  if (message.includes("FORGE_PLANNER_TEST_NOT_FOUND")) {
+    return { ok: false, httpStatus: 404, error: "Work package not found." };
+  }
   if (message.includes("WPP10_STEP_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Planning step not found in this package." };
   }

@@ -62,6 +62,9 @@ export function mapHierarchyRpcError(error) {
   if (isMissingRpcError(error) || isMissingTableError(error)) {
     return { ok: false, httpStatus: 503, error: NOT_APPLIED_ERROR };
   }
+  if (message.includes("FORGE_HIERARCHY_TEST_MARKER_IMMUTABLE")) {
+    return { ok: false, httpStatus: 400, error: "A test client cannot be changed into a real client." };
+  }
   if (message.includes("FORGE_HIERARCHY_FORBIDDEN")) {
     return { ok: false, httpStatus: 403, error: HIERARCHY_ERRORS.FORBIDDEN };
   }
@@ -167,6 +170,10 @@ function toCamelClient(row) {
     externalReference: row.external_reference ?? null,
     status: row.status,
     notes: row.notes ?? null,
+    // Owner-only test client marker (migration 20261117120000). False
+    // for every client created before this slice and for every client
+    // created through the regular create RPC.
+    isTest: row.is_test ?? row.isTest ?? false,
     version: row.version,
     createdBy: row.created_by,
     updatedBy: row.updated_by,
@@ -221,25 +228,35 @@ function toCamelSelector(selector) {
   if (!selector) return { ownerId: null, clients: [] };
   return {
     ownerId: selector.ownerId ?? selector.owner_id ?? null,
-    clients: (selector.clients ?? []).map((client) => ({
-      id: client.id,
-      name: client.name,
-      externalReference: client.external_reference ?? null,
-      status: client.status,
-      sites: (client.sites ?? []).map((site) => ({
-        id: site.id,
-        name: site.name,
-        siteType: site.site_type ?? null,
-        status: site.status,
-        projects: (site.projects ?? []).map((project) => ({
-          id: project.id,
-          name: project.name,
-          projectCode: project.project_code ?? null,
-          projectType: project.project_type ?? null,
-          status: project.status,
+    clients: (selector.clients ?? []).map((client) => {
+      // Test-ness is a client property; sites/projects inherit it by
+      // FK ancestry, so the picker propagates the client's flag down
+      // the tree for TEST badges. A test client is only ever returned
+      // to the platform owner (the selector RPC filters it for others).
+      const isTest = client.is_test ?? client.isTest ?? false;
+      return {
+        id: client.id,
+        name: client.name,
+        externalReference: client.external_reference ?? null,
+        status: client.status,
+        isTest,
+        sites: (client.sites ?? []).map((site) => ({
+          id: site.id,
+          name: site.name,
+          siteType: site.site_type ?? null,
+          status: site.status,
+          isTest,
+          projects: (site.projects ?? []).map((project) => ({
+            id: project.id,
+            name: project.name,
+            projectCode: project.project_code ?? null,
+            projectType: project.project_type ?? null,
+            status: project.status,
+            isTest,
+          })),
         })),
-      })),
-    })),
+      };
+    }),
   };
 }
 
@@ -303,6 +320,20 @@ export async function getHierarchyAdminInventory(db, { ownerId }) {
   return { ok: true, inventory: toCamelInventory(result.data) };
 }
 
+/** Test-subtree inventory for the Planner manager's Test mode: only
+ *  is_test clients (with their sites/projects and assigned-package
+ *  counts) plus the server-computed canUseOwnerTestData flag. Backed by
+ *  forge_hierarchy_test_inventory (migration 20261117120000). A
+ *  non-owner gets an empty tree and canUseOwnerTestData = false — the
+ *  same shape, never an existence-revealing error. */
+export async function getHierarchyTestInventory(db, { ownerId }) {
+  const ownerError = requireOwnerId(ownerId);
+  if (ownerError) return ownerError;
+  const result = await callRpc(db, "forge_hierarchy_test_inventory", { p_owner_id: ownerId });
+  if (!result.ok) return result;
+  return { ok: true, inventory: toCamelInventory(result.data) };
+}
+
 /** Map the inventory RPC's snake_case tree to the service's camelCase
  *  full rows (the same toCamelClient/Site/Project shapes the
  *  validate-selection path returns, so edit forms prefill truthfully
@@ -310,20 +341,32 @@ export async function getHierarchyAdminInventory(db, { ownerId }) {
  *  packageCount — assigned packages (any status) block a hard delete;
  *  the number is display only, the delete RPC re-counts. */
 function toCamelInventory(inventory) {
-  if (!inventory) return { ownerId: null, canManage: false, clients: [] };
+  if (!inventory) return { ownerId: null, canManage: false, canUseOwnerTestData: false, clients: [] };
   return {
     ownerId: inventory.ownerId ?? inventory.owner_id ?? null,
     canManage: inventory.canManage ?? inventory.can_manage ?? false,
-    clients: (inventory.clients ?? []).map((client) => ({
-      ...toCamelClient(client),
-      sites: (client.sites ?? []).map((site) => ({
-        ...toCamelSite(site),
-        projects: (site.projects ?? []).map((project) => ({
-          ...toCamelProject(project),
-          packageCount: project.packageCount ?? project.package_count ?? 0,
+    // Server-computed from the authenticated actor (migration
+    // 20261117120000): true only when auth.uid() is the workspace
+    // owner. The UI shows the Test data section only on this flag —
+    // never on a caller-supplied isOwner — so Brandy and members never
+    // see the section, not even empty.
+    canUseOwnerTestData: inventory.canUseOwnerTestData ?? inventory.can_use_owner_test_data ?? false,
+    clients: (inventory.clients ?? []).map((client) => {
+      const isTest = client.is_test ?? client.isTest ?? false;
+      return {
+        ...toCamelClient(client),
+        isTest,
+        sites: (client.sites ?? []).map((site) => ({
+          ...toCamelSite(site),
+          isTest,
+          projects: (site.projects ?? []).map((project) => ({
+            ...toCamelProject(project),
+            isTest,
+            packageCount: project.packageCount ?? project.package_count ?? 0,
+          })),
         })),
-      })),
-    })),
+      };
+    }),
   };
 }
 
@@ -358,6 +401,29 @@ export async function createHierarchyClient(db, { ownerId, name, externalReferen
   const validation = validateClientInput({ name, externalReference, notes });
   if (validation) return { ok: false, httpStatus: 400, error: validation.message };
   const result = await callRpc(db, "forge_hierarchy_client_create", {
+    p_owner_id: ownerId,
+    p_name: name,
+    p_external_reference: externalReference ?? null,
+    p_notes: notes ?? null,
+    p_request_id: requestId,
+  });
+  if (!result.ok) return result;
+  return { ok: true, client: toCamelClient(result.data) };
+}
+
+/** Owner-only test client create. The ONLY way to mint a test client:
+ *  forge_hierarchy_client_create_test sets is_test = true server-side
+ *  and rejects every non-owner (even a co-owner with the manage
+ *  capability). The regular create above takes no test flag and can
+ *  never create a test client. */
+export async function createHierarchyTestClient(db, { ownerId, name, externalReference, notes, requestId }) {
+  const ownerError = requireOwnerId(ownerId);
+  if (ownerError) return ownerError;
+  const requestError = requireRequestId(requestId);
+  if (requestError) return requestError;
+  const validation = validateClientInput({ name, externalReference, notes });
+  if (validation) return { ok: false, httpStatus: 400, error: validation.message };
+  const result = await callRpc(db, "forge_hierarchy_client_create_test", {
     p_owner_id: ownerId,
     p_name: name,
     p_external_reference: externalReference ?? null,

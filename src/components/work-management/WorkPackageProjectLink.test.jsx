@@ -173,4 +173,25 @@ describe("WorkPackageProjectLink", () => {
     await flush();
     expect(container.textContent).toContain("Currently assigned to: Unassigned");
   });
+
+  it("prefixes the chain name with TEST when the package lives under a test client", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (String(url).includes("projectId=")) {
+        return {
+          ok: true,
+          json: async () => ({
+            selection: {
+              client: { id: "forge_cli_test1", name: "Fictional Test Client", isTest: true },
+              site: { id: "forge_site_test1", name: "Fictional Test Site", isTest: true },
+              project: { id: "forge_prj_test1", name: "Fictional Test Project", isTest: true },
+            },
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ selector: TREE }) };
+    }));
+    const { container } = renderLink({ currentForgeProjectId: "forge_prj_test1" });
+    await flush();
+    expect(container.textContent).toContain("TEST — Fictional Test Client › Fictional Test Site › Fictional Test Project");
+  });
 });

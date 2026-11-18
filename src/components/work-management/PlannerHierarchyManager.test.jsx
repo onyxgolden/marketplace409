@@ -47,6 +47,28 @@ const BASE_TREE = {
   ],
 };
 
+const TEST_TREE = {
+  ownerId: "owner_1",
+  canManage: true,
+  canUseOwnerTestData: true,
+  clients: [
+    {
+      id: "forge_cli_test1", name: "Fictional Test Client", externalReference: "", notes: "",
+      status: "active", version: 1, isTest: true,
+      sites: [
+        {
+          id: "forge_site_test1", name: "Fictional Test Site", siteType: "industrial",
+          addressLine1: "", addressLine2: "", city: "", region: "",
+          postalCode: "", countryCode: "", status: "active", version: 1, isTest: true,
+          projects: [
+            { id: "forge_prj_test1", name: "Fictional Test Project", projectCode: null, description: "", projectType: "", plannedStart: null, plannedFinish: null, status: "active", version: 1, packageCount: 0, isTest: true },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 function ok(body, status = 200) {
   return { ok: true, status, json: async () => body };
 }
@@ -68,21 +90,56 @@ function findIn(server, entity, id) {
   return null;
 }
 
-function stubFetch({ canManage = true, tree = BASE_TREE } = {}) {
+function stubFetch({ canManage = true, tree = BASE_TREE, testTree = TEST_TREE, canUseOwnerTestData = false } = {}) {
   const calls = [];
   let server = structuredClone(tree);
   server.canManage = canManage;
+  server.canUseOwnerTestData = canUseOwnerTestData;
+  let testServer = structuredClone(testTree);
+  testServer.canManage = canManage;
+  testServer.canUseOwnerTestData = canUseOwnerTestData;
   const counters = { client: 100, site: 100, project: 100 };
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     const method = options.method || "GET";
     const body = options.body ? JSON.parse(options.body) : undefined;
     calls.push({ url, method, body });
+    if (String(url).startsWith("/api/forge/planner/test-data/load")) {
+      if (method !== "POST") throw new Error(`unexpected method ${method} on ${url}`);
+      return ok({ load: { loaded: true, alreadyLoaded: false, packages: 6, steps: 31, message: "Loaded 6 sample packages / 31 steps" } });
+    }
+    if (String(url).startsWith("/api/forge/planner/test-data/preview")) {
+      if (method !== "POST") throw new Error(`unexpected method ${method} on ${url}`);
+      return ok({ preview: {
+        clientId: body.clientId, clientName: "Fictional Test Client",
+        counts: { forge_clients: 1, forge_sites: 1, forge_projects: 1, forge_work_packages: 6, forge_work_steps: 31 },
+        blockers: [], canPurge: true, digest: "a".repeat(64),
+      } });
+    }
+    if (String(url).startsWith("/api/forge/planner/test-data/purge")) {
+      if (method !== "POST") throw new Error(`unexpected method ${method} on ${url}`);
+      testServer.clients = testServer.clients.filter((c) => c.id !== body.clientId);
+      return ok({ purge: { purged: true, alreadyPurged: false, message: "Test data deleted — \"Fictional Test Client\" and its samples are gone." } });
+    }
     if (!String(url).startsWith("/api/forge/hierarchy")) {
       throw new Error(`unexpected fetch ${url}`);
     }
-    if (method === "GET") return ok({ inventory: server });
+    if (method === "GET") {
+      if (String(url).includes("mode=test")) return ok({ inventory: testServer });
+      return ok({ inventory: server });
+    }
     if (method === "POST") {
       if (body.entity === "client") {
+        if (body.isTest === true) {
+          if (testServer.clients.some((c) => c.name.toLowerCase() === String(body.name).trim().toLowerCase())) {
+            return fail(409, "A client with that name already exists.");
+          }
+          const created = {
+            id: `forge_cli_test${counters.client++}`, name: body.name, externalReference: body.externalReference,
+            notes: body.notes, status: "active", version: 1, sites: [], isTest: true,
+          };
+          testServer.clients.push(created);
+          return ok({ client: created }, 201);
+        }
         if (server.clients.some((c) => c.name.toLowerCase() === String(body.name).trim().toLowerCase())) {
           return fail(409, "A client with that name already exists.");
         }
@@ -167,6 +224,7 @@ function stubFetch({ canManage = true, tree = BASE_TREE } = {}) {
   return {
     calls,
     get server() { return server; },
+    get testServer() { return testServer; },
     mutate(fn) { fn(server); },
   };
 }
@@ -562,5 +620,111 @@ describe("PlannerHierarchyManager", () => {
     await flush();
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(patchCount);
     expect(container.textContent).toContain("No changes to Turnaround — nothing needed saving.");
+  });
+
+  // Owner-only test data (migration 20261117120000/130000): the Test
+  // data section, Real/Test switch, TEST badges, test-create, sample
+  // load, and purge preview/confirm exist only when the server says
+  // the authenticated actor may use owner test data. A co-owner or
+  // member never sees the section, the switch, or any test name.
+  it("owner: shows the Test data section with a Real/Test switch; Test mode shows only test rows with TEST badges", async () => {
+    stubFetch({ canUseOwnerTestData: true });
+    const { container } = renderManager();
+    await flush();
+    expect(container.querySelector("[data-testid='planner-test-data-section']")).not.toBeNull();
+    expect(container.textContent).toContain("TEST — OWNER ONLY");
+    // Real mode first: the real tree, no test names.
+    expect(container.textContent).toContain("Acme");
+    expect(container.textContent).not.toContain("Fictional Test Client");
+    click(buttonByText(container, "Test"));
+    await flush();
+    expect(container.textContent).toContain("Fictional Test Client");
+    expect(container.textContent).toContain("Fictional Test Site");
+    expect(container.textContent).toContain("Fictional Test Project");
+    expect(container.textContent).not.toContain("Acme");
+    expect(container.textContent).not.toContain("Turnaround");
+    // TEST badges on every level of the test tree (the client badge
+    // reads "TEST — OWNER ONLY", site/project badges read "TEST").
+    const badges = [...container.querySelectorAll("span")].filter((n) => n.textContent.trim().startsWith("TEST"));
+    expect(badges.length).toBeGreaterThanOrEqual(3);
+    // Back to Real restores the real tree.
+    click(buttonByText(container, "Real"));
+    await flush();
+    expect(container.textContent).toContain("Acme");
+    expect(container.textContent).not.toContain("Fictional Test Client");
+  });
+
+  it("co-owner/member: no Test data section, no switch, no test name anywhere", async () => {
+    stubFetch({ canUseOwnerTestData: false });
+    const { container } = renderManager();
+    await flush();
+    expect(container.querySelector("[data-testid='planner-test-data-section']")).toBeNull();
+    expect(container.textContent).not.toContain("Test data");
+    expect(container.textContent).not.toContain("Fictional Test Client");
+    expect([...container.querySelectorAll("button")].map((n) => n.textContent.trim())).not.toContain("Test");
+  });
+
+  it("owner in Test mode: New test client posts isTest true and confirms by name", async () => {
+    const { calls } = stubFetch({ canUseOwnerTestData: true });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByText(container, "Test"));
+    await flush();
+    click(buttonByText(container, "New test client"));
+    setInputValue(nameInput(container), "Second Test Client");
+    click(buttonByText(container, "Save"));
+    await flush();
+    const create = calls.find((c) => c.method === "POST" && c.body?.entity === "client" && c.body?.isTest === true);
+    expect(create).toBeDefined();
+    expect(create.body.name).toBe("Second Test Client");
+    expect(container.textContent).toContain("Second Test Client saved.");
+    expect(container.textContent).toContain("Second Test Client");
+  });
+
+  it("owner in Test mode: Load sample packages posts the project and confirms in plain words", async () => {
+    const { calls } = stubFetch({ canUseOwnerTestData: true });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByText(container, "Test"));
+    await flush();
+    click(buttonByLabel(container, "Load sample packages into Fictional Test Project"));
+    await flush();
+    const load = calls.find((c) => String(c.url).startsWith("/api/forge/planner/test-data/load"));
+    expect(load).toBeDefined();
+    expect(load.body.projectId).toBe("forge_prj_test1");
+    expect(typeof load.body.requestId).toBe("string");
+    expect(container.textContent).toContain("Loaded 6 sample packages / 31 steps");
+  });
+
+  it("owner in Test mode: purge preview shows counts, requires the typed name, then deletes and confirms", async () => {
+    const { calls } = stubFetch({ canUseOwnerTestData: true });
+    const { container } = renderManager();
+    await flush();
+    click(buttonByText(container, "Test"));
+    await flush();
+    click(buttonByLabel(container, "Preview cleanup of Fictional Test Client"));
+    await flush();
+    const previewCall = calls.find((c) => String(c.url).startsWith("/api/forge/planner/test-data/preview"));
+    expect(previewCall).toBeDefined();
+    expect(previewCall.body.clientId).toBe("forge_cli_test1");
+    expect(container.querySelector("[data-testid='purge-preview-forge_cli_test1']")).not.toBeNull();
+    expect(container.textContent).toContain("Delete test data for");
+    // The delete button stays disabled until the name matches exactly.
+    const deleteButton = buttonByText(container, "Delete test data");
+    expect(deleteButton.disabled).toBe(true);
+    const confirmInput = container.querySelector("#purge-confirm-forge_cli_test1");
+    setInputValue(confirmInput, "Wrong Name");
+    expect(deleteButton.disabled).toBe(true);
+    setInputValue(confirmInput, "Fictional Test Client");
+    expect(deleteButton.disabled).toBe(false);
+    click(deleteButton);
+    await flush();
+    const purgeCall = calls.find((c) => String(c.url).startsWith("/api/forge/planner/test-data/purge"));
+    expect(purgeCall).toBeDefined();
+    expect(purgeCall.body.clientId).toBe("forge_cli_test1");
+    expect(purgeCall.body.confirmName).toBe("Fictional Test Client");
+    expect(purgeCall.body.digest).toBe("a".repeat(64));
+    expect(container.textContent).toContain("Test data deleted");
+    expect(container.querySelector("[data-testid='hierarchy-row-client-forge_cli_test1']")).toBeNull();
   });
 });
