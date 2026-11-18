@@ -10,12 +10,16 @@
 // access, so a failed visibility check must never break the shared
 // dashboard. Same query shape as src/app/forge/health/page.jsx.
 export async function isHealthWorkspaceMember({ supabaseClient, actorUserId }) {
-  const { data, error } = await supabaseClient
-    .from("health_workspace_members")
-    .select("workspace_id,role")
-    .eq("user_id", actorUserId)
-    .maybeSingle();
+  try {
+    const { data, error } = await supabaseClient
+      .from("health_workspace_members")
+      .select("workspace_id,role")
+      .eq("user_id", actorUserId)
+      .maybeSingle();
 
-  if (error) return false;
-  return Boolean(data);
+    if (error) return false;
+    return Boolean(data);
+  } catch {
+    return false;
+  }
 }

@@ -371,6 +371,33 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
     expect(markup).toContain("health:Healthy");
   });
 
+  test("health membership lookup fails closed: dashboard still renders, no Health tile", async () => {
+    // The helper returns false when its query rejects (see
+    // isHealthWorkspaceMember.test.js). The page must still render
+    // the shared dashboard with the owner's numbers and simply hide
+    // the Health tile -- a rejected membership lookup must never
+    // take down /forge.
+    const { getSummary, findByOwnerId } = configurePage({
+      actorId: "owner-1",
+      effectiveOwnerId: "owner-1",
+      isOwnerOrCoOwner: true,
+      isHealthWorkspaceMember: false,
+    });
+
+    const element = await ForgePage();
+    const { initialReadModels } = element.props;
+
+    expect(getSummary).toHaveBeenCalledTimes(1);
+    expect(findByOwnerId).not.toHaveBeenCalled();
+    expect(initialReadModels.workspace.portfolio.income).toBe(1500);
+    expect(initialReadModels.isHealthWorkspaceMember).toBe(false);
+
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain("workspace-income:1500");
+    expect(markup).toContain("health:Healthy");
+    expect(markup).toContain("health-member:false");
+  });
+
   test("denied/revoked co-owner falls back to their own workspace, never the primary's", async () => {
     // resolveEffectiveOwnerId returns the actor's own id once the
     // membership is revoked (no active membership); the page must

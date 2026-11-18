@@ -15,6 +15,14 @@ function makeClient({ data, error }) {
   return { from, maybeSingle, eq, select };
 }
 
+function makeRejectingClient(rejection) {
+  const maybeSingle = vi.fn().mockRejectedValue(rejection);
+  const eq = vi.fn().mockReturnValue({ maybeSingle });
+  const select = vi.fn().mockReturnValue({ eq });
+  const from = vi.fn().mockReturnValue({ select });
+  return { from, maybeSingle, eq, select };
+}
+
 describe("isHealthWorkspaceMember", () => {
   it("returns true when the user has a health workspace membership row", async () => {
     const supabaseClient = makeClient({
@@ -60,5 +68,19 @@ describe("isHealthWorkspaceMember", () => {
         actorUserId: "e1b22131-9100-4a79-bbe2-b82d43af922e",
       }),
     ).toBe(false);
+  });
+
+  it("fails closed (false) when the membership query rejects (network unavailable)", async () => {
+    const supabaseClient = makeRejectingClient(
+      new Error("network unavailable"),
+    );
+
+    expect(
+      await isHealthWorkspaceMember({
+        supabaseClient,
+        actorUserId: "e1b22131-9100-4a79-bbe2-b82d43af922e",
+      }),
+    ).toBe(false);
+    expect(supabaseClient.maybeSingle).toHaveBeenCalled();
   });
 });
