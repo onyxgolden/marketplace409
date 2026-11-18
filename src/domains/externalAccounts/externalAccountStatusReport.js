@@ -237,3 +237,65 @@ export function buildExternalAccountStatusSection({
 }
 
 export { RADAR_THREAD_LABEL, STALE_DAYS };
+
+const RADAR_STATUS_WORDS = {
+  open_not_built: "open / not built",
+  not_seeded: "not seeded",
+  in_progress: "in progress",
+};
+
+/**
+ * Plain-text rendering of a status-report section, for the FORGE daily
+ * status / morning briefing to carry verbatim (same pattern as
+ * scripts/brain-digest.mjs). The section object itself carries no
+ * account email or credential locator, so neither can leak through
+ * this rendering — but the renderer only ever prints provider names,
+ * counts, follow-ups, stale reasons and Radar state.
+ *
+ * @param {object} section - as returned by buildExternalAccountStatusSection
+ * @param {object} [provenance] - { queried_at, tracker_revision }
+ */
+export function renderExternalAccountStatusSectionText(section, provenance = {}) {
+  const lines = [];
+  lines.push("External accounts and dependent work");
+  const queriedAt = provenance.queried_at ?? section.generated_at ?? "unknown";
+  const trackerRevision = provenance.tracker_revision ?? "unknown";
+  lines.push(
+    `Provenance: register queried ${queriedAt} · tracker revision ${trackerRevision}`,
+  );
+  lines.push(section.summary);
+  if (section.counts.total === 0) {
+    lines.push(
+      "The register is empty — no accounts have been seeded yet. " +
+        "This is not a statement that there are no external dependencies; " +
+        "treat unseeded providers (including Property Risk Radar sources) as unverified.",
+    );
+  }
+  const radarWords = RADAR_STATUS_WORDS[section.radar.status] ?? section.radar.status;
+  lines.push(`Property Risk Radar: ${radarWords} — ${section.radar.note}`);
+  if (section.follow_ups.length > 0) {
+    lines.push("Follow-ups:");
+    for (const followUp of section.follow_ups) {
+      // Account follow-up text already starts with the provider name;
+      // thread follow-ups start with "Blocked thread:" and gain the
+      // account provider as context. Never print the name twice.
+      const provider = followUp.provider ?? null;
+      const prefix =
+        provider && !followUp.text.startsWith(`${provider}:`) ? `${provider}: ` : "";
+      lines.push(`- [${followUp.kind}] ${prefix}${followUp.text}`);
+    }
+  }
+  if (section.stale_entries.length > 0) {
+    lines.push("Stale entries:");
+    for (const entry of section.stale_entries) {
+      lines.push(`- ${entry.provider}: ${entry.reason} — re-verify it.`);
+    }
+  }
+  if (section.changes_since_prior_report.length > 0) {
+    lines.push("Provider changes since the prior report:");
+    for (const change of section.changes_since_prior_report) {
+      lines.push(`- ${change.provider}: ${change.change}`);
+    }
+  }
+  return lines.join("\n");
+}

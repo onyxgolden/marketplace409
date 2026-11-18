@@ -4,6 +4,7 @@ import {
   buildExternalAccountStatusSection,
   diffExternalAccountsSincePriorReport,
   isStaleExternalAccount,
+  renderExternalAccountStatusSectionText,
 } from "../externalAccountStatusReport";
 
 // Seed candidates use provider_name; DB rows use provider. The report
@@ -136,5 +137,48 @@ describe("external account status report", () => {
     expect(section.radar.status).toBe("not_seeded");
     expect(section.counts.total).toBe(0);
     expect(section.follow_ups).toEqual([]);
+  });
+
+  it("renders plain text for the briefing: Radar, follow-ups, provenance, no leaks", () => {
+    const accounts = [
+      asDbRow(
+        { provider_name: "Blocked Co", provider_slug: "blocked-co", setup_status: "blocked", record_status: "confirmed_account", api_integration_status: "unknown", still_needed: true },
+        { account_email: "someone@example.com", credential_location: "1Password → FORGE" },
+      ),
+    ];
+    const threads = [
+      { id: "t-1", account_provider: "Windy", title: "Property Risk Radar — scope GO Oct 16, build not started", state: "open", next_action: "Jason's word needed to start R0 (source/rights records)" },
+    ];
+    const radarAccounts = buildSeedCandidates()
+      .filter((c) => c.work_thread_label === "Property Risk Radar")
+      .map((row) => asDbRow(row));
+    const section = buildExternalAccountStatusSection({
+      accounts: [...accounts, ...radarAccounts],
+      threads,
+      generatedAt: new Date("2026-11-18T10:00:00Z"),
+    });
+    const text = renderExternalAccountStatusSectionText(section, {
+      queried_at: "2026-11-18T10:00:00.000Z",
+      tracker_revision: "15fcb9cb3abc",
+    });
+    expect(text).toContain("External accounts and dependent work");
+    expect(text).toContain("Provenance: register queried 2026-11-18T10:00:00.000Z · tracker revision 15fcb9cb3abc");
+    expect(text).toContain("Property Risk Radar: open / not built");
+    expect(text).toContain("[setup_blocked] Blocked Co");
+    expect(text).not.toContain("someone@example.com");
+    expect(text).not.toContain("1Password");
+    expect(text).not.toContain("credential_location");
+    expect(text).not.toContain("account_email");
+  });
+
+  it("renders the empty-register note instead of silently reporting zero", () => {
+    const section = buildExternalAccountStatusSection({ accounts: [], threads: [] });
+    const text = renderExternalAccountStatusSectionText(section, {
+      queried_at: "2026-11-18T10:00:00.000Z",
+      tracker_revision: "unknown",
+    });
+    expect(text).toContain("The register is empty");
+    expect(text).toContain("not a statement that there are no external dependencies");
+    expect(text).toContain("Property Risk Radar: not seeded");
   });
 });
