@@ -49,7 +49,7 @@ vi.mock(
                 ),
               isVisible:
                 (context) =>
-                  context.isOwnerOrCoOwner === true,
+                  context.isHealthWorkspaceMember === true,
             },
           ],
       }),
@@ -134,7 +134,7 @@ describe(
             <ForgeWorkspaceDesktop
               riskSummary={{ severity: "low", score: 0 }}
               alertItems={[]}
-              isOwnerOrCoOwner={false}
+              isHealthWorkspaceMember={false}
             />,
           );
         expect(hiddenMarkup).not.toContain("data-health-tile");
@@ -144,7 +144,7 @@ describe(
             <ForgeWorkspaceDesktop
               riskSummary={{ severity: "low", score: 0 }}
               alertItems={[]}
-              isOwnerOrCoOwner
+              isHealthWorkspaceMember
             />,
           );
         expect(visibleMarkup).toContain("data-health-tile");

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import ForgeDashboardClient from "@/components/forge/ForgeDashboardClient";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import { isHealthWorkspaceMember } from "@/lib/supabase/isHealthWorkspaceMember";
 import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +61,7 @@ export default async function ForgePage() {
     executiveSummary,
     transactionReview,
     isOwnerOrCoOwner,
+    isHealthWorkspaceMemberResult,
   ] = await Promise.all([
     readModelApplication.buildBusinessDashboardSummary(),
     readModelApplication.buildInvestorDashboardSummary(),
@@ -72,9 +74,16 @@ export default async function ForgePage() {
           ),
         )
       : null,
-    // Gates the private Health tile to the owner or their active co-owner (spouse) only -- staff
+    // Gates the External Accounts tile to the owner or their active co-owner (spouse) only -- staff
     // roles (manager, bookkeeper, read_only) must never see it on this shared dashboard.
     isOwnerOrActiveCoOwner({
+      supabaseClient: forgeApplication.supabaseClient,
+      actorUserId: forgeApplication.user.id,
+    }),
+    // Gates the private Health tile to health-workspace members only (Jason + Brandy) -- the
+    // membership table is the gate, never a hardcoded email list. Fails closed (false) on a
+    // query error so a broken check hides the tile instead of breaking the dashboard.
+    isHealthWorkspaceMember({
       supabaseClient: forgeApplication.supabaseClient,
       actorUserId: forgeApplication.user.id,
     }),
@@ -91,6 +100,7 @@ export default async function ForgePage() {
     ownerId: forgeApplication.user.id,
     decisionOutcome: null,
     isOwnerOrCoOwner,
+    isHealthWorkspaceMember: isHealthWorkspaceMemberResult,
   };
 
   return (

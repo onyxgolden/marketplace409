@@ -26,6 +26,7 @@ export default function ForgeWorkspaceDesktop({
   properties,
   transactionReview,
   isOwnerOrCoOwner = false,
+  isHealthWorkspaceMember = false,
 }) {
   const workspaceContext = {
     netWorth,
@@ -44,6 +45,7 @@ export default function ForgeWorkspaceDesktop({
     properties,
     transactionReview,
     isOwnerOrCoOwner,
+    isHealthWorkspaceMember,
   };
 
   return (

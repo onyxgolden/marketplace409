@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   createAuthenticatedForgeApplication: vi.fn(),
   isOwnerOrActiveCoOwner: vi.fn(),
+  isHealthWorkspaceMember: vi.fn(),
   redirect: vi.fn(),
 }));
 
@@ -37,6 +38,7 @@ vi.mock("@/components/forge/ForgeDashboardClient", () => ({
       `health:${initialReadModels.executiveSummary?.health?.label}`,
       `owner:${initialReadModels.ownerId}`,
       `co-owner:${initialReadModels.isOwnerOrCoOwner}`,
+      `health-member:${initialReadModels.isHealthWorkspaceMember}`,
     ].join("|"),
 }));
 
@@ -50,6 +52,10 @@ vi.mock(
 
 vi.mock("@/lib/supabase/isOwnerOrActiveCoOwner", () => ({
   isOwnerOrActiveCoOwner: mocks.isOwnerOrActiveCoOwner,
+}));
+
+vi.mock("@/lib/supabase/isHealthWorkspaceMember", () => ({
+  isHealthWorkspaceMember: mocks.isHealthWorkspaceMember,
 }));
 
 import ForgePage from "./page.jsx";
@@ -127,6 +133,7 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
     actorId,
     effectiveOwnerId,
     isOwnerOrCoOwner,
+    isHealthWorkspaceMember,
   }) {
     // The SQL summary RPC, stubbed per owner: records every call so
     // the test can prove exactly one call for the effective owner.
@@ -218,6 +225,10 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       isOwnerOrCoOwner,
     );
 
+    mocks.isHealthWorkspaceMember.mockResolvedValue(
+      isHealthWorkspaceMember,
+    );
+
     return {
       getSummary,
       findByOwnerId,
@@ -236,6 +247,7 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       actorId: "co-owner-actor",
       effectiveOwnerId: "primary-owner",
       isOwnerOrCoOwner: true,
+      isHealthWorkspaceMember: true,
     });
 
     const element = await ForgePage();
@@ -305,12 +317,17 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       supabaseClient: expect.anything(),
       actorUserId: "co-owner-actor",
     });
+    expect(mocks.isHealthWorkspaceMember).toHaveBeenCalledWith({
+      supabaseClient: expect.anything(),
+      actorUserId: "co-owner-actor",
+    });
     expect(getExecutionHistoryIntelligence).toHaveBeenCalledWith({
       ownerId: "co-owner-actor",
       connectionId: undefined,
     });
     expect(initialReadModels.ownerId).toBe("co-owner-actor");
     expect(initialReadModels.isOwnerOrCoOwner).toBe(true);
+    expect(initialReadModels.isHealthWorkspaceMember).toBe(true);
 
     // The rendered client receives the primary owner's numbers.
     const markup = renderToStaticMarkup(element);
@@ -321,6 +338,7 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
     expect(markup).toContain("investor-revenue:1500");
     expect(markup).toContain("kpi-revenue:1500");
     expect(markup).toContain("health:Healthy");
+    expect(markup).toContain("health-member:true");
     expect(markup).not.toContain("Actor Property");
   });
 
@@ -329,6 +347,7 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       actorId: "owner-1",
       effectiveOwnerId: "owner-1",
       isOwnerOrCoOwner: true,
+      isHealthWorkspaceMember: true,
     });
 
     const element = await ForgePage();
@@ -352,6 +371,33 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
     expect(markup).toContain("health:Healthy");
   });
 
+  test("health membership lookup fails closed: dashboard still renders, no Health tile", async () => {
+    // The helper returns false when its query rejects (see
+    // isHealthWorkspaceMember.test.js). The page must still render
+    // the shared dashboard with the owner's numbers and simply hide
+    // the Health tile -- a rejected membership lookup must never
+    // take down /forge.
+    const { getSummary, findByOwnerId } = configurePage({
+      actorId: "owner-1",
+      effectiveOwnerId: "owner-1",
+      isOwnerOrCoOwner: true,
+      isHealthWorkspaceMember: false,
+    });
+
+    const element = await ForgePage();
+    const { initialReadModels } = element.props;
+
+    expect(getSummary).toHaveBeenCalledTimes(1);
+    expect(findByOwnerId).not.toHaveBeenCalled();
+    expect(initialReadModels.workspace.portfolio.income).toBe(1500);
+    expect(initialReadModels.isHealthWorkspaceMember).toBe(false);
+
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain("workspace-income:1500");
+    expect(markup).toContain("health:Healthy");
+    expect(markup).toContain("health-member:false");
+  });
+
   test("denied/revoked co-owner falls back to their own workspace, never the primary's", async () => {
     // resolveEffectiveOwnerId returns the actor's own id once the
     // membership is revoked (no active membership); the page must
@@ -361,6 +407,7 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       actorId: "former-co-owner",
       effectiveOwnerId: "former-co-owner",
       isOwnerOrCoOwner: false,
+      isHealthWorkspaceMember: false,
     });
 
     const element = await ForgePage();
@@ -388,14 +435,18 @@ describe("ForgePage -- dashboard summary owner (Slice 3 fix round 1)", () => {
       "Primary Property",
     );
 
-    // The revoked co-owner loses the Health tile.
+    // The revoked co-owner loses the Health tile: the tile is gated
+    // on health-workspace membership, and a revoked co-owner is not
+    // a health member.
     expect(initialReadModels.isOwnerOrCoOwner).toBe(false);
+    expect(initialReadModels.isHealthWorkspaceMember).toBe(false);
 
     const markup = renderToStaticMarkup(element);
     expect(markup).toContain("workspace-income:700");
     expect(markup).toContain("property:Actor Property");
     expect(markup).toContain("health:Critical");
     expect(markup).toContain("co-owner:false");
+    expect(markup).toContain("health-member:false");
     expect(markup).not.toContain("Primary Property");
   });
 });

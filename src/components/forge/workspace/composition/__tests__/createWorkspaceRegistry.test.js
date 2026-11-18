@@ -84,6 +84,7 @@ describe("createWorkspaceRegistry", () => {
       ),
     ).toEqual([
       "financial-position",
+      "health",
       "transaction-review",
       "property-portfolio",
       "forge-operating-system",
@@ -135,10 +136,17 @@ describe("createWorkspaceRegistry", () => {
     ).toBeNull();
   });
 
-  it("does not list the Health module on the application chooser", () => {
+  it("lists the Health module on the application chooser, gated by membership at render time", () => {
     const registry = createWorkspaceRegistry();
 
-    expect(registry.has("health")).toBe(false);
-    expect(registry.get("health")).toBeNull();
+    expect(registry.has("health")).toBe(true);
+    expect(registry.get("health")?.displayName).toBe("Health");
+    expect(
+      registry.get("health")?.isVisible({ isHealthWorkspaceMember: true }),
+    ).toBe(true);
+    expect(
+      registry.get("health")?.isVisible({ isHealthWorkspaceMember: false }),
+    ).toBe(false);
+    expect(registry.get("health")?.isVisible({})).toBe(false);
   });
 });

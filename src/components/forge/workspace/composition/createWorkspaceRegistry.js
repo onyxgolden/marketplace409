@@ -3,6 +3,7 @@ import { WorkspaceRegistry } from "./WorkspaceRegistry.js";
 import {
   FinancialWorkspaceModule,
   ForgeOperatingSystemWorkspaceModule,
+  HealthWorkspaceModule,
   PropertyPortfolioWorkspaceModule,
   TransactionReviewWorkspaceModule,
 } from "../modules/index.js";
@@ -12,6 +13,10 @@ export function createWorkspaceRegistry() {
 
   registry.register(
     FinancialWorkspaceModule,
+  );
+
+  registry.register(
+    HealthWorkspaceModule,
   );
 
   registry.register(
