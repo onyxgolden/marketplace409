@@ -199,3 +199,102 @@ describe("designStructuralBounds", () => {
     expect(designStructuralBounds(createEmptyDesign())).toBeNull();
   });
 });
+
+// Phone Slice 5 follow-up: whole-plot overview equipment tags. On a
+// phone-width pane at a far-out fit scale (< 0.09) the in-glyph tags
+// hide and a bounded set of short equipment tags renders above the
+// glyphs instead; tapping a tag selects its equipment (the tag is the
+// touch target — the 1-2px glyph underneath is not reliably tappable at
+// fit scale). At desktop width the policy never runs: in-glyph tags
+// render and no overview tags exist. jsdom has no layout engine, so
+// this asserts counts/presence and the tap dispatch; the Playwright
+// geometry check measures real getBBox rects in Chromium.
+describe("PlanCanvas phone overview tags", () => {
+  let container;
+  let root;
+  let dispatch;
+
+  // FCCU-like: four tagged equipment symbols spread across a ~5300in
+  // plan, so the 360px fit scale (~0.059) is below the 0.09 tag gate.
+  // The bounding wall rectangle extends the plan past the rightmost
+  // symbol (as the real FCCU's rooms/pipes do past FL-101): without it
+  // the fit centres the rightmost glyph ~24px from the pane edge and
+  // its ~51px tag can never satisfy the 2px containment inset — the
+  // tag is correctly withheld, but this test wants all four to render.
+  const buildFccuLikeDesign = () => {
+    let d = createEmptyDesign("FCCU-like");
+    d = addWall(d, { x: 1200, y: 1200 }, { x: 6500, y: 1200 });
+    d = addWall(d, { x: 6500, y: 1200 }, { x: 6500, y: 3600 });
+    d = addWall(d, { x: 6500, y: 3600 }, { x: 1200, y: 3600 });
+    d = addWall(d, { x: 1200, y: 3600 }, { x: 1200, y: 1200 });
+    d.symbols = [
+      { id: "sym_r101", domain: "processEquipment", symbolId: "fluidized-bed-reactor", layer: "equipment", tag: "R-101", x: 1500, y: 1500, rotationDeg: 0 },
+      { id: "sym_e101", domain: "processEquipment", symbolId: "shell-tube-exchanger", layer: "equipment", tag: "E-101", x: 2500, y: 2200, rotationDeg: 0 },
+      { id: "sym_p101", domain: "processEquipment", symbolId: "centrifugal-pump", layer: "equipment", tag: "P-101", x: 1500, y: 3500, rotationDeg: 0 },
+      { id: "sym_fl101", domain: "processEquipment", symbolId: "flare-stack", layer: "equipment", tag: "FL-101", x: 5500, y: 3200, rotationDeg: 0 },
+    ];
+    return d;
+  };
+
+  const renderCanvas = (design, props = {}) => {
+    if (!root) {
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      dispatch = vi.fn();
+    }
+    act(() => {
+      root.render(
+        <PlanCanvas design={design} tool="select" selection={null} dispatch={dispatch} {...props} />,
+      );
+    });
+  };
+
+  const overviewTags = () => [...container.querySelectorAll('text[data-label-kind="equipment-tag"]')];
+  const inGlyphTags = () => [...container.querySelectorAll('text[data-label-kind="symbol-tag"]')];
+
+  afterEach(() => {
+    if (root) act(() => root.unmount());
+    root = null;
+    container?.remove();
+    container = null;
+    roCallbacks.length = 0;
+    mockSize = { w: 0, h: 0 };
+  });
+
+  it("renders a bounded set of short equipment tags at phone fit, and no in-glyph tags", () => {
+    mockSize = { w: 360, h: 700 };
+    renderCanvas(buildFccuLikeDesign(), { autoFitKey: "p1:level1" });
+    const tags = texts(overviewTags());
+    expect(tags.length).toBeGreaterThan(0);
+    expect(tags.length).toBeLessThanOrEqual(12);
+    expect(tags).toContain("R-101");
+    expect(tags).toContain("E-101");
+    expect(tags).toContain("P-101");
+    expect(tags).toContain("FL-101");
+    expect(inGlyphTags().length).toBe(0);
+  });
+
+  it("renders no overview tags at desktop width, and in-glyph tags render instead", () => {
+    mockSize = { w: 1200, h: 800 };
+    renderCanvas(buildFccuLikeDesign(), { autoFitKey: "p1:level1" });
+    expect(overviewTags().length).toBe(0);
+    const glyphTags = texts(inGlyphTags());
+    expect(glyphTags).toContain("R-101");
+    expect(glyphTags).toContain("E-101");
+  });
+
+  it("tapping an overview tag selects its equipment", () => {
+    mockSize = { w: 360, h: 700 };
+    renderCanvas(buildFccuLikeDesign(), { autoFitKey: "p1:level1" });
+    const tag = overviewTags().find((el) => el.textContent === "R-101");
+    expect(tag).toBeTruthy();
+    act(() => {
+      tag.closest("g").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "symbol", id: "sym_r101" },
+    });
+  });
+});

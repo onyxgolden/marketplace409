@@ -2,7 +2,7 @@
 //
 // Usage:
 //   node scripts/phone-layout-geometry-check.mjs --tag before|after [--port 3100]
-//     [--widths 360,390,412,430,768,1919] [--cases designer,work-header,app-header,forge-header,rental-23]
+//     [--widths 360,390,412,430,768,1919] [--cases designer,fccu,room-designs,work-header,app-header,forge-header,rental-23]
 //     [--out <evidence-dir>] [--keep-server]
 //
 // Spawns the Next dev server for THIS checkout (unless --keep-server, which
@@ -14,6 +14,23 @@
 //     (via getBBox + getScreenCTM) — zero pairwise intersections, zero
 //     outside the visible 2D pane; structural fit coverage of the
 //     limiting axis; and tap-a-wall -> the selected wall's label appears
+//   - fccu: the provenance-verified REAL FCCU Plot Plan
+//     (design_mwjvt635_lmexii, 91 pipes / 91 symbols / 21 equipment) —
+//     EVERY rendered SVG text classified by data-label-kind with 4-corner
+//     getScreenCTM AABBs; zero intersections among eligible industrial
+//     labels, zero outside the pane at whole-plot fit (containment is a
+//     fit-state rule only — at zoom the pane is a window into a larger
+//     plan, so zoomed labels outside the pane are expected, not a
+//     failure), a non-empty bounded equipment-tag set at whole-plot fit,
+//     tap-an-exchanger/a-pipe/a-flare selection proofs (overview tags
+//     are the tap target: tapping a tag selects its equipment), a
+//     second zoomed scale near the tag-gate transition, and a read-only
+//     (no non-GET requests, excluding Next dev's own stack-frame
+//     reporter) check. Ruler/HUD texts are excluded by semantic
+//     classification and reported, never counted.
+//   - room-designs: the real ProjectsList — subtitle fully wrapped and
+//     visible, input + New design button fully inside the viewport, form
+//     stacked below sm / row at sm+, no page overflow
 //   - work-header: Document library / Admin / New package fully visible
 //   - app-header / forge-header: Apps / Applications always visible, all
 //     header controls inside the viewport
@@ -128,13 +145,32 @@ const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
 
 const WIDTHS = widthsArg ? widthsArg.split(",").map(Number) : [360, 390, 412, 430, 768, 1919];
-const CASES = casesArg ? casesArg.split(",") : ["designer", "work-header", "app-header", "forge-header", "rental-23"];
+const CASES = casesArg ? casesArg.split(",") : ["designer", "fccu", "room-designs", "work-header", "app-header", "forge-header", "rental-23"];
 
 // Evidence goes under the repo by default (git-ignored), or wherever
 // --out points. Never a hardcoded builder path.
 const OUT = outArg ? path.resolve(outArg) : path.join(ROOT, ".phone-layout-evidence");
 
 const BASELINE = loadDesktopBaseline();
+
+// --- FCCU provenance manifest (Phone Slice 5 follow-up): the guard
+// independently checks the fixture's runtime SHA + counts against this
+// tracked manifest — a mutated snapshot or manifest fails here even if
+// the loader's own check were bypassed. A missing manifest is a hard
+// error, never a silent pass.
+const FCCU_MANIFEST_PATH = path.join(ROOT, "src", "app", "phone-fixture", "fccu-provenance.json");
+let FCCU_MANIFEST = null;
+try {
+  FCCU_MANIFEST = JSON.parse(fs.readFileSync(FCCU_MANIFEST_PATH, "utf8"));
+} catch (err) {
+  throw new Error(
+    `phone-layout-geometry-check: FCCU provenance manifest missing/unreadable at ${FCCU_MANIFEST_PATH}: ${err.message} — ` +
+      `the fccu case cannot run without it (a missing manifest must not silently pass)`
+  );
+}
+if (!FCCU_MANIFEST.levelDesignSha256 || !FCCU_MANIFEST.counts || FCCU_MANIFEST.sourceProjectId !== "design_mwjvt635_lmexii") {
+  throw new Error(`phone-layout-geometry-check: FCCU manifest at ${FCCU_MANIFEST_PATH} has unexpected shape (want levelDesignSha256, counts, sourceProjectId design_mwjvt635_lmexii)`);
+}
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -376,6 +412,293 @@ async function measureRental(page) {
   });
 }
 
+// --- FCCU case (Phone Slice 5 follow-up) ---
+//
+// The merged Slice 5 guard measured only the synthetic small-house
+// designer plan, so it could not see the real FCCU Plot Plan's label
+// pile. The fccu case renders the provenance-verified real design
+// (design_mwjvt635_lmexii, 91 pipes / 91 symbols / 21 equipment) through
+// the actual PlanCanvas + renderSymbol2D paths and measures EVERY
+// rendered SVG text with getBBox + per-element getScreenCTM, all four
+// bbox corners — classified by the stable data-label-kind annotation
+// (never a fill/font allowlist). Ruler ticks (ancestor [data-ruler]) and
+// the crosshair HUD (ancestor [data-hud]) are excluded by explicit
+// semantic classification; a text with no classification at all fails
+// the guard rather than being silently ignored.
+//
+// Eligible industrial labels (intersections + containment apply):
+// equipment-tag, symbol-tag, symbol-caption, pipe-label, annotation,
+// room-label, room-area, wall-label, deck-label, sheet-label,
+// symbol-glyph-letter. Excluded (reported, never counted):
+// ruler, hud, selection-hint, org-chart-label.
+//
+// An empty eligible set is NOT a pass: at whole-plot fit at least one
+// short equipment tag must render, and the selection proofs must expose
+// full identity for a crowded exchanger, a pipe, and a noncrowded
+// equipment object. Hidden/accepted counts are reported per category
+// against the provenance counts (data-fccu-counts on the fixture root).
+async function measureFccu(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="designer-fixture"]');
+    const pane = document.querySelector('[data-testid="designer-pane"]');
+    const paneRect = pane ? pane.getBoundingClientRect() : null;
+    const svg = pane ? pane.querySelector("svg") : null;
+    const out = {
+      fccuState: root ? root.getAttribute("data-fccu-state") : null,
+      errorText: null,
+      sha: root ? root.getAttribute("data-fccu-sha") : null,
+      counts: null,
+      paneRect: paneRect ? { left: Math.round(paneRect.left), top: Math.round(paneRect.top), width: Math.round(paneRect.width), height: Math.round(paneRect.height) } : null,
+      scale: null,
+      texts: [],
+      countsByKind: {},
+      eligible: [],
+      intersections: [],
+      outsidePane: [],
+      excluded: [],
+      unclassified: [],
+      fit: null,
+    };
+    try { out.counts = root ? JSON.parse(root.getAttribute("data-fccu-counts") || "null") : null; } catch { out.counts = null; }
+    if (out.fccuState === "error") {
+      const main = document.querySelector("main");
+      out.errorText = main ? main.textContent.trim().slice(0, 500) : "provenance error (no message)";
+    }
+    if (!svg) return out;
+    const toScreen = (el, x, y) => {
+      const p = new DOMPoint(x, y).matrixTransform(el.getScreenCTM());
+      return { x: p.x, y: p.y };
+    };
+    // View scale from the TOP ruler only (left-ruler labels share the
+    // same fill/size but sit at x≈3 with unrelated values — mixing them
+    // drags the median to 0). Top strip: y < 24, left of the corner box.
+    const rulerLabels = [...svg.querySelectorAll("text")].filter((t) => {
+      if (t.getAttribute("font-size") !== "9") return false;
+      if (!/^-?\d+′$/.test((t.textContent || "").trim())) return false;
+      const r = t.getBoundingClientRect();
+      return r.top < 24 && r.left > 30;
+    }).map((t) => ({ v: parseInt(t.textContent, 10), x: t.getBoundingClientRect().left }))
+      .filter((p) => Number.isFinite(p.v))
+      .sort((a, b) => a.x - b.x);
+    const gaps = [];
+    for (let i = 1; i < rulerLabels.length; i += 1) {
+      if (rulerLabels[i].v > rulerLabels[i - 1].v) {
+        gaps.push((rulerLabels[i].x - rulerLabels[i - 1].x) / ((rulerLabels[i].v - rulerLabels[i - 1].v) * 12));
+      }
+    }
+    if (gaps.length) {
+      gaps.sort((a, b) => a - b);
+      out.scale = +gaps[Math.floor(gaps.length / 2)].toFixed(4);
+    }
+    const ELIGIBLE = new Set(["equipment-tag", "symbol-tag", "symbol-caption", "pipe-label", "annotation", "room-label", "room-area", "wall-label", "deck-label", "sheet-label", "symbol-glyph-letter"]);
+    const EXCLUDED = new Set(["ruler", "hud", "selection-hint", "org-chart-label"]);
+    for (const t of svg.querySelectorAll("text")) {
+      const bb = t.getBBox();
+      if (bb.width === 0 && bb.height === 0) continue;
+      const corners = [[bb.x, bb.y], [bb.x + bb.width, bb.y], [bb.x, bb.y + bb.height], [bb.x + bb.width, bb.y + bb.height]].map(([x, y]) => toScreen(t, x, y));
+      const xs = corners.map((c) => c.x);
+      const ys = corners.map((c) => c.y);
+      const text = (t.textContent || "").trim();
+      let kind = t.getAttribute("data-label-kind") || null;
+      if (!kind) {
+        if (t.closest("[data-ruler]")) kind = "ruler";
+        else if (t.closest("[data-hud]")) kind = "hud";
+        else kind = "unclassified";
+      }
+      const entry = {
+        text: text.slice(0, 60),
+        kind,
+        symbolId: t.getAttribute("data-symbol-id") || null,
+        rect: { left: Math.round(Math.min(...xs)), top: Math.round(Math.min(...ys)), right: Math.round(Math.max(...xs)), bottom: Math.round(Math.max(...ys)) },
+      };
+      out.texts.push(entry);
+      out.countsByKind[kind] = (out.countsByKind[kind] || 0) + 1;
+      if (ELIGIBLE.has(kind)) out.eligible.push(entry);
+      else if (EXCLUDED.has(kind)) out.excluded.push(entry);
+      else out.unclassified.push(entry);
+    }
+    for (let i = 0; i < out.eligible.length; i += 1) {
+      for (let j = i + 1; j < out.eligible.length; j += 1) {
+        const a = out.eligible[i].rect;
+        const b = out.eligible[j].rect;
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
+          out.intersections.push([out.eligible[i].text, out.eligible[j].text]);
+        }
+      }
+      const r = out.eligible[i].rect;
+      if (paneRect && (r.left < paneRect.left - 1 || r.right > paneRect.right + 1 || r.top < paneRect.top - 1 || r.bottom > paneRect.bottom + 1)) {
+        out.outsidePane.push(out.eligible[i].text);
+      }
+    }
+    // Structural fit: room polygons + pipe polylines must sit inside the
+    // pane and cover at least half of the limiting axis. Every point is
+    // transformed by its own element's getScreenCTM: pipe/room points
+    // are already screen coords, but glyph polygons (reducers, rack
+    // members) live in a transformed <g> frame, so adding the raw local
+    // coords to the svg offset would fabricate a bbox far outside the
+    // pane.
+    const pts = [];
+    for (const poly of svg.querySelectorAll("polygon, polyline")) {
+      const raw = poly.getAttribute("points") || "";
+      const ctm = poly.getScreenCTM();
+      if (!ctm) continue;
+      for (const pair of raw.trim().split(/\s+/)) {
+        const [x, y] = pair.split(",").map(Number);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          const p = new DOMPoint(x, y).matrixTransform(ctm);
+          pts.push([p.x, p.y]);
+        }
+      }
+    }
+    if (pts.length && paneRect) {
+      const xs = pts.map(([x]) => x);
+      const ys = pts.map(([, y]) => y);
+      const minX = Math.min(...xs); const maxX = Math.max(...xs);
+      const minY = Math.min(...ys); const maxY = Math.max(...ys);
+      out.fit = {
+        structuralPx: { width: Math.round(maxX - minX), height: Math.round(maxY - minY) },
+        panePx: { width: Math.round(paneRect.width), height: Math.round(paneRect.height) },
+        widthCoverage: +((maxX - minX) / Math.max(1, paneRect.width - 48)).toFixed(3),
+        heightCoverage: +((maxY - minY) / Math.max(1, paneRect.height - 48)).toFixed(3),
+        insidePane: minX >= paneRect.left - 1 && maxX <= paneRect.right + 1 && minY >= paneRect.top - 1 && maxY <= paneRect.bottom + 1,
+      };
+    }
+    return out;
+  });
+}
+
+// Tap three objects in the crowded FCCU plot and prove the read-only
+// selection disclosure identifies each one exactly: a crowded exchanger
+// (E-101, via its overview tag — the click lands on the glyph centre
+// just below the tag, inside the symbol footprint), a pipe (longest
+// polyline segment midpoint, chosen far from any rendered tag), and a
+// noncrowded equipment object (FL-101, isolated at the far right).
+// Returns the disclosure text after each tap.
+async function measureFccuSelection(page) {
+  const tapTargets = await page.evaluate(() => {
+    const pane = document.querySelector('[data-testid="designer-pane"]');
+    const svg = pane ? pane.querySelector("svg") : null;
+    if (!svg) return null;
+    const tagRect = (label) => {
+      const t = [...svg.querySelectorAll('text[data-label-kind="equipment-tag"]')].find((el) => (el.textContent || "").trim() === label);
+      if (!t) return null;
+      const r = t.getBoundingClientRect();
+      // Overview tags are themselves the touch target (PlanCanvas
+      // dispatches SELECT from the tag's pointerdown), so click the
+      // tag centre — never a point below it, where the 1-2px glyph
+      // underneath would be missed and a pipe hit instead.
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, tagRect: { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) } };
+    };
+    // Pipe targets: midpoints of the longest polyline segments that
+    // stay clear of every rendered overview tag (symbols are hit-tested
+    // before pipes, so a midpoint under a tag would select the symbol).
+    // Keep the top 5 by clearance: a midpoint can still land inside a
+    // small symbol footprint (e.g. a hydrant), so the caller retries
+    // until one tap actually reveals a pipe.
+    const tagCenters = [...svg.querySelectorAll('text[data-label-kind="equipment-tag"]')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const svgRect = svg.getBoundingClientRect();
+    const pipeCandidates = [];
+    for (const poly of svg.querySelectorAll("polyline")) {
+      const raw = (poly.getAttribute("points") || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+      for (let i = 1; i < raw.length; i += 1) {
+        const mx = svgRect.left + (raw[i - 1][0] + raw[i][0]) / 2;
+        const my = svgRect.top + (raw[i - 1][1] + raw[i][1]) / 2;
+        const len = Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]);
+        const clearance = Math.min(...tagCenters.map((c) => Math.hypot(mx - c.x, my - c.y)));
+        pipeCandidates.push({ x: mx, y: my, len, clearance });
+      }
+    }
+    pipeCandidates.sort((a, b) => b.clearance - a.clearance);
+    const bestPipe = pipeCandidates.slice(0, 5).map((p) => ({ x: p.x, y: p.y, clearance: Math.round(p.clearance) }));
+    return { exchanger: tagRect("E-101"), flare: tagRect("FL-101"), pipe: bestPipe.length ? bestPipe : null };
+  });
+  if (!tapTargets) return { tapped: false, reason: "no svg" };
+  const result = { tapped: true, targets: tapTargets, disclosures: {} };
+  const readDisclosure = () => page.evaluate(() => {
+    const el = document.querySelector('[data-testid="fccu-selection-detail"]');
+    return el ? el.textContent.trim() : null;
+  });
+  for (const [key, pt] of [["exchanger", tapTargets.exchanger], ["flare", tapTargets.flare]]) {
+    if (!pt) { result.disclosures[key] = null; continue; }
+    await page.mouse.click(pt.x, pt.y);
+    await page.waitForTimeout(400);
+    result.disclosures[key] = await readDisclosure();
+  }
+  // Pipe: retry candidate midpoints until one reveals a pipe identity
+  // (a midpoint inside a small symbol footprint selects the symbol).
+  result.disclosures.pipe = null;
+  for (const pt of tapTargets.pipe || []) {
+    await page.mouse.click(pt.x, pt.y);
+    await page.waitForTimeout(400);
+    const d = await readDisclosure();
+    if (d && d.startsWith("Pipe fccu_pipe_")) { result.disclosures.pipe = d; break; }
+    result.disclosures.pipe = d;
+  }
+  return result;
+}
+
+// Zoom the FCCU plot from its whole-plot fit to just past the tag-gate
+// transition (scale >= 0.12) and re-measure: the overview tags must hand
+// off to the in-glyph tags with no new eligible collisions and no
+// flicker (the same tag set measured twice must be identical).
+async function measureFccuZoom(page) {
+  const paneBox = await page.evaluate(() => {
+    const r = document.querySelector('[data-testid="designer-pane"]').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  let scale = null;
+  for (let step = 0; step < 14; step += 1) {
+    await page.mouse.move(paneBox.x, paneBox.y);
+    await page.mouse.wheel(0, -240);
+    await page.waitForTimeout(350);
+    const m = await measureFccu(page);
+    scale = m.scale;
+    if (scale && scale >= 0.12) break;
+  }
+  const first = await measureFccu(page);
+  await page.waitForTimeout(400);
+  const second = await measureFccu(page);
+  return { scale, first, second, stable: JSON.stringify(first.eligible.map((t) => t.text).sort()) === JSON.stringify(second.eligible.map((t) => t.text).sort()) };
+}
+
+// --- Room designs case (Phone Slice 5 follow-up) ---
+// Renders the real ProjectsList; the guard intercepts /api/forge/designer
+// with a canned project list (GET only — no production write, no create).
+async function measureRoomDesigns(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="room-designs-fixture"]');
+    if (!root) return { present: false };
+    const subtitle = [...root.querySelectorAll("p")].find((p) => (p.textContent || "").includes("Floor plans for remodels"));
+    const input = root.querySelector('input[aria-label="New design name"]');
+    const button = [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim().startsWith("New design"));
+    const form = input ? input.closest("div") : null;
+    const rect = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    const formStyle = form ? window.getComputedStyle(form) : null;
+    return {
+      present: true,
+      subtitle: subtitle ? {
+        text: subtitle.textContent.trim(),
+        rect: rect(subtitle),
+        clipped: subtitle.scrollWidth > subtitle.clientWidth + 1,
+        fullyVisible: (() => { const r = subtitle.getBoundingClientRect(); return r.left >= -1 && r.right <= window.innerWidth + 1; })(),
+      } : null,
+      input: input ? { rect: rect(input), focused: document.activeElement === input } : null,
+      button: button ? { rect: rect(button), label: button.textContent.trim(), disabled: button.disabled, visible: (() => { const r = button.getBoundingClientRect(); return r.left >= -1 && r.right <= window.innerWidth + 1 && r.width > 0; })() } : null,
+      formDirection: formStyle ? formStyle.flexDirection : null,
+      pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    };
+  });
+}
+
 async function waitForServer(port, timeoutMs = 120000) {
   const start = Date.now();
   for (;;) {
@@ -407,6 +730,7 @@ async function main() {
     cases: CASES,
     browser: { name: "chromium", version: browser.version() },
     baseline: { file: "scripts/phone-layout-geometry-baseline.json", measuredAtBase: BASELINE.measuredAtBase ?? null },
+    fccuManifest: { file: "src/app/phone-fixture/fccu-provenance.json", sourceProjectId: FCCU_MANIFEST.sourceProjectId, levelDesignSha256: FCCU_MANIFEST.levelDesignSha256, counts: FCCU_MANIFEST.counts },
     checks: [],
     failures: [],
     warnings: [],
@@ -422,14 +746,63 @@ async function main() {
           try { window.localStorage.setItem("forge-designer-display-units", "in"); } catch { /* ignore */ }
         });
         const url = `${BASE}?case=${c}`;
+        // Room designs renders the real ProjectsList, which fetches
+        // /api/forge/designer on mount: intercept with a canned project
+        // list (GET only — the guard never submits the create form, so
+        // no production write is ever attempted).
+        if (c === "room-designs") {
+          await page.route("**/api/forge/designer", (route) => route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ projects: [
+              { id: "design_guard_1", name: "Test kitchen remodel", updatedAt: "2026-11-16T12:00:00Z" },
+              { id: "design_guard_2", name: "Test garage apartment layout", updatedAt: "2026-11-15T09:30:00Z" },
+            ] }),
+          }));
+        }
+        // FCCU must never write: record every non-GET request for the
+        // verdict below (the fixture loads its snapshot by GET only).
+        // Next.js dev's own stack-frame reporter posts to
+        // /__nextjs_original-stack-frames when the dev overlay logs
+        // (e.g. the pre-existing hydration warning) — dev-tooling
+        // noise, not an app write, so it is excluded.
+        const writeRequests = [];
+        if (c === "fccu") {
+          page.on("request", (req) => {
+            if (!["GET", "HEAD", "OPTIONS"].includes(req.method()) && !req.url().includes("/__nextjs")) {
+              writeRequests.push(`${req.method()} ${req.url()}`);
+            }
+          });
+        }
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForSelector('[data-fixture-ready="true"]', { timeout: 60000 });
+        if (c === "fccu") {
+          await page.waitForFunction(() => {
+            const el = document.querySelector("[data-fccu-state]");
+            return el && (el.getAttribute("data-fccu-state") === "ready" || el.getAttribute("data-fccu-state") === "error");
+          }, { timeout: 60000 });
+        }
         await page.waitForTimeout(800); // let the open-time auto-fit settle
         const check = { case: c, width, url };
         check.page = await measurePage(page);
         if (c === "designer") {
           check.designer = await measureDesigner(page);
           check.designerSelection = await measureDesignerSelection(page);
+        } else if (c === "fccu") {
+          check.fccu = await measureFccu(page);
+          check.fccuWriteRequests = writeRequests;
+          if (check.fccu.fccuState === "ready") {
+            // Selection proofs are a phone-width behavior (tapping an
+            // overview tag): at 1919 the overview tags do not render —
+            // identity there is the in-glyph tags, proven by the desktop
+            // differential below — so the taps run at phone widths only.
+            if (width !== 1919) check.fccuSelection = await measureFccuSelection(page);
+            // Second scale near the tag-gate transition (phone widths
+            // only; the 1919 desktop check is the fit-state differential).
+            if (width !== 1919) check.fccuZoom = await measureFccuZoom(page);
+          }
+        } else if (c === "room-designs") {
+          check.roomDesigns = await measureRoomDesigns(page);
         } else if (c === "work-header") {
           check.workHeader = await measureWorkHeader(page);
         } else if (c === "app-header") {
@@ -490,6 +863,107 @@ async function main() {
             fail("no fit measurement (no wall lines found)");
           }
           if (!check.designerSelection.selectedLabelShown) fail(`tap-a-wall did not reveal the selected wall's label: ${JSON.stringify(check.designerSelection)}`);
+        }
+        if (c === "fccu" && check.fccu) {
+          const f = check.fccu;
+          // Provenance is a hard gate: the fixture must be the verified
+          // real design (SHA + counts from the tracked manifest), never
+          // a silent synthetic fallback. A missing fixture file, a
+          // mutated snapshot, or a drifted manifest fails here.
+          if (f.fccuState !== "ready") fail(`FCCU fixture not ready (state=${f.fccuState}): ${f.errorText || "missing fixture / provenance error"}`);
+          if (f.sha !== FCCU_MANIFEST.levelDesignSha256) fail(`FCCU provenance SHA mismatch: got ${f.sha}, want ${FCCU_MANIFEST.levelDesignSha256}`);
+          // Key-order-insensitive: the manifest is written with sorted
+          // keys, the fixture reports insertion order; compare per key.
+          if (!f.counts || Object.keys(FCCU_MANIFEST.counts).some((k) => f.counts[k] !== FCCU_MANIFEST.counts[k]) || Object.keys(f.counts).some((k) => FCCU_MANIFEST.counts[k] === undefined)) fail(`FCCU provenance counts mismatch: got ${JSON.stringify(f.counts)}, want ${JSON.stringify(FCCU_MANIFEST.counts)}`);
+          if (check.fccuWriteRequests.length) fail(`FCCU case made non-GET requests (must be read-only): ${JSON.stringify(check.fccuWriteRequests)}`);
+          if (f.unclassified.length) fail(`unclassified SVG texts (every text must carry a data-label-kind or a ruler/hud ancestor): ${JSON.stringify(f.unclassified.slice(0, 10))}`);
+          if (f.intersections.length) fail(`eligible industrial label intersections: ${JSON.stringify(f.intersections)}`);
+          if (f.outsidePane.length) fail(`eligible industrial labels outside pane: ${JSON.stringify(f.outsidePane)}`);
+          if (f.fit) {
+            if (!f.fit.insidePane) fail("FCCU structural plan extends outside the pane");
+            const limiting = Math.max(f.fit.widthCoverage, f.fit.heightCoverage);
+            if (limiting < 0.5) fail(`FCCU fit covers only ${limiting} of the limiting axis (< 0.5)`);
+          } else {
+            fail("no FCCU fit measurement (no room/polygon or pipe/polyline points found)");
+          }
+          // An empty eligible set is NOT a pass: at whole-plot fit a
+          // bounded set of short equipment tags must render. Hidden
+          // counts are reported (not failed) so the receipt shows what
+          // the policy withheld and why.
+          const tagCount = f.countsByKind["equipment-tag"] || 0;
+          const inGlyphCount = f.countsByKind["symbol-tag"] || 0;
+          if (width !== 1919 && tagCount === 0 && inGlyphCount === 0) fail("no equipment tags render at whole-plot fit (empty label set is not a pass)");
+          if (width === 1919 && inGlyphCount === 0) fail("no in-glyph equipment tags render at 1919 (desktop label inventory changed?)");
+          check.fccuHidden = {
+            equipmentTags: { rendered: tagCount + inGlyphCount, total: f.counts ? f.counts.equipment : null },
+            pipeLabels: { rendered: f.countsByKind["pipe-label"] || 0, total: f.counts ? f.counts.pipes : null },
+            annotations: { rendered: f.countsByKind.annotation || 0, total: f.counts ? f.counts.annotations : null },
+            roomLabels: { rendered: f.countsByKind["room-label"] || 0, total: f.counts ? f.counts.rooms : null },
+            rulerTextsExcluded: f.countsByKind.ruler || 0,
+            rulerIntersectionsExcluded: null, // counted below from raw texts
+          };
+          // Ruler-vs-ruler intersections are excluded from the verdict
+          // (axes are not industrial labels) but recorded so the receipt
+          // shows them instead of hiding them.
+          const rulerRects = f.texts.filter((t) => t.kind === "ruler");
+          let rulerIntersections = 0;
+          for (let i = 0; i < rulerRects.length; i += 1) {
+            for (let j = i + 1; j < rulerRects.length; j += 1) {
+              const a = rulerRects[i].rect; const b = rulerRects[j].rect;
+              if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) rulerIntersections += 1;
+            }
+          }
+          check.fccuHidden.rulerIntersectionsExcluded = rulerIntersections;
+          // Selection proofs: tapping a crowded exchanger, a pipe, and a
+          // noncrowded equipment object must reveal full identity.
+          if (check.fccuSelection) {
+            const s = check.fccuSelection;
+            if (!s.tapped) fail(`FCCU selection taps could not run: ${s.reason || "unknown"}`);
+            else {
+              if (!s.disclosures.exchanger || !s.disclosures.exchanger.includes("E-101")) fail(`tap crowded exchanger did not reveal E-101: ${JSON.stringify(s.disclosures.exchanger)}`);
+              if (!s.disclosures.pipe || !s.disclosures.pipe.startsWith("Pipe fccu_pipe_")) fail(`tap pipe did not reveal a pipe identity: ${JSON.stringify(s.disclosures.pipe)}`);
+              if (!s.disclosures.flare || !s.disclosures.flare.includes("FL-101")) fail(`tap noncrowded equipment did not reveal FL-101: ${JSON.stringify(s.disclosures.flare)}`);
+            }
+          }
+          // Second scale: overview tags hand off to in-glyph tags, no
+          // new eligible collisions, and the tag set is stable.
+          if (check.fccuZoom) {
+            const z = check.fccuZoom;
+            if (!z.scale || z.scale < 0.12) fail(`FCCU zoom did not reach the transition scale (got ${z.scale})`);
+            if (z.first) {
+              if ((z.first.countsByKind["equipment-tag"] || 0) !== 0) fail(`overview tags still render at zoomed scale ${z.scale} (handoff failed)`);
+              if ((z.first.countsByKind["symbol-tag"] || 0) === 0) fail(`no in-glyph tags render at zoomed scale ${z.scale}`);
+              if (z.first.intersections.length) fail(`zoomed eligible label intersections: ${JSON.stringify(z.first.intersections)}`);
+              // No outside-pane check at zoom: a zoomed view is a window
+              // into a larger plan, so labels legitimately fall outside
+              // the visible pane (the user pans to them). Containment is
+              // a whole-plot-fit rule only (checked above).
+              if (z.first.unclassified.length) fail(`zoomed unclassified SVG texts: ${JSON.stringify(z.first.unclassified.slice(0, 10))}`);
+            }
+            if (!z.stable) fail("zoomed eligible tag set is not stable across re-measurement (flicker)");
+          }
+        }
+        if (c === "room-designs" && check.roomDesigns) {
+          const r = check.roomDesigns;
+          if (!r.present) fail("room-designs fixture did not render ProjectsList");
+          else {
+            if (!r.subtitle) fail("room-designs subtitle paragraph not found");
+            else {
+              if (r.subtitle.text !== "Floor plans for remodels and new layouts — 2D plans with a 3D view.") fail(`room-designs subtitle text wrong/clipped: ${JSON.stringify(r.subtitle.text)}`);
+              if (r.subtitle.clipped || !r.subtitle.fullyVisible) fail(`room-designs subtitle clipped: ${JSON.stringify(r.subtitle)}`);
+            }
+            if (!r.input) fail("room-designs New design input not found");
+            else if (r.input.rect.right > r.innerWidth + 1 || r.input.rect.left < -1) fail(`room-designs input outside viewport: ${JSON.stringify(r.input.rect)}`);
+            if (!r.button) fail("room-designs New design button not found");
+            else {
+              if (r.button.label !== "New design") fail(`room-designs button label wrong: ${JSON.stringify(r.button.label)}`);
+              if (!r.button.visible) fail(`room-designs New design button not fully visible: ${JSON.stringify(r.button.rect)}`);
+              if (r.button.disabled) fail("room-designs New design button disabled on load");
+            }
+            if (width < 640 && r.formDirection !== "column") fail(`room-designs form is not stacked below sm at ${width}px (flex-direction=${r.formDirection})`);
+            if (width >= 640 && r.formDirection !== "row") fail(`room-designs form is not a horizontal row at ${width}px (flex-direction=${r.formDirection})`);
+            if (r.pageOverflow) fail(`room-designs page overflow scrollWidth=${r.scrollWidth} > innerWidth=${r.innerWidth}`);
+          }
         }
         if (c === "work-header" && check.workHeader && !check.workHeader.allLinksVisible) fail(`header links not all visible: ${JSON.stringify(check.workHeader.links)}`);
         if ((c === "app-header" || c === "forge-header") && check.header) {

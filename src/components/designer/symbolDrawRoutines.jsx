@@ -91,7 +91,7 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
           Short tag — hidden only at the lowest scales, where even a
           3-character code is wider than the piece it labels. */}
       {showPlanTagLabels(scale) && (
-        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
+        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400} data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {code || symbol.label}
         </text>
       )}
@@ -119,7 +119,7 @@ function roomFloorPattern(instance, scale) {
   return { id: `room-floor-${instance.id}`, dataUrl: floorImage.dataUrl, tilePx };
 }
 
-export function drawRoomSymbol({ instance, toScreen, scale, highlighted }) {
+export function drawRoomSymbol({ instance, toScreen, scale, highlighted, phoneLabelPolicy }) {
   const pts = instance.polygon.map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
   const c = toScreen(centroid(instance.polygon));
   const area = instance.polygon.length >= 3 ? polygonArea(instance.polygon) / 144 : 0;
@@ -149,13 +149,13 @@ export function drawRoomSymbol({ instance, toScreen, scale, highlighted }) {
         <rect x={c.x - 60} y={c.y - 16} width={120} height={30} rx={6} fill="#0f172a" fillOpacity={0.72} />
       )}
       {/* Room name is a short tag; the area line is a detail label. */}
-      {showPlanTagLabels(scale) && (
-        <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"}>
+      {showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"} data-label-kind="room-label" data-room-id={instance.id}>
           {instance.label}
         </text>
       )}
-      {showPlanDetailLabels(scale) && (
-        <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"}>
+      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"} data-label-kind="room-area" data-room-id={instance.id}>
           {area.toFixed(0)} sq ft
         </text>
       )}
@@ -183,7 +183,7 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
       />
       {/* Short tag — hidden only at the lowest scales. */}
       {showPlanTagLabels(scale) && (
-        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db">
+        <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db" data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -196,7 +196,7 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
  * fittings, flow arrow, equipment tag) drawn from symbol.glyph.
  * ctx: { symbol, instance: {id,x,y,rotationDeg,tag}, toScreen, scale, highlighted }
  */
-export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighted, phoneLabelPolicy }) {
   const c = toScreen({ x: instance.x, y: instance.y });
   const hw = (symbol.widthIn * scale) / 2;
   const hh = (symbol.depthIn * scale) / 2;
@@ -342,8 +342,8 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
               fill="#1f2937" stroke={highlighted ? "#f59e0b" : "#fbbf24"} strokeWidth={sw}
             />
             {/* In-glyph tag — a short label, hidden only at the lowest scales. */}
-            {showPlanTagLabels(scale) && (
-              <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
+            {showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+              <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a" data-label-kind="symbol-tag" data-symbol-id={instance.id}>
                 {label}
               </text>
             )}
@@ -362,8 +362,8 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
       {glyph}
       {/* Description line — a detail label, hidden at fit-to-view scales
           where dozens of them stack into an unreadable pile. */}
-      {showPlanDetailLabels(scale) && (
-        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -572,7 +572,7 @@ export function drawBuildingElementSymbol({ symbol, instance, toScreen, scale, h
       {/* Description line — a detail label, hidden at fit-to-view scales
           where dozens of them stack into an unreadable pile. */}
       {showPlanDetailLabels(scale) && (
-        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -697,7 +697,7 @@ export function drawSiteOutdoorSymbol({ symbol, instance, toScreen, scale, highl
       {/* Description line — a detail label, hidden at fit-to-view scales
           where dozens of them stack into an unreadable pile. */}
       {showPlanDetailLabels(scale) && (
-        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -734,7 +734,7 @@ export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highli
         return (
           <g>
             <circle r={Math.min(hw, hh)} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.min(hw, hh)} fontWeight={700} fill={accent}>
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.min(hw, hh)} fontWeight={700} fill={accent} data-label-kind="symbol-glyph-letter">
               S
             </text>
           </g>
@@ -785,7 +785,7 @@ export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highli
       {/* Description line — a detail label, hidden at fit-to-view scales
           where dozens of them stack into an unreadable pile. */}
       {showPlanDetailLabels(scale) && (
-        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -967,7 +967,7 @@ function renderProcessGlyphSpec(spec, { hw, hh, stroke, sw, accent, body, symbol
         return (
           <g>
             <circle r={r} fill={body} stroke={stroke} strokeWidth={sw} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, r * 0.8)} fontWeight={700} fill={accent}>
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, r * 0.8)} fontWeight={700} fill={accent} data-label-kind="symbol-glyph-letter">
               {symbol.tagPrefix}
             </text>
           </g>
@@ -983,7 +983,7 @@ function renderProcessGlyphSpec(spec, { hw, hh, stroke, sw, accent, body, symbol
       return (
         // Haloed in the body color so marks behind it (trays, coils,
         // flames) never strike through the letters.
-        <text key={i} textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, Math.min(r * 0.75, 16))} fontWeight={700} fill={accent} stroke={body} strokeWidth={3} paintOrder="stroke">
+        <text key={i} textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, Math.min(r * 0.75, 16))} fontWeight={700} fill={accent} stroke={body} strokeWidth={3} paintOrder="stroke" data-label-kind="symbol-glyph-letter">
           {m.slice(5)}
         </text>
       );
@@ -1024,8 +1024,8 @@ function renderProcessGlyphSpec(spec, { hw, hh, stroke, sw, accent, body, symbol
       case "diaphragm": return <path key={i} d={`M ${-r * 0.6} ${-r * 0.9} A ${r * 0.6} ${r * 0.35} 0 0 1 ${r * 0.6} ${-r * 0.9}`} {...thin} />;
       case "impeller": return <g key={i} {...thin}><line x1={-r * 0.5} y1={-r * 0.3} x2={r * 0.5} y2={r * 0.3} /><line x1={-r * 0.5} y1={r * 0.3} x2={r * 0.5} y2={-r * 0.3} /></g>;
       case "actuator-box": return <rect key={i} x={-hw * 0.4} y={-hh} width={hw * 0.8} height={hh * 0.6} fill={accent} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />;
-      case "actuator-motor": return <g key={i}><circle cx={0} cy={-hh * 0.7} r={hh * 0.35} fill={body} stroke={stroke} strokeWidth={sw} /><text x={0} y={-hh * 0.7} textAnchor="middle" dominantBaseline="central" fontSize={Math.max(6, hh * 0.45)} fontWeight={700} fill={accent}>M</text></g>;
-      case "bubble-inset": return <g key={i}><circle r={r * 0.55} fill={body} stroke={accent} strokeWidth={sw} /><text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(6, r * 0.45)} fontWeight={700} fill={accent}>{symbol.tagPrefix}</text></g>;
+      case "actuator-motor": return <g key={i}><circle cx={0} cy={-hh * 0.7} r={hh * 0.35} fill={body} stroke={stroke} strokeWidth={sw} /><text x={0} y={-hh * 0.7} textAnchor="middle" dominantBaseline="central" fontSize={Math.max(6, hh * 0.45)} fontWeight={700} fill={accent} data-label-kind="symbol-glyph-letter">M</text></g>;
+      case "bubble-inset": return <g key={i}><circle r={r * 0.55} fill={body} stroke={accent} strokeWidth={sw} /><text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(6, r * 0.45)} fontWeight={700} fill={accent} data-label-kind="symbol-glyph-letter">{symbol.tagPrefix}</text></g>;
       default: return null;
     }
   };
@@ -1046,7 +1046,7 @@ function renderProcessGlyphSpec(spec, { hw, hh, stroke, sw, accent, body, symbol
  * (P-101, V-101, ...) under the symbol and the description beneath it.
  * ctx: { symbol, instance: {id,x,y,rotationDeg,tag,widthIn?,depthIn?}, toScreen, scale, highlighted }
  */
-export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, highlighted, phoneLabelPolicy }) {
   // Detailed TEMA exchangers and components have their own geometry.
   if (symbol.tema) return drawTemaSymbol({ symbol, instance, toScreen, scale, highlighted });
   const c = toScreen({ x: instance.x, y: instance.y });
@@ -1290,14 +1290,14 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
           <g {...common}>
             <line x1={-hw} y1={0} x2={hw} y2={0} />
             <rect x={-hw * 0.6} y={-hh} width={hw * 1.2} height={hh * 2} fill={body} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(8, hh * 1.1)} fontWeight={700} fill={accent} stroke="none">M</text>
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(8, hh * 1.1)} fontWeight={700} fill={accent} stroke="none" data-label-kind="symbol-glyph-letter">M</text>
           </g>
         );
       case "instrument": // ISA field-instrument bubble
         return (
           <g {...common}>
             <circle r={r} fill={body} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, r * 0.8)} fontWeight={700} fill={accent} stroke="none">
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, r * 0.8)} fontWeight={700} fill={accent} stroke="none" data-label-kind="symbol-glyph-letter">
               {symbol.tagPrefix}
             </text>
           </g>
@@ -1322,14 +1322,14 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
       {glyph}
       {components}
       {/* Short tag — survives a desktop fit-to-view, hides on a phone fit. */}
-      {instance.tag && showPlanTagLabels(scale) && (
-        <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
+      {instance.tag && showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"} data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
       {/* Description line — a detail label, hidden at fit-to-view scales. */}
-      {showPlanDetailLabels(scale) && (
-        <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
       )}
@@ -1560,6 +1560,7 @@ export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
           lines.map((line, i) => (
             <text
               key={i}
+              data-label-kind="org-chart-label"
               x={boxW / 2}
               y={firstBaseline + i * lineHeight}
               textAnchor="middle"
@@ -1580,6 +1581,7 @@ export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
       {/* Chart title is detail-tier, like the node text. */}
       {showPlanDetailLabels(scale) && (
         <text
+          data-label-kind="org-chart-label"
           x={anchor.x}
           y={anchor.y - 16}
           textAnchor="middle"
@@ -1603,6 +1605,7 @@ export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
           />
           {showPlanDetailLabels(scale) && (
             <text
+              data-label-kind="org-chart-label"
               x={boxW / 2}
               y={boxH / 2}
               textAnchor="middle"

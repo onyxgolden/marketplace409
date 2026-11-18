@@ -12,7 +12,7 @@ import {
 } from "@/domains/roomDesigner/designerGeometry";
 import { uprightTextTransform } from "./uprightText";
 
-export function drawRackSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+export function drawRackSymbol({ symbol, instance, toScreen, scale, highlighted, phoneLabelPolicy }) {
   const p = rackParams(symbol, instance);
   const plan = rackPlan(p);
   const c = toScreen({ x: instance.x, y: instance.y });
@@ -39,15 +39,17 @@ export function drawRackSymbol({ symbol, instance, toScreen, scale, highlighted 
         const w = Math.max(3, sl.w * k);
         return <rect key={`s${sl.x}`} x={sl.x * k - w / 2} y={-hw} width={w} height={hw * 2} fill={steel} fillOpacity={0.55} stroke={steel} strokeWidth={sw} />;
       })}
-      {/* Short tag — survives a desktop fit-to-view, hides on a phone fit. */}
-      {instance.tag && showPlanTagLabels(scale) && (
-        <text y={below} transform={uprightTextTransform(instance.rotationDeg, 0, below)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
+      {/* Short tag — survives a desktop fit-to-view, hides on a phone fit.
+          Under the phone overview policy the overview tags own equipment
+          identity, so the in-glyph tag stays hidden (see PlanCanvas). */}
+      {instance.tag && showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text y={below} transform={uprightTextTransform(instance.rotationDeg, 0, below)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"} data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
       {/* Description line — a detail label, hidden at fit-to-view scales. */}
-      {showPlanDetailLabels(scale) && (
-        <text y={below + (instance.tag ? 13 : 0)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 13 : 0))} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+        <text y={below + (instance.tag ? 13 : 0)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 13 : 0))} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label} · {rackLabel(p)}
         </text>
       )}
