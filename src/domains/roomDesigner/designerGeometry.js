@@ -329,6 +329,80 @@ export function estimateTextWidthPx(text, fontSizePx) {
 }
 
 /**
+ * Phone whole-plot overview equipment tags (Phone Slice 5 follow-up):
+ * at far-out plot scale the in-glyph symbol tags are hidden by the
+ * 0.09 scale gate, so a phone whole-plot view of an industrial design
+ * shows an anonymous glyph mass with no readable identity. This pure
+ * helper builds one label candidate per tagged equipment symbol
+ * (layer === "equipment" with a tag) — piping symbols (reducers,
+ * valves, hydrants) are deliberately NOT candidates: there are dozens
+ * of them in the dense cluster and tagging them would re-create the
+ * pile. The caller runs the candidates through selectPhoneLabels, the
+ * same deterministic selector as the wall/deck labels: selected first,
+ * then higher priority, then tag ascending; a candidate renders only
+ * when its whole rect sits inside the pane and collides with nothing
+ * already accepted. Where the local geometry is too dense, even
+ * nonselected tags are suppressed rather than allowed to pile — a
+ * withheld tag is never lost: tapping its glyph selects it (selected
+ * wins) and the selection panel/disclosure shows its full tag.
+ *
+ * Each candidate carries the screen anchor the renderer needs
+ * (screenX/screenY = the text baseline point, widthPx = the halo box
+ * width). The tag sits just above its glyph; the rect is the
+ * anchor-aware AABB from phoneLabelScreenRectForAnchor so the guard's
+ * getBBox measurement agrees with the selector's estimate.
+ */
+export const PHONE_OVERVIEW_TAG_FONT_PX = 11;
+export const PHONE_OVERVIEW_TAG_MAX = 12;
+
+const PHONE_OVERVIEW_TAG_KIND_PRIORITY = {
+  "fluidized-bed-reactor": 100,
+  "catalyst-regenerator": 100,
+  column: 90,
+  absorber: 90,
+  "shell-tube-exchanger": 80,
+  "horizontal-drum": 70,
+  "knockout-drum": 70,
+  "centrifugal-pump": 60,
+  blower: 50,
+  "centrifugal-compressor": 50,
+  "flare-stack": 40,
+  "pipe-rack": 20,
+  "sleeper-rack": 20,
+};
+
+export function phoneOverviewTagCandidates({ equipment, toScreen, scale, selectedId }) {
+  if (!Array.isArray(equipment) || typeof toScreen !== "function") return [];
+  const viewScale = Number.isFinite(scale) ? scale : 0;
+  return equipment
+    .filter((inst) => inst && typeof inst.tag === "string" && inst.tag.length > 0)
+    .map((inst) => {
+      const c = toScreen({ x: inst.x, y: inst.y });
+      const halfPx = Math.max(0, ((inst.depthIn || 96) / 2) * viewScale);
+      const baselineY = c.y - halfPx - 6;
+      const widthPx = estimateTextWidthPx(inst.tag, PHONE_OVERVIEW_TAG_FONT_PX) + 10;
+      return {
+        id: `equipment-tag:${inst.tag}`,
+        symbolId: inst.id,
+        tag: inst.tag,
+        screenX: c.x,
+        screenY: baselineY,
+        widthPx,
+        rect: phoneLabelScreenRectForAnchor({
+          anchorX: c.x,
+          anchorY: baselineY,
+          widthPx,
+          heightPx: 15,
+          angleDeg: 0,
+          baselineOffsetPx: 4,
+        }),
+        priority: PHONE_OVERVIEW_TAG_KIND_PRIORITY[inst.symbolId] ?? 10,
+        selected: selectedId === inst.id,
+      };
+    });
+}
+
+/**
  * Screen-space axis-aligned bounding box of a label rect (widthPx x
  * heightPx, centered at centerX/centerY) rotated by angleDeg about its
  * center. Pure — the rotation is what makes a vertical wall's label

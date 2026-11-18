@@ -91,25 +91,25 @@ export default function ProjectsList() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-bold text-white">Room designs</h1>
-      <p className="mt-1 text-sm text-gray-400">
+      <p className="mt-1 min-w-0 max-w-full whitespace-normal break-words text-sm text-gray-400">
         Floor plans for remodels and new layouts — 2D plans with a 3D view.
       </p>
 
-      <div className="mt-6 flex gap-2">
+      <div className="mt-6 flex min-w-0 flex-col gap-2 sm:flex-row">
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") create(); }}
           placeholder="New design name (e.g. Kitchen remodel)"
-          className="flex-1 rounded bg-gray-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500"
+          className="min-w-0 w-full rounded bg-gray-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500 sm:flex-1"
           aria-label="New design name"
         />
         <button
           onClick={create}
           disabled={creating}
-          className="flex items-center gap-1 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="flex w-full shrink-0 items-center justify-center gap-1 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 sm:w-auto"
         >
           <Plus size={16} /> {creating ? "Creating…" : "New design"}
         </button>

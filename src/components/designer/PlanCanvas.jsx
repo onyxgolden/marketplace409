@@ -23,11 +23,15 @@ import {
   snapPoint,
   snapScalar,
   PHONE_AUTO_FIT_BREAKPOINT_PX,
+  PHONE_OVERVIEW_TAG_FONT_PX,
+  PHONE_OVERVIEW_TAG_MAX,
   estimateTextWidthPx,
   fitViewToBounds,
   phoneLabelScreenRectForAnchor,
+  phoneOverviewTagCandidates,
   selectPhoneLabels,
   showPlanDetailLabels,
+  showPlanTagLabels,
   underlayContainsPoint,
   underlayDisplaySizeIn,
   underlayRotationDeg,
@@ -1774,6 +1778,104 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     return selectPhoneLabels(candidates, { left: 0, top: 0, right: canvasSize.w, bottom: canvasSize.h });
   }, [showDetailLabels, canvasSize, design, toScreen, selection]);
 
+  // Phone whole-plot overview equipment tags (Phone Slice 5 follow-up):
+  // on a phone-width pane at far-out plot scale the in-glyph symbol tags
+  // are hidden by the 0.09 scale gate, so an industrial plot renders as
+  // an anonymous glyph mass with no readable identity. The single phone
+  // presentation policy: while the overview is active, PlanCanvas renders
+  // a bounded, non-colliding set of short equipment tags (one per
+  // accepted tag, chosen by the same deterministic selector as the
+  // wall/deck labels — selected first, then equipment priority, then tag
+  // order) and the symbol routines render NO industrial text of their
+  // own. The policy object is threaded into renderSymbol2D's context so
+  // the routines coordinate with it instead of deciding independently.
+  // Desktop is untouched: the policy is null unless the pane is
+  // phone-width AND the scale is below the tag gate.
+  const phoneOverviewActive =
+    !showPlanTagLabels(view.scale) &&
+    canvasSize.w > 0 &&
+    canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX;
+  const phoneLabelPolicy = phoneOverviewActive ? { mode: "phone-overview" } : undefined;
+  const phoneOverviewTags = useMemo(() => {
+    if (!phoneOverviewActive) return null;
+    const equipment = (design.symbols || []).filter((s) => s.layer === "equipment" && s.tag);
+    if (equipment.length === 0) return null;
+    const candidates = phoneOverviewTagCandidates({
+      equipment,
+      toScreen,
+      scale: view.scale,
+      selectedId: selection?.kind === "symbol" ? selection.id : null,
+    });
+    const accepted = selectPhoneLabels(candidates, {
+      left: 0,
+      top: 0,
+      right: canvasSize.w,
+      bottom: canvasSize.h,
+    });
+    const byPriority = [...candidates]
+      .filter((c) => accepted.has(c.id))
+      .sort((a, b) => {
+        if (Boolean(a.selected) !== Boolean(b.selected)) return a.selected ? -1 : 1;
+        if (a.priority !== b.priority) return b.priority - a.priority;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+    return byPriority.slice(0, PHONE_OVERVIEW_TAG_MAX);
+  }, [phoneOverviewActive, canvasSize, design, toScreen, selection, view.scale]);
+
+  // Render the accepted overview tags above the glyphs: one short tag per
+  // accepted equipment symbol, on a dark halo so it stays legible over the
+  // dense cluster. data-label-kind classifies each text for the geometry
+  // guard (equipment-tag = eligible industrial label); a withheld tag is
+  // never lost — tapping its glyph selects it (selected-first) and the
+  // selection panel/disclosure shows its full tag.
+  //
+  // The tags are themselves the touch target: tapping a tag selects its
+  // equipment (the halo is a ~45x15px target, far larger than the 1-2px
+  // glyph underneath at fit scale, where a pixel-perfect glyph tap is
+  // not reliably possible). The handler stops propagation so the canvas
+  // hit-test underneath does not re-select whatever pipe the tag happens
+  // to sit over. Read-only: selection only, no edits.
+  const renderPhoneOverviewTags = () => {
+    if (!phoneOverviewTags || phoneOverviewTags.length === 0) return null;
+    return (
+      <g key="phone-overview-tags" data-phone-overview-tags>
+        {phoneOverviewTags.map((t) => (
+          <g
+            key={t.id}
+            style={{ cursor: "pointer" }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              dispatch({ type: "SELECT", selection: { kind: "symbol", id: t.symbolId } });
+            }}
+          >
+            <rect
+              x={t.screenX - t.widthPx / 2}
+              y={t.screenY - 12}
+              width={t.widthPx}
+              height={15}
+              rx={3}
+              fill="rgba(2,6,23,0.78)"
+              stroke="rgba(148,163,184,0.4)"
+              strokeWidth={0.5}
+            />
+            <text
+              x={t.screenX}
+              y={t.screenY}
+              textAnchor="middle"
+              fontSize={PHONE_OVERVIEW_TAG_FONT_PX}
+              fontWeight={600}
+              fill="#fde68a"
+              data-label-kind="equipment-tag"
+              data-symbol-id={t.symbolId}
+            >
+              {t.tag}
+            </text>
+          </g>
+        ))}
+      </g>
+    );
+  };
+
   // Visio-style grid: light minor lines every gridIn, emphasized major
   // lines every MAJOR_GRID_EVERY minor lines (every 30″ on the 6″ default).
   const minorPx = gridIn * view.scale;
@@ -1813,7 +1915,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       <g pointerEvents="none" data-testid="house-selection">
         <rect x={a.x} y={a.y} width={b.x - a.x} height={b.y - a.y} fill="none"
           stroke="#f59e0b" strokeWidth={thicknessPx} strokeDasharray="12 6" />
-        <text x={a.x} y={a.y - 8} fontSize={13} fontWeight={600} fill="#f59e0b">
+        <text x={a.x} y={a.y - 8} fontSize={13} fontWeight={600} fill="#f59e0b" data-label-kind="selection-hint">
           {label}
         </text>
       </g>
@@ -1835,7 +1937,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             phone pane the selector may withhold it when it would collide or
             clip (tapping the deck selects it, selected-first). */}
         {showDetailLabels && (!phoneLabelAccepted || phoneLabelAccepted.has(`deck:${deck.id}`)) && (
-          <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
+          <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color} data-label-kind="deck-label" data-deck-id={deck.id}>
             {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
           </text>
         )}
@@ -1898,6 +2000,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
                 x={lp.x} y={lp.y}
                 textAnchor="middle"
                 fontSize={12}
+                data-label-kind="wall-label" data-wall-id={wall.id}
                 fill="#9ca3af"
                 stroke="none"
                 transform={`rotate(${dim.labelAngle} ${lp.x} ${lp.y})`}
@@ -2004,6 +2107,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     toScreen,
     scale: view.scale,
     highlighted: selection?.kind === "room" && selection?.id === room.id,
+    phoneLabelPolicy,
   });
 
   // ---- Phase 2: piping mode ----
@@ -2028,6 +2132,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <text
           x={mid.x} y={mid.y - 8} textAnchor="middle" fontSize={11} fontWeight={600}
           fill="#e0f2fe" transform={`rotate(${angle.toFixed(1)} ${mid.x} ${mid.y})`}
+          data-label-kind="pipe-label" data-run-id={run.id}
         >
           {run.underground ? "UG · " : ""}{feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
         </text>
@@ -2114,6 +2219,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       scale: view.scale,
       highlighted: isSelected,
       color: effectiveColor(design, inst, undefined),
+      phoneLabelPolicy,
     });
   };
 
@@ -2149,7 +2255,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         />
         {/* Sheet label — a detail label, hidden at fit-to-view scales. */}
         {showDetailLabels && (
-          <text x={tl.x + 10} y={tl.y - 10} fontSize={13} fontWeight={700} fill={stroke}>
+          <text x={tl.x + 10} y={tl.y - 10} fontSize={13} fontWeight={700} fill={stroke} data-label-kind="sheet-label" data-sheet-id={sheet.id}>
             {`${getSheetSize(sheet.sizeId).label} · ${sheet.orientation} · ${fitScaleLabel(sheet.fitScale)}`}
           </text>
         )}
@@ -2176,7 +2282,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             // VSDX annotation label — a detail label, hidden at
             // fit-to-view scales; the annotation path itself still draws.
             return showDetailLabels ? (
-              <text key={a.id} x={p.x} y={p.y} fontSize={13} fill="#94a3b8" textAnchor="middle">
+              <text key={a.id} x={p.x} y={p.y} fontSize={13} fill="#94a3b8" textAnchor="middle" data-label-kind="annotation" data-annotation-id={a.id}>
                 {a.text || ""}
               </text>
             ) : null;
@@ -2471,7 +2577,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       leftTicks.push({ pos: sy, isFoot, label: isFoot ? `${Math.round(y / 12)}′` : null });
     }
     return (
-      <g onPointerDown={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
+      <g onPointerDown={(e) => e.stopPropagation()} style={{ cursor: "default" }} data-ruler="true">
         <rect x={0} y={0} width={w} height={RULER_PX} fill="#0d1420" />
         <rect x={0} y={0} width={RULER_PX} height={h} fill="#0d1420" />
         {topTicks.map((t, i) => (
@@ -2527,7 +2633,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const boxH = lines.length * rowH + pad * 2 - 5;
     const box = crosshairHudBox({ cx, cy, w, h, boxW, boxH });
     return (
-      <g pointerEvents="none">
+      <g pointerEvents="none" data-hud="crosshair">
         <line x1={cx} y1={0} x2={cx} y2={h} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
         <line x1={0} y1={cy} x2={w} y2={cy} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
         <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="none" stroke="#7dd3fc" strokeWidth={1.5} />
@@ -2655,6 +2761,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.symbols || []).map(renderPipingSymbol)}
         {(design.orgCharts || []).map(renderOrgChart)}
         {(design.sheets || []).map(renderSheet)}
+        {renderPhoneOverviewTags()}
         {renderPipePreview()}
         {renderGhost()}
         {renderResizeHandles()}

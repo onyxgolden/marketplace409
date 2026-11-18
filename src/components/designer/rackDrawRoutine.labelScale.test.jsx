@@ -18,7 +18,7 @@ const pipeRack = {
   depthIn: 240,
   rack: { kind: "pipe", tiers: 2, elevationIn: 180, tierSpacingIn: 72, bentSpacingIn: 240 },
 };
-const renderRack = (scale) =>
+const renderRack = (scale, phoneLabelPolicy) =>
   renderToStaticMarkup(
     <svg>
       {drawRackSymbol({
@@ -27,6 +27,7 @@ const renderRack = (scale) =>
         toScreen,
         scale,
         highlighted: false,
+        phoneLabelPolicy,
       })}
     </svg>,
   );
@@ -48,5 +49,18 @@ describe("drawRackSymbol label gating", () => {
     const html = renderRack(1.6);
     expect(html).toContain("PR-101");
     expect(html).toContain("Pipe rack · TOS EL");
+  });
+
+  it("phone overview policy suppresses the in-glyph rack tag at zoomed scale; undefined policy preserves it", () => {
+    const suppressed = renderRack(0.139, { mode: "phone-overview" });
+    expect(suppressed).not.toContain("PR-101");
+    const preserved = renderRack(0.139, undefined);
+    expect(preserved).toContain("PR-101");
+  });
+
+  it("classifies the rack tag so the geometry guard can count it", () => {
+    const html = renderRack(0.139);
+    expect(html).toContain('data-label-kind="symbol-tag"');
+    expect(html).toContain('data-symbol-id="r1"');
   });
 });

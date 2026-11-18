@@ -151,3 +151,120 @@ describe("selectPhoneLabels", () => {
     expect(selectPhoneLabels([{ id: "a", rect: rect(10, 10, 20, 20) }], null).size).toBe(0);
   });
 });
+
+// Phone Slice 5 follow-up: whole-plot overview equipment tags. One
+// candidate per tagged equipment symbol; piping symbols are never
+// candidates. The caller runs the candidates through selectPhoneLabels
+// (selected first, then equipment priority, then tag order).
+import {
+  PHONE_OVERVIEW_TAG_MAX,
+  phoneOverviewTagCandidates,
+} from "./designerGeometry";
+
+describe("phoneOverviewTagCandidates", () => {
+  const toScreen = (p) => ({ x: p.x, y: p.y });
+  const viewport = { left: 0, top: 0, right: 300, bottom: 800 };
+  const eq = (over) => ({
+    id: over.id ?? `sym_${over.tag}`,
+    tag: over.tag,
+    symbolId: over.symbolId ?? "centrifugal-pump",
+    layer: "equipment",
+    x: over.x ?? 100,
+    y: over.y ?? 100,
+    depthIn: over.depthIn ?? 60,
+  });
+
+  it("builds one candidate per tagged equipment symbol, with a stable id", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [eq({ tag: "R-101", symbolId: "fluidized-bed-reactor", x: 100, y: 100 })],
+      toScreen,
+      scale: 0.033,
+      selectedId: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].id).toBe("equipment-tag:R-101");
+    expect(candidates[0].tag).toBe("R-101");
+    expect(candidates[0].priority).toBe(100);
+    expect(candidates[0].selected).toBe(false);
+    expect(candidates[0].screenX).toBe(100);
+  });
+
+  it("ranks primary equipment above pumps above racks, ties by tag", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [
+        eq({ tag: "PR-101", symbolId: "pipe-rack", x: 100, y: 500 }),
+        eq({ tag: "P-101", symbolId: "centrifugal-pump", x: 100, y: 300 }),
+        eq({ tag: "E-101", symbolId: "shell-tube-exchanger", x: 100, y: 200 }),
+        eq({ tag: "R-101", symbolId: "fluidized-bed-reactor", x: 100, y: 100 }),
+      ],
+      toScreen,
+      scale: 0.033,
+      selectedId: null,
+    });
+    const accepted = selectPhoneLabels(candidates, viewport);
+    // All four are far apart vertically, so all are accepted; the
+    // selector's deterministic order is priority order.
+    expect([...accepted]).toEqual([
+      "equipment-tag:R-101",
+      "equipment-tag:E-101",
+      "equipment-tag:P-101",
+      "equipment-tag:PR-101",
+    ]);
+  });
+
+  it("withholds a colliding lower-priority tag and keeps the higher one", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [
+        eq({ tag: "R-101", symbolId: "fluidized-bed-reactor", x: 100, y: 100 }),
+        eq({ tag: "R-102", symbolId: "catalyst-regenerator", x: 110, y: 100 }),
+      ],
+      toScreen,
+      scale: 0.033,
+      selectedId: null,
+    });
+    const accepted = selectPhoneLabels(candidates, viewport);
+    expect([...accepted]).toEqual(["equipment-tag:R-101"]);
+  });
+
+  it("selected wins over a colliding higher-priority tag", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [
+        eq({ tag: "R-101", symbolId: "fluidized-bed-reactor", x: 100, y: 100 }),
+        eq({ tag: "R-102", symbolId: "catalyst-regenerator", x: 110, y: 100 }),
+      ],
+      toScreen,
+      scale: 0.033,
+      selectedId: "sym_R-102",
+    });
+    const accepted = selectPhoneLabels(candidates, viewport);
+    expect([...accepted]).toEqual(["equipment-tag:R-102"]);
+  });
+
+  it("withholds a tag whose rect leaves the pane", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [eq({ tag: "FL-101", symbolId: "flare-stack", x: 295, y: 100 })],
+      toScreen,
+      scale: 0.033,
+      selectedId: null,
+    });
+    expect(selectPhoneLabels(candidates, viewport).size).toBe(0);
+  });
+
+  it("skips untagged equipment and returns [] for empty input", () => {
+    const candidates = phoneOverviewTagCandidates({
+      equipment: [{ id: "s1", layer: "equipment", x: 100, y: 100 }],
+      toScreen,
+      scale: 0.033,
+      selectedId: null,
+    });
+    expect(candidates).toEqual([]);
+    expect(phoneOverviewTagCandidates({ equipment: [], toScreen, scale: 0.033, selectedId: null })).toEqual([]);
+  });
+
+  it("does not cap the candidate list itself (PlanCanvas applies PHONE_OVERVIEW_TAG_MAX after selection)", () => {
+    const equipment = Array.from({ length: 20 }, (_, i) => eq({ tag: `P-${100 + i}`, x: 100, y: 40 + i * 40 }));
+    const candidates = phoneOverviewTagCandidates({ equipment, toScreen, scale: 0.033, selectedId: null });
+    expect(candidates).toHaveLength(20);
+    expect(PHONE_OVERVIEW_TAG_MAX).toBe(12);
+  });
+});
