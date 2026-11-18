@@ -1,4 +1,8 @@
 export {
+  ExternalAccountsWorkspaceModule,
+} from "./ExternalAccountsWorkspaceModule";
+
+export {
   FinancialWorkspaceModule,
 } from "./FinancialWorkspaceModule";
 
