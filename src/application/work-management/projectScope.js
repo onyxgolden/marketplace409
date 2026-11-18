@@ -185,6 +185,12 @@ export function mapSetProjectRpcError(error) {
   if (message.includes("FORGE_PRB_PROJECT_NOT_FOUND")) {
     return { ok: false, httpStatus: 404, error: "Project not found." };
   }
+  if (message.includes("FORGE_PRB_TEST_BOUNDARY")) {
+    return { ok: false, httpStatus: 409, error: "A test package cannot move to a real project — test data stays in test projects." };
+  }
+  if (message.includes("FORGE_PRB_TEST_CLIENT_MISMATCH")) {
+    return { ok: false, httpStatus: 409, error: "A test package cannot move to a different test client — test data stays in its own test client." };
+  }
   if (message.includes("FORGE_PRB_PROJECT_ARCHIVED")) {
     return { ok: false, httpStatus: 409, error: "That project (or its site or client) is archived — choose an active project." };
   }

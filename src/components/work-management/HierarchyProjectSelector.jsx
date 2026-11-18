@@ -140,7 +140,7 @@ export default function HierarchyProjectSelector({
         >
           <option value="">{selector ? "Choose a client…" : "Loading projects…"}</option>
           {clients.map((entry) => (
-            <option key={entry.id} value={entry.id}>{entry.name}</option>
+            <option key={entry.id} value={entry.id}>{entry.isTest ? `TEST — ${entry.name}` : entry.name}</option>
           ))}
         </select>
       </div>
@@ -157,7 +157,7 @@ export default function HierarchyProjectSelector({
         >
           <option value="">Choose a site…</option>
           {sites.map((entry) => (
-            <option key={entry.id} value={entry.id}>{entry.name}</option>
+            <option key={entry.id} value={entry.id}>{entry.isTest ? `TEST — ${entry.name}` : entry.name}</option>
           ))}
         </select>
       </div>
@@ -175,11 +175,17 @@ export default function HierarchyProjectSelector({
           <option value="">Choose a project…</option>
           {projects.map((entry) => (
             <option key={entry.id} value={entry.id}>
-              {entry.projectCode ? `${entry.name} (${entry.projectCode})` : entry.name}
+              {entry.isTest ? "TEST — " : ""}{entry.projectCode ? `${entry.name} (${entry.projectCode})` : entry.name}
             </option>
           ))}
         </select>
       </div>
+      {(client?.isTest || site?.isTest) && (
+        <p className="w-full text-sm" data-testid="hierarchy-selector-test-badge">
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">TEST</span>{" "}
+          <span className="text-amber-800">Test project — fictional test data, visible only to the owner.</span>
+        </p>
+      )}
       {includeUnassigned && (
         <button
           type="button"

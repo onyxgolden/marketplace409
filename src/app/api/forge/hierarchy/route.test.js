@@ -9,11 +9,13 @@ vi.mock("@/application/forge-shared-hierarchy/hierarchy", () => ({
   createHierarchyClient: vi.fn(),
   createHierarchyProject: vi.fn(),
   createHierarchySite: vi.fn(),
+  createHierarchyTestClient: vi.fn(),
   deleteHierarchyClient: vi.fn(),
   deleteHierarchyProject: vi.fn(),
   deleteHierarchySite: vi.fn(),
   getHierarchyAdminInventory: vi.fn(),
   getHierarchySelector: vi.fn(),
+  getHierarchyTestInventory: vi.fn(),
   updateHierarchyClient: vi.fn(),
   updateHierarchyProject: vi.fn(),
   updateHierarchySite: vi.fn(),
@@ -24,9 +26,11 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import {
   createHierarchyClient,
   createHierarchyProject,
+  createHierarchyTestClient,
   deleteHierarchyProject,
   getHierarchyAdminInventory,
   getHierarchySelector,
+  getHierarchyTestInventory,
   updateHierarchyClient,
   validateHierarchySelection,
 } from "@/application/forge-shared-hierarchy/hierarchy";
@@ -115,6 +119,27 @@ describe("GET /api/forge/hierarchy", () => {
     const response = await GET(new Request("https://test/api/forge/hierarchy"));
     expect(response.status).toBe(401);
   });
+
+  it("returns the test-only inventory for ?mode=test", async () => {
+    const inventory = { ownerId: "owner_1", canUseOwnerTestData: true, clients: [] };
+    getHierarchyTestInventory.mockResolvedValue({ ok: true, inventory });
+    const response = await GET(new Request("https://test/api/forge/hierarchy?mode=test"));
+    expect(response.status).toBe(200);
+    expect(getHierarchyTestInventory).toHaveBeenCalledWith(AUTH.supabaseClient, { ownerId: "owner_1" });
+    expect(getHierarchySelector).not.toHaveBeenCalled();
+    expect(getHierarchyAdminInventory).not.toHaveBeenCalled();
+    expect((await response.json()).inventory).toEqual(inventory);
+  });
+
+  it("maps the test-inventory service error status through", async () => {
+    getHierarchyTestInventory.mockResolvedValue({
+      ok: false,
+      httpStatus: 503,
+      error: "The hierarchy feature is not available yet.",
+    });
+    const response = await GET(new Request("https://test/api/forge/hierarchy?mode=test"));
+    expect(response.status).toBe(503);
+  });
 });
 
 describe("POST /api/forge/hierarchy", () => {
@@ -130,6 +155,27 @@ describe("POST /api/forge/hierarchy", () => {
     expect(typeof requestId).toBe("string");
     expect(requestId.length).toBeGreaterThan(10);
     expect((await response.json()).client.id).toBe("c1");
+  });
+
+  it("creates a test client through the test-create service when isTest is true", async () => {
+    createHierarchyTestClient.mockResolvedValue({ ok: true, client: { id: "tc1", name: "Fictional", isTest: true } });
+    const response = await POST(post({ entity: "client", name: "Fictional", isTest: true }));
+    expect(response.status).toBe(200);
+    expect(createHierarchyTestClient).toHaveBeenCalledWith(
+      AUTH.supabaseClient,
+      expect.objectContaining({ ownerId: "owner_1", name: "Fictional" }),
+    );
+    // The regular create must never run for a test client.
+    expect(createHierarchyClient).not.toHaveBeenCalled();
+    expect((await response.json()).client.isTest).toBe(true);
+  });
+
+  it("creates a real client through the regular service when isTest is absent", async () => {
+    createHierarchyClient.mockResolvedValue({ ok: true, client: { id: "c1", name: "Acme" } });
+    const response = await POST(post({ entity: "client", name: "Acme" }));
+    expect(response.status).toBe(200);
+    expect(createHierarchyTestClient).not.toHaveBeenCalled();
+    expect(createHierarchyClient).toHaveBeenCalled();
   });
 
   it("rejects an unknown entity", async () => {

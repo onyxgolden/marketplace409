@@ -16,7 +16,10 @@ import { usePageQuery } from "./packagePageContext.jsx";
 function chainName(selection) {
   if (!selection) return "Unassigned";
   const parts = [selection.client?.name, selection.site?.name, selection.project?.name].filter(Boolean);
-  return parts.length > 0 ? parts.join(" › ") : "Unassigned";
+  const name = parts.length > 0 ? parts.join(" › ") : "Unassigned";
+  // A test client's chain is prefixed so a package can never be linked
+  // to (or read as linked to) a test project without the marker.
+  return selection.client?.isTest ? `TEST — ${name}` : name;
 }
 
 export default function WorkPackageProjectLink({
