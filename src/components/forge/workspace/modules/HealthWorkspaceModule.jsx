@@ -16,7 +16,10 @@ function renderHealthWorkspaceTile() {
 
 // No health data is ever fetched into the shared dashboard's read models -- this tile is a bare
 // link, and its own visibility is the only gate applied here. The actual records stay behind
-// /forge/health's own RLS-enforced access regardless.
+// /forge/health's own RLS-enforced access regardless. The gate is health-workspace membership
+// (Jason's Nov 18 decision: the tile shows only to health-workspace members, i.e. Jason +
+// Brandy), not the Forge owner/co-owner role -- the two coincide today, but membership is the
+// table that owns this surface.
 export const HealthWorkspaceModule =
   new WorkspaceModule({
     moduleIdentity: "health",
@@ -24,5 +27,5 @@ export const HealthWorkspaceModule =
     category: "health",
     priority: 15,
     renderTile: renderHealthWorkspaceTile,
-    isVisible: (context) => context.isOwnerOrCoOwner === true,
+    isVisible: (context) => context.isHealthWorkspaceMember === true,
   });

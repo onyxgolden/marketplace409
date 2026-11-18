@@ -132,6 +132,7 @@ export default function ForgeDashboardClient({
         properties={readModels.workspace?.properties || []}
         transactionReview={readModels.transactionReview}
         isOwnerOrCoOwner={readModels.isOwnerOrCoOwner}
+        isHealthWorkspaceMember={readModels.isHealthWorkspaceMember}
       />
 
       {readModels && (
