@@ -30,6 +30,13 @@
  *                 the /forge chooser.
  *   rental-23   — the real RentalOverviewPanel for the 23-unit portfolio
  *                 (Slice 2 regression guard — do not change the strip).
+ *   health      — the real HealthLabManualEntryForm + HealthSourceDocumentCard
+ *                 (Health Labs importer manual-entry build), with fixture
+ *                 profiles/documents, no Supabase network calls on render
+ *                 (no auth/workspace bootstrap needed — these two
+ *                 components take their data as props). The phone-width
+ *                 check exercises "Review before saving" too, a pure
+ *                 client-side state transition with no network call.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -46,6 +53,7 @@ import WorkPackagePageHeader from "@/app/forge/work/page-header";
 import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
+import { HealthLabManualEntryForm, HealthSourceDocumentCard } from "@/components/forge/health/HealthDashboard";
 
 function daysFromNow(days) {
   return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
@@ -217,6 +225,36 @@ function Rental23Case() {
   );
 }
 
+// Health case — the real HealthLabManualEntryForm + HealthSourceDocumentCard, fixture
+// profiles/documents only. Neither component makes a Supabase call on render (only on
+// submit/delete, which this fixture never triggers), so no network interception is needed here.
+const HEALTH_FIXTURE_PROFILES = [
+  { id: "profile-1", display_name: "jasonmorgan99@gmail.com" },
+  { id: "profile-2", display_name: "spouse@example.com" },
+];
+const HEALTH_FIXTURE_DOCUMENTS = [
+  { id: "doc-1", title: "August 2026 lab report", document_date: "2026-08-10", review_status: "confirmed", bucket: "health-documents", object_path: "ws-1/doc-1.pdf" },
+  { id: "doc-2", title: "November 6 labs (page 2 duplicate)", document_date: "2026-11-06", review_status: "extraction_failed", bucket: "health-documents", object_path: "ws-1/doc-2.pdf" },
+];
+function HealthCase() {
+  return (
+    <main className="mx-auto max-w-3xl space-y-4 p-4" data-testid="health-fixture">
+      <HealthLabManualEntryForm
+        workspaceId="ws-1"
+        profiles={HEALTH_FIXTURE_PROFILES}
+        defaultProfileId="profile-1"
+        documents={HEALTH_FIXTURE_DOCUMENTS}
+        onSaved={async () => {}}
+      />
+      <div className="space-y-2" data-testid="health-document-list">
+        {HEALTH_FIXTURE_DOCUMENTS.map((document) => (
+          <HealthSourceDocumentCard key={document.id} document={document} onChanged={async () => {}} />
+        ))}
+      </div>
+    </main>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -225,6 +263,7 @@ const CASES = {
   "app-header": AppHeaderCase,
   "forge-header": ForgeHeaderCase,
   "rental-23": Rental23Case,
+  health: HealthCase,
 };
 
 export default function PhoneFixturePage() {

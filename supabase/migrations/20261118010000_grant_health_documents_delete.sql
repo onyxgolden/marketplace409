@@ -1,0 +1,14 @@
+-- health_documents was insert/update-only by design -- there was no delete UI for saved source
+-- documents, so no client ever needed the privilege (same shape as
+-- 20260904000100_grant_health_update_delete.sql for lab_results/workouts/regimen_items). RLS
+-- already permits every operation via the existing "for all to authenticated using
+-- (health_has_workspace_access(...))" policy created in
+-- 20260901000700_create_private_health_tracker.sql; this migration only widens the column-level
+-- grant that policy was waiting behind, so a workspace member can now delete a saved source
+-- document (e.g. a duplicate re-upload) through the app.
+--
+-- Deleting a health_documents row cascades to its health_extraction_proposals row (the FK is
+-- "on delete cascade"), but NEVER to health_lab_results: that table has no foreign key back to
+-- health_documents at all -- it only carries a free-text source_name label. Confirmed results
+-- already entered from a document always survive deleting that document.
+grant delete on public.health_documents to authenticated;

@@ -4,15 +4,16 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import HealthDashboard from "./HealthDashboard";
+import HealthDashboard, { normalizeLabReferenceBound } from "./HealthDashboard";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const { insertMock, updateMock, deleteMock, getUserMock } = vi.hoisted(() => ({
+const { insertMock, updateMock, deleteMock, getUserMock, storageRemoveMock } = vi.hoisted(() => ({
   insertMock: vi.fn(() => Promise.resolve({ error: null })),
   updateMock: vi.fn(() => Promise.resolve({ error: null })),
   deleteMock: vi.fn(() => Promise.resolve({ error: null })),
   getUserMock: vi.fn(() => Promise.resolve({ data: { user: { id: "user-1", email: "jasonmorgan99@gmail.com" } } })),
+  storageRemoveMock: vi.fn(() => Promise.resolve({ error: null })),
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -45,6 +46,9 @@ vi.mock("@/lib/supabase/client", () => ({
                 { name: "Back Squat", sets: "4", reps: "5", intensity: null, max: "225", notes: null },
                 { name: "Deadlift", sets: "2", reps: "8", intensity: null, max: null, notes: null },
               ] },
+            ] : table === "health_documents" ? [
+              { id: "doc-1", profile_id: "profile-1", category: "lab_report", title: "August 2026 lab report", document_date: "2026-08-10", review_status: "confirmed", bucket: "health-documents", object_path: "ws-1/doc-1.pdf" },
+              { id: "doc-2", profile_id: "profile-1", category: "lab_report", title: "November 6 labs (page 2 duplicate)", document_date: "2026-11-06", review_status: "extraction_failed", bucket: "health-documents", object_path: "ws-1/doc-2.pdf" },
             ] : [],
           error: null,
         }),
@@ -56,6 +60,7 @@ vi.mock("@/lib/supabase/client", () => ({
     },
     auth: { getUser: getUserMock },
     rpc: vi.fn(),
+    storage: { from: (bucket) => ({ remove: (paths) => storageRemoveMock(bucket, paths) }) },
   }),
 }));
 
@@ -91,6 +96,29 @@ async function goToTab(container, label) {
   });
 }
 
+describe("normalizeLabReferenceBound -- fix round 1 (P1) unit coverage", () => {
+  // A number input already blocks these in a real browser (and in jsdom via the native value
+  // setter -- verified separately), but the function itself must still refuse them directly:
+  // defense in depth, and the only way to meaningfully assert the whitespace/non-numeric cases
+  // the DOM-level number input makes unreachable through simulated typing.
+  it("normalizes whitespace-only to null (a trimmed blank bound), never to zero (Number(' ') === 0 is the exact bug this guards against)", () => {
+    expect(normalizeLabReferenceBound("   ")).toEqual({ ok: true, value: null });
+  });
+  it("rejects non-numeric text as invalid, not as null via NaN", () => {
+    expect(normalizeLabReferenceBound("abc")).toEqual({ ok: false, value: null });
+  });
+  it("rejects scientific notation (not a plain decimal a lab report would ever show)", () => {
+    expect(normalizeLabReferenceBound("1e5")).toEqual({ ok: false, value: null });
+  });
+  it("normalizes a blank string to null, not zero or an error", () => {
+    expect(normalizeLabReferenceBound("")).toEqual({ ok: true, value: null });
+  });
+  it("accepts a plain decimal, including negative (e.g. base excess)", () => {
+    expect(normalizeLabReferenceBound("98.6")).toEqual({ ok: true, value: 98.6 });
+    expect(normalizeLabReferenceBound("-2.5")).toEqual({ ok: true, value: -2.5 });
+  });
+});
+
 describe("HealthDashboard", () => {
   let mounted;
 
@@ -101,6 +129,7 @@ describe("HealthDashboard", () => {
     updateMock.mockClear();
     deleteMock.mockClear();
     getUserMock.mockClear();
+    storageRemoveMock.mockClear();
   });
 
   it("requires explicit private workspace setup", () => {
@@ -233,6 +262,175 @@ describe("HealthDashboard", () => {
     await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
 
     expect(updateMock).toHaveBeenCalledWith("health_lab_results", expect.objectContaining({ collected_on: "2026-05-08" }), "lab-2");
+  });
+
+  // Regression guard for Jason's Nov 6 lab photos: AI extraction failed on all pages, and there
+  // was no manual entry UI anywhere -- "Enter its fields manually" led nowhere. This form must be
+  // visible on the Labs tab unconditionally, never gated behind a failed (or any) upload attempt.
+  it("always shows a manual lab entry form on the Labs tab, not gated behind a failed extraction", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    expect(mounted.container.textContent).toContain("Enter lab results manually");
+    expect(mounted.container.textContent).toContain("Always available, whether or not a document was uploaded or AI extraction worked.");
+  });
+
+  it("the manual lab entry form shows a review step naming exactly what will be saved before it saves", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Vitamin D, 25-OH");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "42");
+    setInputValue(mounted.container.querySelector('[aria-label="Unit 1"]'), "ng/mL");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    // Nothing written yet -- this is a review step, not a save.
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+    expect(mounted.container.textContent).toContain("Review before saving");
+    expect(mounted.container.textContent).toContain("Vitamin D, 25-OH");
+    expect(mounted.container.textContent).toContain("42");
+    expect(mounted.container.textContent).toContain("ng/mL");
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm and save");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_lab_results", [
+      expect.objectContaining({
+        workspace_id: "health-1", profile_id: "profile-1",
+        marker_name: "Vitamin D, 25-OH", value_numeric: 42, unit: "ng/mL",
+        created_by: "user-1",
+      }),
+    ]);
+    expect(mounted.container.textContent).toContain("1 lab result saved.");
+  });
+
+  it("the manual lab entry review step can go back to edit without saving anything", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Ferritin");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "85");
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    const backButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Back to edit");
+    await act(async () => { backButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+    expect(mounted.container.querySelector('[aria-label="Marker 1"]').value).toBe("Ferritin");
+  });
+
+  it("refuses to advance to review when reference low equals reference high", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "70");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "70");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    // "Review before saving" is also the always-present button's own label in edit mode, so it
+    // cannot distinguish edit vs. review state -- the review card's distinctive lead paragraph can.
+    expect(mounted.container.textContent).not.toContain("Nothing has been added to the health record yet");
+    expect(mounted.container.textContent).toContain("reference low (70) must be less than reference high (70)");
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+  });
+
+  it("refuses to advance to review when reference low is greater than reference high (reversed bounds)", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "100");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "70");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(mounted.container.textContent).not.toContain("Nothing has been added to the health record yet");
+    expect(mounted.container.textContent).toContain("reference low (100) must be less than reference high (70)");
+    expect(insertMock).not.toHaveBeenCalledWith("health_lab_results", expect.anything());
+  });
+
+  it("advances to review and saves correctly when reference low is strictly less than reference high", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Marker 1"]'), "Glucose");
+    setInputValue(mounted.container.querySelector('[aria-label="Value 1"]'), "95");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference low 1"]'), "70");
+    setInputValue(mounted.container.querySelector('[aria-label="Reference high 1"]'), "100");
+
+    const reviewButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Review before saving");
+    await act(async () => { reviewButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(mounted.container.textContent).toContain("Nothing has been added to the health record yet");
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm and save");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_lab_results", [
+      expect.objectContaining({ marker_name: "Glucose", value_numeric: 95, reference_low: 70, reference_high: 100 }),
+    ]);
+  });
+
+  // Regression guard for Jason's report: a duplicate saved source (page 2 re-uploaded) had no
+  // delete control anywhere in the app.
+  it("lists saved lab source documents on the Labs tab, including a duplicate", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    expect(mounted.container.textContent).toContain("August 2026 lab report");
+    expect(mounted.container.textContent).toContain("November 6 labs (page 2 duplicate)");
+  });
+
+  it("deletes a saved source document only after a second confirming click, and also removes the stored file", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete November 6 labs"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).not.toHaveBeenCalled();
+    expect(storageRemoveMock).not.toHaveBeenCalled();
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(deleteMock).toHaveBeenCalledWith("health_documents", "doc-2");
+    expect(storageRemoveMock).toHaveBeenCalledWith("health-documents", ["ws-1/doc-2.pdf"]);
+    // Fix round 2 (P1): storage MUST be deleted before the metadata row, never after --
+    // health_document_object_select's own policy only grants visibility while a matching
+    // health_documents row still exists, so deleting metadata first makes the storage object
+    // permanently undeletable by anyone afterward.
+    expect(storageRemoveMock.mock.invocationCallOrder[0]).toBeLessThan(deleteMock.mock.invocationCallOrder[0]);
+  });
+
+  it("never deletes the health_documents metadata row if the storage deletion fails first", async () => {
+    storageRemoveMock.mockImplementationOnce(() => Promise.resolve({ error: { message: "storage error" } }));
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete November 6 labs"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(storageRemoveMock).toHaveBeenCalledWith("health-documents", ["ws-1/doc-2.pdf"]);
+    expect(deleteMock).not.toHaveBeenCalledWith("health_documents", expect.anything());
   });
 
   it("logs a vital and attributes it to the signed-in user (recorded_by)", async () => {
