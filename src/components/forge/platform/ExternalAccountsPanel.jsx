@@ -155,22 +155,56 @@ export default function ExternalAccountsPanel() {
   const [reportBusy, setReportBusy] = useState(false);
   const [threadForm, setThreadForm] = useState({ title: "", next_action: "", owner: "", next_review_on: "", state: "open" });
 
-  const loadAccounts = useCallback(async () => {
+  // The fetch itself performs NO state update: it only returns the
+  // promise, so the mount effect below can call it without tripping
+  // react-hooks/set-state-in-effect. State updates happen in the
+  // effect's promise callbacks (the rule's intended pattern) and in
+  // reloadAccounts (event handlers only).
+  const fetchAccounts = useCallback(
+    () => callApi(`${API_BASE}?include_deleted=${showDeleted ? "1" : "0"}`),
+    [showDeleted],
+  );
+
+  // Event handlers (save / delete / restore / seed) reload through
+  // this wrapper: setting loading state is fine in an event handler,
+  // just not synchronously inside an effect.
+  const reloadAccounts = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await callApi(`${API_BASE}?include_deleted=${showDeleted ? "1" : "0"}`);
+      const data = await fetchAccounts();
       setAccounts(data.accounts ?? []);
+      setError("");
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [showDeleted]);
+  }, [fetchAccounts]);
 
   useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
+    // `loading` starts true (initial state), so the first load already
+    // shows the loading indicator without anyone setting it. The
+    // cancelled flag is the race guard: a refetch supersedes an older
+    // in-flight one instead of letting it overwrite newer rows.
+    let cancelled = false;
+    fetchAccounts()
+      .then((data) => {
+        if (cancelled) return;
+        setAccounts(data.accounts ?? []);
+        setError("");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchAccounts]);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -241,7 +275,7 @@ export default function ExternalAccountsPanel() {
         setNotice(data.message ?? `Saved ${form.provider_name}.`);
         setEditing(false);
       }
-      await loadAccounts();
+      await reloadAccounts();
       if (selectedId) {
         const data = await callApi(`${API_BASE}/${selectedId}`);
         setDetail(data);
@@ -265,7 +299,7 @@ export default function ExternalAccountsPanel() {
         setSelectedId(null);
         setDetail(null);
       }
-      await loadAccounts();
+      await reloadAccounts();
     } catch (err) {
       setError(err.message);
     }
@@ -276,7 +310,7 @@ export default function ExternalAccountsPanel() {
     try {
       const data = await callApi(`${API_BASE}/${account.id}/restore`, { method: "POST", body: {} });
       setNotice(data.message ?? "Restored.");
-      await loadAccounts();
+      await reloadAccounts();
     } catch (err) {
       setError(err.message);
     }
@@ -338,7 +372,7 @@ export default function ExternalAccountsPanel() {
       });
       setNotice(data.message ?? "Seed applied.");
       setSeedPreview(null);
-      await loadAccounts();
+      await reloadAccounts();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -410,7 +444,10 @@ export default function ExternalAccountsPanel() {
             <input
               type="checkbox"
               checked={showDeleted}
-              onChange={(event) => setShowDeleted(event.target.checked)}
+              onChange={(event) => {
+                setShowDeleted(event.target.checked);
+                setLoading(true);
+              }}
             />{" "}
             Show deleted
           </label>
