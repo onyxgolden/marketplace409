@@ -76,3 +76,5 @@ e2e/placement/dist/
 
 # Phone Slice 5 geometry-check evidence (local-only run receipts + screenshots)
 /.phone-layout-evidence/
+# Planner test-data fixture check evidence (local-only run receipts + screenshots)
+/.test-data-evidence/

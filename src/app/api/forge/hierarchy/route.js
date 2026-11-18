@@ -13,11 +13,13 @@ import {
   createHierarchyClient,
   createHierarchyProject,
   createHierarchySite,
+  createHierarchyTestClient,
   deleteHierarchyClient,
   deleteHierarchyProject,
   deleteHierarchySite,
   getHierarchyAdminInventory,
   getHierarchySelector,
+  getHierarchyTestInventory,
   updateHierarchyClient,
   updateHierarchyProject,
   updateHierarchySite,
@@ -67,6 +69,17 @@ export async function GET(request) {
       if (!result.ok) return fail(result);
       return json({ selection: result.selection });
     }
+    // Test-mode inventory (migration 20261117120000): only is_test
+    // clients, only for the platform owner. A non-owner gets an empty
+    // tree and canUseOwnerTestData = false — the same shape, never an
+    // existence-revealing error. The manager's Test mode reads this.
+    if (url.searchParams.get("mode") === "test") {
+      const result = await getHierarchyTestInventory(authenticated.supabaseClient, {
+        ownerId: authenticated.effectiveOwnerId,
+      });
+      if (!result.ok) return fail(result);
+      return json({ inventory: result.inventory });
+    }
     // Admin management inventory (migration 20261113050000): full
     // identity records + versions + archived rows, plus the
     // server-proven canManage flag. A ?projectId= hint above still
@@ -97,6 +110,21 @@ export async function POST(request) {
     const ownerId = authenticated.effectiveOwnerId;
     const requestId = requestIdOrNew(body);
     if (body.entity === "client") {
+      // Owner-only test client create (migration 20261117120000): the
+      // server selects the test-create RPC, which sets is_test = true
+      // and rejects every non-owner. The regular create below takes no
+      // test flag and can never mint a test client.
+      if (body.isTest === true) {
+        const testResult = await createHierarchyTestClient(authenticated.supabaseClient, {
+          ownerId,
+          name: body.name,
+          externalReference: body.externalReference,
+          notes: body.notes,
+          requestId,
+        });
+        if (!testResult.ok) return fail(testResult);
+        return json({ client: testResult.client });
+      }
       const result = await createHierarchyClient(authenticated.supabaseClient, {
         ownerId,
         name: body.name,

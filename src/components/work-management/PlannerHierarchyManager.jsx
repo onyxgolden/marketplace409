@@ -180,6 +180,22 @@ function validateDraft(entity, draft) {
 export default function PlannerHierarchyManager() {
   const [inventory, setInventory] = useState(null);
   const [canManage, setCanManage] = useState(false);
+  // Server-computed (migration 20261117120000): true only when the
+  // signed-in user IS the workspace owner. The Test data section below
+  // renders only on this flag — never on a caller-supplied isOwner —
+  // so Brandy and members never see the section, not even empty.
+  const [canUseOwnerTestData, setCanUseOwnerTestData] = useState(false);
+  // Real/Test mode switch (default Real). Real mode shows only real
+  // clients; Test mode shows only test clients (loaded from the
+  // owner-only ?mode=test inventory). The switch itself renders only
+  // when canUseOwnerTestData is true.
+  const [mode, setMode] = useState("real");
+  const [testInventory, setTestInventory] = useState(null);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testError, setTestError] = useState("");
+  const [testNotice, setTestNotice] = useState("");
+  // Purge preview state, keyed by test client id: { preview, confirmName }.
+  const [purgePreview, setPurgePreview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -223,7 +239,46 @@ export default function PlannerHierarchyManager() {
     // spread copies — every reload stores a fresh object graph.
     setInventory(structuredClone(loaded));
     setCanManage(loaded.canManage === true);
+    setCanUseOwnerTestData(loaded.canUseOwnerTestData === true);
     return loaded;
+  }
+
+  async function loadTestInventory(silent) {
+    if (!silent) {
+      setTestLoading(true);
+      setTestError("");
+    }
+    let result;
+    try {
+      result = await callJson("/api/forge/hierarchy?mode=test");
+    } catch {
+      if (!silent) {
+        setTestLoading(false);
+        setTestError("Unable to load test data.");
+      }
+      return null;
+    }
+    const { response, data } = result;
+    if (!silent) setTestLoading(false);
+    if (!response.ok) {
+      setTestError(data.error || "Unable to load test data.");
+      return null;
+    }
+    const loaded = data.inventory || { ownerId: null, canManage: false, canUseOwnerTestData: false, clients: [] };
+    setTestInventory(structuredClone(loaded));
+    setCanUseOwnerTestData(loaded.canUseOwnerTestData === true);
+    return loaded;
+  }
+
+  function switchMode(nextMode) {
+    setMode(nextMode);
+    setSectionNotice("");
+    setSectionError("");
+    setTestNotice("");
+    setTestError("");
+    setPurgePreview(null);
+    closeForm();
+    if (nextMode === "test") loadTestInventory(false);
   }
 
   // Load on mount. setState runs inside the fetch callback, not
@@ -241,6 +296,7 @@ export default function PlannerHierarchyManager() {
         const loaded = data.inventory || { ownerId: null, canManage: false, clients: [] };
         setInventory(structuredClone(loaded));
         setCanManage(loaded.canManage === true);
+        setCanUseOwnerTestData(loaded.canUseOwnerTestData === true);
       })
       .catch(() => {
         if (cancelled) return;
@@ -276,25 +332,33 @@ export default function PlannerHierarchyManager() {
 
   const allClients = useMemo(() => inventory?.clients ?? [], [inventory]);
 
+  // The tree on screen. Real mode filters test clients out (the owner
+  // sees them in the raw inventory, but the mode switch is the boundary
+  // between real and test); Test mode shows only the test inventory.
+  const displayedClients = useMemo(() => {
+    if (mode === "test") return testInventory?.clients ?? [];
+    return allClients.filter((client) => !client.isTest);
+  }, [mode, allClients, testInventory]);
+
   const allSites = useMemo(
-    () => allClients.flatMap((client) => (client.sites ?? []).map((site) => ({ ...site, clientName: client.name, clientId: client.id }))),
-    [allClients],
+    () => displayedClients.flatMap((client) => (client.sites ?? []).map((site) => ({ ...site, clientName: client.name, clientId: client.id }))),
+    [displayedClients],
   );
 
   const counts = useMemo(() => {
     let sites = 0;
     let projects = 0;
-    for (const client of allClients) {
+    for (const client of displayedClients) {
       for (const site of client.sites ?? []) {
         sites += 1;
         projects += (site.projects ?? []).length;
       }
     }
-    return { clients: allClients.length, sites, projects };
-  }, [allClients]);
+    return { clients: displayedClients.length, sites, projects };
+  }, [displayedClients]);
 
   function findRecord(entity, id) {
-    for (const client of allClients) {
+    for (const client of displayedClients) {
       if (entity === "client" && client.id === id) return { record: client, parent: null };
       for (const site of client.sites ?? []) {
         if (entity === "site" && site.id === id) return { record: site, parent: client };
@@ -334,7 +398,7 @@ export default function PlannerHierarchyManager() {
           statusLabel(site.status).toLowerCase().includes(query));
       return self || (site.projects ?? []).some(projectMatches);
     }
-    return allClients
+    return displayedClients
       .map((client) => ({
         ...client,
         sites: (client.sites ?? [])
@@ -350,14 +414,21 @@ export default function PlannerHierarchyManager() {
             statusLabel(client.status).toLowerCase().includes(query));
         return self || client.sites.length > 0;
       });
-  }, [allClients, searchText, statusFilter, openFormId]);
+  }, [displayedClients, searchText, statusFilter, openFormId]);
 
   // --- Forms -----------------------------------------------------------
-  function openCreateForm(entity, parentId) {
+  // Reloads whichever inventory is on screen (real or test) after a
+  // save/status change/delete, so versions stay fresh in this mode.
+  async function reloadCurrent(silent) {
+    if (mode === "test") return loadTestInventory(silent);
+    return loadInventory(silent);
+  }
+
+  function openCreateForm(entity, parentId, options) {
     setFormError("");
     setFormNotice("");
     setStaleInfo(null);
-    setOpenForm({ mode: "create", entity, id: null, version: null, parentId: parentId || "", draft: emptyDraft(entity, parentId), record: null });
+    setOpenForm({ mode: "create", entity, id: null, version: null, parentId: parentId || "", isTest: options?.isTest === true, draft: emptyDraft(entity, parentId), record: null });
   }
 
   function openEditForm(entity, id) {
@@ -415,7 +486,10 @@ export default function PlannerHierarchyManager() {
       if (mode === "create") {
         const body =
           entity === "client"
-            ? { entity, name: draft.name, externalReference: draft.externalReference || null, notes: draft.notes || null, requestId }
+            // A test-mode client create sends isTest: true so the route
+            // selects the test-create RPC (the only way to mint a test
+            // client). The regular create takes no test flag.
+            ? { entity, name: draft.name, externalReference: draft.externalReference || null, notes: draft.notes || null, isTest: openForm.isTest === true, requestId }
             : entity === "site"
               ? {
                   entity,
@@ -495,7 +569,7 @@ export default function PlannerHierarchyManager() {
       if (response.status === 409 && (data.error || "").includes("changed by someone else")) {
         // Stale version: reload the fresh record, keep the user's
         // draft for reconciliation, never blind overwrite.
-        const reloaded = await loadInventory(true);
+        const reloaded = await reloadCurrent(true);
         const fresh = reloaded ? findRecordIn(reloaded, entity, id) : null;
         if (fresh) {
           setOpenForm((form) =>
@@ -515,7 +589,7 @@ export default function PlannerHierarchyManager() {
     const savedName = saved?.name || displayName;
     // Reload for fresh versions, then re-point the form at the saved
     // record so a second save carries the new version.
-    const reloaded = await loadInventory(true);
+    const reloaded = await reloadCurrent(true);
     if (mode === "create") {
       setOpenForm((form) => (form ? { ...form, draft: emptyDraft(entity, form.parentId) } : form));
     } else if (saved && reloaded) {
@@ -566,14 +640,14 @@ export default function PlannerHierarchyManager() {
     if (!response.ok) {
       if (response.status === 409 && (data.error || "").includes("changed by someone else")) {
         setSectionError("This record was changed by someone else. Reloading current state.");
-        await loadInventory(true);
+        await reloadCurrent(true);
         return;
       }
       setSectionError(data.error || "Request failed.");
       return;
     }
     setSectionNotice(`${verb} "${record.name}".`);
-    await loadInventory(true);
+    await reloadCurrent(true);
   }
 
   function askDelete(entity, id, triggerEl) {
@@ -607,7 +681,7 @@ export default function PlannerHierarchyManager() {
             if (response.status === 409) {
               if ((data.error || "").includes("changed by someone else")) {
                 setSectionError("This record was changed by someone else. Reloading current state.");
-                await loadInventory(true);
+                await reloadCurrent(true);
                 return;
               }
               if ((data.error || "").includes("still has items under it")) {
@@ -623,11 +697,101 @@ export default function PlannerHierarchyManager() {
             return;
           }
           setSectionNotice(`Deleted "${record.name}".`);
-          await loadInventory(true);
+          await reloadCurrent(true);
         },
       },
       triggerEl,
     );
+  }
+
+  // --- Test data actions (owner-only; Test mode only) ----------------
+  // The server is the authority on every call: the loader proves the
+  // project is a test project and the caller is the owner; the purge
+  // recomputes the preview digest and refuses on blockers. The UI only
+  // decides what to show and what to send, and confirms every save in
+  // plain words (names, not raw IDs).
+  async function loadSamples(project) {
+    if (busy) return;
+    setBusy(true);
+    setTestNotice("");
+    setTestError("");
+    let result;
+    try {
+      result = await callJson("/api/forge/planner/test-data/load", {
+        method: "POST",
+        body: { projectId: project.id, requestId: newRequestId() },
+      });
+    } catch {
+      setBusy(false);
+      setTestError("Request failed.");
+      return;
+    }
+    setBusy(false);
+    const { response, data } = result;
+    if (!response.ok) {
+      setTestError(data.error || "Request failed.");
+      return;
+    }
+    setTestNotice(data.load?.message || `Sample packages loaded into "${project.name}".`);
+    await loadTestInventory(true);
+  }
+
+  async function previewPurge(client) {
+    if (busy) return;
+    setBusy(true);
+    setTestNotice("");
+    setTestError("");
+    let result;
+    try {
+      result = await callJson("/api/forge/planner/test-data/preview", {
+        method: "POST",
+        body: { clientId: client.id },
+      });
+    } catch {
+      setBusy(false);
+      setTestError("Request failed.");
+      return;
+    }
+    setBusy(false);
+    const { response, data } = result;
+    if (!response.ok) {
+      setTestError(data.error || "Request failed.");
+      return;
+    }
+    setPurgePreview({ clientId: client.id, clientName: client.name, preview: data.preview, confirmName: "" });
+  }
+
+  async function purgeTestData() {
+    if (!purgePreview || busy) return;
+    const { clientId, clientName, preview, confirmName } = purgePreview;
+    if (!preview?.canPurge) return;
+    if (confirmName.trim() !== clientName) {
+      setTestError("Type the test client name exactly to confirm the delete.");
+      return;
+    }
+    setBusy(true);
+    setTestNotice("");
+    setTestError("");
+    let result;
+    try {
+      result = await callJson("/api/forge/planner/test-data/purge", {
+        method: "POST",
+        body: { clientId, digest: preview.digest, requestId: newRequestId(), confirmName: confirmName.trim() },
+      });
+    } catch {
+      setBusy(false);
+      setTestError("Request failed.");
+      return;
+    }
+    setBusy(false);
+    const { response, data } = result;
+    if (!response.ok) {
+      setTestError(data.error || "Request failed.");
+      return;
+    }
+    setPurgePreview(null);
+    setTestNotice(data.purge?.message || `Test data deleted — "${clientName}" and its samples are gone.`);
+    await loadTestInventory(true);
   }
 
   // --- Render helpers ---------------------------------------------------
@@ -684,7 +848,7 @@ export default function PlannerHierarchyManager() {
 
   function parentOptions(entity) {
     if (entity === "site") {
-      return allClients.map((client) => ({ id: client.id, label: `${client.name} (${statusLabel(client.status)})` }));
+      return displayedClients.map((client) => ({ id: client.id, label: `${client.name} (${statusLabel(client.status)})` }));
     }
     if (entity === "project") {
       return allSites.map((site) => ({ id: site.id, label: `${site.name} — ${site.clientName}` }));
@@ -876,6 +1040,7 @@ export default function PlannerHierarchyManager() {
 
   function renderProject(project, site) {
     const formIsHere = openForm?.entity === "project" && openForm?.id === project.id;
+    const isTestMode = mode === "test";
     return (
       <li key={project.id} data-testid={`hierarchy-row-project-${project.id}`} className="border-t border-slate-100 px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -883,13 +1048,29 @@ export default function PlannerHierarchyManager() {
             <span className="font-medium">{project.name}</span>
             {project.projectCode && <span className="ml-1 text-xs text-slate-500">({project.projectCode})</span>}
             <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{statusLabel(project.status)}</span>
+            {isTestMode && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">TEST</span>
+            )}
             {(project.packageCount || 0) > 0 && (
               <span className="ml-2 text-xs text-slate-500">
                 {project.packageCount} assigned package{project.packageCount === 1 ? "" : "s"}
               </span>
             )}
           </span>
-          {rowActions("project", project, 0)}
+          <span className="flex flex-wrap items-center gap-1">
+            {isTestMode && canManage && (
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={busy}
+                aria-label={`${(project.packageCount || 0) === 0 ? "Load sample packages into" : "Restore missing samples in"} ${project.name}`}
+                onClick={() => loadSamples(project)}
+              >
+                {(project.packageCount || 0) === 0 ? "Load sample packages" : "Restore missing samples"}
+              </button>
+            )}
+            {rowActions("project", project, 0)}
+          </span>
         </div>
         {formIsHere && <div className="mt-3">{renderForm()}</div>}
       </li>
@@ -906,6 +1087,9 @@ export default function PlannerHierarchyManager() {
             <span className="font-medium">{site.name}</span>
             {site.siteType && <span className="ml-1 text-xs text-slate-500">({site.siteType})</span>}
             <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{statusLabel(site.status)}</span>
+            {mode === "test" && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">TEST</span>
+            )}
           </span>
           <span className="flex flex-wrap items-center gap-1">
             {canManage && (
@@ -928,6 +1112,11 @@ export default function PlannerHierarchyManager() {
   function renderClient(client) {
     const formIsHere = openForm?.entity === "client" && openForm?.id === client.id;
     const createFormIsHere = openForm?.mode === "create" && openForm?.entity === "site" && openForm?.parentId === client.id;
+    const isTestMode = mode === "test";
+    const previewIsHere = isTestMode && purgePreview?.clientId === client.id;
+    const preview = previewIsHere ? purgePreview.preview : null;
+    const previewCounts = preview?.counts || {};
+    const previewTotal = Object.values(previewCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
     return (
       <li key={client.id} data-testid={`hierarchy-row-client-${client.id}`} className="rounded-lg border border-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
@@ -935,8 +1124,22 @@ export default function PlannerHierarchyManager() {
             <span className="font-medium">{client.name}</span>
             {client.externalReference && <span className="ml-1 text-xs text-slate-500">({client.externalReference})</span>}
             <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{statusLabel(client.status)}</span>
+            {isTestMode && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">TEST — OWNER ONLY</span>
+            )}
           </span>
           <span className="flex flex-wrap items-center gap-1">
+            {isTestMode && canManage && (
+              <button
+                type="button"
+                className={btnGhost}
+                disabled={busy}
+                aria-label={`Preview cleanup of ${client.name}`}
+                onClick={() => previewPurge(client)}
+              >
+                Preview cleanup
+              </button>
+            )}
             {canManage && (
               <button type="button" className={btnGhost} disabled={busy} aria-label={`New site under ${client.name}`} onClick={() => openCreateForm("site", client.id)}>
                 New site
@@ -945,6 +1148,54 @@ export default function PlannerHierarchyManager() {
             {rowActions("client", client, (client.sites ?? []).length)}
           </span>
         </div>
+        {previewIsHere && preview && (
+          <div className="mx-3 mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid={`purge-preview-${client.id}`}>
+            <p className="text-sm font-semibold text-amber-900">
+              Delete test data for &ldquo;{client.name}&rdquo;?
+            </p>
+            <p className="mt-1 text-sm text-amber-800">
+              This permanently deletes the test client, its sites and projects, and {previewTotal} test row{previewTotal === 1 ? "" : "s"} (
+              {(previewCounts.forge_work_packages || 0)} sample package{(previewCounts.forge_work_packages || 0) === 1 ? "" : "s"} ·{" "}
+              {(previewCounts.forge_work_steps || 0)} steps · {(previewCounts.forge_work_planning_process_instances || 0)} checklist rows). Real data is never touched.
+            </p>
+            {(preview.blockers ?? []).length > 0 ? (
+              <div role="alert" className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <p className="font-semibold">This test client cannot be deleted yet:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {(preview.blockers ?? []).map((blocker, index) => (
+                    <li key={index}>{blocker.message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <>
+                <label className={label} htmlFor={`purge-confirm-${client.id}`}>
+                  Type the test client name to confirm
+                </label>
+                <input
+                  id={`purge-confirm-${client.id}`}
+                  className={input}
+                  value={purgePreview.confirmName}
+                  placeholder={client.name}
+                  onChange={(event) => setPurgePreview((current) => (current ? { ...current, confirmName: event.target.value } : current))}
+                />
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={btnDanger}
+                    disabled={busy || purgePreview.confirmName.trim() !== client.name}
+                    onClick={purgeTestData}
+                  >
+                    {busy ? "Deleting…" : "Delete test data"}
+                  </button>
+                  <button type="button" className={btnGhost} disabled={busy} onClick={() => setPurgePreview(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {formIsHere && <div className="px-3 pb-3">{renderForm()}</div>}
         {createFormIsHere && <div className="px-3 pb-3">{renderForm()}</div>}
         <ul className="ml-4 mr-3 mb-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
@@ -988,6 +1239,45 @@ export default function PlannerHierarchyManager() {
         <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{sectionError}</p>
       )}
 
+      {canUseOwnerTestData && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid="planner-test-data-section">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-amber-900">
+              Test data <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">TEST — OWNER ONLY</span>
+            </p>
+            <div className="flex gap-1" role="group" aria-label="Real or test data">
+              <button
+                type="button"
+                className={mode === "real" ? btnPrimary : btnGhost}
+                aria-pressed={mode === "real"}
+                onClick={() => switchMode("real")}
+              >
+                Real
+              </button>
+              <button
+                type="button"
+                className={mode === "test" ? btnPrimary : btnGhost}
+                aria-pressed={mode === "test"}
+                onClick={() => switchMode("test")}
+              >
+                Test
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-sm text-amber-800">
+            {mode === "test"
+              ? "Test mode shows only your fictional test clients, sites, and projects. Nothing here is real data, and nobody else can see any of it."
+              : "Real mode shows only real clients. Switch to Test to work with your fictional test data."}
+          </p>
+          {testNotice && (
+            <p role="status" className="mt-2 rounded-lg bg-white p-3 text-sm text-slate-700">{testNotice}</p>
+          )}
+          {testError && (
+            <p role="alert" className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{testError}</p>
+          )}
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div>
           <label className={label} htmlFor="hierarchy-search">Search clients, sites, and projects</label>
@@ -1017,9 +1307,14 @@ export default function PlannerHierarchyManager() {
             <option value="complete">Complete</option>
           </select>
         </div>
-        {canManage && (
+        {canManage && mode === "real" && (
           <button type="button" className={btnPrimary} disabled={busy} onClick={() => openCreateForm("client", "")}>
             New client
+          </button>
+        )}
+        {canManage && mode === "test" && (
+          <button type="button" className={btnPrimary} disabled={busy} onClick={() => openCreateForm("client", "", { isTest: true })}>
+            New test client
           </button>
         )}
       </div>
@@ -1036,10 +1331,14 @@ export default function PlannerHierarchyManager() {
 
       {createClientFormOpen && <div className="mt-3">{renderForm()}</div>}
 
-      {visibleClients.length === 0 ? (
+      {mode === "test" && testLoading ? (
+        <p className="mt-3 text-sm text-slate-500">Loading test data…</p>
+      ) : visibleClients.length === 0 ? (
         <p className="mt-3 rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-600">
-          {allClients.length === 0
-            ? "No clients yet — create your first client to get started."
+          {displayedClients.length === 0
+            ? mode === "test"
+              ? "No test clients yet — create your first test client to get started."
+              : "No clients yet — create your first client to get started."
             : "No clients, sites, or projects match this search."}
         </p>
       ) : (
