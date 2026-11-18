@@ -7,6 +7,12 @@ import { compressImageFile } from "@/components/forge/rental/compressImageFile";
 import HealthLabTrendChart from "./HealthLabTrendChart";
 import HealthLabCombinedTrendChart from "./HealthLabCombinedTrendChart";
 import HealthVitalsTrendChart from "./HealthVitalsTrendChart";
+import HealthLabMarkerDisplay from "./HealthLabMarkerDisplay";
+import {
+  computeDerivedRatios,
+  computeLatestDrawSummary,
+  groupLabsBySection,
+} from "@/domains/health/healthLabPresentation";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
   ForgeErrorState,
@@ -535,9 +541,14 @@ function HealthLabResultRow({ point, onChanged }) {
     <div className="col-span-2 flex gap-1 sm:col-span-1"><button type="button" onClick={save} disabled={busy} className="rounded bg-emerald-500 px-2 py-0.5 text-xs font-black text-slate-950 disabled:opacity-50">{busy ? "…" : "Save"}</button><button type="button" onClick={() => setEditing(false)} className="rounded bg-slate-300 px-2 py-0.5 text-xs font-black dark:bg-slate-600">Cancel</button></div>
   </div>;
 
-  return <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1 text-xs dark:bg-slate-800/50">
-    <span>{point.collected_on} — {point.value_numeric ?? point.value_text} {point.unit}</span>
-    <div className="flex shrink-0 gap-1"><button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${point.marker_name} result from ${point.collected_on}`} className="rounded bg-slate-200 px-2 py-0.5 font-black dark:bg-slate-700">Edit</button><DeleteButton label={`Delete ${point.marker_name} result from ${point.collected_on}`} onDelete={remove}/></div>
+  return <div className="rounded-lg bg-slate-50 px-2 py-1 text-xs dark:bg-slate-800/50">
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-slate-500 dark:text-slate-400">{point.collected_on}</p>
+        <HealthLabMarkerDisplay point={point} />
+      </div>
+      <div className="flex shrink-0 gap-1"><button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${point.marker_name} result from ${point.collected_on}`} className="rounded bg-slate-200 px-2 py-0.5 font-black dark:bg-slate-700">Edit</button><DeleteButton label={`Delete ${point.marker_name} result from ${point.collected_on}`} onDelete={remove}/></div>
+    </div>
   </div>;
 }
 
@@ -901,14 +912,38 @@ export default function HealthDashboard({ initialMembership }) {
         {activeTab === "Overview" && <>
           <Card title="Household profiles"><div className="space-y-3">{data.profiles.map((profile) => <div key={profile.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><p className="font-black">{profile.display_name}</p><p className="text-xs text-slate-500 dark:text-slate-400">{profile.profile_type === "managed_dependent" ? `Managed ${profile.relationship || "dependent"}` : "Private household member"} · {data.conditions.filter((condition) => condition.profile_id === profile.id && condition.status === "active").length} active conditions · {activeRegimen.filter((item) => item.profile_id === profile.id).length} active regimen items</p></div>)}</div><form onSubmit={addDependent} className="mt-4 grid gap-2 sm:grid-cols-2"><input aria-label="Dependent full name" required value={dependentName} onChange={(event) => setDependentName(event.target.value)} placeholder="Dependent full name" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><input aria-label="Relationship" required value={dependentRelationship} onChange={(event) => setDependentRelationship(event.target.value)} placeholder="Relationship, such as mother" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><button className="rounded-xl bg-slate-950 px-4 py-2 font-black text-white dark:bg-amber-400 dark:text-slate-950 sm:col-span-2">Add managed dependent</button></form></Card>
           <Card title="Current regimen"><p className="text-3xl font-black text-emerald-600">{activeRegimen.length}</p><p className="text-sm text-slate-500">active prescriptions, supplements, and peptides for {viewingProfile?.display_name || "the selected person"}</p></Card>
-          <Card title="Latest laboratory results">{latestLabs.length ? <div className="space-y-2">{latestLabs.map((lab) => <div key={lab.id} className="flex justify-between gap-4 border-b border-slate-200 py-2 dark:border-slate-700"><span className="font-bold">{lab.marker_name}</span><span className={lab.flag === "high" || lab.flag === "critical" ? "font-black text-red-600" : "font-black"}>{lab.value_numeric ?? lab.value_text} {lab.unit}</span></div>)}</div> : <p className="text-sm text-slate-500">No structured lab results yet for {viewingProfile?.display_name || "the selected person"}.</p>}</Card>
+          <Card title="Latest laboratory results">{latestLabs.length ? <div className="space-y-4">{groupLabsBySection(latestLabs).map(({ section, markers }) => <div key={section}>
+            <h3 className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{section}</h3>
+            <div className="mt-2 space-y-2">{markers.map(({ markerName, points }) => points.map((lab) => <div key={lab.id} className="border-b border-slate-200 pb-2 dark:border-slate-700">
+              <div className="flex items-baseline justify-between gap-4"><span className="min-w-0 break-words font-bold">{lab.marker_name}</span><span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">{lab.collected_on}</span></div>
+              <HealthLabMarkerDisplay point={lab} />
+            </div>))}</div>
+          </div>)}</div> : <p className="text-sm text-slate-500">No structured lab results yet for {viewingProfile?.display_name || "the selected person"}.</p>}</Card>
           <Card title="Activity"><div className="grid grid-cols-3 gap-3 text-center"><div><p className="text-2xl font-black">{data.measurements.filter((m) => m.profile_id === viewProfileId).length}</p><p className="text-xs">measurements</p></div><div><p className="text-2xl font-black">{viewWorkouts.length}</p><p className="text-xs">workouts</p></div><div><p className="text-2xl font-black">{data.timeline.filter((t) => t.profile_id === viewProfileId).length}</p><p className="text-xs">timeline events</p></div></div></Card>
         </>}
         {activeTab === "Labs" && (() => {
           const groupedViewLabs = groupLabsByMarker(viewLabs);
           const { narrow: narrowTier, wide: wideTier } = splitLabTiers(groupedViewLabs);
           const hasCombinableTrend = Object.values(groupedViewLabs).some((points) => points.length >= 2);
+          const latestSummary = computeLatestDrawSummary(viewLabs);
+          const derivedRatios = computeDerivedRatios(viewLabs);
+          const sectionGroups = groupLabsBySection(viewLabs);
+          const summaryTiles = latestSummary ? [
+            { label: "Within range", count: latestSummary.buckets.within, percent: latestSummary.percentages.within },
+            { label: "Below range", count: latestSummary.buckets.below, percent: latestSummary.percentages.below },
+            { label: "Above range", count: latestSummary.buckets.above, percent: latestSummary.percentages.above },
+          ] : [];
           return <>
+            {latestSummary && <div className="lg:col-span-2"><Card title={`Latest lab summary — ${viewingProfile?.display_name || ""}`}>
+              <p className="text-sm"><span className="font-black">Latest collection date: {latestSummary.date}</span> · {latestSummary.classified} classified of {latestSummary.total} results</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Counts one result per marker; duplicate rows for the same marker on this date are counted once. Percentages are of {latestSummary.classified} classified.</p>
+              {latestSummary.classified > 0 ? <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">{summaryTiles.map((tile) => <div key={tile.label} className="min-w-0 rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
+                <p className="text-2xl font-black tabular-nums">{tile.count}</p>
+                <p className="break-words text-sm font-bold">{tile.label}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{tile.percent.toFixed(1)}% of {latestSummary.classified} classified</p>
+              </div>)}</div> : <p className="mt-4 text-sm font-bold">No comparable reference ranges for the latest date</p>}
+              <p className="mt-3 text-sm">Unclassified: {latestSummary.unclassified}</p>
+            </Card></div>}
             <HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => refresh()}/>
             {viewLabs.length > 0 && <Card title={`Combined trends — ${viewingProfile?.display_name || ""}`}>
               {hasCombinableTrend ? <div className="space-y-4">
@@ -916,7 +951,18 @@ export default function HealthDashboard({ initialMembership }) {
                 <HealthLabCombinedTrendChart title="Wide-range markers" groupedLabs={wideTier}/>
               </div> : <p className="text-sm text-slate-500">Once a marker has a second draw on file, its trend joins a combined chart here.</p>}
             </Card>}
-            <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupedViewLabs).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => refresh()}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
+            <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-5">{sectionGroups.map(({ section, markers }) => <div key={section}>
+              <h3 className="text-sm font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{section}</h3>
+              <div className="mt-2 space-y-4">{markers.map(({ markerName, points }) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => refresh()}/>)}</div></div>)}
+              {section === "Heart Health" && derivedRatios.length > 0 && <div className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
+                <p className="font-black">Calculated ratios — latest date</p>
+                <div className="mt-2 space-y-2">{derivedRatios.map((ratio) => <div key={ratio.key}>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><span className="min-w-0 break-words font-black">{ratio.label}</span><span className="font-black tabular-nums">{ratio.displayValue}</span><span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black dark:bg-slate-700">Calculated</span></div>
+                  <p className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">{ratio.inputsLabel}</p>
+                </div>)}</div>
+              </div>}
+              </div>
+            </div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
           </>;
         })()}
         {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => refresh()}/><HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="prescription" onSaved={() => refresh()}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => refresh()}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
