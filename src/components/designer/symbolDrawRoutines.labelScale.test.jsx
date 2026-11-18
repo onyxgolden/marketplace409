@@ -94,6 +94,56 @@ describe("drawProcessEquipmentSymbol label gating", () => {
     expect(html).toContain("P-101");
     expect(html).toContain("Centrifugal pump");
   });
+
+  it("classifies the rendered tag for the geometry guard", () => {
+    const html = renderPump(0.139);
+    expect(html).toContain('data-label-kind="symbol-tag"');
+    expect(html).toContain('data-symbol-id="p1"');
+  });
+});
+
+// Phone Slice 5 follow-up: the single phone presentation policy. When
+// PlanCanvas is in phone-overview mode (phone pane, scale below the tag
+// gate) the overview tags own equipment identity and the symbol routines
+// render NO industrial text of their own — even at a scale where the tag
+// would otherwise show. Default/undefined policy preserves desktop
+// output exactly (the tests above prove it).
+describe("phone overview policy coordination", () => {
+  const overview = { mode: "phone-overview" };
+  const renderPumpWithPolicy = (scale, phoneLabelPolicy) =>
+    renderToStaticMarkup(
+      <svg>
+        {drawProcessEquipmentSymbol({
+          symbol: pump,
+          instance: pumpInstance,
+          toScreen,
+          scale,
+          highlighted: false,
+          phoneLabelPolicy,
+        })}
+      </svg>,
+    );
+  const renderRoomWithPolicy = (scale, phoneLabelPolicy) =>
+    renderToStaticMarkup(
+      <svg>{drawRoomSymbol({ instance: room, toScreen, scale, highlighted: false, phoneLabelPolicy })}</svg>,
+    );
+
+  it("suppresses the equipment tag and description under the overview policy", () => {
+    const html = renderPumpWithPolicy(0.139, overview);
+    expect(html).not.toContain("P-101");
+    expect(html).not.toContain("Centrifugal pump");
+  });
+
+  it("suppresses the room name and area under the overview policy", () => {
+    const html = renderRoomWithPolicy(0.139, overview);
+    expect(html).not.toContain("Kitchen");
+    expect(html).not.toContain("144 sq ft");
+  });
+
+  it("an undefined policy changes nothing (desktop output preserved)", () => {
+    expect(renderPumpWithPolicy(0.139, undefined)).toContain("P-101");
+    expect(renderRoomWithPolicy(0.139, undefined)).toContain("Kitchen");
+  });
 });
 
 describe("drawRoomSymbol label gating", () => {
